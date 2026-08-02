@@ -8,7 +8,103 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+default = ["openapi31", "macros", "server", "http1", "http2", "trace"]
+
+# --- Specification version -------------------------------------------------
+# `openapi31` is the baseline. `openapi32` is a strict superset: enabling it is
+# purely additive for programs that use no 3.2-only construct.
+openapi31 = ["kynos-openapi/openapi31"]
+openapi32 = ["openapi31", "kynos-openapi/openapi32", "kynos-macros?/openapi32"]
+
+# --- Core ------------------------------------------------------------------
+macros = ["dep:kynos-macros"]
+
+# --- Runtime ---------------------------------------------------------------
+server = ["dep:hyper-util", "tokio/net", "tokio/rt", "tokio/signal"]
+http1 = ["hyper/http1", "hyper-util?/http1"]
+http2 = ["hyper/http2", "hyper-util?/http2"]
+tls = ["dep:tokio-rustls"]
+
+# --- Codecs ----------------------------------------------------------------
+form = ["dep:serde_urlencoded"]
+multipart = ["dep:multer"]
+cookie = ["dep:cookie"]
+compression = ["dep:async-compression"]
+
+# --- Observability ---------------------------------------------------------
+# The `tracing` facade only. Choosing a subscriber stays the application's call.
+trace = ["dep:tracing"]
+
+# --- Document emission -----------------------------------------------------
+yaml = ["kynos-openapi/yaml"]
+
+# --- Testing ---------------------------------------------------------------
+test-util = []
+
+# --- Escape hatch ----------------------------------------------------------
+# Unlocks `layer_unchecked`, `route_unchecked` and `upgrade_unchecked`. Anything
+# reached through these is omitted from the emitted document, so the document
+# stops being authoritative and is stamped as such. Documented anti-pattern.
+unchecked = ["dep:tower"]
+
+full = [
+  "openapi32",
+  "macros",
+  "server",
+  "http1",
+  "http2",
+  "tls",
+  "form",
+  "multipart",
+  "cookie",
+  "compression",
+  "trace",
+  "yaml",
+  "test-util",
+]
+
 [dependencies]
+kynos-macros = { workspace = true, optional = true }
+kynos-openapi = { workspace = true }
+
+async-compression = { workspace = true, optional = true, features = [
+  "tokio",
+  "gzip",
+  "brotli",
+  "zstd",
+] }
+bytes = { workspace = true }
+cookie = { workspace = true, optional = true }
+futures-core = { workspace = true }
+http = { workspace = true }
+http-body = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true, features = ["server"] }
+hyper-util = { workspace = true, optional = true, features = [
+  "server",
+  "tokio",
+] }
+mime = { workspace = true }
+multer = { workspace = true, optional = true }
+percent-encoding = { workspace = true }
+pin-project-lite = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_urlencoded = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time"] }
+tokio-rustls = { workspace = true, optional = true }
+tower = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+trybuild = { workspace = true }
+
+[[test]]
+name = "compile_fail"
+path = "tests/compile_fail.rs"
 
 [lints]
 workspace = true

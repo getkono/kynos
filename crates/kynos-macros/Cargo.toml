@@ -1,0 +1,25 @@
+[package]
+name = "kynos-macros"
+description = "Procedural macros for the Kynos REST API framework."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+proc-macro = true
+
+[features]
+default = ["openapi31"]
+openapi31 = []
+openapi32 = ["openapi31"]
+
+[dependencies]
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true, features = ["full", "extra-traits", "parsing"] }
+
+[lints]
+workspace = true
