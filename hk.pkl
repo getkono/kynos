@@ -1,0 +1,42 @@
+amends "package://github.com/jdx/hk/releases/download/v1.53.0/hk@1.53.0#/Config.pkl"
+
+min_hk_version = "1.53.0"
+default_branch = "master"
+
+hooks {
+    ["pre-commit"] {
+        fix = true
+        stage = true
+        stash = "git"
+        steps {
+            ["format"] {
+                glob = "*.rs"
+                check_first = true
+                check = "mise run format:check"
+                fix = "mise run format"
+            }
+            ["lint"] {
+                glob = List("*.rs", "Cargo.toml", "Cargo.lock")
+                check_first = true
+                check = "mise run lint"
+                fix = "mise run lint:fix"
+                depends = List("format")
+            }
+        }
+    }
+    ["commit-msg"] {
+        steps {
+            ["conventional-commit"] {
+                check = "mise run commits:message < {{commit_msg_file}}"
+            }
+        }
+    }
+    ["pre-push"] {
+        steps {
+            ["validate"] {
+                check = "mise run hooks:pre-push"
+                exclusive = true
+            }
+        }
+    }
+}

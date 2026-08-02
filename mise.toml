@@ -1,0 +1,82 @@
+monorepo_root = true
+
+[monorepo]
+config_roots = ["."]
+lockfile = true
+
+[tools]
+rust = { version = "1.97.1", profile = "minimal", components = [
+  "clippy",
+  "llvm-tools-preview",
+  "rust-analyzer",
+  "rustfmt",
+] }
+hk = "1.53.0"
+"cargo:cargo-llvm-cov" = "0.8.7"
+"cargo:convco" = "0.7.0"
+
+[tasks.format]
+description = "Format the Rust workspace"
+run = "cargo fmt --all"
+
+[tasks."format:check"]
+description = "Check Rust formatting"
+run = "cargo fmt --all -- --check"
+
+[tasks.lint]
+description = "Lint all workspace targets"
+run = "cargo clippy --workspace --all-targets -- -D warnings"
+
+[tasks."lint:fix"]
+description = "Apply Clippy fixes across the workspace"
+run = "cargo clippy --fix --workspace --all-targets --allow-dirty --allow-staged -- -D warnings"
+
+[tasks.test]
+description = "Test all workspace targets"
+run = "cargo test --workspace --all-targets"
+
+[tasks.coverage]
+description = "Run tests with LLVM coverage"
+run = "cargo llvm-cov --workspace"
+
+[tasks."coverage:ci"]
+description = "Generate CI coverage reports"
+run = [
+  "cargo llvm-cov --workspace --lcov --output-path lcov.info",
+  "cargo llvm-cov report --summary-only | tee coverage-summary.txt",
+]
+
+[tasks.check]
+description = "Run formatting, linting, and tests"
+run = [
+  { task = "format:check" },
+  { task = "lint" },
+  { task = "test" },
+]
+
+[tasks."commits:message"]
+description = "Validate one Conventional Commit message from stdin"
+run = "convco check --from-stdin"
+
+[tasks."commits:check"]
+description = "Validate an explicit or outgoing commit range"
+run = '''
+if [ -n "${CONVCO_RANGE:-}" ]; then
+  convco check "$CONVCO_RANGE"
+elif git rev-parse --verify --quiet origin/master >/dev/null; then
+  convco check origin/master..HEAD
+elif git rev-parse --verify --quiet HEAD >/dev/null; then
+  convco check HEAD
+else
+  echo "No commits to validate."
+fi
+'''
+
+[tasks."hooks:pre-push"]
+description = "Run all pre-push checks"
+run = [
+  { task = "format:check" },
+  { task = "lint" },
+  { task = "coverage" },
+  { task = "commits:check" },
+]

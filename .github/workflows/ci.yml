@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Install tools
+        uses: jdx/mise-action@v3
+        with:
+          version: 2026.7.18
+          install: true
+          cache: true
+      - name: Run checks
+        run: mise run check
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Install tools
+        uses: jdx/mise-action@v3
+        with:
+          version: 2026.7.18
+          install: true
+          cache: true
+      - name: Generate coverage report
+        run: mise run coverage:ci
+      - name: Add coverage summary
+        run: cat coverage-summary.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            lcov.info
+            coverage-summary.txt
+
+  commits:
+    name: Conventional commits
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Install tools
+        uses: jdx/mise-action@v3
+        with:
+          version: 2026.7.18
+          install: true
+          cache: true
+      - name: Check commits
+        env:
+          CONVCO_RANGE: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+        run: mise run commits:check
