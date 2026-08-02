@@ -53,6 +53,9 @@ pub mod server;
 #[cfg(feature = "test-util")]
 pub mod test;
 
+#[cfg(feature = "unchecked")]
+pub mod unchecked;
+
 /// The OpenAPI document model Kynos emits into.
 ///
 /// Re-exported so that a program depending on `kynos` never needs to name
