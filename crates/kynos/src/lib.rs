@@ -21,6 +21,41 @@
 //! escape hatches for the first three, at the price of a description that is no
 //! longer authoritative. See the README for the full list and the reasoning.
 //!
+//! # The guarantees, as compile-fail tests
+//!
+//! These are the claims above, stated as code that must not compile. They run
+//! as part of the doc test suite, so a regression in any of them is a test
+//! failure rather than a documentation inaccuracy.
+//!
+//! A path template that is not a legal Paths key — no leading slash:
+//!
+//! ```compile_fail
+//! kynos::path!("users/{id}");
+//! ```
+//!
+//! A template repeating a variable, which OpenAPI 3.2 forbids outright:
+//!
+//! ```compile_fail
+//! kynos::path!("/tenants/{id}/users/{id}");
+//! ```
+//!
+//! A template carrying a query string, which is not part of a path:
+//!
+//! ```compile_fail
+//! kynos::path!("/users?page=1");
+//! ```
+//!
+//! And the one that is valid:
+//!
+//! ```
+//! let template = kynos::path!("/users/{id}");
+//! assert_eq!(template.variables(), ["id"]);
+//! ```
+//!
+//! Further guarantees are stated where they belong: that
+//! [`serde_json::Value`](crate::schema) is not describable, and that a context
+//! providing no `Db` cannot satisfy [`Inject<Db>`](crate::di).
+//!
 //! # Feature flags
 //!
 //! `openapi31` is the baseline; `openapi32` is a strict superset that unlocks

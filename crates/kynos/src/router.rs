@@ -318,7 +318,7 @@ impl<C> Router<C> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Invalid`] if the router cannot be described at all.
+    /// Returns [`Error::Invalid`](crate::Error::Invalid) if the router cannot be described at all.
     pub fn validate(&self) -> Result<Vec<Violation>> {
         todo!()
     }
@@ -327,7 +327,7 @@ impl<C> Router<C> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Invalid`] when validation finds an error-level
+    /// Returns [`Error::Invalid`](crate::Error::Invalid) when validation finds an error-level
     /// violation, so a misleading description is never emitted.
     pub fn openapi(&self) -> Result<Document> {
         todo!()
@@ -337,7 +337,7 @@ impl<C> Router<C> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Invalid`] on a validation error, or if the API uses a
+    /// Returns [`Error::Invalid`](crate::Error::Invalid) on a validation error, or if the API uses a
     /// construct `version` cannot express — a Server-Sent Events response
     /// requested as 3.1, say.
     pub fn openapi_as(&self, version: SpecVersion) -> Result<Document> {
@@ -352,7 +352,7 @@ impl<C> Router<C> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Invalid`] with every violation found.
+    /// Returns [`Error::Invalid`](crate::Error::Invalid) with every violation found.
     pub fn build(self, context: C) -> Result<Service<C>> {
         let _ = context;
         todo!()

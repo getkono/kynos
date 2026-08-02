@@ -100,11 +100,6 @@ tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-trybuild = { workspace = true }
-
-[[test]]
-name = "compile_fail"
-path = "tests/compile_fail.rs"
 
 [lints]
 workspace = true

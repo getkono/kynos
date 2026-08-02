@@ -344,7 +344,7 @@ pub mod catch_panic {
 ///
 /// Out-of-document: a preflight `OPTIONS` is a browser protocol detail, not an
 /// operation of the API, so it contributes nothing. Use
-/// [`Cors::document_response_headers`] when the CORS response headers are part
+/// [`Cors::document_response_headers`](cors::Cors::document_response_headers) when the CORS response headers are part
 /// of what you want clients to know about.
 pub mod cors {
     /// CORS configuration.
