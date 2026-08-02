@@ -11,5 +11,68 @@ repository = "https://github.com/getkono/kynos"
 publish = false
 
 [workspace.dependencies]
+
+async-compression = "0.4.19"
+bytes = "1.10.1"
+cookie = "0.18.1"
+futures-core = "0.3.31"
+http = "1.3.1"
+http-body = "1.0.1"
+http-body-util = "0.1.3"
+hyper = "1.7.0"
+hyper-util = "0.1.16"
+indexmap = "2.11.0"
+mime = "0.3.17"
+multer = "3.1.0"
+percent-encoding = "2.3.2"
+pin-project-lite = "0.2.16"
+proc-macro2 = "1.0.101"
+quote = "1.0.40"
+serde = "1.0.219"
+serde_json = "1.0.145"
+serde_urlencoded = "0.7.1"
+serde_yaml_ng = "0.10.0"
+syn = "2.0.106"
 thiserror = "2.0.19"
 tokio = "1.53.1"
+tokio-rustls = "0.26.4"
+tower = "0.5.2"
+tracing = "0.1.41"
+trybuild = "1.0.111"
+
+# Lints are declared once here and inherited by every member with
+# `[lints] workspace = true`. Kynos is a public framework: undocumented public
+# API and unsafe code are hard errors, not warnings.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Rustdoc conventions we deliberately do not follow: error and panic conditions
+# are documented where they are non-obvious, not mechanically on every item.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# `kynos::error::Error` and friends read better than `kynos::error::KynosError`.
+module_name_repetitions = "allow"
+# The API surface is currently `todo!()`-bodied, so Clippy cannot see how
+# arguments and receivers are consumed. Revisit once bodies land.
+needless_pass_by_value = "allow"
+unused_self = "allow"
+must_use_candidate = "allow"
+
+# `panic` is deliberately left at `unwind`: the `catch_panic` interceptor turns a
+# handler panic into a declared 500, which `panic = "abort"` would make impossible.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
+# Benchmarks live in getkono/kynos-bench, but a profile that keeps debug info
+# while staying optimized makes local profiling of this workspace possible.
+[profile.bench]
+debug = true
+lto = "thin"

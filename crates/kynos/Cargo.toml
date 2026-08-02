@@ -1,6 +1,6 @@
 [package]
 name = "kynos"
-description = "An idiomatic, performance-focused REST API framework with OpenAPI 3.1 support."
+description = "An idiomatic, performance-focused REST API framework with OpenAPI 3.1 and 3.2 support."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,3 +9,6 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+
+[lints]
+workspace = true
