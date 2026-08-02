@@ -4,6 +4,14 @@
 
 Kynos is an idiomatic, performance-focused Rust framework for building REST APIs with first-class OpenAPI 3.1 and 3.2 support.
 
+## Features
+
+- [ ] TODO
+
+Permanently out-of-scope
+
+- Support for OpenAPI 3.0 and older: OpenAPI 3.0.x is vastly different from OpenAPI 3.1+ and has technically been superseded for many years.
+
 ## Development
 
 - Prerequisites: rustup, [mise](https://mise.jdx.dev/)

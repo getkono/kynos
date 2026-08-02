@@ -10,6 +10,12 @@ Kynos is an idiomatic, performance-focused Rust framework for building REST APIs
 - Be opinionated where it counts: We scope features that are strictly required for performance and where there should only be one recommended approach. For example, IO-related primitives is vertically integrated and coupled with core dependencies like `tokio` and dependency injection is fully-featured. However, we would not prescribe dependencies such as ORMs and logging backends.
 - Document all public API surface.
 
+## Development Guidelines
+
+- Pushing code: Atomic, semantic commits are strictly required. All PRs are *usually* merged rather than being squashed/rebased.
+- New features: Code implementation must be code-complete. Feature flag(s) must be modified when justified. When feasible, new features must be additive.
+- Bug fixes: Correctness is strict. The offending code must be testable so refactor adjacent code to expose the internals for unit testing if required. Push strictly in order: red tests targetting failure case and asserting the correct invariants; implementation that addresses the red case with evidence the tests turned green.
+
 ## Workspace
 
 - The root is a Cargo and mise monorepo.
