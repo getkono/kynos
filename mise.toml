@@ -56,10 +56,12 @@ run = [
 
 [tasks."commits:message"]
 description = "Validate one Conventional Commit message from stdin"
+quiet = true
 run = "convco check --from-stdin"
 
 [tasks."commits:check"]
 description = "Validate an explicit or outgoing commit range"
+quiet = true
 run = '''
 if [ -n "${CONVCO_RANGE:-}" ]; then
   convco check "$CONVCO_RANGE"

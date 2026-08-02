@@ -27,14 +27,19 @@ hooks {
     ["commit-msg"] {
         steps {
             ["conventional-commit"] {
-                check = "mise run commits:message < {{commit_msg_file}}"
+                check = "mise run --quiet commits:message < {{commit_msg_file}}"
+                output_summary = "stdout"
             }
         }
     }
     ["pre-push"] {
         steps {
             ["validate"] {
-                check = "mise run hooks:pre-push"
+                // Git still invokes pre-push when it has no ref updates. hk preserves
+                // Git's ref-update input as {{hook_stdin}}, so only run the expensive
+                // checks when at least one update was proposed.
+                check = "if IFS= read -r _; then mise run --quiet hooks:pre-push; fi"
+                stdin = "{{ hook_stdin }}"
                 exclusive = true
             }
         }
