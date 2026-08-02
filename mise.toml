@@ -45,7 +45,14 @@ description = "Check every reachable feature combination"
 # Kynos gates the OpenAPI 3.2 object model, every optional codec and the escape
 # hatches behind features. Without a powerset check a combination nobody builds
 # locally breaks silently.
-run = "cargo hack check --workspace --feature-powerset --depth 2 --no-dev-deps"
+# `--at-least-one-of` encodes the baseline: a build with neither spec version
+# is rejected by a `compile_error!`, and that rejection is correct rather than
+# a failure the matrix should report.
+run = '''
+cargo hack check --workspace --feature-powerset --depth 2 --no-dev-deps \
+  --exclude-no-default-features \
+  --at-least-one-of openapi31,openapi32
+'''
 
 [tasks."docs:check"]
 description = "Build documentation with warnings denied"
