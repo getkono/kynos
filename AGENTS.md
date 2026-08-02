@@ -1,6 +1,6 @@
 # Kynos
 
-Kynos is an idiomatic, performance-focused Rust framework for building REST APIs with first-class OpenAPI 3.1 support.
+Kynos is an idiomatic, performance-focused Rust framework for building REST APIs with first-class OpenAPI 3.1 and 3.2 support.
 
 ## Workspace
 
