@@ -38,6 +38,43 @@ pub trait Endpoint<C> {
     ) -> impl Future<Output = crate::http::Response> + Send;
 }
 
+/// The compile-time facts a route attribute knows about an operation.
+///
+/// The attribute macros expand a handler into a zero-sized type implementing
+/// this, which is what `routes!` collects. Everything here is `const`, so the
+/// checks that depend on it — that path template variables match the handler's
+/// path parameters, that no `operationId` repeats — happen during compilation
+/// rather than at startup.
+pub trait EndpointMeta {
+    /// The HTTP method, spelled as it appears on the wire.
+    const METHOD: &'static str;
+
+    /// The path template, relative to any enclosing group.
+    const PATH: &'static str;
+
+    /// The variable names appearing in [`PATH`](EndpointMeta::PATH).
+    ///
+    /// Compared against `PathParams::NAMES` by a const assertion in the
+    /// expansion, so a handler whose parameters do not match its path is a
+    /// compile error rather than a runtime 500.
+    const PATH_VARIABLES: &'static [&'static str];
+
+    /// The operation identifier.
+    ///
+    /// Defaults to the handler's module path and name, which is unique by
+    /// construction.
+    const OPERATION_ID: &'static str;
+
+    /// The first line of the handler's doc comment.
+    const SUMMARY: Option<&'static str>;
+
+    /// The rest of the handler's doc comment.
+    const DESCRIPTION: Option<&'static str>;
+
+    /// Whether the handler carried `#[deprecated]`.
+    const DEPRECATED: bool;
+}
+
 /// The description of the operation currently being built.
 ///
 /// Passed to [`Describe`](crate::extract::Describe) implementations so that

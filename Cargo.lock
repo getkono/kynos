@@ -467,6 +467,7 @@ dependencies = [
 name = "kynos-macros"
 version = "0.1.0"
 dependencies = [
+ "kynos-openapi",
  "proc-macro2",
  "quote",
  "syn 2.0.119",

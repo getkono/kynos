@@ -67,6 +67,15 @@ pub use crate::{
     router::{Endpoint, Router},
 };
 
+#[cfg(feature = "macros")]
+pub use kynos_macros::{
+    ApiError, Cookies, Headers, PathParams, Provider, QueryParams, Reply, Schema, SecurityScheme,
+    Tag, delete, get, head, operation, options, patch, path, post, put, routes, trace,
+};
+
+#[cfg(all(feature = "macros", feature = "openapi32"))]
+pub use kynos_macros::query;
+
 /// Everything a typical application needs, in one import.
 pub mod prelude {
     pub use crate::{
@@ -75,7 +84,14 @@ pub mod prelude {
         extract::{Json, Path, Query},
         response::{Created, NoContent},
         router::{Group, Router},
-        schema::Schema,
+        schema::Schema as SchemaTrait,
+    };
+
+    #[cfg(feature = "macros")]
+    pub use crate::{
+        ApiError, Cookies, Headers, PathParams, Provider, QueryParams, Reply, Schema,
+        SecurityScheme, Tag, delete, get, head, operation, options, patch, path, post, put, routes,
+        trace,
     };
 
     #[cfg(feature = "server")]
