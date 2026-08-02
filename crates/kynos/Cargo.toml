@@ -3,6 +3,7 @@ name = "kynos"
 description = "An idiomatic, performance-focused REST API framework with OpenAPI 3.1 support."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
