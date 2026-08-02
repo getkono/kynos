@@ -50,6 +50,9 @@ pub mod security;
 #[cfg(feature = "server")]
 pub mod server;
 
+#[cfg(feature = "test-util")]
+pub mod test;
+
 /// The OpenAPI document model Kynos emits into.
 ///
 /// Re-exported so that a program depending on `kynos` never needs to name
