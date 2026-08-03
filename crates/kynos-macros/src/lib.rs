@@ -28,11 +28,15 @@ use proc_macro::TokenStream;
 /// /// Fetch a single user.
 /// ///
 /// /// The first line becomes the operation's summary, the rest its description.
-/// #[kynos::get("/users/{id}")]
+/// #[kynos::get("/users/{id}", catch_panics)]
 /// async fn get_user(Path(id): Path<UserId>) -> Result<Json<User>, ApiError> {
 ///     todo!()
 /// }
 /// ```
+///
+/// `catch_panics` installs a compile-time-selected recovery boundary for this
+/// operation and contributes its 500 response. It is a compile-time error to
+/// use it when the final binary is built with `panic = "abort"`.
 ///
 /// Accepts `operation_id = "..."` and `tag = SomeTag` after the path.
 #[proc_macro_attribute]

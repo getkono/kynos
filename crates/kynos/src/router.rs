@@ -5,7 +5,10 @@ use kynos_openapi::{Document, Info, Method, PathTemplate, SpecVersion, Violation
 use crate::{
     error::Result,
     handler::Handler,
-    middleware::{Interceptor, Observer, OperationContribution},
+    middleware::{
+        Interceptor, Observer, OperationContribution,
+        catch_panic::{Catch, PanicPolicy, Propagate},
+    },
     schema::Registry,
     security::SecurityScheme,
 };
@@ -46,6 +49,9 @@ pub trait Endpoint<C> {
 /// path parameters, that no `operationId` repeats — happen during compilation
 /// rather than at startup.
 pub trait EndpointMeta {
+    /// How this endpoint handles a panic while executing its operation.
+    type PanicPolicy: PanicPolicy;
+
     /// The HTTP method, spelled as it appears on the wire.
     const METHOD: &'static str;
 
@@ -144,15 +150,43 @@ pub trait Tag {
 /// — so attaching authentication to a group documents it on every operation
 /// underneath, correctly, without anyone maintaining that by hand.
 #[derive(Debug)]
-pub struct Group<C> {
-    _private: std::marker::PhantomData<C>,
+pub struct Group<C, P = Propagate> {
+    _private: std::marker::PhantomData<(C, P)>,
 }
 
-impl<C> Group<C> {
+impl<C> Group<C, Propagate> {
     /// Creates a group mounted at `prefix`.
     #[must_use]
     pub fn new(prefix: &'static str) -> Self {
         let _ = prefix;
+        todo!()
+    }
+}
+
+impl<C, P: PanicPolicy> Group<C, P> {
+    /// Converts panics from covered operations into documented 500 responses.
+    ///
+    /// The policy is carried in the group's type and resolved while its
+    /// endpoints are mounted. No recovery branch is installed when this method
+    /// is not called.
+    ///
+    /// # Compile-time requirement
+    ///
+    /// The final binary must use `panic = "unwind"`. Selecting this policy in
+    /// a `panic = "abort"` build is a compile-time error.
+    ///
+    /// ```no_run
+    /// let users = kynos::router::Group::<()>::new("/users").catch_panics();
+    /// # let _ = users;
+    /// ```
+    #[must_use]
+    pub fn catch_panics(self) -> Group<C, Catch> {
+        const {
+            assert!(
+                cfg!(panic = "unwind"),
+                "Kynos panic recovery requires `panic = \"unwind\"`; remove `catch_panics` or enable unwinding"
+            );
+        }
         todo!()
     }
 
@@ -189,20 +223,48 @@ pub trait IntoEndpoints<C> {
 /// every handler resolves its state from. A handler asking for something the
 /// context does not provide is a compile error, not a runtime panic.
 #[derive(Debug)]
-pub struct Router<C> {
-    _private: std::marker::PhantomData<C>,
+pub struct Router<C, P = Propagate> {
+    _private: std::marker::PhantomData<(C, P)>,
 }
 
-impl<C> Default for Router<C> {
+impl<C> Default for Router<C, Propagate> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<C> Router<C> {
+impl<C> Router<C, Propagate> {
     /// Creates an empty router.
     #[must_use]
     pub fn new() -> Self {
+        todo!()
+    }
+}
+
+impl<C, P: PanicPolicy> Router<C, P> {
+    /// Converts panics from covered operations into documented 500 responses.
+    ///
+    /// The policy is carried in the router's type and resolved when the service
+    /// is built. No recovery branch is installed when this method is not
+    /// called.
+    ///
+    /// # Compile-time requirement
+    ///
+    /// The final binary must use `panic = "unwind"`. Selecting this policy in
+    /// a `panic = "abort"` build is a compile-time error.
+    ///
+    /// ```no_run
+    /// let router = kynos::Router::<()>::new().catch_panics();
+    /// # let _ = router;
+    /// ```
+    #[must_use]
+    pub fn catch_panics(self) -> Router<C, Catch> {
+        const {
+            assert!(
+                cfg!(panic = "unwind"),
+                "Kynos panic recovery requires `panic = \"unwind\"`; remove `catch_panics` or enable unwinding"
+            );
+        }
         todo!()
     }
 
@@ -232,21 +294,21 @@ impl<C> Router<C> {
 
     /// Mounts a group.
     #[must_use]
-    pub fn group(self, group: Group<C>) -> Self {
+    pub fn group<GP: PanicPolicy>(self, group: Group<C, GP>) -> Self {
         let _ = group;
         todo!()
     }
 
     /// Mounts another router beneath a path prefix.
     #[must_use]
-    pub fn nest(self, prefix: &'static str, router: Self) -> Self {
+    pub fn nest<NP: PanicPolicy>(self, prefix: &'static str, router: Router<C, NP>) -> Self {
         let _ = (prefix, router);
         todo!()
     }
 
     /// Merges another router at the same level.
     #[must_use]
-    pub fn merge(self, router: Self) -> Self {
+    pub fn merge<OP: PanicPolicy>(self, router: Router<C, OP>) -> Self {
         let _ = router;
         todo!()
     }
@@ -400,15 +462,55 @@ impl<C> Service<C> {
 /// set of routes is not known at compile time; the attribute checks things this
 /// cannot, notably that a handler's path parameters match its path template.
 #[derive(Debug)]
-pub struct EndpointBuilder<C, H> {
-    _private: std::marker::PhantomData<(C, H)>,
+pub struct EndpointBuilder<C, H, P = Propagate> {
+    _private: std::marker::PhantomData<(C, H, P)>,
 }
 
-impl<C, H: Handler<C>> EndpointBuilder<C, H> {
+impl<C, H: Handler<C>> EndpointBuilder<C, H, Propagate> {
     /// Begins an endpoint for `handler`.
     #[must_use]
     pub fn new(method: Method, path: PathTemplate, handler: H) -> Self {
         let _ = (method, path, handler);
+        todo!()
+    }
+}
+
+impl<C, H: Handler<C>, P: PanicPolicy> EndpointBuilder<C, H, P> {
+    /// Converts panics from this operation into a documented 500 response.
+    ///
+    /// Extraction and handler execution are covered. The policy is carried in
+    /// the endpoint's type, so an endpoint that does not select it installs no
+    /// recovery branch.
+    ///
+    /// # Compile-time requirement
+    ///
+    /// The final binary must use `panic = "unwind"`. Selecting this policy in
+    /// a `panic = "abort"` build is a compile-time error.
+    ///
+    /// ```no_run
+    /// # use kynos::{handler::Handler, http, openapi, router::EndpointBuilder, schema::Registry};
+    /// # #[derive(Clone)]
+    /// # struct Health;
+    /// # impl Handler<()> for Health {
+    /// #     async fn call(self, _: http::Request, _: ()) -> http::Response { todo!() }
+    /// #     fn describe(_: &mut Registry) -> openapi::Operation { todo!() }
+    /// # }
+    /// let endpoint = EndpointBuilder::new(
+    ///     openapi::Method::Get,
+    ///     openapi::PathTemplate::parse("/health").expect("valid path"),
+    ///     Health,
+    /// )
+    /// .catch_panics();
+    /// # let _ = endpoint;
+    /// ```
+    #[must_use]
+    pub fn catch_panics(self) -> EndpointBuilder<C, H, Catch> {
+        const {
+            assert!(
+                cfg!(panic = "unwind"),
+                "Kynos panic recovery requires `panic = \"unwind\"`; remove `catch_panics` or enable unwinding"
+            );
+        }
         todo!()
     }
 

@@ -8,6 +8,11 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[[test]]
+name = "panic-recovery-check"
+path = "tests/compile/panic_recovery.rs"
+harness = false
+
 [features]
 default = ["openapi31", "macros", "server", "http1", "http2", "trace"]
 

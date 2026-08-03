@@ -67,11 +67,13 @@ needless_pass_by_value = "allow"
 unused_self = "allow"
 must_use_candidate = "allow"
 
-# `panic` is deliberately left at `unwind`: the `catch_panic` interceptor turns a
-# handler panic into a declared 500, which `panic = "abort"` would make impossible.
+# `panic` is deliberately pinned to `unwind`: a statically selected recovery
+# policy turns a handler panic into a declared 500, which `panic = "abort"`
+# would make impossible.
 [profile.release]
 lto = "fat"
 codegen-units = 1
+panic = "unwind"
 
 # Benchmarks live in getkono/kynos-bench, but a profile that keeps debug info
 # while staying optimized makes local profiling of this workspace possible.

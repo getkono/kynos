@@ -61,6 +61,23 @@ description = "Build documentation with warnings denied"
 run = "cargo doc --workspace --all-features --no-deps"
 env = { RUSTDOCFLAGS = "-D warnings" }
 
+[tasks."panic:check"]
+description = "Verify panic recovery rejects aborting builds only when selected"
+run = '''
+set -eu
+panic_check_output="$(mktemp)"
+trap 'rm -f "$panic_check_output"' EXIT
+
+RUSTFLAGS="-C panic=abort" cargo check -p kynos --lib
+
+if RUSTFLAGS="-C panic=abort" cargo build -p kynos --test panic-recovery-check >"$panic_check_output" 2>&1; then
+  echo "panic recovery unexpectedly compiled with panic=abort" >&2
+  exit 1
+fi
+
+rg -F 'Kynos panic recovery requires `panic = "unwind"`' "$panic_check_output"
+'''
+
 [tasks."msrv:check"]
 description = "Verify the crate still builds on the declared MSRV"
 run = '''
@@ -87,6 +104,7 @@ run = [
   { task = "test" },
   { task = "test:doc" },
   { task = "docs:check" },
+  { task = "panic:check" },
 ]
 
 [tasks."commits:message"]

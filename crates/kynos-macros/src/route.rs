@@ -18,6 +18,7 @@ struct RouteArgs {
     path: LitStr,
     operation_id: Option<LitStr>,
     tag: Option<Ident>,
+    catch_panics: bool,
 }
 
 impl RouteArgs {
@@ -29,15 +30,20 @@ impl RouteArgs {
         let mut path = None;
         let mut operation_id = None;
         let mut tag = None;
+        let mut catch_panics = false;
 
         for item in items {
             match &item {
                 // The bare path literal, which must come first.
                 Meta::Path(bare) => {
-                    return Err(syn::Error::new(
-                        bare.span(),
-                        "expected a path string literal, `operation_id = \"...\"`, or `tag = Tag`",
-                    ));
+                    if bare.is_ident("catch_panics") {
+                        catch_panics = true;
+                    } else {
+                        return Err(syn::Error::new(
+                            bare.span(),
+                            "expected a path string literal, `operation_id = \"...\"`, `tag = Tag`, or `catch_panics`",
+                        ));
+                    }
                 }
                 Meta::NameValue(pair) => {
                     let name = pair
@@ -77,6 +83,7 @@ impl RouteArgs {
             path,
             operation_id,
             tag,
+            catch_panics,
         })
     }
 }
@@ -263,6 +270,19 @@ fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenStream2 {
     // with the handler function rather than shadowing it. `routes!` refers to
     // the type; callers and unit tests keep calling the function.
     let endpoint = format_ident!("{name}");
+    let panic_policy = if args.catch_panics {
+        quote!(::kynos::middleware::catch_panic::Catch)
+    } else {
+        quote!(::kynos::middleware::catch_panic::Propagate)
+    };
+    let panic_strategy_check = args.catch_panics.then(|| {
+        quote! {
+            #[cfg(panic = "abort")]
+            compile_error!(
+                "Kynos panic recovery requires `panic = \"unwind\"`; remove `catch_panics` or enable unwinding"
+            );
+        }
+    });
     let tag_note = args.tag.as_ref().map(|tag| {
         quote! {
             const _: fn() = || {
@@ -281,6 +301,8 @@ fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenStream2 {
         #visibility struct #endpoint {}
 
         impl ::kynos::router::EndpointMeta for #endpoint {
+            type PanicPolicy = #panic_policy;
+
             const METHOD: &'static str = #method;
             const PATH: &'static str = #raw_path;
             const PATH_VARIABLES: &'static [&'static str] = &[#(#variables),*];
@@ -291,6 +313,7 @@ fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenStream2 {
         }
 
         #tag_note
+        #panic_strategy_check
     }
 }
 
@@ -345,7 +368,9 @@ pub(crate) fn expand_path(input: TokenStream) -> TokenStream {
 
 #[cfg(test)]
 mod tests {
-    use super::split_doc;
+    use quote::quote;
+
+    use super::{RouteArgs, split_doc};
 
     fn lines(input: &[&str]) -> Vec<String> {
         input.iter().map(|line| (*line).to_owned()).collect()
@@ -400,5 +425,13 @@ mod tests {
         let (summary, description) = split_doc(&lines(&[" Fetch a user.", "", "  "]));
         assert_eq!(summary.as_deref(), Some("Fetch a user."));
         assert_eq!(description, None);
+    }
+
+    #[test]
+    fn catch_panics_is_a_bare_route_option() {
+        let args = RouteArgs::parse(quote!(path = "/health", catch_panics))
+            .expect("valid route arguments");
+
+        assert!(args.catch_panics);
     }
 }
