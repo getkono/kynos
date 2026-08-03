@@ -344,6 +344,13 @@ pub trait IntoEndpoints<C> {
     fn add_to(self, router: &mut Router<C>);
 }
 
+impl<C, E: Endpoint<C>> IntoEndpoints<C> for E {
+    fn add_to(self, router: &mut Router<C>) {
+        let _ = (self, router);
+        todo!()
+    }
+}
+
 /// The root of an API.
 ///
 /// `C` is the application context type — the dependency-injection container
@@ -588,12 +595,29 @@ impl<C> Service<C> {
 /// The attribute macros expand into this. Reach for it directly only when the
 /// set of routes is not known at compile time; the attribute checks things this
 /// cannot, notably that a handler's path parameters match its path template.
+///
+/// ```no_run
+/// # use kynos::{handler::Handler, http, openapi, router::EndpointBuilder, schema::Registry};
+/// # #[derive(Clone)] struct Health;
+/// # impl Handler<()> for Health {
+/// #     async fn call(self, _: http::Request, _: ()) -> http::Response { todo!() }
+/// #     fn describe(_: &mut Registry) -> openapi::Operation { todo!() }
+/// # }
+/// let endpoint = EndpointBuilder::new(
+///     openapi::Method::Get,
+///     openapi::PathTemplate::parse("/health").expect("valid path"),
+///     Health,
+/// )
+/// .intercept(kynos::middleware::limits::BodySize::new(1_024));
+/// let router = kynos::Router::<()>::new().mount(endpoint);
+/// # let _ = router;
+/// ```
 #[derive(Debug)]
-pub struct EndpointBuilder<C, H, P = Propagate> {
-    _private: std::marker::PhantomData<(C, H, P)>,
+pub struct EndpointBuilder<C, H, P = Propagate, I = ()> {
+    _private: std::marker::PhantomData<(C, H, P, I)>,
 }
 
-impl<C, H: Handler<C>> EndpointBuilder<C, H, Propagate> {
+impl<C, H: Handler<C>> EndpointBuilder<C, H, Propagate, ()> {
     /// Begins an endpoint for `handler`.
     #[must_use]
     pub fn new(method: Method, path: PathTemplate, handler: H) -> Self {
@@ -602,7 +626,7 @@ impl<C, H: Handler<C>> EndpointBuilder<C, H, Propagate> {
     }
 }
 
-impl<C, H: Handler<C>, P: PanicPolicy> EndpointBuilder<C, H, P> {
+impl<C, H: Handler<C>, P: PanicPolicy, I> EndpointBuilder<C, H, P, I> {
     /// Converts panics from this operation into a documented 500 response.
     ///
     /// Extraction and handler execution are covered. The policy is carried in
@@ -631,7 +655,7 @@ impl<C, H: Handler<C>, P: PanicPolicy> EndpointBuilder<C, H, P> {
     /// # let _ = endpoint;
     /// ```
     #[must_use]
-    pub fn catch_panics(self) -> EndpointBuilder<C, H, Catch> {
+    pub fn catch_panics(self) -> EndpointBuilder<C, H, Catch, I> {
         const {
             assert!(
                 cfg!(panic = "unwind"),
@@ -682,6 +706,43 @@ impl<C, H: Handler<C>, P: PanicPolicy> EndpointBuilder<C, H, P> {
     #[must_use]
     pub fn contribute(self, contribution: OperationContribution) -> Self {
         let _ = contribution;
+        todo!()
+    }
+
+    /// Applies an interceptor to this operation only.
+    ///
+    /// The interceptor's contribution is merged into this endpoint's
+    /// description and its type is retained in the builder for runtime
+    /// composition.
+    #[must_use]
+    pub fn intercept<N: Interceptor<C>>(self, interceptor: N) -> EndpointBuilder<C, H, P, (I, N)> {
+        let _ = interceptor;
+        todo!()
+    }
+}
+
+impl<C, H, P, I> Endpoint<C> for EndpointBuilder<C, H, P, I>
+where
+    C: Sync,
+    H: Handler<C>,
+    I: Sync,
+    P: PanicPolicy,
+{
+    fn method(&self) -> Method {
+        todo!()
+    }
+
+    fn path(&self) -> &PathTemplate {
+        todo!()
+    }
+
+    fn describe(&self, registry: &mut Registry) -> kynos_openapi::Operation {
+        let _ = registry;
+        todo!()
+    }
+
+    async fn call(&self, request: crate::http::Request, context: &C) -> crate::http::Response {
+        let _ = (request, context);
         todo!()
     }
 }
