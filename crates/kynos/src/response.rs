@@ -993,6 +993,8 @@ mod private {
     tuple_representations!(A: a = 0, B: b = 1, C: c = 2, D: d = 3);
     tuple_representations!(A: a = 0, B: b = 1, C: c = 2, D: d = 3, E: e = 4);
     tuple_representations!(A: a = 0, B: b = 1, C: c = 2, D: d = 3, E: e = 4, F: f = 5);
+    tuple_representations!(A: a = 0, B: b = 1, C: c = 2, D: d = 3, E: e = 4, F: f = 5, G: g = 6);
+    tuple_representations!(A: a = 0, B: b = 1, C: c = 2, D: d = 3, E: e = 4, F: f = 5, G: g = 6, H: h = 7);
 }
 
 impl<T: private::Representations> IntoResponse for Negotiated<T> {

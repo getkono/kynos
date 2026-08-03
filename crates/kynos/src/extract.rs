@@ -770,6 +770,14 @@ where
     }
 }
 
+impl<L, R, N> Alternative<N> for OneOf<L, R>
+where
+    L: Alternative<R>,
+    R: RequestContent,
+    N: RequestContent,
+{
+}
+
 #[cfg(feature = "json")]
 impl<T: Schema> Alternative<Text> for Json<T> {}
 #[cfg(feature = "json")]
