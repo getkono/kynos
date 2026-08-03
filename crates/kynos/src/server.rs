@@ -5,6 +5,12 @@
 //! client certificates is enforcing a security scheme, so
 //! [`TlsConfig::require_client_certificate`] declares it in the description
 //! automatically.
+//!
+//! # Protocol roadmap
+//!
+//! The server currently exposes HTTP/1 and HTTP/2. There is no `http3` feature;
+//! QUIC and HTTP/3 support are roadmap work whose prioritization depends on
+//! demonstrated user demand.
 
 use std::{net::SocketAddr, time::Duration};
 

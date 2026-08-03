@@ -80,6 +80,10 @@ Disabling `json` removes application JSON payload types and helpers, including
 the OpenAPI 3.2 JSON stream responses. OpenAPI document serialization and the
 framework's RFC 9457 problem responses remain JSON-based core behavior.
 
+HTTP/3 is not implemented and there is currently no `http3` feature. QUIC and
+HTTP/3 support are on the roadmap, with prioritization based on demonstrated
+user demand.
+
 ## Development
 
 - Prerequisites: rustup, [mise](https://mise.jdx.dev/)
