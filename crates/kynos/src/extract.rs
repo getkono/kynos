@@ -215,6 +215,8 @@ pub struct Form<T>(pub T);
 /// A `multipart/form-data` request body with declared fields.
 ///
 /// `T` derives `Schema`, and each field becomes a part with its own `Encoding`.
+/// The same wrapper may be returned as a response, preserving the declared
+/// field names, per-part media types, and encodings in both directions.
 /// There is no dynamic-field iterator: a handler that accepts arbitrary part
 /// names cannot describe them. For a variable number of uploads, declare one
 /// field of type `Vec<FilePart>`.
