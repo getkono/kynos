@@ -75,7 +75,7 @@ if RUSTFLAGS="-C panic=abort" cargo build -p kynos --test panic-recovery-check >
   exit 1
 fi
 
-rg -F 'Kynos panic recovery requires `panic = "unwind"`' "$panic_check_output"
+grep -F 'Kynos panic recovery requires `panic = "unwind"`' "$panic_check_output"
 '''
 
 [tasks."msrv:check"]
