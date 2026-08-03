@@ -27,6 +27,36 @@ jobs:
       - name: Run checks
         run: mise run check
 
+  features:
+    name: Feature matrix
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Install tools
+        uses: jdx/mise-action@v3
+        with:
+          version: 2026.7.18
+          install: true
+          cache: true
+      - name: Check every feature combination
+        run: mise run features:check
+
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Install tools
+        uses: jdx/mise-action@v3
+        with:
+          version: 2026.7.18
+          install: true
+          cache: true
+      - name: Check the declared MSRV
+        run: mise run msrv:check
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest

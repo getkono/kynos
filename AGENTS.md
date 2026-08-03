@@ -10,13 +10,19 @@ Kynos is an idiomatic, performance-focused Rust framework for building REST APIs
 - Be opinionated where it counts: We scope features that are strictly required for performance and where there should only be one recommended approach. For example, IO-related primitives is vertically integrated and coupled with core dependencies like `tokio` and dependency injection is fully-featured. However, we would not prescribe dependencies such as ORMs and logging backends.
 - Document all public API surface.
 
+## Development Guidelines
+
+- Pushing code: Atomic, semantic commits are strictly required. All PRs are *usually* merged rather than being squashed/rebased.
+- New features: Code implementation must be code-complete. Feature flag(s) must be modified when justified. When feasible, new features must be additive.
+- Bug fixes: Correctness is strict. The offending code must be testable so refactor adjacent code to expose the internals for unit testing if required. Push strictly in order: red tests targetting failure case and asserting the correct invariants; implementation that addresses the red case with evidence the tests turned green.
+
 ## Workspace
 
 - The root is a Cargo and mise monorepo.
-- The initial library crate is `crates/kynos`.
+- The crates are `kynos-openapi` (the OpenAPI document model, runtime-free), `kynos-macros` (procedural macros) and `kynos` (the framework facade, which re-exports both). Application code depends only on `kynos`.
 - Declare shared dependency versions under `[workspace.dependencies]`.
 - Add a dependency to a member crate with `workspace = true` only when the crate consumes it.
-- Do not introduce public framework APIs as placeholders.
+- Do not introduce public framework APIs as placeholders, with one exception: the pre-v1 API-skeleton milestone, during which the surface is designed ahead of its implementation so it can be reviewed and frozen as a whole. A placeholder body must be `todo!()`, must be fully documented, and must appear in a `no_run` doc example proving the surface is usable. Once the skeleton is frozen this exception lapses.
 
 ## Tooling
 
@@ -27,7 +33,13 @@ mise run test          # correctness
 mise run format:check  # formatting
 mise run lint          # Clippy with warnings denied
 mise run coverage      # LLVM coverage
+mise run features:check # every reachable feature combination
+mise run docs:check    # rustdoc with warnings denied
+mise run msrv:check    # builds on the declared MSRV
 ```
+
+A framework this feature-gated breaks silently without `features:check`; run it
+whenever a feature flag or a `#[cfg]` changes.
 
 Run `mise run check` before handing off changes.
 

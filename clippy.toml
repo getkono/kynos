@@ -1,0 +1,18 @@
+# Proper nouns that appear in prose throughout the documentation. Without these
+# `clippy::doc_markdown` demands backticks, which would wrongly render domain
+# terminology as code. `".."` extends Clippy's default list rather than
+# replacing it.
+doc-valid-idents = [
+  "..",
+  "CommonMark",
+  "JSONPath",
+  "MessagePack",
+  "OpenAPI",
+  "OpenID",
+  "OpenIdConnect",
+  "WebSocket",
+  "WebSockets",
+]
+
+# Kynos targets Rust 1.85; Clippy should not suggest anything newer.
+msrv = "1.85"

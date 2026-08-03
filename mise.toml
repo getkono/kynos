@@ -13,6 +13,7 @@ rust = { version = "1.97.1", profile = "minimal", components = [
 ] }
 hk = "1.53.0"
 "cargo:cargo-llvm-cov" = "0.8.7"
+"cargo:cargo-hack" = "0.6.36"
 "cargo:convco" = "0.7.0"
 
 [tasks.format]
@@ -33,7 +34,56 @@ run = "cargo clippy --fix --workspace --all-targets --allow-dirty --allow-staged
 
 [tasks.test]
 description = "Test all workspace targets"
-run = "cargo test --workspace --all-targets"
+run = "cargo test --workspace --all-targets --all-features"
+
+[tasks."test:doc"]
+description = "Run doc tests, which carry the compile-fail guarantees"
+run = "cargo test --workspace --all-features --doc"
+
+[tasks."features:check"]
+description = "Check every reachable feature combination"
+# Kynos gates the OpenAPI 3.2 object model, every optional codec and the escape
+# hatches behind features. Without a powerset check a combination nobody builds
+# locally breaks silently.
+# `--at-least-one-of` encodes the baseline: a build with neither spec version
+# is rejected by a `compile_error!`, and that rejection is correct rather than
+# a failure the matrix should report.
+run = '''
+cargo hack check --workspace --feature-powerset --depth 2 --no-dev-deps \
+  --exclude-no-default-features \
+  --at-least-one-of openapi31,openapi32
+'''
+
+[tasks."docs:check"]
+description = "Build documentation with warnings denied"
+# `missing_docs` is denied at the workspace level, so this also enforces that
+# every public item is documented.
+run = "cargo doc --workspace --all-features --no-deps"
+env = { RUSTDOCFLAGS = "-D warnings" }
+
+[tasks."panic:check"]
+description = "Verify panic recovery rejects aborting builds only when selected"
+run = '''
+set -eu
+panic_check_output="$(mktemp)"
+trap 'rm -f "$panic_check_output"' EXIT
+
+RUSTFLAGS="-C panic=abort" cargo check -p kynos --lib
+
+if RUSTFLAGS="-C panic=abort" cargo build -p kynos --test panic-recovery-check >"$panic_check_output" 2>&1; then
+  echo "panic recovery unexpectedly compiled with panic=abort" >&2
+  exit 1
+fi
+
+grep -F 'Kynos panic recovery requires `panic = "unwind"`' "$panic_check_output"
+'''
+
+[tasks."msrv:check"]
+description = "Verify the crate still builds on the declared MSRV"
+run = '''
+rustup toolchain install 1.85 --profile minimal --no-self-update
+cargo +1.85 check --workspace --all-features
+'''
 
 [tasks.coverage]
 description = "Run tests with LLVM coverage"
@@ -52,6 +102,9 @@ run = [
   { task = "format:check" },
   { task = "lint" },
   { task = "test" },
+  { task = "test:doc" },
+  { task = "docs:check" },
+  { task = "panic:check" },
 ]
 
 [tasks."commits:message"]
