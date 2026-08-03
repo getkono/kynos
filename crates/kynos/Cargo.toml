@@ -38,10 +38,17 @@ openapi32 = ["openapi31", "kynos-openapi/openapi32", "kynos-macros?/openapi32"]
 macros = ["dep:kynos-macros"]
 
 # --- Runtime ---------------------------------------------------------------
-server = ["dep:hyper-util", "tokio/net", "tokio/rt", "tokio/signal"]
+server = [
+  "dep:hyper-util",
+  "dep:tracing",
+  "tokio/net",
+  "tokio/macros",
+  "tokio/rt",
+  "tokio/signal",
+]
 http1 = ["hyper/http1", "hyper-util?/http1"]
 http2 = ["hyper/http2", "hyper-util?/http2"]
-tls = ["dep:tokio-rustls"]
+tls = ["server", "dep:tokio-rustls"]
 
 # --- Codecs ----------------------------------------------------------------
 # Application request and response payloads encoded as JSON. OpenAPI document
@@ -124,6 +131,7 @@ tower-service = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
+hyper = { workspace = true, features = ["client", "http1", "http2"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]

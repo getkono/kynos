@@ -57,6 +57,11 @@ pub enum Error {
     /// The listener could not be bound, or the server could not start.
     #[error("the server could not start")]
     Io(#[from] std::io::Error),
+
+    /// The server configuration or transport failed.
+    #[cfg(feature = "server")]
+    #[error(transparent)]
+    Server(#[from] crate::server::ServerError),
 }
 
 /// An RFC 9457 problem detail.

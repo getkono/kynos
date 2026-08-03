@@ -50,8 +50,26 @@ description = "Check every reachable feature combination"
 # a failure the matrix should report.
 run = '''
 cargo hack check --workspace --feature-powerset --depth 2 --no-dev-deps \
-  --exclude-no-default-features \
+  --exclude-no-default-features --exclude-all-features \
+  --exclude-features default,server,tls \
   --at-least-one-of openapi31,openapi32
+
+cargo hack check -p kynos --feature-powerset --depth 2 --no-dev-deps \
+  --features server \
+  --exclude-no-default-features --exclude-all-features \
+  --exclude-features default \
+  --at-least-one-of openapi31,openapi32 \
+  --at-least-one-of http1,http2
+
+invalid_server_output="$(mktemp)"
+trap 'rm -f "$invalid_server_output"' EXIT
+if cargo check -p kynos --no-default-features --features openapi31,server \
+    >"$invalid_server_output" 2>&1; then
+  echo "server unexpectedly compiled without an HTTP protocol" >&2
+  exit 1
+fi
+grep -F 'the `server` feature requires at least one of `http1` or `http2`' \
+  "$invalid_server_output"
 '''
 
 [tasks."docs:check"]
