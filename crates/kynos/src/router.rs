@@ -496,6 +496,17 @@ impl<C, P: PanicPolicy> Router<C, P> {
         todo!()
     }
 
+    /// Sets the application-wide trailing-slash policy.
+    ///
+    /// Redirect mode only adds or removes the final slash to reach an exactly
+    /// declared path. It never changes path casing or normalizes individual
+    /// routes, and uses 308 so the request method and body are preserved.
+    #[must_use]
+    pub fn trailing_slashes(self, policy: TrailingSlashPolicy) -> Self {
+        let _ = policy;
+        todo!()
+    }
+
     /// Turns unconstrained-schema warnings into build errors.
     ///
     /// [`Unchecked`](crate::schema::Unchecked) is honest but weak. A team that
@@ -565,6 +576,24 @@ pub enum FallbackPolicy {
     Problem,
     /// Reply with an empty body and the status alone.
     Empty,
+}
+
+/// How the router handles a request differing only by a trailing slash.
+///
+/// ```no_run
+/// use kynos::router::TrailingSlashPolicy;
+///
+/// let router = kynos::Router::<()>::new()
+///     .trailing_slashes(TrailingSlashPolicy::Redirect);
+/// # let _ = router;
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TrailingSlashPolicy {
+    /// Treat the two paths as distinct and use the normal not-found policy.
+    #[default]
+    Strict,
+    /// Redirect to the exactly declared path with status 308.
+    Redirect,
 }
 
 /// A built router, ready to serve.
