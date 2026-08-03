@@ -169,6 +169,14 @@ pub struct Query<T>(pub T);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct QueryString<T, M>(pub T, std::marker::PhantomData<M>);
 
+#[cfg(feature = "openapi32")]
+impl<T, M> QueryString<T, M> {
+    /// Wraps a decoded whole-query-string value with its declared media type.
+    pub fn new(value: T) -> Self {
+        Self(value, std::marker::PhantomData)
+    }
+}
+
 /// Declared request headers.
 ///
 /// `T` derives `Headers`. Declaring `Accept`, `Content-Type` or `Authorization`
@@ -243,6 +251,13 @@ pub struct FilePart {
 /// `contentMediaType`/`contentEncoding`, never the OpenAPI 3.0 `format: binary`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Binary<M>(pub bytes::Bytes, std::marker::PhantomData<M>);
+
+impl<M> Binary<M> {
+    /// Wraps bytes with their compile-time media type.
+    pub fn new(bytes: impl Into<bytes::Bytes>) -> Self {
+        Self(bytes.into(), std::marker::PhantomData)
+    }
+}
 
 /// A `text/plain` request or response body.
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
