@@ -27,12 +27,74 @@
 //! [`Unchecked`](crate::schema::Unchecked) before reaching for this module,
 //! because a weak schema is still an honest one.
 
-use crate::router::Router;
+use std::{
+    convert::Infallible,
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
+
+use crate::router::{Router, Service};
 
 /// A route Kynos does not describe.
 #[derive(Debug)]
 pub struct UncheckedRoute {
     _private: (),
+}
+
+/// A Kynos service exposed through Tower's untyped service contract.
+///
+/// Creating this wrapper marks the OpenAPI document non-authoritative because
+/// Tower layers can change responses in ways their types do not declare. The
+/// normal [`Service`] intentionally does not implement `tower_service::Service`.
+#[derive(Clone, Debug)]
+pub struct UncheckedService<C> {
+    service: Arc<Service<C>>,
+}
+
+impl<C> UncheckedService<C> {
+    /// Returns the document, stamped as non-authoritative.
+    #[must_use]
+    pub fn openapi(&self) -> &kynos_openapi::Document {
+        self.service.openapi()
+    }
+}
+
+impl<C> Service<C> {
+    /// Converts this service into an explicitly unchecked Tower service.
+    ///
+    /// ```no_run
+    /// # use kynos::{router::Service, unchecked::UncheckedService};
+    /// fn tower<C: Send + Sync + 'static>(service: Service<C>) -> UncheckedService<C> {
+    ///     service.into_tower_unchecked()
+    /// }
+    /// ```
+    #[must_use]
+    pub fn into_tower_unchecked(self) -> UncheckedService<C> {
+        UncheckedService {
+            service: Arc::new(self),
+        }
+    }
+}
+
+impl<C> tower_service::Service<crate::http::Request> for UncheckedService<C>
+where
+    C: Send + Sync + 'static,
+{
+    type Response = crate::http::Response;
+    type Error = Infallible;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        let _ = context;
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, request: crate::http::Request) -> Self::Future {
+        let service = Arc::clone(&self.service);
+        Box::pin(async move { Ok(service.call(request).await) })
+    }
 }
 
 impl<C> Router<C> {

@@ -67,7 +67,7 @@ test-util = []
 # Unlocks `layer_unchecked`, `route_unchecked` and `upgrade_unchecked`. Anything
 # reached through these is omitted from the emitted document, so the document
 # stops being authoritative and is stamped as such. Documented anti-pattern.
-unchecked = ["dep:tower"]
+unchecked = ["dep:tower", "dep:tower-service"]
 
 full = [
   "openapi32",
@@ -120,6 +120,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 tokio-rustls = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
+tower-service = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 
 [dev-dependencies]
