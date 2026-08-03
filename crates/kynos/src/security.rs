@@ -11,7 +11,12 @@
 
 use std::future::Future;
 
-use crate::{error::Rejection, extract::Describe, http::Parts, router::OperationCx};
+use crate::{
+    error::Rejection,
+    extract::{Describe, FromRequestParts},
+    http::Parts,
+    router::OperationCx,
+};
 
 /// A security scheme, as a type.
 ///
@@ -55,7 +60,7 @@ pub trait SecurityScheme: Send + Sync + 'static {
 /// is *checked*. Kynos deliberately does not ship a JWT verifier or a session
 /// store — that is application policy, and prescribing it would be exactly the
 /// kind of scope creep the project avoids.
-pub trait Authenticator<S: SecurityScheme, C>: Send + Sync + 'static {
+pub trait Authenticator<S: SecurityScheme, C: Sync>: Send + Sync + 'static {
     /// Checks the credential carried by this request.
     ///
     /// Return [`Rejection::Unauthenticated`] when the credential is absent or
@@ -65,6 +70,27 @@ pub trait Authenticator<S: SecurityScheme, C>: Send + Sync + 'static {
         parts: &Parts,
         context: &C,
     ) -> impl Future<Output = Result<S::Credential, Rejection>> + Send;
+
+    /// Checks that an authenticated credential has every requested scope.
+    fn authorize(
+        &self,
+        credential: &S::Credential,
+        scopes: &'static [&'static str],
+        context: &C,
+    ) -> impl Future<Output = Result<(), Rejection>> + Send;
+}
+
+/// An application context that supplies an authenticator for scheme `S`.
+///
+/// This typed association replaces an erased authentication extension map: a
+/// router using `Auth<S>` cannot be mounted with a context that does not prove
+/// it can authenticate `S`.
+pub trait Authenticates<S: SecurityScheme>: Sync + Sized {
+    /// The concrete authenticator owned by this context.
+    type Authenticator: Authenticator<S, Self>;
+
+    /// Borrows the authenticator used for this scheme.
+    fn authenticator(&self) -> &Self::Authenticator;
 }
 
 /// A credential proving the request satisfies scheme `S`.
@@ -103,6 +129,22 @@ impl<S: SecurityScheme> Describe for Auth<S> {
     }
 }
 
+impl<C, S> FromRequestParts<C> for Auth<S>
+where
+    C: Authenticates<S> + Sync,
+    S: SecurityScheme,
+{
+    type Rejection = Rejection;
+
+    async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
+        context
+            .authenticator()
+            .authenticate(parts, context)
+            .await
+            .map(Self)
+    }
+}
+
 /// A named set of scopes.
 ///
 /// Declared as a unit struct so that scope sets are types rather than string
@@ -125,12 +167,46 @@ pub trait Scopes: Send + Sync + 'static {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Scoped<S: SecurityScheme, R: Scopes>(pub S::Credential, pub std::marker::PhantomData<R>);
 
+impl<S: SecurityScheme, R: Scopes> Scoped<S, R> {
+    /// Unwraps the verified and authorized credential.
+    pub fn into_inner(self) -> S::Credential {
+        self.0
+    }
+}
+
+impl<S: SecurityScheme, R: Scopes> Describe for Scoped<S, R> {
+    fn describe(operation: &mut OperationCx<'_>) {
+        let _ = operation;
+        todo!()
+    }
+}
+
+impl<C, S, R> FromRequestParts<C> for Scoped<S, R>
+where
+    C: Authenticates<S> + Sync,
+    S: SecurityScheme,
+    R: Scopes,
+{
+    type Rejection = Rejection;
+
+    async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
+        let authenticator = context.authenticator();
+        let credential = authenticator.authenticate(parts, context).await?;
+        authenticator
+            .authorize(&credential, R::SCOPES, context)
+            .await?;
+        Ok(Self(credential, std::marker::PhantomData))
+    }
+}
+
 /// The schemes Kynos knows how to describe.
 ///
 /// Each is a unit struct implementing [`SecurityScheme`]; `#[derive(SecurityScheme)]`
 /// exists for the cases these do not cover, such as an API key under a
 /// non-standard header name.
 pub mod schemes {
+    use super::SecurityScheme;
+
     /// HTTP bearer authentication, per RFC 6750.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct Bearer;
@@ -158,4 +234,58 @@ pub mod schemes {
     /// about it.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct MutualTls;
+
+    impl SecurityScheme for Bearer {
+        const NAME: &'static str = "Bearer";
+        type Credential = String;
+
+        fn describe() -> kynos_openapi::SecurityScheme {
+            todo!()
+        }
+    }
+
+    impl SecurityScheme for Basic {
+        const NAME: &'static str = "Basic";
+        type Credential = (String, String);
+
+        fn describe() -> kynos_openapi::SecurityScheme {
+            todo!()
+        }
+    }
+
+    impl SecurityScheme for ApiKey {
+        const NAME: &'static str = "ApiKey";
+        type Credential = String;
+
+        fn describe() -> kynos_openapi::SecurityScheme {
+            todo!()
+        }
+    }
+
+    impl SecurityScheme for OAuth2 {
+        const NAME: &'static str = "OAuth2";
+        type Credential = String;
+
+        fn describe() -> kynos_openapi::SecurityScheme {
+            todo!()
+        }
+    }
+
+    impl SecurityScheme for OpenIdConnect {
+        const NAME: &'static str = "OpenIdConnect";
+        type Credential = String;
+
+        fn describe() -> kynos_openapi::SecurityScheme {
+            todo!()
+        }
+    }
+
+    impl SecurityScheme for MutualTls {
+        const NAME: &'static str = "MutualTls";
+        type Credential = Vec<u8>;
+
+        fn describe() -> kynos_openapi::SecurityScheme {
+            todo!()
+        }
+    }
 }
