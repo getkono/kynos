@@ -67,6 +67,7 @@ Each of these is something another Rust framework offers and Kynos does not, and
 | `macros` | yes | Route attributes and derives |
 | `server` | yes | The `tokio`/`hyper` server |
 | `http1`, `http2` | yes | Protocol versions |
+| `json` | yes | Application JSON request and response codecs |
 | `trace` | yes | Per-operation `tracing` spans. Facade only; the subscriber stays yours |
 | `tls` | no | `rustls`, including client-certificate verification |
 | `form`, `multipart`, `cookie` | no | Additional codecs |
@@ -74,6 +75,10 @@ Each of these is something another Rust framework offers and Kynos does not, and
 | `yaml` | no | YAML document emission |
 | `test-util` | no | In-process test client and contract-conformance assertions |
 | `unchecked` | no | Escape hatches. Marks the emitted document non-authoritative |
+
+Disabling `json` removes application JSON payload types and helpers, including
+the OpenAPI 3.2 JSON stream responses. OpenAPI document serialization and the
+framework's RFC 9457 problem responses remain JSON-based core behavior.
 
 ## Development
 

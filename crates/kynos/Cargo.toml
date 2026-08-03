@@ -14,7 +14,15 @@ path = "tests/compile/panic_recovery.rs"
 harness = false
 
 [features]
-default = ["openapi31", "macros", "server", "http1", "http2", "trace"]
+default = [
+  "openapi31",
+  "macros",
+  "server",
+  "http1",
+  "http2",
+  "json",
+  "trace",
+]
 
 # --- Specification version -------------------------------------------------
 # `openapi31` is the baseline. `openapi32` is a strict superset: enabling it is
@@ -32,6 +40,9 @@ http2 = ["hyper/http2", "hyper-util?/http2"]
 tls = ["dep:tokio-rustls"]
 
 # --- Codecs ----------------------------------------------------------------
+# Application request and response payloads encoded as JSON. OpenAPI document
+# serialization and RFC 9457 problem details remain available without it.
+json = []
 form = ["dep:serde_urlencoded"]
 multipart = ["dep:multer"]
 cookie = ["dep:cookie"]
@@ -59,6 +70,7 @@ full = [
   "server",
   "http1",
   "http2",
+  "json",
   "tls",
   "form",
   "multipart",

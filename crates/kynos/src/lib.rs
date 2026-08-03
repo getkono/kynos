@@ -60,7 +60,9 @@
 //!
 //! `openapi31` is the baseline; `openapi32` is a strict superset that unlocks
 //! Server-Sent Events, streaming bodies and whole-query-string parameters,
-//! none of which OpenAPI 3.1 can describe.
+//! none of which OpenAPI 3.1 can describe. The default-on `json` feature adds
+//! application JSON request and response codecs; it does not control OpenAPI
+//! document serialization or the framework's problem-details responses.
 
 // `openapi31` is the baseline object model rather than an optional extra.
 // `openapi32` implies it, so this fires only when a caller disables default
@@ -116,11 +118,14 @@ pub mod prelude {
     pub use crate::{
         di::Inject,
         error::{Error, Problem, Result},
-        extract::{Json, Path, Query},
+        extract::{Path, Query},
         response::{Created, NoContent},
         router::{Group, Router},
         schema::Schema as SchemaTrait,
     };
+
+    #[cfg(feature = "json")]
+    pub use crate::extract::Json;
 
     #[cfg(feature = "macros")]
     pub use crate::{

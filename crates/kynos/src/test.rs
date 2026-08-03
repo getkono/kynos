@@ -103,6 +103,7 @@ impl<C> TestRequest<'_, C> {
     }
 
     /// Sets a JSON body.
+    #[cfg(feature = "json")]
     #[must_use]
     pub fn json<T: serde::Serialize>(self, body: &T) -> Self {
         let _ = body;
@@ -133,6 +134,7 @@ impl TestResponse {
     /// # Panics
     ///
     /// Panics when the body is not valid JSON for `T`.
+    #[cfg(feature = "json")]
     #[must_use]
     pub fn json<T: serde::de::DeserializeOwned>(&self) -> T {
         todo!()

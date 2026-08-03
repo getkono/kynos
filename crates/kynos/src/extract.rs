@@ -127,9 +127,22 @@ pub struct Headers<T>(pub T);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Cookies<T>(pub T);
 
-/// A JSON request or response body.
+/// An `application/json` request or response body.
 ///
-/// The most common body type, and the default one the derives assume.
+/// Requires the default-on `json` feature. Requests accept
+/// `application/json` with no parameters or with `charset=utf-8`; a missing or
+/// different content type rejects with 415. Malformed or incomplete JSON
+/// rejects with 400, while valid JSON that cannot deserialize into `T` or
+/// violates derived schema constraints rejects with 422.
+///
+/// ```no_run
+/// use kynos::extract::Json;
+///
+/// async fn echo(Json(message): Json<String>) -> Json<String> {
+///     Json(message)
+/// }
+/// ```
+#[cfg(feature = "json")]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Json<T>(pub T);
 
@@ -225,9 +238,11 @@ pub mod media {
     }
 
     /// `application/json`, for a query string described as JSON.
+    #[cfg(feature = "json")]
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct Json;
 
+    #[cfg(feature = "json")]
     impl MediaType for Json {
         const MEDIA_TYPE: &'static str = "application/json";
     }
@@ -289,6 +304,7 @@ impl<T: QueryParams> Describe for Query<T> {
     }
 }
 
+#[cfg(feature = "json")]
 impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Json<T> {
     type Rejection = Rejection;
 
@@ -298,6 +314,7 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Json<T> 
     }
 }
 
+#[cfg(feature = "json")]
 impl<T: Schema> Describe for Json<T> {
     fn describe(operation: &mut OperationCx<'_>) {
         let _ = operation;

@@ -42,6 +42,11 @@ pub trait Responses {
 }
 
 /// A JSON response body, with status 200.
+///
+/// Requires the default-on `json` feature. Serialization is completed before
+/// the response is committed, so a serialization failure becomes a documented
+/// RFC 9457 500 response rather than a truncated successful response.
+#[cfg(feature = "json")]
 pub use crate::extract::Json;
 
 /// A 204 No Content response.
@@ -148,8 +153,20 @@ pub struct Event<T> {
 
 /// A newline-delimited JSON response (`application/x-ndjson`).
 ///
-/// Requires `openapi32`, for the same reason as [`Sse`].
-#[cfg(feature = "openapi32")]
+/// Requires both `json` and `openapi32`; the latter supplies the `itemSchema`
+/// needed to describe each streamed value.
+///
+/// ```no_run
+/// # #[cfg(all(feature = "json", feature = "openapi32"))]
+/// # {
+/// use kynos::response::JsonLines;
+///
+/// fn lines<S>(items: S) -> JsonLines<S> {
+///     JsonLines { items }
+/// }
+/// # }
+/// ```
+#[cfg(all(feature = "json", feature = "openapi32"))]
 #[derive(Debug)]
 pub struct JsonLines<S> {
     /// The stream of items.
@@ -158,8 +175,20 @@ pub struct JsonLines<S> {
 
 /// An RFC 7464 JSON text sequence response (`application/json-seq`).
 ///
-/// Requires `openapi32`, for the same reason as [`Sse`].
-#[cfg(feature = "openapi32")]
+/// Requires both `json` and `openapi32`; the latter supplies the `itemSchema`
+/// needed to describe each streamed value.
+///
+/// ```no_run
+/// # #[cfg(all(feature = "json", feature = "openapi32"))]
+/// # {
+/// use kynos::response::JsonSeq;
+///
+/// fn sequence<S>(items: S) -> JsonSeq<S> {
+///     JsonSeq { items }
+/// }
+/// # }
+/// ```
+#[cfg(all(feature = "json", feature = "openapi32"))]
 #[derive(Debug)]
 pub struct JsonSeq<S> {
     /// The stream of items.
@@ -179,13 +208,71 @@ impl Responses for NoContent {
     }
 }
 
+#[cfg(feature = "json")]
 impl<T: serde::Serialize> IntoResponse for Json<T> {
     fn into_response(self) -> Response {
         todo!()
     }
 }
 
+#[cfg(feature = "json")]
 impl<T: crate::schema::Schema> Responses for Json<T> {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        todo!()
+    }
+}
+
+/// Streams each item as one JSON value followed by a newline.
+///
+/// The response is committed before every item is available. If serializing a
+/// later item fails, the stream terminates; it cannot replace the already-sent
+/// status with a problem response.
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<S> IntoResponse for JsonLines<S>
+where
+    S: futures_core::Stream + Send + 'static,
+    S::Item: serde::Serialize,
+{
+    fn into_response(self) -> Response {
+        todo!()
+    }
+}
+
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<S> Responses for JsonLines<S>
+where
+    S: futures_core::Stream,
+    S::Item: crate::schema::Schema,
+{
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        todo!()
+    }
+}
+
+/// Streams each item as an RFC 7464 JSON text sequence record.
+///
+/// The response is committed before every item is available. If serializing a
+/// later item fails, the stream terminates; it cannot replace the already-sent
+/// status with a problem response.
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<S> IntoResponse for JsonSeq<S>
+where
+    S: futures_core::Stream + Send + 'static,
+    S::Item: serde::Serialize,
+{
+    fn into_response(self) -> Response {
+        todo!()
+    }
+}
+
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<S> Responses for JsonSeq<S>
+where
+    S: futures_core::Stream,
+    S::Item: crate::schema::Schema,
+{
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let _ = registry;
         todo!()
