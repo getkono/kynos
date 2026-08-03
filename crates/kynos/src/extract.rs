@@ -355,7 +355,12 @@ pub trait QueryParams: Sized + Schema {
     }
 }
 
-/// A group of request headers.
+/// A group of declared request or response headers.
+///
+/// The same derived contract is used by [`Headers`] while extracting and by
+/// [`WithHeaders`](crate::response::WithHeaders) while responding. Encoding
+/// returns a sequence rather than a map so fields such as `Set-Cookie` can be
+/// emitted more than once without comma joining.
 pub trait HeaderParams: Sized {
     /// The header names this group declares.
     const NAMES: &'static [&'static str];
@@ -373,6 +378,14 @@ pub trait HeaderParams: Sized {
 
     /// Describes the declared OpenAPI header parameters.
     fn parameters(registry: &mut Registry) -> Vec<kynos_openapi::Parameter> {
+        let _ = registry;
+        todo!()
+    }
+
+    /// Describes the headers when this group is attached to a response.
+    fn response_headers(
+        registry: &mut Registry,
+    ) -> kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>> {
         let _ = registry;
         todo!()
     }

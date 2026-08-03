@@ -230,12 +230,13 @@ pub fn derive_query_params(item: TokenStream) -> TokenStream {
     todo!()
 }
 
-/// Declares a group of request headers.
+/// Declares a group of request or response headers.
 ///
 /// Rejects `Accept`, `Content-Type` and `Authorization`. The specification says
-/// a parameter definition for those is ignored, so declaring one puts a claim
-/// in the description that no consumer will honour. The diagnostic names the
-/// right tool for each.
+/// a parameter definition for those is ignored; `Content-Type` is likewise
+/// derived from a response's content map. Repeated fields such as `Set-Cookie`
+/// remain separate header values rather than being comma joined. The
+/// diagnostic names the right tool for each reserved field.
 #[proc_macro_derive(Headers, attributes(header))]
 pub fn derive_headers(item: TokenStream) -> TokenStream {
     let _ = item;
