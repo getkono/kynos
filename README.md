@@ -4,6 +4,9 @@
 
 Kynos is an idiomatic, performance-focused Rust framework for building REST APIs with first-class OpenAPI 3.1 and 3.2 support.
 
+The version-pinned [axum family parity ledger](AXUM_PARITY.md) records every
+application-facing primitive, its Kynos equivalent, and deliberate exclusions.
+
 Kynos only lets you build APIs it can fully describe. Every handler input describes itself as a Parameter or Request Body, every handler output describes itself as a Responses Object, and every interceptor declares what it contributes. Anything undescribable does not compile.
 
 The emitted document is therefore not documentation that drifts from the code. It is a checked contract derived from the same types the server runs on.
@@ -70,7 +73,7 @@ Each of these is something another Rust framework offers and Kynos does not, and
 | `json` | yes | Application JSON request and response codecs |
 | `trace` | yes | Per-operation `tracing` spans. Facade only; the subscriber stays yours |
 | `tls` | no | `rustls`, including client-certificate verification |
-| `form`, `multipart`, `cookie` | no | Additional codecs |
+| `form`, `multipart`, `protobuf`, `cookie` | no | Additional codecs |
 | `compression` | no | Response compression |
 | `yaml` | no | YAML document emission |
 | `test-util` | no | In-process test client and contract-conformance assertions |
