@@ -81,6 +81,67 @@ pub trait Describe {
     fn describe(operation: &mut OperationCx<'_>);
 }
 
+/// Metadata shared by request-body extractors.
+///
+/// This trait deliberately has no implementation for request-part extractors.
+/// Consequently `Option<Path<T>>` and similar ambiguous signatures do not
+/// compile, while `Option<Json<T>>` means that the entire body is optional.
+///
+/// ```compile_fail
+/// fn body<T: kynos::extract::FromRequest<()>>() {}
+/// body::<Option<kynos::extract::Path<u64>>>();
+/// ```
+pub trait RequestContent: Describe {
+    /// Every media type accepted by this body extractor.
+    fn media_types() -> Vec<&'static str>;
+
+    /// Builds the required OpenAPI Request Body Object for this extractor.
+    fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody;
+}
+
+/// One of two request body representations, selected by `Content-Type`.
+///
+/// The alternatives must implement [`Alternative`], which is provided only
+/// for pairs whose media types are known to be distinct. Unsupported media
+/// types reject with 415; a malformed selected representation uses that
+/// representation's normal rejection.
+///
+/// ```no_run
+/// use kynos::extract::{Binary, OneOf, Text, media::Pdf};
+///
+/// async fn upload(body: OneOf<Text, Binary<Pdf>>) {
+///     match body {
+///         OneOf::Left(text) => drop(text),
+///         OneOf::Right(pdf) => drop(pdf),
+///     }
+/// }
+/// ```
+///
+/// Alternatives with the same media type are intentionally not implemented:
+///
+/// ```compile_fail
+/// fn body<T: kynos::extract::FromRequest<()>>() {}
+/// body::<kynos::extract::OneOf<kynos::extract::Text, kynos::extract::Text>>();
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OneOf<L, R> {
+    /// The left representation was selected.
+    Left(L),
+    /// The right representation was selected.
+    Right(R),
+}
+
+/// Proves that two request content types can be alternatives.
+///
+/// Kynos implements this for its non-overlapping body wrappers. It is not a
+/// blanket trait: writing `OneOf<Json<A>, Json<B>>` therefore fails to compile
+/// instead of making dispatch order observable.
+pub trait Alternative<Rhs>: RequestContent
+where
+    Rhs: RequestContent,
+{
+}
+
 /// Variables captured from the path template.
 ///
 /// `T` derives `PathParams`, and its field names are checked against the route
@@ -432,8 +493,19 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Json<T> 
 #[cfg(feature = "json")]
 impl<T: Schema> Describe for Json<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let _ = operation;
-        todo!()
+        let body = <Self as RequestContent>::request_body(operation.registry());
+        operation.set_request_body(body);
+    }
+}
+
+#[cfg(feature = "json")]
+impl<T: Schema> RequestContent for Json<T> {
+    fn media_types() -> Vec<&'static str> {
+        vec!["application/json"]
+    }
+
+    fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
+        kynos_openapi::RequestBody::json(registry.resolve::<T>())
     }
 }
 
@@ -450,7 +522,19 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Form<T> 
 #[cfg(feature = "form")]
 impl<T: Schema> Describe for Form<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let _ = operation;
+        let body = <Self as RequestContent>::request_body(operation.registry());
+        operation.set_request_body(body);
+    }
+}
+
+#[cfg(feature = "form")]
+impl<T: Schema> RequestContent for Form<T> {
+    fn media_types() -> Vec<&'static str> {
+        vec!["application/x-www-form-urlencoded"]
+    }
+
+    fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
+        let _ = registry;
         todo!()
     }
 }
@@ -468,7 +552,19 @@ impl<C: Sync, T: Send> FromRequest<C> for MultipartForm<T> {
 #[cfg(feature = "multipart")]
 impl<T: Schema> Describe for MultipartForm<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let _ = operation;
+        let body = <Self as RequestContent>::request_body(operation.registry());
+        operation.set_request_body(body);
+    }
+}
+
+#[cfg(feature = "multipart")]
+impl<T: Schema> RequestContent for MultipartForm<T> {
+    fn media_types() -> Vec<&'static str> {
+        vec!["multipart/form-data"]
+    }
+
+    fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
+        let _ = registry;
         todo!()
     }
 }
@@ -484,7 +580,18 @@ impl<C: Sync, M: MediaType + Send> FromRequest<C> for Binary<M> {
 
 impl<M: MediaType> Describe for Binary<M> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let _ = operation;
+        let body = <Self as RequestContent>::request_body(operation.registry());
+        operation.set_request_body(body);
+    }
+}
+
+impl<M: MediaType> RequestContent for Binary<M> {
+    fn media_types() -> Vec<&'static str> {
+        vec![M::MEDIA_TYPE]
+    }
+
+    fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
+        let _ = registry;
         todo!()
     }
 }
@@ -500,10 +607,131 @@ impl<C: Sync> FromRequest<C> for Text {
 
 impl Describe for Text {
     fn describe(operation: &mut OperationCx<'_>) {
-        let _ = operation;
+        let body = <Self as RequestContent>::request_body(operation.registry());
+        operation.set_request_body(body);
+    }
+}
+
+impl RequestContent for Text {
+    fn media_types() -> Vec<&'static str> {
+        vec!["text/plain"]
+    }
+
+    fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
+        let _ = registry;
         todo!()
     }
 }
+
+impl<C, T> FromRequest<C> for Option<T>
+where
+    C: Sync,
+    T: FromRequest<C> + RequestContent,
+{
+    type Rejection = T::Rejection;
+
+    async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
+        let _ = (request, context);
+        todo!()
+    }
+}
+
+impl<T: RequestContent> Describe for Option<T> {
+    fn describe(operation: &mut OperationCx<'_>) {
+        let body = T::request_body(operation.registry()).optional();
+        operation.set_request_body(body);
+    }
+}
+
+impl<C, L, R> FromRequest<C> for OneOf<L, R>
+where
+    C: Sync,
+    L: FromRequest<C, Rejection = Rejection> + Alternative<R>,
+    R: FromRequest<C, Rejection = Rejection> + RequestContent,
+{
+    type Rejection = Rejection;
+
+    async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
+        let _ = (request, context);
+        todo!()
+    }
+}
+
+impl<L, R> Describe for OneOf<L, R>
+where
+    L: Alternative<R>,
+    R: RequestContent,
+{
+    fn describe(operation: &mut OperationCx<'_>) {
+        let body = <Self as RequestContent>::request_body(operation.registry());
+        operation.set_request_body(body);
+    }
+}
+
+impl<L, R> RequestContent for OneOf<L, R>
+where
+    L: Alternative<R>,
+    R: RequestContent,
+{
+    fn media_types() -> Vec<&'static str> {
+        let mut media_types = L::media_types();
+        media_types.extend(R::media_types());
+        media_types
+    }
+
+    fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
+        let mut body = L::request_body(registry);
+        for (media_type, content) in R::request_body(registry).content {
+            assert!(
+                body.content.insert(media_type.clone(), content).is_none(),
+                "request body alternative repeats media type `{media_type}`"
+            );
+        }
+        body
+    }
+}
+
+#[cfg(feature = "json")]
+impl<T: Schema> Alternative<Text> for Json<T> {}
+#[cfg(feature = "json")]
+impl<T: Schema> Alternative<Json<T>> for Text {}
+#[cfg(feature = "json")]
+impl<T: Schema, M: MediaType> Alternative<Binary<M>> for Json<T> {}
+#[cfg(feature = "json")]
+impl<T: Schema, M: MediaType> Alternative<Json<T>> for Binary<M> {}
+
+#[cfg(feature = "form")]
+impl<T: Schema> Alternative<Text> for Form<T> {}
+#[cfg(feature = "form")]
+impl<T: Schema> Alternative<Form<T>> for Text {}
+#[cfg(feature = "form")]
+impl<T: Schema, M: MediaType> Alternative<Binary<M>> for Form<T> {}
+#[cfg(feature = "form")]
+impl<T: Schema, M: MediaType> Alternative<Form<T>> for Binary<M> {}
+
+#[cfg(all(feature = "json", feature = "form"))]
+impl<T: Schema, U: Schema> Alternative<Form<U>> for Json<T> {}
+#[cfg(all(feature = "json", feature = "form"))]
+impl<T: Schema, U: Schema> Alternative<Json<U>> for Form<T> {}
+
+#[cfg(feature = "multipart")]
+impl<T: Schema> Alternative<Text> for MultipartForm<T> {}
+#[cfg(feature = "multipart")]
+impl<T: Schema> Alternative<MultipartForm<T>> for Text {}
+#[cfg(feature = "multipart")]
+impl<T: Schema, M: MediaType> Alternative<Binary<M>> for MultipartForm<T> {}
+#[cfg(feature = "multipart")]
+impl<T: Schema, M: MediaType> Alternative<MultipartForm<T>> for Binary<M> {}
+
+#[cfg(all(feature = "json", feature = "multipart"))]
+impl<T: Schema, U: Schema> Alternative<MultipartForm<U>> for Json<T> {}
+#[cfg(all(feature = "json", feature = "multipart"))]
+impl<T: Schema, U: Schema> Alternative<Json<U>> for MultipartForm<T> {}
+
+#[cfg(all(feature = "form", feature = "multipart"))]
+impl<T: Schema, U: Schema> Alternative<MultipartForm<U>> for Form<T> {}
+#[cfg(all(feature = "form", feature = "multipart"))]
+impl<T: Schema, U: Schema> Alternative<Form<U>> for MultipartForm<T> {}
 
 impl<C: Sync> FromRequestParts<C> for MatchedPath {
     type Rejection = Rejection;
