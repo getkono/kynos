@@ -30,6 +30,8 @@ use crate::{
 use crate::extract::Form;
 #[cfg(feature = "multipart")]
 use crate::extract::MultipartForm;
+#[cfg(feature = "protobuf")]
+use crate::extract::Protobuf;
 
 /// A value that can be written as an HTTP response.
 ///
@@ -849,6 +851,21 @@ impl<T: crate::schema::Schema> Responses for MultipartForm<T> {
     }
 }
 
+#[cfg(feature = "protobuf")]
+impl<T: prost::Message> IntoResponse for Protobuf<T> {
+    fn into_response(self) -> Response {
+        todo!()
+    }
+}
+
+#[cfg(feature = "protobuf")]
+impl<T: crate::schema::Schema> Responses for Protobuf<T> {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        todo!()
+    }
+}
+
 /// `Result` unions the responses of both sides.
 ///
 /// This is where a handler's success and failure descriptions come together: a
@@ -886,6 +903,8 @@ mod private {
     use crate::extract::Form;
     #[cfg(feature = "multipart")]
     use crate::extract::MultipartForm;
+    #[cfg(feature = "protobuf")]
+    use crate::extract::Protobuf;
 
     pub trait Representation: IntoResponse + Responses {
         fn media_type() -> &'static str;
@@ -927,6 +946,16 @@ mod private {
     impl<T: crate::schema::Schema> Representation for MultipartForm<T> {
         fn media_type() -> &'static str {
             "multipart/form-data"
+        }
+    }
+
+    #[cfg(feature = "protobuf")]
+    impl<T> Representation for Protobuf<T>
+    where
+        T: prost::Message + crate::schema::Schema,
+    {
+        fn media_type() -> &'static str {
+            "application/protobuf"
         }
     }
 

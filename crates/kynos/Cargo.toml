@@ -49,6 +49,7 @@ tls = ["dep:tokio-rustls"]
 json = []
 form = ["dep:serde_urlencoded"]
 multipart = ["dep:multer"]
+protobuf = ["dep:prost"]
 cookie = ["dep:cookie"]
 compression = ["dep:async-compression"]
 
@@ -78,6 +79,7 @@ full = [
   "tls",
   "form",
   "multipart",
+  "protobuf",
   "cookie",
   "compression",
   "trace",
@@ -110,6 +112,7 @@ mime = { workspace = true }
 multer = { workspace = true, optional = true }
 percent-encoding = { workspace = true }
 pin-project-lite = { workspace = true }
+prost = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_urlencoded = { workspace = true, optional = true }

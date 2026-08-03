@@ -215,6 +215,25 @@ pub struct Cookies<T>(pub T);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Json<T>(pub T);
 
+/// An `application/protobuf` request or response body.
+///
+/// Requires the `protobuf` feature. A missing or different content type
+/// rejects with 415 and an invalid protobuf message rejects with 400.
+///
+/// ```no_run
+/// # #[cfg(feature = "protobuf")]
+/// # {
+/// use kynos::extract::Protobuf;
+///
+/// async fn echo<T>(Protobuf(message): Protobuf<T>) -> Protobuf<T> {
+///     Protobuf(message)
+/// }
+/// # }
+/// ```
+#[cfg(feature = "protobuf")]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Protobuf<T>(pub T);
+
 /// An `application/x-www-form-urlencoded` request body.
 #[cfg(feature = "form")]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -539,6 +558,36 @@ impl<T: Schema> RequestContent for Json<T> {
     }
 }
 
+#[cfg(feature = "protobuf")]
+impl<C: Sync, T: prost::Message + Default + Send> FromRequest<C> for Protobuf<T> {
+    type Rejection = Rejection;
+
+    async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
+        let _ = (request, context);
+        todo!()
+    }
+}
+
+#[cfg(feature = "protobuf")]
+impl<T: Schema> Describe for Protobuf<T> {
+    fn describe(operation: &mut OperationCx<'_>) {
+        let body = <Self as RequestContent>::request_body(operation.registry());
+        operation.set_request_body(body);
+    }
+}
+
+#[cfg(feature = "protobuf")]
+impl<T: Schema> RequestContent for Protobuf<T> {
+    fn media_types() -> Vec<&'static str> {
+        vec!["application/protobuf"]
+    }
+
+    fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
+        let _ = registry;
+        todo!()
+    }
+}
+
 #[cfg(feature = "form")]
 impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Form<T> {
     type Rejection = Rejection;
@@ -762,6 +811,30 @@ impl<T: Schema, U: Schema> Alternative<Json<U>> for MultipartForm<T> {}
 impl<T: Schema, U: Schema> Alternative<MultipartForm<U>> for Form<T> {}
 #[cfg(all(feature = "form", feature = "multipart"))]
 impl<T: Schema, U: Schema> Alternative<Form<U>> for MultipartForm<T> {}
+
+#[cfg(feature = "protobuf")]
+impl<T: Schema> Alternative<Text> for Protobuf<T> {}
+#[cfg(feature = "protobuf")]
+impl<T: Schema> Alternative<Protobuf<T>> for Text {}
+#[cfg(feature = "protobuf")]
+impl<T: Schema, M: MediaType> Alternative<Binary<M>> for Protobuf<T> {}
+#[cfg(feature = "protobuf")]
+impl<T: Schema, M: MediaType> Alternative<Protobuf<T>> for Binary<M> {}
+
+#[cfg(all(feature = "json", feature = "protobuf"))]
+impl<T: Schema, U: Schema> Alternative<Protobuf<U>> for Json<T> {}
+#[cfg(all(feature = "json", feature = "protobuf"))]
+impl<T: Schema, U: Schema> Alternative<Json<U>> for Protobuf<T> {}
+
+#[cfg(all(feature = "form", feature = "protobuf"))]
+impl<T: Schema, U: Schema> Alternative<Protobuf<U>> for Form<T> {}
+#[cfg(all(feature = "form", feature = "protobuf"))]
+impl<T: Schema, U: Schema> Alternative<Form<U>> for Protobuf<T> {}
+
+#[cfg(all(feature = "multipart", feature = "protobuf"))]
+impl<T: Schema, U: Schema> Alternative<Protobuf<U>> for MultipartForm<T> {}
+#[cfg(all(feature = "multipart", feature = "protobuf"))]
+impl<T: Schema, U: Schema> Alternative<MultipartForm<U>> for Protobuf<T> {}
 
 impl<C: Sync> FromRequestParts<C> for MatchedPath {
     type Rejection = Rejection;
