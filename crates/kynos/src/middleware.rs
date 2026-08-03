@@ -161,6 +161,8 @@ pub trait Observer<C>: Send + Sync + 'static {
 /// Request tracing: the one standard way to log at the operation level.
 #[cfg(feature = "trace")]
 pub mod trace {
+    use crate::{http, middleware::Observer};
+
     /// Emits one `tracing` span per operation.
     ///
     /// The span is named by `operation_id` and carries `method`,
@@ -203,15 +205,37 @@ pub mod trace {
             todo!()
         }
     }
+
+    impl<C> Observer<C> for Trace {
+        fn on_request(&self, request: &http::Request, context: &C) {
+            let _ = (request, context);
+            todo!()
+        }
+
+        fn on_response(&self, response: &http::Response, elapsed: std::time::Duration) {
+            let _ = (response, elapsed);
+            todo!()
+        }
+
+        fn on_panic(&self, payload: &(dyn std::any::Any + Send)) {
+            let _ = payload;
+            todo!()
+        }
+    }
 }
 
 /// Correlation identifiers.
 pub mod request_id {
+    use crate::{
+        http,
+        middleware::{Interceptor, Next, OperationContribution},
+    };
+
     /// Assigns each request an identifier and echoes it back.
     ///
-    /// An observer, not an interceptor: the header it adds is a property of the
-    /// deployment rather than of the API, and describing it on every operation
-    /// would be noise.
+    /// This is an interceptor because it adds a response header. Its
+    /// contribution keeps that wire-visible behavior in every covered
+    /// operation's description.
     #[derive(Clone, Debug, Default)]
     pub struct RequestId {
         _private: (),
@@ -231,11 +255,28 @@ pub mod request_id {
             todo!()
         }
     }
+
+    impl<C: Sync + 'static> Interceptor<C> for RequestId {
+        fn contribution(&self) -> OperationContribution {
+            todo!()
+        }
+
+        async fn intercept(
+            &self,
+            request: http::Request,
+            context: &C,
+            next: Next<'_, C>,
+        ) -> http::Response {
+            let _ = (request, context, next);
+            todo!()
+        }
+    }
 }
 
 /// Limits, and the responses they make possible.
 pub mod limits {
-    use super::OperationContribution;
+    use super::{Interceptor, Next, OperationContribution};
+    use crate::http;
 
     /// Caps the size of a request body.
     ///
@@ -262,6 +303,22 @@ pub mod limits {
         }
     }
 
+    impl<C: Sync + 'static> Interceptor<C> for BodySize {
+        fn contribution(&self) -> OperationContribution {
+            Self::contribution(self)
+        }
+
+        async fn intercept(
+            &self,
+            request: http::Request,
+            context: &C,
+            next: Next<'_, C>,
+        ) -> http::Response {
+            let _ = (request, context, next);
+            todo!()
+        }
+    }
+
     /// Caps how long a handler may run.
     ///
     /// Contributes 504.
@@ -269,6 +326,34 @@ pub mod limits {
     pub struct Timeout {
         /// The maximum handler duration.
         pub limit: std::time::Duration,
+    }
+
+    impl Timeout {
+        /// Limits handlers to `limit`.
+        pub fn new(limit: std::time::Duration) -> Self {
+            Self { limit }
+        }
+
+        /// This interceptor's contribution.
+        pub fn contribution(&self) -> OperationContribution {
+            todo!()
+        }
+    }
+
+    impl<C: Sync + 'static> Interceptor<C> for Timeout {
+        fn contribution(&self) -> OperationContribution {
+            Self::contribution(self)
+        }
+
+        async fn intercept(
+            &self,
+            request: http::Request,
+            context: &C,
+            next: Next<'_, C>,
+        ) -> http::Response {
+            let _ = (request, context, next);
+            todo!()
+        }
     }
 
     /// Caps concurrent in-flight requests.
@@ -279,11 +364,67 @@ pub mod limits {
         /// The maximum number of requests in flight at once.
         pub limit: usize,
     }
+
+    impl Concurrency {
+        /// Limits in-flight requests to `limit`.
+        pub fn new(limit: usize) -> Self {
+            Self { limit }
+        }
+
+        /// This interceptor's contribution.
+        pub fn contribution(&self) -> OperationContribution {
+            todo!()
+        }
+    }
+
+    impl<C: Sync + 'static> Interceptor<C> for Concurrency {
+        fn contribution(&self) -> OperationContribution {
+            Self::contribution(self)
+        }
+
+        async fn intercept(
+            &self,
+            request: http::Request,
+            context: &C,
+            next: Next<'_, C>,
+        ) -> http::Response {
+            let _ = (request, context, next);
+            todo!()
+        }
+    }
 }
 
 /// Rate limiting.
 pub mod rate_limit {
-    use super::OperationContribution;
+    use std::future::Future;
+
+    use super::{Interceptor, Next, OperationContribution};
+    use crate::http;
+
+    /// The result of consulting a rate-limit policy.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Decision {
+        /// The request may continue.
+        Allow {
+            /// Requests remaining in the current window.
+            remaining: u32,
+        },
+        /// The request must receive 429 without calling the handler.
+        Deny {
+            /// How long the client should wait before retrying.
+            retry_after: std::time::Duration,
+        },
+    }
+
+    /// Application policy used to identify clients and maintain counters.
+    pub trait RateLimitPolicy<C>: Send + Sync + 'static {
+        /// Decides whether this request may continue.
+        fn check(
+            &self,
+            request: &http::Request,
+            context: &C,
+        ) -> impl Future<Output = Decision> + Send;
+    }
 
     /// Limits request rate per client.
     ///
@@ -291,22 +432,70 @@ pub mod rate_limit {
     /// Kynos supplies the description and the response; the *policy* — how a
     /// client is identified, where counters live — is the application's, since
     /// prescribing a store would mean prescribing a dependency.
+    ///
+    /// ```no_run
+    /// use std::time::Duration;
+    /// use kynos::{
+    ///     http,
+    ///     middleware::rate_limit::{Decision, RateLimit, RateLimitPolicy},
+    /// };
+    ///
+    /// #[derive(Clone, Debug)]
+    /// struct PerClient;
+    ///
+    /// impl RateLimitPolicy<()> for PerClient {
+    ///     async fn check(&self, _: &http::Request, _: &()) -> Decision {
+    ///         Decision::Allow { remaining: 99 }
+    ///     }
+    /// }
+    ///
+    /// let limit = RateLimit::new(100, Duration::from_secs(60), PerClient);
+    /// # let _ = limit;
+    /// ```
     #[derive(Clone, Debug)]
-    pub struct RateLimit {
-        _private: (),
+    pub struct RateLimit<P> {
+        policy: P,
+        requests: u32,
+        window: std::time::Duration,
     }
 
-    impl RateLimit {
-        /// Allows `requests` per `window`.
+    impl<P> RateLimit<P> {
+        /// Allows `requests` per `window`, consulting `policy` for each request.
         #[must_use]
-        pub fn new(requests: u32, window: std::time::Duration) -> Self {
-            let _ = (requests, window);
-            todo!()
+        pub fn new(requests: u32, window: std::time::Duration, policy: P) -> Self {
+            Self {
+                policy,
+                requests,
+                window,
+            }
         }
 
         /// This interceptor's contribution.
         #[must_use]
         pub fn contribution(&self) -> OperationContribution {
+            todo!()
+        }
+    }
+
+    impl<C: Sync + 'static, P: RateLimitPolicy<C>> Interceptor<C> for RateLimit<P> {
+        fn contribution(&self) -> OperationContribution {
+            Self::contribution(self)
+        }
+
+        async fn intercept(
+            &self,
+            request: http::Request,
+            context: &C,
+            next: Next<'_, C>,
+        ) -> http::Response {
+            let _ = (
+                &self.policy,
+                self.requests,
+                self.window,
+                request,
+                context,
+                next,
+            );
             todo!()
         }
     }
@@ -358,6 +547,11 @@ pub mod catch_panic {
 /// [`Cors::document_response_headers`](cors::Cors::document_response_headers) when the CORS response headers are part
 /// of what you want clients to know about.
 pub mod cors {
+    use crate::{
+        http,
+        middleware::{Interceptor, Next, OperationContribution},
+    };
+
     /// CORS configuration.
     #[derive(Clone, Debug, Default)]
     pub struct Cors {
@@ -390,6 +584,22 @@ pub mod cors {
             todo!()
         }
     }
+
+    impl<C: Sync + 'static> Interceptor<C> for Cors {
+        fn contribution(&self) -> OperationContribution {
+            todo!()
+        }
+
+        async fn intercept(
+            &self,
+            request: http::Request,
+            context: &C,
+            next: Next<'_, C>,
+        ) -> http::Response {
+            let _ = (request, context, next);
+            todo!()
+        }
+    }
 }
 
 /// Response compression.
@@ -397,6 +607,11 @@ pub mod cors {
 /// Out-of-document: content coding is transport, and OpenAPI does not model it.
 #[cfg(feature = "compression")]
 pub mod compression {
+    use crate::{
+        http,
+        middleware::{Interceptor, Next, OperationContribution},
+    };
+
     /// Compresses responses when the client accepts it.
     #[derive(Clone, Copy, Debug, Default)]
     pub struct Compression {
@@ -414,6 +629,22 @@ pub mod compression {
         #[must_use]
         pub fn min_size(self, bytes: u64) -> Self {
             let _ = bytes;
+            todo!()
+        }
+    }
+
+    impl<C: Sync + 'static> Interceptor<C> for Compression {
+        fn contribution(&self) -> OperationContribution {
+            OperationContribution::none()
+        }
+
+        async fn intercept(
+            &self,
+            request: http::Request,
+            context: &C,
+            next: Next<'_, C>,
+        ) -> http::Response {
+            let _ = (request, context, next);
             todo!()
         }
     }
