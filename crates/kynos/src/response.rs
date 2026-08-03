@@ -18,13 +18,27 @@
 //! ad hoc, so `Response.headers` in the description is complete by
 //! construction.
 
-use crate::{http::Response, schema::Registry};
+use crate::{
+    extract::{Binary, HeaderParams, MediaType, Text},
+    http::Response,
+    schema::Registry,
+};
+
+#[cfg(feature = "form")]
+use crate::extract::Form;
+#[cfg(feature = "multipart")]
+use crate::extract::MultipartForm;
 
 /// A value that can be written as an HTTP response.
 ///
 /// Implemented for the response types in this module and for anything deriving
 /// `Reply`. There is deliberately no implementation for `String`, `&str`,
 /// `StatusCode`, or tuples of them.
+///
+/// ```compile_fail
+/// fn response<T: kynos::response::IntoResponse>(value: T) { drop(value); }
+/// response(String::from("the content type would be unknown"));
+/// ```
 pub trait IntoResponse {
     /// Writes this value as a response.
     fn into_response(self) -> Response;
@@ -83,11 +97,23 @@ pub struct Accepted<T> {
     pub body: T,
 }
 
+impl<T> Accepted<T> {
+    /// Creates a 202 response carrying the accepted work representation.
+    pub fn new(body: T) -> Self {
+        Self { body }
+    }
+}
+
 /// A redirect with a status fixed at compile time.
 ///
 /// `CODE` must be one of 301, 302, 303, 307 or 308; anything else fails to
 /// compile. That rules out the most common redirect bug, which is using 302
 /// where 307 was meant and silently changing the method on replay.
+///
+/// ```compile_fail
+/// fn response<T: kynos::response::IntoResponse>(value: T) { drop(value); }
+/// response(kynos::response::Redirect::<304>::to("/cached"));
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Redirect<const CODE: u16> {
     /// The target of the redirect.
@@ -103,6 +129,19 @@ impl<const CODE: u16> Redirect<CODE> {
     }
 }
 
+/// A compile-time proof that a redirect status is supported.
+///
+/// Implemented by Kynos for `()` and the five redirect statuses accepted by
+/// [`Redirect`]. Downstream crates cannot add implementations because both the
+/// trait and `()` are foreign there.
+pub trait ValidRedirectCode<const CODE: u16> {}
+
+impl ValidRedirectCode<301> for () {}
+impl ValidRedirectCode<302> for () {}
+impl ValidRedirectCode<303> for () {}
+impl ValidRedirectCode<307> for () {}
+impl ValidRedirectCode<308> for () {}
+
 /// A response carrying declared headers alongside its body.
 ///
 /// `H` derives `Headers`, so each header appears in `Response.headers` with its
@@ -113,6 +152,13 @@ pub struct WithHeaders<T, H> {
     pub body: T,
     /// The declared headers.
     pub headers: H,
+}
+
+impl<T, H> WithHeaders<T, H> {
+    /// Attaches a derived header group to a response body.
+    pub fn new(body: T, headers: H) -> Self {
+        Self { body, headers }
+    }
 }
 
 /// A response whose representation is chosen by the client's `Accept` header.
@@ -208,6 +254,19 @@ impl Responses for NoContent {
     }
 }
 
+impl IntoResponse for () {
+    fn into_response(self) -> Response {
+        todo!()
+    }
+}
+
+impl Responses for () {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        todo!()
+    }
+}
+
 #[cfg(feature = "json")]
 impl<T: serde::Serialize> IntoResponse for Json<T> {
     fn into_response(self) -> Response {
@@ -286,6 +345,115 @@ impl<T: IntoResponse> IntoResponse for Created<T> {
 }
 
 impl<T: Responses> Responses for Created<T> {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        todo!()
+    }
+}
+
+impl<T: IntoResponse> IntoResponse for Accepted<T> {
+    fn into_response(self) -> Response {
+        todo!()
+    }
+}
+
+impl<T: Responses> Responses for Accepted<T> {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        todo!()
+    }
+}
+
+impl<const CODE: u16> IntoResponse for Redirect<CODE>
+where
+    (): ValidRedirectCode<CODE>,
+{
+    fn into_response(self) -> Response {
+        todo!()
+    }
+}
+
+impl<const CODE: u16> Responses for Redirect<CODE>
+where
+    (): ValidRedirectCode<CODE>,
+{
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        todo!()
+    }
+}
+
+impl<T, H> IntoResponse for WithHeaders<T, H>
+where
+    T: IntoResponse,
+    H: HeaderParams,
+{
+    fn into_response(self) -> Response {
+        todo!()
+    }
+}
+
+impl<T, H> Responses for WithHeaders<T, H>
+where
+    T: Responses,
+    H: HeaderParams,
+{
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        todo!()
+    }
+}
+
+impl IntoResponse for Text {
+    fn into_response(self) -> Response {
+        todo!()
+    }
+}
+
+impl Responses for Text {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        todo!()
+    }
+}
+
+impl<M: MediaType> IntoResponse for Binary<M> {
+    fn into_response(self) -> Response {
+        todo!()
+    }
+}
+
+impl<M: MediaType> Responses for Binary<M> {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        todo!()
+    }
+}
+
+#[cfg(feature = "form")]
+impl<T: serde::Serialize> IntoResponse for Form<T> {
+    fn into_response(self) -> Response {
+        todo!()
+    }
+}
+
+#[cfg(feature = "form")]
+impl<T: crate::schema::Schema> Responses for Form<T> {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        todo!()
+    }
+}
+
+#[cfg(feature = "multipart")]
+impl<T: crate::schema::Schema> IntoResponse for MultipartForm<T> {
+    fn into_response(self) -> Response {
+        todo!()
+    }
+}
+
+#[cfg(feature = "multipart")]
+impl<T: crate::schema::Schema> Responses for MultipartForm<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let _ = registry;
         todo!()
