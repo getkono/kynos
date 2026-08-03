@@ -34,7 +34,7 @@ use crate::{
     error::Rejection,
     http::{Parts, Request},
     router::OperationCx,
-    schema::Schema,
+    schema::{Registry, Schema},
 };
 
 /// A handler input built from the request head.
@@ -255,21 +255,84 @@ pub mod media {
 pub trait PathParams: Sized {
     /// The parameter names, in declaration order.
     const NAMES: &'static [&'static str];
+
+    /// Decodes the named captures from a matched route.
+    fn decode(values: &[(&str, &str)]) -> Result<Self, Rejection> {
+        let _ = values;
+        todo!()
+    }
+
+    /// Encodes this value for a typed endpoint URI.
+    fn encode(&self) -> Vec<(&'static str, String)> {
+        todo!()
+    }
+
+    /// Describes each captured value as an OpenAPI path parameter.
+    fn parameters(registry: &mut Registry) -> Vec<kynos_openapi::Parameter> {
+        let _ = registry;
+        todo!()
+    }
 }
 
 /// A group of query parameters.
-pub trait QueryParams: Sized + Schema {}
+pub trait QueryParams: Sized + Schema {
+    /// Decodes a raw query string.
+    fn decode(query: Option<&str>) -> Result<Self, Rejection> {
+        let _ = query;
+        todo!()
+    }
+
+    /// Encodes this value as a query string without the leading `?`.
+    fn encode(&self) -> String {
+        todo!()
+    }
+
+    /// Describes the individual OpenAPI query parameters.
+    fn parameters(registry: &mut Registry) -> Vec<kynos_openapi::Parameter> {
+        let _ = registry;
+        todo!()
+    }
+}
 
 /// A group of request headers.
 pub trait HeaderParams: Sized {
     /// The header names this group declares.
     const NAMES: &'static [&'static str];
+
+    /// Decodes this group from request headers.
+    fn decode(headers: &crate::http::HeaderMap) -> Result<Self, Rejection> {
+        let _ = headers;
+        todo!()
+    }
+
+    /// Encodes this group as response header values.
+    fn encode(&self) -> Vec<(crate::http::HeaderName, crate::http::HeaderValue)> {
+        todo!()
+    }
+
+    /// Describes the declared OpenAPI header parameters.
+    fn parameters(registry: &mut Registry) -> Vec<kynos_openapi::Parameter> {
+        let _ = registry;
+        todo!()
+    }
 }
 
 /// A group of request cookies.
 pub trait CookieParams: Sized {
     /// The cookie names this group declares.
     const NAMES: &'static [&'static str];
+
+    /// Decodes this group from the request's cookie header fields.
+    fn decode(headers: &crate::http::HeaderMap) -> Result<Self, Rejection> {
+        let _ = headers;
+        todo!()
+    }
+
+    /// Describes the declared OpenAPI cookie parameters.
+    fn parameters(registry: &mut Registry) -> Vec<kynos_openapi::Parameter> {
+        let _ = registry;
+        todo!()
+    }
 }
 
 impl<C: Sync, T: PathParams + Send> FromRequestParts<C> for Path<T> {
@@ -304,6 +367,58 @@ impl<T: QueryParams> Describe for Query<T> {
     }
 }
 
+#[cfg(feature = "openapi32")]
+impl<C: Sync, T: Send, M: MediaType + Send> FromRequestParts<C> for QueryString<T, M> {
+    type Rejection = Rejection;
+
+    async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
+        let _ = (parts, context);
+        todo!()
+    }
+}
+
+#[cfg(feature = "openapi32")]
+impl<T: Schema, M: MediaType> Describe for QueryString<T, M> {
+    fn describe(operation: &mut OperationCx<'_>) {
+        let _ = operation;
+        todo!()
+    }
+}
+
+impl<C: Sync, T: HeaderParams + Send> FromRequestParts<C> for Headers<T> {
+    type Rejection = Rejection;
+
+    async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
+        let _ = (parts, context);
+        todo!()
+    }
+}
+
+impl<T: HeaderParams> Describe for Headers<T> {
+    fn describe(operation: &mut OperationCx<'_>) {
+        let _ = operation;
+        todo!()
+    }
+}
+
+#[cfg(feature = "cookie")]
+impl<C: Sync, T: CookieParams + Send> FromRequestParts<C> for Cookies<T> {
+    type Rejection = Rejection;
+
+    async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
+        let _ = (parts, context);
+        todo!()
+    }
+}
+
+#[cfg(feature = "cookie")]
+impl<T: CookieParams> Describe for Cookies<T> {
+    fn describe(operation: &mut OperationCx<'_>) {
+        let _ = operation;
+        todo!()
+    }
+}
+
 #[cfg(feature = "json")]
 impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Json<T> {
     type Rejection = Rejection;
@@ -319,5 +434,103 @@ impl<T: Schema> Describe for Json<T> {
     fn describe(operation: &mut OperationCx<'_>) {
         let _ = operation;
         todo!()
+    }
+}
+
+#[cfg(feature = "form")]
+impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Form<T> {
+    type Rejection = Rejection;
+
+    async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
+        let _ = (request, context);
+        todo!()
+    }
+}
+
+#[cfg(feature = "form")]
+impl<T: Schema> Describe for Form<T> {
+    fn describe(operation: &mut OperationCx<'_>) {
+        let _ = operation;
+        todo!()
+    }
+}
+
+#[cfg(feature = "multipart")]
+impl<C: Sync, T: Send> FromRequest<C> for MultipartForm<T> {
+    type Rejection = Rejection;
+
+    async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
+        let _ = (request, context);
+        todo!()
+    }
+}
+
+#[cfg(feature = "multipart")]
+impl<T: Schema> Describe for MultipartForm<T> {
+    fn describe(operation: &mut OperationCx<'_>) {
+        let _ = operation;
+        todo!()
+    }
+}
+
+impl<C: Sync, M: MediaType + Send> FromRequest<C> for Binary<M> {
+    type Rejection = Rejection;
+
+    async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
+        let _ = (request, context);
+        todo!()
+    }
+}
+
+impl<M: MediaType> Describe for Binary<M> {
+    fn describe(operation: &mut OperationCx<'_>) {
+        let _ = operation;
+        todo!()
+    }
+}
+
+impl<C: Sync> FromRequest<C> for Text {
+    type Rejection = Rejection;
+
+    async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
+        let _ = (request, context);
+        todo!()
+    }
+}
+
+impl Describe for Text {
+    fn describe(operation: &mut OperationCx<'_>) {
+        let _ = operation;
+        todo!()
+    }
+}
+
+impl<C: Sync> FromRequestParts<C> for MatchedPath {
+    type Rejection = Rejection;
+
+    async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
+        let _ = (parts, context);
+        todo!()
+    }
+}
+
+impl Describe for MatchedPath {
+    fn describe(operation: &mut OperationCx<'_>) {
+        let _ = operation;
+    }
+}
+
+impl<C: Sync> FromRequestParts<C> for ConnectInfo {
+    type Rejection = Rejection;
+
+    async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
+        let _ = (parts, context);
+        todo!()
+    }
+}
+
+impl Describe for ConnectInfo {
+    fn describe(operation: &mut OperationCx<'_>) {
+        let _ = operation;
     }
 }
