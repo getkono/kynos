@@ -8,13 +8,14 @@ Kynos is an idiomatic, performance-focused Rust framework for building REST APIs
 - Idiomatic and strict Rust API: API is pre-v1. All changes are on the table. API must be idiomatic Rust, and structurally strict to leverage compiler hints.
 - Production-ready: Our contract guarantees made it easy to make it production-grade since day-one. Not future optimizations should not break API (hence we are not v0.y.z).
 - Be opinionated where it counts: We scope features that are strictly required for performance and where there should only be one recommended approach. For example, IO-related primitives is vertically integrated and coupled with core dependencies like `tokio` and dependency injection is fully-featured. However, we would not prescribe dependencies such as ORMs and logging backends.
-- Document all public API surface.
+- Document all public API surface idiomatically and just tersely for internal logic.
 
 ## Development Guidelines
 
 - Pushing code: Atomic, semantic commits are strictly required. All PRs are *usually* merged rather than being squashed/rebased.
-- New features: Code implementation must be code-complete. Feature flag(s) must be modified when justified. When feasible, new features must be additive.
+- New features: Code implementation must be code-complete. Feature flag(s) must be modified when justified. When feasible, new features must be additive. Requirements are often missing context about the repository so all features must identify and finalize all technical ambiguity. Assert all decisions and standards-compliant behavior via the most appropriate testing method (e.g. property tests). When appropriate, each new group of feature should be demonstrated in some minimal example(s) in the appropriate crate's examples directory.
 - Bug fixes: Correctness is strict. The offending code must be testable so refactor adjacent code to expose the internals for unit testing if required. Push strictly in order: red tests targetting failure case and asserting the correct invariants; implementation that addresses the red case with evidence the tests turned green.
+- Framework documentation is intentionally curated and minimal. The API should be mostly self-documenting so documentation serve to fill in the gaps such as design decisions and highlighting the important concepts and design patterns for beginners.
 
 ## Workspace
 
