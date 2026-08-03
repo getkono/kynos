@@ -19,8 +19,10 @@
 //! construction.
 
 use crate::{
-    extract::{Binary, HeaderParams, MediaType, Text},
-    http::Response,
+    error::Rejection,
+    extract::{Binary, Describe, FromRequestParts, HeaderParams, MediaType, Text},
+    http::{Parts, Response},
+    router::OperationCx,
     schema::Registry,
 };
 
@@ -161,14 +163,193 @@ impl<T, H> WithHeaders<T, H> {
     }
 }
 
-/// A response whose representation is chosen by the client's `Accept` header.
+/// The client's accepted response representations.
+///
+/// This extractor contributes no `Accept` parameter because OpenAPI ignores
+/// such parameters. It contributes the 406 rejection and the representation
+/// tuple contributes the operation's response `content` map.
+///
+/// ```no_run
+/// use kynos::{
+///     error::Rejection,
+///     extract::{Binary, Text, media::Pdf},
+///     response::{Accept, Negotiated},
+/// };
+///
+/// async fn report(
+///     accept: Accept<(Text, Binary<Pdf>)>,
+/// ) -> Result<Negotiated<(Text, Binary<Pdf>)>, Rejection> {
+///     accept.respond((
+///         Text("plain report".to_owned()),
+///         Binary::new(Vec::<u8>::new()),
+///     ))
+/// }
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Accept<T> {
+    preferences: Vec<Preference>,
+    representations: std::marker::PhantomData<fn() -> T>,
+}
+
+impl<T> Accept<T> {
+    /// Parses an `Accept` field value for tests and non-server integrations.
+    ///
+    /// An absent field is represented by `"*/*"`. Invalid quality values are
+    /// rejected as malformed headers.
+    pub fn parse(value: &str) -> Result<Self, Rejection> {
+        let mut preferences = Vec::new();
+        for (order, item) in value.split(',').enumerate() {
+            let mut segments = item.trim().split(';');
+            let range = segments.next().unwrap_or_default().trim();
+            let Some((type_, subtype)) = range.split_once('/') else {
+                return Err(invalid_accept());
+            };
+            if type_.is_empty() || subtype.is_empty() || (type_ == "*" && subtype != "*") {
+                return Err(invalid_accept());
+            }
+
+            let mut quality = 1_000;
+            for parameter in segments {
+                let Some((name, value)) = parameter.trim().split_once('=') else {
+                    return Err(invalid_accept());
+                };
+                if name.trim().eq_ignore_ascii_case("q") {
+                    quality = parse_quality(value.trim()).ok_or_else(invalid_accept)?;
+                }
+            }
+            preferences.push(Preference {
+                type_: type_.to_ascii_lowercase(),
+                subtype: subtype.to_ascii_lowercase(),
+                quality,
+                order,
+            });
+        }
+        if preferences.is_empty() {
+            return Err(invalid_accept());
+        }
+        Ok(Self {
+            preferences,
+            representations: std::marker::PhantomData,
+        })
+    }
+
+    /// Chooses one offered representation or returns a documented 406.
+    pub fn respond(self, representations: T) -> Result<Negotiated<T>, Rejection>
+    where
+        T: private::Representations,
+    {
+        let selected = T::media_types()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, media_type)| self.score(media_type).map(|score| (score, index)))
+            .max_by(|(left_score, left_index), (right_score, right_index)| {
+                left_score
+                    .cmp(right_score)
+                    .then_with(|| right_index.cmp(left_index))
+            })
+            .map(|(_, index)| index)
+            .ok_or(Rejection::NotAcceptable)?;
+
+        Ok(Negotiated {
+            representations,
+            selected,
+        })
+    }
+
+    fn score(&self, media_type: &str) -> Option<(u16, u8, std::cmp::Reverse<usize>)> {
+        let (type_, subtype) = media_type.split_once('/')?;
+        self.preferences
+            .iter()
+            .filter_map(|preference| {
+                let specificity = if preference.type_ == "*" && preference.subtype == "*" {
+                    0
+                } else if preference.type_.eq_ignore_ascii_case(type_) && preference.subtype == "*"
+                {
+                    1
+                } else if preference.type_.eq_ignore_ascii_case(type_)
+                    && preference.subtype.eq_ignore_ascii_case(subtype)
+                {
+                    2
+                } else {
+                    return None;
+                };
+                Some((
+                    specificity,
+                    std::cmp::Reverse(preference.order),
+                    preference.quality,
+                ))
+            })
+            .max_by_key(|(specificity, order, _)| (*specificity, *order))
+            .and_then(|(specificity, order, quality)| {
+                (quality != 0).then_some((quality, specificity, order))
+            })
+    }
+}
+
+fn parse_quality(value: &str) -> Option<u16> {
+    if value == "0" || value == "0.0" || value == "0.00" || value == "0.000" {
+        return Some(0);
+    }
+    if value == "1" || value == "1.0" || value == "1.00" || value == "1.000" {
+        return Some(1_000);
+    }
+    let digits = value.strip_prefix("0.")?;
+    if digits.is_empty() || digits.len() > 3 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    digits
+        .parse::<u16>()
+        .ok()
+        .map(|quality| match digits.len() {
+            1 => quality * 100,
+            2 => quality * 10,
+            _ => quality,
+        })
+}
+
+fn invalid_accept() -> Rejection {
+    Rejection::Header {
+        name: "Accept".to_owned(),
+        detail: "expected comma-separated media ranges with q values from 0 to 1".to_owned(),
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Preference {
+    type_: String,
+    subtype: String,
+    quality: u16,
+    order: usize,
+}
+
+impl<C: Sync, T: Send> FromRequestParts<C> for Accept<T> {
+    type Rejection = Rejection;
+
+    async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
+        let _ = (parts, context);
+        todo!()
+    }
+}
+
+impl<T> Describe for Accept<T> {
+    fn describe(operation: &mut OperationCx<'_>) {
+        let responses = Rejection::responses(operation.registry());
+        operation.add_responses(responses);
+    }
+}
+
+/// A response whose representation was chosen from the client's `Accept`
+/// header.
 ///
 /// `T` is a tuple of response types, each contributing one entry to the
 /// operation's `content` map. Note that `Accept` itself is never declared as a
 /// parameter — the specification says such a declaration is ignored, and the
 /// `content` map is what actually describes the negotiation.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Negotiated<T>(pub T);
+pub struct Negotiated<T> {
+    representations: T,
+    selected: usize,
+}
 
 /// A Server-Sent Events response.
 ///
@@ -545,5 +726,154 @@ where
             Ok(value) => value.into_response(),
             Err(error) => error.into_response(),
         }
+    }
+}
+
+mod private {
+    use super::{IntoResponse, MediaType, Registry, Response, Responses};
+    use crate::extract::{Binary, Text};
+
+    #[cfg(feature = "form")]
+    use crate::extract::Form;
+    #[cfg(feature = "multipart")]
+    use crate::extract::MultipartForm;
+
+    pub trait Representation: IntoResponse + Responses {
+        fn media_type() -> &'static str;
+    }
+
+    #[cfg(feature = "json")]
+    impl<T> Representation for crate::extract::Json<T>
+    where
+        T: serde::Serialize + crate::schema::Schema,
+    {
+        fn media_type() -> &'static str {
+            "application/json"
+        }
+    }
+
+    impl Representation for Text {
+        fn media_type() -> &'static str {
+            "text/plain"
+        }
+    }
+
+    impl<M: MediaType> Representation for Binary<M> {
+        fn media_type() -> &'static str {
+            M::MEDIA_TYPE
+        }
+    }
+
+    #[cfg(feature = "form")]
+    impl<T> Representation for Form<T>
+    where
+        T: serde::Serialize + crate::schema::Schema,
+    {
+        fn media_type() -> &'static str {
+            "application/x-www-form-urlencoded"
+        }
+    }
+
+    #[cfg(feature = "multipart")]
+    impl<T: crate::schema::Schema> Representation for MultipartForm<T> {
+        fn media_type() -> &'static str {
+            "multipart/form-data"
+        }
+    }
+
+    pub trait Representations {
+        fn media_types() -> Vec<&'static str>;
+        fn into_response_at(self, index: usize) -> Response;
+        fn responses(registry: &mut Registry) -> kynos_openapi::Responses;
+    }
+
+    macro_rules! tuple_representations {
+        ($($type:ident : $value:ident = $index:literal),+ $(,)?) => {
+            impl<$($type: Representation),+> Representations for ($($type,)+) {
+                fn media_types() -> Vec<&'static str> {
+                    vec![$($type::media_type()),+]
+                }
+
+                fn into_response_at(self, index: usize) -> Response {
+                    let ($($value,)+) = self;
+                    match index {
+                        $($index => $value.into_response(),)+
+                        _ => unreachable!("negotiated representation index was validated"),
+                    }
+                }
+
+                fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+                    let _ = registry;
+                    todo!()
+                }
+            }
+        };
+    }
+
+    tuple_representations!(A: a = 0, B: b = 1);
+    tuple_representations!(A: a = 0, B: b = 1, C: c = 2);
+    tuple_representations!(A: a = 0, B: b = 1, C: c = 2, D: d = 3);
+    tuple_representations!(A: a = 0, B: b = 1, C: c = 2, D: d = 3, E: e = 4);
+    tuple_representations!(A: a = 0, B: b = 1, C: c = 2, D: d = 3, E: e = 4, F: f = 5);
+}
+
+impl<T: private::Representations> IntoResponse for Negotiated<T> {
+    fn into_response(self) -> Response {
+        self.representations.into_response_at(self.selected)
+    }
+}
+
+impl<T: private::Representations> Responses for Negotiated<T> {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        T::responses(registry)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Accept;
+    use crate::extract::{Binary, Text, media::Pdf};
+
+    #[test]
+    fn accept_prefers_quality_then_specificity() {
+        let accepted = Accept::<(Text, Binary<Pdf>)>::parse("text/*;q=0.5, application/pdf;q=0.9")
+            .expect("valid Accept header")
+            .respond((Text(String::new()), Binary::default()))
+            .expect("a representation matches");
+
+        assert_eq!(accepted.selected, 1);
+    }
+
+    #[test]
+    fn accept_uses_the_most_specific_range_to_set_quality() {
+        let accepted = Accept::<(Text, Binary<Pdf>)>::parse(
+            "text/plain;q=0.1, text/*;q=0.9, application/pdf;q=0.5",
+        )
+        .expect("valid Accept header")
+        .respond((Text(String::new()), Binary::default()))
+        .expect("a representation matches");
+
+        assert_eq!(accepted.selected, 1);
+    }
+
+    #[test]
+    fn accept_uses_first_offered_representation_to_break_ties() {
+        let accepted = Accept::<(Text, Binary<Pdf>)>::parse("*/*")
+            .expect("valid Accept header")
+            .respond((Text(String::new()), Binary::default()))
+            .expect("a representation matches");
+
+        assert_eq!(accepted.selected, 0);
+    }
+
+    #[test]
+    fn accept_rejects_zero_quality_and_malformed_values() {
+        assert!(
+            Accept::<(Text, Binary<Pdf>)>::parse("text/plain;q=0")
+                .expect("valid Accept header")
+                .respond((Text(String::new()), Binary::default()))
+                .is_err()
+        );
+        assert!(Accept::<(Text, Binary<Pdf>)>::parse("text/plain;q=1.1").is_err());
     }
 }
