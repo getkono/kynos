@@ -4,8 +4,8 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
-    Expr, ExprLit, Ident, ItemFn, Lit, LitStr, Meta, Token, parse::Parser, parse_macro_input,
-    punctuated::Punctuated, spanned::Spanned,
+    Expr, ExprLit, GenericArgument, Ident, ItemFn, Lit, LitStr, Meta, PathArguments, Token, Type,
+    parse::Parser, parse_macro_input, punctuated::Punctuated, spanned::Spanned,
 };
 
 /// The methods that have a dedicated Path Item field in OpenAPI 3.1.
@@ -264,6 +264,10 @@ fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenStream2 {
 
     let summary = option_str(summary.as_deref());
     let description = option_str(description.as_deref());
+    let uri_impl = match endpoint_uri_impl(function, &raw_path, &variables) {
+        Ok(uri_impl) => uri_impl,
+        Err(error) => return error.to_compile_error(),
+    };
     let variables = variables.iter().map(String::as_str);
 
     // A braced struct occupies only the type namespace, so it can share a name
@@ -312,9 +316,121 @@ fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenStream2 {
             const DEPRECATED: bool = #deprecated;
         }
 
+        #uri_impl
+
         #tag_note
         #panic_strategy_check
     }
+}
+
+fn endpoint_uri_impl(
+    function: &ItemFn,
+    path: &str,
+    variables: &[String],
+) -> syn::Result<TokenStream2> {
+    let endpoint = &function.sig.ident;
+    let path_type = extractor_type(function, "Path")?;
+    let query_type = extractor_type(function, "Query")?;
+
+    if variables.is_empty() && path_type.is_some() {
+        return Err(syn::Error::new(
+            function.sig.span(),
+            "the handler extracts Path<T>, but its route has no path variables",
+        ));
+    }
+    if !variables.is_empty() && path_type.is_none() {
+        return Err(syn::Error::new(
+            function.sig.span(),
+            "the route has path variables, but the handler has no Path<T> extractor",
+        ));
+    }
+
+    let path_names = variables.iter().map(String::as_str);
+    let path_assertion = path_type.as_ref().map(|path_type| {
+        quote! {
+            const _: () = assert!(::kynos::router::path_parameter_names_match(
+                <#path_type as ::kynos::extract::PathParams>::NAMES,
+                &[#(#path_names),*],
+            ), "PathParams names must exactly match route variables in declaration order");
+        }
+    });
+
+    let uri = match (path_type, query_type) {
+        (None, None) => quote! {
+            impl #endpoint {
+                /// Builds this endpoint's URI.
+                pub fn uri() -> ::kynos::http::Uri {
+                    ::kynos::router::endpoint_uri(#path)
+                }
+            }
+        },
+        (Some(path_type), None) => quote! {
+            impl #endpoint {
+                /// Builds this endpoint's URI from its exact path parameters.
+                pub fn uri(path: #path_type) -> ::kynos::http::Uri {
+                    ::kynos::router::endpoint_uri_with_path(#path, &path)
+                }
+            }
+        },
+        (None, Some(query_type)) => quote! {
+            impl #endpoint {
+                /// Builds this endpoint's URI from its exact query parameters.
+                pub fn uri(query: #query_type) -> ::kynos::http::Uri {
+                    ::kynos::router::endpoint_uri_with_query(#path, &query)
+                }
+            }
+        },
+        (Some(path_type), Some(query_type)) => quote! {
+            impl #endpoint {
+                /// Builds this endpoint's URI from its exact path and query parameters.
+                pub fn uri(path: #path_type, query: #query_type) -> ::kynos::http::Uri {
+                    ::kynos::router::endpoint_uri_with_path_and_query(#path, &path, &query)
+                }
+            }
+        },
+    };
+
+    Ok(quote! {
+        #path_assertion
+        #uri
+    })
+}
+
+fn extractor_type(function: &ItemFn, extractor: &str) -> syn::Result<Option<Type>> {
+    let mut found = None;
+    for input in &function.sig.inputs {
+        let syn::FnArg::Typed(argument) = input else {
+            continue;
+        };
+        let Type::Path(type_path) = argument.ty.as_ref() else {
+            continue;
+        };
+        let Some(segment) = type_path.path.segments.last() else {
+            continue;
+        };
+        if segment.ident != extractor {
+            continue;
+        }
+        let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+            return Err(syn::Error::new(
+                segment.span(),
+                format!("{extractor} needs one type argument"),
+            ));
+        };
+        let Some(GenericArgument::Type(inner)) = arguments.args.first() else {
+            return Err(syn::Error::new(
+                arguments.span(),
+                format!("{extractor} needs one type argument"),
+            ));
+        };
+        if found.replace(inner.clone()).is_some() {
+            return Err(syn::Error::new(
+                argument.span(),
+                format!("a handler may extract {extractor}<T> only once"),
+            ));
+        }
+    }
+    Ok(found)
 }
 
 fn option_str(value: Option<&str>) -> TokenStream2 {
@@ -368,9 +484,9 @@ pub(crate) fn expand_path(input: TokenStream) -> TokenStream {
 
 #[cfg(test)]
 mod tests {
-    use quote::quote;
+    use quote::{ToTokens, quote};
 
-    use super::{RouteArgs, split_doc};
+    use super::{RouteArgs, endpoint_uri_impl, split_doc};
 
     fn lines(input: &[&str]) -> Vec<String> {
         input.iter().map(|line| (*line).to_owned()).collect()
@@ -418,6 +534,30 @@ mod tests {
         let (summary, description) = split_doc(&[]);
         assert_eq!(summary, None);
         assert_eq!(description, None);
+    }
+
+    #[test]
+    fn endpoint_uri_uses_the_exact_extracted_parameter_types() {
+        let function: syn::ItemFn = syn::parse_quote! {
+            async fn report(Path(path): Path<ReportPath>, Query(query): Query<ReportQuery>) {}
+        };
+        let expansion = endpoint_uri_impl(&function, "/reports/{name}", &["name".to_owned()])
+            .expect("valid endpoint")
+            .into_token_stream()
+            .to_string();
+
+        assert!(expansion.contains("pub fn uri (path : ReportPath , query : ReportQuery)"));
+    }
+
+    #[test]
+    fn endpoint_uri_rejects_a_template_without_a_path_extractor() {
+        let function: syn::ItemFn = syn::parse_quote! {
+            async fn report() {}
+        };
+        let error = endpoint_uri_impl(&function, "/reports/{name}", &["name".to_owned()])
+            .expect_err("missing Path<T> must fail");
+
+        assert!(error.to_string().contains("no Path<T> extractor"));
     }
 
     #[test]
