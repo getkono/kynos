@@ -33,6 +33,23 @@ pub struct Server<C> {
     _private: std::marker::PhantomData<C>,
 }
 
+mod private {
+    pub trait SealedListener {}
+
+    impl SealedListener for std::net::TcpListener {}
+    impl SealedListener for tokio::net::TcpListener {}
+}
+
+/// A supported pre-bound TCP listener.
+///
+/// Sealed to the standard-library and Tokio TCP listener types so the server
+/// can preserve its HTTP/1 and HTTP/2 transport guarantees. Custom transports
+/// are outside the current server contract.
+pub trait Listener: private::SealedListener + Send + 'static {}
+
+impl Listener for std::net::TcpListener {}
+impl Listener for tokio::net::TcpListener {}
+
 impl<C> Server<C> {
     /// Prepares to serve `service`.
     #[must_use]
@@ -47,9 +64,9 @@ impl<C> Server<C> {
     /// `(IpAddr, u16)`. May be called more than once to listen on several
     /// addresses.
     ///
-    /// Resolution and binding happen in [`serve`](Server::serve), so a bad
-    /// address surfaces there rather than here; a builder method that returned
-    /// a `Result` would put a `?` in the middle of every chain.
+    /// Resolution and binding happen in [`prepare`](Server::prepare), or in
+    /// [`serve`](Server::serve) through its convenience call to `prepare`, so a
+    /// bad address surfaces there rather than in the builder chain.
     #[must_use]
     pub fn bind(self, address: impl std::net::ToSocketAddrs) -> Self {
         let _ = address;
@@ -58,9 +75,10 @@ impl<C> Server<C> {
 
     /// Listens on an already-bound listener.
     ///
-    /// For socket activation, or for a port the operating system chose.
+    /// Accepts either [`std::net::TcpListener`] or [`tokio::net::TcpListener`],
+    /// for socket activation or a port the operating system chose.
     #[must_use]
-    pub fn listener(self, listener: std::net::TcpListener) -> Self {
+    pub fn listener<L: Listener>(self, listener: L) -> Self {
         let _ = listener;
         todo!()
     }
@@ -106,24 +124,56 @@ impl<C> Server<C> {
         todo!()
     }
 
-    /// Serves until shutdown.
+    /// Binds every configured address and returns the prepared server.
+    ///
+    /// This is the point at which operating-system-selected ports become
+    /// observable through [`BoundServer::local_addrs`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Io`](crate::Error::Io) when a listener cannot be bound.
+    pub async fn prepare(self) -> Result<BoundServer<C>> {
+        todo!()
+    }
+
+    /// Binds and serves until shutdown.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Io`](crate::Error::Io) when a listener cannot be bound.
     /// Once serving, a per-connection failure is logged rather than returned.
     pub async fn serve(self) -> Result<()> {
+        self.prepare().await?.serve().await
+    }
+}
+
+/// A server whose listeners have all been bound successfully.
+///
+/// ```no_run
+/// # use kynos::{router::Service, server::Server};
+/// # async fn run<C>(service: Service<C>) -> kynos::Result<()> {
+/// let bound = Server::new(service).bind("127.0.0.1:0").prepare().await?;
+/// println!("listening on {:?}", bound.local_addrs());
+/// bound.serve().await
+/// # }
+/// ```
+#[derive(Debug)]
+pub struct BoundServer<C> {
+    _private: std::marker::PhantomData<C>,
+}
+
+impl<C> BoundServer<C> {
+    /// The addresses actually bound, including operating-system-selected ports.
+    #[must_use]
+    pub fn local_addrs(&self) -> &[SocketAddr] {
         todo!()
     }
 
-    /// The addresses actually bound.
+    /// Serves on the prepared listeners until shutdown.
     ///
-    /// Useful when a port was chosen by the operating system.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::Io`](crate::Error::Io) if binding has not happened yet.
-    pub fn local_addrs(&self) -> Result<Vec<SocketAddr>> {
+    /// A per-connection failure is logged rather than terminating unrelated
+    /// listeners.
+    pub async fn serve(self) -> Result<()> {
         todo!()
     }
 }
