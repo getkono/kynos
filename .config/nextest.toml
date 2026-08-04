@@ -1,0 +1,11 @@
+[profile.default]
+# Tests are hermetic: a flake is an isolation bug, so never retry it away.
+retries = 0
+fail-fast = false
+# Async tests deadlock instead of failing; bound them so the culprit is named.
+slow-timeout = { period = "30s", terminate-after = 4 }
+leak-timeout = { period = "100ms", result = "fail" }
+
+# Inherits the default profile; only the log-shape differs.
+[profile.ci]
+failure-output = "immediate-final"
