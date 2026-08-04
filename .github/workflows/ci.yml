@@ -17,6 +17,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # Incremental artifacts only pay off across edits in one working tree. CI has
+  # no such tree, so they are dead weight in the cache and slow the build.
+  CARGO_INCREMENTAL: 0
+
 jobs:
   checks:
     name: Checks
@@ -26,12 +31,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-      - name: Install tools
-        uses: jdx/mise-action@v3
+      - name: Set up
+        uses: ./.github/actions/setup
         with:
-          version: 2026.7.18
-          install: true
-          cache: true
+          cargo-cache-key: checks
       - name: Run checks
         run: mise run check
 
@@ -41,12 +44,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-      - name: Install tools
-        uses: jdx/mise-action@v3
+      - name: Set up
+        uses: ./.github/actions/setup
         with:
-          version: 2026.7.18
-          install: true
-          cache: true
+          cargo-cache-key: features
       - name: Check every feature combination
         run: mise run features:check
 
@@ -56,12 +57,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-      - name: Install tools
-        uses: jdx/mise-action@v3
+      - name: Set up
+        uses: ./.github/actions/setup
         with:
-          version: 2026.7.18
-          install: true
-          cache: true
+          cargo-cache-key: msrv
       - name: Check the declared MSRV
         run: mise run msrv:check
 
@@ -73,12 +72,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-      - name: Install tools
-        uses: jdx/mise-action@v3
+      - name: Set up
+        uses: ./.github/actions/setup
         with:
-          version: 2026.7.18
-          install: true
-          cache: true
+          cargo-cache-key: coverage
       - name: Generate coverage report
         run: mise run coverage:ci
       - name: Add coverage summary
@@ -100,12 +97,9 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Install tools
-        uses: jdx/mise-action@v3
-        with:
-          version: 2026.7.18
-          install: true
-          cache: true
+      # No Cargo build here, so no Cargo cache to restore.
+      - name: Set up
+        uses: ./.github/actions/setup
       - name: Check commits
         env:
           CONVCO_RANGE: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
