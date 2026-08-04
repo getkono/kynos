@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/kynos", "crates/kynos-macros", "crates/kynos-openapi"]
+exclude = ["references"]
 resolver = "3"
 
 [workspace.package]
