@@ -5,6 +5,7 @@ Kynos is an idiomatic, performance-focused Rust framework for building REST APIs
 ## Code Guidelines
 
 - OpenAPI compliance: The official OpenAPI specs in Markdown is vendored in `references/`. Strictly distinguish features behind `openapi31` (default enabled and baseline) and `openapi32` feature flags.
+- RFC9110 compliance: See `references/rfc9110.txt` when HTTP semantic correctness is involved.
 - Idiomatic and strict Rust API: API is pre-v1. All changes are on the table. API must be idiomatic Rust, and structurally strict to leverage compiler hints.
 - Production-ready: Our contract guarantees made it easy to make it production-grade since day-one. Not future optimizations should not break API (hence we are not v0.y.z).
 - Be opinionated where it counts: We scope features that are strictly required for performance and where there should only be one recommended approach. For example, IO-related primitives is vertically integrated and coupled with core dependencies like `tokio` and dependency injection is fully-featured. However, we would not prescribe dependencies such as ORMs and logging backends.
