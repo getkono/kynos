@@ -39,7 +39,7 @@ use tokio::{
 use crate::{error::Result, router::Service};
 
 const DEFAULT_CONNECTION_LIMIT: usize = 10_000;
-const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(25);
 const ACCEPT_RETRY_INITIAL: Duration = Duration::from_millis(10);
 const ACCEPT_RETRY_MAX: Duration = Duration::from_secs(1);
 const MAX_CONSECUTIVE_ACCEPT_FAILURES: u32 = 5;
@@ -160,6 +160,15 @@ pub enum ServerError {
     /// An operating-system shutdown signal could not be registered.
     #[error("could not register a shutdown signal")]
     Signal(#[source] io::Error),
+    /// Graceful shutdown exceeded its drain deadline.
+    #[error("graceful shutdown timed out after {timeout:?}")]
+    ShutdownTimeout {
+        /// The configured drain deadline.
+        timeout: Duration,
+    },
+    /// A repeated operating-system signal forced shutdown.
+    #[error("graceful shutdown was forced by a repeated termination signal")]
+    ShutdownForced,
     /// Mutual TLS conflicts with the existing description.
     #[error("the OpenAPI component `MutualTls` conflicts with mandatory client authentication")]
     MutualTlsConflict,
@@ -270,14 +279,18 @@ impl<C: 'static> Server<C> {
         self
     }
 
-    /// Stops accepting when `shutdown` resolves, then drains in-flight work.
+    /// Stops accepting when `shutdown` resolves, then drains active requests.
     #[must_use]
     pub fn graceful_shutdown(mut self, shutdown: Shutdown) -> Self {
         self.shutdown = Some(shutdown);
         self
     }
 
-    /// Sets the drain deadline. The default is 30 seconds.
+    /// Sets the drain deadline. The default is 25 seconds, leaving a margin
+    /// under the common 30-second orchestrator termination window.
+    ///
+    /// [`Duration::ZERO`] forces immediate shutdown and reports
+    /// [`ServerError::ShutdownTimeout`].
     #[must_use]
     pub fn shutdown_timeout(mut self, timeout: Duration) -> Self {
         self.shutdown_timeout = timeout;
@@ -396,6 +409,13 @@ struct TransportConfig {
     max_connections: NonZeroUsize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Lifecycle {
+    Running,
+    Draining,
+    Forced,
+}
+
 impl<C: 'static> BoundServer<C> {
     /// The addresses actually bound, including operating-system-selected ports.
     #[must_use]
@@ -411,7 +431,7 @@ impl<C: 'static> BoundServer<C> {
 
     /// Serves on every listener until shutdown or a terminal accept failure.
     pub async fn serve(self) -> Result<()> {
-        let (stop_sender, stop_receiver) = watch::channel(false);
+        let (lifecycle_sender, lifecycle_receiver) = watch::channel(Lifecycle::Running);
         let permits = Arc::new(Semaphore::new(self.config.max_connections.get()));
         let mut accept_loops = JoinSet::new();
 
@@ -422,42 +442,92 @@ impl<C: 'static> BoundServer<C> {
                 Arc::clone(&self.service),
                 self.config.clone(),
                 Arc::clone(&permits),
-                stop_receiver.clone(),
+                lifecycle_receiver.clone(),
             ));
         }
 
         let shutdown = self.shutdown.map_or_else(
-            || Box::pin(pending()) as Pin<Box<dyn Future<Output = io::Result<()>> + Send>>,
+            || Box::pin(pending()) as ShutdownFuture,
             |shutdown| shutdown.future,
         );
         tokio::pin!(shutdown);
 
-        let outcome = tokio::select! {
-            signal = &mut shutdown => signal.map_err(ServerError::Signal),
+        let (root_error, force) = tokio::select! {
+            biased;
             completed = accept_loops.join_next() => match completed {
-                Some(Ok(result)) => result,
-                Some(Err(error)) => Err(ServerError::InvalidConfiguration(
+                Some(Ok(Ok(()))) | None => (None, Box::pin(pending()) as ForceFuture),
+                Some(Ok(Err(error))) => (Some(error), Box::pin(pending()) as ForceFuture),
+                Some(Err(error)) => (Some(ServerError::InvalidConfiguration(
                     if error.is_panic() { "an accept loop panicked" } else { "an accept loop was cancelled" }
-                )),
-                None => Ok(()),
+                )), Box::pin(pending()) as ForceFuture),
+            },
+            signal = &mut shutdown => match signal {
+                Ok(request) => (None, request.force),
+                Err(error) => (Some(ServerError::Signal(error)), Box::pin(pending()) as ForceFuture),
             },
         };
 
-        stop_sender.send_replace(true);
-        if self.config.shutdown_timeout.is_zero() {
-            accept_loops.abort_all();
+        lifecycle_sender.send_replace(Lifecycle::Draining);
+        let drain = if self.config.shutdown_timeout.is_zero() {
+            Drain::TimedOut
         } else {
-            let timed_out = tokio::time::timeout(self.config.shutdown_timeout, async {
-                while accept_loops.join_next().await.is_some() {}
-            })
-            .await
-            .is_err();
-            if timed_out {
-                accept_loops.abort_all();
+            let wait_for_accept_loops = async { while accept_loops.join_next().await.is_some() {} };
+            tokio::pin!(wait_for_accept_loops);
+            tokio::pin!(force);
+            tokio::select! {
+                biased;
+                () = &mut force, if root_error.is_none() => Drain::Forced,
+                () = &mut wait_for_accept_loops => Drain::Complete,
+                () = tokio::time::sleep(self.config.shutdown_timeout) => Drain::TimedOut,
             }
+        };
+
+        if drain != Drain::Complete {
+            lifecycle_sender.send_replace(Lifecycle::Forced);
+            accept_loops.shutdown().await;
         }
 
-        outcome.map_err(Into::into)
+        if let Some(error) = root_error {
+            return Err(error.into());
+        }
+        match drain {
+            Drain::Complete => Ok(()),
+            Drain::TimedOut => Err(ServerError::ShutdownTimeout {
+                timeout: self.config.shutdown_timeout,
+            }
+            .into()),
+            Drain::Forced => Err(ServerError::ShutdownForced.into()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Drain {
+    Complete,
+    TimedOut,
+    Forced,
+}
+
+async fn wait_until_stopping(lifecycle: &mut watch::Receiver<Lifecycle>) -> Lifecycle {
+    loop {
+        let current = *lifecycle.borrow();
+        if current != Lifecycle::Running {
+            return current;
+        }
+        if lifecycle.changed().await.is_err() {
+            return Lifecycle::Forced;
+        }
+    }
+}
+
+async fn wait_until_forced(lifecycle: &mut watch::Receiver<Lifecycle>) {
+    loop {
+        if *lifecycle.borrow() == Lifecycle::Forced {
+            return;
+        }
+        if lifecycle.changed().await.is_err() {
+            return;
+        }
     }
 }
 
@@ -494,7 +564,7 @@ async fn accept_loop<C: 'static>(
     service: Arc<Service<C>>,
     config: TransportConfig,
     permits: Arc<Semaphore>,
-    mut stop: watch::Receiver<bool>,
+    mut lifecycle: watch::Receiver<Lifecycle>,
 ) -> std::result::Result<(), ServerError> {
     let mut connections = JoinSet::new();
     let mut failures = 0_u32;
@@ -507,8 +577,8 @@ async fn accept_loop<C: 'static>(
         }
 
         let permit = tokio::select! {
-            changed = stop.changed() => {
-                let _ = changed;
+            biased;
+            _ = wait_until_stopping(&mut lifecycle) => {
                 break;
             }
             permit = Arc::clone(&permits).acquire_owned() => {
@@ -517,8 +587,8 @@ async fn accept_loop<C: 'static>(
         };
 
         let accepted = tokio::select! {
-            changed = stop.changed() => {
-                let _ = changed;
+            biased;
+            _ = wait_until_stopping(&mut lifecycle) => {
                 drop(permit);
                 break;
             }
@@ -533,7 +603,7 @@ async fn accept_loop<C: 'static>(
                 }
                 let service = Arc::clone(&service);
                 let connection_config = config.clone();
-                let connection_stop = stop.clone();
+                let connection_lifecycle = lifecycle.clone();
                 connections.spawn(async move {
                     let _permit = permit;
                     serve_connection(
@@ -542,7 +612,7 @@ async fn accept_loop<C: 'static>(
                         local_addr,
                         service,
                         connection_config,
-                        connection_stop,
+                        connection_lifecycle,
                     )
                     .await;
                 });
@@ -570,17 +640,31 @@ async fn accept_loop<C: 'static>(
                     .min(ACCEPT_RETRY_MAX);
                 tracing::warn!(%source, %local_addr, ?delay, "retrying failed accept");
                 tokio::select! {
-                    () = tokio::time::sleep(delay) => {}
-                    changed = stop.changed() => {
-                        let _ = changed;
+                    biased;
+                    _ = wait_until_stopping(&mut lifecycle) => {
                         break;
                     }
+                    () = tokio::time::sleep(delay) => {}
                 }
             }
         }
     }
 
-    while connections.join_next().await.is_some() {}
+    drop(listener);
+    loop {
+        tokio::select! {
+            biased;
+            () = wait_until_forced(&mut lifecycle) => {
+                connections.shutdown().await;
+                break;
+            }
+            completed = connections.join_next() => {
+                if completed.is_none() {
+                    break;
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -611,12 +695,18 @@ async fn serve_connection<C: 'static>(
     local_addr: SocketAddr,
     service: Arc<Service<C>>,
     config: TransportConfig,
-    stop: watch::Receiver<bool>,
+    lifecycle: watch::Receiver<Lifecycle>,
 ) {
     #[cfg(feature = "tls")]
+    let mut lifecycle = lifecycle;
+
+    #[cfg(feature = "tls")]
     if let Some(tls) = &config.tls {
-        let handshake =
-            tokio::time::timeout(tls.handshake_timeout, tls.acceptor.accept(stream)).await;
+        let handshake = tokio::select! {
+            biased;
+            _ = wait_until_stopping(&mut lifecycle) => return,
+            handshake = tokio::time::timeout(tls.handshake_timeout, tls.acceptor.accept(stream)) => handshake,
+        };
         match handshake {
             Ok(Ok(stream)) => {
                 let (_, session) = stream.get_ref();
@@ -634,12 +724,12 @@ async fn serve_connection<C: 'static>(
                             .collect(),
                     }),
                 };
-                if let Err(error) = serve_http(stream, service, config, metadata, stop).await {
+                if let Err(error) = serve_http(stream, service, config, metadata, lifecycle).await {
                     tracing::debug!(%error, %local_addr, %peer_addr, "TLS connection failed");
                 }
             }
             Ok(Err(error)) => {
-                tracing::debug!(%error, %local_addr, %peer_addr, "TLS handshake failed")
+                tracing::debug!(%error, %local_addr, %peer_addr, "TLS handshake failed");
             }
             Err(_) => tracing::debug!(%local_addr, %peer_addr, "TLS handshake timed out"),
         }
@@ -652,7 +742,7 @@ async fn serve_connection<C: 'static>(
         #[cfg(feature = "tls")]
         tls: None,
     };
-    if let Err(error) = serve_http(stream, service, config, metadata, stop).await {
+    if let Err(error) = serve_http(stream, service, config, metadata, lifecycle).await {
         tracing::debug!(%error, %local_addr, %peer_addr, "HTTP connection failed");
     }
 }
@@ -662,7 +752,7 @@ async fn serve_http<C, I>(
     service: Arc<Service<C>>,
     config: TransportConfig,
     metadata: ConnectionMetadata,
-    mut stop: watch::Receiver<bool>,
+    mut lifecycle: watch::Receiver<Lifecycle>,
 ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
     C: 'static,
@@ -726,12 +816,15 @@ where
     let connection = builder.serve_connection(TokioIo::new(io), handler);
     tokio::pin!(connection);
     tokio::select! {
-        result = &mut connection => result,
-        changed = stop.changed() => {
-            let _ = changed;
+        biased;
+        state = wait_until_stopping(&mut lifecycle) => {
+            if state == Lifecycle::Forced {
+                return Ok(());
+            }
             connection.as_mut().graceful_shutdown();
             connection.await
         }
+        result = &mut connection => result,
     }
 }
 
@@ -888,9 +981,24 @@ fn validate_protocol_config(
     Ok(())
 }
 
-/// A signal that begins graceful shutdown.
+type ForceFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+type ShutdownFuture = Pin<Box<dyn Future<Output = io::Result<ShutdownRequest>> + Send + 'static>>;
+
+struct ShutdownRequest {
+    force: ForceFuture,
+}
+
+/// A trigger that begins graceful shutdown.
+///
+/// Built-in operating-system triggers force any remaining work to stop when a
+/// second matching signal arrives. Custom triggers rely on the server's drain
+/// deadline for forced termination.
+///
+/// Installing a Tokio operating-system signal listener replaces that signal's
+/// default process behavior for the rest of the process lifetime. Kynos keeps
+/// its listeners alive through the drain so repeated signals remain effective.
 pub struct Shutdown {
-    future: Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'static>>,
+    future: ShutdownFuture,
 }
 
 impl fmt::Debug for Shutdown {
@@ -900,38 +1008,148 @@ impl fmt::Debug for Shutdown {
 }
 
 impl Shutdown {
-    /// Resolves on `SIGINT`.
+    /// Resolves on the first Ctrl-C and forces shutdown on the second.
     #[must_use]
     pub fn ctrl_c() -> Self {
         Self {
-            future: Box::pin(tokio::signal::ctrl_c()),
+            future: repeatable_ctrl_c(),
         }
     }
 
-    /// Resolves on `SIGINT` or `SIGTERM`.
-    #[cfg(unix)]
+    /// Resolves on the platform's conventional termination signals.
+    ///
+    /// Unix listens for `SIGINT` and `SIGTERM`. Windows listens for Ctrl-C,
+    /// Ctrl-Break, console close, logoff, and system shutdown events. A second
+    /// watched event forces shutdown immediately.
     #[must_use]
     pub fn signals() -> Self {
         Self {
-            future: Box::pin(async {
-                let mut terminate =
-                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-                tokio::select! {
-                    result = tokio::signal::ctrl_c() => result,
-                    _ = terminate.recv() => Ok(()),
-                }
-            }),
+            future: platform_signals(),
         }
     }
 
     /// Resolves successfully when `future` does.
+    ///
+    /// Custom triggers do not provide an early force signal. The configured
+    /// shutdown timeout remains the upper bound on their drain.
     #[must_use]
     pub fn on(future: impl Future<Output = ()> + Send + 'static) -> Self {
         Self {
             future: Box::pin(async move {
                 future.await;
-                Ok(())
+                Ok(ShutdownRequest {
+                    force: Box::pin(pending()),
+                })
             }),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn repeatable_ctrl_c() -> ShutdownFuture {
+    Box::pin(async {
+        let mut interrupt =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+        let _ = interrupt.recv().await;
+        Ok(ShutdownRequest {
+            force: Box::pin(async move {
+                let _ = interrupt.recv().await;
+            }),
+        })
+    })
+}
+
+#[cfg(windows)]
+fn repeatable_ctrl_c() -> ShutdownFuture {
+    Box::pin(async {
+        let mut interrupt = tokio::signal::windows::ctrl_c()?;
+        let _ = interrupt.recv().await;
+        Ok(ShutdownRequest {
+            force: Box::pin(async move {
+                let _ = interrupt.recv().await;
+            }),
+        })
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn repeatable_ctrl_c() -> ShutdownFuture {
+    Box::pin(async {
+        tokio::signal::ctrl_c().await?;
+        Ok(ShutdownRequest {
+            force: Box::pin(async {
+                let _ = tokio::signal::ctrl_c().await;
+            }),
+        })
+    })
+}
+
+#[cfg(unix)]
+fn platform_signals() -> ShutdownFuture {
+    Box::pin(async {
+        let mut interrupt =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            _ = interrupt.recv() => {}
+            _ = terminate.recv() => {}
+        }
+        Ok(ShutdownRequest {
+            force: Box::pin(async move {
+                tokio::select! {
+                    _ = interrupt.recv() => {}
+                    _ = terminate.recv() => {}
+                }
+            }),
+        })
+    })
+}
+
+#[cfg(windows)]
+fn platform_signals() -> ShutdownFuture {
+    Box::pin(async {
+        let mut signals = WindowsSignals::new()?;
+        signals.recv().await;
+        Ok(ShutdownRequest {
+            force: Box::pin(async move { signals.recv().await }),
+        })
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn platform_signals() -> ShutdownFuture {
+    repeatable_ctrl_c()
+}
+
+#[cfg(windows)]
+struct WindowsSignals {
+    ctrl_c: tokio::signal::windows::CtrlC,
+    ctrl_break: tokio::signal::windows::CtrlBreak,
+    ctrl_close: tokio::signal::windows::CtrlClose,
+    ctrl_logoff: tokio::signal::windows::CtrlLogoff,
+    ctrl_shutdown: tokio::signal::windows::CtrlShutdown,
+}
+
+#[cfg(windows)]
+impl WindowsSignals {
+    fn new() -> io::Result<Self> {
+        Ok(Self {
+            ctrl_c: tokio::signal::windows::ctrl_c()?,
+            ctrl_break: tokio::signal::windows::ctrl_break()?,
+            ctrl_close: tokio::signal::windows::ctrl_close()?,
+            ctrl_logoff: tokio::signal::windows::ctrl_logoff()?,
+            ctrl_shutdown: tokio::signal::windows::ctrl_shutdown()?,
+        })
+    }
+
+    async fn recv(&mut self) {
+        tokio::select! {
+            _ = self.ctrl_c.recv() => {}
+            _ = self.ctrl_break.recv() => {}
+            _ = self.ctrl_close.recv() => {}
+            _ = self.ctrl_logoff.recv() => {}
+            _ = self.ctrl_shutdown.recv() => {}
         }
     }
 }
@@ -1339,6 +1557,11 @@ mod tests {
         );
     }
 
+    #[test]
+    fn shutdown_default_leaves_an_orchestrator_margin() {
+        assert_eq!(super::DEFAULT_SHUTDOWN_TIMEOUT.as_secs(), 25);
+    }
+
     #[tokio::test]
     async fn prepare_requires_a_listener() {
         let service = test_service();
@@ -1415,6 +1638,91 @@ mod tests {
         assert!(response.starts_with("HTTP/1.1 200 OK"));
         assert!(response.ends_with("ok"));
         let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_closes_listeners_while_an_http1_request_drains() {
+        use http_body_util::{BodyExt as _, Empty};
+        use hyper_util::rt::TokioIo;
+
+        let (service, started, release) = blocking_service();
+        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let bound = super::Server::new(service)
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .graceful_shutdown(super::Shutdown::on(async move {
+                let _ = shutdown_receiver.await;
+            }))
+            .prepare()
+            .await
+            .expect("loopback listener binds");
+        let address = bound.local_addrs()[0];
+        let server = tokio::spawn(bound.serve());
+
+        let stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+            .await
+            .expect("HTTP/1 handshake completes");
+        let connection = tokio::spawn(connection);
+        let request = tokio::spawn(async move {
+            let request = hyper::Request::builder()
+                .uri("/")
+                .header(hyper::header::HOST, "localhost")
+                .body(Empty::<bytes::Bytes>::new())
+                .expect("request builds");
+            sender
+                .send_request(request)
+                .await
+                .expect("request succeeds")
+                .into_body()
+                .collect()
+                .await
+                .expect("response body reads")
+                .to_bytes()
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), started.notified())
+            .await
+            .expect("the request reaches the handler");
+        let _ = shutdown_sender.send(());
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                match tokio::time::timeout(
+                    std::time::Duration::from_millis(50),
+                    tokio::net::TcpStream::connect(address),
+                )
+                .await
+                {
+                    Ok(Err(_)) => break,
+                    Ok(Ok(stream)) => drop(stream),
+                    Err(_) => {}
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the listener closes while the request drains");
+        assert!(
+            !server.is_finished(),
+            "the active request must keep draining"
+        );
+
+        release.notify_one();
+        assert_eq!(
+            request.await.expect("request task joins"),
+            bytes::Bytes::from_static(b"ok")
+        );
+        connection
+            .await
+            .expect("client connection task joins")
+            .expect("client connection closes cleanly");
         server
             .await
             .expect("server task joins")
@@ -1501,7 +1809,7 @@ mod tests {
 
     #[cfg(feature = "http1")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn zero_shutdown_timeout_aborts_an_in_flight_request() {
+    async fn zero_shutdown_timeout_reports_an_incomplete_drain() {
         use std::sync::Arc;
 
         let started = Arc::new(tokio::sync::Notify::new());
@@ -1537,11 +1845,63 @@ mod tests {
             .await
             .expect("the request reaches the handler");
         let _ = shutdown_sender.send(());
-        tokio::time::timeout(std::time::Duration::from_secs(1), server)
+        let error = tokio::time::timeout(std::time::Duration::from_secs(1), server)
             .await
             .expect("forced shutdown is prompt")
             .expect("server task joins")
-            .expect("server exits cleanly");
+            .expect_err("an incomplete drain is reported");
+        assert!(matches!(
+            error,
+            crate::Error::Server(super::ServerError::ShutdownTimeout { timeout })
+                if timeout.is_zero()
+        ));
+        client.await.expect("client task joins");
+    }
+
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn repeated_shutdown_trigger_forces_an_incomplete_drain() {
+        let (service, started, _release) = blocking_service();
+        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let (force_sender, force_receiver) = tokio::sync::oneshot::channel();
+        let shutdown = super::Shutdown {
+            future: Box::pin(async move {
+                let _ = shutdown_receiver.await;
+                Ok(super::ShutdownRequest {
+                    force: Box::pin(async move {
+                        let _ = force_receiver.await;
+                    }),
+                })
+            }),
+        };
+        let bound = super::Server::new(service)
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .shutdown_timeout(std::time::Duration::from_secs(25))
+            .graceful_shutdown(shutdown)
+            .prepare()
+            .await
+            .expect("loopback listener binds");
+        let address = bound.local_addrs()[0];
+        let server = tokio::spawn(bound.serve());
+        let client = tokio::task::spawn_blocking(move || request_http1(address));
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), started.notified())
+            .await
+            .expect("the request reaches the handler");
+        let _ = shutdown_sender.send(());
+        tokio::task::yield_now().await;
+        assert!(!server.is_finished(), "the request starts draining");
+        let _ = force_sender.send(());
+
+        let error = tokio::time::timeout(std::time::Duration::from_secs(1), server)
+            .await
+            .expect("forced shutdown is prompt")
+            .expect("server task joins")
+            .expect_err("the repeated trigger is reported");
+        assert!(matches!(
+            error,
+            crate::Error::Server(super::ServerError::ShutdownForced)
+        ));
         client.await.expect("client task joins");
     }
 
@@ -1597,6 +1957,128 @@ mod tests {
             .await
             .expect("server task joins")
             .expect("server exits cleanly");
+    }
+
+    #[cfg(feature = "http2")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_drains_an_active_http2_stream() {
+        use http_body_util::{BodyExt as _, Empty};
+        use hyper_util::rt::{TokioExecutor, TokioIo};
+
+        let (service, started, release) = blocking_service();
+        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let bound = super::Server::new(service)
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .graceful_shutdown(super::Shutdown::on(async move {
+                let _ = shutdown_receiver.await;
+            }))
+            .prepare()
+            .await
+            .expect("loopback listener binds");
+        let address = bound.local_addrs()[0];
+        let server = tokio::spawn(bound.serve());
+
+        let stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        let (mut sender, connection) =
+            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+                .await
+                .expect("HTTP/2 handshake completes");
+        let connection = tokio::spawn(connection);
+        let request = tokio::spawn(async move {
+            let request = hyper::Request::builder()
+                .uri("http://localhost/")
+                .body(Empty::<bytes::Bytes>::new())
+                .expect("request builds");
+            sender
+                .send_request(request)
+                .await
+                .expect("request succeeds")
+                .into_body()
+                .collect()
+                .await
+                .expect("response body reads")
+                .to_bytes()
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), started.notified())
+            .await
+            .expect("the stream reaches the handler");
+        let _ = shutdown_sender.send(());
+        tokio::task::yield_now().await;
+        assert!(
+            !server.is_finished(),
+            "the active stream must keep draining"
+        );
+
+        release.notify_one();
+        assert_eq!(
+            request.await.expect("request task joins"),
+            bytes::Bytes::from_static(b"ok")
+        );
+        connection
+            .await
+            .expect("client connection task joins")
+            .expect("client connection closes cleanly");
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+
+    #[cfg(feature = "tls")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_cancels_an_incomplete_tls_handshake() {
+        const SERVER_CERTIFICATE: &[u8] = include_bytes!("../tests/fixtures/tls/server.pem");
+        const SERVER_KEY: &[u8] = include_bytes!("../tests/fixtures/tls/server.key");
+
+        use std::{num::NonZeroUsize, sync::Arc};
+
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("loopback listener binds");
+        let address = listener.local_addr().expect("listener has an address");
+        let client = tokio::spawn(tokio::net::TcpStream::connect(address));
+        let (stream, peer_addr) = listener.accept().await.expect("server accepts");
+        let _client = client
+            .await
+            .expect("client task joins")
+            .expect("client connects");
+        let config = super::TransportConfig {
+            #[cfg(feature = "http1")]
+            http1: super::Http1Config::default(),
+            #[cfg(feature = "http2")]
+            http2: super::Http2Config::default(),
+            tls: Some(
+                super::TlsConfig::from_pem(SERVER_CERTIFICATE, SERVER_KEY)
+                    .expect("TLS identity parses")
+                    .build()
+                    .expect("TLS config builds"),
+            ),
+            shutdown_timeout: std::time::Duration::from_secs(25),
+            max_connections: NonZeroUsize::new(1).expect("one is non-zero"),
+        };
+        let (stop_sender, stop_receiver) = tokio::sync::watch::channel(super::Lifecycle::Running);
+        let mut connection = tokio::spawn(super::serve_connection(
+            stream,
+            peer_addr,
+            address,
+            Arc::new(test_service()),
+            config,
+            stop_receiver,
+        ));
+
+        tokio::task::yield_now().await;
+        stop_sender.send_replace(super::Lifecycle::Draining);
+        if tokio::time::timeout(std::time::Duration::from_secs(1), &mut connection)
+            .await
+            .is_err()
+        {
+            connection.abort();
+            let _ = connection.await;
+            panic!("the incomplete TLS handshake blocked shutdown");
+        }
     }
 
     #[cfg(feature = "tls")]
@@ -1839,6 +2321,35 @@ mod tests {
                 b"ok",
             )))
         })
+    }
+
+    fn blocking_service() -> (
+        crate::router::Service<()>,
+        std::sync::Arc<tokio::sync::Notify>,
+        std::sync::Arc<tokio::sync::Notify>,
+    ) {
+        let started = std::sync::Arc::new(tokio::sync::Notify::new());
+        let release = std::sync::Arc::new(tokio::sync::Notify::new());
+        let service = {
+            let started = std::sync::Arc::clone(&started);
+            let release = std::sync::Arc::clone(&release);
+            let document = kynos_openapi::Document::new(
+                kynos_openapi::SpecVersion::V3_1,
+                kynos_openapi::Info::new("Test", "1"),
+            );
+            crate::router::Service::for_test(document, move |_| {
+                let started = std::sync::Arc::clone(&started);
+                let release = std::sync::Arc::clone(&release);
+                async move {
+                    started.notify_one();
+                    release.notified().await;
+                    crate::http::Response::new(crate::http::Body::from_bytes(
+                        bytes::Bytes::from_static(b"ok"),
+                    ))
+                }
+            })
+        };
+        (service, started, release)
     }
 
     #[cfg(feature = "http1")]
