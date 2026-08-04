@@ -12,8 +12,13 @@ rust = { version = "1.97.1", profile = "minimal", components = [
   "rustfmt",
 ] }
 hk = "1.53.0"
-"cargo:cargo-llvm-cov" = "0.8.7"
-"cargo:convco" = "0.7.0"
+# Dev tools come from upstream release binaries, not `cargo:` (which compiles
+# from source). Building convco alone cost over four minutes on every CI job.
+"github:taiki-e/cargo-llvm-cov" = "0.8.7"
+"github:taiki-e/cargo-hack" = "0.6.36"
+# nextest tags releases `cargo-nextest-<version>`, so the tag is the version.
+"github:nextest-rs/nextest" = { version = "cargo-nextest-0.9.140", exe = "cargo-nextest" }
+"github:convco/convco" = "0.7.0"
 
 [tasks.format]
 description = "Format the Rust workspace"
@@ -33,16 +38,83 @@ run = "cargo clippy --fix --workspace --all-targets --allow-dirty --allow-staged
 
 [tasks.test]
 description = "Test all workspace targets"
-run = "cargo test --workspace --all-targets"
+run = "cargo nextest run --workspace --all-targets --all-features"
+
+[tasks."test:doc"]
+description = "Run doc tests, which carry the compile-fail guarantees"
+run = "cargo test --workspace --all-features --doc"
+
+[tasks."features:check"]
+description = "Check every reachable feature combination"
+# Kynos gates the OpenAPI 3.2 object model, every optional codec and the escape
+# hatches behind features. Without a powerset check a combination nobody builds
+# locally breaks silently.
+# `--at-least-one-of` encodes the baseline: a build with neither spec version
+# is rejected by a `compile_error!`, and that rejection is correct rather than
+# a failure the matrix should report.
+run = '''
+cargo hack check --workspace --feature-powerset --depth 2 --no-dev-deps \
+  --exclude-no-default-features --exclude-all-features \
+  --exclude-features default,server,tls \
+  --at-least-one-of openapi31,openapi32
+
+cargo hack check -p kynos --feature-powerset --depth 2 --no-dev-deps \
+  --features server \
+  --exclude-no-default-features --exclude-all-features \
+  --exclude-features default \
+  --at-least-one-of openapi31,openapi32 \
+  --at-least-one-of http1,http2
+
+invalid_server_output="$(mktemp)"
+trap 'rm -f "$invalid_server_output"' EXIT
+if cargo check -p kynos --no-default-features --features openapi31,server \
+    >"$invalid_server_output" 2>&1; then
+  echo "server unexpectedly compiled without an HTTP protocol" >&2
+  exit 1
+fi
+grep -F 'the `server` feature requires at least one of `http1` or `http2`' \
+  "$invalid_server_output"
+'''
+
+[tasks."docs:check"]
+description = "Build documentation with warnings denied"
+# `missing_docs` is denied at the workspace level, so this also enforces that
+# every public item is documented.
+run = "cargo doc --workspace --all-features --no-deps"
+env = { RUSTDOCFLAGS = "-D warnings" }
+
+[tasks."panic:check"]
+description = "Verify panic recovery rejects aborting builds only when selected"
+run = '''
+set -eu
+panic_check_output="$(mktemp)"
+trap 'rm -f "$panic_check_output"' EXIT
+
+RUSTFLAGS="-C panic=abort" cargo check -p kynos --lib
+
+if RUSTFLAGS="-C panic=abort" cargo build -p kynos --test panic-recovery-check >"$panic_check_output" 2>&1; then
+  echo "panic recovery unexpectedly compiled with panic=abort" >&2
+  exit 1
+fi
+
+grep -F 'Kynos panic recovery requires `panic = "unwind"`' "$panic_check_output"
+'''
+
+[tasks."msrv:check"]
+description = "Verify the crate still builds on the declared MSRV"
+run = '''
+rustup toolchain install 1.85 --profile minimal --no-self-update
+cargo +1.85 check --workspace --all-features
+'''
 
 [tasks.coverage]
 description = "Run tests with LLVM coverage"
-run = "cargo llvm-cov --workspace"
+run = "cargo llvm-cov nextest --workspace --all-targets --all-features"
 
 [tasks."coverage:ci"]
 description = "Generate CI coverage reports"
 run = [
-  "cargo llvm-cov --workspace --lcov --output-path lcov.info",
+  "cargo llvm-cov nextest --workspace --all-targets --all-features --lcov --output-path lcov.info",
   "cargo llvm-cov report --summary-only | tee coverage-summary.txt",
 ]
 
@@ -52,6 +124,9 @@ run = [
   { task = "format:check" },
   { task = "lint" },
   { task = "test" },
+  { task = "test:doc" },
+  { task = "docs:check" },
+  { task = "panic:check" },
 ]
 
 [tasks."commits:message"]

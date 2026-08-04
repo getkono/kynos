@@ -11,35 +11,52 @@ on:
 permissions:
   contents: read
 
-jobs:
-  checks:
-    name: Checks
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-      - name: Install tools
-        uses: jdx/mise-action@v3
-        with:
-          version: 2026.7.18
-          install: true
-          cache: true
-      - name: Run checks
-        run: mise run check
+# Superseding a pull request makes its in-flight run worthless, so stop paying
+# for it. master is exempt because release-plz consumes those runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-  coverage:
-    name: Coverage
+env:
+  CARGO_TERM_COLOR: always
+  # Incremental artifacts only pay off across edits in one working tree. CI has
+  # no such tree, so they are dead weight in the cache and slow the build.
+  CARGO_INCREMENTAL: 0
+  NEXTEST_PROFILE: ci
+
+# Between them these jobs run every task in `mise run check`, plus the three
+# that are too slow to belong there. Splitting them apart trades one serial
+# runner for parallel ones and gives each its own Cargo cache; keep a task in
+# exactly one job so no two jobs compile the same thing.
+jobs:
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-      - name: Install tools
-        uses: jdx/mise-action@v3
+      - name: Set up
+        uses: ./.github/actions/setup
         with:
-          version: 2026.7.18
-          install: true
-          cache: true
-      - name: Generate coverage report
+          cargo-cache-key: lint
+      - name: Check formatting
+        run: mise run format:check
+      - name: Lint
+        run: mise run lint
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up
+        uses: ./.github/actions/setup
+        with:
+          cargo-cache-key: test
+      # The instrumented run is the test of record. It selects the same tests
+      # as `mise run test`, so running both would execute the suite twice.
+      - name: Run tests under coverage
         run: mise run coverage:ci
       - name: Add coverage summary
         run: cat coverage-summary.txt >> "$GITHUB_STEP_SUMMARY"
@@ -51,6 +68,53 @@ jobs:
             lcov.info
             coverage-summary.txt
 
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up
+        uses: ./.github/actions/setup
+        with:
+          cargo-cache-key: docs
+      # Paired with the rustdoc build: both compile the workspace with every
+      # feature and no extra rustflags, so the second reuses the first's deps.
+      - name: Run doc tests
+        run: mise run test:doc
+      - name: Build documentation
+        run: mise run docs:check
+
+  features:
+    name: Feature matrix
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up
+        uses: ./.github/actions/setup
+        with:
+          cargo-cache-key: features
+      - name: Check every feature combination
+        run: mise run features:check
+      # Also a check that a build configuration is rejected, so it belongs
+      # here rather than on the critical path in `test`.
+      - name: Check panic recovery gating
+        run: mise run panic:check
+
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up
+        uses: ./.github/actions/setup
+        with:
+          cargo-cache-key: msrv
+      - name: Check the declared MSRV
+        run: mise run msrv:check
+
   commits:
     name: Conventional commits
     if: github.event_name == 'pull_request'
@@ -60,12 +124,9 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Install tools
-        uses: jdx/mise-action@v3
-        with:
-          version: 2026.7.18
-          install: true
-          cache: true
+      # No Cargo build here, so no Cargo cache to restore.
+      - name: Set up
+        uses: ./.github/actions/setup
       - name: Check commits
         env:
           CONVCO_RANGE: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
