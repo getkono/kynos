@@ -11,6 +11,12 @@ on:
 permissions:
   contents: read
 
+# Superseding a pull request makes its in-flight run worthless, so stop paying
+# for it. master is exempt because release-plz consumes those runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   checks:
     name: Checks
