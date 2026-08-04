@@ -15,6 +15,7 @@ Kynos is an idiomatic, performance-focused Rust framework for building REST APIs
 - Pushing code: Atomic, semantic commits are strictly required. All PRs are *usually* merged rather than being squashed/rebased.
 - New features: Code implementation must be code-complete. Feature flag(s) must be modified when justified. When feasible, new features must be additive.
 - Bug fixes: Correctness is strict. The offending code must be testable so refactor adjacent code to expose the internals for unit testing if required. Push strictly in order: red tests targetting failure case and asserting the correct invariants; implementation that addresses the red case with evidence the tests turned green.
+- Tests: hermetic by construction. Nextest isolates each test in its own process, so never rely on shared state or test ordering, and never mask a flake with retries.
 
 ## Workspace
 

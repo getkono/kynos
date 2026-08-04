@@ -12,9 +12,13 @@ rust = { version = "1.97.1", profile = "minimal", components = [
   "rustfmt",
 ] }
 hk = "1.53.0"
-"cargo:cargo-llvm-cov" = "0.8.7"
-"cargo:cargo-hack" = "0.6.36"
-"cargo:convco" = "0.7.0"
+# Dev tools come from upstream release binaries, not `cargo:` (which compiles
+# from source). Building convco alone cost over four minutes on every CI job.
+"github:taiki-e/cargo-llvm-cov" = "0.8.7"
+"github:taiki-e/cargo-hack" = "0.6.36"
+# nextest tags releases `cargo-nextest-<version>`, so the tag is the version.
+"github:nextest-rs/nextest" = { version = "cargo-nextest-0.9.140", exe = "cargo-nextest" }
+"github:convco/convco" = "0.7.0"
 
 [tasks.format]
 description = "Format the Rust workspace"
@@ -34,7 +38,7 @@ run = "cargo clippy --fix --workspace --all-targets --allow-dirty --allow-staged
 
 [tasks.test]
 description = "Test all workspace targets"
-run = "cargo test --workspace --all-targets --all-features"
+run = "cargo nextest run --workspace --all-targets --all-features"
 
 [tasks."test:doc"]
 description = "Run doc tests, which carry the compile-fail guarantees"
@@ -105,12 +109,12 @@ cargo +1.85 check --workspace --all-features
 
 [tasks.coverage]
 description = "Run tests with LLVM coverage"
-run = "cargo llvm-cov --workspace"
+run = "cargo llvm-cov nextest --workspace --all-targets --all-features"
 
 [tasks."coverage:ci"]
 description = "Generate CI coverage reports"
 run = [
-  "cargo llvm-cov --workspace --lcov --output-path lcov.info",
+  "cargo llvm-cov nextest --workspace --all-targets --all-features --lcov --output-path lcov.info",
   "cargo llvm-cov report --summary-only | tee coverage-summary.txt",
 ]
 
