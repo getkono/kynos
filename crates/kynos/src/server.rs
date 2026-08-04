@@ -1339,6 +1339,11 @@ mod tests {
         );
     }
 
+    #[test]
+    fn shutdown_default_leaves_an_orchestrator_margin() {
+        assert_eq!(super::DEFAULT_SHUTDOWN_TIMEOUT.as_secs(), 25);
+    }
+
     #[tokio::test]
     async fn prepare_requires_a_listener() {
         let service = test_service();
@@ -1415,6 +1420,91 @@ mod tests {
         assert!(response.starts_with("HTTP/1.1 200 OK"));
         assert!(response.ends_with("ok"));
         let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_closes_listeners_while_an_http1_request_drains() {
+        use http_body_util::{BodyExt as _, Empty};
+        use hyper_util::rt::TokioIo;
+
+        let (service, started, release) = blocking_service();
+        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let bound = super::Server::new(service)
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .graceful_shutdown(super::Shutdown::on(async move {
+                let _ = shutdown_receiver.await;
+            }))
+            .prepare()
+            .await
+            .expect("loopback listener binds");
+        let address = bound.local_addrs()[0];
+        let server = tokio::spawn(bound.serve());
+
+        let stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+            .await
+            .expect("HTTP/1 handshake completes");
+        let connection = tokio::spawn(connection);
+        let request = tokio::spawn(async move {
+            let request = hyper::Request::builder()
+                .uri("/")
+                .header(hyper::header::HOST, "localhost")
+                .body(Empty::<bytes::Bytes>::new())
+                .expect("request builds");
+            sender
+                .send_request(request)
+                .await
+                .expect("request succeeds")
+                .into_body()
+                .collect()
+                .await
+                .expect("response body reads")
+                .to_bytes()
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), started.notified())
+            .await
+            .expect("the request reaches the handler");
+        let _ = shutdown_sender.send(());
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                match tokio::time::timeout(
+                    std::time::Duration::from_millis(50),
+                    tokio::net::TcpStream::connect(address),
+                )
+                .await
+                {
+                    Ok(Err(_)) => break,
+                    Ok(Ok(stream)) => drop(stream),
+                    Err(_) => {}
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the listener closes while the request drains");
+        assert!(
+            !server.is_finished(),
+            "the active request must keep draining"
+        );
+
+        release.notify_one();
+        assert_eq!(
+            request.await.expect("request task joins"),
+            bytes::Bytes::from_static(b"ok")
+        );
+        connection
+            .await
+            .expect("client connection task joins")
+            .expect("client connection closes cleanly");
         server
             .await
             .expect("server task joins")
@@ -1501,7 +1591,7 @@ mod tests {
 
     #[cfg(feature = "http1")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn zero_shutdown_timeout_aborts_an_in_flight_request() {
+    async fn zero_shutdown_timeout_reports_an_incomplete_drain() {
         use std::sync::Arc;
 
         let started = Arc::new(tokio::sync::Notify::new());
@@ -1537,11 +1627,15 @@ mod tests {
             .await
             .expect("the request reaches the handler");
         let _ = shutdown_sender.send(());
-        tokio::time::timeout(std::time::Duration::from_secs(1), server)
+        let error = tokio::time::timeout(std::time::Duration::from_secs(1), server)
             .await
             .expect("forced shutdown is prompt")
             .expect("server task joins")
-            .expect("server exits cleanly");
+            .expect_err("an incomplete drain is reported");
+        assert!(
+            error.to_string().contains("graceful shutdown timed out"),
+            "unexpected error: {error}"
+        );
         client.await.expect("client task joins");
     }
 
@@ -1597,6 +1691,128 @@ mod tests {
             .await
             .expect("server task joins")
             .expect("server exits cleanly");
+    }
+
+    #[cfg(feature = "http2")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_drains_an_active_http2_stream() {
+        use http_body_util::{BodyExt as _, Empty};
+        use hyper_util::rt::{TokioExecutor, TokioIo};
+
+        let (service, started, release) = blocking_service();
+        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let bound = super::Server::new(service)
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .graceful_shutdown(super::Shutdown::on(async move {
+                let _ = shutdown_receiver.await;
+            }))
+            .prepare()
+            .await
+            .expect("loopback listener binds");
+        let address = bound.local_addrs()[0];
+        let server = tokio::spawn(bound.serve());
+
+        let stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        let (mut sender, connection) =
+            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+                .await
+                .expect("HTTP/2 handshake completes");
+        let connection = tokio::spawn(connection);
+        let request = tokio::spawn(async move {
+            let request = hyper::Request::builder()
+                .uri("http://localhost/")
+                .body(Empty::<bytes::Bytes>::new())
+                .expect("request builds");
+            sender
+                .send_request(request)
+                .await
+                .expect("request succeeds")
+                .into_body()
+                .collect()
+                .await
+                .expect("response body reads")
+                .to_bytes()
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), started.notified())
+            .await
+            .expect("the stream reaches the handler");
+        let _ = shutdown_sender.send(());
+        tokio::task::yield_now().await;
+        assert!(
+            !server.is_finished(),
+            "the active stream must keep draining"
+        );
+
+        release.notify_one();
+        assert_eq!(
+            request.await.expect("request task joins"),
+            bytes::Bytes::from_static(b"ok")
+        );
+        connection
+            .await
+            .expect("client connection task joins")
+            .expect("client connection closes cleanly");
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+
+    #[cfg(feature = "tls")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_cancels_an_incomplete_tls_handshake() {
+        use std::{num::NonZeroUsize, sync::Arc};
+
+        const SERVER_CERTIFICATE: &[u8] = include_bytes!("../tests/fixtures/tls/server.pem");
+        const SERVER_KEY: &[u8] = include_bytes!("../tests/fixtures/tls/server.key");
+
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("loopback listener binds");
+        let address = listener.local_addr().expect("listener has an address");
+        let client = tokio::spawn(tokio::net::TcpStream::connect(address));
+        let (stream, peer_addr) = listener.accept().await.expect("server accepts");
+        let _client = client
+            .await
+            .expect("client task joins")
+            .expect("client connects");
+        let config = super::TransportConfig {
+            #[cfg(feature = "http1")]
+            http1: super::Http1Config::default(),
+            #[cfg(feature = "http2")]
+            http2: super::Http2Config::default(),
+            tls: Some(
+                super::TlsConfig::from_pem(SERVER_CERTIFICATE, SERVER_KEY)
+                    .expect("TLS identity parses")
+                    .build()
+                    .expect("TLS config builds"),
+            ),
+            shutdown_timeout: std::time::Duration::from_secs(25),
+            max_connections: NonZeroUsize::new(1).expect("one is non-zero"),
+        };
+        let (stop_sender, stop_receiver) = tokio::sync::watch::channel(false);
+        let mut connection = tokio::spawn(super::serve_connection(
+            stream,
+            peer_addr,
+            address,
+            Arc::new(test_service()),
+            config,
+            stop_receiver,
+        ));
+
+        tokio::task::yield_now().await;
+        stop_sender.send_replace(true);
+        if tokio::time::timeout(std::time::Duration::from_secs(1), &mut connection)
+            .await
+            .is_err()
+        {
+            connection.abort();
+            let _ = connection.await;
+            panic!("the incomplete TLS handshake blocked shutdown");
+        }
     }
 
     #[cfg(feature = "tls")]
@@ -1839,6 +2055,35 @@ mod tests {
                 b"ok",
             )))
         })
+    }
+
+    fn blocking_service() -> (
+        crate::router::Service<()>,
+        std::sync::Arc<tokio::sync::Notify>,
+        std::sync::Arc<tokio::sync::Notify>,
+    ) {
+        let started = std::sync::Arc::new(tokio::sync::Notify::new());
+        let release = std::sync::Arc::new(tokio::sync::Notify::new());
+        let service = {
+            let started = std::sync::Arc::clone(&started);
+            let release = std::sync::Arc::clone(&release);
+            let document = kynos_openapi::Document::new(
+                kynos_openapi::SpecVersion::V3_1,
+                kynos_openapi::Info::new("Test", "1"),
+            );
+            crate::router::Service::for_test(document, move |_| {
+                let started = std::sync::Arc::clone(&started);
+                let release = std::sync::Arc::clone(&release);
+                async move {
+                    started.notify_one();
+                    release.notified().await;
+                    crate::http::Response::new(crate::http::Body::from_bytes(
+                        bytes::Bytes::from_static(b"ok"),
+                    ))
+                }
+            })
+        };
+        (service, started, release)
     }
 
     #[cfg(feature = "http1")]
