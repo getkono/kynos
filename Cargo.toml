@@ -9,7 +9,7 @@ edition = "2024"
 rust-version = "1.85"
 license = "MIT"
 repository = "https://github.com/getkono/kynos"
-publish = false
+publish = true
 
 [workspace.dependencies]
 kynos-macros = { version = "0.1.0", path = "crates/kynos-macros" }
