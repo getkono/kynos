@@ -11,7 +11,7 @@ pub mod downgrade;
 
 use crate::{
     model::document::{Document, SpecVersion},
-    validate::SpecError,
+    validate::violation::SpecError,
 };
 
 impl Document {

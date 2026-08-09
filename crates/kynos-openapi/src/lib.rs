@@ -76,7 +76,7 @@ pub use crate::{
         server::{Server, ServerVariable},
         tag::Tag,
     },
-    validate::{Severity, SpecError, Violation},
+    validate::violation::{Severity, SpecError, Violation},
 };
 
 /// The ordered map used throughout the model.
