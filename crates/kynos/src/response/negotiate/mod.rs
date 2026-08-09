@@ -11,7 +11,7 @@ use crate::{
     extract::{FromRequestParts, describe::Describe},
     http::{Parts, Response},
     response::{IntoResponse, Responses},
-    router::OperationCx,
+    router::operation::OperationCx,
     schema::Registry,
 };
 

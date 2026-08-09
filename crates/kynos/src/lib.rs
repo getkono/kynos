@@ -111,7 +111,7 @@ pub use kynos_openapi as openapi;
 
 pub use crate::{
     error::{Error, Problem, Result},
-    router::{Endpoint, Router},
+    router::{Router, endpoint::Endpoint},
 };
 
 #[cfg(feature = "macros")]
@@ -130,7 +130,7 @@ pub mod prelude {
         error::{Error, Problem, Result},
         extract::params::{path::Path, query::Query},
         response::status::{Created, NoContent},
-        router::{Group, Router},
+        router::{Router, group::Group},
         schema::Schema as SchemaTrait,
     };
 

@@ -5,7 +5,7 @@ use std::future::Future;
 use crate::{
     extract::describe::Describe,
     http::{Request, Response},
-    router::OperationCx,
+    router::operation::OperationCx,
     schema::Registry,
 };
 

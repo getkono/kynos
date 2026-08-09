@@ -66,7 +66,7 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenSt
     let tag_note = args.tag.as_ref().map(|tag| {
         quote! {
             const _: fn() = || {
-                fn assert_tag<T: ::kynos::router::Tag>() {}
+                fn assert_tag<T: ::kynos::router::operation::Tag>() {}
                 assert_tag::<#tag>();
             };
         }
@@ -80,7 +80,7 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenSt
         #[derive(Clone, Copy, Debug, Default)]
         #visibility struct #endpoint {}
 
-        impl ::kynos::router::EndpointMeta for #endpoint {
+        impl ::kynos::router::endpoint::EndpointMeta for #endpoint {
             type PanicPolicy = #panic_policy;
 
             const METHOD: &'static str = #method;

@@ -511,8 +511,8 @@ pub mod catch_panic {
     ///
     /// This trait is sealed. Select a policy through
     /// [`Router::catch_panics`](crate::router::Router::catch_panics),
-    /// [`Group::catch_panics`](crate::router::Group::catch_panics), or
-    /// [`EndpointBuilder::catch_panics`](crate::router::EndpointBuilder::catch_panics)
+    /// [`Group::catch_panics`](crate::router::group::Group::catch_panics), or
+    /// [`EndpointBuilder::catch_panics`](crate::router::endpoint::EndpointBuilder::catch_panics)
     /// rather than naming its implementations in application code.
     pub trait PanicPolicy: private::Sealed + Send + Sync + 'static {}
 

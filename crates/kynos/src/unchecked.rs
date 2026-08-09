@@ -43,7 +43,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::router::{Router, Service};
+use crate::router::{Router, service::Service};
 
 /// A route Kynos does not describe.
 #[derive(Debug)]
@@ -73,7 +73,7 @@ impl<C> Service<C> {
     /// Converts this service into an explicitly unchecked Tower service.
     ///
     /// ```no_run
-    /// # use kynos::{router::Service, unchecked::UncheckedService};
+    /// # use kynos::{router::service::Service, unchecked::UncheckedService};
     /// fn tower<C: Send + Sync + 'static>(service: Service<C>) -> UncheckedService<C> {
     ///     service.into_tower_unchecked()
     /// }

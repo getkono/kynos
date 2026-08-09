@@ -4,7 +4,7 @@ use crate::{
     error::Rejection,
     extract::{FromRequestParts, describe::Describe},
     http::{HeaderMap, Parts},
-    router::OperationCx,
+    router::operation::OperationCx,
     schema::Registry,
 };
 

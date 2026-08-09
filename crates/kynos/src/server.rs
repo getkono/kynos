@@ -40,7 +40,7 @@ use tokio::{
     task::JoinSet,
 };
 
-use crate::{error::Result, router::Service};
+use crate::{error::Result, router::service::Service};
 
 const DEFAULT_CONNECTION_LIMIT: usize = 10_000;
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(25);
@@ -1746,14 +1746,14 @@ mod tests {
 
         let calls = Arc::new(AtomicUsize::new(0));
         let release = Arc::new(tokio::sync::Notify::new());
-        let service: crate::router::Service<()> = {
+        let service: crate::router::service::Service<()> = {
             let calls = Arc::clone(&calls);
             let release = Arc::clone(&release);
             let document = kynos_openapi::Document::new(
                 kynos_openapi::SpecVersion::V3_1,
                 kynos_openapi::Info::new("Test", "1"),
             );
-            crate::router::Service::for_test(document, move |_| {
+            crate::router::service::Service::for_test(document, move |_| {
                 let calls = Arc::clone(&calls);
                 let release = Arc::clone(&release);
                 async move {
@@ -1817,13 +1817,13 @@ mod tests {
         use std::sync::Arc;
 
         let started = Arc::new(tokio::sync::Notify::new());
-        let service: crate::router::Service<()> = {
+        let service: crate::router::service::Service<()> = {
             let started = Arc::clone(&started);
             let document = kynos_openapi::Document::new(
                 kynos_openapi::SpecVersion::V3_1,
                 kynos_openapi::Info::new("Test", "1"),
             );
-            crate::router::Service::for_test(document, move |_| {
+            crate::router::service::Service::for_test(document, move |_| {
                 let started = Arc::clone(&started);
                 async move {
                     started.notify_one();
@@ -2315,12 +2315,12 @@ mod tests {
         ));
     }
 
-    fn test_service() -> crate::router::Service<()> {
+    fn test_service() -> crate::router::service::Service<()> {
         let document = kynos_openapi::Document::new(
             kynos_openapi::SpecVersion::V3_1,
             kynos_openapi::Info::new("Test", "1"),
         );
-        crate::router::Service::for_test(document, |_| async {
+        crate::router::service::Service::for_test(document, |_| async {
             crate::http::Response::new(crate::http::Body::from_bytes(bytes::Bytes::from_static(
                 b"ok",
             )))
@@ -2328,7 +2328,7 @@ mod tests {
     }
 
     fn blocking_service() -> (
-        crate::router::Service<()>,
+        crate::router::service::Service<()>,
         std::sync::Arc<tokio::sync::Notify>,
         std::sync::Arc<tokio::sync::Notify>,
     ) {
@@ -2341,7 +2341,7 @@ mod tests {
                 kynos_openapi::SpecVersion::V3_1,
                 kynos_openapi::Info::new("Test", "1"),
             );
-            crate::router::Service::for_test(document, move |_| {
+            crate::router::service::Service::for_test(document, move |_| {
                 let started = std::sync::Arc::clone(&started);
                 let release = std::sync::Arc::clone(&release);
                 async move {

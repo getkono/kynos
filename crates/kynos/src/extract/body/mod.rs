@@ -29,7 +29,7 @@ use crate::{
         describe::{Describe, RequestContent},
     },
     http::Request,
-    router::OperationCx,
+    router::operation::OperationCx,
     schema::Registry,
 };
 
