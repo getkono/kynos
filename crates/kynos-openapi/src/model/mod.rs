@@ -1,7 +1,8 @@
 //! The OpenAPI object model.
 //!
-//! Data and invariant-preserving constructors, and nothing else. Checking a
-//! document against the specification lives in [`crate::validate`].
+//! Data and invariant-preserving constructors, and nothing else. Producing an
+//! artifact from this model lives in [`crate::emit`]; checking one against the
+//! specification lives in [`crate::validate`].
 //!
 //! This is the subtree that would become a standalone IR crate if the
 //! satellite-crate boundary described in `docs/architecture.md` is ever drawn.

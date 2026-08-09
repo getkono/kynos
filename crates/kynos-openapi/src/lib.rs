@@ -43,6 +43,7 @@ compile_error!(
      enable `openapi31`, or `openapi32`, which implies it."
 );
 
+pub mod emit;
 pub mod model;
 pub mod validate;
 

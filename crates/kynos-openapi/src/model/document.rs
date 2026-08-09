@@ -17,7 +17,6 @@ use crate::{
         server::Server,
         tag::Tag,
     },
-    validate::SpecError,
 };
 
 /// The version of the OpenAPI Specification a document targets.
@@ -194,50 +193,6 @@ impl Document {
         self.security.push(requirement);
         self
     }
-
-    /// Serializes to pretty-printed JSON.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error only if a specification extension holds a value that
-    /// cannot be represented in JSON.
-    pub fn to_json(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(self)
-    }
-
-    /// Serializes to YAML.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error only if a specification extension holds a value that
-    /// cannot be represented in YAML.
-    #[cfg(feature = "yaml")]
-    pub fn to_yaml(&self) -> Result<String, serde_yaml_ng::Error> {
-        serde_yaml_ng::to_string(self)
-    }
-
-    /// Produces this document as `version`, refusing a lossy downgrade.
-    ///
-    /// Cargo unifies features across a dependency graph, so a program can find
-    /// itself built with `openapi32` enabled even when it needs to publish a
-    /// 3.1 description. This is the safe way to ask for one: rather than
-    /// dropping 3.2-only constructs and emitting something that misdescribes
-    /// the API, it fails and names what stands in the way.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SpecError::RequiresV3_2`] when the document uses a construct
-    /// that `version` cannot express.
-    pub fn emit(&self, version: SpecVersion) -> Result<Self, SpecError> {
-        let blockers = crate::validate::three_two_only_constructs(self);
-        if !version.supports_3_2() && !blockers.is_empty() {
-            return Err(SpecError::RequiresV3_2 { blockers });
-        }
-
-        let mut emitted = self.clone();
-        version.as_str().clone_into(&mut emitted.openapi);
-        Ok(emitted)
-    }
 }
 
 #[cfg(test)]
@@ -277,22 +232,5 @@ mod tests {
     #[test]
     fn three_one_does_not_claim_three_two_support() {
         assert!(!SpecVersion::V3_1.supports_3_2());
-    }
-
-    #[test]
-    fn a_bare_document_emits_only_the_required_fields() {
-        let json = document().to_json().expect("serializable");
-        assert!(json.contains(r#""openapi": "3.1.2""#));
-        assert!(json.contains(r#""title": "Orders""#));
-        assert!(!json.contains("paths"));
-        assert!(!json.contains("components"));
-    }
-
-    #[test]
-    fn emitting_the_declared_version_is_a_no_op() {
-        let emitted = document()
-            .emit(SpecVersion::V3_1)
-            .expect("no 3.2 constructs");
-        assert_eq!(emitted.openapi, "3.1.2");
     }
 }
