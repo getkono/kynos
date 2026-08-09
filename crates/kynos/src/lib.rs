@@ -129,7 +129,7 @@ pub mod prelude {
         di::Inject,
         error::{Error, Problem, Result},
         extract::params::{path::Path, query::Query},
-        response::{Created, NoContent},
+        response::status::{Created, NoContent},
         router::{Group, Router},
         schema::Schema as SchemaTrait,
     };

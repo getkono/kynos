@@ -21,7 +21,7 @@ pub struct Headers<T>(pub T);
 /// A group of declared request or response headers.
 ///
 /// The same derived contract is used by [`Headers`] while extracting and by
-/// [`WithHeaders`](crate::response::WithHeaders) while responding.
+/// [`WithHeaders`](crate::response::headers::WithHeaders) while responding.
 /// Encoding returns a sequence rather than a map so fields such as `Set-Cookie`
 /// can be emitted more than once without comma joining.
 pub trait HeaderParams: Sized {
