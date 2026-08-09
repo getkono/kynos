@@ -1,7 +1,7 @@
 //! Raw bytes with a declared media type.
 
 use crate::{
-    error::Rejection,
+    error::rejection::Rejection,
     extract::{
         FromRequest,
         describe::{Describe, RequestContent},
@@ -9,7 +9,7 @@ use crate::{
     },
     http::Request,
     router::operation::OperationCx,
-    schema::Registry,
+    schema::registry::Registry,
 };
 
 /// A body of raw bytes with a declared media type.

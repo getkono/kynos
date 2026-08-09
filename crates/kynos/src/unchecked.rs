@@ -32,7 +32,7 @@
 //!
 //! To avoid writing a type. Everything under [`crate::schema`] exists so that
 //! the hard cases stay describable; reach for
-//! [`Unchecked`](crate::schema::Unchecked) before reaching for this module,
+//! [`Unchecked`](crate::schema::unchecked::Unchecked) before reaching for this module,
 //! because a weak schema is still an honest one.
 
 use std::{

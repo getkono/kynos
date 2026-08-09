@@ -22,7 +22,7 @@ pub mod multipart;
 pub mod protobuf;
 
 use crate::{
-    error::Rejection,
+    error::rejection::Rejection,
     extract::{
         FromRequest,
         body::alternative::Alternative,
@@ -30,7 +30,7 @@ use crate::{
     },
     http::Request,
     router::operation::OperationCx,
-    schema::Registry,
+    schema::registry::Registry,
 };
 
 /// One of two request body representations, selected by `Content-Type`.

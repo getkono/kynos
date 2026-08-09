@@ -1,6 +1,6 @@
 //! What a request-derived input contributes to the description.
 
-use crate::{router::operation::OperationCx, schema::Registry};
+use crate::{router::operation::OperationCx, schema::registry::Registry};
 
 /// What a request-derived input contributes to the description.
 ///

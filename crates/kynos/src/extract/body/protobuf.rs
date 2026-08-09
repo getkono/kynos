@@ -1,14 +1,14 @@
 //! The `application/protobuf` body codec.
 
 use crate::{
-    error::Rejection,
+    error::rejection::Rejection,
     extract::{
         FromRequest,
         describe::{Describe, RequestContent},
     },
     http::Request,
     router::operation::OperationCx,
-    schema::{Registry, Schema},
+    schema::{Schema, registry::Registry},
 };
 
 /// An `application/protobuf` request or response body.

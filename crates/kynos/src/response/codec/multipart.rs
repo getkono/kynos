@@ -8,7 +8,7 @@ use crate::{
     extract::body::multipart::MultipartForm,
     http::Response,
     response::{IntoResponse, Responses},
-    schema::{Registry, Schema},
+    schema::{Schema, registry::Registry},
 };
 
 impl<T: Schema> IntoResponse for MultipartForm<T> {

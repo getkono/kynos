@@ -1,14 +1,14 @@
 //! The `application/json` body codec.
 
 use crate::{
-    error::Rejection,
+    error::rejection::Rejection,
     extract::{
         FromRequest,
         describe::{Describe, RequestContent},
     },
     http::Request,
     router::operation::OperationCx,
-    schema::{Registry, Schema},
+    schema::{Schema, registry::Registry},
 };
 
 /// An `application/json` request or response body.

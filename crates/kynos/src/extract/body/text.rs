@@ -1,14 +1,14 @@
 //! The `text/plain` body codec.
 
 use crate::{
-    error::Rejection,
+    error::rejection::Rejection,
     extract::{
         FromRequest,
         describe::{Describe, RequestContent},
     },
     http::Request,
     router::operation::OperationCx,
-    schema::Registry,
+    schema::registry::Registry,
 };
 
 /// A `text/plain` request or response body.

@@ -12,7 +12,7 @@ use crate::{
     },
     http::Response,
     response::{IntoResponse, Responses},
-    schema::Registry,
+    schema::registry::Registry,
 };
 
 #[cfg(feature = "form")]

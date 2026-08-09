@@ -33,7 +33,7 @@ pub mod status;
 #[cfg(feature = "openapi32")]
 pub mod stream;
 
-use crate::{http::Response, schema::Registry};
+use crate::{http::Response, schema::registry::Registry};
 
 /// A value that can be written as an HTTP response.
 ///

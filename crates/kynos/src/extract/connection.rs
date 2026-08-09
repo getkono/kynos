@@ -4,7 +4,7 @@
 //! properties of how a request arrived, not of the contract it is part of.
 
 use crate::{
-    error::Rejection,
+    error::rejection::Rejection,
     extract::{FromRequestParts, describe::Describe},
     http::Parts,
     router::operation::OperationCx,

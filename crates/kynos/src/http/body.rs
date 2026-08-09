@@ -1,12 +1,8 @@
-//! The HTTP types Kynos builds on.
+//! The request and response body.
 //!
-//! Kynos does not define its own request or response types. It uses the `http`
-//! crate's, which the whole Rust HTTP ecosystem shares, so that a Kynos
-//! application composes with anything else that speaks them.
-//!
-//! What Kynos *does* withhold is access to them from a handler: there is no
-//! extractor yielding a whole [`Request`], because a handler that reads an
-//! arbitrary part of the request cannot describe what it read.
+//! Opaque by design, and the one place the erased body type is named. A body is
+//! consumed through a typed extractor, so nothing above this file needs to know
+//! what it is erased into.
 
 use std::{
     error::Error as StdError,
@@ -21,9 +17,6 @@ use http_body::{Body as HttpBody, Frame, SizeHint};
 use http_body_util::{BodyExt, Empty, Full, combinators::UnsyncBoxBody};
 
 type BoxError = Box<dyn StdError + Send + Sync>;
-
-#[doc(no_inline)]
-pub use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Version, header};
 
 /// The request body.
 ///
@@ -103,18 +96,3 @@ impl Default for Body {
         Self::empty()
     }
 }
-
-/// An incoming request.
-pub type Request = http::Request<Body>;
-
-/// The head of an incoming request: everything but the body.
-///
-/// This is what a [`FromRequestParts`](crate::extract::FromRequestParts)
-/// implementation sees.
-pub type Parts = http::request::Parts;
-
-/// An outgoing response.
-pub type Response = http::Response<Body>;
-
-/// The head of an outgoing response.
-pub type ResponseParts = http::response::Parts;

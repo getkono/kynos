@@ -110,7 +110,7 @@ pub mod unchecked;
 pub use kynos_openapi as openapi;
 
 pub use crate::{
-    error::{Error, Problem, Result},
+    error::{Error, Result, problem::Problem},
     router::{Router, endpoint::Endpoint},
 };
 
@@ -126,8 +126,8 @@ pub use kynos_macros::query;
 /// Everything a typical application needs, in one import.
 pub mod prelude {
     pub use crate::{
-        di::Inject,
-        error::{Error, Problem, Result},
+        di::inject::Inject,
+        error::{Error, Result, problem::Problem},
         extract::params::{path::Path, query::Query},
         response::status::{Created, NoContent},
         router::{Router, group::Group},

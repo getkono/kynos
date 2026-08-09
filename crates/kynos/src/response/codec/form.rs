@@ -4,7 +4,7 @@ use crate::{
     extract::body::form::Form,
     http::Response,
     response::{IntoResponse, Responses},
-    schema::{Registry, Schema},
+    schema::{Schema, registry::Registry},
 };
 
 impl<T: serde::Serialize> IntoResponse for Form<T> {

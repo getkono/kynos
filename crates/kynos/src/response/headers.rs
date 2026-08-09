@@ -4,7 +4,7 @@ use crate::{
     extract::params::header::HeaderParams,
     http::Response,
     response::{IntoResponse, Responses},
-    schema::Registry,
+    schema::registry::Registry,
 };
 
 /// A response carrying declared headers alongside its body.

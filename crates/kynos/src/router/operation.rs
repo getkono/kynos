@@ -1,6 +1,6 @@
 //! Describing one operation while the router is built.
 
-use crate::schema::Registry;
+use crate::schema::registry::Registry;
 
 /// The description of the operation currently being built.
 ///

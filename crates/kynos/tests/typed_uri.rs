@@ -6,7 +6,7 @@ use kynos::{
         query::{Query, QueryParams},
     },
     openapi,
-    schema::{Registry, Schema},
+    schema::{Schema, registry::Registry},
 };
 
 struct ReportPath;

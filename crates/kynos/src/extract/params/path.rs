@@ -1,11 +1,11 @@
 //! Variables captured from the path template.
 
 use crate::{
-    error::Rejection,
+    error::rejection::Rejection,
     extract::{FromRequestParts, describe::Describe},
     http::Parts,
     router::operation::OperationCx,
-    schema::{Registry, Schema},
+    schema::{Schema, registry::Registry},
 };
 
 /// Variables captured from the path template.

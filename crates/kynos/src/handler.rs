@@ -6,7 +6,7 @@ use crate::{
     extract::describe::Describe,
     http::{Request, Response},
     router::operation::OperationCx,
-    schema::Registry,
+    schema::registry::Registry,
 };
 
 /// An `async fn` usable as an operation handler.

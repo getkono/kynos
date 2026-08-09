@@ -21,7 +21,7 @@
 //! whole request**. No `Request`, no `Body`, no `HeaderMap`. Those are the
 //! holes. A handler that wants an arbitrary header declares it with
 //! [`Headers`](params::header::Headers); a handler that wants an arbitrary body
-//! says [`Unchecked`](crate::schema::Unchecked).
+//! says [`Unchecked`](crate::schema::unchecked::Unchecked).
 //!
 //! # Rejections describe themselves too
 //!

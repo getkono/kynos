@@ -187,7 +187,7 @@ impl<C, P: PanicPolicy> Router<C, P> {
 
     /// Turns unconstrained-schema warnings into build errors.
     ///
-    /// [`Unchecked`](crate::schema::Unchecked) is honest but weak. A team that
+    /// [`Unchecked`](crate::schema::unchecked::Unchecked) is honest but weak. A team that
     /// wants no weak schemas at all can say so here.
     #[must_use]
     pub fn deny_unchecked_schemas(self) -> Self {

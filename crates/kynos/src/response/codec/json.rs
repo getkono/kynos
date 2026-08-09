@@ -3,7 +3,7 @@
 use crate::{
     http::Response,
     response::{IntoResponse, Responses},
-    schema::{Registry, Schema},
+    schema::{Schema, registry::Registry},
 };
 
 /// A JSON response body, with status 200.

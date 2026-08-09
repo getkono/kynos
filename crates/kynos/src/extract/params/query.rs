@@ -1,11 +1,11 @@
 //! Query string parameters, named and whole.
 
 use crate::{
-    error::Rejection,
+    error::rejection::Rejection,
     extract::{FromRequestParts, describe::Describe},
     http::Parts,
     router::operation::OperationCx,
-    schema::{Registry, Schema},
+    schema::{Schema, registry::Registry},
 };
 
 #[cfg(feature = "openapi32")]

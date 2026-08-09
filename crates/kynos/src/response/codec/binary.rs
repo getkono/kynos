@@ -4,7 +4,7 @@ use crate::{
     extract::{body::binary::Binary, media::MediaType},
     http::Response,
     response::{IntoResponse, Responses},
-    schema::Registry,
+    schema::registry::Registry,
 };
 
 impl<M: MediaType> IntoResponse for Binary<M> {

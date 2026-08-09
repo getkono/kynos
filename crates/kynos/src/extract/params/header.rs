@@ -1,11 +1,11 @@
 //! Declared request headers.
 
 use crate::{
-    error::Rejection,
+    error::rejection::Rejection,
     extract::{FromRequestParts, describe::Describe},
     http::{HeaderMap, HeaderName, HeaderValue, Parts},
     router::operation::OperationCx,
-    schema::Registry,
+    schema::registry::Registry,
 };
 
 /// Declared request headers.
@@ -14,7 +14,7 @@ use crate::{
 /// is a compile error: the specification says a parameter definition for those
 /// is ignored, so accepting one would put a claim in the description that no
 /// consumer will honour. Use content negotiation for the first two and
-/// [`Auth`](crate::security::Auth) for the third.
+/// [`Auth`](crate::security::auth::Auth) for the third.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Headers<T>(pub T);
 

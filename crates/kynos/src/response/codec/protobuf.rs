@@ -4,7 +4,7 @@ use crate::{
     extract::body::protobuf::Protobuf,
     http::Response,
     response::{IntoResponse, Responses},
-    schema::{Registry, Schema},
+    schema::{Schema, registry::Registry},
 };
 
 impl<T: prost::Message> IntoResponse for Protobuf<T> {

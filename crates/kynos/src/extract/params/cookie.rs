@@ -1,11 +1,11 @@
 //! Declared request cookies.
 
 use crate::{
-    error::Rejection,
+    error::rejection::Rejection,
     extract::{FromRequestParts, describe::Describe},
     http::{HeaderMap, Parts},
     router::operation::OperationCx,
-    schema::Registry,
+    schema::registry::Registry,
 };
 
 /// Declared request cookies.

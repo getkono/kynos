@@ -4,7 +4,7 @@ use crate::{
     extract::body::text::Text,
     http::Response,
     response::{IntoResponse, Responses},
-    schema::Registry,
+    schema::registry::Registry,
 };
 
 impl IntoResponse for Text {

@@ -7,12 +7,12 @@
 mod representation;
 
 use crate::{
-    error::Rejection,
+    error::rejection::Rejection,
     extract::{FromRequestParts, describe::Describe},
     http::{Parts, Response},
     response::{IntoResponse, Responses},
     router::operation::OperationCx,
-    schema::Registry,
+    schema::registry::Registry,
 };
 
 /// The client's accepted response representations.
@@ -23,7 +23,7 @@ use crate::{
 ///
 /// ```no_run
 /// use kynos::{
-///     error::Rejection,
+///     error::rejection::Rejection,
 ///     extract::{
 ///         body::{binary::Binary, text::Text},
 ///         media::Pdf,

@@ -227,7 +227,7 @@ async fn connection_limit_applies_before_accepting_another_socket() {
                 if call == 0 {
                     release.notified().await;
                 }
-                crate::http::Response::new(crate::http::Body::from_bytes(
+                crate::http::Response::new(crate::http::body::Body::from_bytes(
                     bytes::Bytes::from_static(b"ok"),
                 ))
             }
@@ -796,9 +796,9 @@ fn test_service() -> crate::router::service::Service<()> {
         kynos_openapi::Info::new("Test", "1"),
     );
     crate::router::service::Service::for_test(document, |_| async {
-        crate::http::Response::new(crate::http::Body::from_bytes(bytes::Bytes::from_static(
-            b"ok",
-        )))
+        crate::http::Response::new(crate::http::body::Body::from_bytes(
+            bytes::Bytes::from_static(b"ok"),
+        ))
     })
 }
 
@@ -822,7 +822,7 @@ fn blocking_service() -> (
             async move {
                 started.notify_one();
                 release.notified().await;
-                crate::http::Response::new(crate::http::Body::from_bytes(
+                crate::http::Response::new(crate::http::body::Body::from_bytes(
                     bytes::Bytes::from_static(b"ok"),
                 ))
             }

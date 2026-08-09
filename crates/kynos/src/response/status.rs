@@ -3,7 +3,7 @@
 use crate::{
     http::Response,
     response::{IntoResponse, Responses},
-    schema::Registry,
+    schema::registry::Registry,
 };
 
 /// A 204 No Content response.

@@ -11,7 +11,7 @@ use crate::{
         contribution::OperationContribution,
     },
     router::{Router, operation::Tag},
-    schema::Registry,
+    schema::registry::Registry,
 };
 
 /// A declared API operation.
@@ -103,7 +103,7 @@ impl<C, E: Endpoint<C>> IntoEndpoints<C> for E {
 ///
 /// ```no_run
 /// # use kynos::{
-/// #     handler::Handler, http, openapi, router::endpoint::EndpointBuilder, schema::Registry,
+/// #     handler::Handler, http, openapi, router::endpoint::EndpointBuilder, schema::registry::Registry,
 /// # };
 /// # #[derive(Clone)] struct Health;
 /// # impl Handler<()> for Health {
@@ -147,7 +147,7 @@ impl<C, H: Handler<C>, P: PanicPolicy, I> EndpointBuilder<C, H, P, I> {
     ///
     /// ```no_run
     /// # use kynos::{
-    /// #     handler::Handler, http, openapi, router::endpoint::EndpointBuilder, schema::Registry,
+    /// #     handler::Handler, http, openapi, router::endpoint::EndpointBuilder, schema::registry::Registry,
     /// # };
     /// # #[derive(Clone)]
     /// # struct Health;

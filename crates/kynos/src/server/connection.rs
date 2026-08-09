@@ -166,8 +166,10 @@ where
         async move {
             let (mut parts, body) = request.into_parts();
             parts.extensions.insert(metadata);
-            let request =
-                crate::http::Request::from_parts(parts, crate::http::Body::from_incoming(body));
+            let request = crate::http::Request::from_parts(
+                parts,
+                crate::http::body::Body::from_incoming(body),
+            );
             Ok::<_, Infallible>(service.call(request).await)
         }
     });

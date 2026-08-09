@@ -4,7 +4,7 @@ use crate::{
     extract::media::MediaType,
     http::Response,
     response::{IntoResponse, Responses},
-    schema::Registry,
+    schema::registry::Registry,
 };
 
 /// A streamed binary response with a declared media type.
