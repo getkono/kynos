@@ -23,11 +23,12 @@ buffer that consumes much of what it came for.
   trait exists — not public, not internal. The server calls tokio directly.
 - tokio types appear in zero handler-facing signatures. The one deliberate
   exception anywhere in the public API is
-  [`server::Listener::Tokio`](../crates/kynos/src/server.rs), which exists so an
+  [`server::address::Listener::Tokio`](../crates/kynos/src/server/address.rs),
+  which exists so an
   already-bound `tokio::net::TcpListener` can be handed to the server; naming
   the runtime there is the point, not a leak.
 - The runtime coupling surface is exactly five points, and they all live in
-  `crates/kynos/src/server.rs`: the accept loop and listener, connection socket
+  `crates/kynos/src/server/`: the accept loop and listener, connection socket
   read and write (the `hyper::rt` implementation), `spawn`, timers (request
   timeout, keepalive, shutdown grace), and the shutdown signal. Holding that
   count is about auditability and a small public surface, not about keeping a
@@ -43,7 +44,7 @@ buffer that consumes much of what it came for.
   not a design constraint today.
 
 The policy is already visible in the tree: `crates/kynos-openapi/` carries no
-runtime dependency at all, and `crates/kynos/src/server.rs` is the only place
+runtime dependency at all, and `crates/kynos/src/server/` is the only place
 the runtime is named. Work that would widen that set is the work this section
 exists to reject.
 
@@ -75,6 +76,16 @@ Core speaks its own intermediate representation and nothing else. OpenAPI 3.1
 and 3.2, JSON, path-template syntax and wire codecs are all projections of that
 IR, and they belong in satellite crates. The test is mechanical: if a standards
 body could revise it, it cannot be in core.
+
+*Where that boundary falls today:* `kynos-openapi` is still one crate, but it
+is split three ways —
+[`model/`](../crates/kynos-openapi/src/model/) is version-agnostic data and
+invariant-preserving constructors, [`emit/`](../crates/kynos-openapi/src/emit/)
+turns it into an artifact at a chosen version, and
+[`validate/`](../crates/kynos-openapi/src/validate/) checks one. `model/` is
+what an eventual IR crate would be. The seam is not yet a crate boundary
+because there is no second projection to justify one; when there is, drawing it
+is a directory move rather than a redesign.
 
 **2. Model the general case; today's common case is a degenerate instance.**
 

@@ -6,7 +6,8 @@ A layer's type must declare everything it can do to a response that the
 handler's type does not already say.
 
 Everything below follows from that sentence. The mechanism is
-[`OperationContribution`](../crates/kynos/src/middleware.rs), and the reason it
+[`OperationContribution`](../crates/kynos/src/middleware/contribution.rs), and
+the reason it
 is a closed set rather than an open one is that an interceptor doing something
 the set cannot express is doing something OpenAPI cannot describe.
 
@@ -41,7 +42,8 @@ only obtain by running the server is a document you cannot check in CI.
 rewriting headers after authentication has added a 401 produces a different
 document than the reverse order, and the composition rules must reflect that
 rather than sorting it away. `merge` returning
-[`ContributionConflict`](../crates/kynos/src/middleware.rs) is the other half of
+[`ContributionConflict`](../crates/kynos/src/middleware/contribution.rs) is the
+other half of
 this: two interceptors that disagree about what a 429 means are caught when the
 router is built, not in production.
 
@@ -73,7 +75,7 @@ it reaches:
 
 | Escape hatch | Today | Contract |
 | --- | --- | --- |
-| [`Unchecked<T>`](../crates/kynos/src/schema.rs) | Per-item annotation, reported by `validate` | Unchanged — already correct, and the model for the rest |
+| [`Unchecked<T>`](../crates/kynos/src/schema/unchecked.rs) | Per-item annotation, reported by `validate` | Unchanged — already correct, and the model for the rest |
 | `route_unchecked` | Operation absent from `paths` | Operation emitted, flagged `Opaque` |
 | `layer_unchecked`, `into_tower_unchecked` | Whole document stamped non-authoritative | `Opaque` on the covered subtree only |
 | `upgrade_unchecked` | Absent from `paths` | Still absent, and still reported by `validate` |

@@ -32,10 +32,10 @@ disabled, or passes trivially and hides the regression it was meant to catch.
 | Requirement group | Location |
 | --- | --- |
 | [Document model](#document-model) | `crates/kynos-openapi/` |
-| [Routing](#routing) | `crates/kynos/src/router.rs` |
-| [Extraction](#extraction) | `crates/kynos/src/extract.rs` |
-| [Middleware](#middleware) | `crates/kynos/src/middleware.rs` |
-| [Runtime](#runtime) | `crates/kynos/src/server.rs` |
+| [Routing](#routing) | `crates/kynos/src/router/` |
+| [Extraction](#extraction) | `crates/kynos/src/extract/` |
+| [Middleware](#middleware) | `crates/kynos/src/middleware/` |
+| [Runtime](#runtime) | `crates/kynos/src/server/` |
 | [Macros](#macros) | `crates/kynos-macros/` |
 | [Observability](#observability) | the `trace` feature — no module yet |
 
@@ -96,12 +96,12 @@ intention rather than a guarantee.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| reliability | Graceful shutdown drains all in-flight requests with zero dropped responses | Integration tests in `crates/kynos/src/server.rs` covering HTTP/1 drain, HTTP/2 stream drain, TLS handshake cancellation, and timeout exhaustion | `enforced` |
+| reliability | Graceful shutdown drains all in-flight requests with zero dropped responses | Integration tests in `crates/kynos/src/server/tests.rs` covering HTTP/1 drain, HTTP/2 stream drain, TLS handshake cancellation, and timeout exhaustion | `enforced` |
 | reliability | Backpressure is bounded by default via queue depth and timeouts | Load test at 2× capacity asserting bounded memory and shed responses rather than unbounded growth | `blocked-on-impl` |
 | performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `planned` |
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `planned` |
 | compatibility | `Listener::Tokio` is the only public item naming a tokio type | `cargo-public-api` assertion over the framework surface | `planned` |
-| compatibility | The runtime is named in `crates/kynos/src/server.rs` and nowhere else | CI grep for `tokio` outside that module | `planned` |
+| compatibility | The runtime is named under `crates/kynos/src/server/` and nowhere else | CI grep for `tokio` outside that module tree | `planned` |
 
 The last two rows are the enforcement of the tokio-only policy in
 [`architecture.md`](architecture.md#runtime-policy). There is no runtime
