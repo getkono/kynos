@@ -105,7 +105,7 @@ No, it is minimal but strict and opinionated where correctness is in question.
 **Is kynos really faster than the competition?**
 A better way to frame it is we are as fast if not faster in most ways (open an issue if not) and spend effort on optimizations possible due to our API strictness since day-one.
 The concrete claim: there is no JSON Schema interpreter on the hot path. Constraints are declared once on the type, and the emitted document and the request parser are two projections of that one declaration.
-We plan to release our benchmarks in this repo: <https://github.com/getkono/kynos-bench>
+We plan to release our benchmarks in this repo: <https://github.com/getkono/kynos-bench>, which also defines the measurement methodology — what is measured, how, and why each number is worth tracking.
 <!-- TODO: establish this claim. -->
 
 **Why code-first and not contract-first?**

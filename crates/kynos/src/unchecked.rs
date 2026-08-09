@@ -1,14 +1,22 @@
 //! Escape hatches, and what they cost.
 //!
-//! Everything in this module lets you build something Kynos cannot describe. In
-//! exchange, the emitted document is stamped with
-//! `x-kynos-document-not-authoritative`, `Router::validate` reports every
-//! unchecked construct, and whatever they reach is absent from `paths`.
+//! Everything in this module lets you build something Kynos cannot describe.
+//! These are waivers: you are asserting that you know what the cost is.
+//!
+//! In exchange, `Router::validate` reports every unchecked construct, and the
+//! operations a waiver reaches are emitted and flagged rather than dropped.
+//! `x-kynos-document-not-authoritative` follows from that, stamped on the
+//! document when any operation is flagged.
 //!
 //! That cost is deliberate and visible. A description that silently omits part
 //! of the service is worse than no description, because consumers trust it. If
 //! Kynos cannot describe something, it says so in the artifact rather than
 //! quietly leaving a hole.
+//!
+//! The exception is [`Router::upgrade_unchecked`], because a connection that
+//! has left HTTP has no vocabulary in any version of the specification — an
+//! entry no consumer could act on would be worse than the honest absence, which
+//! `Router::validate` reports either way.
 //!
 //! # When these are the right answer
 //!
