@@ -20,18 +20,24 @@
 
 use crate::{
     error::Rejection,
-    extract::{Binary, Describe, FromRequestParts, HeaderParams, MediaType, Text},
+    extract::{
+        FromRequestParts,
+        body::{binary::Binary, text::Text},
+        describe::Describe,
+        media::MediaType,
+        params::header::HeaderParams,
+    },
     http::{Parts, Response},
     router::OperationCx,
     schema::Registry,
 };
 
 #[cfg(feature = "form")]
-use crate::extract::Form;
+use crate::extract::body::form::Form;
 #[cfg(feature = "multipart")]
-use crate::extract::MultipartForm;
+use crate::extract::body::multipart::MultipartForm;
 #[cfg(feature = "protobuf")]
-use crate::extract::Protobuf;
+use crate::extract::body::protobuf::Protobuf;
 
 /// A value that can be written as an HTTP response.
 ///
@@ -65,7 +71,7 @@ pub trait Responses {
 /// the response is committed, so a serialization failure becomes a documented
 /// RFC 9457 500 response rather than a truncated successful response.
 #[cfg(feature = "json")]
-pub use crate::extract::Json;
+pub use crate::extract::body::json::Json;
 
 /// A 204 No Content response.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -174,7 +180,10 @@ impl<T, H> WithHeaders<T, H> {
 /// ```no_run
 /// use kynos::{
 ///     error::Rejection,
-///     extract::{Binary, Text, media::Pdf},
+///     extract::{
+///         body::{binary::Binary, text::Text},
+///         media::Pdf,
+///     },
 ///     response::{Accept, Negotiated},
 /// };
 ///
@@ -897,21 +906,21 @@ where
 
 mod private {
     use super::{IntoResponse, MediaType, Registry, Response, Responses};
-    use crate::extract::{Binary, Text};
+    use crate::extract::body::{binary::Binary, text::Text};
 
     #[cfg(feature = "form")]
-    use crate::extract::Form;
+    use crate::extract::body::form::Form;
     #[cfg(feature = "multipart")]
-    use crate::extract::MultipartForm;
+    use crate::extract::body::multipart::MultipartForm;
     #[cfg(feature = "protobuf")]
-    use crate::extract::Protobuf;
+    use crate::extract::body::protobuf::Protobuf;
 
     pub trait Representation: IntoResponse + Responses {
         fn media_type() -> &'static str;
     }
 
     #[cfg(feature = "json")]
-    impl<T> Representation for crate::extract::Json<T>
+    impl<T> Representation for crate::extract::body::json::Json<T>
     where
         T: serde::Serialize + crate::schema::Schema,
     {
@@ -1012,7 +1021,10 @@ impl<T: private::Representations> Responses for Negotiated<T> {
 #[cfg(test)]
 mod tests {
     use super::Accept;
-    use crate::extract::{Binary, Text, media::Pdf};
+    use crate::extract::{
+        body::{binary::Binary, text::Text},
+        media::Pdf,
+    };
 
     #[test]
     fn accept_prefers_quality_then_specificity() {

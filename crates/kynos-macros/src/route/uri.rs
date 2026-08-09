@@ -30,7 +30,7 @@ pub(crate) fn endpoint_uri_impl(
     let path_assertion = path_type.as_ref().map(|path_type| {
         quote! {
             const _: () = assert!(::kynos::__private::path::path_parameter_names_match(
-                <#path_type as ::kynos::extract::PathParams>::NAMES,
+                <#path_type as ::kynos::extract::params::path::PathParams>::NAMES,
                 &[#(#path_names),*],
             ), "PathParams names must exactly match route variables in declaration order");
         }

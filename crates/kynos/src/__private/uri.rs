@@ -1,7 +1,7 @@
 //! URI construction for the `uri()` inherent method a route attribute emits.
 
 use crate::{
-    extract::{PathParams, QueryParams},
+    extract::params::{path::PathParams, query::QueryParams},
     http::Uri,
 };
 

@@ -1,6 +1,6 @@
 use crate::{
     __private::{path::path_parameter_names_match, uri::endpoint_uri_with_path},
-    extract::PathParams,
+    extract::params::path::PathParams,
 };
 
 struct Params;

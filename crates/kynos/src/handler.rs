@@ -3,7 +3,7 @@
 use std::future::Future;
 
 use crate::{
-    extract::Describe,
+    extract::describe::Describe,
     http::{Request, Response},
     router::OperationCx,
     schema::Registry,

@@ -13,7 +13,7 @@ use std::future::Future;
 
 use crate::{
     error::Rejection,
-    extract::{Describe, FromRequestParts},
+    extract::{FromRequestParts, describe::Describe},
     http::Parts,
     router::OperationCx,
 };

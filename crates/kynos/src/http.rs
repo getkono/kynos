@@ -28,7 +28,7 @@ pub use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Vers
 /// The request body.
 ///
 /// Opaque by design. Bodies are consumed through a typed extractor such as
-/// [`Json`](crate::extract::Json), never read directly.
+/// [`Json`](crate::extract::body::json::Json), never read directly.
 pub struct Body {
     inner: Mutex<UnsyncBoxBody<Bytes, BoxError>>,
 }

@@ -128,14 +128,14 @@ pub mod prelude {
     pub use crate::{
         di::Inject,
         error::{Error, Problem, Result},
-        extract::{Path, Query},
+        extract::params::{path::Path, query::Query},
         response::{Created, NoContent},
         router::{Group, Router},
         schema::Schema as SchemaTrait,
     };
 
     #[cfg(feature = "json")]
-    pub use crate::extract::Json;
+    pub use crate::extract::body::json::Json;
 
     #[cfg(feature = "macros")]
     pub use crate::{

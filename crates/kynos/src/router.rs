@@ -85,7 +85,7 @@ pub trait EndpointMeta {
 
 /// The description of the operation currently being built.
 ///
-/// Passed to [`Describe`](crate::extract::Describe) implementations so that
+/// Passed to [`Describe`](crate::extract::describe::Describe) implementations so that
 /// each handler input can add its own parameters or request body.
 #[derive(Debug)]
 pub struct OperationCx<'a> {
@@ -106,7 +106,7 @@ impl OperationCx<'_> {
     /// Panics if a request body was already set. The trait bounds make this
     /// unreachable from a handler — only one argument may implement
     /// [`FromRequest`](crate::extract::FromRequest) — so reaching it indicates
-    /// a hand-written [`Describe`](crate::extract::Describe) implementation
+    /// a hand-written [`Describe`](crate::extract::describe::Describe) implementation
     /// that claims a body it does not consume.
     pub fn set_request_body(&mut self, body: kynos_openapi::RequestBody) {
         let _ = body;
