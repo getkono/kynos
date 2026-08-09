@@ -29,7 +29,7 @@ pub(crate) fn endpoint_uri_impl(
     let path_names = variables.iter().map(String::as_str);
     let path_assertion = path_type.as_ref().map(|path_type| {
         quote! {
-            const _: () = assert!(::kynos::router::path_parameter_names_match(
+            const _: () = assert!(::kynos::__private::path::path_parameter_names_match(
                 <#path_type as ::kynos::extract::PathParams>::NAMES,
                 &[#(#path_names),*],
             ), "PathParams names must exactly match route variables in declaration order");
@@ -41,7 +41,7 @@ pub(crate) fn endpoint_uri_impl(
             impl #endpoint {
                 /// Builds this endpoint's URI.
                 pub fn uri() -> ::kynos::http::Uri {
-                    ::kynos::router::endpoint_uri(#path)
+                    ::kynos::__private::uri::endpoint_uri(#path)
                 }
             }
         },
@@ -49,7 +49,7 @@ pub(crate) fn endpoint_uri_impl(
             impl #endpoint {
                 /// Builds this endpoint's URI from its exact path parameters.
                 pub fn uri(path: #path_type) -> ::kynos::http::Uri {
-                    ::kynos::router::endpoint_uri_with_path(#path, &path)
+                    ::kynos::__private::uri::endpoint_uri_with_path(#path, &path)
                 }
             }
         },
@@ -57,7 +57,7 @@ pub(crate) fn endpoint_uri_impl(
             impl #endpoint {
                 /// Builds this endpoint's URI from its exact query parameters.
                 pub fn uri(query: #query_type) -> ::kynos::http::Uri {
-                    ::kynos::router::endpoint_uri_with_query(#path, &query)
+                    ::kynos::__private::uri::endpoint_uri_with_query(#path, &query)
                 }
             }
         },
@@ -65,7 +65,7 @@ pub(crate) fn endpoint_uri_impl(
             impl #endpoint {
                 /// Builds this endpoint's URI from its exact path and query parameters.
                 pub fn uri(path: #path_type, query: #query_type) -> ::kynos::http::Uri {
-                    ::kynos::router::endpoint_uri_with_path_and_query(#path, &path, &query)
+                    ::kynos::__private::uri::endpoint_uri_with_path_and_query(#path, &path, &query)
                 }
             }
         },

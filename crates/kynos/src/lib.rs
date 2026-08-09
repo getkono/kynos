@@ -80,6 +80,9 @@ compile_error!(
 #[cfg(all(feature = "server", not(any(feature = "http1", feature = "http2"))))]
 compile_error!("the `server` feature requires at least one of `http1` or `http2`");
 
+#[doc(hidden)]
+pub mod __private;
+
 pub mod di;
 pub mod error;
 pub mod extract;
