@@ -6,8 +6,9 @@ use kynos_openapi::{Method, PathTemplate};
 use crate::{
     handler::Handler,
     middleware::{
-        Interceptor, OperationContribution,
+        Interceptor,
         catch_panic::{Catch, PanicPolicy, Propagate},
+        contribution::OperationContribution,
     },
     router::{Router, operation::Tag},
     schema::Registry,

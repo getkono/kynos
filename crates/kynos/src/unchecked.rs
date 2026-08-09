@@ -114,7 +114,7 @@ impl<C> Router<C> {
     ///
     /// Prefer writing an [`Interceptor`](crate::middleware::Interceptor). It is
     /// barely more work: declare an
-    /// [`OperationContribution`](crate::middleware::OperationContribution)
+    /// [`OperationContribution`](crate::middleware::contribution::OperationContribution)
     /// saying what the layer does to the exchange, and in return every covered
     /// operation documents it correctly and automatically.
     #[must_use]
