@@ -15,7 +15,7 @@ use std::net::Ipv4Addr;
 
 use kynos::{
     Router,
-    server::{Server, Shutdown},
+    server::{Server, shutdown::Shutdown},
 };
 
 #[tokio::main]

@@ -12,7 +12,7 @@
 
 use std::net::Ipv4Addr;
 
-use kynos::{Router, server::Http2Config, server::Server};
+use kynos::{Router, server::Server, server::protocol::Http2Config};
 
 #[tokio::main]
 async fn main() -> kynos::Result<()> {

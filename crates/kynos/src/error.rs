@@ -61,7 +61,7 @@ pub enum Error {
     /// The server configuration or transport failed.
     #[cfg(feature = "server")]
     #[error(transparent)]
-    Server(#[from] crate::server::ServerError),
+    Server(#[from] crate::server::error::ServerError),
 }
 
 /// An RFC 9457 problem detail.
