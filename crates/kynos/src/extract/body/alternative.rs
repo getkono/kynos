@@ -4,10 +4,19 @@
 //! module declaration: each impl names two codecs, so a cross-codec pair such
 //! as JSON-or-form needs both features and no single gate covers a group.
 
+use crate::extract::describe::RequestContent;
+
+// Every impl below pairs a codec with `Binary` or `Text`, so with no codec
+// feature enabled the matrix is empty and these would be unused.
+#[cfg(any(
+    feature = "json",
+    feature = "form",
+    feature = "multipart",
+    feature = "protobuf"
+))]
 use crate::{
     extract::{
         body::{binary::Binary, text::Text},
-        describe::RequestContent,
         media::MediaType,
     },
     schema::Schema,
