@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{extensions::Extensions, external_docs::ExternalDocumentation};
+use crate::model::{extensions::Extensions, external_docs::ExternalDocumentation};
 
 /// Metadata for a single tag used by [`Operation::tags`](crate::Operation::tags).
 ///

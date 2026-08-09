@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::extensions::Extensions;
+use crate::model::extensions::Extensions;
 
 /// A worked example of a parameter, request body, response body or header.
 ///

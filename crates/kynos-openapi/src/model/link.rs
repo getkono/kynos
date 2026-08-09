@@ -3,7 +3,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{Map, extensions::Extensions, server::Server};
+use crate::{
+    Map,
+    model::{extensions::Extensions, server::Server},
+};
 
 /// A design-time link from one response to another operation.
 ///

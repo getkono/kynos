@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::extensions::Extensions;
+use crate::model::extensions::Extensions;
 
 /// A pointer to extended documentation.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

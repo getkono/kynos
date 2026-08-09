@@ -1,6 +1,8 @@
 //! The Responses and Response Objects.
 
-use std::{fmt, str::FromStr};
+pub mod status;
+
+use std::fmt;
 
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
@@ -10,90 +12,12 @@ use serde::{
 use serde_json::Value;
 
 use crate::{
-    Map, body::MediaType, extensions::Extensions, link::Link, parameter::Header, reference::RefOr,
+    Map,
+    model::{
+        body::media_type::MediaType, extensions::Extensions, link::Link, parameter::header::Header,
+        reference::RefOr, response::status::StatusPattern,
+    },
 };
-
-/// The key of an entry in a [`Responses`] map.
-///
-/// Either an exact status code or one of the five permitted wildcards. No other
-/// wildcard form is legal.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum StatusPattern {
-    /// An exact status code, such as `404`.
-    Code(u16),
-    /// Every informational response, written `1XX`.
-    Informational,
-    /// Every successful response, written `2XX`.
-    Success,
-    /// Every redirection response, written `3XX`.
-    Redirection,
-    /// Every client error response, written `4XX`.
-    ClientError,
-    /// Every server error response, written `5XX`.
-    ServerError,
-}
-
-impl StatusPattern {
-    /// Whether `code` is covered by this pattern.
-    #[must_use]
-    pub fn matches(self, code: u16) -> bool {
-        match self {
-            Self::Code(exact) => exact == code,
-            Self::Informational => (100..200).contains(&code),
-            Self::Success => (200..300).contains(&code),
-            Self::Redirection => (300..400).contains(&code),
-            Self::ClientError => (400..500).contains(&code),
-            Self::ServerError => (500..600).contains(&code),
-        }
-    }
-
-    /// Whether this pattern is a wildcard rather than an exact code.
-    #[must_use]
-    pub fn is_range(self) -> bool {
-        !matches!(self, Self::Code(_))
-    }
-}
-
-impl fmt::Display for StatusPattern {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Code(code) => write!(f, "{code}"),
-            Self::Informational => f.write_str("1XX"),
-            Self::Success => f.write_str("2XX"),
-            Self::Redirection => f.write_str("3XX"),
-            Self::ClientError => f.write_str("4XX"),
-            Self::ServerError => f.write_str("5XX"),
-        }
-    }
-}
-
-/// The error returned when a string is not a legal [`Responses`] key.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error(
-    "`{0}` is not a valid response key: expected a status code such as `404`, \
-     or one of `1XX`, `2XX`, `3XX`, `4XX`, `5XX`"
-)]
-pub struct InvalidStatusPattern(pub String);
-
-impl FromStr for StatusPattern {
-    type Err = InvalidStatusPattern;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "1XX" => Ok(Self::Informational),
-            "2XX" => Ok(Self::Success),
-            "3XX" => Ok(Self::Redirection),
-            "4XX" => Ok(Self::ClientError),
-            "5XX" => Ok(Self::ServerError),
-            _ => value
-                .parse::<u16>()
-                .ok()
-                .filter(|code| (100..600).contains(code))
-                .map(Self::Code)
-                .ok_or_else(|| InvalidStatusPattern(value.to_owned())),
-        }
-    }
-}
 
 /// The responses an operation may return.
 ///
@@ -211,7 +135,7 @@ impl<'de> Deserialize<'de> for Responses {
                 while let Some(key) = access.next_key::<String>()? {
                     if key == "default" {
                         responses.default_response = Some(access.next_value()?);
-                    } else if key.starts_with(crate::extensions::EXTENSION_PREFIX) {
+                    } else if key.starts_with(crate::model::extensions::EXTENSION_PREFIX) {
                         responses.extensions.0.insert(key, access.next_value()?);
                     } else {
                         // Reject a malformed key here rather than carrying it
@@ -309,79 +233,4 @@ impl Response {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{RefOr, Response, Responses, StatusPattern};
-
-    #[test]
-    fn status_patterns_round_trip_through_strings() {
-        for text in ["200", "404", "1XX", "2XX", "3XX", "4XX", "5XX"] {
-            let pattern: StatusPattern = text.parse().expect("valid");
-            assert_eq!(pattern.to_string(), text);
-        }
-    }
-
-    #[test]
-    fn only_the_five_documented_wildcards_are_accepted() {
-        assert!("6XX".parse::<StatusPattern>().is_err());
-        assert!("2xx".parse::<StatusPattern>().is_err());
-        assert!("20X".parse::<StatusPattern>().is_err());
-        assert!("99".parse::<StatusPattern>().is_err());
-        assert!("600".parse::<StatusPattern>().is_err());
-    }
-
-    #[test]
-    fn wildcards_cover_their_class() {
-        assert!(StatusPattern::ClientError.matches(404));
-        assert!(!StatusPattern::ClientError.matches(500));
-        assert!(StatusPattern::Code(404).matches(404));
-        assert!(!StatusPattern::Code(404).matches(400));
-    }
-
-    #[test]
-    fn responses_serialize_default_alongside_status_keys() {
-        let responses = Responses::new()
-            .with(200, Response::new("ok"))
-            .with_default(Response::new("unexpected error"));
-        let json = serde_json::to_string(&responses).expect("ok");
-        assert!(json.contains(r#""default""#));
-        assert!(json.contains(r#""200""#));
-    }
-
-    #[test]
-    fn responses_round_trip() {
-        let responses = Responses::new().with(201, Response::new("created"));
-        let json = serde_json::to_string(&responses).expect("ok");
-        let parsed: Responses = serde_json::from_str(&json).expect("ok");
-        assert_eq!(parsed, responses);
-    }
-
-    #[test]
-    fn a_malformed_status_key_is_a_parse_error() {
-        let result = serde_json::from_str::<Responses>(r#"{"okay":{"description":"x"}}"#);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn extensions_survive_a_round_trip() {
-        let parsed: Responses =
-            serde_json::from_str(r#"{"200":{"description":"ok"},"x-note":"hi"}"#).expect("ok");
-        assert_eq!(
-            parsed.extensions.get("x-note").and_then(|v| v.as_str()),
-            Some("hi")
-        );
-        assert_eq!(parsed.responses.len(), 1);
-    }
-
-    #[test]
-    fn merging_keeps_the_existing_entry_on_conflict() {
-        let mut base = Responses::new().with(200, Response::new("mine"));
-        let other = Responses::new()
-            .with(200, Response::new("theirs"))
-            .with(429, Response::new("too many requests"));
-        base.merge_from(&other);
-
-        assert_eq!(base.responses.len(), 2);
-        let two_hundred = base.get(200).and_then(RefOr::as_item).expect("present");
-        assert_eq!(two_hundred.description, "mine");
-    }
-}
+mod tests;

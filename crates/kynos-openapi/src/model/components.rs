@@ -6,20 +6,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Map,
-    body::RequestBody,
-    callback::Callback,
-    example::Example,
-    extensions::Extensions,
-    parameter::{Header, Parameter},
-    paths::PathItem,
-    reference::RefOr,
-    response::Response,
-    schema::Schema,
-    security::SecurityScheme,
+    model::{
+        body::RequestBody,
+        callback::Callback,
+        example::Example,
+        extensions::Extensions,
+        parameter::{Parameter, header::Header},
+        paths::item::PathItem,
+        reference::RefOr,
+        response::Response,
+        schema::Schema,
+        security::SecurityScheme,
+    },
 };
 
 #[cfg(feature = "openapi32")]
-use crate::body::MediaType;
+use crate::model::body::media_type::MediaType;
 
 /// The error returned when a component key is not a legal name.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -157,7 +159,7 @@ pub struct Components {
 
     /// Reusable links.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
-    pub links: Map<RefOr<crate::link::Link>>,
+    pub links: Map<RefOr<crate::model::link::Link>>,
 
     /// Reusable callbacks.
     #[serde(default, skip_serializing_if = "Map::is_empty")]

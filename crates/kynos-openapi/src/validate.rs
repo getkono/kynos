@@ -12,13 +12,18 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     Map,
-    body::MediaType,
-    components::ComponentName,
-    document::{Document, SpecVersion},
-    extensions::Extensions,
-    parameter::{Header, Parameter, ParameterIn, is_ignored_header_parameter},
-    paths::{Operation, PathItem, PathTemplate},
-    reference::RefOr,
+    model::{
+        body::media_type::MediaType,
+        components::ComponentName,
+        document::{Document, SpecVersion},
+        extensions::Extensions,
+        parameter::{
+            Parameter, ParameterIn,
+            header::{Header, is_ignored_header_parameter},
+        },
+        paths::{item::PathItem, operation::Operation, template::PathTemplate},
+        reference::RefOr,
+    },
 };
 
 /// The annotation marking a schema as deliberately unconstrained.
@@ -769,13 +774,13 @@ fn check_media_type(location: &str, content: &MediaType, violations: &mut Vec<Vi
     }
 }
 
-fn is_unchecked(schema: &crate::schema::Schema) -> bool {
+fn is_unchecked(schema: &crate::model::schema::Schema) -> bool {
     match schema {
-        crate::schema::Schema::Bool(true) => true,
-        crate::schema::Schema::Object(object) => object
+        crate::model::schema::Schema::Bool(true) => true,
+        crate::model::schema::Schema::Object(object) => object
             .unknown_keywords
             .contains_key(UNCHECKED_SCHEMA_ANNOTATION),
-        crate::schema::Schema::Bool(false) => false,
+        crate::model::schema::Schema::Bool(false) => false,
     }
 }
 
@@ -854,7 +859,7 @@ fn collect_operation_blockers(location: &str, operation: &Operation, blockers: &
         if parameter.location == ParameterIn::Querystring {
             blockers.push(format!("{location}/parameters/{}", parameter.name));
         }
-        if parameter.style == Some(crate::parameter::Style::Cookie) {
+        if parameter.style == Some(crate::model::parameter::style::Style::Cookie) {
             blockers.push(format!("{location}/parameters/{}/style", parameter.name));
         }
     }
@@ -929,12 +934,14 @@ type UnusedMapAlias = Map<()>;
 #[cfg(test)]
 mod tests {
     use super::{SpecError, Validator, Violation};
-    use crate::{
-        Document, Info, Response, Responses, SpecVersion,
-        parameter::{Parameter, Style},
-        paths::{Method, Operation, PathItem, PathTemplate},
-        schema::{Schema, SchemaType},
-        security::SecurityRequirement,
+    use crate::model::{
+        document::{Document, SpecVersion},
+        info::Info,
+        parameter::{Parameter, style::Style},
+        paths::{item::PathItem, method::Method, operation::Operation, template::PathTemplate},
+        response::{Response, Responses},
+        schema::{Schema, types::SchemaType},
+        security::requirement::SecurityRequirement,
     };
 
     fn ok_responses() -> Responses {

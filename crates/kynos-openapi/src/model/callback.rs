@@ -2,7 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Map, paths::PathItem, reference::RefOr};
+use crate::{
+    Map,
+    model::{paths::item::PathItem, reference::RefOr},
+};
 
 /// Out-of-band requests the API makes as part of an operation.
 ///

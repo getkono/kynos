@@ -5,9 +5,19 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Map, components::Components, extensions::Extensions, external_docs::ExternalDocumentation,
-    info::Info, paths::PathItem, paths::Paths, schema::OAS_DIALECT, security::SecurityRequirement,
-    server::Server, tag::Tag, validate::SpecError,
+    Map,
+    model::{
+        components::Components,
+        extensions::Extensions,
+        external_docs::ExternalDocumentation,
+        info::Info,
+        paths::{Paths, item::PathItem},
+        schema::dialect::OAS_DIALECT,
+        security::requirement::SecurityRequirement,
+        server::Server,
+        tag::Tag,
+    },
+    validate::SpecError,
 };
 
 /// The version of the OpenAPI Specification a document targets.
@@ -233,7 +243,7 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::{Document, SpecVersion};
-    use crate::{Info, schema::OAS_DIALECT};
+    use crate::model::{info::Info, schema::dialect::OAS_DIALECT};
 
     fn document() -> Document {
         Document::new(SpecVersion::V3_1, Info::new("Orders", "1.0.0"))

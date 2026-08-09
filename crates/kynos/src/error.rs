@@ -44,7 +44,7 @@ pub enum Error {
 
     /// A path template was malformed, or collided with another.
     #[error(transparent)]
-    Path(#[from] kynos_openapi::paths::InvalidPathTemplate),
+    Path(#[from] kynos_openapi::model::paths::template::InvalidPathTemplate),
 
     /// Two types claimed the same component name.
     #[error(transparent)]

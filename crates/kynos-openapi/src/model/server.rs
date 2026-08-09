@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Map, extensions::Extensions};
+use crate::{Map, model::extensions::Extensions};
 
 /// A server hosting the API.
 ///
