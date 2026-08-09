@@ -100,11 +100,14 @@ intention rather than a guarantee.
 | reliability | Backpressure is bounded by default via queue depth and timeouts | Load test at 2× capacity asserting bounded memory and shed responses rather than unbounded growth | `blocked-on-impl` |
 | performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `planned` |
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `planned` |
-| compatibility | The internal runtime trait is private | CI assertion that it does not appear in `cargo-public-api` output | `planned` |
+| compatibility | `Listener::Tokio` is the only public item naming a tokio type | `cargo-public-api` assertion over the framework surface | `planned` |
+| compatibility | The runtime is named in `crates/kynos/src/server.rs` and nowhere else | CI grep for `tokio` outside that module | `planned` |
 
-The last row is the enforcement of the runtime policy in
-[`architecture.md`](architecture.md#runtime-policy); the syscall row is also the
-prerequisite for ever reconsidering io_uring.
+The last two rows are the enforcement of the tokio-only policy in
+[`architecture.md`](architecture.md#runtime-policy). There is no runtime
+abstraction trait to keep private, so what CI has to check is the opposite:
+that direct tokio use stays inside the one module that is allowed to have it,
+and that it reaches users only through the listener handover it is meant to.
 
 ## Macros
 

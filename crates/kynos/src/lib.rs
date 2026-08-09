@@ -63,6 +63,10 @@
 //! none of which OpenAPI 3.1 can describe. The default-on `json` feature adds
 //! application JSON request and response codecs; it does not control OpenAPI
 //! document serialization or the framework's problem-details responses.
+//!
+//! The default-on `server` feature provides the `server` module. It is built on
+//! tokio, which is the only supported runtime: Kynos does not abstract over the
+//! runtime and offers no flag selecting another one.
 
 // `openapi31` is the baseline object model rather than an optional extra.
 // `openapi32` implies it, so this fires only when a caller disables default

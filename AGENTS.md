@@ -9,6 +9,7 @@ Kynos is an idiomatic, performance-focused Rust framework for building REST APIs
 - Idiomatic and strict Rust API: API is pre-v1. All changes are on the table. API must be idiomatic Rust, and structurally strict to leverage compiler hints.
 - Production-ready: Our contract guarantees made it easy to make it production-grade since day-one. Not future optimizations should not break API (hence we are not v0.y.z).
 - Be opinionated where it counts: We scope features that are strictly required for performance and where there should only be one recommended approach. For example, IO-related primitives is vertically integrated and coupled with core dependencies like `tokio` and dependency injection is fully-featured. However, we would not prescribe dependencies such as ORMs and logging backends.
+- Runtime: tokio-only and never abstracted over; direct tokio use stays inside `crates/kynos/src/server.rs`. See `docs/architecture.md`.
 - Document all public API surface idiomatically and just tersely for internal logic.
 
 ## Development Guidelines

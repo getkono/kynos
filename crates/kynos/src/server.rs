@@ -8,6 +8,10 @@
 //!
 //! Kynos supports HTTP/1 and HTTP/2. Custom transports, Unix sockets and
 //! HTTP/3 are outside the current server contract.
+//!
+//! Kynos runs on tokio and does not abstract over it, so serving requires a
+//! tokio runtime. This module is the only place the runtime is named; apart
+//! from [`Listener::Tokio`], no public item mentions a tokio type.
 
 use std::{
     convert::Infallible,
