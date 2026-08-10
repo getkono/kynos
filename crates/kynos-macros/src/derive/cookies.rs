@@ -1,9 +1,51 @@
-//! Expansion of `#[derive(Cookies)]`.
+//! `#[derive(Cookies)]`.
 
 use proc_macro::TokenStream;
+use quote::quote;
+use syn::{DeriveInput, parse_macro_input};
 
-/// Expands the derive into a group of request cookies.
+use crate::derive::common::{named_fields, names_const, reject_duplicate_names, wire_name};
+
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
-    let _ = item;
-    todo!()
+    let input = parse_macro_input!(item as DeriveInput);
+    match expand_inner(&input) {
+        Ok(tokens) => tokens.into(),
+        Err(error) => error.to_compile_error().into(),
+    }
+}
+
+fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+    let fields = named_fields(input, "Cookies")?;
+    let names = fields
+        .named
+        .iter()
+        .map(|field| wire_name(field, "cookie"))
+        .collect::<syn::Result<Vec<_>>>()?;
+    reject_duplicate_names(fields, &names, "cookie")?;
+
+    let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let names = names_const(&names);
+
+    Ok(quote! {
+        impl #impl_generics ::kynos::extract::params::cookie::CookieParams
+            for #name #ty_generics #where_clause
+        {
+            #names
+
+            fn decode(
+                headers: &::kynos::http::HeaderMap,
+            ) -> ::core::result::Result<Self, ::kynos::error::rejection::Rejection> {
+                let _ = headers;
+                ::core::todo!()
+            }
+
+            fn parameters(
+                registry: &mut ::kynos::schema::registry::Registry,
+            ) -> ::std::vec::Vec<::kynos::openapi::Parameter> {
+                let _ = registry;
+                ::core::todo!()
+            }
+        }
+    })
 }

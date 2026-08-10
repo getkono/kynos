@@ -8,6 +8,7 @@
 //! trait it implements, rather than being duplicated here.
 
 pub(crate) mod api_error;
+pub(crate) mod common;
 pub(crate) mod cookies;
 pub(crate) mod headers;
 pub(crate) mod path_params;

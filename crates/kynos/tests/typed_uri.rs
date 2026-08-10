@@ -1,5 +1,10 @@
 //! Compile and runtime checks for route-generated typed URIs.
 
+// The route attribute lives behind `macros`, and the feature powerset check
+// runs with `--no-dev-deps`, so without this gate the build breaks in a
+// configuration CI never compiles.
+#![cfg(feature = "macros")]
+
 use kynos::{
     extract::params::{
         path::{Path, PathParams},

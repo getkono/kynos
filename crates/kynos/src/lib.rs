@@ -116,10 +116,16 @@ pub use crate::{
 
 #[cfg(feature = "macros")]
 pub use kynos_macros::{
-    ApiError, Cookies, Headers, PathParams, Provider, QueryParams, Reply, Schema, SecurityScheme,
-    Tag, delete, get, head, operation, options, patch, path, post, put, routes, trace,
+    ApiError, Headers, PathParams, Provider, QueryParams, Reply, Schema, SecurityScheme, Tag,
+    delete, get, head, operation, options, patch, path, post, put, routes, trace,
 };
 
+// Each of these derives a trait that its feature gates, so exporting it more
+// widely would only trade one diagnostic for a worse one: "no derive macro
+// named `Cookies`" says which feature to enable, where "cannot find trait
+// `CookieParams`" points at an expansion the user did not write.
+#[cfg(all(feature = "macros", feature = "cookie"))]
+pub use kynos_macros::Cookies;
 #[cfg(all(feature = "macros", feature = "openapi32"))]
 pub use kynos_macros::query;
 
@@ -139,10 +145,12 @@ pub mod prelude {
 
     #[cfg(feature = "macros")]
     pub use crate::{
-        ApiError, Cookies, Headers, PathParams, Provider, QueryParams, Reply, Schema,
-        SecurityScheme, Tag, delete, get, head, operation, options, patch, path, post, put, routes,
-        trace,
+        ApiError, Headers, PathParams, Provider, QueryParams, Reply, Schema, SecurityScheme, Tag,
+        delete, get, head, operation, options, patch, path, post, put, routes, trace,
     };
+
+    #[cfg(all(feature = "macros", feature = "cookie"))]
+    pub use crate::Cookies;
 
     #[cfg(feature = "server")]
     pub use crate::server::Server;
