@@ -25,6 +25,8 @@
 //! responding half of each body codec, and [`stream`] the responses delivered
 //! as a sequence.
 
+use core::convert::Infallible;
+
 pub mod codec;
 pub mod headers;
 pub mod negotiate;
@@ -84,6 +86,24 @@ impl Responses for () {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let _ = registry;
         todo!()
+    }
+}
+
+/// The uninhabited type, which no extractor that names it can ever produce.
+///
+/// Present so that an infallible extractor can say so in its `Rejection`
+/// rather than inventing an error it never returns.
+impl IntoResponse for Infallible {
+    fn into_response(self) -> Response {
+        match self {}
+    }
+}
+
+/// Contributes no responses, because there are none to contribute.
+impl Responses for Infallible {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        kynos_openapi::Responses::new()
     }
 }
 

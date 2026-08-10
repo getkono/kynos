@@ -2,20 +2,20 @@
 //!
 //! # The rule that makes Kynos work
 //!
-//! There are two ways a handler argument can come into existence, and Kynos
-//! keeps them apart:
+//! **Every handler argument implements [`Describe`](describe::Describe).**
+//! There is no second kind of argument and no exemption, so an operation
+//! cannot read something its description never mentions.
 //!
-//! - It is derived from the **request**, in which case it implements
-//!   [`FromRequestParts`] (or [`FromRequest`]) *and*
-//!   [`Describe`](describe::Describe), and contributes a Parameter or a Request
-//!   Body to the description.
-//! - It is derived from **application state**, in which case it implements
-//!   [`FromContext`](crate::di::FromContext) and contributes nothing.
+//! An argument that contributes nothing says so, by implementing `Describe`
+//! with an empty body. [`Inject`](crate::di::inject::Inject),
+//! [`MatchedPath`](connection::MatchedPath) and
+//! [`ConnectInfo`](connection::ConnectInfo) all do: none of them is visible to
+//! a consumer, and each is making that claim rather than skipping a step.
 //!
-//! Axum's single `FromRequestParts` conflates the two, which is exactly why
-//! tools that infer a description from axum handlers produce documents with
-//! silent holes. Keeping them apart is what lets Kynos guarantee there are
-//! none.
+//! Tools that infer a description from axum handlers produce documents with
+//! silent holes because an extractor there need not describe itself at all.
+//! The difference is not that Kynos sorts arguments into kinds — it is that
+//! the describing half is not optional.
 //!
 //! A consequence worth stating plainly: **there is no extractor that yields the
 //! whole request**. No `Request`, no `Body`, no `HeaderMap`. Those are the
