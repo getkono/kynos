@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// The error returned when a path template is malformed.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum InvalidPathTemplate {
     /// The template did not begin with `/`.
     #[error("path template `{0}` must begin with `/`")]
@@ -33,6 +34,27 @@ pub enum InvalidPathTemplate {
     /// The template contained a query string or fragment.
     #[error("path template `{0}` must not contain a query string or fragment")]
     NotAPath(String),
+
+    /// A literal segment contained a character the path grammar forbids.
+    ///
+    /// Outside a `{}` expression a template may only carry `pchar`: letters,
+    /// digits, `-._~`, the sub-delimiters `!$&'()*+,;=`, `:`, `@`, and
+    /// percent-encoded triples. Anything else — including any non-ASCII
+    /// character — has to arrive percent-encoded.
+    #[error(
+        "path template `{template}` contains `{character}` outside a `{{}}` expression, which the \
+         path grammar does not allow"
+    )]
+    IllegalLiteralCharacter {
+        /// The offending template.
+        template: String,
+        /// The character that is not allowed there.
+        character: char,
+    },
+
+    /// A `%` was not followed by two hexadecimal digits.
+    #[error("path template `{0}` contains a `%` that does not introduce a percent-encoded triple")]
+    MalformedPercentEncoding(String),
 }
 
 /// A parsed path template such as `/users/{id}/posts/{postId}`.
