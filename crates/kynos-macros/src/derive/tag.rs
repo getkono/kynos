@@ -4,7 +4,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, LitStr, parse_macro_input};
 
-use crate::derive::common::unit_struct;
+use crate::derive::common::{skip_value, unit_struct};
 
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
@@ -47,9 +47,9 @@ fn tag_name(input: &DeriveInput) -> syn::Result<Option<LitStr>> {
                 declared = Some(meta.value()?.parse::<LitStr>()?);
             } else {
                 // `description`, `parent` and the rest are read when
-                // `metadata` is implemented; parsing past them keeps the
+                // `metadata` is implemented; skipping past them keeps the
                 // attribute usable now.
-                let _ = meta.input.parse::<proc_macro2::TokenStream>();
+                skip_value(&meta)?;
             }
             Ok(())
         })?;

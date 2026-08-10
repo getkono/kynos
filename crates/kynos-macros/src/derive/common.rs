@@ -59,6 +59,24 @@ pub(crate) fn unit_struct(input: &DeriveInput, derive: &str, purpose: &str) -> s
     }
 }
 
+/// Skips the value of the nested-meta item just matched.
+///
+/// Consuming `meta.input` wholesale would swallow every *later* item too, so
+/// an attribute would silently lose everything after its first unrecognized
+/// key. This takes exactly one `= value` or one `(...)` group and leaves the
+/// rest of the list to the loop.
+pub(crate) fn skip_value(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
+    if meta.input.peek(syn::Token![=]) {
+        let _: syn::Expr = meta.value()?.parse()?;
+    } else if meta.input.peek(syn::token::Paren) {
+        let content;
+        syn::parenthesized!(content in meta.input);
+        let _ = content.parse::<proc_macro2::TokenStream>()?;
+    }
+    // A bare path such as `default` or `untagged` has no value to skip.
+    Ok(())
+}
+
 /// The wire name of a field: its `rename` if it has one, else its identifier.
 ///
 /// Both the Kynos attribute and serde's are consulted, in that order, so that a
@@ -68,7 +86,7 @@ pub(crate) fn wire_name(field: &Field, attribute: &str) -> syn::Result<String> {
     if let Some(renamed) = kynos_rename(field, attribute)? {
         return Ok(renamed);
     }
-    if let Some(renamed) = serde_rename(field) {
+    if let Some(renamed) = serde_rename(field)? {
         return Ok(renamed);
     }
     Ok(field
@@ -92,7 +110,7 @@ fn kynos_rename(field: &Field, attribute: &str) -> syn::Result<Option<String>> {
             if meta.path.is_ident("rename") {
                 found = Some(meta.value()?.parse::<LitStr>()?.value());
             } else {
-                let _ = meta.input.parse::<proc_macro2::TokenStream>();
+                skip_value(&meta)?;
             }
             Ok(())
         })?;
@@ -100,28 +118,35 @@ fn kynos_rename(field: &Field, attribute: &str) -> syn::Result<Option<String>> {
     Ok(found)
 }
 
-/// The `rename = "..."` inside `#[serde(...)]`, if it is the simple form.
+/// The `rename = "..."` inside `#[serde(...)]`.
 ///
-/// serde owns this vocabulary and has spellings Kynos does not model —
-/// `rename(serialize = "...", deserialize = "...")` among them — so anything
-/// that does not parse is left alone rather than reported. Reading it at all is
-/// what stops a type describing one field name while serializing another.
-fn serde_rename(field: &Field) -> Option<String> {
+/// Reading serde's own attribute is what stops a type describing one field
+/// name while serializing another. serde also has a split form,
+/// `rename(serialize = "a", deserialize = "b")`, which describes two names
+/// where a parameter can have one — that is rejected rather than guessed at,
+/// because guessing is the failure this whole function exists to prevent.
+fn serde_rename(field: &Field) -> syn::Result<Option<String>> {
     let mut found = None;
     for attr in &field.attrs {
         if !attr.path().is_ident("serde") {
             continue;
         }
-        let _ = attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("rename") {
-                found = Some(meta.value()?.parse::<LitStr>()?.value());
-            } else {
-                let _ = meta.input.parse::<proc_macro2::TokenStream>();
+        attr.parse_nested_meta(|meta| {
+            if !meta.path.is_ident("rename") {
+                return skip_value(&meta);
             }
+            if meta.input.peek(syn::token::Paren) {
+                return Err(meta.error(
+                    "a split `rename` gives this field two wire names, and a description can \
+                     carry one. Say which with `rename = \"...\"`, or name it explicitly in the \
+                     Kynos attribute",
+                ));
+            }
+            found = Some(meta.value()?.parse::<LitStr>()?.value());
             Ok(())
-        });
+        })?;
     }
-    found
+    Ok(found)
 }
 
 /// A `const NAMES` item listing the wire names of every field, in order.

@@ -4,7 +4,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, Field, Type, parse_macro_input, spanned::Spanned};
 
-use crate::derive::common::named_fields;
+use crate::derive::common::{named_fields, skip_value};
 
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
@@ -24,6 +24,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         .collect();
 
     reject_duplicate_types(&provided)?;
+    reject_type_parameter_fields(input, &provided)?;
 
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
@@ -57,7 +58,7 @@ fn is_skipped(field: &Field) -> bool {
             if meta.path.is_ident("skip") {
                 skipped = true;
             } else {
-                let _ = meta.input.parse::<proc_macro2::TokenStream>();
+                skip_value(&meta)?;
             }
             Ok(())
         });
@@ -93,6 +94,44 @@ fn reject_duplicate_types(provided: &[&Field]) -> syn::Result<()> {
                 ),
             ));
         }
+    }
+    Ok(())
+}
+
+/// A field whose type is one of the context's own type parameters would emit
+/// `impl<T> Provides<T> for Ctx<T>`, which overlaps every other field's
+/// implementation at that instantiation.
+///
+/// Coherence catches it, but blames the derive's own output and names neither
+/// field — the exact diagnostic `reject_duplicate_types` exists to prevent.
+fn reject_type_parameter_fields(input: &DeriveInput, provided: &[&Field]) -> syn::Result<()> {
+    if provided.len() < 2 {
+        return Ok(());
+    }
+
+    let parameters: Vec<String> = input
+        .generics
+        .type_params()
+        .map(|parameter| parameter.ident.to_string())
+        .collect();
+
+    for field in provided {
+        let rendered = render(&field.ty);
+        if !parameters.contains(&rendered) {
+            continue;
+        }
+        let named = field
+            .ident
+            .as_ref()
+            .map_or_else(String::new, ToString::to_string);
+        return Err(syn::Error::new(
+            field.span(),
+            format!(
+                "`{named}` is `{rendered}`, one of this context's own type parameters, so it \
+                 would supply every type at once and collide with the other fields. Wrap it in a \
+                 newtype, or opt it out with `#[provide(skip)]`"
+            ),
+        ));
     }
     Ok(())
 }

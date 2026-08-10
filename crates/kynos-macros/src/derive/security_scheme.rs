@@ -25,7 +25,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, Ident, LitStr, Type, parse_macro_input, parse_quote};
 
-use crate::derive::common::unit_struct;
+use crate::derive::common::{skip_value, unit_struct};
 
 /// Locations an API key may travel in.
 ///
@@ -132,9 +132,7 @@ fn parse_args(input: &DeriveInput) -> syn::Result<SchemeArgs> {
                 "challenge" => args.challenge = Some(meta.value()?.parse()?),
                 // Read when `describe` is implemented; parsing past them keeps
                 // the attribute usable now and the grammar stable.
-                "description" | "scopes" | "deprecated" => {
-                    let _ = meta.input.parse::<proc_macro2::TokenStream>();
-                }
+                "description" | "scopes" | "deprecated" => skip_value(&meta)?,
                 kind if is_kind(kind) => {
                     if let Some(existing) = &args.kind {
                         return Err(syn::Error::new(
@@ -175,9 +173,8 @@ fn is_kind(name: &str) -> bool {
 /// user hits, and both have their span here and nowhere else.
 fn check_kind(kind: &Ident, meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
     if kind != "api_key" {
-        // The other kinds' options are consumed when `describe` lands.
-        let _ = meta.input.parse::<proc_macro2::TokenStream>();
-        return Ok(());
+        // The other kinds' options are read when `describe` lands.
+        return skip_value(meta);
     }
 
     let mut location = None;
@@ -188,7 +185,7 @@ fn check_kind(kind: &Ident, meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Resul
         } else if nested.path.is_ident("name") {
             field = Some(nested.value()?.parse::<LitStr>()?);
         } else {
-            let _ = nested.input.parse::<proc_macro2::TokenStream>();
+            skip_value(&nested)?;
         }
         Ok(())
     })?;
