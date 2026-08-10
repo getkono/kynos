@@ -119,10 +119,8 @@ hyper-util = { workspace = true, optional = true, features = [
   "server",
   "tokio",
 ] }
-mime = { workspace = true }
 multer = { workspace = true, optional = true }
 percent-encoding = { workspace = true }
-pin-project-lite = { workspace = true }
 prost = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
