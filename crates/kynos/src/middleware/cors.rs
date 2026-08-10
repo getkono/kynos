@@ -1,9 +1,16 @@
 //! Cross-origin resource sharing.
 //!
+//! The list-taking builders accept anything iterable of anything string-like,
+//! rather than a `&'static [&'static str]`: an allow-list read from the
+//! environment at startup is the common deployment, and the borrowed form
+//! would force it through `Vec::leak`.
+//!
 //! Out-of-document: a preflight `OPTIONS` is a browser protocol detail, not an
 //! operation of the API, so it contributes nothing. Use
 //! [`Cors::document_response_headers`] when the CORS response headers are part
 //! of what you want clients to know about.
+
+use std::borrow::Cow;
 
 use crate::{
     http,
@@ -26,8 +33,12 @@ impl Cors {
 
     /// Permits these origins.
     #[must_use]
-    pub fn allow_origins(self, origins: &'static [&'static str]) -> Self {
-        let _ = origins;
+    pub fn allow_origins<I, S>(self, origins: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<Cow<'static, str>>,
+    {
+        let _ = origins.into_iter().map(Into::into).collect::<Vec<_>>();
         todo!()
     }
 
@@ -49,15 +60,22 @@ impl Cors {
     /// cannot disagree. Overriding is for a deployment that fronts routes Kynos
     /// does not serve.
     #[must_use]
-    pub fn allow_methods(self, methods: &'static [kynos_openapi::Method]) -> Self {
-        let _ = methods;
+    pub fn allow_methods<I>(self, methods: I) -> Self
+    where
+        I: IntoIterator<Item = kynos_openapi::Method>,
+    {
+        let _ = methods.into_iter().collect::<Vec<_>>();
         todo!()
     }
 
     /// Permits these request headers.
     #[must_use]
-    pub fn allow_headers(self, names: &'static [&'static str]) -> Self {
-        let _ = names;
+    pub fn allow_headers<I, S>(self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<Cow<'static, str>>,
+    {
+        let _ = names.into_iter().map(Into::into).collect::<Vec<_>>();
         todo!()
     }
 
@@ -69,8 +87,12 @@ impl Cors {
 
     /// Makes these response headers readable by the client.
     #[must_use]
-    pub fn expose_headers(self, names: &'static [&'static str]) -> Self {
-        let _ = names;
+    pub fn expose_headers<I, S>(self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<Cow<'static, str>>,
+    {
+        let _ = names.into_iter().map(Into::into).collect::<Vec<_>>();
         todo!()
     }
 

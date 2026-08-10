@@ -66,7 +66,7 @@ impl<C> Endpoints<C> {
 
 /// A value that can contribute operations to a router or a group.
 ///
-/// Implemented for [`Endpoints`], for [`EndpointBuilder`](crate::router::endpoint::EndpointBuilder), and for tuples,
+/// Implemented for [`Endpoints`], for [`EndpointBuilder`](crate::router::endpoint::builder::EndpointBuilder), and for tuples,
 /// arrays and vectors of those — which is what lets `routes![a, b, c]` be one
 /// argument.
 ///

@@ -26,7 +26,7 @@ use crate::{
 /// cannot, notably that a handler's path parameters match its path template.
 ///
 /// ```no_run
-/// # use kynos::{openapi, router::endpoint::EndpointBuilder};
+/// # use kynos::{openapi, router::endpoint::builder::EndpointBuilder};
 /// async fn health() -> kynos::response::status::NoContent {
 ///     kynos::response::status::NoContent
 /// }
@@ -82,7 +82,7 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy> EndpointBuilder<C, H, A, P> {
     /// a `panic = "abort"` build is a compile-time error.
     ///
     /// ```no_run
-    /// # use kynos::{openapi, router::endpoint::EndpointBuilder};
+    /// # use kynos::{openapi, router::endpoint::builder::EndpointBuilder};
     /// async fn health() -> kynos::response::status::NoContent {
     ///     kynos::response::status::NoContent
     /// }

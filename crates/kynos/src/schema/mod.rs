@@ -74,7 +74,6 @@ pub mod unchecked;
 // at. Which types are implemented is documented above, beside the rejections.
 mod impls;
 
-pub use crate::schema::constraints::Constraints;
 use kynos_openapi::{ComponentName, Schema as OpenApiSchema};
 
 use crate::schema::registry::Registry;
@@ -132,7 +131,7 @@ pub trait Schema {
 /// no object that can exist.
 ///
 /// ```no_run
-/// # use kynos::schema::{Constraints, MapKey, Schema};
+/// # use kynos::schema::{MapKey, Schema, constraints::Constraints};
 /// # struct Sku;
 /// # impl Schema for Sku {
 /// #     fn schema(_: &mut kynos::schema::registry::Registry) -> kynos::openapi::Schema {

@@ -77,7 +77,16 @@ pub(crate) fn expand_generic(attribute: TokenStream, item: TokenStream) -> Token
         .into();
     }
 
-    let args = match RouteArgs::parse(tokens) {
+    // `method` belongs to this attribute and to no other, so it is removed
+    // before delegating rather than tolerated by the shared parser -- which
+    // would silently accept `#[kynos::get("/x", method = "POST")]` and serve a
+    // route the description does not match.
+    let remaining: Punctuated<Meta, Token![,]> = items
+        .into_iter()
+        .filter(|entry| !matches!(entry, Meta::NameValue(pair) if pair.path.is_ident("method")))
+        .collect();
+
+    let args = match RouteArgs::parse(quote::quote!(#remaining)) {
         Ok(args) => args,
         Err(error) => return error.to_compile_error().into(),
     };

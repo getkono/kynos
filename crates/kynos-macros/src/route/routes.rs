@@ -33,7 +33,7 @@ pub(crate) fn expand_routes(input: TokenStream) -> TokenStream {
     // dependency the context lacks becomes a compile error.
     let pushes = paths.iter().map(|path| {
         quote! {
-            ::kynos::router::endpoint::Endpoints::push(
+            ::kynos::router::endpoint::set::Endpoints::push(
                 &mut __endpoints,
                 ::kynos::__private::endpoint::from_meta::<_, #path, _, _>(#path),
             );
@@ -42,7 +42,7 @@ pub(crate) fn expand_routes(input: TokenStream) -> TokenStream {
 
     quote! {
         {
-            let mut __endpoints = ::kynos::router::endpoint::Endpoints::new();
+            let mut __endpoints = ::kynos::router::endpoint::set::Endpoints::new();
             #(#pushes)*
             __endpoints
         }

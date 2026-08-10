@@ -9,12 +9,6 @@ pub mod builder;
 pub mod meta;
 pub mod set;
 
-pub use crate::router::endpoint::{
-    builder::EndpointBuilder,
-    meta::EndpointMeta,
-    set::{Endpoints, IntoEndpoints},
-};
-
 use std::{future::Future, pin::Pin};
 
 use kynos_openapi::{Method, PathTemplate};

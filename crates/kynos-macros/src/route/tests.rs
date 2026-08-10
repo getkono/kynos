@@ -89,15 +89,16 @@ fn catch_panics_is_a_bare_route_option() {
     assert!(args.catch_panics);
 }
 
-/// `#[kynos::operation]` passes its whole argument list to `RouteArgs`, having
-/// already read `method` itself, so rejecting `method` there makes every
-/// program using the attribute fail to compile.
+/// `method` belongs to `#[kynos::operation]` alone. The shared parser must
+/// keep rejecting it, so that `#[kynos::get("/x", method = "POST")]` cannot
+/// serve one method while the description names another.
 #[test]
-fn a_generic_operation_keeps_its_method_argument() {
-    let args = RouteArgs::parse(quote!(method = "LOCK", path = "/documents/{id}"))
-        .expect("`method` belongs to the generic attribute, not to an unknown-argument error");
+fn a_per_method_attribute_rejects_a_method_argument() {
+    let Err(error) = RouteArgs::parse(quote!(path = "/health", method = "POST")) else {
+        panic!("a per-method attribute must not accept `method`")
+    };
 
-    assert_eq!(args.path.value(), "/documents/{id}");
+    assert!(error.to_string().contains("unknown route argument"));
 }
 
 #[test]

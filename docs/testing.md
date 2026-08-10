@@ -11,8 +11,8 @@ document is about the mechanics.
 | Unit | a sibling `tests.rs` beside the module | `cargo nextest` | internal logic, including private items | in use |
 | Doctest | the item's own documentation | `mise run test:doc` | that documented code compiles, and that undocumentable code does not | in use |
 | Integration | [`crates/kynos/tests/`](../crates/kynos/tests/) | `cargo nextest` | that the public surface composes as a user would compose it | in use |
-| UI snapshot | `crates/kynos/tests/ui/` | `trybuild` | the exact text of a diagnostic | not built |
-| Property | `crates/kynos-openapi/` | `proptest` | round-tripping and determinism over generated documents | not built |
+| UI snapshot | `crates/kynos/tests/ui/` | `trybuild` | the exact text of a diagnostic | built |
+| Property | `crates/kynos-openapi/tests/properties.rs` | `proptest` | round-tripping, determinism and totality over generated documents | built |
 | Conformance | a harness over a fixture app | `proptest` over live responses | *emitted ⊇ observable* against a running service | not built |
 
 A module becomes a directory once it holds two independently-changing concerns
@@ -38,10 +38,12 @@ one, because [`mise run panic:check`](../mise.toml) asserts that *building* it
 fails and greps the compiler's message. A passing build is the failure
 condition.
 
-> **Not built:** `trybuild` sits in `[workspace.dependencies]` and is consumed
-> by nothing, so `crates/kynos/tests/ui/` does not exist yet. `proptest` is not
-> declared anywhere. Both are named in
-> [`nfr.md`](nfr.md#tooling-gaps) with the rows they unblock.
+The UI suite does not run under coverage instrumentation: `trybuild` spawns its
+own `cargo`, and `llvm-cov`'s flags reach the child and perturb the exact stderr
+a snapshot records. [`mise run ui:check`](../mise.toml) is its own task and its
+own CI step for that reason — and the exclusion belongs on the coverage command
+rather than on the nextest profile, because a profile-wide filter would remove
+the suite from every job that sets `NEXTEST_PROFILE`.
 
 ## The pass-control rule
 
@@ -59,24 +61,23 @@ signature typechecked, not because the rejections worked. The failure is silent
 by construction: a test that asserts absence cannot report that it found too
 much absence.
 
-Where the rule holds today:
+Every case in `tests/ui/` obeys it: `tests/ui/pass/` holds one control per
+negative, and a case whose control cannot be written does not land — it goes in
+[`PENDING.md`](../crates/kynos/tests/ui/PENDING.md) with the blocker named.
 
-| Negative | Control | Present |
-| --- | --- | --- |
-| `path!` without a leading slash | `path!("/users/{id}")` | yes |
-| `path!` repeating a variable | same | yes |
-| `path!` carrying a query string | same | yes |
-| `Schema` for `serde_json::Value` | `Unchecked<serde_json::Value>` | yes |
-| `Provides<Db>` for a context without one | — | no |
-| `Option<Path<T>>` as a request body | — | no |
-| `IntoResponse` for `String` | — | no |
-| `Redirect<304>` | — | no |
-| `OneOf<Text, Text>` | — | no |
+That ledger is where the rule earns its keep. `#[kynos::operation]` was
+scheduled for two negatives, both of which produced exactly the right
+diagnostic; no control could be written for either, because the attribute was
+broken and *no* program using it compiled. Nothing else in the suite would have
+noticed.
 
-The five missing controls are the work item, not a revision of the rule. Each is
-one passing block naming the same trait: `Provides<Pool>` against a context that
-has one, `Option<Json<T>>` as a body, `NoContent` as a response, `Redirect<307>`,
-`OneOf<Text, Binary<Pdf>>` behind the same `FromRequest` bound the negative uses.
+The `compile_fail` doctests that remain are a separate matter. Four have a
+control beside them and the rest do not; each is a single rule stated where a
+reader needs it, and the tabular ones — the path-template rejections and the
+`Schema` refusal table — have moved into the suite, where exhaustiveness can be
+checked. `every_rejected_schema_type_has_a_case` in
+[`tests/ui.rs`](../crates/kynos/tests/ui.rs) counts the refusal table's rows
+against the cases, so a row added without one fails the build.
 
 The `Provides` case has a positive control in
 [`di/tests.rs`](../crates/kynos/src/di/tests.rs) rather than in the doctest.

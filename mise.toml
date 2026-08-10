@@ -111,10 +111,17 @@ cargo +1.85 check --workspace --all-features
 description = "Run tests with LLVM coverage"
 run = "cargo llvm-cov nextest --workspace --all-targets --all-features"
 
+[tasks."ui:check"]
+description = "Run the compile-fail suite"
+# trybuild spawns its own `cargo`, so this must not run under `llvm-cov`:
+# the instrumentation flags reach the child and perturb the exact stderr the
+# snapshots record. Hence its own task rather than a line in `coverage:ci`.
+run = "cargo nextest run -p kynos --test ui --all-features"
+
 [tasks."coverage:ci"]
 description = "Generate CI coverage reports"
 run = [
-  "cargo llvm-cov nextest --workspace --all-targets --all-features --lcov --output-path lcov.info",
+  "cargo llvm-cov nextest --workspace --all-targets --all-features --lcov --output-path lcov.info -E 'not binary(ui)'",
   "cargo llvm-cov report --summary-only | tee coverage-summary.txt",
 ]
 
@@ -125,6 +132,7 @@ run = [
   { task = "lint" },
   { task = "test" },
   { task = "test:doc" },
+  { task = "ui:check" },
   { task = "docs:check" },
   { task = "panic:check" },
 ]

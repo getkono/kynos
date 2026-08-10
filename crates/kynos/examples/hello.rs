@@ -52,7 +52,7 @@ struct Page {
 
 /// Reports that the service is up.
 ///
-/// The first line becomes the operation's summary, and everything after it the
+/// The first paragraph becomes the operation's summary and the rest the
 /// description — so the documentation a reader of this file sees and the
 /// documentation a consumer of the API sees are the same words.
 #[kynos::get("/health")]

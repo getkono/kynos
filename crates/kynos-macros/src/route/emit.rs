@@ -80,7 +80,7 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenSt
         #[derive(Clone, Copy, Debug, Default)]
         #visibility struct #endpoint {}
 
-        impl ::kynos::router::endpoint::EndpointMeta for #endpoint {
+        impl ::kynos::router::endpoint::meta::EndpointMeta for #endpoint {
             type PanicPolicy = #panic_policy;
 
             const METHOD: &'static str = #method;

@@ -31,6 +31,13 @@ fn ui() {
 
 /// One `ui/schema/` case per row of the rejection table in `kynos::schema`.
 ///
+/// A count, not a mapping: it catches a row added without a case, which is the
+/// drift that actually happens, and does not catch a case renamed to cover a
+/// different row. Several rows also list more than one type — the row for
+/// `serde_json::Value` names `Map` and `RawValue` too — so the case count is a
+/// floor on coverage rather than a measure of it. The pass-control rule is
+/// enforced by review, not here.
+///
 /// The table is the specification of which types are deliberately undescribable,
 /// and a row nobody wrote a case for is a rule nobody checks. Counting here
 /// turns adding a row without adding a case into a test failure.
@@ -49,8 +56,8 @@ fn every_rejected_schema_type_has_a_case() {
     assert_eq!(
         cases, rows,
         "`tests/ui/schema/` holds {cases} case(s) for {rows} row(s) of the rejection table in \
-         `schema/mod.rs`; every row needs one negative, and every negative needs a control in \
-         `tests/ui/pass/`"
+         `schema/mod.rs`; a row added without a case leaves a documented refusal that nothing \
+         checks"
     );
 }
 

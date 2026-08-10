@@ -20,7 +20,7 @@ use crate::{
         catch_panic::{Catch, PanicPolicy, Propagate},
     },
     router::{
-        endpoint::IntoEndpoints,
+        endpoint::set::IntoEndpoints,
         group::Group,
         operation::Tag,
         policy::{FallbackPolicy, TrailingSlashPolicy},

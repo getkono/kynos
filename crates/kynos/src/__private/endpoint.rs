@@ -5,7 +5,7 @@ use kynos_openapi::{Method, PathTemplate};
 use crate::{
     handler::Handler,
     middleware::catch_panic::PanicPolicy,
-    router::endpoint::{EndpointBuilder, EndpointMeta},
+    router::endpoint::{builder::EndpointBuilder, meta::EndpointMeta},
 };
 
 /// Builds an endpoint from a route attribute's compile-time facts.

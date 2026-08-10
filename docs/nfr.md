@@ -22,11 +22,10 @@ while the closing section says it deliberately will not; those rows are
 `kynos-bench` now, which is where the harness that gives a threshold meaning
 already lives.
 
-Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`, and
-rustdoc with `missing_docs = "deny"`. Not yet present: `cargo-public-api`,
-`cargo-semver-checks`, `cargo-fuzz`, `proptest`. `trybuild` sits in
-`[workspace.dependencies]` and is consumed by nothing. `criterion` is not on
-this list and will not be: benchmarks live in `kynos-bench`.
+Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
+`trybuild`, `proptest`, and rustdoc with `missing_docs = "deny"`. Not yet
+present: `cargo-public-api`, `cargo-semver-checks`, `cargo-fuzz`. `criterion` is
+not on this list and will not be: benchmarks live in `kynos-bench`.
 
 ## Thresholds
 
@@ -97,7 +96,7 @@ the requirement above is that it be *verified*, not merely intended.
 | --- | --- | --- | --- |
 | performance | Zero heap allocations on the routing path | Counting allocator asserting `alloc_count == 0` across a 10k-request replay, over routes of at most three parameters and no static/dynamic sibling overlap | `blocked-on-impl` |
 | performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `kynos-bench` |
-| reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; `Router::validate` for those only visible once the tree is assembled | `blocked-on-impl` |
+| reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; `Router::validate` for those only visible once the tree is assembled | `enforced` for the macro half; `blocked-on-impl` for the tree |
 | operability | Metric labels derive from operation IDs, never request paths | Unit test asserting label cardinality is constant under adversarial path input | `blocked-on-impl` |
 
 The allocation row is scoped rather than absolute because of what the pinned
@@ -167,9 +166,9 @@ fails the build when a crate is named outside the module that owns it.
 | compatibility | `tower` and `tower-service` are named only in `unchecked.rs` | CI grep over `crates/*/src` | `planned` |
 | dx | Every crate in `[workspace.dependencies]` is consumed by a member | `cargo-udeps` or an equivalent manifest check | `needs-tooling` |
 
-The last row still fails, on `trybuild` alone: `mime` and `pin-project-lite`
-are gone, and the codec crates `crates/kynos` declares without yet naming are
-each behind an off-by-default feature.
+The last row now passes: `mime` and `pin-project-lite` are gone, `trybuild` and
+`proptest` have consumers, and the codec crates `crates/kynos` declares without
+yet naming are each behind an off-by-default feature.
 [`architecture.md`](architecture.md#dependencies) lists them.
 
 **Deferred by decision, not by oversight.** The eight containment greps above
@@ -182,10 +181,10 @@ surface baseline is recorded against a surface that has stopped moving.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| dx | No diagnostic names an internal type | Exhaustive `trybuild` UI snapshot suite, reviewed on every change | `planned` |
+| dx | No diagnostic names an internal type | Exhaustive `trybuild` UI snapshot suite, reviewed on every change | `enforced` |
 | dx | Incremental rebuild after a one-line handler edit ≤ TBD at 100 operations | `cargo build --timings` in CI with a trend gate | `planned` |
 | dx | `cargo expand` output compiles standalone and is human-readable | CI test compiling expanded fixtures directly | `planned` |
-| reliability | All diagnostics carry user spans | UI tests asserting error locations point into user source | `planned` |
+| reliability | All diagnostics carry user spans | UI tests asserting error locations point into user source | `enforced` |
 
 Compile time needs a trend line rather than a spot check: it is the failure mode
 that kills macro-heavy type-level frameworks, and it degrades gradually enough

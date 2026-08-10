@@ -33,7 +33,7 @@ pub(crate) fn endpoint_uri_impl(
         quote! {
             const _: () = assert!(::kynos::__private::path::path_parameter_names_match(
                 <#path_type as ::kynos::extract::params::path::PathParams>::NAMES,
-                <#endpoint as ::kynos::router::endpoint::EndpointMeta>::PATH_VARIABLES,
+                <#endpoint as ::kynos::router::endpoint::meta::EndpointMeta>::PATH_VARIABLES,
             ), "PathParams names must exactly match route variables in declaration order");
         }
     });

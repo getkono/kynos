@@ -55,48 +55,35 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     })
 }
 
-/// The input's generics, with `FieldTy: Schema` added for every field.
+/// The input's generics, with `Schema` required of each type parameter.
 ///
-/// serde's shape rather than a blanket `T: Schema` on each parameter: a field
-/// may be `Vec<T>` or `Option<T>`, and the bound belongs on what is described
-/// rather than on what it is built from. Emitted now because the implementation
-/// will need it, and adding a bound after the freeze breaks exactly the code
-/// this milestone invites people to write.
+/// serde's own default shape, and for the same reason: bounding the
+/// *parameters* rather than the field types is both sufficient and narrower.
+/// `Vec<T>: Schema` follows from `T: Schema` through the blanket
+/// implementation, while a field-type bound would demand `PhantomData<T>:
+/// Schema` — a bound nothing satisfies, on a field no schema describes, failing
+/// at the handler rather than here.
+///
+/// Emitted now because the implementation will need it, and adding a bound
+/// after the freeze breaks exactly the code this milestone invites people to
+/// write.
 fn schema_bounded_generics(input: &DeriveInput) -> syn::Generics {
     let mut generics = input.generics.clone();
-    if generics.type_params().next().is_none() {
+    let parameters: Vec<syn::Ident> = generics
+        .type_params()
+        .map(|parameter| parameter.ident.clone())
+        .collect();
+    if parameters.is_empty() {
         return generics;
     }
 
     let clause = generics.make_where_clause();
-    for ty in field_types(input) {
+    for parameter in parameters {
         clause
             .predicates
-            .push(syn::parse_quote!(#ty: ::kynos::schema::Schema));
+            .push(syn::parse_quote!(#parameter: ::kynos::schema::Schema));
     }
     generics
-}
-
-/// Every field type in the input, deduplicated, in declaration order.
-fn field_types(input: &DeriveInput) -> Vec<&syn::Type> {
-    let fields: Vec<&syn::Type> = match &input.data {
-        Data::Struct(data) => data.fields.iter().map(|field| &field.ty).collect(),
-        Data::Enum(data) => data
-            .variants
-            .iter()
-            .flat_map(|variant| variant.fields.iter().map(|field| &field.ty))
-            .collect(),
-        Data::Union(_) => Vec::new(),
-    };
-
-    let mut seen = Vec::new();
-    for ty in fields {
-        let rendered = quote!(#ty).to_string();
-        if !seen.iter().any(|(text, _)| *text == rendered) {
-            seen.push((rendered, ty));
-        }
-    }
-    seen.into_iter().map(|(_, ty)| ty).collect()
 }
 
 /// `#[serde(untagged)]` has no describable decoding rule.

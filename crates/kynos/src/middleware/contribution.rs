@@ -59,8 +59,17 @@ impl OperationContribution {
     }
 
     /// Declares a response this interceptor can produce.
+    ///
+    /// A [`StatusPattern`] rather than a bare code, so that a layer answering
+    /// a range can say so — and so that this and
+    /// [`ContributionConflict::Response`], which reports a pattern, cannot
+    /// describe different things.
     #[must_use]
-    pub fn with_response(mut self, status: u16, response: kynos_openapi::Response) -> Self {
+    pub fn with_response(
+        mut self,
+        status: StatusPattern,
+        response: kynos_openapi::Response,
+    ) -> Self {
         let _ = &mut self;
         let _ = (status, response);
         todo!()

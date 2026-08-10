@@ -19,7 +19,8 @@ use std::net::Ipv4Addr;
 
 use kynos::{
     http,
-    middleware::{Interceptor, Next, contribution::OperationContribution},
+    middleware::{Interceptor, Next, Observer, contribution::OperationContribution},
+    openapi,
     prelude::*,
     response::status::NoContent,
     router::{group::Group, operation::Route},
@@ -43,8 +44,8 @@ impl<C: Sync + 'static> Interceptor<C> for RequireSecret {
         let _ = route.operation_id();
 
         OperationContribution::none().with_response(
-            401,
-            kynos_openapi::Response::new("the shared secret was absent or wrong"),
+            openapi::StatusPattern::Code(401),
+            openapi::Response::new("the shared secret was absent or wrong"),
         )
     }
 
@@ -60,26 +61,30 @@ impl<C: Sync + 'static> Interceptor<C> for RequireSecret {
     }
 }
 
-/// Anything a consumer cannot observe declares nothing.
+/// Something that cannot change the exchange is an `Observer`, not an
+/// `Interceptor`.
 ///
-/// Compression rewrites bytes on the wire and changes no response a client can
-/// distinguish at the level OpenAPI describes, so `none()` is the honest answer
-/// rather than a gap.
+/// Because it cannot alter anything, it needs no declaration and gets to see
+/// everything — including the headers no extractor will surface to a handler.
+/// Reaching for an interceptor here would mean declaring an empty contribution
+/// forever, which says nothing and costs a chain link.
 struct Timing;
 
-impl<C: Sync + 'static> Interceptor<C> for Timing {
-    fn contribution(&self, _route: Route<'_>) -> OperationContribution {
-        OperationContribution::none()
+impl<C> Observer<C> for Timing {
+    fn on_request(&self, request: &http::Request, route: Option<Route<'_>>, context: &C) {
+        let _ = (request, context);
+        // Keyed by the operation rather than the request path, so the label
+        // cardinality is bounded by the number of operations.
+        let _ = route.map(|route| route.operation_id());
     }
 
-    async fn intercept(
+    fn on_response(
         &self,
-        request: http::Request,
-        context: &C,
-        next: Next<'_, C>,
-    ) -> http::Response {
-        let _ = context;
-        next.run(request).await
+        response: &http::Response,
+        route: Option<Route<'_>>,
+        elapsed: std::time::Duration,
+    ) {
+        let _ = (response, route, elapsed);
     }
 }
 
@@ -104,7 +109,7 @@ async fn main() -> kynos::Result<()> {
         .mount(kynos::routes![reports]);
 
     let service = Router::<()>::new()
-        .intercept(Timing)
+        .observe(Timing)
         .mount(kynos::routes![public])
         .group(admin)
         .build(())?;

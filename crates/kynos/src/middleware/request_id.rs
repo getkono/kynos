@@ -38,9 +38,34 @@ impl RequestIdSource for Counter {
 /// This is an interceptor because it adds a response header. Its
 /// contribution keeps that wire-visible behavior in every covered
 /// operation's description.
-#[derive(Clone, Debug, Default)]
 pub struct RequestId<S = Counter> {
+    source: S,
     _private: std::marker::PhantomData<fn() -> S>,
+}
+
+// Hand-written for the reason `UncheckedInner`'s are: `PhantomData<fn() -> S>`
+// needs nothing of `S`, and the source is what actually decides these.
+impl<S: Clone> Clone for RequestId<S> {
+    fn clone(&self) -> Self {
+        Self {
+            source: self.source.clone(),
+            _private: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<S: std::fmt::Debug> std::fmt::Debug for RequestId<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RequestId")
+            .field("source", &self.source)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Default for RequestId<Counter> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RequestId<Counter> {

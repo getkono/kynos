@@ -1,4 +1,4 @@
-use kynos::{openapi, response::status::NoContent, router::endpoint::EndpointBuilder};
+use kynos::{openapi, response::status::NoContent, router::endpoint::builder::EndpointBuilder};
 
 async fn health() -> NoContent {
     NoContent

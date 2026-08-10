@@ -79,9 +79,26 @@ where
 ///
 /// Opaque on purpose: a layer may compose with it, but nothing in an
 /// application may name a field of it or construct one.
-#[derive(Clone, Debug)]
 pub struct UncheckedInner<C> {
     _private: std::marker::PhantomData<fn() -> C>,
+}
+
+// Hand-written: a derive would bound each on `C`, and `PhantomData<fn() -> C>`
+// needs nothing of it. Most tower layers implement `Clone` for their service
+// only when the inner one is, so a derived bound here would shut an
+// application whose context is not `Clone` out of the hatch for no reason.
+impl<C> Clone for UncheckedInner<C> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<C> Copy for UncheckedInner<C> {}
+
+impl<C> std::fmt::Debug for UncheckedInner<C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UncheckedInner").finish_non_exhaustive()
+    }
 }
 
 impl<C> tower_service::Service<crate::http::Request> for UncheckedInner<C>
@@ -215,17 +232,13 @@ impl<C, P: crate::middleware::catch_panic::PanicPolicy> Router<C, P> {
     /// minted would be a claim about either the path or a parameter that the
     /// service does not honour.
     #[must_use]
-    pub fn route_unchecked<H>(
-        self,
-        methods: &'static [crate::http::Method],
-        pattern: &'static str,
-        handler: H,
-    ) -> Self
+    pub fn route_unchecked<I, H>(self, methods: I, pattern: &'static str, handler: H) -> Self
     where
         C: Sync + 'static,
+        I: IntoIterator<Item = crate::http::Method>,
         H: UncheckedHandler<C>,
     {
-        let _ = (methods, pattern, handler);
+        let _ = (methods.into_iter().collect::<Vec<_>>(), pattern, handler);
         todo!()
     }
 
@@ -266,6 +279,15 @@ impl<C, P: crate::middleware::catch_panic::PanicPolicy> crate::router::group::Gr
     where
         C: Send + Sync + 'static,
         L: tower::Layer<UncheckedInner<C>> + Send + Sync + 'static,
+        L::Service: tower_service::Service<
+                crate::http::Request,
+                Response = crate::http::Response,
+                Error = Infallible,
+            > + Clone
+            + Send
+            + Sync
+            + 'static,
+        <L::Service as tower_service::Service<crate::http::Request>>::Future: Send + 'static,
     {
         let _ = layer;
         todo!()

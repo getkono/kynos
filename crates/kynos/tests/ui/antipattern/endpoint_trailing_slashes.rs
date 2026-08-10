@@ -1,7 +1,7 @@
 //! README anti-pattern 10: nor can a single endpoint.
 
 use kynos::{
-    openapi, response::status::NoContent, router::endpoint::EndpointBuilder,
+    openapi, response::status::NoContent, router::endpoint::builder::EndpointBuilder,
     router::policy::TrailingSlashPolicy,
 };
 

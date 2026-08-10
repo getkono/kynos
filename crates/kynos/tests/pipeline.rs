@@ -18,7 +18,7 @@ use kynos::{
     extract::{body::json::Json, params::path::Path},
     handler::Handler,
     response::status::{Created, NoContent},
-    router::endpoint::{Endpoints, IntoEndpoints},
+    router::endpoint::set::{Endpoints, IntoEndpoints},
 };
 
 #[derive(Clone, Debug, PartialEq)]

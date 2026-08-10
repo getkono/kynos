@@ -55,9 +55,12 @@ jobs:
         with:
           cargo-cache-key: test
       # The instrumented run is the test of record. It selects the same tests
-      # as `mise run test`, so running both would execute the suite twice.
+      # as `mise run test`, so running both would execute the suite twice --
+      # except the compile-fail suite, which cannot run instrumented.
       - name: Run tests under coverage
         run: mise run coverage:ci
+      - name: Run the compile-fail suite
+        run: mise run ui:check
       - name: Add coverage summary
         run: cat coverage-summary.txt >> "$GITHUB_STEP_SUMMARY"
       - name: Upload coverage artifact

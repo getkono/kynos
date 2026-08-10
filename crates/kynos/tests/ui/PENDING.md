@@ -23,11 +23,13 @@ are recorded with it on. See below.
 
 ## Resolved since this ledger was written
 
-`#[kynos::operation]` was listed here as having no possible control, because
-no program using the attribute compiled: it read `method` itself and then
-handed its whole argument list to a parser that rejected `method` as unknown.
-That was a real defect rather than a limit of the suite, and both cases have
-landed now.
+`#[kynos::operation]` was listed here as having no possible control, because no
+program using it compiled: it read `method` itself and then handed its whole
+argument list to a parser that rejected `method` as unknown. That was a defect
+rather than a limit of the suite. Both cases have landed
+(`macros/operation_missing_method.rs`, `pass/operation_with_method.rs`), along
+with `macros/route_method_argument.rs`, which pins the other half — that a
+per-method attribute must keep rejecting `method`.
 
 ## Blocked on the suite's one feature set
 
@@ -42,20 +44,3 @@ feature sets, only require them.
 | --- | --- |
 | `Group::layer_unchecked` absent | the escape hatch for README anti-pattern 1 is behind `unchecked` |
 | `#[kynos::operation(method = "PROPFIND")]` rejected | a method outside the eight OpenAPI 3.1 names needs `openapi32` for `additionalOperations` |
-
-## Blocked on a bug
-
-`#[kynos::operation]` cannot compile with any arguments at all.
-[`route/mod.rs`](../../../kynos-macros/src/route/mod.rs)'s `expand_generic`
-reads `method = "..."` out of the attribute and then hands the *whole* token
-stream to `RouteArgs::parse`, which rejects `method` as an unknown route
-argument. Two cases wait on the fix:
-
-| Case | Asserts |
-| --- | --- |
-| `macros/operation_without_method.rs` | `#[kynos::operation(path = "/users")]` names `method` as the missing argument |
-| `macros/openapi32_off/operation_non_standard_method.rs` | as above, and also blocked on the feature set |
-
-Both negatives produce the right diagnostic today. Neither has a control,
-because no `#[kynos::operation]` program compiles — which is exactly the failure
-the pass-control rule exists to surface.

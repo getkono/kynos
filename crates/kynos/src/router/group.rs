@@ -5,7 +5,7 @@ use crate::{
         Interceptor,
         catch_panic::{Catch, PanicPolicy, Propagate},
     },
-    router::{endpoint::IntoEndpoints, operation::Tag},
+    router::{endpoint::set::IntoEndpoints, operation::Tag},
 };
 
 /// A set of operations sharing a path prefix, a tag, and interceptors.

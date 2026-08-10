@@ -23,15 +23,15 @@ required-features = ["openapi31", "macros", "server", "http1", "json"]
 
 [[example]]
 name = "state"
-required-features = ["openapi31", "macros", "server", "http1", "json"]
+required-features = ["openapi31", "macros", "server", "http1"]
 
 [[example]]
 name = "interceptor"
-required-features = ["openapi31", "macros", "server", "http1", "json"]
+required-features = ["openapi31", "macros", "server", "http1"]
 
 [[example]]
 name = "security"
-required-features = ["openapi31", "macros", "server", "http1", "json"]
+required-features = ["openapi31", "macros", "server", "http1"]
 
 [[example]]
 name = "http2"
