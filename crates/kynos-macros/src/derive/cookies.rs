@@ -35,7 +35,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
 
             fn decode(
                 headers: &::kynos::http::HeaderMap,
-            ) -> ::core::result::Result<Self, ::kynos::error::rejection::Rejection> {
+            ) -> ::core::result::Result<Self, ::kynos::error::rejection::CookieRejection> {
                 let _ = headers;
                 ::core::todo!()
             }

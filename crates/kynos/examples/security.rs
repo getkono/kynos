@@ -17,7 +17,7 @@
 use std::net::Ipv4Addr;
 
 use kynos::{
-    error::rejection::Rejection,
+    error::rejection::AuthRejection,
     http::Parts,
     prelude::*,
     response::status::NoContent,
@@ -45,9 +45,9 @@ struct Tokens {
 }
 
 impl<C: Sync> Authenticator<Bearer<Claims>, C> for Tokens {
-    async fn authenticate(&self, parts: &Parts, context: &C) -> Result<Claims, Rejection> {
+    async fn authenticate(&self, parts: &Parts, context: &C) -> Result<Claims, AuthRejection> {
         let _ = (parts, context);
-        Err(Rejection::Unauthenticated)
+        Err(AuthRejection::Unauthenticated)
     }
 
     async fn authorize(
@@ -55,9 +55,9 @@ impl<C: Sync> Authenticator<Bearer<Claims>, C> for Tokens {
         credential: &Claims,
         scopes: &'static [&'static str],
         context: &C,
-    ) -> Result<(), Rejection> {
+    ) -> Result<(), AuthRejection> {
         let _ = (credential, scopes, context);
-        Err(Rejection::Forbidden)
+        Err(AuthRejection::Forbidden)
     }
 }
 

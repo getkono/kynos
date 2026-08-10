@@ -3,8 +3,9 @@
 //! Both contribute nothing to the description, which is the point: they are
 //! properties of how a request arrived, not of the contract it is part of.
 
+use core::convert::Infallible;
+
 use crate::{
-    error::rejection::Rejection,
     extract::{FromRequestParts, describe::Describe},
     http::Parts,
     router::operation::OperationCx,
@@ -25,8 +26,11 @@ pub struct MatchedPath(pub &'static str);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ConnectInfo(pub std::net::SocketAddr);
 
+/// Infallible because a route has already matched by the time an argument is
+/// built: the template that matched is what this returns, so there is no state
+/// in which it is absent.
 impl<C: Sync> FromRequestParts<C> for MatchedPath {
-    type Rejection = Rejection;
+    type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
         let _ = (parts, context);
@@ -40,8 +44,11 @@ impl Describe for MatchedPath {
     }
 }
 
+/// Infallible because a request that reached a handler arrived on a connection,
+/// and the peer address is a property of that connection rather than of
+/// anything the client sent.
 impl<C: Sync> FromRequestParts<C> for ConnectInfo {
-    type Rejection = Rejection;
+    type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
         let _ = (parts, context);

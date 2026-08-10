@@ -1,7 +1,7 @@
 //! The `application/x-www-form-urlencoded` body codec.
 
 use crate::{
-    error::rejection::Rejection,
+    error::rejection::BodyRejection,
     extract::{
         FromRequest,
         describe::{Describe, RequestContent},
@@ -16,7 +16,7 @@ use crate::{
 pub struct Form<T>(pub T);
 
 impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Form<T> {
-    type Rejection = Rejection;
+    type Rejection = BodyRejection;
 
     async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
         let _ = (request, context);

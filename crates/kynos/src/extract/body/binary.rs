@@ -1,7 +1,7 @@
 //! Raw bytes with a declared media type.
 
 use crate::{
-    error::rejection::Rejection,
+    error::rejection::BodyRejection,
     extract::{
         FromRequest,
         describe::{Describe, RequestContent},
@@ -28,7 +28,7 @@ impl<M> Binary<M> {
 }
 
 impl<C: Sync, M: MediaType + Send> FromRequest<C> for Binary<M> {
-    type Rejection = Rejection;
+    type Rejection = BodyRejection;
 
     async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
         let _ = (request, context);

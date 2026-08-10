@@ -6,7 +6,7 @@
 //! whole point.
 
 use crate::{
-    error::rejection::Rejection,
+    error::rejection::AuthRejection,
     extract::{FromRequestParts, describe::Describe},
     http::Parts,
     router::operation::OperationCx,
@@ -89,7 +89,7 @@ where
     C: Authenticates<S> + Sync,
     S: SecurityScheme,
 {
-    type Rejection = Rejection;
+    type Rejection = AuthRejection;
 
     async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
         context
@@ -173,7 +173,7 @@ where
     S: SecurityScheme,
     R: Scopes,
 {
-    type Rejection = Rejection;
+    type Rejection = AuthRejection;
 
     async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
         let authenticator = context.authenticator();

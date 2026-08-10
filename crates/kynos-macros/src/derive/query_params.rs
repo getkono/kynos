@@ -32,7 +32,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         {
             fn decode(
                 query: ::core::option::Option<&str>,
-            ) -> ::core::result::Result<Self, ::kynos::error::rejection::Rejection> {
+            ) -> ::core::result::Result<Self, ::kynos::error::rejection::QueryRejection> {
                 let _ = query;
                 ::core::todo!()
             }

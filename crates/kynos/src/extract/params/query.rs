@@ -1,7 +1,7 @@
 //! Query string parameters, named and whole.
 
 use crate::{
-    error::rejection::Rejection,
+    error::rejection::QueryRejection,
     extract::{FromRequestParts, describe::Describe},
     http::Parts,
     router::operation::OperationCx,
@@ -23,7 +23,7 @@ pub struct Query<T>(pub T);
 /// A group of query parameters.
 pub trait QueryParams: Sized + Schema {
     /// Decodes a raw query string.
-    fn decode(query: Option<&str>) -> Result<Self, Rejection> {
+    fn decode(query: Option<&str>) -> Result<Self, QueryRejection> {
         let _ = query;
         todo!()
     }
@@ -41,7 +41,7 @@ pub trait QueryParams: Sized + Schema {
 }
 
 impl<C: Sync, T: QueryParams + Send> FromRequestParts<C> for Query<T> {
-    type Rejection = Rejection;
+    type Rejection = QueryRejection;
 
     async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
         let _ = (parts, context);
@@ -76,7 +76,7 @@ impl<T, M> QueryString<T, M> {
 
 #[cfg(feature = "openapi32")]
 impl<C: Sync, T: Send, M: MediaType + Send> FromRequestParts<C> for QueryString<T, M> {
-    type Rejection = Rejection;
+    type Rejection = QueryRejection;
 
     async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
         let _ = (parts, context);

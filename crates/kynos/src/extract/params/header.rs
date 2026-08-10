@@ -1,7 +1,7 @@
 //! Declared request headers.
 
 use crate::{
-    error::rejection::Rejection,
+    error::rejection::HeaderRejection,
     extract::{FromRequestParts, describe::Describe},
     http::{HeaderMap, HeaderName, HeaderValue, Parts},
     router::operation::OperationCx,
@@ -29,7 +29,7 @@ pub trait HeaderParams: Sized {
     const NAMES: &'static [&'static str];
 
     /// Decodes this group from request headers.
-    fn decode(headers: &HeaderMap) -> Result<Self, Rejection> {
+    fn decode(headers: &HeaderMap) -> Result<Self, HeaderRejection> {
         let _ = headers;
         todo!()
     }
@@ -55,7 +55,7 @@ pub trait HeaderParams: Sized {
 }
 
 impl<C: Sync, T: HeaderParams + Send> FromRequestParts<C> for Headers<T> {
-    type Rejection = Rejection;
+    type Rejection = HeaderRejection;
 
     async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
         let _ = (parts, context);

@@ -20,7 +20,7 @@ pub mod schemes;
 
 use std::future::Future;
 
-use crate::{error::rejection::Rejection, http::Parts};
+use crate::{error::rejection::AuthRejection, http::Parts};
 
 /// A security scheme, as a type.
 ///
@@ -78,13 +78,13 @@ pub trait SecurityScheme: Send + Sync + 'static {
 pub trait Authenticator<S: SecurityScheme, C: Sync>: Send + Sync + 'static {
     /// Checks the credential carried by this request.
     ///
-    /// Return [`Rejection::Unauthenticated`] when the credential is absent or
-    /// invalid, and [`Rejection::Forbidden`] when it is valid but insufficient.
+    /// Return [`AuthRejection::Unauthenticated`] when the credential is absent or
+    /// invalid, and [`AuthRejection::Forbidden`] when it is valid but insufficient.
     fn authenticate(
         &self,
         parts: &Parts,
         context: &C,
-    ) -> impl Future<Output = Result<S::Credential, Rejection>> + Send;
+    ) -> impl Future<Output = Result<S::Credential, AuthRejection>> + Send;
 
     /// Checks that an authenticated credential has every requested scope.
     fn authorize(
@@ -92,7 +92,7 @@ pub trait Authenticator<S: SecurityScheme, C: Sync>: Send + Sync + 'static {
         credential: &S::Credential,
         scopes: &'static [&'static str],
         context: &C,
-    ) -> impl Future<Output = Result<(), Rejection>> + Send;
+    ) -> impl Future<Output = Result<(), AuthRejection>> + Send;
 }
 
 /// An application context that supplies an authenticator for scheme `S`.

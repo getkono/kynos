@@ -1,8 +1,23 @@
-//! Every way a built-in extractor can fail — and how each describes itself.
+//! Every way a built-in extractor can fail — one type per extractor.
 //!
-//! Each variant maps to a documented status, which is what lets an extractor's
-//! rejection appear in its operation's `responses` rather than being an
-//! undocumented surprise.
+//! Each type names only the statuses that extractor can actually produce, and
+//! [`FromRequestParts::Rejection`](crate::extract::FromRequestParts::Rejection)
+//! is bound by [`Responses`], so those statuses reach the operation's
+//! `responses` without an author restating them.
+//!
+//! # Why not one shared type
+//!
+//! A single union would be sound — it satisfies `emitted ⊇ observable` — and
+//! would still make every operation advertise every status any extractor can
+//! raise. A handler reading one path parameter would claim it might answer 401,
+//! which is not a harmless over-approximation: a 401 on an endpoint with no
+//! authentication is a claim a client generator turns into dead retry logic.
+//!
+//! Statuses raised by an interceptor rather than an extractor — 429, 503 and
+//! 504 — are not here. [`RateLimit`](crate::middleware::rate_limit::RateLimit),
+//! [`Concurrency`](crate::middleware::limits::Concurrency) and
+//! [`Timeout`](crate::middleware::limits::Timeout) return a response directly
+//! and declare it through `OperationContribution`.
 
 use std::collections::BTreeMap;
 
@@ -13,63 +28,200 @@ use crate::{
     schema::registry::Registry,
 };
 
-/// Why a request could not be turned into a handler's arguments.
+/// Emits the two implementations that are mechanical for every rejection: the
+/// bridge to a response, and the description built from `statuses()`.
 ///
-/// Every [`FromRequestParts`](crate::extract::FromRequestParts) implementation
-/// rejects with one of these, and each maps to a documented status.
+/// Hand-writing fourteen identical bodies would invite one of them to drift.
+/// `into_problem` stays per-type, because only it knows the variants.
+macro_rules! rejection_response {
+    ($rejection:ty) => {
+        impl IntoResponse for $rejection {
+            fn into_response(self) -> crate::http::Response {
+                todo!()
+            }
+        }
+
+        impl Responses for $rejection {
+            fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+                let _ = registry;
+                todo!()
+            }
+        }
+    };
+}
+
+/// A path parameter did not match its declared schema.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum Rejection {
-    /// A path parameter did not match its declared schema. Produces 400.
+pub enum PathRejection {
+    /// The parameter could not be decoded. Produces 400.
     #[error("path parameter `{name}` is not valid")]
-    Path {
+    Invalid {
         /// The parameter that failed.
         name: String,
         /// What was wrong with it.
         detail: String,
     },
+}
 
-    /// A query parameter was missing or malformed. Produces 400.
+impl PathRejection {
+    /// The status this rejection produces.
+    #[must_use]
+    pub fn status(&self) -> StatusCode {
+        match self {
+            Self::Invalid { .. } => StatusCode::BAD_REQUEST,
+        }
+    }
+}
+
+impl IntoProblem for PathRejection {
+    fn into_problem(self) -> Problem {
+        todo!()
+    }
+
+    fn statuses() -> &'static [StatusCode] {
+        &[StatusCode::BAD_REQUEST]
+    }
+}
+
+rejection_response!(PathRejection);
+
+/// A query parameter was missing or malformed.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum QueryRejection {
+    /// The parameter was absent or could not be decoded. Produces 400.
     #[error("query parameter `{name}` is not valid")]
-    Query {
+    Invalid {
         /// The parameter that failed.
         name: String,
         /// What was wrong with it.
         detail: String,
     },
+}
 
-    /// A header was missing or malformed. Produces 400.
+impl QueryRejection {
+    /// The status this rejection produces.
+    #[must_use]
+    pub fn status(&self) -> StatusCode {
+        match self {
+            Self::Invalid { .. } => StatusCode::BAD_REQUEST,
+        }
+    }
+}
+
+impl IntoProblem for QueryRejection {
+    fn into_problem(self) -> Problem {
+        todo!()
+    }
+
+    fn statuses() -> &'static [StatusCode] {
+        &[StatusCode::BAD_REQUEST]
+    }
+}
+
+rejection_response!(QueryRejection);
+
+/// A header was missing or malformed.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum HeaderRejection {
+    /// The header was absent or could not be decoded. Produces 400.
     #[error("header `{name}` is not valid")]
-    Header {
+    Invalid {
         /// The header that failed.
         name: String,
         /// What was wrong with it.
         detail: String,
     },
+}
 
-    /// A cookie was missing or malformed. Produces 400.
+impl HeaderRejection {
+    /// The status this rejection produces.
+    #[must_use]
+    pub fn status(&self) -> StatusCode {
+        match self {
+            Self::Invalid { .. } => StatusCode::BAD_REQUEST,
+        }
+    }
+}
+
+impl IntoProblem for HeaderRejection {
+    fn into_problem(self) -> Problem {
+        todo!()
+    }
+
+    fn statuses() -> &'static [StatusCode] {
+        &[StatusCode::BAD_REQUEST]
+    }
+}
+
+rejection_response!(HeaderRejection);
+
+/// A cookie was missing or malformed.
+///
+/// Gated at item level rather than on a module, because the rest of this module
+/// is reachable without the `cookie` feature and no module gate covers one type.
+#[cfg(feature = "cookie")]
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum CookieRejection {
+    /// The cookie was absent or could not be decoded. Produces 400.
     #[error("cookie `{name}` is not valid")]
-    Cookie {
+    Invalid {
         /// The cookie that failed.
         name: String,
         /// What was wrong with it.
         detail: String,
     },
+}
 
+#[cfg(feature = "cookie")]
+impl CookieRejection {
+    /// The status this rejection produces.
+    #[must_use]
+    pub fn status(&self) -> StatusCode {
+        match self {
+            Self::Invalid { .. } => StatusCode::BAD_REQUEST,
+        }
+    }
+}
+
+#[cfg(feature = "cookie")]
+impl IntoProblem for CookieRejection {
+    fn into_problem(self) -> Problem {
+        todo!()
+    }
+
+    fn statuses() -> &'static [StatusCode] {
+        &[StatusCode::BAD_REQUEST]
+    }
+}
+
+#[cfg(feature = "cookie")]
+rejection_response!(CookieRejection);
+
+/// The request body could not be turned into the handler's argument.
+///
+/// The one rejection with a genuinely wide status set, because deciding a body
+/// is unacceptable happens in four distinct ways.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum BodyRejection {
     /// The body was syntactically invalid. Produces 400.
     #[error("the request body could not be parsed")]
-    BodySyntax {
+    Syntax {
         /// What was wrong with it.
         detail: String,
     },
 
     /// The body parsed but violated its schema. Produces 422.
     ///
-    /// The split between this and [`BodySyntax`](Rejection::BodySyntax) is
-    /// deliberate: a client can retry neither, but only one of them indicates a
-    /// bug in its serializer.
+    /// The split from [`Syntax`](BodyRejection::Syntax) is deliberate: a client
+    /// can retry neither, but only one of them indicates a bug in its
+    /// serializer.
     #[error("the request body does not satisfy its schema")]
-    BodySchema {
+    Schema {
         /// The failures, keyed by JSON Pointer into the body.
         failures: BTreeMap<String, String>,
     },
@@ -81,17 +233,91 @@ pub enum Rejection {
         received: Option<String>,
     },
 
-    /// No offered representation satisfied `Accept`. Produces 406.
-    #[error("no acceptable representation")]
-    NotAcceptable,
-
     /// The body exceeded the configured limit. Produces 413.
     #[error("the request body is too large")]
-    PayloadTooLarge {
+    TooLarge {
         /// The configured maximum, in bytes.
         limit: u64,
     },
+}
 
+impl BodyRejection {
+    /// The status this rejection produces.
+    #[must_use]
+    pub fn status(&self) -> StatusCode {
+        match self {
+            Self::Syntax { .. } => StatusCode::BAD_REQUEST,
+            Self::Schema { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::UnsupportedMediaType { .. } => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            Self::TooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
+        }
+    }
+}
+
+impl IntoProblem for BodyRejection {
+    fn into_problem(self) -> Problem {
+        todo!()
+    }
+
+    fn statuses() -> &'static [StatusCode] {
+        &[
+            StatusCode::BAD_REQUEST,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ]
+    }
+}
+
+rejection_response!(BodyRejection);
+
+/// No offered representation satisfied the request's `Accept`.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum NegotiationRejection {
+    /// The `Accept` header could not be parsed. Produces 400.
+    #[error("header `Accept` is not valid")]
+    MalformedAccept {
+        /// What was wrong with it.
+        detail: String,
+    },
+
+    /// The header parsed, but nothing offered matched it. Produces 406.
+    #[error("no acceptable representation")]
+    NotAcceptable,
+}
+
+impl NegotiationRejection {
+    /// The status this rejection produces.
+    #[must_use]
+    pub fn status(&self) -> StatusCode {
+        match self {
+            Self::MalformedAccept { .. } => StatusCode::BAD_REQUEST,
+            Self::NotAcceptable => StatusCode::NOT_ACCEPTABLE,
+        }
+    }
+}
+
+impl IntoProblem for NegotiationRejection {
+    fn into_problem(self) -> Problem {
+        todo!()
+    }
+
+    fn statuses() -> &'static [StatusCode] {
+        &[StatusCode::BAD_REQUEST, StatusCode::NOT_ACCEPTABLE]
+    }
+}
+
+rejection_response!(NegotiationRejection);
+
+/// A credential was absent, invalid, or insufficient.
+///
+/// The only rejection carrying 401 or 403, which is what keeps an endpoint with
+/// no [`Auth`](crate::security::auth::Auth) argument from advertising a
+/// challenge it will never send.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum AuthRejection {
     /// Credentials were absent or invalid. Produces 401.
     #[error("authentication is required")]
     Unauthenticated,
@@ -99,62 +325,30 @@ pub enum Rejection {
     /// Credentials were valid but insufficient. Produces 403.
     #[error("access is not permitted")]
     Forbidden,
-
-    /// A rate limit was exceeded. Produces 429.
-    #[error("too many requests")]
-    TooManyRequests {
-        /// How long to wait before retrying.
-        retry_after: std::time::Duration,
-    },
-
-    /// The service is at capacity. Produces 503.
-    #[error("the service is at capacity")]
-    ServiceUnavailable {
-        /// How long to wait before retrying.
-        retry_after: std::time::Duration,
-    },
-
-    /// The handler did not finish inside its budget. Produces 504.
-    #[error("the request timed out")]
-    GatewayTimeout {
-        /// The budget that was exhausted.
-        limit: std::time::Duration,
-    },
 }
 
-impl Rejection {
+impl AuthRejection {
     /// The status this rejection produces.
     #[must_use]
     pub fn status(&self) -> StatusCode {
-        todo!()
-    }
-
-    /// Every status any rejection can produce.
-    #[must_use]
-    pub fn all_statuses() -> &'static [StatusCode] {
-        todo!()
+        match self {
+            Self::Unauthenticated => StatusCode::UNAUTHORIZED,
+            Self::Forbidden => StatusCode::FORBIDDEN,
+        }
     }
 }
 
-impl IntoProblem for Rejection {
+impl IntoProblem for AuthRejection {
     fn into_problem(self) -> Problem {
         todo!()
     }
 
     fn statuses() -> &'static [StatusCode] {
-        Self::all_statuses()
+        &[StatusCode::UNAUTHORIZED, StatusCode::FORBIDDEN]
     }
 }
 
-impl IntoResponse for Rejection {
-    fn into_response(self) -> crate::http::Response {
-        todo!()
-    }
-}
+rejection_response!(AuthRejection);
 
-impl Responses for Rejection {
-    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        let _ = registry;
-        todo!()
-    }
-}
+#[cfg(test)]
+mod tests;

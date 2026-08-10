@@ -22,7 +22,7 @@ pub mod multipart;
 pub mod protobuf;
 
 use crate::{
-    error::rejection::Rejection,
+    error::rejection::BodyRejection,
     extract::{
         FromRequest,
         body::alternative::Alternative,
@@ -93,10 +93,10 @@ impl<T: RequestContent> Describe for Option<T> {
 impl<C, L, R> FromRequest<C> for OneOf<L, R>
 where
     C: Sync,
-    L: FromRequest<C, Rejection = Rejection> + Alternative<R>,
-    R: FromRequest<C, Rejection = Rejection> + RequestContent,
+    L: FromRequest<C, Rejection = BodyRejection> + Alternative<R>,
+    R: FromRequest<C, Rejection = BodyRejection> + RequestContent,
 {
-    type Rejection = Rejection;
+    type Rejection = BodyRejection;
 
     async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
         let _ = (request, context);

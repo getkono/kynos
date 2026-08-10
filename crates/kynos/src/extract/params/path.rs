@@ -1,7 +1,7 @@
 //! Variables captured from the path template.
 
 use crate::{
-    error::rejection::Rejection,
+    error::rejection::PathRejection,
     extract::{FromRequestParts, describe::Describe},
     http::Parts,
     router::operation::OperationCx,
@@ -25,7 +25,7 @@ pub trait PathParams: Sized {
     const NAMES: &'static [&'static str];
 
     /// Decodes the named captures from a matched route.
-    fn decode(values: &[(&str, &str)]) -> Result<Self, Rejection> {
+    fn decode(values: &[(&str, &str)]) -> Result<Self, PathRejection> {
         let _ = values;
         todo!()
     }
@@ -43,7 +43,7 @@ pub trait PathParams: Sized {
 }
 
 impl<C: Sync, T: PathParams + Send> FromRequestParts<C> for Path<T> {
-    type Rejection = Rejection;
+    type Rejection = PathRejection;
 
     async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
         let _ = (parts, context);

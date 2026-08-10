@@ -1,7 +1,7 @@
 //! Declared request cookies.
 
 use crate::{
-    error::rejection::Rejection,
+    error::rejection::CookieRejection,
     extract::{FromRequestParts, describe::Describe},
     http::{HeaderMap, Parts},
     router::operation::OperationCx,
@@ -22,7 +22,7 @@ pub trait CookieParams: Sized {
     const NAMES: &'static [&'static str];
 
     /// Decodes this group from the request's cookie header fields.
-    fn decode(headers: &HeaderMap) -> Result<Self, Rejection> {
+    fn decode(headers: &HeaderMap) -> Result<Self, CookieRejection> {
         let _ = headers;
         todo!()
     }
@@ -35,7 +35,7 @@ pub trait CookieParams: Sized {
 }
 
 impl<C: Sync, T: CookieParams + Send> FromRequestParts<C> for Cookies<T> {
-    type Rejection = Rejection;
+    type Rejection = CookieRejection;
 
     async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
         let _ = (parts, context);

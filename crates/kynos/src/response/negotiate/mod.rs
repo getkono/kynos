@@ -7,7 +7,7 @@
 mod representation;
 
 use crate::{
-    error::rejection::Rejection,
+    error::rejection::NegotiationRejection,
     extract::{FromRequestParts, describe::Describe},
     http::{Parts, Response},
     response::{IntoResponse, Responses},
@@ -23,7 +23,7 @@ use crate::{
 ///
 /// ```no_run
 /// use kynos::{
-///     error::rejection::Rejection,
+///     error::rejection::NegotiationRejection,
 ///     extract::{
 ///         body::{binary::Binary, text::Text},
 ///         media::Pdf,
@@ -33,7 +33,7 @@ use crate::{
 ///
 /// async fn report(
 ///     accept: Accept<(Text, Binary<Pdf>)>,
-/// ) -> Result<Negotiated<(Text, Binary<Pdf>)>, Rejection> {
+/// ) -> Result<Negotiated<(Text, Binary<Pdf>)>, NegotiationRejection> {
 ///     accept.respond((
 ///         Text("plain report".to_owned()),
 ///         Binary::new(Vec::<u8>::new()),
@@ -51,7 +51,7 @@ impl<T> Accept<T> {
     ///
     /// An absent field is represented by `"*/*"`. Invalid quality values are
     /// rejected as malformed headers.
-    pub fn parse(value: &str) -> Result<Self, Rejection> {
+    pub fn parse(value: &str) -> Result<Self, NegotiationRejection> {
         let mut preferences = Vec::new();
         for (order, item) in value.split(',').enumerate() {
             let mut segments = item.trim().split(';');
@@ -89,7 +89,7 @@ impl<T> Accept<T> {
     }
 
     /// Chooses one offered representation or returns a documented 406.
-    pub fn respond(self, representations: T) -> Result<Negotiated<T>, Rejection>
+    pub fn respond(self, representations: T) -> Result<Negotiated<T>, NegotiationRejection>
     where
         T: representation::Representations,
     {
@@ -103,7 +103,7 @@ impl<T> Accept<T> {
                     .then_with(|| right_index.cmp(left_index))
             })
             .map(|(_, index)| index)
-            .ok_or(Rejection::NotAcceptable)?;
+            .ok_or(NegotiationRejection::NotAcceptable)?;
 
         Ok(Negotiated {
             representations,
@@ -162,9 +162,8 @@ fn parse_quality(value: &str) -> Option<u16> {
         })
 }
 
-fn invalid_accept() -> Rejection {
-    Rejection::Header {
-        name: "Accept".to_owned(),
+fn invalid_accept() -> NegotiationRejection {
+    NegotiationRejection::MalformedAccept {
         detail: "expected comma-separated media ranges with q values from 0 to 1".to_owned(),
     }
 }
@@ -178,7 +177,7 @@ struct Preference {
 }
 
 impl<C: Sync, T: Send> FromRequestParts<C> for Accept<T> {
-    type Rejection = Rejection;
+    type Rejection = NegotiationRejection;
 
     async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
         let _ = (parts, context);
@@ -188,7 +187,7 @@ impl<C: Sync, T: Send> FromRequestParts<C> for Accept<T> {
 
 impl<T> Describe for Accept<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let responses = Rejection::responses(operation.registry());
+        let responses = NegotiationRejection::responses(operation.registry());
         operation.add_responses(responses);
     }
 }

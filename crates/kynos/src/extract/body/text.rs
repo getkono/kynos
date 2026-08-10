@@ -1,7 +1,7 @@
 //! The `text/plain` body codec.
 
 use crate::{
-    error::rejection::Rejection,
+    error::rejection::BodyRejection,
     extract::{
         FromRequest,
         describe::{Describe, RequestContent},
@@ -16,7 +16,7 @@ use crate::{
 pub struct Text(pub String);
 
 impl<C: Sync> FromRequest<C> for Text {
-    type Rejection = Rejection;
+    type Rejection = BodyRejection;
 
     async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
         let _ = (request, context);

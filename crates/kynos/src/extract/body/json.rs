@@ -1,7 +1,7 @@
 //! The `application/json` body codec.
 
 use crate::{
-    error::rejection::Rejection,
+    error::rejection::BodyRejection,
     extract::{
         FromRequest,
         describe::{Describe, RequestContent},
@@ -30,7 +30,7 @@ use crate::{
 pub struct Json<T>(pub T);
 
 impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Json<T> {
-    type Rejection = Rejection;
+    type Rejection = BodyRejection;
 
     async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
         let _ = (request, context);

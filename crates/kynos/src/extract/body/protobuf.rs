@@ -1,7 +1,7 @@
 //! The `application/protobuf` body codec.
 
 use crate::{
-    error::rejection::Rejection,
+    error::rejection::BodyRejection,
     extract::{
         FromRequest,
         describe::{Describe, RequestContent},
@@ -30,7 +30,7 @@ use crate::{
 pub struct Protobuf<T>(pub T);
 
 impl<C: Sync, T: prost::Message + Default + Send> FromRequest<C> for Protobuf<T> {
-    type Rejection = Rejection;
+    type Rejection = BodyRejection;
 
     async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
         let _ = (request, context);
