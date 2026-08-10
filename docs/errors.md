@@ -86,6 +86,16 @@ one that can drift from it.
 opt-in because a variant carries whatever the error site had to hand, and the
 default must not be to publish it. `trace` above stays internal.
 
+**What is built.** The grammar is parsed and enforced: a missing or
+out-of-range `status`, a member the grammar does not define, a `base` on a
+variant, an `extension` on a field with no name, and a type with no `Display`
+are all compile errors, each with a case in
+[`tests/ui/macros`](../crates/kynos/tests/ui/macros). `statuses()` is real.
+What `base`, `title`, `type` and `extension` *do* is designed rather than built,
+because `into_problem` and `Problem`'s builders are still `todo!()`; the
+members are checked for shape and position so the grammar cannot quietly change
+meaning once those land.
+
 ## Rejections
 
 One type per extractor, each naming only the statuses it can actually produce.
