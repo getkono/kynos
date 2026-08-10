@@ -14,6 +14,22 @@ path = "tests/compile/panic_recovery.rs"
 harness = false
 
 [[example]]
+name = "hello"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
+[[example]]
+name = "state"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
+[[example]]
+name = "interceptor"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
+[[example]]
+name = "security"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
+[[example]]
 name = "http2"
 required-features = ["openapi31", "server", "http2"]
 
