@@ -473,3 +473,35 @@ fn a_clean_document_makes_no_opacity_noise() {
             | SpecError::OpaqueRoute { .. }
     )));
 }
+
+/// A description read from somewhere else never passes through
+/// `PathTemplate::parse`, so validation is the only place its keys are checked.
+#[test]
+fn a_paths_key_that_is_not_a_template_is_reported() {
+    let document: Document = serde_json::from_value(serde_json::json!({
+        "openapi": "3.1.1",
+        "info": { "title": "Test", "version": "1.0.0" },
+        "paths": {
+            "/a b|c": { "get": { "operationId": "odd", "responses": { "200": { "description": "ok" } } } }
+        }
+    }))
+    .expect("a `paths` key is a plain string, so this parses");
+
+    assert!(errors(&document).iter().any(
+        |e| matches!(e, SpecError::InvalidPathTemplate { template, .. } if template == "/a b|c")
+    ));
+}
+
+/// The location must be a resolvable JSON Pointer, which means the `/` inside a
+/// path key is escaped rather than left to read as a token separator.
+#[test]
+fn violation_locations_escape_their_path_keys() {
+    let item = PathItem::new().with_operation(Method::Get, Operation::new("listUsers"));
+    let document = document_with(&[("/users/{id}", item)]);
+
+    assert!(
+        violations(&document)
+            .iter()
+            .any(|v| v.location == "#/paths/~1users~1{id}/get")
+    );
+}

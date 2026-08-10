@@ -48,6 +48,15 @@ impl std::fmt::Display for Violation {
     }
 }
 
+/// Escapes one map key for use as a JSON Pointer token, per RFC 6901.
+///
+/// Every `paths` key contains a `/`, so a location that embeds one unescaped
+/// reads as several tokens and resolves against nothing. Shared so that the
+/// three places that build locations cannot disagree.
+pub(crate) fn pointer_token(key: &str) -> String {
+    key.replace('~', "~0").replace('/', "~1")
+}
+
 /// A way in which a document fails to conform.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -71,6 +80,18 @@ pub enum SpecError {
         template: String,
         /// The template already present.
         existing: String,
+    },
+
+    /// A `paths` key is not a legal path template.
+    ///
+    /// Reachable only for a description read from somewhere else: a template
+    /// Kynos constructs is checked when it is parsed.
+    #[error("`{template}` is not a legal path template: {reason}")]
+    InvalidPathTemplate {
+        /// The offending key.
+        template: String,
+        /// Why it is not one.
+        reason: String,
     },
 
     /// A path template variable has no corresponding parameter.

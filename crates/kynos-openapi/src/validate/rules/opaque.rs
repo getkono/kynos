@@ -16,26 +16,30 @@ use crate::{
         paths::{item::PathItem, operation::Operation},
         reference::RefOr,
     },
-    validate::violation::{SpecError, Violation},
+    validate::violation::{SpecError, Violation, pointer_token},
 };
 
 pub(in crate::validate) fn check_opaque(document: &Document, violations: &mut Vec<Violation>) {
     for (raw, item) in &document.paths.0 {
-        check_item(&format!("#/paths/{}", pointer(raw)), item, violations);
+        check_item(&format!("#/paths/{}", pointer_token(raw)), item, violations);
     }
     for (name, item) in &document.webhooks {
-        check_item(&format!("#/webhooks/{}", pointer(name)), item, violations);
+        check_item(
+            &format!("#/webhooks/{}", pointer_token(name)),
+            item,
+            violations,
+        );
     }
     for (name, item) in &document.components.path_items {
         check_item(
-            &format!("#/components/pathItems/{}", pointer(name)),
+            &format!("#/components/pathItems/{}", pointer_token(name)),
             item,
             violations,
         );
     }
     for (name, callback) in &document.components.callbacks {
         check_callback(
-            &format!("#/components/callbacks/{}", pointer(name)),
+            &format!("#/components/callbacks/{}", pointer_token(name)),
             callback,
             violations,
         );
@@ -56,14 +60,6 @@ pub(in crate::validate) fn check_opaque(document: &Document, violations: &mut Ve
     }
 }
 
-/// Escapes one map key for use as a JSON Pointer token, per RFC 6901.
-///
-/// Every path key contains a `/`, so without this a location reads as several
-/// tokens and resolves against nothing.
-fn pointer(key: &str) -> String {
-    key.replace('~', "~0").replace('/', "~1")
-}
-
 fn check_item(location: &str, item: &PathItem, violations: &mut Vec<Violation>) {
     for (method, operation) in item.operations() {
         check_operation(
@@ -76,7 +72,7 @@ fn check_item(location: &str, item: &PathItem, violations: &mut Vec<Violation>) 
     #[cfg(feature = "openapi32")]
     for (method, operation) in &item.additional_operations {
         check_operation(
-            &format!("{location}/additionalOperations/{}", pointer(method)),
+            &format!("{location}/additionalOperations/{}", pointer_token(method)),
             operation,
             violations,
         );
@@ -92,7 +88,7 @@ fn check_callback(location: &str, callback: &RefOr<Callback>, violations: &mut V
     for (expression, item) in &callback.0 {
         if let Some(item) = item.as_item() {
             check_item(
-                &format!("{location}/{}", pointer(expression)),
+                &format!("{location}/{}", pointer_token(expression)),
                 item,
                 violations,
             );
@@ -103,7 +99,7 @@ fn check_callback(location: &str, callback: &RefOr<Callback>, violations: &mut V
 fn check_operation(location: &str, operation: &Operation, violations: &mut Vec<Violation>) {
     for (name, callback) in &operation.callbacks {
         check_callback(
-            &format!("{location}/callbacks/{}", pointer(name)),
+            &format!("{location}/callbacks/{}", pointer_token(name)),
             callback,
             violations,
         );
@@ -137,7 +133,7 @@ fn check_routes(document: &Document, violations: &mut Vec<Violation>) {
 
     for (index, route) in routes.iter().enumerate() {
         violations.push(Violation::warning(
-            format!("#/{}/{index}", pointer(OPAQUE_ROUTES_ANNOTATION)),
+            format!("#/{}/{index}", pointer_token(OPAQUE_ROUTES_ANNOTATION)),
             SpecError::OpaqueRoute {
                 pattern: route.pattern.clone(),
             },

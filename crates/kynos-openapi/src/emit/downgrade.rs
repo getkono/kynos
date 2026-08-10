@@ -1,6 +1,8 @@
 //! What stands in the way of emitting a document as an earlier version.
 
 use crate::model::document::Document;
+#[cfg(feature = "openapi32")]
+use crate::validate::violation::pointer_token;
 
 // Everything below the document itself is reached only while collecting 3.2
 // blockers, which a build without `openapi32` cannot have any of.
@@ -51,7 +53,7 @@ pub fn three_two_only_constructs(document: &Document) -> Vec<String> {
         }
 
         for (raw, item) in &document.paths.0 {
-            let location = format!("#/paths/{raw}");
+            let location = format!("#/paths/{}", pointer_token(raw));
             if item.query.is_some() {
                 blockers.push(format!("{location}/query"));
             }
