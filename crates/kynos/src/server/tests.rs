@@ -219,7 +219,7 @@ async fn connection_limit_applies_before_accepting_another_socket() {
             kynos_openapi::SpecVersion::V3_1,
             kynos_openapi::Info::new("Test", "1"),
         );
-        crate::router::service::Service::for_test(document, move |_| {
+        crate::router::service::Service::new(document, move |_| {
             let calls = Arc::clone(&calls);
             let release = Arc::clone(&release);
             async move {
@@ -289,7 +289,7 @@ async fn zero_shutdown_timeout_reports_an_incomplete_drain() {
             kynos_openapi::SpecVersion::V3_1,
             kynos_openapi::Info::new("Test", "1"),
         );
-        crate::router::service::Service::for_test(document, move |_| {
+        crate::router::service::Service::new(document, move |_| {
             let started = Arc::clone(&started);
             async move {
                 started.notify_one();
@@ -795,7 +795,7 @@ fn test_service() -> crate::router::service::Service<()> {
         kynos_openapi::SpecVersion::V3_1,
         kynos_openapi::Info::new("Test", "1"),
     );
-    crate::router::service::Service::for_test(document, |_| async {
+    crate::router::service::Service::new(document, |_| async {
         crate::http::Response::new(crate::http::body::Body::from_bytes(
             bytes::Bytes::from_static(b"ok"),
         ))
@@ -816,7 +816,7 @@ fn blocking_service() -> (
             kynos_openapi::SpecVersion::V3_1,
             kynos_openapi::Info::new("Test", "1"),
         );
-        crate::router::service::Service::for_test(document, move |_| {
+        crate::router::service::Service::new(document, move |_| {
             let started = std::sync::Arc::clone(&started);
             let release = std::sync::Arc::clone(&release);
             async move {

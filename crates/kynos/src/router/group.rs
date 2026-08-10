@@ -17,7 +17,8 @@ use crate::{
 /// underneath, correctly, without anyone maintaining that by hand.
 #[derive(Debug)]
 pub struct Group<C, P = Propagate> {
-    _private: std::marker::PhantomData<(C, P)>,
+    // See `Router`: the parameters name a shape, not this value's auto traits.
+    _private: std::marker::PhantomData<fn() -> (C, P)>,
 }
 
 impl<C> Group<C, Propagate> {

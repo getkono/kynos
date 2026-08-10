@@ -44,15 +44,22 @@ impl<C> Service<C> {
         self.handler.call(request).await
     }
 
-    #[cfg(test)]
-    pub(crate) fn for_test<F, Fut>(document: Document, handler: F) -> Self
+    /// Wraps an erased dispatcher and the description it implements.
+    ///
+    /// Called by [`Router::build`](crate::Router::build). The closure owns the
+    /// context and the matcher, which is why a `Service<C>` is `Send + Sync`
+    /// whatever `C` is — the context is captured here once rather than being
+    /// threaded through every request.
+    // `Router::build`, its only caller, is still `todo!()`.
+    #[allow(dead_code)]
+    pub(crate) fn new<F, Fut>(document: Document, handler: F) -> Self
     where
         F: Fn(crate::http::Request) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = crate::http::Response> + Send + 'static,
     {
-        struct TestService<F>(F);
+        struct Dispatch<F>(F);
 
-        impl<F, Fut> ErasedService for TestService<F>
+        impl<F, Fut> ErasedService for Dispatch<F>
         where
             F: Fn(crate::http::Request) -> Fut + Send + Sync + 'static,
             Fut: Future<Output = crate::http::Response> + Send + 'static,
@@ -67,7 +74,7 @@ impl<C> Service<C> {
 
         Self {
             document,
-            handler: Arc::new(TestService(handler)),
+            handler: Arc::new(Dispatch(handler)),
             _context: std::marker::PhantomData,
         }
     }

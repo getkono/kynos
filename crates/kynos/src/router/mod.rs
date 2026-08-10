@@ -36,7 +36,10 @@ use crate::{
 /// context does not provide is a compile error, not a runtime panic.
 #[derive(Debug)]
 pub struct Router<C, P = Propagate> {
-    _private: std::marker::PhantomData<(C, P)>,
+    // `fn() -> _` so that the parameters name a shape without deciding this
+    // builder's auto traits: a router is `Send` because what it holds is, not
+    // because `C` happens to be.
+    _private: std::marker::PhantomData<fn() -> (C, P)>,
 }
 
 impl<C> Default for Router<C, Propagate> {
@@ -238,7 +241,10 @@ impl<C, P: PanicPolicy> Router<C, P> {
     /// # Errors
     ///
     /// Returns [`Error::Invalid`](crate::Error::Invalid) with every violation found.
-    pub fn build(self, context: C) -> Result<Service<C>> {
+    pub fn build(self, context: C) -> Result<Service<C>>
+    where
+        C: Send + Sync + 'static,
+    {
         let _ = context;
         todo!()
     }
