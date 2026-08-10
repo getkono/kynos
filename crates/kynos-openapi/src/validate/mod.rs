@@ -25,20 +25,6 @@ use crate::{
     },
 };
 
-/// The annotation marking a schema as deliberately unconstrained.
-///
-/// Kynos attaches this wherever a handler used the explicit permissive type, so
-/// that "this payload is unchecked" is visible in the published description
-/// rather than only in the Rust source.
-pub const UNCHECKED_SCHEMA_ANNOTATION: &str = "x-kynos-unchecked";
-
-/// The annotation marking a description as not fully describing the service.
-///
-/// Kynos attaches this when a router reached something it cannot describe — an
-/// opaque layer, a wildcard route, a protocol upgrade — so that consumers know
-/// the description is incomplete.
-pub const NOT_AUTHORITATIVE_ANNOTATION: &str = "x-kynos-document-not-authoritative";
-
 /// Checks a document against the rules of a specification version.
 #[derive(Clone, Copy, Debug)]
 pub struct Validator {

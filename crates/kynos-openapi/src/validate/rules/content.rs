@@ -2,11 +2,9 @@
 //! deliberately unconstrained.
 
 use crate::{
+    annotation::UNCHECKED_SCHEMA_ANNOTATION,
     model::{body::media_type::MediaType, schema::Schema},
-    validate::{
-        UNCHECKED_SCHEMA_ANNOTATION,
-        violation::{SpecError, Violation},
-    },
+    validate::violation::{SpecError, Violation},
 };
 
 pub(in crate::validate) fn check_media_type(
