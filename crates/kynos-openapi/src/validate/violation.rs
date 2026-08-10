@@ -274,10 +274,12 @@ pub enum SpecError {
     AuthorityNotStamped,
 
     /// A Kynos annotation was present but not in the shape Kynos emits.
-    #[error("`{name}` is present but is not in the form Kynos emits, so it cannot be acted on")]
+    #[error("`{name}` is present but is not in the form Kynos emits: {detail}")]
     MalformedAnnotation {
         /// The offending field name.
         name: String,
+        /// What went wrong reading it.
+        detail: String,
     },
 
     /// The document declared nothing at all.

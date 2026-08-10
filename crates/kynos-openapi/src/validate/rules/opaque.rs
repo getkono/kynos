@@ -7,33 +7,61 @@
 
 use crate::{
     annotation::{
-        NOT_AUTHORITATIVE_ANNOTATION, OPAQUE_OPERATION_ANNOTATION, OPAQUE_ROUTES_ANNOTATION,
-        Opaque, OpaqueRoute, is_authoritative,
+        MalformedAnnotation, NOT_AUTHORITATIVE_ANNOTATION, OPAQUE_ROUTES_ANNOTATION, Opaque,
+        OpaqueRoute,
     },
-    model::{document::Document, paths::item::PathItem, paths::operation::Operation},
+    model::{
+        callback::Callback,
+        document::Document,
+        paths::{item::PathItem, operation::Operation},
+        reference::RefOr,
+    },
     validate::violation::{SpecError, Violation},
 };
 
 pub(in crate::validate) fn check_opaque(document: &Document, violations: &mut Vec<Violation>) {
     for (raw, item) in &document.paths.0 {
-        check_item(&format!("#/paths/{raw}"), item, violations);
+        check_item(&format!("#/paths/{}", pointer(raw)), item, violations);
     }
     for (name, item) in &document.webhooks {
-        check_item(&format!("#/webhooks/{name}"), item, violations);
+        check_item(&format!("#/webhooks/{}", pointer(name)), item, violations);
     }
     for (name, item) in &document.components.path_items {
-        check_item(&format!("#/components/pathItems/{name}"), item, violations);
+        check_item(
+            &format!("#/components/pathItems/{}", pointer(name)),
+            item,
+            violations,
+        );
+    }
+    for (name, callback) in &document.components.callbacks {
+        check_callback(
+            &format!("#/components/callbacks/{}", pointer(name)),
+            callback,
+            violations,
+        );
     }
 
     check_routes(document, violations);
 
-    if !is_authoritative(document) {
-        violations.push(Violation::warning("#", SpecError::NotAuthoritative));
-
-        if document.extensions.get(NOT_AUTHORITATIVE_ANNOTATION) != Some(&true.into()) {
+    if !document.is_authoritative() {
+        if document.extensions.get(NOT_AUTHORITATIVE_ANNOTATION) == Some(&true.into()) {
+            // Honestly incomplete: worth saying, not worth failing over.
+            violations.push(Violation::warning("#", SpecError::NotAuthoritative));
+        } else {
+            // The root stamp is what a consumer reads before deciding whether
+            // to trust anything else, so its absence is the graver claim and
+            // reporting both would only bury it.
             violations.push(Violation::error("#", SpecError::AuthorityNotStamped));
         }
     }
+}
+
+/// Escapes one map key for use as a JSON Pointer token, per RFC 6901.
+///
+/// Every path key contains a `/`, so without this a location reads as several
+/// tokens and resolves against nothing.
+fn pointer(key: &str) -> String {
+    key.replace('~', "~0").replace('/', "~1")
 }
 
 fn check_item(location: &str, item: &PathItem, violations: &mut Vec<Violation>) {
@@ -48,53 +76,81 @@ fn check_item(location: &str, item: &PathItem, violations: &mut Vec<Violation>) 
     #[cfg(feature = "openapi32")]
     for (method, operation) in &item.additional_operations {
         check_operation(
-            &format!("{location}/additionalOperations/{method}"),
+            &format!("{location}/additionalOperations/{}", pointer(method)),
             operation,
             violations,
         );
     }
 }
 
+/// A callback holds path items of its own, and an operation inside one is as
+/// much part of the service as any other.
+fn check_callback(location: &str, callback: &RefOr<Callback>, violations: &mut Vec<Violation>) {
+    let Some(callback) = callback.as_item() else {
+        return;
+    };
+    for (expression, item) in &callback.0 {
+        if let Some(item) = item.as_item() {
+            check_item(
+                &format!("{location}/{}", pointer(expression)),
+                item,
+                violations,
+            );
+        }
+    }
+}
+
 fn check_operation(location: &str, operation: &Operation, violations: &mut Vec<Violation>) {
+    for (name, callback) in &operation.callbacks {
+        check_callback(
+            &format!("{location}/callbacks/{}", pointer(name)),
+            callback,
+            violations,
+        );
+    }
+
     if !Opaque::is_annotated(operation) {
         return;
     }
 
-    let Some(marker) = Opaque::of(operation) else {
-        violations.push(Violation::error(
+    match Opaque::of(operation) {
+        Ok(Some(marker)) => violations.push(Violation::warning(
             location,
-            SpecError::MalformedAnnotation {
-                name: OPAQUE_OPERATION_ANNOTATION.to_owned(),
+            SpecError::OpaqueOperation {
+                reasons: marker.reasons,
             },
-        ));
-        return;
-    };
-
-    violations.push(Violation::warning(
-        location,
-        SpecError::OpaqueOperation {
-            reasons: marker.reasons,
-        },
-    ));
+        )),
+        // `is_annotated` was true, so the annotation is present.
+        Ok(None) => {}
+        Err(error) => violations.push(malformed(location, &error)),
+    }
 }
 
 fn check_routes(document: &Document, violations: &mut Vec<Violation>) {
-    let Some(routes) = OpaqueRoute::all(document) else {
-        violations.push(Violation::error(
-            "#",
-            SpecError::MalformedAnnotation {
-                name: OPAQUE_ROUTES_ANNOTATION.to_owned(),
-            },
-        ));
-        return;
+    let routes = match OpaqueRoute::all(document) {
+        Ok(routes) => routes,
+        Err(error) => {
+            violations.push(malformed("#", &error));
+            return;
+        }
     };
 
     for (index, route) in routes.iter().enumerate() {
         violations.push(Violation::warning(
-            format!("#/{OPAQUE_ROUTES_ANNOTATION}/{index}"),
+            format!("#/{}/{index}", pointer(OPAQUE_ROUTES_ANNOTATION)),
             SpecError::OpaqueRoute {
                 pattern: route.pattern.clone(),
             },
         ));
     }
+}
+
+fn malformed(location: impl Into<String>, error: &MalformedAnnotation) -> Violation {
+    Violation::error(
+        location,
+        SpecError::MalformedAnnotation {
+            name: error.name.clone(),
+            detail: error.detail.clone(),
+        },
+    )
 }

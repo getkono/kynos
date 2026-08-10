@@ -52,7 +52,7 @@ pub mod validate;
 // path inside `model` or `validate`; these shortcuts exist so that the common
 // names stay one import away despite the module tree being deep.
 pub use crate::{
-    annotation::{Opaque, OpaqueReason, OpaqueRoute},
+    annotation::{MalformedAnnotation, Opaque, OpaqueReason, OpaqueRoute},
     model::{
         body::{RequestBody, encoding::Encoding, media_type::MediaType},
         callback::Callback,

@@ -19,7 +19,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{document::Document, paths::operation::Operation};
+use crate::model::{
+    document::Document,
+    paths::{item::PathItem, operation::Operation},
+    reference::RefOr,
+};
 
 /// The annotation marking a schema as deliberately unconstrained.
 ///
@@ -48,7 +52,12 @@ pub const OPAQUE_ROUTES_ANNOTATION: &str = "x-kynos-opaque-routes";
 pub const NOT_AUTHORITATIVE_ANNOTATION: &str = "x-kynos-document-not-authoritative";
 
 /// Why part of a service is not verifiably described.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+///
+/// Deliberately not `Copy`: the wire form has to survive a description written
+/// by a newer Kynos, which means carrying a reason this build does not know as
+/// [`Unrecognized`](OpaqueReason::Unrecognized) rather than failing to read the
+/// record at all.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum OpaqueReason {
@@ -73,17 +82,27 @@ pub enum OpaqueReason {
     /// upgraded away from HTTP has no vocabulary here, and inventing one would
     /// produce an entry no consumer could act on.
     ProtocolUpgrade,
+
+    /// A reason recorded by a version of Kynos that knows more than this one.
+    ///
+    /// Preserved verbatim so the record round-trips. An older reader must not
+    /// turn a description it merely does not fully understand into one it
+    /// reports as malformed -- and must not drop the reason when it writes the
+    /// document back out.
+    #[serde(untagged)]
+    Unrecognized(String),
 }
 
 impl OpaqueReason {
     /// The reason as it is spelled in the description.
     #[must_use]
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             Self::UntypedLayer => "untyped-layer",
             Self::UntypedRoute => "untyped-route",
             Self::UntypedHandler => "untyped-handler",
             Self::ProtocolUpgrade => "protocol-upgrade",
+            Self::Unrecognized(reason) => reason,
         }
     }
 }
@@ -99,6 +118,7 @@ impl std::fmt::Display for OpaqueReason {
 /// Serialized under [`OPAQUE_OPERATION_ANNOTATION`]. Marks the operation
 /// unverified; never removes it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct Opaque {
     /// Every reason recorded, in the order they were recorded, deduplicated.
     pub reasons: Vec<OpaqueReason>,
@@ -135,7 +155,7 @@ impl Opaque {
     /// Unions `other`'s reasons into this marker, keeping the first note.
     pub fn absorb(&mut self, other: &Self) {
         for reason in &other.reasons {
-            self.add_reason(*reason);
+            self.add_reason(reason.clone());
         }
         if self.note.is_none() {
             self.note.clone_from(&other.note);
@@ -162,28 +182,45 @@ impl Opaque {
 
     /// Reads the marker from an operation.
     ///
-    /// `None` when the annotation is absent *or* not in the shape Kynos emits;
-    /// [`Opaque::is_annotated`] separates the two, and
-    /// [`crate::validate`] reports the malformed case.
-    #[must_use]
-    pub fn of(operation: &Operation) -> Option<Self> {
-        let value = operation.extensions.get(OPAQUE_OPERATION_ANNOTATION)?;
-        serde_json::from_value(value.clone()).ok()
+    /// `Ok(None)` means the operation carries no marker. A reason this build
+    /// does not know is *not* an error — it round-trips as
+    /// [`OpaqueReason::Unrecognized`] — so an error here means the value was
+    /// hand-written into a shape Kynos never emits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MalformedAnnotation`] when the annotation is present but
+    /// unreadable.
+    pub fn of(operation: &Operation) -> Result<Option<Self>, MalformedAnnotation> {
+        let Some(value) = operation.extensions.get(OPAQUE_OPERATION_ANNOTATION) else {
+            return Ok(None);
+        };
+        serde_json::from_value(value.clone())
+            .map(Some)
+            .map_err(|error| MalformedAnnotation::new(OPAQUE_OPERATION_ANNOTATION, &error))
     }
 
     /// Writes the marker onto an operation, merging with any already present.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MalformedAnnotation`] when the operation already carries an
+    /// unreadable marker, rather than replacing it. Overwriting would delete a
+    /// waiver someone recorded, which is the one thing this whole mechanism
+    /// exists to prevent.
     ///
     /// # Panics
     ///
     /// Panics only if this marker cannot be serialized, which the type makes
     /// impossible.
-    pub fn apply_to(&self, operation: &mut Operation) {
-        let mut merged = Self::of(operation).unwrap_or_default();
+    pub fn apply_to(&self, operation: &mut Operation) -> Result<(), MalformedAnnotation> {
+        let mut merged = Self::of(operation)?.unwrap_or_default();
         merged.absorb(self);
         let value = serde_json::to_value(&merged).expect("an opaque marker is always serializable");
         operation
             .extensions
             .insert(OPAQUE_OPERATION_ANNOTATION, value);
+        Ok(())
     }
 }
 
@@ -196,13 +233,15 @@ impl Opaque {
 /// unescaped `/`. A consumer gets something visible, greppable and diffable
 /// instead of a plausible lie.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct OpaqueRoute {
     /// The router's matching pattern, verbatim.
     pub pattern: String,
 
     /// The literal prefix the pattern is anchored at, if any.
     ///
-    /// Recorded so that overlap with a described path can be checked.
+    /// Recorded so that a reader can tell which part of the URL space the
+    /// route claims without parsing the router's matching syntax.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix: Option<String>,
 
@@ -267,41 +306,84 @@ impl OpaqueRoute {
 
     /// Reads every recorded route from a document.
     ///
-    /// `None` when the annotation is present but not in the shape Kynos emits.
-    /// An absent annotation reads as an empty list, since no record is the same
-    /// claim as an empty record.
-    #[must_use]
-    pub fn all(document: &Document) -> Option<Vec<Self>> {
+    /// An absent annotation reads as an empty list, since recording nothing is
+    /// the same claim as recording an empty list.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MalformedAnnotation`] when the annotation is present but
+    /// unreadable. A reason this build does not know is not that case — it
+    /// round-trips as [`OpaqueReason::Unrecognized`].
+    pub fn all(document: &Document) -> Result<Vec<Self>, MalformedAnnotation> {
         let Some(value) = document.extensions.get(OPAQUE_ROUTES_ANNOTATION) else {
-            return Some(Vec::new());
+            return Ok(Vec::new());
         };
-        serde_json::from_value(value.clone()).ok()
+        serde_json::from_value(value.clone())
+            .map_err(|error| MalformedAnnotation::new(OPAQUE_ROUTES_ANNOTATION, &error))
     }
 
     /// Appends this record to a document.
     ///
-    /// A malformed existing annotation is replaced rather than extended: it was
-    /// not written by Kynos, and silently preserving something unreadable would
-    /// leave the list neither one thing nor the other.
+    /// # Errors
+    ///
+    /// Returns [`MalformedAnnotation`] when the document already carries an
+    /// unreadable list, rather than replacing it. Appending by overwriting
+    /// would delete every route someone else recorded — silent loss of exactly
+    /// the record this mechanism exists to keep.
     ///
     /// # Panics
     ///
     /// Panics only if this record cannot be serialized, which the type makes
     /// impossible.
-    pub fn append_to(&self, document: &mut Document) {
-        let mut routes = Self::all(document).unwrap_or_default();
+    pub fn append_to(&self, document: &mut Document) -> Result<(), MalformedAnnotation> {
+        let mut routes = Self::all(document)?;
         routes.push(self.clone());
         let value = serde_json::to_value(&routes).expect("an opaque route is always serializable");
         document.extensions.insert(OPAQUE_ROUTES_ANNOTATION, value);
+        Ok(())
     }
 }
 
-/// Every operation on one path item, including any 3.2 additional operation.
-fn item_operations(item: &crate::model::paths::item::PathItem) -> impl Iterator<Item = &Operation> {
+/// A Kynos annotation was present but not in the shape Kynos emits.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("`{name}` is present but is not in the form Kynos emits: {detail}")]
+pub struct MalformedAnnotation {
+    /// The offending field name.
+    pub name: String,
+    /// What went wrong reading it.
+    pub detail: String,
+}
+
+impl MalformedAnnotation {
+    fn new(name: &str, error: &serde_json::Error) -> Self {
+        Self {
+            name: name.to_owned(),
+            detail: error.to_string(),
+        }
+    }
+}
+
+/// Every operation reachable from one path item.
+///
+/// Callbacks are path items in their own right, and an operation inside one is
+/// as much part of the service as any other — so a waiver taken there has to be
+/// as visible. Boxed because the recursion is not otherwise expressible.
+fn item_operations(item: &PathItem) -> Box<dyn Iterator<Item = &Operation> + '_> {
     let declared = item.operations().map(|(_, operation)| operation);
     #[cfg(feature = "openapi32")]
     let declared = declared.chain(item.additional_operations.values().map(Box::as_ref));
-    declared
+
+    Box::new(declared.flat_map(|operation| {
+        std::iter::once(operation).chain(
+            operation
+                .callbacks
+                .values()
+                .filter_map(RefOr::as_item)
+                .flat_map(|callback| callback.0.values())
+                .filter_map(RefOr::as_item)
+                .flat_map(item_operations),
+        )
+    }))
 }
 
 /// Every operation in a document, wherever it is declared.
@@ -313,38 +395,44 @@ fn operations(document: &Document) -> impl Iterator<Item = &Operation> {
         .chain(document.webhooks.values())
         .chain(document.components.path_items.values())
         .flat_map(item_operations)
+        .chain(
+            document
+                .components
+                .callbacks
+                .values()
+                .filter_map(RefOr::as_item)
+                .flat_map(|callback| callback.0.values())
+                .filter_map(RefOr::as_item)
+                .flat_map(item_operations),
+        )
 }
 
-/// Whether every operation and route in `document` is verifiably described.
-///
-/// This is the property [`NOT_AUTHORITATIVE_ANNOTATION`] negates. Computing it
-/// rather than reading the stamp is deliberate: the stamp is a summary a
-/// consumer reads, not the fact itself.
-#[must_use]
-pub fn is_authoritative(document: &Document) -> bool {
-    let no_opaque_routes = match OpaqueRoute::all(document) {
-        Some(routes) => routes.is_empty(),
-        // Unreadable is not clean.
-        None => false,
-    };
-    no_opaque_routes && !operations(document).any(Opaque::is_annotated)
-}
+impl Document {
+    /// Whether every operation and route in this document is verifiably
+    /// described.
+    ///
+    /// This is the property [`NOT_AUTHORITATIVE_ANNOTATION`] negates. Computing
+    /// it rather than reading the stamp is deliberate: the stamp is a summary a
+    /// consumer reads, not the fact itself. An annotation this build cannot
+    /// read counts as unclean, because the alternative is calling a description
+    /// authoritative on the strength of not understanding it.
+    #[must_use]
+    pub fn is_authoritative(&self) -> bool {
+        let no_opaque_routes = OpaqueRoute::all(self).is_ok_and(|routes| routes.is_empty());
+        no_opaque_routes && !operations(self).any(Opaque::is_annotated)
+    }
 
-/// Brings [`NOT_AUTHORITATIVE_ANNOTATION`] into line with the document.
-///
-/// Adds the stamp when something is opaque and removes it when nothing is, so
-/// that a document edited after the fact cannot keep a stamp it no longer
-/// earns — or lose one it does.
-pub fn restamp_authority(document: &mut Document) {
-    if is_authoritative(document) {
-        document
-            .extensions
-            .0
-            .shift_remove(NOT_AUTHORITATIVE_ANNOTATION);
-    } else {
-        document
-            .extensions
-            .insert(NOT_AUTHORITATIVE_ANNOTATION, true);
+    /// Brings [`NOT_AUTHORITATIVE_ANNOTATION`] into line with this document.
+    ///
+    /// Adds the stamp when something is opaque and removes it when nothing is,
+    /// so that a document edited after the fact cannot keep a stamp it no
+    /// longer earns — or lose one it does.
+    pub fn restamp_authority(&mut self) {
+        if self.is_authoritative() {
+            self.extensions.remove(NOT_AUTHORITATIVE_ANNOTATION);
+        } else {
+            self.extensions.insert(NOT_AUTHORITATIVE_ANNOTATION, true);
+        }
     }
 }
 

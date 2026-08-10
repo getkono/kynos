@@ -371,10 +371,11 @@ fn violations(document: &Document) -> Vec<Violation> {
 fn opaque_document() -> Document {
     let mut operation = Operation::new("listUsers").with_responses(ok_responses());
     crate::annotation::Opaque::new(crate::annotation::OpaqueReason::UntypedLayer)
-        .apply_to(&mut operation);
+        .apply_to(&mut operation)
+        .expect("nothing to conflict with");
     let item = PathItem::new().with_operation(Method::Get, operation);
     let mut document = document_with(&[("/users", item)]);
-    crate::annotation::restamp_authority(&mut document);
+    document.restamp_authority();
     document
 }
 
@@ -385,7 +386,7 @@ fn an_opaque_operation_is_a_warning_not_an_error() {
     assert!(errors(&document).is_empty());
     assert!(violations(&document).iter().any(|v| {
         v.severity == super::Severity::Warning
-            && v.location == "#/paths//users/get"
+            && v.location == "#/paths/~1users/get"
             && matches!(v.error, SpecError::OpaqueOperation { .. })
     }));
 }
@@ -418,8 +419,9 @@ fn an_opaque_route_is_reported_without_inventing_a_paths_entry() {
         "/assets/{*path}",
         crate::annotation::OpaqueReason::UntypedRoute,
     )
-    .append_to(&mut document);
-    crate::annotation::restamp_authority(&mut document);
+    .append_to(&mut document)
+    .expect("nothing to conflict with");
+    document.restamp_authority();
 
     assert!(errors(&document).is_empty());
     assert!(violations(&document).iter().any(|v| {
@@ -445,7 +447,7 @@ fn an_unreadable_annotation_is_an_error() {
 
     let reported = errors(&document);
     assert!(reported.iter().any(
-        |e| matches!(e, SpecError::MalformedAnnotation { name } if name == "x-kynos-opaque-routes")
+        |e| matches!(e, SpecError::MalformedAnnotation { name, .. } if name == "x-kynos-opaque-routes")
     ));
     // Unreadable is not clean, so the authority stamp is demanded too.
     assert!(
