@@ -1,0 +1,5 @@
+error[E0599]: no method named `trailing_slashes` found for struct `Group<C, P>` in the current scope
+ --> tests/ui/antipattern/group_trailing_slashes.rs:8:41
+  |
+8 |         let _ = Group::<()>::new("/v1").trailing_slashes(TrailingSlashPolicy::Redirect);
+  |                                         ^^^^^^^^^^^^^^^^ method not found in `Group<()>`

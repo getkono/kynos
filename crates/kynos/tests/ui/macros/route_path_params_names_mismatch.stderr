@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: PathParams names must exactly match route variables in declaration order
+ --> tests/ui/macros/route_path_params_names_mismatch.rs:8:1
+  |
+8 | #[kynos::get("/users/{id}")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `_` failed here

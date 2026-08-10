@@ -1,0 +1,8 @@
+error: `Tag` marks a type that names a group of operations, so it carries no fields
+ --> tests/ui/macros/tag_with_fields.rs:2:14
+  |
+2 |   struct Users {
+  |  ______________^
+3 | |     name: String,
+4 | | }
+  | |_^

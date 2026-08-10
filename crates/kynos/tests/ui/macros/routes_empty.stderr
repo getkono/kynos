@@ -1,0 +1,7 @@
+error: `routes!` needs at least one operation
+ --> tests/ui/macros/routes_empty.rs:2:13
+  |
+2 |     let _ = kynos::routes![];
+  |             ^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the macro `kynos::routes` (in Nightly builds, run with -Z macro-backtrace for more info)

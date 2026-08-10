@@ -1,0 +1,5 @@
+error: path template `/users/a b` contains ` ` outside a `{}` expression, which the path grammar does not allow
+ --> tests/ui/macros/path_illegal_literal_character.rs:2:18
+  |
+2 |     kynos::path!("/users/a b");
+  |                  ^^^^^^^^^^^^

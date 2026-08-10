@@ -1,0 +1,24 @@
+error[E0277]: `PathBuf` cannot describe itself as a schema
+ --> tests/ui/schema/platform_string.rs:6:19
+  |
+6 |     describable::<std::path::PathBuf>();
+  |                   ^^^^^^^^^^^^^^^^^^ not describable
+  |
+  = help: the trait `SchemaTrait` is not implemented for `PathBuf`
+  = note: derive it with `#[derive(kynos::Schema)]`
+  = note: some types are refused on purpose — `serde_json::Value`, `usize`, `SystemTime` and friends. Wrap one in `kynos::schema::unchecked::Unchecked` to say the payload really is unconstrained
+  = help: the following other types implement trait `SchemaTrait`:
+            ()
+            (A, B)
+            (A, B, C)
+            (A, B, C, D)
+            (A, B, C, D, E)
+            (A, B, C, D, E, F)
+            (A, B, C, D, E, F, G)
+            (A, B, C, D, E, F, G, H)
+          and $N others
+note: required by a bound in `describable`
+ --> tests/ui/schema/platform_string.rs:3:19
+  |
+3 | fn describable<T: kynos::schema::Schema>() {}
+  |                   ^^^^^^^^^^^^^^^^^^^^^ required by this bound in `describable`

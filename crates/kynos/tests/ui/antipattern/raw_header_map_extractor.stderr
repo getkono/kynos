@@ -1,0 +1,23 @@
+error[E0277]: `HeaderMap` cannot be extracted from a request head
+ --> tests/ui/antipattern/raw_header_map_extractor.rs:6:30
+  |
+6 |     from_request_parts::<(), kynos::http::HeaderMap>();
+  |                              ^^^^^^^^^^^^^^^^^^^^^^ not extractable
+  |
+  = help: the trait `FromRequestParts<()>` is not implemented for `HeaderMap`
+  = note: the context type `()` may be the problem rather than `HeaderMap`: `Inject<T>` needs `(): Provides<T>`, and `Auth<S>` needs `(): Authenticates<S>`
+  = help: the following other types implement trait `FromRequestParts<C>`:
+            Auth<S>
+            ConnectInfo
+            Cookies<T>
+            Headers<T>
+            Inject<T>
+            MatchedPath
+            QueryString<T, M>
+            Scoped<S, R>
+          and $N others
+note: required by a bound in `from_request_parts`
+ --> tests/ui/antipattern/raw_header_map_extractor.rs:3:29
+  |
+3 | fn from_request_parts<C, T: kynos::extract::FromRequestParts<C>>() {}
+  |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `from_request_parts`

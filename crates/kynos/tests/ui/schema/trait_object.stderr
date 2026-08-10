@@ -1,0 +1,48 @@
+error[E0277]: `dyn Debug` cannot describe itself as a schema
+ --> tests/ui/schema/trait_object.rs:6:19
+  |
+6 |     describable::<Box<dyn std::fmt::Debug>>();
+  |                   ^^^^^^^^^^^^^^^^^^^^^^^^ not describable
+  |
+  = help: the trait `SchemaTrait` is not implemented for `dyn Debug`
+  = note: derive it with `#[derive(kynos::Schema)]`
+  = note: some types are refused on purpose — `serde_json::Value`, `usize`, `SystemTime` and friends. Wrap one in `kynos::schema::unchecked::Unchecked` to say the payload really is unconstrained
+  = help: the following other types implement trait `SchemaTrait`:
+            ()
+            (A, B)
+            (A, B, C)
+            (A, B, C, D)
+            (A, B, C, D, E)
+            (A, B, C, D, E, F)
+            (A, B, C, D, E, F, G)
+            (A, B, C, D, E, F, G, H)
+          and $N others
+  = note: required for `Box<dyn Debug>` to implement `SchemaTrait`
+note: required by a bound in `describable`
+ --> tests/ui/schema/trait_object.rs:3:19
+  |
+3 | fn describable<T: kynos::schema::Schema>() {}
+  |                   ^^^^^^^^^^^^^^^^^^^^^ required by this bound in `describable`
+
+error[E0277]: the size for values of type `dyn Debug` cannot be known at compilation time
+ --> tests/ui/schema/trait_object.rs:6:19
+  |
+6 |     describable::<Box<dyn std::fmt::Debug>>();
+  |                   ^^^^^^^^^^^^^^^^^^^^^^^^ doesn't have a size known at compile-time
+  |
+  = help: the trait `Sized` is not implemented for `dyn Debug`
+help: the trait `SchemaTrait` is implemented for `Box<T>`
+ --> src/schema/impls/wrapper.rs
+  |
+  |             impl<T: Schema> Schema for $ty<T> {
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+  | transparent!(Box, Arc);
+  | ---------------------- in this macro invocation
+  = note: required for `Box<dyn Debug>` to implement `SchemaTrait`
+note: required by a bound in `describable`
+ --> tests/ui/schema/trait_object.rs:3:19
+  |
+3 | fn describable<T: kynos::schema::Schema>() {}
+  |                   ^^^^^^^^^^^^^^^^^^^^^ required by this bound in `describable`
+  = note: this error originates in the macro `transparent` (in Nightly builds, run with -Z macro-backtrace for more info)

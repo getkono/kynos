@@ -1,0 +1,5 @@
+error: `primary` and `replica` are both `Pool`, so a handler asking for one could not say which. Give one a newtype, or opt it out with `#[provide(skip)]`
+ --> tests/ui/macros/provider_duplicate_types.rs:7:5
+  |
+7 |     replica: Pool,
+  |     ^^^^^^^

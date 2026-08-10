@@ -1,0 +1,5 @@
+error: path template `/tenants/{id}/users/{id}` repeats the variable `id`
+ --> tests/ui/macros/path_duplicate_variable.rs:2:18
+  |
+2 |     kynos::path!("/tenants/{id}/users/{id}");
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^

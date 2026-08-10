@@ -1,0 +1,24 @@
+error[E0277]: `StatusCode` cannot be turned into a response
+ --> tests/ui/antipattern/bare_status_code.rs:6:16
+  |
+6 |     responds::<kynos::http::StatusCode>();
+  |                ^^^^^^^^^^^^^^^^^^^^^^^ not a response
+  |
+  = help: the trait `IntoResponse` is not implemented for `StatusCode`
+  = note: return a body type, or wrap one in `Created`, `Accepted`, `NoContent` or `Redirect`
+  = note: a bare `StatusCode` is deliberately not one: a status the description does not list is a status it is wrong about. Use `#[derive(Reply)]` when an operation has several
+  = help: the following other types implement trait `IntoResponse`:
+            ()
+            Accepted<T>
+            BinaryStream<S, M>
+            Created<T>
+            Infallible
+            JsonLines<S>
+            JsonSeq<S>
+            MultipartForm<T>
+          and $N others
+note: required by a bound in `responds`
+ --> tests/ui/antipattern/bare_status_code.rs:3:16
+  |
+3 | fn responds<T: kynos::response::IntoResponse>() {}
+  |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `responds`

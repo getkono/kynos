@@ -1,0 +1,5 @@
+error: `Content-Type` must not be declared as a header parameter: the content map decides this; it follows from the body type rather than being declared beside it
+ --> tests/ui/macros/headers_content_type.rs:3:5
+  |
+3 |     #[header(rename = "Content-Type")]
+  |     ^

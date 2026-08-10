@@ -6,6 +6,11 @@ fail-fast = false
 slow-timeout = { period = "30s", terminate-after = 4 }
 leak-timeout = { period = "100ms", result = "fail" }
 
-# Inherits the default profile; only the log-shape differs.
+# Inherits the default profile; only the log-shape and the filter differ.
 [profile.ci]
 failure-output = "immediate-final"
+# `mise run coverage:ci` runs this profile under `llvm-cov`, which exports
+# instrumentation flags to every child `cargo`. trybuild spawns one, so the UI
+# suite would be built instrumented -- slow, and enough to perturb the exact
+# stderr the snapshots record. It runs under the default profile instead.
+default-filter = 'not binary(ui)'

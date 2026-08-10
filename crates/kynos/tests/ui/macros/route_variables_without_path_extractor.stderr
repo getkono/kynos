@@ -1,0 +1,5 @@
+error: the route has path variables, but the handler has no Path<T> extractor
+ --> tests/ui/macros/route_variables_without_path_extractor.rs:2:1
+  |
+2 | async fn get_user() {}
+  | ^^^^^

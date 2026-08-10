@@ -1,0 +1,5 @@
+error: path template `/users/{id` has unbalanced braces
+ --> tests/ui/macros/path_unbalanced_braces.rs:2:18
+  |
+2 |     kynos::path!("/users/{id");
+  |                  ^^^^^^^^^^^^

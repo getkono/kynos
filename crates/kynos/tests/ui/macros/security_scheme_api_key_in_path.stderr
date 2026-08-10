@@ -1,0 +1,5 @@
+error: an API key travels in a header, a query parameter or a cookie, not `path`
+ --> tests/ui/macros/security_scheme_api_key_in_path.rs:2:25
+  |
+2 | #[security(api_key(in = "path", name = "key"))]
+  |                         ^^^^^^

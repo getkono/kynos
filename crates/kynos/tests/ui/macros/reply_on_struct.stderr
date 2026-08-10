@@ -1,0 +1,5 @@
+error: `Reply` declares a closed set of responses, one variant per status, so it needs an enum. A single response is already expressible: return the body type, or wrap it in `Created`, `Accepted` or `NoContent`
+ --> tests/ui/macros/reply_on_struct.rs:2:1
+  |
+2 | struct Accepted {
+  | ^^^^^^

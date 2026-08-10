@@ -1,0 +1,5 @@
+error: `Authorization` must not be declared as a parameter: the specification says such a definition is ignored. For credentials use `http(scheme = "...")`, `bearer` or `basic`; for content negotiation, return `Negotiated<T>`
+ --> tests/ui/macros/security_scheme_api_key_authorization_header.rs:2:42
+  |
+2 | #[security(api_key(in = "header", name = "Authorization"))]
+  |                                          ^^^^^^^^^^^^^^^

@@ -1,0 +1,5 @@
+error: the handler extracts Path<T>, but its route has no path variables
+  --> tests/ui/macros/route_path_extractor_without_variables.rs:10:1
+   |
+10 | async fn list(
+   | ^^^^^

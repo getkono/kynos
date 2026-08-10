@@ -1,0 +1,5 @@
+error: path template `/users?page=1` must not contain a query string or fragment
+ --> tests/ui/macros/path_query_string.rs:2:18
+  |
+2 |     kynos::path!("/users?page=1");
+  |                  ^^^^^^^^^^^^^^^
