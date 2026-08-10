@@ -98,17 +98,25 @@ pub(in crate::validate) fn check_path_correspondence(
     operation: &Operation,
     violations: &mut Vec<Violation>,
 ) {
-    let declared: HashSet<&str> = item
+    // Declaration order, not hash order: `validate` promises violations "most
+    // structural first", and a caller diffing two runs of the same document
+    // must not see them shuffle.
+    let mut declared: Vec<&str> = Vec::new();
+    for parameter in item
         .parameters
         .iter()
         .chain(operation.parameters.iter())
         .filter_map(RefOr::as_item)
         .filter(|parameter| parameter.location == ParameterIn::Path)
-        .map(|parameter| parameter.name.as_str())
-        .collect();
+    {
+        let name = parameter.name.as_str();
+        if !declared.contains(&name) {
+            declared.push(name);
+        }
+    }
 
     for variable in template.variables() {
-        if !declared.contains(variable.as_str()) {
+        if !declared.contains(&variable.as_str()) {
             violations.push(Violation::error(
                 location,
                 SpecError::UndeclaredPathVariable {

@@ -102,9 +102,8 @@ fn a_generic_operation_keeps_its_method_argument() {
 
 #[test]
 fn an_unknown_route_argument_is_still_rejected() {
-    let error = match RouteArgs::parse(quote!(path = "/health", nonsense = "x")) {
-        Ok(_) => panic!("an argument no attribute reads must not be silently ignored"),
-        Err(error) => error,
+    let Err(error) = RouteArgs::parse(quote!(path = "/health", nonsense = "x")) else {
+        panic!("an argument no attribute reads must not be silently ignored")
     };
 
     assert!(error.to_string().contains("unknown route argument"));

@@ -505,3 +505,43 @@ fn violation_locations_escape_their_path_keys() {
             .any(|v| v.location == "#/paths/~1users~1{id}/get")
     );
 }
+
+/// `Operation.responses` is skipped when it is empty, so a `Responses` that
+/// carries only extensions must not read as empty — or a round trip drops it.
+#[test]
+fn a_responses_holding_only_extensions_is_not_empty() {
+    let mut responses = Responses::new();
+    assert!(responses.is_empty());
+
+    responses
+        .extensions
+        .insert("x-poll-interval", serde_json::json!(30));
+    assert!(!responses.is_empty());
+
+    let operation = Operation::new("listUsers").with_responses(responses);
+    let json = serde_json::to_string(&operation).expect("serializable");
+    assert!(
+        json.contains("x-poll-interval"),
+        "the extension was dropped: {json}"
+    );
+}
+
+/// `validate` promises violations "most structural first", so a caller
+/// diffing two runs of one document must not see them shuffle.
+#[test]
+fn violation_order_does_not_depend_on_hashing() {
+    let mut operation = Operation::new("listUsers").with_responses(ok_responses());
+    for name in ["alpha", "beta", "gamma", "delta", "epsilon"] {
+        operation =
+            operation.with_parameter(Parameter::path(name, Schema::of_type(SchemaType::String)));
+    }
+    let document = document_with(&[(
+        "/things",
+        PathItem::new().with_operation(Method::Get, operation),
+    )]);
+
+    let first = errors(&document);
+    for _ in 0..16 {
+        assert_eq!(errors(&document), first);
+    }
+}

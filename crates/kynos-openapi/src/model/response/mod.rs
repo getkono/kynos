@@ -70,10 +70,14 @@ impl Responses {
         self
     }
 
-    /// Returns `true` when no response at all is declared.
+    /// Returns `true` when nothing at all is declared.
+    ///
+    /// Extensions count. `Operation.responses` is skipped when this is true,
+    /// so ignoring them would silently drop a `Responses` that carries only
+    /// `x-` fields — which is exactly the drop a round trip must not make.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.default_response.is_none() && self.responses.is_empty()
+        self.default_response.is_none() && self.responses.is_empty() && self.extensions.is_empty()
     }
 
     /// Looks up the response declared for an exact status code.
