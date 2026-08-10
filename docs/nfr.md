@@ -59,7 +59,7 @@ disabled, or passes trivially and hides the regression it was meant to catch.
 | --- | --- | --- | --- |
 | compatibility | Public API surface is diffed on every change; an addition requires explicit budget approval, a removal fails the build | `cargo-public-api` | `needs-tooling` |
 | compatibility | Every release tag is gated on semantic-version correctness | `cargo-semver-checks` | `needs-tooling` |
-| correctness | The IR round-trips through serialization losslessly | `proptest` over generated IR values | `needs-tooling` |
+| correctness | The IR round-trips through serialization losslessly | `proptest` over generated IR values | `enforced`, with two exclusions below |
 | correctness | Emitted documents validate against both 3.1 and 3.2 validators | CI step over a fixture app covering the full type matrix | `planned` |
 | correctness | Emitted documents are byte-deterministic across runs and platforms | CI comparing repeated generation and cross-OS builds | `planned` |
 | dx | No public item exposes `Pin`, `BoxFuture` or a tokio type | `cargo-public-api` assertion | `needs-tooling` |
@@ -70,6 +70,19 @@ The `--check` row's blocker is not a `todo!()` body: the workspace declares no
 binary target at all, and no command-line surface is designed anywhere. It is
 recorded here because the emitter is here, but it may well belong to a
 satellite crate.
+
+Two shapes are excluded from the round-trip property, and both are real gaps
+rather than test convenience:
+
+- **A JSON `null` example does not survive.** Every `Option<Value>` field —
+  `Example::value`, a parameter's `example`, a schema's `const` and `default`,
+  and four others — is `skip_serializing_if = "Option::is_none"`, so
+  `Some(Value::Null)` writes `null` and reads back as `None`. JSON `null` is a
+  legal example and a legal default, so a description that uses one is
+  silently changed. The remedy is a double-`Option` deserializer at each site.
+- **A `PathItem` carrying both `$ref` and sibling fields loses the siblings.**
+  It reads back as a `RefOr::Ref`. Kynos never emits one, but the type permits
+  constructing it, so the model can hold a value it cannot write down.
 
 The `dx` row currently holds by construction — the crate has no runtime
 dependency at all, which is deliberate — but nothing prevents that from
