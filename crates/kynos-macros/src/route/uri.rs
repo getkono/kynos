@@ -26,12 +26,14 @@ pub(crate) fn endpoint_uri_impl(
         ));
     }
 
-    let path_names = variables.iter().map(String::as_str);
+    // Read from `EndpointMeta::PATH_VARIABLES` rather than rebuilt here, so
+    // that what the description will say and what the handler destructures are
+    // checked against one source rather than two that could drift.
     let path_assertion = path_type.as_ref().map(|path_type| {
         quote! {
             const _: () = assert!(::kynos::__private::path::path_parameter_names_match(
                 <#path_type as ::kynos::extract::params::path::PathParams>::NAMES,
-                &[#(#path_names),*],
+                <#endpoint as ::kynos::router::endpoint::EndpointMeta>::PATH_VARIABLES,
             ), "PathParams names must exactly match route variables in declaration order");
         }
     });
