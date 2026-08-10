@@ -8,6 +8,7 @@
 pub(in crate::validate) mod content;
 pub(in crate::validate) mod document;
 pub(in crate::validate) mod extensions;
+pub(in crate::validate) mod opaque;
 pub(in crate::validate) mod operations;
 pub(in crate::validate) mod parameters;
 pub(in crate::validate) mod paths;

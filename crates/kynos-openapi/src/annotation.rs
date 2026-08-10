@@ -75,6 +75,25 @@ pub enum OpaqueReason {
     ProtocolUpgrade,
 }
 
+impl OpaqueReason {
+    /// The reason as it is spelled in the description.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::UntypedLayer => "untyped-layer",
+            Self::UntypedRoute => "untyped-route",
+            Self::UntypedHandler => "untyped-handler",
+            Self::ProtocolUpgrade => "protocol-upgrade",
+        }
+    }
+}
+
+impl std::fmt::Display for OpaqueReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// The record a waiver leaves on one operation.
 ///
 /// Serialized under [`OPAQUE_OPERATION_ANNOTATION`]. Marks the operation

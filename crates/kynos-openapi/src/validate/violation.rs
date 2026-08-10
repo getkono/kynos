@@ -239,6 +239,47 @@ pub enum SpecError {
     #[error("this description omits part of the service and is not authoritative")]
     NotAuthoritative,
 
+    /// An operation is emitted but is covered by an `unchecked` waiver.
+    ///
+    /// It is still described; what it does is no longer verified.
+    #[error(
+        "this operation is covered by an `unchecked` waiver ({}), so its description is not \
+         verified",
+        reasons.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+    )]
+    OpaqueOperation {
+        /// Why the waiver was needed.
+        reasons: Vec<crate::annotation::OpaqueReason>,
+    },
+
+    /// A route is served but has no path template that could express it.
+    #[error(
+        "`{pattern}` is served but no path template can express it, so it has no `paths` entry"
+    )]
+    OpaqueRoute {
+        /// The router's matching pattern, verbatim.
+        pattern: String,
+    },
+
+    /// The description is opaque somewhere but does not say so at the root.
+    ///
+    /// The document-level stamp is the one-glance signal a consumer reads
+    /// before deciding whether to trust anything else, so a description that
+    /// omits it while carrying an opaque operation or route is worse than one
+    /// that is honestly incomplete.
+    #[error(
+        "this description contains opaque operations or routes but is not marked \
+         non-authoritative"
+    )]
+    AuthorityNotStamped,
+
+    /// A Kynos annotation was present but not in the shape Kynos emits.
+    #[error("`{name}` is present but is not in the form Kynos emits, so it cannot be acted on")]
+    MalformedAnnotation {
+        /// The offending field name.
+        name: String,
+    },
+
     /// The document declared nothing at all.
     #[error("a document must declare at least one of `paths`, `components` or `webhooks`")]
     EmptyDocument,

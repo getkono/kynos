@@ -363,3 +363,111 @@ fn validate_reports_errors_and_hides_warnings() {
             .all(|v| v.severity == super::Severity::Error)
     );
 }
+
+fn violations(document: &Document) -> Vec<Violation> {
+    Validator::new(SpecVersion::V3_1).validate(document)
+}
+
+fn opaque_document() -> Document {
+    let mut operation = Operation::new("listUsers").with_responses(ok_responses());
+    crate::annotation::Opaque::new(crate::annotation::OpaqueReason::UntypedLayer)
+        .apply_to(&mut operation);
+    let item = PathItem::new().with_operation(Method::Get, operation);
+    let mut document = document_with(&[("/users", item)]);
+    crate::annotation::restamp_authority(&mut document);
+    document
+}
+
+#[test]
+fn an_opaque_operation_is_a_warning_not_an_error() {
+    let document = opaque_document();
+
+    assert!(errors(&document).is_empty());
+    assert!(violations(&document).iter().any(|v| {
+        v.severity == super::Severity::Warning
+            && v.location == "#/paths//users/get"
+            && matches!(v.error, SpecError::OpaqueOperation { .. })
+    }));
+}
+
+#[test]
+fn an_opaque_document_that_omits_the_stamp_is_an_error() {
+    let mut document = opaque_document();
+    document
+        .extensions
+        .0
+        .shift_remove(crate::annotation::NOT_AUTHORITATIVE_ANNOTATION);
+
+    assert!(
+        errors(&document)
+            .iter()
+            .any(|e| matches!(e, SpecError::AuthorityNotStamped))
+    );
+}
+
+#[test]
+fn an_opaque_route_is_reported_without_inventing_a_paths_entry() {
+    let mut document = document_with(&[(
+        "/users",
+        PathItem::new().with_operation(
+            Method::Get,
+            Operation::new("listUsers").with_responses(ok_responses()),
+        ),
+    )]);
+    crate::annotation::OpaqueRoute::new(
+        "/assets/{*path}",
+        crate::annotation::OpaqueReason::UntypedRoute,
+    )
+    .append_to(&mut document);
+    crate::annotation::restamp_authority(&mut document);
+
+    assert!(errors(&document).is_empty());
+    assert!(violations(&document).iter().any(|v| {
+        matches!(&v.error, SpecError::OpaqueRoute { pattern } if pattern == "/assets/{*path}")
+    }));
+    // The route is recorded, and `paths` is untouched by it.
+    assert_eq!(document.paths.0.len(), 1);
+}
+
+#[test]
+fn an_unreadable_annotation_is_an_error() {
+    let mut document = document_with(&[(
+        "/users",
+        PathItem::new().with_operation(
+            Method::Get,
+            Operation::new("listUsers").with_responses(ok_responses()),
+        ),
+    )]);
+    document.extensions.insert(
+        crate::annotation::OPAQUE_ROUTES_ANNOTATION,
+        serde_json::json!("nonsense"),
+    );
+
+    let reported = errors(&document);
+    assert!(reported.iter().any(
+        |e| matches!(e, SpecError::MalformedAnnotation { name } if name == "x-kynos-opaque-routes")
+    ));
+    // Unreadable is not clean, so the authority stamp is demanded too.
+    assert!(
+        reported
+            .iter()
+            .any(|e| matches!(e, SpecError::AuthorityNotStamped))
+    );
+}
+
+#[test]
+fn a_clean_document_makes_no_opacity_noise() {
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("health").with_responses(ok_responses()),
+    );
+    let document = document_with(&[("/health", item)]);
+
+    assert!(!violations(&document).iter().any(|v| matches!(
+        v.error,
+        SpecError::NotAuthoritative
+            | SpecError::AuthorityNotStamped
+            | SpecError::OpaqueOperation { .. }
+            | SpecError::OpaqueRoute { .. }
+    )));
+}

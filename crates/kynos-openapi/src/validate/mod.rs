@@ -20,7 +20,7 @@ mod rules;
 use crate::{
     model::document::{Document, SpecVersion},
     validate::{
-        rules::extensions::check_extensions,
+        rules::{extensions::check_extensions, opaque::check_opaque},
         violation::{Severity, SpecError, Violation},
     },
 };
@@ -68,6 +68,7 @@ impl Validator {
         self.check_tags(document, &mut violations);
         self.check_component_names(document, &mut violations);
         self.check_paths(document, &mut violations);
+        check_opaque(document, &mut violations);
         check_extensions("#", &document.extensions, &mut violations);
 
         violations
