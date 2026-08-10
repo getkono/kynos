@@ -65,10 +65,13 @@ impl<T: crate::schema::Schema> Representation for MultipartForm<T> {
     }
 }
 
+// The bound is deferred to the codec rather than restating the protobuf
+// message trait, so that the codec crate stays named only under the two
+// protobuf modules the dependency table gives it.
 #[cfg(feature = "protobuf")]
 impl<T> Representation for Protobuf<T>
 where
-    T: prost::Message + crate::schema::Schema,
+    Protobuf<T>: IntoResponse + Responses,
 {
     fn media_type() -> &'static str {
         "application/protobuf"
