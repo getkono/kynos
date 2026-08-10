@@ -46,7 +46,9 @@ pub enum ViaParts {}
     label = "not a handler",
     note = "every argument must implement `Describe`, and `FromRequestParts` — or `FromRequest`, \
             for the last one",
-    note = "the return type must implement `IntoResponse` and `Responses`"
+    note = "the return type must implement `IntoResponse` and `Responses`",
+    note = "the handler's future must be `Send`: nothing that is not — an `Rc`, a `RefCell` \
+            borrow, a lock guard — may be held across an `.await`"
 )]
 pub trait Handler<C, A>: Clone + Send + Sync + 'static {
     /// Runs the handler: extracts every argument, then invokes it.

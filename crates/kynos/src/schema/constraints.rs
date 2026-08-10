@@ -37,6 +37,15 @@ pub struct Constraints {
 }
 
 impl Constraints {
+    /// Whether any constraint is set.
+    ///
+    /// An empty set applied to a schema leaves it unchanged, so a caller that
+    /// would emit the result as a keyword can skip it entirely.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
     /// Applies these constraints to a schema.
     #[must_use]
     pub fn apply(&self, schema: OpenApiSchema) -> OpenApiSchema {

@@ -19,18 +19,21 @@ fn array<T: Schema>(registry: &mut Registry, unique: bool) -> OpenApiSchema {
 
 /// An object schema whose values are `V` and whose keys are `K`.
 ///
-/// `propertyNames` is emitted only when it says something: a key type that
-/// describes itself as a bare string constrains nothing that `type: object`
-/// does not already, and JSON object keys are strings regardless.
+/// `propertyNames` is built here as a string schema plus `K`'s constraints,
+/// rather than taken from `K`'s own schema — so a key type cannot describe
+/// itself as something a JSON object key could never be. It is omitted when
+/// `K` constrains nothing, since `{"type": "string"}` says no more than
+/// `type: object` already does.
 fn map<K: MapKey, V: Schema>(registry: &mut Registry) -> OpenApiSchema {
     let values = registry.resolve::<V>();
-    let keys = registry.resolve::<K>();
-    let keys_are_informative = keys != OpenApiSchema::of_type(SchemaType::String);
+    let constraints = K::key_constraints();
 
     with_object(OpenApiSchema::of_type(SchemaType::Object), |object| {
         object.additional_properties = Some(Box::new(values));
-        if keys_are_informative {
-            object.property_names = Some(Box::new(keys));
+        if !constraints.is_empty() {
+            object.property_names = Some(Box::new(
+                constraints.apply(OpenApiSchema::of_type(SchemaType::String)),
+            ));
         }
     })
 }

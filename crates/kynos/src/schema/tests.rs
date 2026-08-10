@@ -163,3 +163,58 @@ fn standard_types_are_anonymous() {
     assert!(<Vec<String> as Schema>::name().is_none());
     assert!(<(u32, u32) as Schema>::name().is_none());
 }
+
+/// The composite implementations resolve their members through the registry,
+/// whose body is still `todo!()`, so their helpers are exercised directly.
+/// Without this nothing checks the shapes those helpers produce.
+mod shapes {
+    use kynos_openapi::{
+        Schema as OpenApiSchema,
+        model::schema::types::{SchemaType, TypeSet},
+    };
+
+    use crate::schema::{MapKey, impls::testing};
+
+    #[test]
+    fn nullability_widens_a_simple_type_in_place() {
+        let widened = testing::nullable(OpenApiSchema::of_type(SchemaType::String));
+        let object = widened.as_object().expect("keywords");
+        assert_eq!(
+            object.ty,
+            Some(TypeSet::Many(vec![SchemaType::String, SchemaType::Null]))
+        );
+        assert!(object.any_of.is_none());
+    }
+
+    /// A type union's members must be unique, so a schema that already admits
+    /// `null` widens to itself rather than to a repeat.
+    #[test]
+    fn nullability_does_not_repeat_null() {
+        let already = OpenApiSchema::of_type(SchemaType::Null);
+        assert_eq!(testing::nullable(already.clone()), already);
+
+        let twice = testing::nullable(testing::nullable(OpenApiSchema::of_type(
+            SchemaType::String,
+        )));
+        assert_eq!(
+            twice.as_object().expect("keywords").ty,
+            Some(TypeSet::Many(vec![SchemaType::String, SchemaType::Null]))
+        );
+    }
+
+    /// Widening a `$ref` in place would edit the type it points at.
+    #[test]
+    fn nullability_wraps_a_reference() {
+        let widened = testing::nullable(OpenApiSchema::component("User"));
+        let object = widened.as_object().expect("keywords");
+        assert_eq!(object.ty, None);
+        assert_eq!(object.any_of.as_ref().map(Vec::len), Some(2));
+    }
+
+    /// A plain `String` key constrains nothing, so `propertyNames` would say no
+    /// more than `type: object` already does.
+    #[test]
+    fn a_string_key_emits_no_property_names() {
+        assert!(<String as MapKey>::key_constraints().is_empty());
+    }
+}

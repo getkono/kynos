@@ -31,15 +31,15 @@
 //! | --- | --- |
 //! | `bool` | `boolean` |
 //! | `String`, `char` | `string`; `char` is bounded to one character |
-//! | `i8`–`i32`, `u8`–`u32` | `integer`/`int32`, with the type's exact range |
-//! | `i64`, `u64` | `integer`/`int64`; `u64` adds `minimum: 0` |
+//! | `i8`–`i32`, `u8`–`u16` | `integer`/`int32`, with the type's exact range |
+//! | `u32`, `i64`, `u64` | `integer`/`int64` — the OAS formats are *signed*, so a `u32` maximum does not fit `int32`; the unsigned two add `minimum: 0` |
 //! | `f32`, `f64` | `number`/`float`, `number`/`double` |
 //! | `Option<T>` | `T`, widened to admit `null` |
 //! | `Box<T>`, `Arc<T>` | `T`, under `T`'s own component name |
 //! | `Vec<T>`, `VecDeque<T>`, `[T]` | `array` |
 //! | `[T; N]` | `array` of exactly `N` |
 //! | `HashSet<T>`, `BTreeSet<T>` | `array` with `uniqueItems` |
-//! | `HashMap<K, V>`, `BTreeMap<K, V>` | `object`, `K: MapKey` |
+//! | `HashMap<K, V>`, `BTreeMap<K, V>` | `object`; `K: MapKey` supplies `propertyNames` |
 //! | tuples up to twelve | `array` with `prefixItems`, closed |
 //! | `()` | `null` |
 //! | `Ipv4Addr`, `Ipv6Addr`, `IpAddr` | `string`/`ipv4`, `string`/`ipv6`, either |
@@ -74,6 +74,7 @@ pub mod unchecked;
 // at. Which types are implemented is documented above, beside the rejections.
 mod impls;
 
+pub use crate::schema::constraints::Constraints;
 use kynos_openapi::{ComponentName, Schema as OpenApiSchema};
 
 use crate::schema::registry::Registry;
@@ -92,6 +93,11 @@ use crate::schema::registry::Registry;
 /// descending into its own fields. So an implementation reaches its field types
 /// through `registry.resolve::<T>()` rather than through `T::schema`, and lets
 /// the registry decide whether each one inlines or is referenced.
+///
+/// The one exception is a wrapper with no wire form of its own — `Box<T>`,
+/// `Arc<T>` — which *is* `T` and delegates to `T::schema` directly. Going
+/// through `resolve` there would hand back a `$ref` to the component currently
+/// being defined.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot describe itself as a schema",
     label = "not describable",
@@ -118,17 +124,47 @@ pub trait Schema {
 
 /// A type usable as a JSON object key.
 ///
-/// JSON object keys are strings, so an implementation's [`Schema`] must be a
-/// string schema. Implement it for a string-shaped newtype or a unit-variant
-/// enum to use that type as a map key; the bound is what stops a map keyed by
-/// something that cannot survive the round trip.
+/// JSON object keys are strings, so a map's `propertyNames` is built as a
+/// *string* schema plus whatever this returns. That is the point of the method
+/// rather than reusing [`Schema`]: string-ness is then true by construction,
+/// where a trait that merely asked implementations to produce a string schema
+/// would be a promise nothing checks — and a map keyed by an integer describes
+/// no object that can exist.
+///
+/// ```no_run
+/// # use kynos::schema::{Constraints, MapKey, Schema};
+/// # struct Sku;
+/// # impl Schema for Sku {
+/// #     fn schema(_: &mut kynos::schema::registry::Registry) -> kynos::openapi::Schema {
+/// #         todo!()
+/// #     }
+/// # }
+/// impl MapKey for Sku {
+///     fn key_constraints() -> Constraints {
+///         // `Constraints` is `#[non_exhaustive]`, so it grows without
+///         // breaking you — which also means starting from `default`.
+///         let mut constraints = Constraints::default();
+///         constraints.pattern = Some("^[A-Z]{3}-[0-9]{4}$".to_owned());
+///         constraints
+///     }
+/// }
+/// ```
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be a JSON object key",
     label = "not a map key",
     note = "JSON object keys are strings; implement `kynos::schema::MapKey` for a string-shaped \
             newtype, or key the map by `String`"
 )]
-pub trait MapKey: Schema {}
+pub trait MapKey: Schema {
+    /// What a key must satisfy beyond being a string.
+    ///
+    /// Nothing, by default — which is what makes the resulting
+    /// `propertyNames` vacuous for a plain [`String`] key, and why a map keyed
+    /// by one emits none at all.
+    fn key_constraints() -> constraints::Constraints {
+        constraints::Constraints::default()
+    }
+}
 
 impl MapKey for String {}
 

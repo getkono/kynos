@@ -60,12 +60,18 @@ macro_rules! unsigned {
 }
 
 signed!(i8 => "int32", i16 => "int32", i32 => "int32");
-unsigned!(u8 => "int32", u16 => "int32", u32 => "int32");
+
+// `int32` and `int64` are *signed* in the OAS Format Registry, so a `u32` does
+// not fit `int32` — a generator honouring the format would emit a type its own
+// maximum overflows. The bounds stay exact; the format widens.
+unsigned!(u8 => "int32", u16 => "int32", u32 => "int64");
 
 // `i64::MAX` and `u64::MAX` are not representable in an `f64`, and JSON Schema
 // bounds are numbers. Emitting a rounded bound would forbid values the type
 // accepts, or accept values it does not, so the width is left to the format —
-// which is the only honest thing the vocabulary can say here.
+// which is the only honest thing the vocabulary can say here. `u64` keeps
+// `int64` for the same reason it keeps no maximum: nothing narrower is true,
+// and its `minimum: 0` is.
 impl Schema for i64 {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         formatted(SchemaType::Integer, "int64")

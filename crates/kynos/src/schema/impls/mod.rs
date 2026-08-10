@@ -48,3 +48,14 @@ fn integer(format: &str, minimum: Option<f64>, maximum: Option<f64>) -> OpenApiS
         object.maximum = maximum;
     })
 }
+
+/// Reaching the helpers from the module's tests.
+///
+/// The composite implementations route their members through
+/// [`Registry::resolve`](crate::schema::registry::Registry::resolve), which is
+/// still `todo!()`, so nothing would otherwise exercise the shapes these
+/// produce.
+#[cfg(test)]
+pub(crate) mod testing {
+    pub(crate) use super::wrapper::nullable;
+}

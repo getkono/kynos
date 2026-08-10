@@ -15,7 +15,7 @@ macro_rules! tuples {
             impl<$($member: Schema),+> Schema for ($($member,)+) {
                 fn schema(registry: &mut Registry) -> OpenApiSchema {
                     let prefix = vec![$(registry.resolve::<$member>()),+];
-                    let length = prefix.len() as u64;
+                    let length = u64::try_from(prefix.len()).unwrap_or(u64::MAX);
                     with_object(OpenApiSchema::of_type(SchemaType::Array), |object| {
                         object.prefix_items = Some(prefix);
                         object.items = Some(Box::new(OpenApiSchema::never()));
