@@ -15,7 +15,7 @@
 //! | A route no path template can express | [`OpaqueRoute`] on the document | Every `paths` key that could be minted would be a lie |
 //!
 //! [`NOT_AUTHORITATIVE_ANNOTATION`] summarizes both. It is derived — see
-//! [`restamp_authority`] — never authored.
+//! [`Document::restamp_authority`] — never authored.
 
 use serde::{Deserialize, Serialize};
 
@@ -48,7 +48,7 @@ pub const OPAQUE_ROUTES_ANNOTATION: &str = "x-kynos-opaque-routes";
 ///
 /// Derived, never authored: true exactly when some operation carries
 /// [`OPAQUE_OPERATION_ANNOTATION`] or some route is recorded under
-/// [`OPAQUE_ROUTES_ANNOTATION`]. [`restamp_authority`] computes it.
+/// [`OPAQUE_ROUTES_ANNOTATION`]. [`Document::restamp_authority`] computes it.
 pub const NOT_AUTHORITATIVE_ANNOTATION: &str = "x-kynos-document-not-authoritative";
 
 /// Why part of a service is not verifiably described.

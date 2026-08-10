@@ -36,7 +36,14 @@ default = [
 # `openapi31` is the baseline. `openapi32` is a strict superset: enabling it is
 # purely additive for programs that use no 3.2-only construct.
 openapi31 = ["kynos-openapi/openapi31"]
-openapi32 = ["openapi31", "kynos-openapi/openapi32", "kynos-macros?/openapi32"]
+openapi32 = [
+  "openapi31",
+  "kynos-openapi/openapi32",
+  "kynos-macros?/openapi32",
+  # `response::stream` is the only thing that names a stream, and 3.1 has no
+  # `itemSchema` to describe one with, so the whole subtree is 3.2-only.
+  "dep:futures-core",
+]
 
 # --- Core ------------------------------------------------------------------
 macros = ["dep:kynos-macros"]
@@ -75,9 +82,11 @@ yaml = ["kynos-openapi/yaml"]
 test-util = []
 
 # --- Escape hatch ----------------------------------------------------------
-# Unlocks `layer_unchecked`, `route_unchecked` and `upgrade_unchecked`. Anything
-# reached through these is omitted from the emitted document, so the document
-# stops being authoritative and is stamped as such. Documented anti-pattern.
+# Unlocks `layer_unchecked`, `route_unchecked` and `upgrade_unchecked`. What
+# they reach is recorded and flagged rather than dropped -- an operation stays
+# in `paths` marked opaque, a route with no expressible template is listed at
+# the document root -- and the document is stamped non-authoritative.
+# Documented anti-pattern.
 unchecked = ["dep:tower", "dep:tower-service"]
 
 full = [
@@ -110,7 +119,7 @@ async-compression = { workspace = true, optional = true, features = [
 ] }
 bytes = { workspace = true }
 cookie = { workspace = true, optional = true }
-futures-core = { workspace = true }
+futures-core = { workspace = true, optional = true }
 http = { workspace = true }
 http-body = { workspace = true }
 http-body-util = { workspace = true }

@@ -113,14 +113,15 @@ by naming the row X displaces rather than by arguing that X is good.
 | Percent-encoding | `percent-encoding` | [`__private/uri.rs`](../crates/kynos/src/__private/uri.rs) | built |
 | Errors | `thiserror` | ambient | built |
 | Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | built in `server/`, designed in `middleware/` |
-| Streaming bodies | `futures-core` | [`response/stream/`](../crates/kynos/src/response/stream/), reachable only under `openapi32` | built |
+| Streaming bodies | `futures-core` | [`response/stream/`](../crates/kynos/src/response/stream/), gated on `openapi32` | designed |
 | JSON | `serde_json` | ambient with `serde` | built |
 | Form codec | `serde_urlencoded` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs) | designed |
 | Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | designed |
 | Protobuf codec | `prost` | [`extract/body/protobuf.rs`](../crates/kynos/src/extract/body/protobuf.rs), [`response/codec/protobuf.rs`](../crates/kynos/src/response/codec/protobuf.rs) | designed |
 | Cookies | `cookie` | [`extract/params/cookie.rs`](../crates/kynos/src/extract/params/cookie.rs) | designed |
 | Compression | `async-compression` | [`middleware/compression.rs`](../crates/kynos/src/middleware/compression.rs) | designed |
-| tower interop, escape hatch only | `tower`, `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
+| tower interop, outward | `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
+| tower interop, inward | `tower` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | designed |
 | Document ordering | `indexmap` | [`kynos-openapi`](../crates/kynos-openapi/src/lib.rs) | built |
 | YAML emission | `serde_yaml_ng` | [`kynos-openapi/emit/`](../crates/kynos-openapi/src/emit/) | built |
 | Macro parsing | `proc-macro2`, `quote`, `syn` | [`kynos-macros`](../crates/kynos-macros/src/) | built |
@@ -130,9 +131,14 @@ Three statuses, and the distinction is what keeps the table checkable:
 
 | Status | Meaning |
 | --- | --- |
-| `built` | Declared by a member crate, named by the module that owns it, and that module is implemented |
+| `built` | Reached by code that is implemented |
 | `designed` | Declared by a member crate; the module that owns it is still skeleton |
 | `chosen` | Settled as the answer, declared by nobody. It appears in no manifest and no lockfile |
+
+A row whose *Named in* column says `never` or `ambient` is `built` when the
+code that reaches it is implemented; it has no owning module to be a skeleton.
+`httparse` and `h2` are the clear cases: no member declares either, and they
+are reached only through `hyper`.
 
 `matchit` is the only `chosen` row. It is recorded here because the decision is
 made and the alternatives are closed — see [below](#what-does-not-move-and-why)
@@ -191,8 +197,18 @@ is: they widen the coupling surface the runtime policy exists to bound.
 
 Several rows are `designed` because the manifest runs ahead of the skeleton:
 `multer`, `serde_urlencoded`, `async-compression` and `cookie` are declared by
-`crates/kynos` and named by no code in it. Each is gated behind an off-by-default
-feature, so no default build carries a dependency it does not use.
+`crates/kynos` and named by no code in it. Each is gated behind an
+off-by-default feature, so no default build carries a dependency it does not
+use — which is why `futures-core` became optional too, rather than being
+compiled into every 3.1 build for a module 3.1 cannot reach.
+
+Two rows are `designed` for a subtler reason: the crate is named, but only in
+the bound of a body that is still `todo!()`. `futures-core` appears in the
+`Stream` bounds of the response types under `response/stream/`, whose builders
+are real and whose responses are not; `tower` appears only in the bound of
+`layer_unchecked`. `tower-service` is separate and genuinely `built`, because
+the outward direction — mounting a Kynos service into someone else's stack —
+is implemented.
 
 `mime` and `pin-project-lite` were in this list and are gone. Neither was a
 deferred wiring job: media types are carried as `&'static str` on purpose, for
