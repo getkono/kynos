@@ -70,20 +70,91 @@ pub struct PathTemplate {
     variables: Vec<String>,
 }
 
+/// Whether `character` is `pchar`, the only thing a path literal may hold.
+///
+/// `pchar = unreserved / pct-encoded / sub-delims / ":" / "@"`, per RFC 3986
+/// section 3.3. `%` is handled by the caller, which has the following two
+/// characters in hand.
+const fn is_path_character(character: char) -> bool {
+    character.is_ascii_alphanumeric()
+        || matches!(
+            character,
+            '-' | '.'
+                | '_'
+                | '~'
+                | '!'
+                | '$'
+                | '&'
+                | '\''
+                | '('
+                | ')'
+                | '*'
+                | '+'
+                | ','
+                | ';'
+                | '='
+                | ':'
+                | '@'
+        )
+}
+
+/// Checks one literal run of a template, between `{}` expressions.
+///
+/// `/` is the segment separator rather than `pchar`, so it is allowed here and
+/// segmentation is left to callers that care about it.
+fn check_literal(literal: &str, raw: &str) -> Result<(), InvalidPathTemplate> {
+    let mut characters = literal.chars();
+    while let Some(character) = characters.next() {
+        match character {
+            '/' => {}
+            '%' => {
+                let high = characters.next();
+                let low = characters.next();
+                if !matches!((high, low), (Some(high), Some(low))
+                    if high.is_ascii_hexdigit() && low.is_ascii_hexdigit())
+                {
+                    return Err(InvalidPathTemplate::MalformedPercentEncoding(
+                        raw.to_owned(),
+                    ));
+                }
+            }
+            _ if is_path_character(character) => {}
+            _ => {
+                return Err(InvalidPathTemplate::IllegalLiteralCharacter {
+                    template: raw.to_owned(),
+                    character,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 impl PathTemplate {
     /// Parses a path template.
+    ///
+    /// Literal segments are checked against the path grammar; variable names
+    /// are not, because the grammar admits every character except a brace
+    /// there. A name that Kynos's router cannot match — a catch-all, say — is
+    /// still a legal OpenAPI template, and this type has to be able to hold one
+    /// so that an externally authored description round-trips. That narrower
+    /// contract is enforced where routes are registered.
     ///
     /// # Errors
     ///
     /// Returns [`InvalidPathTemplate`] when the template does not start with
-    /// `/`, has unbalanced or empty braces, repeats a variable, or carries a
-    /// query string or fragment.
+    /// `/`, has unbalanced or empty braces, repeats a variable, carries a query
+    /// string or fragment, or holds a character the path grammar does not allow
+    /// outside a `{}` expression.
     pub fn parse(raw: impl Into<String>) -> Result<Self, InvalidPathTemplate> {
         let raw = raw.into();
 
         if !raw.starts_with('/') {
             return Err(InvalidPathTemplate::MissingLeadingSlash(raw));
         }
+        // `?` and `#` are not `pchar` either, but a template carrying one is
+        // more likely a URL pasted whole than a stray character, so it keeps
+        // the error that says so.
         if raw.contains('?') || raw.contains('#') {
             return Err(InvalidPathTemplate::NotAPath(raw));
         }
@@ -91,6 +162,7 @@ impl PathTemplate {
         let mut variables = Vec::new();
         let mut rest = raw.as_str();
         while let Some(open) = rest.find('{') {
+            check_literal(&rest[..open], &raw)?;
             let after_open = &rest[open + 1..];
             let Some(close) = after_open.find('}') else {
                 return Err(InvalidPathTemplate::UnbalancedBraces(raw));
@@ -114,6 +186,7 @@ impl PathTemplate {
         if rest.contains('}') {
             return Err(InvalidPathTemplate::UnbalancedBraces(raw));
         }
+        check_literal(rest, &raw)?;
 
         Ok(Self { raw, variables })
     }
