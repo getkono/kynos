@@ -23,16 +23,18 @@ buffer that consumes much of what it came for.
   trait exists — not public, not internal. The server calls tokio directly.
 - tokio types appear in zero handler-facing signatures. The one deliberate
   exception anywhere in the public API is
-  [`server::address::Listener::Tokio`](../crates/kynos/src/server/address.rs),
-  which exists so an
-  already-bound `tokio::net::TcpListener` can be handed to the server; naming
-  the runtime there is the point, not a leak.
+  [`server::address::Listener::Tokio`](../crates/kynos/src/server/address.rs)
+  together with its `From<tokio::net::TcpListener>` conversion, which exist so
+  an already-bound `tokio::net::TcpListener` can be handed to the server;
+  naming the runtime there is the point, not a leak. A surface check counts
+  both, because the conversion names the type as plainly as the variant does.
 - The runtime coupling surface is exactly five points, and they all live in
   `crates/kynos/src/server/`: the accept loop and listener, connection socket
-  read and write (the `hyper::rt` implementation), `spawn`, timers (request
-  timeout, keepalive, shutdown grace), and the shutdown signal. Holding that
-  count is about auditability and a small public surface, not about keeping a
-  swap open.
+  read and write (the `tokio::io::{AsyncRead, AsyncWrite}` bound on the
+  connection driver, adapted for hyper by `hyper_util::rt::TokioIo`), `spawn`,
+  timers (request timeout, keepalive, shutdown grace), and the shutdown
+  signal. Holding that count is about auditability and a small public surface,
+  not about keeping a swap open.
 - Bodies are streams of `Bytes`. A body producer is never runtime-aware, which
   is what keeps the coupling surface at five points instead of spreading through
   everything that can emit a response.
@@ -53,7 +55,12 @@ rule to the rest of the graph.
 
 - No async machinery in public signatures: no `BoxFuture`, no `#[async_trait]`,
   no user-visible `Pin<Box<dyn Future>>`, no hand-rolled `Stream`
-  implementations.
+  implementations. The rule is scoped to the checked surface: `unchecked`
+  hands the service to `tower`, whose `Service::Future` is an associated type
+  Kynos does not choose, so
+  [`UncheckedService`](../crates/kynos/src/unchecked.rs) names a boxed future.
+  That is the shape of the escape hatch rather than an exception to the rule,
+  and it is the only one.
 - `Send`-ness is decided once, at the runtime boundary — never per-trait, and
   never as a bound on a handler.
 - No lifetimes in handler signatures. Generics that exist for performance stay
@@ -97,33 +104,47 @@ by naming the row X displaces rather than by arguing that X is good.
 | Request and response types | `http` | ambient | built |
 | Byte buffers | `bytes` | ambient | built |
 | Body trait and erasure | `http-body`, `http-body-util` | [`http/body.rs`](../crates/kynos/src/http/body.rs) | built |
-| Protocol driver, HTTP/1 and HTTP/2 | `hyper`, `hyper-util` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs), [`http/body.rs`](../crates/kynos/src/http/body.rs) | built |
+| Protocol driver, HTTP/1 and HTTP/2 | `hyper` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs), [`http/body.rs`](../crates/kynos/src/http/body.rs) | built |
+| tokio adapters for the driver | `hyper-util` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs) | built |
 | HTTP/1 parsing | `httparse` | never — reached through `hyper` | built |
 | HTTP/2 framing | `h2` | never — reached through `hyper` | built |
 | TLS | `rustls`, via `tokio-rustls` | [`server/tls/`](../crates/kynos/src/server/tls/) | built |
-| Route matching | `matchit` | [`router/`](../crates/kynos/src/router/) | designed |
+| Route matching | `matchit` | [`router/`](../crates/kynos/src/router/) | chosen |
 | Percent-encoding | `percent-encoding` | [`__private/uri.rs`](../crates/kynos/src/__private/uri.rs) | built |
-| Media type parsing | `mime` | [`extract/media.rs`](../crates/kynos/src/extract/media.rs), [`response/negotiate/`](../crates/kynos/src/response/negotiate/) | designed |
 | Errors | `thiserror` | ambient | built |
-| Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | built |
-| Streaming bodies | `futures-core`, `pin-project-lite` | [`response/stream/`](../crates/kynos/src/response/stream/) | designed |
+| Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | built in `server/`, designed in `middleware/` |
+| Streaming bodies | `futures-core` | [`response/stream/`](../crates/kynos/src/response/stream/), reachable only under `openapi32` | built |
 | JSON | `serde_json` | ambient with `serde` | built |
 | Form codec | `serde_urlencoded` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs) | designed |
 | Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | designed |
 | Protobuf codec | `prost` | [`extract/body/protobuf.rs`](../crates/kynos/src/extract/body/protobuf.rs), [`response/codec/protobuf.rs`](../crates/kynos/src/response/codec/protobuf.rs) | designed |
 | Cookies | `cookie` | [`extract/params/cookie.rs`](../crates/kynos/src/extract/params/cookie.rs) | designed |
 | Compression | `async-compression` | [`middleware/compression.rs`](../crates/kynos/src/middleware/compression.rs) | designed |
-| tower interop, escape hatch only | `tower`, `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | designed |
+| tower interop, escape hatch only | `tower`, `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
 | Document ordering | `indexmap` | [`kynos-openapi`](../crates/kynos-openapi/src/lib.rs) | built |
 | YAML emission | `serde_yaml_ng` | [`kynos-openapi/emit/`](../crates/kynos-openapi/src/emit/) | built |
 | Macro parsing | `proc-macro2`, `quote`, `syn` | [`kynos-macros`](../crates/kynos-macros/src/) | built |
 | HTTP/3, QUIC | — | — | out of scope |
 
-`built` means the dependency is wired and the module that owns it is
-implemented; `designed` means the crate is declared and its module is still
-skeleton. `hyper` has two sites rather than one because the body handover is
-where its `Incoming` type enters, and `http/body.rs` is by design the only
-place the erased body is named.
+Three statuses, and the distinction is what keeps the table checkable:
+
+| Status | Meaning |
+| --- | --- |
+| `built` | Declared by a member crate, named by the module that owns it, and that module is implemented |
+| `designed` | Declared by a member crate; the module that owns it is still skeleton |
+| `chosen` | Settled as the answer, declared by nobody. It appears in no manifest and no lockfile |
+
+`matchit` is the only `chosen` row. It is recorded here because the decision is
+made and the alternatives are closed — see [below](#what-does-not-move-and-why)
+— but declaring a dependency the tree does not name would break the
+consumed-by-a-member requirement in [`nfr.md`](nfr.md#dependencies) for no gain.
+It arrives with the router implementation.
+
+`hyper` has two sites rather than one because the body handover is where its
+`Incoming` type enters, and `http/body.rs` is by design the only place the
+erased body is named. `hyper-util` is a separate row because it is a separate
+allowance: it supplies the tokio adapters named in the runtime policy above,
+and it does not reach the body.
 
 ### What does not move, and why
 
@@ -168,12 +189,21 @@ is: they widen the coupling surface the runtime policy exists to bound.
 
 ### What the table does not yet claim
 
-Several rows are `designed` because the manifest runs ahead of the skeleton.
-`mime`, `multer`, `serde_urlencoded`, `async-compression`, `cookie` and
-`pin-project-lite` are declared by `crates/kynos` and named by no code in it,
-and `trybuild` sits in `[workspace.dependencies]` consumed by no member at all.
-That is the expected state during the API skeleton, and it is recorded because
-a dependency graph that overstates what is wired is worse than no graph.
+Several rows are `designed` because the manifest runs ahead of the skeleton:
+`multer`, `serde_urlencoded`, `async-compression` and `cookie` are declared by
+`crates/kynos` and named by no code in it. Each is gated behind an off-by-default
+feature, so no default build carries a dependency it does not use.
+
+`mime` and `pin-project-lite` were in this list and are gone. Neither was a
+deferred wiring job: media types are carried as `&'static str` on purpose, for
+the reason [`mime_names.rs`](../crates/kynos-openapi/src/model/body/mime_names.rs)
+records — the model must express media type *ranges* and vendor types that a
+parsed `Mime` would normalize away — and the streaming surface pins nothing
+by hand. A row whose module deliberately went the other way is not `designed`,
+it is wrong.
+
+This section exists because a dependency graph that overstates what is wired is
+worse than no graph.
 
 ## Invariants
 
