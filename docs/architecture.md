@@ -46,7 +46,8 @@ buffer that consumes much of what it came for.
 The policy is already visible in the tree: `crates/kynos-openapi/` carries no
 runtime dependency at all, and `crates/kynos/src/server/` is the only place
 the runtime is named. Work that would widen that set is the work this section
-exists to reject.
+exists to reject. [Dependencies](#dependencies) applies the same containment
+rule to the rest of the graph.
 
 ### Public API surface
 
@@ -62,6 +63,117 @@ exists to reject.
 - Features are additive only.
 - Macros expand to readable code and carry user spans.
 - Ship 1.0, freeze the core, and put subsequent velocity into satellite crates.
+
+## Dependencies
+
+The table below is the maximal scope: the whole of what Kynos intends to depend
+on. A crate absent from it is not a candidate, and "can we add X?" is answered
+by naming the row X displaces rather than by arguing that X is good.
+
+**Policy:**
+
+- Every dependency is either *ambient* or *contained*. Ambient dependencies may
+  be named anywhere, and there are exactly four: `http`, `bytes`, `serde` and
+  `thiserror`. The first three are the re-export allowance above; `thiserror`
+  is a derive that reaches no public signature. Every other dependency may be
+  named only under the path the table gives it. This is the runtime rule
+  generalized, not a second rule.
+- `httparse` and `h2` are never named. They are hyper's HTTP/1 parser and
+  HTTP/2 framing layer and they reach Kynos through it. Naming either would
+  mean Kynos had taken the protocol over, which is a decision this section
+  closes rather than defers.
+- A new dependency arrives feature-gated and additive, never as a widening of
+  the default build.
+- rustls is the only TLS backend that ships. The accept path keeps the socket
+  and the rustls connection separable rather than fusing them into one opaque
+  stream, so a second backend stays an additive change. No public trait
+  abstracts the backend, today or later.
+
+### The graph
+
+| Layer | Crate | Named in | Status |
+| --- | --- | --- | --- |
+| Runtime, sockets, timers, signals | `tokio` | `server/` | built |
+| Request and response types | `http` | ambient | built |
+| Byte buffers | `bytes` | ambient | built |
+| Body trait and erasure | `http-body`, `http-body-util` | [`http/body.rs`](../crates/kynos/src/http/body.rs) | built |
+| Protocol driver, HTTP/1 and HTTP/2 | `hyper`, `hyper-util` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs), [`http/body.rs`](../crates/kynos/src/http/body.rs) | built |
+| HTTP/1 parsing | `httparse` | never — reached through `hyper` | built |
+| HTTP/2 framing | `h2` | never — reached through `hyper` | built |
+| TLS | `rustls`, via `tokio-rustls` | [`server/tls/`](../crates/kynos/src/server/tls/) | built |
+| Route matching | `matchit` | [`router/`](../crates/kynos/src/router/) | designed |
+| Percent-encoding | `percent-encoding` | [`__private/uri.rs`](../crates/kynos/src/__private/uri.rs) | built |
+| Media type parsing | `mime` | [`extract/media.rs`](../crates/kynos/src/extract/media.rs), [`response/negotiate/`](../crates/kynos/src/response/negotiate/) | designed |
+| Errors | `thiserror` | ambient | built |
+| Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | built |
+| Streaming bodies | `futures-core`, `pin-project-lite` | [`response/stream/`](../crates/kynos/src/response/stream/) | designed |
+| JSON | `serde_json` | ambient with `serde` | built |
+| Form codec | `serde_urlencoded` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs) | designed |
+| Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | designed |
+| Protobuf codec | `prost` | [`extract/body/protobuf.rs`](../crates/kynos/src/extract/body/protobuf.rs), [`response/codec/protobuf.rs`](../crates/kynos/src/response/codec/protobuf.rs) | designed |
+| Cookies | `cookie` | [`extract/params/cookie.rs`](../crates/kynos/src/extract/params/cookie.rs) | designed |
+| Compression | `async-compression` | [`middleware/compression.rs`](../crates/kynos/src/middleware/compression.rs) | designed |
+| tower interop, escape hatch only | `tower`, `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | designed |
+| Document ordering | `indexmap` | [`kynos-openapi`](../crates/kynos-openapi/src/lib.rs) | built |
+| YAML emission | `serde_yaml_ng` | [`kynos-openapi/emit/`](../crates/kynos-openapi/src/emit/) | built |
+| Macro parsing | `proc-macro2`, `quote`, `syn` | [`kynos-macros`](../crates/kynos-macros/src/) | built |
+| HTTP/3, QUIC | — | — | out of scope |
+
+`built` means the dependency is wired and the module that owns it is
+implemented; `designed` means the crate is declared and its module is still
+skeleton. `hyper` has two sites rather than one because the body handover is
+where its `Incoming` type enters, and `http/body.rs` is by design the only
+place the erased body is named.
+
+### What does not move, and why
+
+**hyper.** hyper parses HTTP/1 with `httparse`, so owning the codec would mean
+owning framing and buffering rather than parsing — and hyper's framing is close
+to allocation-free already: header values are `Bytes` slices into the read
+buffer, and the `HeaderMap` is recycled between requests on a connection. Two
+limits are real, and are recorded here rather than argued away. hyper allocates
+an 8 KiB write buffer at connection construction and never shrinks the read
+buffer below 8 KiB, with no pool and no way to supply one, so roughly 16 KiB
+per live connection is not configurable; `max_buf_size` moves the ceiling, not
+the floor. And hyper releases HTTP/2 flow-control capacity as soon as a frame
+is polled, so backpressure on an HTTP/2 request body is not expressible through
+it — the `h2` crate's `release_capacity` is the only remedy, and taking it
+means owning the connection driver. The question reopens on one measurement:
+RSS delta at 100k idle keep-alive connections, with and without TLS. Until that
+number exists it stays closed.
+
+**matchit.** A `{param}` matches exactly one path segment, never crossing a
+`/`, and captures a borrowed slice of the request path rather than an owned
+string — which is what makes the zero-allocation requirement in
+[`nfr.md`](nfr.md#routing) reachable at all. matchit also understands catch-all
+patterns, which Kynos does not: a catch-all has no OpenAPI equivalent, so the
+router rejects that syntax before matchit is asked to insert it. That check is
+syntactic and belongs above the dependency rather than inside it, which is why
+the anti-pattern and the crate can coexist.
+
+**rustls.** It is the only TLS backend, and there is no seam that would let an
+application supply another. What the design does preserve is the option to add
+one: the accept path holds the socket and the rustls session as separable
+values, so a kernel-TLS path could be introduced additively later. That costs
+nothing today and is not a commitment — see the rationale below.
+
+### Scope edges
+
+**HTTP/3 and QUIC are out.** The server contract is HTTP/1 and HTTP/2. If
+demand justifies HTTP/3 it arrives as an additive `http3` feature over `h3` and
+`quinn`, alongside the existing driver rather than reshaping it.
+
+**Custom transports and Unix sockets are out**, for the same reason the runtime
+is: they widen the coupling surface the runtime policy exists to bound.
+
+### What the table does not yet claim
+
+Several rows are `designed` because the manifest runs ahead of the skeleton.
+`mime`, `multer`, `serde_urlencoded`, `async-compression`, `cookie` and
+`pin-project-lite` are declared by `crates/kynos` and named by no code in it,
+and `trybuild` sits in `[workspace.dependencies]` consumed by no member at all.
+That is the expected state during the API skeleton, and it is recorded because
+a dependency graph that overstates what is wired is worse than no graph.
 
 ## Invariants
 
@@ -127,6 +239,64 @@ Two deployment facts compound this. io_uring is Linux-only, and it is disabled
 by seccomp policy by default on many managed platforms. That makes it a
 deployment-restricted optimization, which is a poor thing to build a foundation
 on.
+
+### Why hyper stays
+
+The case for owning the HTTP/1 codec rests on a category error: `httparse` is
+already what hyper parses with, so a rewrite would not touch the parser. What
+it would take over is framing and buffering — and measured against that, hyper
+costs roughly nothing per request. A GET with standard headers allocates once
+or not at all.
+
+The honest counter-argument is the per-connection buffer floor. Roughly 16 KiB
+that cannot be pooled or reclaimed between requests on an idle keep-alive
+connection is around 1.6 GiB at 100k connections, against a requirement whose
+threshold is still `TBD`. It is the one place in the comparison with a large
+multiplier behind it. Three things blunt it: under rustls the TLS buffers per
+connection are comparable or larger, so removing hyper's share may only halve
+the real figure; `unsafe_code = "forbid"` means a Kynos codec starts behind
+hyper's own parser, which uses uninitialized memory for the header array; and
+owning HTTP framing means owning request-smuggling response permanently. The
+resolution is a measurement, not more argument.
+
+Upstreaming is not a schedule that can be planned on — hyper ranks correctness
+above speed and speed above flexibility, and a seam for supplying a buffer pool
+is exactly the flexibility it declines. Vendoring trades a maintained
+dependency for a fork that ages.
+
+The other reason to leave the codec alone is that the cheap wins are not in it.
+Discarding the ALPN protocol already negotiated during the handshake and
+letting the driver re-sniff it costs a read syscall per connection; cloning
+per-connection TLS metadata per request copies the peer certificate chain each
+time; erasing every body through a boxed trait object behind a mutex allocates
+once per request for a body that is not shared. Those cost more per request
+than hyper's entire HTTP/1 codec, and none of them require replacing it.
+
+### Why kernel TLS is deferred
+
+Kernel TLS moves record encryption into the kernel once rustls has finished the
+handshake, and rustls supports the handover directly. The published wins,
+however, all come from `sendfile` on large static bodies — the path where the
+userspace round trip disappears entirely. A small dynamic JSON response cannot
+use it, so what remains is one avoided copy of a few kilobytes, against an AEAD
+cost that is not the bottleneck. Measurements on receive-side kernel TLS have
+shown worse tail latency than userspace TLS for request/response traffic, which
+is precisely this workload's shape.
+
+Runtime detection is also less safe than it looks. A sandboxed kernel can
+accept the socket options that enable kernel TLS and then ignore them, which a
+probe cannot distinguish from real support — and the failure mode is plaintext
+on the wire rather than an error. Any adoption has to verify end to end that
+bytes leaving the socket are actually encrypted, not merely that the setup
+calls returned success.
+
+Revisiting is worth it when all of these hold: a workload where a material
+share of bytes are `sendfile`-able; a deployment target on a real kernel new
+enough to handle TLS 1.3 key updates, with the TLS module loadable on the
+nodes; a maintained Rust binding that has seen production use; and a profile
+showing TLS is among the top costs. Until then the only thing worth spending is
+the design constraint recorded above — keep the socket and the session
+separable — which costs nothing and keeps the option alive.
 
 ### Language features that will reshape the surface
 

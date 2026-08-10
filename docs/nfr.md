@@ -11,6 +11,7 @@ only if it never claims a guarantee CI does not actually enforce.
 | `enforced` | A CI job runs this today. Regressions fail the build |
 | `planned` | The requirement is settled; the tooling is not installed. The tool to add is named |
 | `blocked-on-impl` | The surface is still `todo!()`-bodied, so there is nothing to assert against yet |
+| `blocked-on-dependency` | A pinned dependency does not expose what the requirement needs. The dependency and the remedy are named |
 
 Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`, and
 rustdoc with `missing_docs = "deny"`. Not yet present: `cargo-public-api`,
@@ -36,6 +37,7 @@ disabled, or passes trivially and hides the regression it was meant to catch.
 | [Extraction](#extraction) | `crates/kynos/src/extract/` |
 | [Middleware](#middleware) | `crates/kynos/src/middleware/` |
 | [Runtime](#runtime) | `crates/kynos/src/server/` |
+| [Dependencies](#dependencies) | the whole workspace |
 | [Macros](#macros) | `crates/kynos-macros/` |
 | [Observability](#observability) | the `trace` feature — no module yet |
 
@@ -65,10 +67,17 @@ the requirement above is that it be *verified*, not merely intended.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| performance | Zero heap allocations on the routing path | Counting allocator asserting `alloc_count == 0` across a 10k-request replay | `blocked-on-impl` |
+| performance | Zero heap allocations on the routing path | Counting allocator asserting `alloc_count == 0` across a 10k-request replay, over routes of at most three parameters and no static/dynamic sibling overlap | `blocked-on-impl` |
 | performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `blocked-on-impl` |
 | reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; `Router::validate` for those only visible once the tree is assembled | `blocked-on-impl` |
 | operability | Metric labels derive from operation IDs, never request paths | Unit test asserting label cardinality is constant under adversarial path input | `blocked-on-impl` |
+
+The allocation row is scoped rather than absolute because `matchit` captures
+parameters into a fixed inline buffer of three and spills to the heap beyond it,
+and backtracking out of a static segment into a parameter sibling allocates once
+as well. Both are reachable through ordinary REST shapes, so the requirement is
+written against what the pinned router actually guarantees. Widening it later is
+a measurement, not a rewrite.
 
 ## Extraction
 
@@ -97,7 +106,8 @@ intention rather than a guarantee.
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | reliability | Graceful shutdown drains all in-flight requests with zero dropped responses | Integration tests in `crates/kynos/src/server/tests.rs` covering HTTP/1 drain, HTTP/2 stream drain, TLS handshake cancellation, and timeout exhaustion | `enforced` |
-| reliability | Backpressure is bounded by default via queue depth and timeouts | Load test at 2× capacity asserting bounded memory and shed responses rather than unbounded growth | `blocked-on-impl` |
+| reliability | Backpressure is bounded by default via connection count, queue depth and timeouts | Load test at 2× capacity asserting bounded memory and shed responses rather than unbounded growth | `blocked-on-impl` |
+| reliability | HTTP/2 request-body flow control is released as the body is consumed, not as frames arrive | Load test streaming a large body to a slow consumer, asserting the receive window closes | `blocked-on-dependency` |
 | performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `planned` |
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `planned` |
 | compatibility | `Listener::Tokio` is the only public item naming a tokio type | `cargo-public-api` assertion over the framework surface | `planned` |
@@ -108,6 +118,32 @@ The last two rows are the enforcement of the tokio-only policy in
 abstraction trait to keep private, so what CI has to check is the opposite:
 that direct tokio use stays inside the one module that is allowed to have it,
 and that it reaches users only through the listener handover it is meant to.
+
+The `blocked-on-dependency` row is the one requirement a pinned dependency
+prevents rather than delays: hyper releases HTTP/2 flow-control capacity when a
+frame is polled rather than when the body is consumed, so the receive window
+never closes on a slow consumer. Driving `h2` directly is the only remedy, and
+[`architecture.md`](architecture.md#dependencies) records why that trade is not
+taken today.
+
+## Dependencies
+
+Containment rows enforcing the graph in
+[`architecture.md`](architecture.md#dependencies). Each is a grep, and each
+fails the build when a crate is named outside the module that owns it.
+
+| Category | Requirement | Method | Status |
+| --- | --- | --- | --- |
+| compatibility | `hyper` and `hyper-util` are named only in `server/connection.rs` and `http/body.rs` | CI grep over `crates/*/src`, excluding test modules | `planned` |
+| compatibility | `tokio-rustls` and `rustls` are named only under `server/tls/` | CI grep over `crates/*/src`, excluding test modules | `planned` |
+| compatibility | `matchit` is named only under `router/` | CI grep over `crates/*/src` | `planned` |
+| compatibility | `h2` and `httparse` are never named | CI grep over `crates/*/src`, allowing the `b"h2"` ALPN identifier | `planned` |
+| compatibility | `tower` and `tower-service` are named only in `unchecked.rs` | CI grep over `crates/*/src` | `planned` |
+| dx | Every crate in `[workspace.dependencies]` is consumed by a member | `cargo-udeps` or an equivalent manifest check | `planned` |
+
+The last row is the one that currently fails: `trybuild` is declared and unused,
+and `crates/kynos` declares several codec crates its skeleton does not yet name.
+[`architecture.md`](architecture.md#dependencies) lists them.
 
 ## Macros
 

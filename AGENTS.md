@@ -19,6 +19,7 @@ Kynos is an idiomatic, performance-focused Rust framework for building REST APIs
 - Bug fixes: Correctness is strict. The offending code must be testable so refactor adjacent code to expose the internals for unit testing if required. Push strictly in order: red tests targetting failure case and asserting the correct invariants; implementation that addresses the red case with evidence the tests turned green.
 - Framework documentation is intentionally curated and minimal. The API should be mostly self-documenting so documentation serve to fill in the gaps such as design decisions and highlighting the important concepts and design patterns for beginners.
 - Tests: hermetic by construction. Nextest isolates each test in its own process, so never rely on shared state or test ordering, and never mask a flake with retries.
+- Documentation: All documentation must be placed in `docs/` which intentionally tersely formatted in Markdown. It complements and provides high-level context complementing the API docs published with code.
 
 ## Workspace
 
