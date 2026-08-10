@@ -17,6 +17,13 @@
 //! What the attribute *does* add is compile-time checking the builder form
 //! cannot do — chiefly that a path template's variables match the handler's
 //! path parameters.
+//!
+//! # Why the examples here are `ignore`d
+//!
+//! Every expansion names `::kynos::…`, which this crate cannot depend on, so a
+//! doctest here would not compile whatever the derive emitted. The compiled
+//! demonstrations live in `crates/kynos/tests/derives.rs` and the framework's
+//! examples; `AGENTS.md` records the carve-out.
 
 mod derive;
 mod route;
