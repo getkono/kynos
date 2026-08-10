@@ -23,6 +23,9 @@
 pub mod problem;
 pub mod rejection;
 
+#[cfg(test)]
+mod tests;
+
 /// The result type used throughout the framework.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -48,6 +51,15 @@ pub enum Error {
     /// Two types claimed the same component name.
     #[error(transparent)]
     Schema(#[from] crate::schema::registry::SchemaConflict),
+
+    /// Two interceptors covering one operation disagreed about what they
+    /// contribute to it.
+    ///
+    /// Raised while the router is built, which is the whole point: two layers
+    /// that disagree about what a 429 means are caught before the service
+    /// starts rather than in production.
+    #[error(transparent)]
+    Contribution(#[from] crate::middleware::contribution::ContributionConflict),
 
     /// The document could not be serialized.
     #[error("the description could not be serialized")]
