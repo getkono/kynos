@@ -88,3 +88,24 @@ fn catch_panics_is_a_bare_route_option() {
 
     assert!(args.catch_panics);
 }
+
+/// `#[kynos::operation]` passes its whole argument list to `RouteArgs`, having
+/// already read `method` itself, so rejecting `method` there makes every
+/// program using the attribute fail to compile.
+#[test]
+fn a_generic_operation_keeps_its_method_argument() {
+    let args = RouteArgs::parse(quote!(method = "LOCK", path = "/documents/{id}"))
+        .expect("`method` belongs to the generic attribute, not to an unknown-argument error");
+
+    assert_eq!(args.path.value(), "/documents/{id}");
+}
+
+#[test]
+fn an_unknown_route_argument_is_still_rejected() {
+    let error = match RouteArgs::parse(quote!(path = "/health", nonsense = "x")) {
+        Ok(_) => panic!("an argument no attribute reads must not be silently ignored"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("unknown route argument"));
+}
