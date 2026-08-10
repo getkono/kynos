@@ -187,18 +187,40 @@ pub fn derive_schema(item: TokenStream) -> TokenStream {
 /// Maps an error type to RFC 9457 problem details.
 ///
 /// ```ignore
-/// #[derive(ApiError)]
+/// #[derive(Debug, thiserror::Error, ApiError)]
 /// #[problem(base = "https://errors.example.com/")]
-/// enum ApiError {
+/// enum StoreError {
+///     #[error("no user with id {id}")]
 ///     #[problem(status = 404, title = "User not found")]
-///     NotFound { id: UserId },
+///     NotFound {
+///         #[problem(extension)]
+///         id: UserId,
+///         trace: String,
+///     },
+///
+///     #[error("that email is already registered")]
 ///     #[problem(status = 409)]
 ///     EmailTaken,
 /// }
 /// ```
 ///
-/// Also emits the `Responses` implementation, so the statuses the error can
-/// produce and the statuses the description advertises cannot diverge.
+/// `status` is required on every variant and must be between 400 and 599. A
+/// struct declares its one status on the type instead; `base` always belongs on
+/// the type, since it is the prefix every variant's type URI shares.
+///
+/// The error's `Display` supplies each problem's `detail`, which is why
+/// `thiserror` is the expected companion — the `#[error("...")]` a Rust reader
+/// sees is the sentence an API consumer receives. A type without a `Display`
+/// is rejected at the derive rather than at the handler returning it.
+///
+/// A field is published as an extension member only when it says
+/// `#[problem(extension)]`, because a variant carries whatever the error site
+/// had to hand and the default must not be to put that on the wire.
+///
+/// Also emits the `IntoResponse` and `Responses` implementations, so the
+/// statuses the error can produce and the statuses the description advertises
+/// cannot diverge. It is the only supported way to implement
+/// `IntoProblem`.
 #[proc_macro_derive(ApiError, attributes(problem))]
 pub fn derive_api_error(item: TokenStream) -> TokenStream {
     derive::api_error::expand(item)
