@@ -1,0 +1,5 @@
+error: variant `NotFound` does not say what status it produces; add `#[problem(status = ...)]`
+ --> tests/ui/macros/api_error_missing_status.rs:9:5
+  |
+9 |     NotFound,
+  |     ^^^^^^^^

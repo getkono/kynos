@@ -91,9 +91,24 @@ struct BearerAuth;
 #[security(name = "SessionCookie")]
 struct SessionCookie;
 
-#[derive(ApiError)]
+/// The whole `#[problem(...)]` grammar, so the expansion is exercised by a
+/// compiled use rather than only by compile-fail cases.
+///
+/// `detail` comes from `Display`, which is why `thiserror` sits alongside: the
+/// `#[error("...")]` a Rust reader sees is the sentence an API consumer gets.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/")]
 enum StoreError {
-    NotFound,
+    #[error("no user with id {id}")]
+    #[problem(status = 404, title = "User not found")]
+    NotFound {
+        #[problem(extension)]
+        id: u64,
+        trace: String,
+    },
+
+    #[error("that email is already registered")]
+    #[problem(status = 409, type = "https://errors.example.com/email-taken")]
     Conflict,
 }
 

@@ -1,0 +1,5 @@
+error: a problem detail describes a failure, so its status is between 400 and 599; `200` is not
+ --> tests/ui/macros/api_error_status_out_of_range.rs:8:24
+  |
+8 |     #[problem(status = 200)]
+  |                        ^^^

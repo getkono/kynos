@@ -1,0 +1,17 @@
+error[E0277]: `StoreError` doesn't implement `std::fmt::Display`
+ --> tests/ui/macros/api_error_without_display.rs:7:6
+  |
+7 | enum StoreError {
+  |      ^^^^^^^^^^ unsatisfied trait bound
+  |
+help: the trait `std::fmt::Display` is not implemented for `StoreError`
+ --> tests/ui/macros/api_error_without_display.rs:7:1
+  |
+7 | enum StoreError {
+  | ^^^^^^^^^^^^^^^
+note: required by a bound in `is_display`
+ --> tests/ui/macros/api_error_without_display.rs:6:17
+  |
+6 | #[derive(Debug, ApiError)]
+  |                 ^^^^^^^^ required by this bound in `is_display`
+  = note: this error originates in the derive macro `ApiError` (in Nightly builds, run with -Z macro-backtrace for more info)
