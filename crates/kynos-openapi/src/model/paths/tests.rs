@@ -128,6 +128,58 @@ fn a_variable_name_may_hold_anything_but_a_brace() {
 }
 
 #[test]
+fn a_path_segment_is_never_empty() {
+    // `path-segment = 1*( path-literal / template-expression )`, so a segment
+    // always holds something.
+    for raw in ["//", "//users", "/users//posts", "/users//"] {
+        assert!(
+            matches!(
+                PathTemplate::parse(raw),
+                Err(InvalidPathTemplate::EmptySegment(_))
+            ),
+            "`{raw}` should not parse"
+        );
+    }
+}
+
+#[test]
+fn the_root_and_a_trailing_slash_are_still_paths() {
+    // The final segment is optional in the grammar, so `/` and `/users/` are
+    // both well formed — and they are different paths, which is the point of
+    // the trailing-slash policy being an application-level decision.
+    assert_eq!(PathTemplate::parse("/").expect("valid").as_str(), "/");
+    assert_eq!(
+        PathTemplate::parse("/users/").expect("valid").as_str(),
+        "/users/"
+    );
+    assert_eq!(
+        PathTemplate::parse("/users/{id}/").expect("valid").as_str(),
+        "/users/{id}/"
+    );
+}
+
+/// A variable name may hold a `/`, so segmenting cannot simply split on one.
+#[test]
+fn a_slash_inside_an_expression_does_not_open_a_segment() {
+    let template = PathTemplate::parse("/files/{a/b}").expect("valid");
+    assert_eq!(template.variables(), ["a/b"]);
+}
+
+#[test]
+fn a_stray_closing_brace_reads_as_unbalanced_wherever_it_is() {
+    // Before the first expression and after the last are the same mistake, so
+    // they must not produce two different diagnostics.
+    assert!(matches!(
+        PathTemplate::parse("/a}/b/{id}"),
+        Err(InvalidPathTemplate::UnbalancedBraces(_))
+    ));
+    assert!(matches!(
+        PathTemplate::parse("/{id}/a}"),
+        Err(InvalidPathTemplate::UnbalancedBraces(_))
+    ));
+}
+
+#[test]
 fn templates_differing_only_in_variable_name_normalize_alike() {
     let left = PathTemplate::parse("/pets/{petId}").expect("valid");
     let right = PathTemplate::parse("/pets/{name}").expect("valid");

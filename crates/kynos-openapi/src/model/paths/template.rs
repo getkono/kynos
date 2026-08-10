@@ -55,6 +55,13 @@ pub enum InvalidPathTemplate {
     /// A `%` was not followed by two hexadecimal digits.
     #[error("path template `{0}` contains a `%` that does not introduce a percent-encoded triple")]
     MalformedPercentEncoding(String),
+
+    /// Two `/` met with nothing between them.
+    ///
+    /// A path segment always holds at least one character. A *trailing* `/` is
+    /// legal, because the grammar makes the final segment optional.
+    #[error("path template `{0}` has an empty segment")]
+    EmptySegment(String),
 }
 
 /// A parsed path template such as `/users/{id}/posts/{postId}`.
