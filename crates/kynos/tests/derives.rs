@@ -150,3 +150,36 @@ fn a_derived_schema_claims_a_component_name() {
         Some("User".to_owned())
     );
 }
+
+#[derive(Clone, Debug, PartialEq)]
+struct Pool(u32);
+
+#[derive(Clone, Debug, PartialEq)]
+struct Cache(&'static str);
+
+#[derive(kynos::Provider)]
+struct App {
+    pool: Pool,
+    cache: Cache,
+    /// Not every field is a dependency, and opting one out must not need a
+    /// newtype.
+    #[provide(skip)]
+    #[allow(dead_code)]
+    name: &'static str,
+}
+
+fn provides<C: kynos::di::Provides<Pool> + kynos::di::Provides<Cache>>(
+    context: &C,
+) -> (Pool, Cache) {
+    (context.provide(), context.provide())
+}
+
+#[test]
+fn the_provider_derive_supplies_every_field_it_was_not_told_to_skip() {
+    let app = App {
+        pool: Pool(7),
+        cache: Cache("local"),
+        name: "orders",
+    };
+    assert_eq!(provides(&app), (Pool(7), Cache("local")));
+}

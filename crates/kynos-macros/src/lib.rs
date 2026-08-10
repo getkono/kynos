@@ -278,14 +278,20 @@ pub fn derive_security_scheme(item: TokenStream) -> TokenStream {
 /// ```ignore
 /// #[derive(Provider)]
 /// struct App {
-///     db: Pool,
-///     #[provide(scoped)]
-///     transaction: Transaction,
+///     pool: Pool,
+///     cache: Cache,
+///     #[provide(skip)]
+///     started_at: Instant,
 /// }
 /// ```
 ///
-/// A handler asking for something no field supplies fails to typecheck, rather
-/// than panicking at runtime the way an erased state map does.
+/// Each provided field's type must be `Clone`, since a value is handed out per
+/// request; a handle is the intended shape. A handler asking for something no
+/// field supplies fails to typecheck, rather than panicking at runtime the way
+/// an erased state map does.
+///
+/// Two provided fields of the same type are rejected here, naming both, rather
+/// than being left to produce a coherence error about the derive's own output.
 #[proc_macro_derive(Provider, attributes(provide))]
 pub fn derive_provider(item: TokenStream) -> TokenStream {
     derive::provider::expand(item)
