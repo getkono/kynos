@@ -74,3 +74,36 @@ the repository's MIT license.
 The document's embedded notice requires separate Revised BSD License treatment
 for Code Components extracted from it. Consult the TLP before copying RFC text
 or code into source files.
+
+## Problem Details
+
+[`rfc9457.txt`](rfc9457.txt) is an unmodified, byte-for-byte copy of the RFC
+Editor's official plain-text publication of [RFC 9457, Problem Details for HTTP
+APIs](https://www.rfc-editor.org/rfc/rfc9457.txt), retrieved on 2026-08-10. Its
+SHA-256 digest is
+`f2b3db92fb0bf3489cb3841a0da0c0d88dff40797b64d40b6123085183886c7b`.
+Consult the [RFC Editor information page](https://www.rfc-editor.org/info/rfc9457)
+for the document's current status and reported errata.
+
+Consult it whenever the wire form of an error is involved. Problem details are
+the only error representation Kynos emits, so the registered members, the
+`application/problem+json` media type and the extension-member rules bind
+[`error::problem`](../crates/kynos/src/error/problem.rs) and everything
+`#[derive(ApiError)]` produces; [`docs/errors.md`](../docs/errors.md) records how
+that maps onto the framework's types.
+
+RFC 9457 obsoletes RFC 7807, which is not vendored. Treat 7807 field names and
+the older `application/problem+json` registration as historical: where a client
+library still speaks 7807, the difference is additive and 9457 is the reference.
+
+### Licensing
+
+RFC 9457 was published under the IETF Trust's [Legal Provisions Relating to
+IETF Documents](https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/)
+(TLP 5.0), on the same terms as RFC 9110 above. The vendored file preserves the
+complete document, including its copyright, authorship and license notices, and
+is distributed under those terms rather than the repository's MIT license. Unlike
+RFC 9110 it carries no pre-RFC-5378-material notice.
+
+The same Revised BSD License treatment applies to Code Components extracted from
+it — which includes the JSON and schema fragments in its examples.
