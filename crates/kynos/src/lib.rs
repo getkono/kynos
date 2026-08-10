@@ -63,6 +63,10 @@
 //! none of which OpenAPI 3.1 can describe. The default-on `json` feature adds
 //! application JSON request and response codecs; it does not control OpenAPI
 //! document serialization or the framework's problem-details responses.
+//!
+//! The default-on `server` feature provides the `server` module. It is built on
+//! tokio, which is the only supported runtime: Kynos does not abstract over the
+//! runtime and offers no flag selecting another one.
 
 // `openapi31` is the baseline object model rather than an optional extra.
 // `openapi32` implies it, so this fires only when a caller disables default
@@ -75,6 +79,9 @@ compile_error!(
 
 #[cfg(all(feature = "server", not(any(feature = "http1", feature = "http2"))))]
 compile_error!("the `server` feature requires at least one of `http1` or `http2`");
+
+#[doc(hidden)]
+pub mod __private;
 
 pub mod di;
 pub mod error;
@@ -103,8 +110,8 @@ pub mod unchecked;
 pub use kynos_openapi as openapi;
 
 pub use crate::{
-    error::{Error, Problem, Result},
-    router::{Endpoint, Router},
+    error::{Error, Result, problem::Problem},
+    router::{Router, endpoint::Endpoint},
 };
 
 #[cfg(feature = "macros")]
@@ -119,16 +126,16 @@ pub use kynos_macros::query;
 /// Everything a typical application needs, in one import.
 pub mod prelude {
     pub use crate::{
-        di::Inject,
-        error::{Error, Problem, Result},
-        extract::{Path, Query},
-        response::{Created, NoContent},
-        router::{Group, Router},
+        di::inject::Inject,
+        error::{Error, Result, problem::Problem},
+        extract::params::{path::Path, query::Query},
+        response::status::{Created, NoContent},
+        router::{Router, group::Group},
         schema::Schema as SchemaTrait,
     };
 
     #[cfg(feature = "json")]
-    pub use crate::extract::Json;
+    pub use crate::extract::body::json::Json;
 
     #[cfg(feature = "macros")]
     pub use crate::{

@@ -27,6 +27,7 @@ Permanently out-of-scope
 - Support for OpenAPI 3.0 and older: OpenAPI 3.0.x is vastly different from OpenAPI 3.1+ and has technically been superseded for many years.
 - WebSockets: OpenAPI describes HTTP request/response semantics. A socket that stops being either belongs to AsyncAPI, and Kynos would rather point at it than pretend.
 - Templating and HTML rendering: Kynos is a REST framework, not a web framework.
+- Runtime abstraction: Kynos is tokio-only. There is no executor generic and no feature flag selecting another runtime, because no trait spans readiness-based and completion-based I/O without paying for a copy. See [`docs/architecture.md`](docs/architecture.md#runtime-policy).
 
 ## Anti-patterns
 
@@ -65,7 +66,7 @@ Each of these is something another Rust framework offers and Kynos does not, and
 | `openapi31` | yes | The OpenAPI 3.1 object model. Baseline. |
 | `openapi32` | no | The 3.2 superset: `itemSchema`, `in: querystring`, `QUERY`, hierarchical tags, `$self`, device authorization |
 | `macros` | yes | Route attributes and derives |
-| `server` | yes | The `tokio`/`hyper` server |
+| `server` | yes | The `tokio`/`hyper` server. tokio is the only supported runtime |
 | `http1`, `http2` | yes | Protocol versions |
 | `json` | yes | Application JSON request and response codecs |
 | `trace` | yes | Per-operation `tracing` spans. Facade only; the subscriber stays yours |
@@ -105,7 +106,7 @@ No, it is minimal but strict and opinionated where correctness is in question.
 **Is kynos really faster than the competition?**
 A better way to frame it is we are as fast if not faster in most ways (open an issue if not) and spend effort on optimizations possible due to our API strictness since day-one.
 The concrete claim: there is no JSON Schema interpreter on the hot path. Constraints are declared once on the type, and the emitted document and the request parser are two projections of that one declaration.
-We plan to release our benchmarks in this repo: <https://github.com/getkono/kynos-bench>
+We plan to release our benchmarks in this repo: <https://github.com/getkono/kynos-bench>, which also defines the measurement methodology — what is measured, how, and why each number is worth tracking.
 <!-- TODO: establish this claim. -->
 
 **Why code-first and not contract-first?**

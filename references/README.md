@@ -1,8 +1,9 @@
 # Specification References
 
 This directory contains standards texts vendored under their respective
-upstream terms for implementation reference and auditability. Product scope and
-normative precedence remain defined in [`docs/prd.md`](../docs/prd.md).
+upstream terms for implementation reference and auditability. Product scope
+lives in the [README](../README.md), and design decisions that bind
+implementation work are recorded in [`docs/`](../docs/README.md).
 
 ## OpenAPI Specifications
 

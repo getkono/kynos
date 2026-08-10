@@ -8,7 +8,7 @@
 
 use crate::{
     http::{Response, StatusCode},
-    router::Service,
+    router::service::Service,
 };
 
 /// Sends requests to a [`Service`] directly.

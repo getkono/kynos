@@ -21,7 +21,8 @@
 //!
 //! OpenAPI 3.2 did *not* mint a new JSON Schema dialect. Both 3.1 and 3.2 use
 //! `https://spec.openapis.org/oas/3.1/dialect/base`, exposed here as
-//! [`schema::OAS_DIALECT`]. It is not versioned by feature flag.
+//! [`model::schema::dialect::OAS_DIALECT`]. It is not versioned by feature
+//! flag.
 //!
 //! # Example
 //!
@@ -42,44 +43,40 @@ compile_error!(
      enable `openapi31`, or `openapi32`, which implies it."
 );
 
-pub mod body;
-pub mod callback;
-pub mod components;
-pub mod document;
-pub mod example;
-pub mod extensions;
-pub mod external_docs;
-pub mod info;
-pub mod link;
-pub mod parameter;
-pub mod paths;
-pub mod reference;
-pub mod response;
-pub mod schema;
-pub mod security;
-pub mod server;
-pub mod tag;
+pub mod emit;
+pub mod model;
 pub mod validate;
 
+// The curated crate-root facade. Every item below has exactly one canonical
+// path inside `model` or `validate`; these shortcuts exist so that the common
+// names stay one import away despite the module tree being deep.
 pub use crate::{
-    body::{Encoding, MediaType, RequestBody},
-    callback::Callback,
-    components::{ComponentName, Components},
-    document::{Document, SpecVersion},
-    example::Example,
-    extensions::Extensions,
-    external_docs::ExternalDocumentation,
-    info::{Contact, Info, License},
-    link::Link,
-    parameter::{Header, Parameter, ParameterIn, Style},
-    paths::{Method, Operation, PathItem, PathTemplate, Paths},
-    reference::{Ref, RefOr},
-    response::{Response, Responses, StatusPattern},
-    schema::{Discriminator, Schema, SchemaObject, Xml},
-    security::{OAuthFlow, OAuthFlows, SecurityRequirement, SecurityScheme},
-    server::{Server, ServerVariable},
-    tag::Tag,
-    validate::{Severity, SpecError, Violation},
+    model::{
+        body::{RequestBody, encoding::Encoding, media_type::MediaType},
+        callback::Callback,
+        components::{ComponentName, Components},
+        document::{Document, SpecVersion},
+        example::Example,
+        extensions::Extensions,
+        external_docs::ExternalDocumentation,
+        info::{Contact, Info, License},
+        link::Link,
+        parameter::{Parameter, ParameterIn, header::Header, style::Style},
+        paths::{
+            Paths, item::PathItem, method::Method, operation::Operation, template::PathTemplate,
+        },
+        reference::{Ref, RefOr},
+        response::{Response, Responses, status::StatusPattern},
+        schema::{Schema, discriminator::Discriminator, object::SchemaObject, xml::Xml},
+        security::{
+            SecurityScheme,
+            oauth::{OAuthFlow, OAuthFlows},
+            requirement::SecurityRequirement,
+        },
+        server::{Server, ServerVariable},
+        tag::Tag,
+    },
+    validate::violation::{Severity, SpecError, Violation},
 };
 
 /// The ordered map used throughout the model.

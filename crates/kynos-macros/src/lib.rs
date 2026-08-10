@@ -18,6 +18,7 @@
 //! cannot do — chiefly that a path template's variables match the handler's
 //! path parameters.
 
+mod derive;
 mod route;
 
 use proc_macro::TokenStream;
@@ -129,7 +130,7 @@ pub fn operation(attribute: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro]
 pub fn routes(input: TokenStream) -> TokenStream {
-    route::expand_routes(input)
+    route::routes::expand_routes(input)
 }
 
 /// A path template validated at compile time.
@@ -143,7 +144,7 @@ pub fn routes(input: TokenStream) -> TokenStream {
 /// a Paths key.
 #[proc_macro]
 pub fn path(input: TokenStream) -> TokenStream {
-    route::expand_path(input)
+    route::path::expand_path(input)
 }
 
 /// Describes a type as JSON Schema.
@@ -173,8 +174,7 @@ pub fn path(input: TokenStream) -> TokenStream {
 ///   3.2's `defaultMapping` to describe.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
-    let _ = item;
-    todo!()
+    derive::schema::expand(item)
 }
 
 /// Maps an error type to RFC 9457 problem details.
@@ -194,8 +194,7 @@ pub fn derive_schema(item: TokenStream) -> TokenStream {
 /// produce and the statuses the description advertises cannot diverge.
 #[proc_macro_derive(ApiError, attributes(problem))]
 pub fn derive_api_error(item: TokenStream) -> TokenStream {
-    let _ = item;
-    todo!()
+    derive::api_error::expand(item)
 }
 
 /// Declares a closed set of responses, one variant per status.
@@ -204,8 +203,7 @@ pub fn derive_api_error(item: TokenStream) -> TokenStream {
 /// poem-openapi's `ApiResponse`, which is the best existing treatment of this.
 #[proc_macro_derive(Reply, attributes(reply))]
 pub fn derive_reply(item: TokenStream) -> TokenStream {
-    let _ = item;
-    todo!()
+    derive::reply::expand(item)
 }
 
 /// Declares a group of path parameters.
@@ -214,8 +212,7 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 /// emits a const assertion comparing the two sets.
 #[proc_macro_derive(PathParams, attributes(param))]
 pub fn derive_path_params(item: TokenStream) -> TokenStream {
-    let _ = item;
-    todo!()
+    derive::path_params::expand(item)
 }
 
 /// Declares a group of query parameters.
@@ -226,8 +223,7 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// properly under `openapi32`.
 #[proc_macro_derive(QueryParams, attributes(param))]
 pub fn derive_query_params(item: TokenStream) -> TokenStream {
-    let _ = item;
-    todo!()
+    derive::query_params::expand(item)
 }
 
 /// Declares a group of request or response headers.
@@ -239,15 +235,13 @@ pub fn derive_query_params(item: TokenStream) -> TokenStream {
 /// diagnostic names the right tool for each reserved field.
 #[proc_macro_derive(Headers, attributes(header))]
 pub fn derive_headers(item: TokenStream) -> TokenStream {
-    let _ = item;
-    todo!()
+    derive::headers::expand(item)
 }
 
 /// Declares a group of request cookies.
 #[proc_macro_derive(Cookies, attributes(cookie))]
 pub fn derive_cookies(item: TokenStream) -> TokenStream {
-    let _ = item;
-    todo!()
+    derive::cookies::expand(item)
 }
 
 /// Declares a tag.
@@ -263,8 +257,7 @@ pub fn derive_cookies(item: TokenStream) -> TokenStream {
 /// one tag under another, which requires `openapi32`.
 #[proc_macro_derive(Tag, attributes(tag))]
 pub fn derive_tag(item: TokenStream) -> TokenStream {
-    let _ = item;
-    todo!()
+    derive::tag::expand(item)
 }
 
 /// Declares a security scheme.
@@ -276,8 +269,7 @@ pub fn derive_tag(item: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_derive(SecurityScheme, attributes(security))]
 pub fn derive_security_scheme(item: TokenStream) -> TokenStream {
-    let _ = item;
-    todo!()
+    derive::security_scheme::expand(item)
 }
 
 /// Declares an application context, emitting one `Provides` implementation per
@@ -296,6 +288,5 @@ pub fn derive_security_scheme(item: TokenStream) -> TokenStream {
 /// than panicking at runtime the way an erased state map does.
 #[proc_macro_derive(Provider, attributes(provide))]
 pub fn derive_provider(item: TokenStream) -> TokenStream {
-    let _ = item;
-    todo!()
+    derive::provider::expand(item)
 }

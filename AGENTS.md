@@ -9,6 +9,7 @@ Kynos is an idiomatic, performance-focused Rust framework for building REST APIs
 - Idiomatic and strict Rust API: API is pre-v1. All changes are on the table. API must be idiomatic Rust, and structurally strict to leverage compiler hints.
 - Production-ready: Our contract guarantees made it easy to make it production-grade since day-one. Not future optimizations should not break API (hence we are not v0.y.z).
 - Be opinionated where it counts: We scope features that are strictly required for performance and where there should only be one recommended approach. For example, IO-related primitives is vertically integrated and coupled with core dependencies like `tokio` and dependency injection is fully-featured. However, we would not prescribe dependencies such as ORMs and logging backends.
+- Runtime: tokio-only and never abstracted over; direct tokio use stays inside `crates/kynos/src/server/`. See `docs/architecture.md`.
 - Document all public API surface idiomatically and just tersely for internal logic.
 
 ## Development Guidelines
@@ -25,6 +26,9 @@ Kynos is an idiomatic, performance-focused Rust framework for building REST APIs
 - The crates are `kynos-openapi` (the OpenAPI document model, runtime-free), `kynos-macros` (procedural macros) and `kynos` (the framework facade, which re-exports both). Application code depends only on `kynos`.
 - Declare shared dependency versions under `[workspace.dependencies]`.
 - Add a dependency to a member crate with `workspace = true` only when the crate consumes it.
+- A module becomes a directory once it holds two independently-changing concerns or exceeds ~400 lines excluding tests; tests move to a sibling `tests.rs`.
+- Submodules are `pub` with no parent re-exports, so every item has one canonical path; the crate root and `kynos::prelude` are the only curated shortcuts, and macro-support items live in `kynos::__private`.
+- A feature gate belongs on the `pub mod` line, not repeated on each item inside it.
 - Do not introduce public framework APIs as placeholders, with one exception: the pre-v1 API-skeleton milestone, during which the surface is designed ahead of its implementation so it can be reviewed and frozen as a whole. A placeholder body must be `todo!()`, must be fully documented, and must appear in a `no_run` doc example proving the surface is usable. Once the skeleton is frozen this exception lapses.
 
 ## Tooling

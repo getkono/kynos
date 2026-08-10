@@ -3,10 +3,10 @@
 use std::future::Future;
 
 use crate::{
-    extract::Describe,
+    extract::describe::Describe,
     http::{Request, Response},
-    router::OperationCx,
-    schema::Registry,
+    router::operation::OperationCx,
+    schema::registry::Registry,
 };
 
 /// An `async fn` usable as an operation handler.

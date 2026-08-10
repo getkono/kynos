@@ -1,9 +1,12 @@
 //! Compile and runtime checks for route-generated typed URIs.
 
 use kynos::{
-    extract::{Path, PathParams, Query, QueryParams},
+    extract::params::{
+        path::{Path, PathParams},
+        query::{Query, QueryParams},
+    },
     openapi,
-    schema::{Registry, Schema},
+    schema::{Schema, registry::Registry},
 };
 
 struct ReportPath;

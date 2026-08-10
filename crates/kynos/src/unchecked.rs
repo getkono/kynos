@@ -1,14 +1,22 @@
 //! Escape hatches, and what they cost.
 //!
-//! Everything in this module lets you build something Kynos cannot describe. In
-//! exchange, the emitted document is stamped with
-//! `x-kynos-document-not-authoritative`, `Router::validate` reports every
-//! unchecked construct, and whatever they reach is absent from `paths`.
+//! Everything in this module lets you build something Kynos cannot describe.
+//! These are waivers: you are asserting that you know what the cost is.
+//!
+//! In exchange, `Router::validate` reports every unchecked construct, and the
+//! operations a waiver reaches are emitted and flagged rather than dropped.
+//! `x-kynos-document-not-authoritative` follows from that, stamped on the
+//! document when any operation is flagged.
 //!
 //! That cost is deliberate and visible. A description that silently omits part
 //! of the service is worse than no description, because consumers trust it. If
 //! Kynos cannot describe something, it says so in the artifact rather than
 //! quietly leaving a hole.
+//!
+//! The exception is [`Router::upgrade_unchecked`], because a connection that
+//! has left HTTP has no vocabulary in any version of the specification — an
+//! entry no consumer could act on would be worse than the honest absence, which
+//! `Router::validate` reports either way.
 //!
 //! # When these are the right answer
 //!
@@ -24,7 +32,7 @@
 //!
 //! To avoid writing a type. Everything under [`crate::schema`] exists so that
 //! the hard cases stay describable; reach for
-//! [`Unchecked`](crate::schema::Unchecked) before reaching for this module,
+//! [`Unchecked`](crate::schema::unchecked::Unchecked) before reaching for this module,
 //! because a weak schema is still an honest one.
 
 use std::{
@@ -35,7 +43,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::router::{Router, Service};
+use crate::router::{Router, service::Service};
 
 /// A route Kynos does not describe.
 #[derive(Debug)]
@@ -65,7 +73,7 @@ impl<C> Service<C> {
     /// Converts this service into an explicitly unchecked Tower service.
     ///
     /// ```no_run
-    /// # use kynos::{router::Service, unchecked::UncheckedService};
+    /// # use kynos::{router::service::Service, unchecked::UncheckedService};
     /// fn tower<C: Send + Sync + 'static>(service: Service<C>) -> UncheckedService<C> {
     ///     service.into_tower_unchecked()
     /// }
@@ -106,7 +114,7 @@ impl<C> Router<C> {
     ///
     /// Prefer writing an [`Interceptor`](crate::middleware::Interceptor). It is
     /// barely more work: declare an
-    /// [`OperationContribution`](crate::middleware::OperationContribution)
+    /// [`OperationContribution`](crate::middleware::contribution::OperationContribution)
     /// saying what the layer does to the exchange, and in return every covered
     /// operation documents it correctly and automatically.
     #[must_use]
