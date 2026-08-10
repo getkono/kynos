@@ -22,6 +22,12 @@ impl Registry {
     }
 
     /// Returns a schema for `T`, registering it if it is named and new.
+    ///
+    /// This is where naming happens, not in [`Schema::schema`]. A named type is
+    /// registered under [`Schema::name`] and the caller gets a `$ref`; an
+    /// anonymous one is inlined. Registration precedes the descent into `T`'s
+    /// own fields, which is what makes a self-referential type produce a `$ref`
+    /// rather than recurse forever.
     pub fn resolve<T: Schema>(&mut self) -> OpenApiSchema {
         todo!()
     }

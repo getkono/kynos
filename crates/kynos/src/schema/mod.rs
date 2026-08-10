@@ -25,6 +25,29 @@
 //! document, and makes `Router::validate` report a warning. Weakness is
 //! allowed; *silent* weakness is not.
 //!
+//! # What the standard library gets
+//!
+//! | Rust | Schema |
+//! | --- | --- |
+//! | `bool` | `boolean` |
+//! | `String`, `char` | `string`; `char` is bounded to one character |
+//! | `i8`–`i32`, `u8`–`u32` | `integer`/`int32`, with the type's exact range |
+//! | `i64`, `u64` | `integer`/`int64`; `u64` adds `minimum: 0` |
+//! | `f32`, `f64` | `number`/`float`, `number`/`double` |
+//! | `Option<T>` | `T`, widened to admit `null` |
+//! | `Box<T>`, `Arc<T>` | `T`, under `T`'s own component name |
+//! | `Vec<T>`, `VecDeque<T>`, `[T]` | `array` |
+//! | `[T; N]` | `array` of exactly `N` |
+//! | `HashSet<T>`, `BTreeSet<T>` | `array` with `uniqueItems` |
+//! | `HashMap<K, V>`, `BTreeMap<K, V>` | `object`, `K: MapKey` |
+//! | tuples up to twelve | `array` with `prefixItems`, closed |
+//! | `()` | `null` |
+//! | `Ipv4Addr`, `Ipv6Addr`, `IpAddr` | `string`/`ipv4`, `string`/`ipv6`, either |
+//!
+//! Date, time, decimal and UUID types are not here, because the crates that
+//! define them are not Kynos dependencies. Reach them through a derived newtype
+//! until they are.
+//!
 //! # Types deliberately left without an implementation
 //!
 //! | Rejected | Why | Use instead |
@@ -47,6 +70,10 @@ pub mod constraints;
 pub mod registry;
 pub mod unchecked;
 
+// Implementations only, so there is no item here for a canonical path to point
+// at. Which types are implemented is documented above, beside the rejections.
+mod impls;
+
 use kynos_openapi::{ComponentName, Schema as OpenApiSchema};
 
 use crate::schema::registry::Registry;
@@ -56,12 +83,28 @@ use crate::schema::registry::Registry;
 /// Normally derived. Implement it by hand only for a newtype over something
 /// that already implements it, or for a type whose wire form is not the one
 /// serde would produce.
+///
+/// # What an implementation returns
+///
+/// The schema *body*, never a `$ref` to itself. Naming, deduplication and
+/// cycle-breaking belong to [`Registry::resolve`], which is the only thing that
+/// can do them: a type cannot register a placeholder for itself before
+/// descending into its own fields. So an implementation reaches its field types
+/// through `registry.resolve::<T>()` rather than through `T::schema`, and lets
+/// the registry decide whether each one inlines or is referenced.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot describe itself as a schema",
+    label = "not describable",
+    note = "derive it with `#[derive(kynos::Schema)]`",
+    note = "some types are refused on purpose — `serde_json::Value`, `usize`, `SystemTime` and \
+            friends. Wrap one in `kynos::schema::unchecked::Unchecked` to say the payload really \
+            is unconstrained"
+)]
 pub trait Schema {
-    /// Produces the schema, registering any named component it needs.
+    /// Produces the schema body for this type.
     ///
-    /// A type with a [`name`](Schema::name) should register itself with the
-    /// registry and return a `$ref`, so that a schema used in twenty places
-    /// appears once in the document.
+    /// Field and element types go through [`Registry::resolve`]; see the trait
+    /// documentation for why.
     fn schema(registry: &mut Registry) -> OpenApiSchema;
 
     /// The component name this type is registered under, if it has one.
@@ -72,3 +115,22 @@ pub trait Schema {
         None
     }
 }
+
+/// A type usable as a JSON object key.
+///
+/// JSON object keys are strings, so an implementation's [`Schema`] must be a
+/// string schema. Implement it for a string-shaped newtype or a unit-variant
+/// enum to use that type as a map key; the bound is what stops a map keyed by
+/// something that cannot survive the round trip.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be a JSON object key",
+    label = "not a map key",
+    note = "JSON object keys are strings; implement `kynos::schema::MapKey` for a string-shaped \
+            newtype, or key the map by `String`"
+)]
+pub trait MapKey: Schema {}
+
+impl MapKey for String {}
+
+#[cfg(test)]
+mod tests;
