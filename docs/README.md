@@ -15,6 +15,7 @@ framework, and the list of features it deliberately rejects, lives in the
 | [`architecture.md`](architecture.md) | Touching the runtime boundary, adding a dependency, or introducing anything to the public API surface |
 | [`state.md`](state.md) | Working on dependency injection, the application context, or anything a handler receives that the request did not carry |
 | [`handlers.md`](handlers.md) | Working on extraction, responses, or what a handler signature is allowed to say |
+| [`errors.md`](errors.md) | Working on failure: what a handler returns when it cannot succeed, how an extractor rejects, and what reaches a client |
 | [`routing.md`](routing.md) | Working on path templates, routers, groups, or how router scope becomes document scope |
 | [`middleware.md`](middleware.md) | Working on interceptors, contributions, escape hatches, or `tower` interoperability |
 | [`testing.md`](testing.md) | Deciding where a test belongs, or what kind of test a guarantee needs |
