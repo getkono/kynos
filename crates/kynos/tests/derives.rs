@@ -84,6 +84,13 @@ struct Admin;
 #[security(bearer, name = "BearerAuth", credential = String)]
 struct BearerAuth;
 
+/// Cookie authentication needs no new type and no `cookie` feature: a scheme
+/// is pure description, and the authenticator parses the header itself.
+#[derive(SecurityScheme)]
+#[security(api_key(in = "cookie", name = "session"))]
+#[security(name = "SessionCookie")]
+struct SessionCookie;
+
 #[derive(ApiError)]
 enum StoreError {
     NotFound,
@@ -119,6 +126,7 @@ fn every_derive_implements_its_trait() {
     implements_tag::<Users>();
     implements_tag::<Admin>();
     implements_security_scheme::<BearerAuth>();
+    implements_security_scheme::<SessionCookie>();
     implements_responses::<StoreError>();
     implements_responses::<CreateReply>();
 }
@@ -134,6 +142,10 @@ fn declared_names_reach_the_trait_constants() {
     );
     assert_eq!(<Users as TagTrait>::NAME, "users");
     assert_eq!(<BearerAuth as SecuritySchemeTrait>::NAME, "BearerAuth");
+    assert_eq!(
+        <SessionCookie as SecuritySchemeTrait>::NAME,
+        "SessionCookie"
+    );
 }
 
 /// A tag with no explicit name takes the type's own identifier.
@@ -182,4 +194,15 @@ fn the_provider_derive_supplies_every_field_it_was_not_told_to_skip() {
         name: "orders",
     };
     assert_eq!(provides(&app), (Pool(7), Cache("local")));
+}
+
+/// An HTTP authentication scheme knows its own challenge, so a 401 and the
+/// description cannot disagree about what a client should do next.
+#[test]
+fn an_http_scheme_supplies_its_challenge() {
+    assert_eq!(
+        <BearerAuth as SecuritySchemeTrait>::challenge(),
+        Some("Bearer")
+    );
+    assert_eq!(<SessionCookie as SecuritySchemeTrait>::challenge(), None);
 }

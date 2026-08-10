@@ -55,6 +55,17 @@ pub trait SecurityScheme: Send + Sync + 'static {
     fn scopes() -> &'static [&'static str] {
         &[]
     }
+
+    /// The `WWW-Authenticate` challenge sent with a 401, if this scheme has
+    /// one.
+    ///
+    /// Declared here rather than in the authenticator so that the challenge in
+    /// the description and the challenge on the wire are one string. A client
+    /// has to handle it, which makes it part of what the 401 response *is*
+    /// rather than an implementation detail of enforcing the scheme.
+    fn challenge() -> Option<&'static str> {
+        None
+    }
 }
 
 /// Verifies a credential.

@@ -32,8 +32,43 @@ use crate::{
 /// #     fn describe() -> kynos::openapi::SecurityScheme { todo!() }
 /// # }
 /// ```
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Auth<S: SecurityScheme>(pub S::Credential);
+
+// Hand-written rather than derived: a derive bounds the implementation on the
+// *scheme*, which is a marker and carries nothing, while what is actually
+// being cloned or compared is the credential. `Default` and `Ord` are absent
+// on purpose — `Auth::default()` would be an unverified credential, and there
+// is no meaningful order on one.
+impl<S: SecurityScheme> Clone for Auth<S>
+where
+    S::Credential: Clone,
+{
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<S: SecurityScheme> Copy for Auth<S> where S::Credential: Copy {}
+
+impl<S: SecurityScheme> std::fmt::Debug for Auth<S>
+where
+    S::Credential: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Auth").field(&self.0).finish()
+    }
+}
+
+impl<S: SecurityScheme> PartialEq for Auth<S>
+where
+    S::Credential: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<S: SecurityScheme> Eq for Auth<S> where S::Credential: Eq {}
 
 impl<S: SecurityScheme> Auth<S> {
     /// Unwraps the verified credential.
@@ -84,8 +119,39 @@ pub trait Scopes: Send + Sync + 'static {
 /// A const generic would be the natural spelling, but `&'static [&'static str]`
 /// is not a permitted const parameter type, so the scope set is a type
 /// implementing [`Scopes`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Scoped<S: SecurityScheme, R: Scopes>(pub S::Credential, pub std::marker::PhantomData<R>);
+
+// See `Auth`: bounded on the credential, and without `Default`.
+impl<S: SecurityScheme, R: Scopes> Clone for Scoped<S, R>
+where
+    S::Credential: Clone,
+{
+    fn clone(&self) -> Self {
+        Self(self.0.clone(), std::marker::PhantomData)
+    }
+}
+
+impl<S: SecurityScheme, R: Scopes> Copy for Scoped<S, R> where S::Credential: Copy {}
+
+impl<S: SecurityScheme, R: Scopes> std::fmt::Debug for Scoped<S, R>
+where
+    S::Credential: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Scoped").field(&self.0).finish()
+    }
+}
+
+impl<S: SecurityScheme, R: Scopes> PartialEq for Scoped<S, R>
+where
+    S::Credential: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<S: SecurityScheme, R: Scopes> Eq for Scoped<S, R> where S::Credential: Eq {}
 
 impl<S: SecurityScheme, R: Scopes> Scoped<S, R> {
     /// Unwraps the verified and authorized credential.

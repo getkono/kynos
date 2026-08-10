@@ -36,6 +36,17 @@ impl<C> Service<C> {
         &mut self.document
     }
 
+    /// Flags every operation in the document as unverified, and restamps the
+    /// document-level summary to match.
+    ///
+    /// Used by the escape hatches: the operations stay in `paths`, because an
+    /// omission is invisible to the consumer that trusts the description.
+    #[cfg(feature = "unchecked")]
+    pub(crate) fn mark_opaque(&mut self, reason: kynos_openapi::OpaqueReason) {
+        let _ = reason;
+        todo!()
+    }
+
     /// Handles one request.
     ///
     /// Exposed so that a Kynos service can be driven directly — by a test, or

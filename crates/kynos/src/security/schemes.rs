@@ -1,30 +1,46 @@
-//! The schemes Kynos knows how to describe.
+//! The schemes Kynos can describe without being told anything.
 //!
-//! Each is a unit struct implementing [`SecurityScheme`]; `#[derive(SecurityScheme)]`
-//! exists for the cases these do not cover, such as an API key under a
-//! non-standard header name.
+//! Each is a marker type implementing [`SecurityScheme`]. Only the schemes
+//! whose description follows entirely from the scheme itself are here: an API
+//! key has to say which header or cookie carries it, OAuth 2.0 has to declare
+//! its flows, and OpenID Connect has to name a discovery URL, so none of the
+//! three can exist as a configuration-free type. Those come from
+//! `#[derive(SecurityScheme)]`, which is where the configuration goes.
+//!
+//! Every scheme is generic over what a verified credential yields the handler,
+//! because the *description* is the same whatever that is — the document says
+//! "a bearer token"; what the token means is the application's business, and
+//! `Authenticates<Bearer<Claims>>` is where it says so. Without the parameter
+//! an application could only ever have one bearer authenticator, and it would
+//! have to hand handlers a raw `String`.
+
+use std::marker::PhantomData;
 
 use crate::security::SecurityScheme;
 
 /// HTTP bearer authentication, per RFC 6750.
+///
+/// `bearerFormat` is an optional hint, so this describes itself completely
+/// without one. Use `#[derive(SecurityScheme)]` with `bearer(format = "JWT")`
+/// to add it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Bearer;
+pub struct Bearer<T = String>(PhantomData<fn() -> T>);
 
 /// HTTP basic authentication, per RFC 7617.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Basic;
+pub struct Basic<T = Credentials>(PhantomData<fn() -> T>);
 
-/// An API key carried in a header, query parameter or cookie.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ApiKey;
-
-/// OAuth 2.0.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct OAuth2;
-
-/// OpenID Connect Discovery.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct OpenIdConnect;
+/// The user-id and password carried by HTTP basic authentication.
+///
+/// A named type rather than a pair, so that a handler signature says which
+/// field is the password.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Credentials {
+    /// The user-id.
+    pub username: String,
+    /// The password.
+    pub password: String,
+}
 
 /// Mutual TLS client certificate authentication.
 ///
@@ -32,56 +48,37 @@ pub struct OpenIdConnect;
 /// certificates, so turning on mTLS cannot leave the description silent
 /// about it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct MutualTls;
+pub struct MutualTls<T = Vec<u8>>(PhantomData<fn() -> T>);
 
-impl SecurityScheme for Bearer {
+impl<T: Send + 'static> SecurityScheme for Bearer<T> {
     const NAME: &'static str = "Bearer";
-    type Credential = String;
+    type Credential = T;
 
     fn describe() -> kynos_openapi::SecurityScheme {
-        todo!()
+        kynos_openapi::SecurityScheme::bearer(None)
+    }
+
+    fn challenge() -> Option<&'static str> {
+        Some("Bearer")
     }
 }
 
-impl SecurityScheme for Basic {
+impl<T: Send + 'static> SecurityScheme for Basic<T> {
     const NAME: &'static str = "Basic";
-    type Credential = (String, String);
+    type Credential = T;
 
     fn describe() -> kynos_openapi::SecurityScheme {
         todo!()
     }
-}
 
-impl SecurityScheme for ApiKey {
-    const NAME: &'static str = "ApiKey";
-    type Credential = String;
-
-    fn describe() -> kynos_openapi::SecurityScheme {
-        todo!()
+    fn challenge() -> Option<&'static str> {
+        Some("Basic")
     }
 }
 
-impl SecurityScheme for OAuth2 {
-    const NAME: &'static str = "OAuth2";
-    type Credential = String;
-
-    fn describe() -> kynos_openapi::SecurityScheme {
-        todo!()
-    }
-}
-
-impl SecurityScheme for OpenIdConnect {
-    const NAME: &'static str = "OpenIdConnect";
-    type Credential = String;
-
-    fn describe() -> kynos_openapi::SecurityScheme {
-        todo!()
-    }
-}
-
-impl SecurityScheme for MutualTls {
+impl<T: Send + 'static> SecurityScheme for MutualTls<T> {
     const NAME: &'static str = "MutualTls";
-    type Credential = Vec<u8>;
+    type Credential = T;
 
     fn describe() -> kynos_openapi::SecurityScheme {
         todo!()
