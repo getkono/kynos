@@ -65,7 +65,10 @@ impl<C, P: PanicPolicy> Group<C, P> {
 
     /// Applies an interceptor to every operation in this group.
     #[must_use]
-    pub fn intercept<I: Interceptor<C>>(self, interceptor: I) -> Self {
+    pub fn intercept<I: Interceptor<C>>(self, interceptor: I) -> Self
+    where
+        C: Sync + 'static,
+    {
         let _ = interceptor;
         todo!()
     }

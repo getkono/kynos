@@ -1,7 +1,10 @@
 //! Limits, and the responses they make possible.
 
-use crate::http;
-use crate::middleware::{Interceptor, Next, contribution::OperationContribution};
+use crate::{
+    http,
+    middleware::{Interceptor, Next, contribution::OperationContribution},
+    router::operation::Route,
+};
 
 /// Caps the size of a request body.
 ///
@@ -29,7 +32,7 @@ impl BodySize {
 }
 
 impl<C: Sync + 'static> Interceptor<C> for BodySize {
-    fn contribution(&self) -> OperationContribution {
+    fn contribution(&self, _route: Route<'_>) -> OperationContribution {
         Self::contribution(self)
     }
 
@@ -66,7 +69,7 @@ impl Timeout {
 }
 
 impl<C: Sync + 'static> Interceptor<C> for Timeout {
-    fn contribution(&self) -> OperationContribution {
+    fn contribution(&self, _route: Route<'_>) -> OperationContribution {
         Self::contribution(self)
     }
 
@@ -103,7 +106,7 @@ impl Concurrency {
 }
 
 impl<C: Sync + 'static> Interceptor<C> for Concurrency {
-    fn contribution(&self) -> OperationContribution {
+    fn contribution(&self, _route: Route<'_>) -> OperationContribution {
         Self::contribution(self)
     }
 

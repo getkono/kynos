@@ -2,11 +2,15 @@
 
 use std::future::Future;
 
-use crate::http;
-use crate::middleware::{Interceptor, Next, contribution::OperationContribution};
+use crate::{
+    http,
+    middleware::{Interceptor, Next, contribution::OperationContribution},
+    router::operation::Route,
+};
 
 /// The result of consulting a rate-limit policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Decision {
     /// The request may continue.
     Allow {
@@ -78,7 +82,7 @@ impl<P> RateLimit<P> {
 }
 
 impl<C: Sync + 'static, P: RateLimitPolicy<C>> Interceptor<C> for RateLimit<P> {
-    fn contribution(&self) -> OperationContribution {
+    fn contribution(&self, _route: Route<'_>) -> OperationContribution {
         Self::contribution(self)
     }
 

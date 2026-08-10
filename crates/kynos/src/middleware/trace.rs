@@ -1,6 +1,6 @@
 //! Request tracing: the one standard way to log at the operation level.
 
-use crate::{http, middleware::Observer};
+use crate::{http, middleware::Observer, router::operation::Route};
 
 /// Emits one `tracing` span per operation.
 ///
@@ -46,17 +46,22 @@ impl Trace {
 }
 
 impl<C> Observer<C> for Trace {
-    fn on_request(&self, request: &http::Request, context: &C) {
+    fn on_request(&self, request: &http::Request, _route: Option<Route<'_>>, context: &C) {
         let _ = (request, context);
         todo!()
     }
 
-    fn on_response(&self, response: &http::Response, elapsed: std::time::Duration) {
+    fn on_response(
+        &self,
+        response: &http::Response,
+        _route: Option<Route<'_>>,
+        elapsed: std::time::Duration,
+    ) {
         let _ = (response, elapsed);
         todo!()
     }
 
-    fn on_panic(&self, payload: &(dyn std::any::Any + Send)) {
+    fn on_panic(&self, payload: &(dyn std::any::Any + Send), _route: Option<Route<'_>>) {
         let _ = payload;
         todo!()
     }

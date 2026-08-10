@@ -17,6 +17,7 @@ use crate::{
 /// specifics a client needs to act on it — which field failed, which quota was
 /// exceeded, when to retry.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Problem {
     /// A URI identifying the problem *type*.
     ///
@@ -119,6 +120,17 @@ pub trait IntoProblem {
     /// returned at runtime but missing here is a bug the description would
     /// hide. The derive computes it; hand implementations must keep it honest.
     fn statuses() -> &'static [StatusCode];
+}
+
+/// Serialized by hand rather than derived: [`StatusCode`] is not
+/// [`serde::Serialize`], `type_uri` is written as RFC 9457's `type`, and the
+/// extension members are flattened alongside the registered ones rather than
+/// nested under a field of their own.
+impl serde::Serialize for Problem {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let _ = serializer;
+        todo!()
+    }
 }
 
 impl IntoResponse for Problem {

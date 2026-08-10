@@ -5,6 +5,7 @@
 use crate::{
     http,
     middleware::{Interceptor, Next, contribution::OperationContribution},
+    router::operation::Route,
 };
 
 /// Compresses responses when the client accepts it.
@@ -29,7 +30,7 @@ impl Compression {
 }
 
 impl<C: Sync + 'static> Interceptor<C> for Compression {
-    fn contribution(&self) -> OperationContribution {
+    fn contribution(&self, _route: Route<'_>) -> OperationContribution {
         OperationContribution::none()
     }
 

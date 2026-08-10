@@ -99,6 +99,27 @@ pub enum Rejection {
     /// Credentials were valid but insufficient. Produces 403.
     #[error("access is not permitted")]
     Forbidden,
+
+    /// A rate limit was exceeded. Produces 429.
+    #[error("too many requests")]
+    TooManyRequests {
+        /// How long to wait before retrying.
+        retry_after: std::time::Duration,
+    },
+
+    /// The service is at capacity. Produces 503.
+    #[error("the service is at capacity")]
+    ServiceUnavailable {
+        /// How long to wait before retrying.
+        retry_after: std::time::Duration,
+    },
+
+    /// The handler did not finish inside its budget. Produces 504.
+    #[error("the request timed out")]
+    GatewayTimeout {
+        /// The budget that was exhausted.
+        limit: std::time::Duration,
+    },
 }
 
 impl Rejection {

@@ -3,7 +3,35 @@
 use crate::{
     http,
     middleware::{Interceptor, Next, contribution::OperationContribution},
+    router::operation::Route,
 };
+
+/// Supplies identifiers for requests that arrive without one.
+///
+/// Kynos owns the header and the contribution; the identifier *format* stays
+/// the application's, because prescribing one would mean prescribing a UUID or
+/// trace-context dependency that most applications already have their own
+/// opinion about.
+pub trait RequestIdSource: Send + Sync + 'static {
+    /// Produces an identifier for a request that carried none.
+    fn next_id(&self) -> http::HeaderValue;
+}
+
+/// A dependency-free source: a per-process counter.
+///
+/// Unique within one process and no further. Enough to correlate a request
+/// across its own logs, which is what the default is for; reach for a real
+/// identifier scheme when correlation has to cross a process boundary.
+#[derive(Debug, Default)]
+pub struct Counter {
+    _private: (),
+}
+
+impl RequestIdSource for Counter {
+    fn next_id(&self) -> http::HeaderValue {
+        todo!()
+    }
+}
 
 /// Assigns each request an identifier and echoes it back.
 ///
@@ -11,27 +39,47 @@ use crate::{
 /// contribution keeps that wire-visible behavior in every covered
 /// operation's description.
 #[derive(Clone, Debug, Default)]
-pub struct RequestId {
-    _private: (),
+pub struct RequestId<S = Counter> {
+    _private: std::marker::PhantomData<fn() -> S>,
 }
 
-impl RequestId {
+impl RequestId<Counter> {
     /// Uses `X-Request-Id`, generating one when the client sends none.
     #[must_use]
     pub fn new() -> Self {
         todo!()
     }
+}
 
+impl<S: RequestIdSource> RequestId<S> {
     /// Uses a different header name.
     #[must_use]
     pub fn header(self, name: &'static str) -> Self {
         let _ = name;
         todo!()
     }
+
+    /// Echoes a client-supplied identifier instead of always generating one.
+    ///
+    /// Off by default. An inbound header is attacker-controlled, so letting it
+    /// into logs and downstream requests is a decision worth making explicitly
+    /// rather than a default worth inheriting.
+    #[must_use]
+    pub fn trust_client(self, trust: bool) -> Self {
+        let _ = trust;
+        todo!()
+    }
+
+    /// Replaces the identifier source.
+    #[must_use]
+    pub fn source<T: RequestIdSource>(self, source: T) -> RequestId<T> {
+        let _ = source;
+        todo!()
+    }
 }
 
-impl<C: Sync + 'static> Interceptor<C> for RequestId {
-    fn contribution(&self) -> OperationContribution {
+impl<C: Sync + 'static, S: RequestIdSource> Interceptor<C> for RequestId<S> {
+    fn contribution(&self, _route: Route<'_>) -> OperationContribution {
         todo!()
     }
 

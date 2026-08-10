@@ -3,6 +3,8 @@
 pub mod header;
 pub mod style;
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -43,6 +45,27 @@ pub enum ParameterIn {
     /// query-related parameter on its operation.
     #[cfg(feature = "openapi32")]
     Querystring,
+}
+
+impl ParameterIn {
+    /// The location as it is spelled in a description.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Query => "query",
+            Self::Header => "header",
+            Self::Path => "path",
+            Self::Cookie => "cookie",
+            #[cfg(feature = "openapi32")]
+            Self::Querystring => "querystring",
+        }
+    }
+}
+
+impl fmt::Display for ParameterIn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// A single operation parameter.

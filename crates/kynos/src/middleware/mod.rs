@@ -45,24 +45,44 @@ pub mod limits;
 pub mod rate_limit;
 pub mod request_id;
 
+// Object-safe forms of the two RPITIT traits, so a heterogeneous chain fits in
+// one collection. Private: `Pin<Box<dyn Future>>` never reaches a user
+// signature.
+mod erased;
+
 #[cfg(feature = "compression")]
 pub mod compression;
 #[cfg(feature = "trace")]
 pub mod trace;
 
-use std::future::Future;
+use std::{future::Future, sync::Arc};
 
 use crate::{
     http::{Request, Response},
-    middleware::contribution::OperationContribution,
+    middleware::{
+        contribution::OperationContribution,
+        erased::{ErasedInterceptor, ErasedTerminal},
+    },
+    router::operation::Route,
 };
 
 /// Middleware that can affect the exchange, and says how.
-pub trait Interceptor<C>: Send + Sync + 'static {
-    /// What this interceptor adds to every operation it covers.
+///
+/// The `C: Sync + 'static` bound is stated once here rather than repeated on
+/// every implementation: it is what makes [`Next`] `Send` unconditionally, so
+/// no interceptor has to reason about whether its own future is.
+pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
+    /// What this interceptor adds to the description of `route`.
     ///
-    /// Called once per operation while the router is built, never per request.
-    fn contribution(&self) -> OperationContribution;
+    /// Called once per covered operation while the router is built, never per
+    /// request — which is what makes the emitted description checkable in CI
+    /// rather than only observable by running the service.
+    ///
+    /// `route` is supplied so that one interceptor may contribute differently
+    /// to different operations: different scopes per resource, a different
+    /// documented limit per operation. It is still inert data, because the
+    /// operation is known at build time.
+    fn contribution(&self, route: Route<'_>) -> OperationContribution;
 
     /// Handles a request, calling `next` to continue.
     fn intercept(
@@ -74,16 +94,58 @@ pub trait Interceptor<C>: Send + Sync + 'static {
 }
 
 /// The remainder of the interceptor chain.
-#[derive(Debug)]
+///
+/// A cursor rather than a linked structure: running the rest of the chain is
+/// taking the head of a slice, and reaching the end is calling the endpoint. A
+/// route with no interceptors therefore pays nothing.
+// Read by `Next::run` and populated by `Router::build`, both still `todo!()`.
+#[allow(dead_code)]
 pub struct Next<'a, C> {
-    _private: std::marker::PhantomData<&'a C>,
+    remaining: &'a [Arc<dyn ErasedInterceptor<C>>],
+    terminal: &'a dyn ErasedTerminal<C>,
+    context: &'a C,
+    route: Route<'a>,
 }
 
-impl<C> Next<'_, C> {
+impl<C> std::fmt::Debug for Next<'_, C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Next")
+            .field("remaining", &self.remaining.len())
+            .field("route", &self.route)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a, C: Sync + 'static> Next<'a, C> {
+    /// Begins a chain.
+    // Called by `Router::build`, whose body is still `todo!()`.
+    #[allow(dead_code)]
+    pub(crate) fn new(
+        remaining: &'a [Arc<dyn ErasedInterceptor<C>>],
+        terminal: &'a dyn ErasedTerminal<C>,
+        context: &'a C,
+        route: Route<'a>,
+    ) -> Self {
+        Self {
+            remaining,
+            terminal,
+            context,
+            route,
+        }
+    }
+
     /// Runs the rest of the chain.
     pub async fn run(self, request: Request) -> Response {
         let _ = request;
         todo!()
+    }
+
+    /// The operation this request matched.
+    ///
+    /// Always available: interceptors run per-operation, after routing.
+    #[must_use]
+    pub fn route(&self) -> Route<'a> {
+        self.route
     }
 }
 
@@ -92,15 +154,24 @@ impl<C> Next<'_, C> {
 /// Because it cannot change the exchange, it contributes nothing to the
 /// description — which is why an observer needs no declaration and can see
 /// everything, including the headers no extractor will surface to a handler.
+///
+/// `route` is `None` when no operation matched: a 404 is still worth logging,
+/// and an observer that could not see one would be blind to exactly the
+/// traffic worth investigating.
 pub trait Observer<C>: Send + Sync + 'static {
     /// Called when a request arrives, before any interceptor.
-    fn on_request(&self, request: &Request, context: &C);
+    fn on_request(&self, request: &Request, route: Option<Route<'_>>, context: &C);
 
     /// Called when a response is about to be written.
-    fn on_response(&self, response: &Response, elapsed: std::time::Duration);
+    fn on_response(
+        &self,
+        response: &Response,
+        route: Option<Route<'_>>,
+        elapsed: std::time::Duration,
+    );
 
     /// Called when a handler panicked.
-    fn on_panic(&self, payload: &(dyn std::any::Any + Send)) {
-        let _ = payload;
+    fn on_panic(&self, payload: &(dyn std::any::Any + Send), route: Option<Route<'_>>) {
+        let _ = (payload, route);
     }
 }
