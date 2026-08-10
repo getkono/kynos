@@ -13,8 +13,22 @@ framework, and the list of features it deliberately rejects, lives in the
 | Document | Consult when |
 | --- | --- |
 | [`architecture.md`](architecture.md) | Touching the runtime boundary, adding a dependency, or introducing anything to the public API surface |
+| [`state.md`](state.md) | Working on dependency injection, the application context, or anything a handler receives that the request did not carry |
+| [`handlers.md`](handlers.md) | Working on extraction, responses, or what a handler signature is allowed to say |
+| [`routing.md`](routing.md) | Working on path templates, routers, groups, or how router scope becomes document scope |
 | [`middleware.md`](middleware.md) | Working on interceptors, contributions, escape hatches, or `tower` interoperability |
+| [`testing.md`](testing.md) | Deciding where a test belongs, or what kind of test a guarantee needs |
 | [`nfr.md`](nfr.md) | Adding a module-level guarantee, or deciding what a change must prove before it lands |
+
+## The anti-patterns are normative
+
+The eleven [anti-patterns](../README.md#anti-patterns) live in the README
+because that is where someone evaluating Kynos will look for them, but they
+bind implementation work exactly as anything here does —
+[`architecture.md`](architecture.md#invariants) derives them from its three
+invariants, which is only meaningful if the list is a contract rather than
+marketing. Each has a normative home in one of the documents above, which is
+where its enforcement point is recorded.
 
 ## Normative and non-normative material
 
