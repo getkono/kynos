@@ -135,7 +135,7 @@ Each is a rule with a mechanical enforcement point.
 | # | Rule | Enforced by |
 | --- | --- | --- |
 | 2 | No handler receives the raw request, its body, or its whole header map | `Describe` has no blanket implementation, and Kynos ships none for `Request`, `Body` or `HeaderMap` |
-| 4 | No status is chosen at run time | `IntoResponse` is unimplemented for `StatusCode`, `String`, `&str` and tuples of them |
+| 4 | No status is chosen at run time | `IntoResponse` is unimplemented for `StatusCode`, `String`, `&str` and tuples of them; `Responses` is unimplemented for `Problem`, whose status is a field. See [`errors.md`](errors.md#a-problem-is-a-representation-not-a-response) |
 | 5 | `Accept`, `Content-Type` and `Authorization` are never header parameters | `#[derive(Headers)]` rejects them by folded name, and names the right tool for each |
 | 6 | No unconstrained body type | `serde_json::Value` and friends have no [`Schema`](../crates/kynos/src/schema/mod.rs) implementation |
 

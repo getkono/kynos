@@ -64,14 +64,33 @@ async fn list_users(Inject(pool): Inject<Pool>, Inject(cache): Inject<Cache>) ->
     NoContent
 }
 
+/// What checking a connection out of the pool can fail with.
+///
+/// A named type rather than a bare `Problem`, because the statuses an operation
+/// advertises have to be known without running it. `statuses()` here is
+/// `&[503]`, and that is what reaches the description.
+// The variant is constructed by the checkout this example does not implement.
+#[allow(dead_code)]
+#[derive(Debug, thiserror::Error, ApiError)]
+enum HealthError {
+    #[error("the pool has no connection to spare")]
+    #[problem(status = 503, title = "Pool exhausted")]
+    Exhausted,
+}
+
 /// Acquisition that can fail is not injection.
 ///
 /// Inject the *handle* and check it out here, where the failure lands in the
 /// return type and therefore in the description. A provider that could fail
 /// would produce a response no operation declares — which is the one thing this
 /// framework exists to prevent.
+///
+/// The return type is a plain `Result`. `kynos::Result` defaults its error to
+/// the framework's own build-time failure, which is what `main` below returns;
+/// in a handler position that default would suggest a relationship that does
+/// not exist.
 #[kynos::get("/health")]
-async fn health(Inject(pool): Inject<Pool>) -> kynos::Result<NoContent, Problem> {
+async fn health(Inject(pool): Inject<Pool>) -> Result<NoContent, HealthError> {
     let _ = pool;
     Ok(NoContent)
 }

@@ -16,15 +16,23 @@ a problem document, and both appear in the operation's `responses` — because
 
 ## A problem is a representation, not a response
 
-[`Problem`](../crates/kynos/src/error/problem.rs) implements neither
-`IntoResponse` nor `Responses`, so it cannot be returned from a handler.
+[`Problem`](../crates/kynos/src/error/problem.rs) does **not** implement
+`Responses`, so it cannot be returned from a handler and `Result<T, Problem>`
+does not compile.
 
 This is [anti-pattern 4](../README.md#anti-patterns) applied to errors, and the
 reasoning is the same one that keeps `IntoResponse` off `StatusCode`. `Problem`
-carries its status in a field, so `Result<T, Problem>` would choose a status at
-run time and `Responses` would have nothing honest to say about which. The type
-that reaches the wire and the type a handler names are deliberately different:
-the first carries a status, the second *is* a set of them.
+carries its status in a field, so returning one would choose that status at run
+time and `Responses` would have nothing honest to say about which. The type that
+reaches the wire and the type a handler names are deliberately different: the
+first carries a status, the second *is* a set of them.
+
+It keeps `IntoResponse`, because being *written* is exactly what it is for —
+that implementation is how every derived error reaches the wire. The handler
+bound is the pair, so removing one half is enough, and removing the half that
+cannot be answered honestly is the one that says something true. `Problem` also
+implements `Schema` and is registered as a named component, so a hundred error
+responses share one `$ref` rather than repeating the object.
 
 An error type gets to the wire through
 [`IntoProblem`](../crates/kynos/src/error/problem.rs) instead:
@@ -142,7 +150,7 @@ is recorded in [`handlers.md`](handlers.md#where-the-rejection-union-happens).
 
 | # | Rule | Enforced by |
 | --- | --- | --- |
-| 4 | No status is chosen at run time | `IntoResponse` is unimplemented for `StatusCode`, `String`, `&str`, tuples of them, and `Problem` |
+| 4 | No status is chosen at run time | `IntoResponse` is unimplemented for `StatusCode`, `String`, `&str` and tuples of them; `Responses` is unimplemented for `Problem` |
 
 Anti-pattern 4's other half — that a handler's several statuses come from
 `#[derive(Reply)]` — is homed in [`handlers.md`](handlers.md#status-is-a-type).
