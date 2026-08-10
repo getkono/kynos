@@ -36,6 +36,13 @@ use crate::extract::body::protobuf::Protobuf;
 /// Kynos implements this for its non-overlapping body wrappers. It is not a
 /// blanket trait: writing `OneOf<Json<A>, Json<B>>` therefore fails to compile
 /// instead of making dispatch order observable.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` and `{Rhs}` cannot be alternatives",
+    label = "overlapping alternatives",
+    note = "two alternatives must be distinguishable by content type, so `OneOf` cannot hold \
+            two bodies that share one — dispatch order would decide which won, and no \
+            description can express that"
+)]
 pub trait Alternative<Rhs>: RequestContent
 where
     Rhs: RequestContent,

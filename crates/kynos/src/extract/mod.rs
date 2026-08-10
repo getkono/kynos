@@ -52,6 +52,12 @@ use crate::http::{Parts, Request};
 /// Every implementation must also implement [`Describe`](describe::Describe);
 /// the two are separate traits only because the runtime half is generic over
 /// the application context and the describing half is not.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be extracted from a request head",
+    label = "not extractable",
+    note = "the context type `{C}` may be the problem rather than `{Self}`: `Inject<T>` needs \
+            `{C}: Provides<T>`, and `Auth<S>` needs `{C}: Authenticates<S>`"
+)]
 pub trait FromRequestParts<C>: Sized + Send {
     /// How this extractor fails, and what that failure looks like in the
     /// description.
@@ -69,6 +75,11 @@ pub trait FromRequestParts<C>: Sized + Send {
 /// At most one argument per handler may implement this, and it must be the
 /// last. The split from [`FromRequestParts`] is what enforces that: the body
 /// can only be taken once, so the type system takes it once.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be extracted from a request body",
+    label = "not a body extractor",
+    note = "only the last handler argument consumes the body; every earlier one reads the head"
+)]
 pub trait FromRequest<C>: Sized + Send {
     /// How this extractor fails, and what that failure looks like in the
     /// description.

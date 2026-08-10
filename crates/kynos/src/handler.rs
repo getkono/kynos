@@ -22,6 +22,13 @@ use crate::{
 ///
 /// `A` is the argument tuple; it exists only so that the implementations do not
 /// overlap, and is inferred at every call site.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a Kynos handler",
+    label = "not a handler",
+    note = "every argument must implement `Describe`, and `FromRequestParts` — or `FromRequest`, \
+            for the last one",
+    note = "the return type must implement `IntoResponse` and `Responses`"
+)]
 pub trait Handler<C, A = ()>: Clone + Send + Sync + 'static {
     /// Runs the handler.
     fn call(self, request: Request, context: C) -> impl Future<Output = Response> + Send;

@@ -41,6 +41,14 @@ use std::future::Future;
 /// A context that can supply a `T`.
 ///
 /// Derived by `#[derive(Provider)]`, which emits one implementation per field.
+#[diagnostic::on_unimplemented(
+    message = "the context `{Self}` provides no `{T}`",
+    label = "cannot supply `{T}`",
+    note = "add a `{T}` field to the context type and `#[derive(kynos::Provider)]`, or write \
+            `impl Provides<{T}> for {Self}` by hand",
+    note = "a dependency a handler asks for and the context does not have is a compile error \
+            here rather than a panic in production, which is the whole point of `Inject`"
+)]
 pub trait Provides<T> {
     /// Supplies the value for one request.
     fn provide(&self) -> impl Future<Output = T> + Send;

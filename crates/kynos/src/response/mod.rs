@@ -45,6 +45,13 @@ use crate::{http::Response, schema::registry::Registry};
 /// fn response<T: kynos::response::IntoResponse>(value: T) { drop(value); }
 /// response(String::from("the content type would be unknown"));
 /// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be turned into a response",
+    label = "not a response",
+    note = "return a body type, or wrap one in `Created`, `Accepted`, `NoContent` or `Redirect`",
+    note = "a bare `StatusCode` is deliberately not one: a status the description does not list \
+            is a status it is wrong about. Use `#[derive(Reply)]` when an operation has several"
+)]
 pub trait IntoResponse {
     /// Writes this value as a response.
     fn into_response(self) -> Response;
@@ -56,6 +63,12 @@ pub trait IntoResponse {
 /// [`IntoResponse`] this is the pair that makes the description total: one
 /// says what goes on the wire, the other says what the document claims, and a
 /// type must supply both.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not declare which responses it can produce",
+    label = "undeclared responses",
+    note = "a handler's return type has to say what a consumer might receive; derive it with \
+            `#[derive(kynos::Reply)]`, or `#[derive(kynos::ApiError)]` for an error type"
+)]
 pub trait Responses {
     /// The responses this type may produce.
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses;
