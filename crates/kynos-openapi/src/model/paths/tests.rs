@@ -170,3 +170,17 @@ fn methods_render_in_wire_case() {
     assert_eq!(Method::Get.to_string(), "GET");
     assert_eq!(Method::Delete.as_wire_str(), "DELETE");
 }
+
+#[test]
+fn every_method_round_trips_through_its_wire_spelling() {
+    for method in Method::all() {
+        assert_eq!(Method::from_wire_str(method.as_wire_str()), Some(*method));
+    }
+}
+
+#[test]
+fn wire_spellings_are_case_sensitive_and_closed() {
+    assert_eq!(Method::from_wire_str("get"), None);
+    assert_eq!(Method::from_wire_str("PROPFIND"), None);
+    assert_eq!(Method::from_wire_str(""), None);
+}
