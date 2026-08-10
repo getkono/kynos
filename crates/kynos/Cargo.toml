@@ -22,6 +22,10 @@ name = "hello"
 required-features = ["openapi31", "macros", "server", "http1", "json"]
 
 [[example]]
+name = "errors"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
+[[example]]
 name = "state"
 required-features = ["openapi31", "macros", "server", "http1"]
 
