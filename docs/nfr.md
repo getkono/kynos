@@ -9,14 +9,24 @@ only if it never claims a guarantee CI does not actually enforce.
 | Status | Meaning |
 | --- | --- |
 | `enforced` | A CI job runs this today. Regressions fail the build |
-| `planned` | The requirement is settled; the tooling is not installed. The tool to add is named |
+| `planned` | The requirement is settled and the method needs no tool this repository lacks; it is simply not wired |
+| `needs-tooling` | Settled, and blocked on installing something. The tool is named |
 | `blocked-on-impl` | The surface is still `todo!()`-bodied, so there is nothing to assert against yet |
 | `blocked-on-dependency` | A pinned dependency does not expose what the requirement needs. The dependency and the remedy are named |
+| `kynos-bench` | Owned by [`getkono/kynos-bench`](https://github.com/getkono/kynos-bench), not by this repository |
+
+`planned` and `needs-tooling` were one status, which made six rows look
+blocked on a purchase they were not — a CI grep needs no tool. And every
+performance row named `criterion` as something this repository would install,
+while the closing section says it deliberately will not; those rows are
+`kynos-bench` now, which is where the harness that gives a threshold meaning
+already lives.
 
 Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`, and
 rustdoc with `missing_docs = "deny"`. Not yet present: `cargo-public-api`,
-`cargo-semver-checks`, `cargo-fuzz`, `proptest`, `criterion`. `trybuild` sits in
-`[workspace.dependencies]` and is consumed by nothing.
+`cargo-semver-checks`, `cargo-fuzz`, `proptest`. `trybuild` sits in
+`[workspace.dependencies]` and is consumed by nothing. `criterion` is not on
+this list and will not be: benchmarks live in `kynos-bench`.
 
 ## Thresholds
 
@@ -47,14 +57,19 @@ disabled, or passes trivially and hides the regression it was meant to catch.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| compatibility | Public API surface is diffed on every change; an addition requires explicit budget approval, a removal fails the build | `cargo-public-api` | `planned` |
-| compatibility | Every release tag is gated on semantic-version correctness | `cargo-semver-checks` | `planned` |
-| correctness | The IR round-trips through serialization losslessly | `proptest` over generated IR values | `planned` |
+| compatibility | Public API surface is diffed on every change; an addition requires explicit budget approval, a removal fails the build | `cargo-public-api` | `needs-tooling` |
+| compatibility | Every release tag is gated on semantic-version correctness | `cargo-semver-checks` | `needs-tooling` |
+| correctness | The IR round-trips through serialization losslessly | `proptest` over generated IR values | `needs-tooling` |
 | correctness | Emitted documents validate against both 3.1 and 3.2 validators | CI step over a fixture app covering the full type matrix | `planned` |
 | correctness | Emitted documents are byte-deterministic across runs and platforms | CI comparing repeated generation and cross-OS builds | `planned` |
-| dx | No public item exposes `Pin`, `BoxFuture` or a tokio type | `cargo-public-api` assertion | `planned` |
-| operability | `--check` mode exits nonzero on drift from the committed document | Used as a required gate on the framework's own examples | `blocked-on-impl` |
-| performance | Generation time and output size scale sub-quadratically in operation count | Measured at 10/100/1000 operations with a fitted-slope assertion | `planned` |
+| dx | No public item exposes `Pin`, `BoxFuture` or a tokio type | `cargo-public-api` assertion | `needs-tooling` |
+| operability | `--check` mode exits nonzero on drift from the committed document | A binary target, used as a required gate on the framework's own examples | `blocked-on-impl` |
+| performance | Generation time and output size scale sub-quadratically in operation count | Measured at 10/100/1000 operations with a fitted-slope assertion | `kynos-bench` |
+
+The `--check` row's blocker is not a `todo!()` body: the workspace declares no
+binary target at all, and no command-line surface is designed anywhere. It is
+recorded here because the emitter is here, but it may well belong to a
+satellite crate.
 
 The `dx` row currently holds by construction — the crate has no runtime
 dependency at all, which is deliberate — but nothing prevents that from
@@ -68,22 +83,20 @@ the requirement above is that it be *verified*, not merely intended.
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | performance | Zero heap allocations on the routing path | Counting allocator asserting `alloc_count == 0` across a 10k-request replay, over routes of at most three parameters and no static/dynamic sibling overlap | `blocked-on-impl` |
-| performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `blocked-on-impl` |
+| performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `kynos-bench` |
 | reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; `Router::validate` for those only visible once the tree is assembled | `blocked-on-impl` |
 | operability | Metric labels derive from operation IDs, never request paths | Unit test asserting label cardinality is constant under adversarial path input | `blocked-on-impl` |
 
-The allocation row is scoped rather than absolute because `matchit` captures
-parameters into a fixed inline buffer of three and spills to the heap beyond it,
-and backtracking out of a static segment into a parameter sibling allocates once
-as well. Both are reachable through ordinary REST shapes, so the requirement is
-written against what the pinned router actually guarantees. Widening it later is
-a measurement, not a rewrite.
+The allocation row is scoped rather than absolute because of what the pinned
+router actually guarantees; [`routing.md`](routing.md) records the two cases
+and why they are reachable through ordinary REST shapes. Widening the scope
+later is a measurement, not a rewrite.
 
 ## Extraction
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| reliability | No extractor panics on any input | `cargo-fuzz` target per extractor, run nightly, corpus committed | `blocked-on-impl` |
+| reliability | No extractor panics on any input | `cargo-fuzz` target per extractor, run nightly, corpus committed | `needs-tooling` |
 | security | Body size, header count and header size limits are enforced by default | Rejection at limit+1 with no allocation proportional to input size | `blocked-on-impl` |
 | correctness | Every Rust type expressible as a handler input has a valid JSON Schema projection | Property test over a macro fixture set, validated against 3.1 and 3.2 validators | `blocked-on-impl` |
 | dx | Every rejection produces an error naming the field and the fix | `trybuild` UI tests plus snapshot tests on runtime error bodies | `blocked-on-impl` |
@@ -95,7 +108,7 @@ a measurement, not a rewrite.
 | correctness | Emitted document ⊇ observable responses | Conformance harness property-testing live responses against the generated document across the owned-layer matrix | `blocked-on-impl` |
 | correctness | Contribution composition is order-sensitive and deterministic | Permuted stacks produce differing, stable documents | `blocked-on-impl` |
 | reliability | `Opaque` propagates to every affected operation and omits none | Unit test over a synthetic router tree | `blocked-on-impl` |
-| performance | Per-layer added p99 ≤ TBD | `criterion` at stack depth 0/4/8 with a regression gate | `planned` |
+| performance | Per-layer added p99 ≤ TBD | `criterion` at stack depth 0/4/8 with a regression gate | `kynos-bench` |
 
 The first and third rows are the enforcement of
 [`middleware.md`](middleware.md). Until they run, the soundness invariant is an
@@ -108,9 +121,9 @@ intention rather than a guarantee.
 | reliability | Graceful shutdown drains all in-flight requests with zero dropped responses | Integration tests in `crates/kynos/src/server/tests.rs` covering HTTP/1 drain, HTTP/2 stream drain, TLS handshake cancellation, and timeout exhaustion | `enforced` |
 | reliability | Backpressure is bounded by default via connection count, queue depth and timeouts | Load test at 2× capacity asserting bounded memory and shed responses rather than unbounded growth | `blocked-on-impl` |
 | reliability | HTTP/2 request-body flow control is released as the body is consumed, not as frames arrive | Load test streaming a large body to a slow consumer, asserting the receive window closes | `blocked-on-dependency` |
-| performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `planned` |
-| performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `planned` |
-| compatibility | `Listener::Tokio` is the only public item naming a tokio type | `cargo-public-api` assertion over the framework surface | `planned` |
+| performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `kynos-bench` |
+| performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `kynos-bench` |
+| compatibility | `Listener::Tokio` is the only public item naming a tokio type | `cargo-public-api` assertion over the framework surface | `needs-tooling` |
 | compatibility | The runtime is named under `crates/kynos/src/server/` and nowhere else | CI grep for `tokio` outside that module tree | `planned` |
 
 The last two rows are the enforcement of the tokio-only policy in
@@ -136,14 +149,21 @@ fails the build when a crate is named outside the module that owns it.
 | --- | --- | --- | --- |
 | compatibility | `hyper` and `hyper-util` are named only in `server/connection.rs` and `http/body.rs` | CI grep over `crates/*/src`, excluding test modules | `planned` |
 | compatibility | `tokio-rustls` and `rustls` are named only under `server/tls/` | CI grep over `crates/*/src`, excluding test modules | `planned` |
-| compatibility | `matchit` is named only under `router/` | CI grep over `crates/*/src` | `planned` |
+| compatibility | `matchit` may be named only under `router/` | CI grep over `crates/*/src` | `planned` |
 | compatibility | `h2` and `httparse` are never named | CI grep over `crates/*/src`, allowing the `b"h2"` ALPN identifier | `planned` |
 | compatibility | `tower` and `tower-service` are named only in `unchecked.rs` | CI grep over `crates/*/src` | `planned` |
-| dx | Every crate in `[workspace.dependencies]` is consumed by a member | `cargo-udeps` or an equivalent manifest check | `planned` |
+| dx | Every crate in `[workspace.dependencies]` is consumed by a member | `cargo-udeps` or an equivalent manifest check | `needs-tooling` |
 
-The last row is the one that currently fails: `trybuild` is declared and unused,
-and `crates/kynos` declares several codec crates its skeleton does not yet name.
+The last row still fails, on `trybuild` alone: `mime` and `pin-project-lite`
+are gone, and the codec crates `crates/kynos` declares without yet naming are
+each behind an off-by-default feature.
 [`architecture.md`](architecture.md#dependencies) lists them.
+
+**Deferred by decision, not by oversight.** The eight containment greps above
+and in [Runtime](#runtime) need no tool this repository lacks, and
+`cargo-public-api` is the single highest-leverage addition on the tooling
+list. Both were held back from the API-freeze push so that a committed
+surface baseline is recorded against a surface that has stopped moving.
 
 ## Macros
 
@@ -165,8 +185,14 @@ subscriber stays the application's.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| operability | Spans conform to OpenTelemetry HTTP semantic conventions | Integration test asserting attribute names against a pinned semconv version | `planned` |
+| operability | Spans conform to OpenTelemetry HTTP semantic conventions | Integration test asserting attribute names against a pinned semconv version | `blocked-on-impl` |
 | operability | Metric cardinality is bounded by operation count | Test asserting series count is invariant under 10k distinct request paths | `blocked-on-impl` |
+
+Both rows are `blocked-on-impl` on the same thing — the module does not exist —
+so neither is waiting on tooling. What did land is the seam they need:
+`Observer` receives the matched [`Route`](../crates/kynos/src/router/operation.rs),
+so a label can be keyed by operation rather than by request path, which is the
+property the second row measures.
 
 ## Workspace
 
@@ -179,8 +205,8 @@ subscriber stays the application's.
 | reliability | Commits follow Conventional Commits | `convco`, via git hook and CI | `enforced` |
 | dx | Every public item is documented | `missing_docs = "deny"` plus `mise run docs:check` | `enforced` |
 | dx | Every public item has a compiling doc example | Doctests already run via `mise run test:doc`; *presence* of an example per item is unenforced | `planned` |
-| compatibility | Public API item count is tracked as a budget | `cargo-public-api` count with a committed baseline | `planned` |
-| performance | The benchmark suite runs nightly with regression alerting | `kynos-bench`, so erosion surfaces as a trend rather than at release | `planned` |
+| compatibility | Public API item count is tracked as a budget | `cargo-public-api` count with a committed baseline | `needs-tooling` |
+| performance | The benchmark suite runs nightly with regression alerting | `kynos-bench`, so erosion surfaces as a trend rather than at release | `kynos-bench` |
 
 ## Tooling gaps
 

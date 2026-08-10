@@ -53,8 +53,10 @@ document matches scope in the router.
 
 ## Opaque
 
-> **Not yet implemented.** This section specifies the contract the middleware
-> and router implementation must satisfy. No `Opaque` type exists today.
+The vocabulary is
+[built](../crates/kynos-openapi/src/annotation/mod.rs) and
+[checked](../crates/kynos-openapi/src/validate/rules/opaque.rs); what still
+has a `todo!()` body is the router side that produces it.
 
 `unchecked` and `Opaque` are cause and effect, not alternatives, and the
 distinction is worth being precise about:
@@ -73,21 +75,42 @@ Today the escape hatches in `crates/kynos/src/unchecked.rs` have three different
 blast radii for the same underlying situation. The waiver must mark exactly what
 it reaches:
 
-| Escape hatch | Today | Contract |
+| Escape hatch | Record | Where |
 | --- | --- | --- |
-| [`Unchecked<T>`](../crates/kynos/src/schema/unchecked.rs) | Per-item annotation, reported by `validate` | Unchanged — already correct, and the model for the rest |
-| `route_unchecked` | Operation absent from `paths` | Operation emitted, flagged `Opaque` |
-| `layer_unchecked`, `into_tower_unchecked` | Whole document stamped non-authoritative | `Opaque` on the covered subtree only |
-| `upgrade_unchecked` | Absent from `paths` | Still absent, and still reported by `validate` |
+| [`Unchecked<T>`](../crates/kynos/src/schema/unchecked.rs) | `x-kynos-unchecked` on the schema | Reporting is built; the annotation is emitted by a `todo!()` body |
+| `layer_unchecked`, `into_tower_unchecked` | `x-kynos-opaque` on each covered operation | The covered subtree only, never the whole document |
+| `route_unchecked` | An entry in `x-kynos-opaque-routes` | The document root; no `paths` key |
+| `upgrade_unchecked` | An entry in `x-kynos-opaque-routes` | The document root; no `paths` key |
 
-`upgrade_unchecked` is the one exception, and it is not a gap to be closed
-later. OpenAPI describes HTTP request/response semantics; a connection that has
-upgraded away from HTTP has no vocabulary in any version of the specification.
-Emitting an entry no consumer could act on would be worse than the honest
-absence, which `Router::validate` reports regardless.
+**A route with no expressible template gets no `paths` key.** This was once
+specified as "operation emitted, flagged `Opaque`", which cannot be honoured:
+a catch-all matches a set of paths that no single template describes, so every
+key that could be minted is a claim about either the path or a parameter that
+the service does not honour. The literal wildcard mints a parameter named
+`*path`; a synthesized `{path}` promises a value that never contains an
+unescaped `/` and always does; the bare prefix claims an operation that 404s.
+
+Soundness does not require a `paths` entry — it requires that a consumer is
+never *unaware* of what the service serves. A root-level array is visible,
+greppable, diffable and reported by `validate`, and it leaves the path rules
+in [`validate/rules/paths.rs`](../crates/kynos-openapi/src/validate/rules/paths.rs)
+meaning what they say.
+
+That also dissolves the `upgrade_unchecked` exception rather than adding one.
+A connection that has left HTTP has no vocabulary in any version of the
+specification, so it too is a route with no expressible template: same record,
+different reason, no special case.
+
+Two records rather than one stretched over both, because there are two
+situations. `layer_unchecked` covers *real operations on real paths* whose
+behaviour is unverified — the path is true, so the operation stays in `paths`
+and carries a marker. `route_unchecked` has no operation to hang a marker on.
 
 `x-kynos-document-not-authoritative` survives as a *derived* summary — true when
-any operation is `Opaque` — rather than as the mechanism. That preserves the
+any operation is opaque or any route is recorded — rather than as the
+mechanism. It is recomputed rather than set, in both directions, so a document
+edited after the fact cannot keep a stamp it no longer earns or lose one it
+does. That preserves the
 one-glance signal for a consumer while confining the damage to the operations
 actually affected: one unchecked layer on one subtree must not taint three
 hundred operations it never touches.
@@ -107,14 +130,37 @@ This keeps the invariant intact while leaving the ecosystem's migration path
 open, which matters more than purity: an application that cannot adopt Kynos
 incrementally will not adopt it.
 
+## Composition
+
+Interceptors are erased, at every level. A router, a group and an endpoint hold
+the same list and compose it the same way.
+
+That is not a performance trade against a statically composed chain — it is the
+only shape available.
+[`Next<'a, C>`](../crates/kynos/src/middleware/mod.rs) has two parameters and
+appears in `Interceptor::intercept`'s signature, so a chain composed in the
+type system would need a tail parameter that infects every interceptor anyone
+writes. The terminal is boxed regardless, since `Endpoint` returns an opaque
+future and a router holds endpoints it cannot name. A route with no
+interceptors calls the terminal directly and pays nothing.
+
+An interceptor is handed the [`Route`](../crates/kynos/src/router/operation.rs)
+it covers, both when it declares its contribution and when it runs. Declaring
+per-operation keeps the contribution inert — the operation is known at build
+time — while letting one interceptor say different things about different
+operations. Running with it is what keeps a metric label keyed by the
+`paths` key rather than by the request path, so label cardinality is bounded
+and the label cannot disagree with the description.
+
 ## Conformance
 
 The invariant is a claim about a running service, so it needs to be tested like
-one. A conformance harness property-tests live responses against the emitted
+one: a conformance harness property-testing live responses against the emitted
 document across the full matrix of owned layers, in CI.
 
-Without that harness this document is marketing. The requirement is recorded in
-[`nfr.md`](nfr.md#middleware).
+That harness does not exist. Until it does, the soundness invariant above is an
+intention rather than a guarantee, and this section is a requirement rather
+than a description. It is recorded in [`nfr.md`](nfr.md#middleware).
 
 ## Rationale
 

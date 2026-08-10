@@ -28,9 +28,10 @@ Kynos is an idiomatic, performance-focused Rust framework for building REST APIs
 - Declare shared dependency versions under `[workspace.dependencies]`.
 - Add a dependency to a member crate with `workspace = true` only when the crate consumes it.
 - A module becomes a directory once it holds two independently-changing concerns or exceeds ~400 lines excluding tests; tests move to a sibling `tests.rs`.
-- Submodules are `pub` with no parent re-exports, so every item has one canonical path; the crate root and `kynos::prelude` are the only curated shortcuts, and macro-support items live in `kynos::__private`.
+- Submodules are `pub` with no parent re-exports, so every item has one canonical path; the crate root and `kynos::prelude` are the only curated shortcuts, and macro-support items live in `kynos::__private`. A module that declares no item of its own — only trait implementations — is private instead, since it has nothing for a path to point at.
 - A feature gate belongs on the `pub mod` line, not repeated on each item inside it.
 - Do not introduce public framework APIs as placeholders, with one exception: the pre-v1 API-skeleton milestone, during which the surface is designed ahead of its implementation so it can be reviewed and frozen as a whole. A placeholder body must be `todo!()`, must be fully documented, and must appear in a `no_run` doc example proving the surface is usable. Once the skeleton is frozen this exception lapses.
+- A proc macro is exempt from the `no_run` example rule only while its expansion cannot compile in its own crate; a derive must expand to a well-formed implementation with `todo!()` bodies rather than `todo!()`-ing during expansion, since an expansion that aborts can appear in no test at all.
 
 ## Tooling
 

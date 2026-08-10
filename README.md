@@ -10,8 +10,8 @@ The emitted document is therefore not documentation that drifts from the code. I
 
 ## Features
 
-- [ ] OpenAPI 3.1 document model, with 3.2 as an opt-in strict superset
-- [ ] Structural validation: `operationId` uniqueness, path-template correspondence, parameter uniqueness, closed style/location table
+- [x] OpenAPI 3.1 document model, with 3.2 as an opt-in strict superset
+- [x] Structural validation: `operationId` uniqueness, path-template correspondence, parameter uniqueness, closed style/location table
 - [ ] Typed extraction for path, query, header, cookie, JSON, form and multipart
 - [ ] Extractor rejections documented automatically
 - [ ] Type-level status codes and response headers
@@ -49,7 +49,7 @@ Each of these is something another Rust framework offers and Kynos does not, and
 
 **8. Request-derived values as dependencies.** A `CurrentUser` read from an `Authorization` header is not application state; injecting it would make the requirement invisible in the description. It arrives through `Auth<S>`, so enforcing a credential and declaring it are one act.
 
-**9. Header-based API versioning.** OpenAPI expresses paths. Put the version in the path.
+**9. Header-based API versioning.** OpenAPI expresses paths. Put the version in the path. This is the one item here with no mechanical enforcement — a version header declared with `#[derive(Headers)]` compiles — so it is advice rather than a rule the compiler keeps.
 
 **10. Per-route trailing-slash or case normalization.** One app-level policy, or none. Paths in a description are exact.
 
@@ -75,7 +75,8 @@ Each of these is something another Rust framework offers and Kynos does not, and
 | `compression` | no | Response compression |
 | `yaml` | no | YAML document emission |
 | `test-util` | no | In-process test client and contract-conformance assertions |
-| `unchecked` | no | Escape hatches. Marks the emitted document non-authoritative |
+| `unchecked` | no | Escape hatches. What they reach is recorded and flagged rather than dropped, and the document is stamped non-authoritative |
+| `full` | no | Every feature above except `unchecked`. A convenience for testing the whole surface, not a recommended default |
 
 Disabling `json` removes application JSON payload types and helpers, including
 the OpenAPI 3.2 JSON stream responses. OpenAPI document serialization and the
