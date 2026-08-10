@@ -21,6 +21,14 @@ Anti-pattern 1 landed as the part of it that a single build can check: a
 checked here — the negative needs the feature off, and this suite's snapshots
 are recorded with it on. See below.
 
+## Resolved since this ledger was written
+
+`#[kynos::operation]` was listed here as having no possible control, because
+no program using the attribute compiled: it read `method` itself and then
+handed its whole argument list to a parser that rejected `method` as unknown.
+That was a real defect rather than a limit of the suite, and both cases have
+landed now.
+
 ## Blocked on the suite's one feature set
 
 Five snapshots in `antipattern/` embed rustc's "the following other types

@@ -1,0 +1,7 @@
+error: `#[kynos::operation]` needs `method = "..."`; the per-method attributes such as `#[kynos::get]` are the usual way to declare an operation
+ --> tests/ui/macros/operation_missing_method.rs:1:1
+  |
+1 | #[kynos::operation(path = "/documents")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `kynos::operation` (in Nightly builds, run with -Z macro-backtrace for more info)

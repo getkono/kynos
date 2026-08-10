@@ -49,6 +49,11 @@ impl RouteArgs {
                         "operation_id" => operation_id = Some(expect_str(&pair.value)?),
                         "tag" => tag = Some(expect_ident(&pair.value)?),
                         "path" => path = Some(expect_str(&pair.value)?),
+                        // `#[kynos::operation]` reads the method itself and
+                        // then passes its whole argument list here, so seeing
+                        // one is not a mistake. Rejecting it made every use of
+                        // that attribute fail to compile.
+                        "method" => {}
                         _ => {
                             return Err(syn::Error::new(
                                 pair.path.span(),
