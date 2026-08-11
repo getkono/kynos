@@ -160,10 +160,20 @@ pub fn path(input: TokenStream) -> TokenStream {
 /// `flatten`, `tag`, `content` — so the schema and the wire form come from one
 /// declaration.
 ///
-/// Constraints go on fields as `#[schema(min = 1, max = 100)]`,
-/// `#[schema(pattern = "...")]`, `#[schema(format = "uuid")]`. They become JSON
-/// Schema assertions *and* the parser's checks, which is what keeps the
-/// description honest without a JSON Schema interpreter on the hot path.
+/// Constraints go on fields, and the grammar is exactly the keys of
+/// [`Constraints`](../kynos/schema/constraints/struct.Constraints.html) so that
+/// the attribute and the type it fills cannot drift: `minimum`, `maximum`,
+/// `exclusive_minimum`, `exclusive_maximum`, `multiple_of`, `min_length`,
+/// `max_length`, `pattern`, `min_items`, `max_items` and the `unique_items`
+/// flag. They become JSON Schema assertions *and* the parser's checks, which is
+/// what keeps the description honest without a JSON Schema interpreter on the
+/// hot path.
+///
+/// `format` is **not** among them. It states what a value *is*, which follows
+/// from the type or from nothing, so a `String` annotated as a UUID is a
+/// compile error naming the remedy — `uuid::Uuid`, one of the date, time or
+/// decimal types behind their features, or a newtype with its own `Schema`.
+/// A constraint on one field is `pattern`; a claim about a type is the type's.
 ///
 /// # Rejected, because serde and the schema would disagree
 ///
