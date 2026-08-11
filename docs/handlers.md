@@ -156,8 +156,8 @@ content map for `Content-Type`, and `#[derive(SecurityScheme)]` for
 **#6.** The rule also removes `usize` and `isize` (their width depends on the
 build target, and a wire contract must not), `SystemTime` (serde emits a
 seconds/nanos struct nobody wants as a contract), and `Box<dyn Trait>`. The
-accepted and rejected sets are tabulated in the
-[`schema` module documentation](../crates/kynos/src/schema/mod.rs).
+accepted and rejected sets, and the `format` each describable type carries, are
+normative in [`schema.md`](schema.md).
 
 ## Rationale
 
