@@ -80,6 +80,10 @@ required-features = [
   "multipart",
 ]
 
+[[example]]
+name = "responses"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
 [features]
 default = [
   "openapi31",
