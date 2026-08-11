@@ -68,6 +68,18 @@ required-features = ["openapi31", "macros", "server", "http1", "json"]
 name = "parameters"
 required-features = ["openapi31", "macros", "server", "http1", "json", "cookie"]
 
+[[example]]
+name = "payloads"
+required-features = [
+  "openapi31",
+  "macros",
+  "server",
+  "http1",
+  "json",
+  "form",
+  "multipart",
+]
+
 [features]
 default = [
   "openapi31",
