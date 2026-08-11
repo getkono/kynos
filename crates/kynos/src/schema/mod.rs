@@ -60,10 +60,26 @@
 //! | Rust | Schema | Feature |
 //! | --- | --- | --- |
 //! | `uuid::Uuid` | `string`/`uuid` | `uuid` |
+//! | `chrono::NaiveDate` | `string`/`date` | `time-chrono` |
+//! | `chrono::NaiveTime` | `string`/`time-local` | `time-chrono` |
+//! | `chrono::NaiveDateTime` | `string`/`date-time-local` | `time-chrono` |
+//! | `chrono::DateTime<Utc>`, `<FixedOffset>` | `string`/`date-time` | `time-chrono` |
 //!
-//! Date, time and decimal types are not here yet, because the crates that
-//! define them are not Kynos dependencies. Reach them through a newtype
-//! carrying its own [`Schema`] until they are.
+//! `time` is an umbrella carrying the shapes a backend maps onto, so a concept
+//! is defined once rather than once per library; it names no crate and does not
+//! compile alone.
+//!
+//! The offset-less types take `date-time-local` and `time-local` rather than
+//! `date-time` and `time`, because the latter two are RFC 3339 productions that
+//! *require* an offset. A `NaiveDateTime` serializes without one and its
+//! deserializer rejects one, so claiming `date-time` would advertise a request
+//! body the service answers 400 for. `DateTime<Local>` has no implementation at
+//! all: its offset comes from the process environment, which is the same
+//! objection that removes `usize`.
+//!
+//! Decimal types are not here yet, because the crates that define them are not
+//! Kynos dependencies. Reach them through a newtype carrying its own
+//! [`Schema`] until they are.
 //!
 //! # Types deliberately left without an implementation
 //!

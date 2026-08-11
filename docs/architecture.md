@@ -120,7 +120,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | Protobuf codec | `prost` | [`extract/body/protobuf.rs`](../crates/kynos/src/extract/body/protobuf.rs), [`response/codec/protobuf.rs`](../crates/kynos/src/response/codec/protobuf.rs) | designed |
 | Cookies | `cookie` | [`extract/params/cookie.rs`](../crates/kynos/src/extract/params/cookie.rs) | designed |
 | Scalar formats, identifiers | `uuid` | [`schema/impls/identifier.rs`](../crates/kynos/src/schema/impls/identifier.rs) | built |
-| Scalar formats, dates and times | `chrono`, `jiff` | [`schema/impls/`](../crates/kynos/src/schema/impls/) | chosen |
+| Scalar formats, dates and times | `chrono`, `jiff` | [`schema/impls/temporal/`](../crates/kynos/src/schema/impls/temporal/) | `chrono` built, `jiff` chosen |
 | Scalar formats, decimals | `rust_decimal`, `bigdecimal` | [`schema/impls/`](../crates/kynos/src/schema/impls/) | chosen |
 | Compression | `async-compression` | [`middleware/compression.rs`](../crates/kynos/src/middleware/compression.rs) | designed |
 | tower interop, outward | `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |

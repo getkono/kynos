@@ -14,6 +14,8 @@ mod wrapper;
 
 #[cfg(feature = "uuid")]
 mod identifier;
+#[cfg(feature = "time")]
+mod temporal;
 
 use kynos_openapi::{Schema as OpenApiSchema, SchemaObject, model::schema::types::SchemaType};
 

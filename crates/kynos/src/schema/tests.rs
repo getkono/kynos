@@ -117,6 +117,76 @@ fn a_uuid_serializes_as_the_string_its_format_promises() {
     );
 }
 
+#[cfg(feature = "time-chrono")]
+mod chrono_backend {
+    use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+
+    use super::{object_of, schema_of};
+
+    fn format_of<T: super::Schema>() -> Option<String> {
+        object_of::<T>().format
+    }
+
+    #[test]
+    fn an_offset_carrying_instant_is_a_date_time() {
+        assert_eq!(format_of::<DateTime<Utc>>().as_deref(), Some("date-time"));
+        assert_eq!(
+            format_of::<DateTime<FixedOffset>>().as_deref(),
+            Some("date-time")
+        );
+    }
+
+    #[test]
+    fn the_offsetless_types_take_the_local_formats() {
+        assert_eq!(format_of::<NaiveDate>().as_deref(), Some("date"));
+        assert_eq!(format_of::<NaiveTime>().as_deref(), Some("time-local"));
+        assert_eq!(
+            format_of::<NaiveDateTime>().as_deref(),
+            Some("date-time-local")
+        );
+    }
+
+    /// The reason the offset-less types may not claim `date-time`: serde emits
+    /// no offset, and the deserializer refuses to read one. A description
+    /// promising `date-time` would advertise an input that answers 400.
+    #[test]
+    fn a_local_date_time_neither_writes_nor_reads_an_offset() {
+        let value = NaiveDate::from_ymd_opt(2026, 3, 15)
+            .and_then(|date| date.and_hms_opt(12, 30, 0))
+            .expect("a representable civil date and time");
+
+        let encoded = serde_json::to_value(value).expect("a civil date-time serializes");
+        assert_eq!(
+            encoded,
+            serde_json::Value::String("2026-03-15T12:30:00".to_owned())
+        );
+
+        serde_json::from_value::<NaiveDateTime>(serde_json::Value::String(
+            "2026-03-15T12:30:00Z".to_owned(),
+        ))
+        .expect_err("an offset is not readable back into a civil date-time");
+    }
+
+    #[test]
+    fn an_instant_writes_the_offset_its_format_promises() {
+        let value = DateTime::<Utc>::from_timestamp(0, 0).expect("the epoch is representable");
+        let encoded = serde_json::to_value(value).expect("an instant serializes");
+        assert_eq!(
+            encoded,
+            serde_json::Value::String("1970-01-01T00:00:00Z".to_owned())
+        );
+    }
+
+    /// A `DateTime<Local>` would serialize to a valid RFC 3339 string whose
+    /// offset is whatever the process environment says, so the wire contract
+    /// would depend on where the server runs. It has no implementation, and
+    /// this is the shape of that refusal at the type level.
+    #[test]
+    fn the_backend_describes_only_what_it_was_given() {
+        let _ = schema_of::<DateTime<Utc>>();
+    }
+}
+
 #[test]
 fn addresses_use_their_named_formats() {
     assert_eq!(object_of::<Ipv4Addr>().format.as_deref(), Some("ipv4"));
