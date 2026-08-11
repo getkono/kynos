@@ -71,6 +71,7 @@
 //! | `jiff::Zoned` | `string`/`date-time-zoned`, with a pattern | `time-jiff` |
 //! | `jiff::Span`, `jiff::SignedDuration` | `string`/`duration` | `time-jiff` |
 //! | `rust_decimal::Decimal` | `string`/`decimal` | `decimal-rust` |
+//! | `bigdecimal::BigDecimal` | `string`/`decimal` | `decimal-big` |
 //!
 //! `time` is an umbrella carrying the shapes a backend maps onto, so a concept
 //! is defined once rather than once per library; it names no crate and does not

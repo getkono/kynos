@@ -114,6 +114,7 @@ time-jiff = ["time", "dep:jiff"]
 # only representation that keeps the precision a decimal exists for.
 decimal = []
 decimal-rust = ["decimal", "dep:rust_decimal"]
+decimal-big = ["decimal", "dep:bigdecimal"]
 
 # --- Observability ---------------------------------------------------------
 # The `tracing` facade only. Choosing a subscriber stays the application's call.
@@ -153,6 +154,7 @@ full = [
   "time-chrono",
   "time-jiff",
   "decimal-rust",
+  "decimal-big",
 ]
 
 [dependencies]
@@ -165,6 +167,7 @@ async-compression = { workspace = true, optional = true, features = [
   "brotli",
   "zstd",
 ] }
+bigdecimal = { workspace = true, optional = true }
 bytes = { workspace = true }
 chrono = { workspace = true, optional = true }
 cookie = { workspace = true, optional = true }
@@ -206,6 +209,7 @@ trybuild = { workspace = true }
 # A scalar format claims a wire form, and the claim is only worth as much as a
 # test that serializes the type and looks. That needs the serde integration the
 # library itself does not.
+bigdecimal = { workspace = true, features = ["serde"] }
 chrono = { workspace = true, features = ["alloc", "serde"] }
 # `tzdb-bundle-always` rather than the platform database, so a test that names a
 # zone does not depend on what the host has installed.

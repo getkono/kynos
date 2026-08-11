@@ -319,6 +319,19 @@ mod decimal_backends {
             "1.2300",
         );
     }
+
+    #[cfg(feature = "decimal-big")]
+    #[test]
+    fn an_arbitrary_decimal_is_a_string_of_that_format() {
+        // Far past `rust_decimal`'s ceiling of 28 significant digits, which is
+        // the whole reason this backend exists alongside it.
+        let wide = "1.2345678901234567890123456789012345";
+        assert_writes_a_string(
+            wide.parse::<bigdecimal::BigDecimal>()
+                .expect("an arbitrary-precision decimal"),
+            wide,
+        );
+    }
 }
 
 #[test]

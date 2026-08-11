@@ -92,9 +92,13 @@ compile_error!(
      `time-jiff`"
 );
 
-#[cfg(all(feature = "decimal", not(feature = "decimal-rust")))]
+#[cfg(all(
+    feature = "decimal",
+    not(any(feature = "decimal-rust", feature = "decimal-big"))
+))]
 compile_error!(
-    "the `decimal` feature carries no types of its own; enable a backend, which is `decimal-rust`"
+    "the `decimal` feature carries no types of its own; enable a backend, either `decimal-rust` \
+     or `decimal-big`"
 );
 
 #[doc(hidden)]

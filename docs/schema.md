@@ -104,8 +104,7 @@ backend; enabling an umbrella without a backend is a compile error.
 | `decimal-rust` | `decimal` | `rust_decimal` |
 | `decimal-big` | `decimal` | `bigdecimal` |
 
-`decimal-big` is designed and does not exist yet. Every other feature above is
-built.
+Every feature above is built.
 
 | Rust | `type` | `format` | Feature |
 | --- | --- | --- | --- |

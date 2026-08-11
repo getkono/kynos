@@ -121,7 +121,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | Cookies | `cookie` | [`extract/params/cookie.rs`](../crates/kynos/src/extract/params/cookie.rs) | designed |
 | Scalar formats, identifiers | `uuid` | [`schema/impls/identifier.rs`](../crates/kynos/src/schema/impls/identifier.rs) | built |
 | Scalar formats, dates and times | `chrono`, `jiff` | [`schema/impls/temporal/`](../crates/kynos/src/schema/impls/temporal/) | built |
-| Scalar formats, decimals | `rust_decimal`, `bigdecimal` | [`schema/impls/decimal/`](../crates/kynos/src/schema/impls/decimal/) | `rust_decimal` built, `bigdecimal` chosen |
+| Scalar formats, decimals | `rust_decimal`, `bigdecimal` | [`schema/impls/decimal/`](../crates/kynos/src/schema/impls/decimal/) | built |
 | Compression | `async-compression` | [`middleware/compression.rs`](../crates/kynos/src/middleware/compression.rs) | designed |
 | tower interop, outward | `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
 | tower interop, inward | `tower` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | designed |

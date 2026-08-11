@@ -13,6 +13,8 @@ use kynos_openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType};
 
 use crate::schema::impls::formatted;
 
+#[cfg(feature = "decimal-big")]
+mod bigdecimal;
 #[cfg(feature = "decimal-rust")]
 mod rust_decimal;
 

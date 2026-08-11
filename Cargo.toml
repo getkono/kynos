@@ -16,6 +16,7 @@ kynos-macros = { version = "0.1.0", path = "crates/kynos-macros" }
 kynos-openapi = { version = "0.1.0", path = "crates/kynos-openapi", default-features = false }
 
 async-compression = "0.4.19"
+bigdecimal = { version = "0.4.10", default-features = false }
 bytes = "1.10.1"
 chrono = { version = "0.4.45", default-features = false }
 cookie = "0.18.1"
