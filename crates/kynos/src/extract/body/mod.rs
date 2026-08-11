@@ -12,6 +12,9 @@ pub mod alternative;
 pub mod binary;
 pub mod text;
 
+#[cfg(test)]
+mod tests;
+
 #[cfg(feature = "form")]
 pub mod form;
 #[cfg(feature = "json")]

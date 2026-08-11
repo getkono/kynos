@@ -62,15 +62,32 @@ impl<T: QueryParams> Describe for Query<T> {
 /// describe search filters, JSON in the query, or RFC 9535 JSONPath — shapes a
 /// list of named parameters cannot express. It must be the only query-related
 /// input on its handler.
+/// The media type is a marker rather than a field, so this is a named struct
+/// and not the newtype every other parameter extractor is: a handler binds the
+/// whole value and reaches the decoded query through
+/// [`into_inner`](Self::into_inner) or the public field.
 #[cfg(feature = "openapi32")]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct QueryString<T, M>(pub T, std::marker::PhantomData<M>);
+pub struct QueryString<T, M> {
+    /// The decoded query string.
+    pub value: T,
+    media: std::marker::PhantomData<M>,
+}
 
 #[cfg(feature = "openapi32")]
 impl<T, M> QueryString<T, M> {
     /// Wraps a decoded whole-query-string value with its declared media type.
     pub fn new(value: T) -> Self {
-        Self(value, std::marker::PhantomData)
+        Self {
+            value,
+            media: std::marker::PhantomData,
+        }
+    }
+
+    /// Takes the decoded value out.
+    #[must_use]
+    pub fn into_inner(self) -> T {
+        self.value
     }
 }
 
