@@ -92,6 +92,11 @@ compile_error!(
      `time-jiff`"
 );
 
+#[cfg(all(feature = "decimal", not(feature = "decimal-rust")))]
+compile_error!(
+    "the `decimal` feature carries no types of its own; enable a backend, which is `decimal-rust`"
+);
+
 #[doc(hidden)]
 pub mod __private;
 

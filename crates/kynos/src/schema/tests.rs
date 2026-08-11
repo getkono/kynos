@@ -285,6 +285,42 @@ mod jiff_backend {
     }
 }
 
+#[cfg(feature = "decimal")]
+mod decimal_backends {
+    use super::object_of;
+
+    /// The claim every decimal backend makes, and the one that would silently
+    /// stop being true if anything in the dependency graph enabled
+    /// `rust_decimal/serde-float`. Cargo unifies features across the whole
+    /// build, so that switch is not local to whoever flips it -- and the
+    /// emitted `type: string` would be wrong everywhere with nothing in the
+    /// type system to notice.
+    fn assert_writes_a_string<T: serde::Serialize + super::Schema>(value: T, expected: &str) {
+        let object = object_of::<T>();
+        assert_eq!(
+            object.ty,
+            Some(super::TypeSet::One(super::SchemaType::String))
+        );
+        assert_eq!(object.format.as_deref(), Some("decimal"));
+
+        let encoded = serde_json::to_value(value).expect("a decimal serializes");
+        assert_eq!(encoded, serde_json::Value::String(expected.to_owned()));
+    }
+
+    #[cfg(feature = "decimal-rust")]
+    #[test]
+    fn a_fixed_decimal_is_a_string_of_that_format() {
+        // Trailing zeros are significant to `rust_decimal` and survive the
+        // round trip, which is a large part of why money uses it.
+        assert_writes_a_string(
+            "1.2300"
+                .parse::<rust_decimal::Decimal>()
+                .expect("a decimal"),
+            "1.2300",
+        );
+    }
+}
+
 #[test]
 fn addresses_use_their_named_formats() {
     assert_eq!(object_of::<Ipv4Addr>().format.as_deref(), Some("ipv4"));

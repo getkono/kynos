@@ -110,6 +110,11 @@ time = []
 time-chrono = ["time", "dep:chrono"]
 time-jiff = ["time", "dep:jiff"]
 
+# The same shape for decimals. Both backends write a JSON string, which is the
+# only representation that keeps the precision a decimal exists for.
+decimal = []
+decimal-rust = ["decimal", "dep:rust_decimal"]
+
 # --- Observability ---------------------------------------------------------
 # The `tracing` facade only. Choosing a subscriber stays the application's call.
 trace = ["dep:tracing"]
@@ -147,6 +152,7 @@ full = [
   "uuid",
   "time-chrono",
   "time-jiff",
+  "decimal-rust",
 ]
 
 [dependencies]
@@ -175,6 +181,7 @@ jiff = { workspace = true, optional = true }
 multer = { workspace = true, optional = true }
 percent-encoding = { workspace = true }
 prost = { workspace = true, optional = true }
+rust_decimal = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_urlencoded = { workspace = true, optional = true }
@@ -207,6 +214,7 @@ jiff = { workspace = true, features = [
   "serde",
   "tzdb-bundle-always",
 ] }
+rust_decimal = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["serde"] }
 
 [lints]

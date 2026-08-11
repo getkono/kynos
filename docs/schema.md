@@ -104,8 +104,8 @@ backend; enabling an umbrella without a backend is a compile error.
 | `decimal-rust` | `decimal` | `rust_decimal` |
 | `decimal-big` | `decimal` | `bigdecimal` |
 
-`uuid`, `time`, `time-chrono` and `time-jiff` are built. The three decimal
-features are designed and do not exist yet.
+`decimal-big` is designed and does not exist yet. Every other feature above is
+built.
 
 | Rust | `type` | `format` | Feature |
 | --- | --- | --- | --- |

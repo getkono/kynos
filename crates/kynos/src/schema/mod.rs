@@ -70,6 +70,7 @@
 //! | `jiff::Timestamp` | `string`/`date-time` | `time-jiff` |
 //! | `jiff::Zoned` | `string`/`date-time-zoned`, with a pattern | `time-jiff` |
 //! | `jiff::Span`, `jiff::SignedDuration` | `string`/`duration` | `time-jiff` |
+//! | `rust_decimal::Decimal` | `string`/`decimal` | `decimal-rust` |
 //!
 //! `time` is an umbrella carrying the shapes a backend maps onto, so a concept
 //! is defined once rather than once per library; it names no crate and does not
@@ -91,9 +92,11 @@
 //! is what stops it being a valid `date-time`, so it carries a pattern and a
 //! format name that is Kynos's until one is registered.
 //!
-//! Decimal types are not here yet, because the crates that define them are not
-//! Kynos dependencies. Reach them through a newtype carrying its own
-//! [`Schema`] until they are.
+//! A decimal is a *string* carrying the registered `decimal` format, not a
+//! number. The registry permits either, but a JSON number round-trips through
+//! an `f64` in most consumers, which loses exactly the precision a decimal
+//! exists to keep. Both backends serialize to a string by default and the
+//! description follows them.
 //!
 //! # Types deliberately left without an implementation
 //!

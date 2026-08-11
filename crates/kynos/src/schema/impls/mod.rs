@@ -12,6 +12,8 @@ mod primitive;
 mod tuple;
 mod wrapper;
 
+#[cfg(feature = "decimal")]
+mod decimal;
 #[cfg(feature = "uuid")]
 mod identifier;
 #[cfg(feature = "time")]
