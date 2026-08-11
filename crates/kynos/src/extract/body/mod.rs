@@ -45,6 +45,7 @@ use crate::{
 ///
 /// ```no_run
 /// use kynos::extract::{
+///     FromRequest,
 ///     body::{OneOf, binary::Binary, text::Text},
 ///     media::Pdf,
 /// };
@@ -55,6 +56,12 @@ use crate::{
 ///         OneOf::Right(pdf) => drop(pdf),
 ///     }
 /// }
+///
+/// // Naming the signature is not enough to prove the pair is offerable: the
+/// // `Alternative` bound lives on the implementations rather than on the type,
+/// // so an unproven pair still typechecks until something asks for one.
+/// fn takes_a_body<C, T: FromRequest<C>>() {}
+/// takes_a_body::<(), OneOf<Text, Binary<Pdf>>>();
 /// ```
 ///
 /// Alternatives with the same media type are intentionally not implemented:
@@ -64,6 +71,18 @@ use crate::{
 ///
 /// fn body<T: kynos::extract::FromRequest<()>>() {}
 /// body::<OneOf<Text, Text>>();
+/// ```
+///
+/// Two [`Binary`](binary::Binary)s are refused for the same reason, even when
+/// the markers differ. Both media types come from a marker, so nothing at the
+/// implementation site can tell this pair from `Binary<Pdf>` beside itself —
+/// unlike the pair above, where one side's media type is fixed by its type:
+///
+/// ```compile_fail
+/// use kynos::extract::{body::{OneOf, binary::Binary}, media::{Pdf, Png}};
+///
+/// fn body<T: kynos::extract::FromRequest<()>>() {}
+/// body::<OneOf<Binary<Pdf>, Binary<Png>>>();
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OneOf<L, R> {

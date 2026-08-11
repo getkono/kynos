@@ -6,21 +6,19 @@
 
 use crate::extract::describe::RequestContent;
 
-// Every impl below pairs a codec with `Binary` or `Text`, so with no codec
-// feature enabled the matrix is empty and these would be unused.
+use crate::extract::{
+    body::{binary::Binary, text::Text},
+    media::MediaType,
+};
+
+// Only the codec pairs describe a schema; text and raw bytes do not.
 #[cfg(any(
     feature = "json",
     feature = "form",
     feature = "multipart",
     feature = "protobuf"
 ))]
-use crate::{
-    extract::{
-        body::{binary::Binary, text::Text},
-        media::MediaType,
-    },
-    schema::Schema,
-};
+use crate::schema::Schema;
 
 #[cfg(feature = "form")]
 use crate::extract::body::form::Form;
@@ -48,6 +46,17 @@ where
     Rhs: RequestContent,
 {
 }
+
+// Text and raw bytes, which is the pair that needs no codec feature at all.
+//
+// Note what is *not* here: `Binary<A>` beside `Binary<B>`. Every other pair has
+// at least one side whose media type is fixed by the type, so an implementation
+// can be written per pair and reviewed; two `Binary`s are both chosen by a
+// marker, and `OneOf<Binary<Pdf>, Binary<Pdf>>` would satisfy any
+// implementation general enough to admit the useful case. A provable overlap is
+// not the same risk as a possible one.
+impl<M: MediaType> Alternative<Binary<M>> for Text {}
+impl<M: MediaType> Alternative<Text> for Binary<M> {}
 
 #[cfg(feature = "json")]
 impl<T: Schema> Alternative<Text> for Json<T> {}
