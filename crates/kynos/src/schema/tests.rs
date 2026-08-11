@@ -48,6 +48,20 @@ fn primitives_carry_their_type_and_format() {
 }
 
 #[test]
+fn every_integer_width_carries_its_registered_format() {
+    // The Format Registry names both signednesses at every width, so no type
+    // has to borrow a wider or differently-signed format than it is.
+    assert_eq!(object_of::<i8>().format.as_deref(), Some("int8"));
+    assert_eq!(object_of::<i16>().format.as_deref(), Some("int16"));
+    assert_eq!(object_of::<i32>().format.as_deref(), Some("int32"));
+    assert_eq!(object_of::<i64>().format.as_deref(), Some("int64"));
+    assert_eq!(object_of::<u8>().format.as_deref(), Some("uint8"));
+    assert_eq!(object_of::<u16>().format.as_deref(), Some("uint16"));
+    assert_eq!(object_of::<u32>().format.as_deref(), Some("uint32"));
+    assert_eq!(object_of::<u64>().format.as_deref(), Some("uint64"));
+}
+
+#[test]
 fn integer_bounds_are_the_types_own() {
     assert_eq!(object_of::<u8>().minimum, Some(0.0));
     assert_eq!(object_of::<u8>().maximum, Some(255.0));
@@ -70,6 +84,9 @@ fn the_wide_integers_state_no_bound_they_cannot_state_exactly() {
 fn a_char_is_a_string_of_exactly_one() {
     let object = object_of::<char>();
     assert_eq!(object.ty, Some(TypeSet::One(SchemaType::String)));
+    // The length bounds stay beside the format, because format support is
+    // optional and a tool that ignores `char` still gets the constraint.
+    assert_eq!(object.format.as_deref(), Some("char"));
     assert_eq!(object.min_length, Some(1));
     assert_eq!(object.max_length, Some(1));
 }
