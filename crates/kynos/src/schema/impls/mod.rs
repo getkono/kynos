@@ -12,6 +12,9 @@ mod primitive;
 mod tuple;
 mod wrapper;
 
+#[cfg(feature = "uuid")]
+mod identifier;
+
 use kynos_openapi::{Schema as OpenApiSchema, SchemaObject, model::schema::types::SchemaType};
 
 /// A schema of one primitive type, with an OAS `format` hint.

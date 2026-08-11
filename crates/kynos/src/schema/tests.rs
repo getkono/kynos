@@ -96,6 +96,27 @@ fn the_unit_type_is_null() {
     assert_eq!(object_of::<()>().ty, Some(TypeSet::One(SchemaType::Null)));
 }
 
+#[cfg(feature = "uuid")]
+#[test]
+fn a_uuid_is_a_string_of_that_format() {
+    let object = object_of::<uuid::Uuid>();
+    assert_eq!(object.ty, Some(TypeSet::One(SchemaType::String)));
+    assert_eq!(object.format.as_deref(), Some("uuid"));
+}
+
+/// A format is a claim about the wire form, so it is worth only as much as a
+/// test that produces one and looks at it.
+#[cfg(feature = "uuid")]
+#[test]
+fn a_uuid_serializes_as_the_string_its_format_promises() {
+    let value = uuid::Uuid::nil();
+    let encoded = serde_json::to_value(value).expect("a uuid serializes");
+    assert_eq!(
+        encoded,
+        serde_json::Value::String("00000000-0000-0000-0000-000000000000".to_owned())
+    );
+}
+
 #[test]
 fn addresses_use_their_named_formats() {
     assert_eq!(object_of::<Ipv4Addr>().format.as_deref(), Some("ipv4"));

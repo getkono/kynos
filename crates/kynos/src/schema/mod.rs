@@ -52,9 +52,18 @@
 //! loses nothing. `docs/schema.md` is normative for the whole mapping and
 //! records where each format comes from.
 //!
-//! Date, time, decimal and UUID types are not here, because the crates that
-//! define them are not Kynos dependencies. Reach them through a derived newtype
-//! until they are.
+//! # Behind a feature flag
+//!
+//! A scalar type from outside `std` gets an implementation once its crate is a
+//! Kynos dependency. Each arrives additive and off by default.
+//!
+//! | Rust | Schema | Feature |
+//! | --- | --- | --- |
+//! | `uuid::Uuid` | `string`/`uuid` | `uuid` |
+//!
+//! Date, time and decimal types are not here yet, because the crates that
+//! define them are not Kynos dependencies. Reach them through a newtype
+//! carrying its own [`Schema`] until they are.
 //!
 //! # Types deliberately left without an implementation
 //!

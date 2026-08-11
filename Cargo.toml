@@ -43,6 +43,10 @@ tower = "0.5.2"
 tower-service = "0.3.3"
 tracing = "0.1.41"
 trybuild = "1.0.111"
+# A scalar-format crate is reached only from `schema/impls/`, and is declared
+# without default features because only the type is wanted -- an application
+# brings its own copy with whatever else it needs from it.
+uuid = { version = "1.24.0", default-features = false }
 
 # Lints are declared once here and inherited by every member with
 # `[lints] workspace = true`. Kynos is a public framework: undocumented public
