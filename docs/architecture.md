@@ -119,6 +119,9 @@ by naming the row X displaces rather than by arguing that X is good.
 | Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | designed |
 | Protobuf codec | `prost` | [`extract/body/protobuf.rs`](../crates/kynos/src/extract/body/protobuf.rs), [`response/codec/protobuf.rs`](../crates/kynos/src/response/codec/protobuf.rs) | designed |
 | Cookies | `cookie` | [`extract/params/cookie.rs`](../crates/kynos/src/extract/params/cookie.rs) | designed |
+| Scalar formats, identifiers | `uuid` | [`schema/impls/`](../crates/kynos/src/schema/impls/) | chosen |
+| Scalar formats, dates and times | `chrono`, `jiff` | [`schema/impls/`](../crates/kynos/src/schema/impls/) | chosen |
+| Scalar formats, decimals | `rust_decimal`, `bigdecimal` | [`schema/impls/`](../crates/kynos/src/schema/impls/) | chosen |
 | Compression | `async-compression` | [`middleware/compression.rs`](../crates/kynos/src/middleware/compression.rs) | designed |
 | tower interop, outward | `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
 | tower interop, inward | `tower` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | designed |
@@ -140,17 +143,29 @@ code that reaches it is implemented; it has no owning module to be a skeleton.
 `httparse` and `h2` are the clear cases: no member declares either, and they
 are reached only through `hyper`.
 
-`matchit` is the only `chosen` row. It is recorded here because the decision is
-made and the alternatives are closed — see [below](#what-does-not-move-and-why)
-— but declaring a dependency the tree does not name would break the
-consumed-by-a-member requirement in [`nfr.md`](nfr.md#dependencies) for no gain.
-It arrives with the router implementation.
+`matchit` and the three scalar-format rows are the `chosen` ones. Each is
+recorded because the decision is made and the alternatives are closed — see
+[below](#what-does-not-move-and-why) — but declaring a dependency the tree does
+not name would break the consumed-by-a-member requirement in
+[`nfr.md`](nfr.md#dependencies) for no gain. `matchit` arrives with the router
+implementation; each scalar crate arrives with the `Schema` implementation that
+names it, and becomes `built` in the same commit, since a leaf implementation
+has no skeleton phase to be `designed` in.
 
 `hyper` has two sites rather than one because the body handover is where its
 `Incoming` type enters, and `http/body.rs` is by design the only place the
 erased body is named. `hyper-util` is a separate row because it is a separate
 allowance: it supplies the tokio adapters named in the runtime policy above,
 and it does not reach the body.
+
+The three scalar-format rows are a **new layer**, and saying so is the point.
+This table was organized by transport and codec and had no home for a crate whose
+only job is to give a value a JSON Schema `format` — which is why "can we add
+`uuid`?" read as unanswerable rather than as settled. Nothing is displaced,
+because there was nothing in that position to displace. The rule the layer
+inherits is the ordinary one: each crate is named only under
+[`schema/impls/`](../crates/kynos/src/schema/impls/), each arrives behind an
+off-by-default feature, and none is reachable from a default build.
 
 ### What does not move, and why
 
@@ -183,6 +198,17 @@ application supply another. What the design does preserve is the option to add
 one: the accept path holds the socket and the rustls session as separable
 values, so a kernel-TLS path could be introduced additively later. That costs
 nothing today and is not a commitment — see the rationale below.
+
+**Two date backends and two decimal backends, not one each.** These are the only
+rows where Kynos ships alternatives, and the reason is that the alternatives are
+not competing answers to one question. `chrono` and `jiff` divide by ecosystem
+rather than capability; `rust_decimal` is a fixed 96-bit mantissa with a scale
+ceiling of 28 and `bigdecimal` is arbitrary precision, so money and science want
+different crates. Picking one would be choosing the user's problem for them,
+which invariant 3 forbids. An umbrella feature defines each concept's shape once
+so the backends cannot diverge in what they emit, and enabling an umbrella with
+no backend does not compile. The `time` crate is **not** a backend and will not
+become one; it reaches the tree only as a transitive dependency of `cookie`.
 
 ### Scope edges
 
