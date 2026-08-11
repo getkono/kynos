@@ -64,6 +64,10 @@ required-features = [
 name = "schema"
 required-features = ["openapi31", "macros", "server", "http1", "json"]
 
+[[example]]
+name = "parameters"
+required-features = ["openapi31", "macros", "server", "http1", "json", "cookie"]
+
 [features]
 default = [
   "openapi31",
