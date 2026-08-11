@@ -33,6 +33,19 @@ pub struct FilePart {
     pub bytes: bytes::Bytes,
 }
 
+/// A part's bytes are raw binary, which sits outside JSON Schema's `type`
+/// exactly as a raw binary message body does.
+///
+/// The part's media type is the Encoding Object's to state, and a
+/// `contentMediaType` here would contradict it — which the specification says
+/// is ignored. So the schema is the empty one, and every part-level fact is
+/// carried where a consumer will actually read it. See `docs/schema.md`.
+impl Schema for FilePart {
+    fn schema(_registry: &mut Registry) -> kynos_openapi::Schema {
+        kynos_openapi::Schema::Object(Box::default())
+    }
+}
+
 impl<C: Sync, T: Send> FromRequest<C> for MultipartForm<T> {
     type Rejection = BodyRejection;
 
