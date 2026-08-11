@@ -4,7 +4,7 @@
 //! such a declaration is ignored — so what describes the negotiation is the
 //! operation's `content` map, contributed by the representation tuple.
 
-mod representation;
+pub mod representation;
 
 use crate::{
     error::rejection::NegotiationRejection,
