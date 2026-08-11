@@ -15,6 +15,8 @@ use crate::schema::impls::formatted;
 
 #[cfg(feature = "time-chrono")]
 mod chrono;
+#[cfg(feature = "time-jiff")]
+mod jiff;
 
 /// A calendar date: RFC 3339 `full-date`, which carries no offset and needs
 /// none.
@@ -43,7 +45,13 @@ pub(super) fn local_time() -> OpenApiSchema {
     formatted(SchemaType::String, "time-local")
 }
 
-// No `duration` shape yet. chrono cannot supply one: its `TimeDelta`
-// serializes as a `[seconds, nanos]` array, which is the shape
-// `std::time::Duration` is already refused for. It arrives with a backend that
-// writes an ISO 8601 duration.
+/// An ISO 8601 duration.
+///
+/// Only a backend that writes one may claim this, which is why the two are not
+/// symmetric: chrono's `TimeDelta` serializes as a `[seconds, nanos]` array,
+/// the shape `std::time::Duration` is already refused for, so chrono
+/// contributes no duration at all.
+#[cfg(feature = "time-jiff")]
+pub(super) fn duration() -> OpenApiSchema {
+    formatted(SchemaType::String, "duration")
+}

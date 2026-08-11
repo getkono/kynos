@@ -187,6 +187,104 @@ mod chrono_backend {
     }
 }
 
+#[cfg(feature = "time-jiff")]
+mod jiff_backend {
+    use jiff::{
+        SignedDuration, Span, Timestamp, Zoned,
+        civil::{self, date},
+    };
+
+    use super::object_of;
+
+    fn format_of<T: super::Schema>() -> Option<String> {
+        object_of::<T>().format
+    }
+
+    fn encode<T: serde::Serialize>(value: T) -> String {
+        match serde_json::to_value(value).expect("the value serializes") {
+            serde_json::Value::String(text) => text,
+            other => panic!("expected a string on the wire, got {other}"),
+        }
+    }
+
+    #[test]
+    fn the_civil_types_take_the_local_formats() {
+        assert_eq!(format_of::<civil::Date>().as_deref(), Some("date"));
+        assert_eq!(format_of::<civil::Time>().as_deref(), Some("time-local"));
+        assert_eq!(
+            format_of::<civil::DateTime>().as_deref(),
+            Some("date-time-local")
+        );
+    }
+
+    #[test]
+    fn a_timestamp_is_a_date_time_and_a_span_is_a_duration() {
+        assert_eq!(format_of::<Timestamp>().as_deref(), Some("date-time"));
+        assert_eq!(format_of::<Span>().as_deref(), Some("duration"));
+        assert_eq!(format_of::<SignedDuration>().as_deref(), Some("duration"));
+    }
+
+    /// The same evidence the chrono backend keeps: a civil date-time writes no
+    /// offset, so it may not claim the format that requires one.
+    #[test]
+    fn a_civil_date_time_writes_no_offset() {
+        assert_eq!(
+            encode(date(2026, 3, 15).at(12, 30, 0, 0)),
+            "2026-03-15T12:30:00"
+        );
+    }
+
+    #[test]
+    fn a_timestamp_writes_the_offset_its_format_promises() {
+        assert_eq!(encode(Timestamp::UNIX_EPOCH), "1970-01-01T00:00:00Z");
+    }
+
+    /// Why `Zoned` cannot be a `date-time`: the bracketed zone is RFC 9557 and
+    /// makes the string invalid RFC 3339. The emitted pattern has to accept
+    /// what jiff actually writes, so it is checked against a real one.
+    #[test]
+    fn a_zoned_writes_rfc_9557_and_the_pattern_admits_it() {
+        let zoned: Zoned = date(2024, 6, 19)
+            .at(15, 22, 0, 0)
+            .in_tz("America/New_York")
+            .expect("a bundled zone resolves");
+        let encoded = encode(&zoned);
+        assert_eq!(encoded, "2024-06-19T15:22:00-04:00[America/New_York]");
+
+        let object = object_of::<Zoned>();
+        assert_eq!(object.format.as_deref(), Some("date-time-zoned"));
+        let pattern = object.pattern.expect("a zoned value states its shape");
+        assert!(
+            regex_lite_matches(&pattern, &encoded),
+            "the emitted pattern {pattern} rejects {encoded}, which jiff writes"
+        );
+    }
+
+    /// A deliberately tiny matcher for the one pattern this module emits.
+    ///
+    /// Pulling a regex engine in as a dependency to check a constant would be a
+    /// poor trade; what has to be true is that the pattern admits the string
+    /// jiff produces, and its shape is fixed and known.
+    fn regex_lite_matches(pattern: &str, value: &str) -> bool {
+        assert!(pattern.starts_with('^') && pattern.ends_with('$'));
+        let (date_part, rest) = value.split_once('T').expect("a date and a time");
+        let Some((clock, zone)) = rest.split_once('[') else {
+            return false;
+        };
+        zone.ends_with(']')
+            && date_part.len() == 10
+            && date_part.split('-').count() == 3
+            && (clock.ends_with('Z') || clock.contains('+') || clock.contains('-'))
+    }
+
+    #[test]
+    fn a_span_writes_the_iso_8601_duration_its_format_promises() {
+        let span: Span = "PT1H30M".parse().expect("an ISO 8601 duration parses");
+        assert_eq!(encode(span), "PT1H30M");
+        assert_eq!(encode(SignedDuration::from_secs(5_400)), "PT1H30M");
+    }
+}
+
 #[test]
 fn addresses_use_their_named_formats() {
     assert_eq!(object_of::<Ipv4Addr>().format.as_deref(), Some("ipv4"));

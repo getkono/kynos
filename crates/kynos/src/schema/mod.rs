@@ -64,6 +64,12 @@
 //! | `chrono::NaiveTime` | `string`/`time-local` | `time-chrono` |
 //! | `chrono::NaiveDateTime` | `string`/`date-time-local` | `time-chrono` |
 //! | `chrono::DateTime<Utc>`, `<FixedOffset>` | `string`/`date-time` | `time-chrono` |
+//! | `jiff::civil::Date` | `string`/`date` | `time-jiff` |
+//! | `jiff::civil::Time` | `string`/`time-local` | `time-jiff` |
+//! | `jiff::civil::DateTime` | `string`/`date-time-local` | `time-jiff` |
+//! | `jiff::Timestamp` | `string`/`date-time` | `time-jiff` |
+//! | `jiff::Zoned` | `string`/`date-time-zoned`, with a pattern | `time-jiff` |
+//! | `jiff::Span`, `jiff::SignedDuration` | `string`/`duration` | `time-jiff` |
 //!
 //! `time` is an umbrella carrying the shapes a backend maps onto, so a concept
 //! is defined once rather than once per library; it names no crate and does not
@@ -76,6 +82,14 @@
 //! body the service answers 400 for. `DateTime<Local>` has no implementation at
 //! all: its offset comes from the process environment, which is the same
 //! objection that removes `usize`.
+//!
+//! The backends are not symmetric, and cannot be. `jiff::Span` writes an ISO
+//! 8601 duration and so takes `duration`; chrono's `TimeDelta` writes a
+//! `[seconds, nanos]` array and gets no implementation at all, for the same
+//! reason `std::time::Duration` has none. `jiff::Zoned` is the one type here
+//! with no registered format to take: it writes RFC 9557, whose bracketed zone
+//! is what stops it being a valid `date-time`, so it carries a pattern and a
+//! format name that is Kynos's until one is registered.
 //!
 //! Decimal types are not here yet, because the crates that define them are not
 //! Kynos dependencies. Reach them through a newtype carrying its own

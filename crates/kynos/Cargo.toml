@@ -108,6 +108,7 @@ uuid = ["dep:uuid"]
 # `cookie`.
 time = []
 time-chrono = ["time", "dep:chrono"]
+time-jiff = ["time", "dep:jiff"]
 
 # --- Observability ---------------------------------------------------------
 # The `tracing` facade only. Choosing a subscriber stays the application's call.
@@ -145,6 +146,7 @@ full = [
   "test-util",
   "uuid",
   "time-chrono",
+  "time-jiff",
 ]
 
 [dependencies]
@@ -169,6 +171,7 @@ hyper-util = { workspace = true, optional = true, features = [
   "server",
   "tokio",
 ] }
+jiff = { workspace = true, optional = true }
 multer = { workspace = true, optional = true }
 percent-encoding = { workspace = true }
 prost = { workspace = true, optional = true }
@@ -197,6 +200,13 @@ trybuild = { workspace = true }
 # test that serializes the type and looks. That needs the serde integration the
 # library itself does not.
 chrono = { workspace = true, features = ["alloc", "serde"] }
+# `tzdb-bundle-always` rather than the platform database, so a test that names a
+# zone does not depend on what the host has installed.
+jiff = { workspace = true, features = [
+  "std",
+  "serde",
+  "tzdb-bundle-always",
+] }
 uuid = { workspace = true, features = ["serde"] }
 
 [lints]

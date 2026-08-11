@@ -83,9 +83,13 @@ compile_error!("the `server` feature requires at least one of `http1` or `http2`
 // `time` carries the shapes the date and time backends map onto and names no
 // library of its own, so on its own it describes nothing. Saying so is better
 // than compiling to a feature that silently does nothing.
-#[cfg(all(feature = "time", not(feature = "time-chrono")))]
+#[cfg(all(
+    feature = "time",
+    not(any(feature = "time-chrono", feature = "time-jiff"))
+))]
 compile_error!(
-    "the `time` feature carries no types of its own; enable a backend, which is `time-chrono`"
+    "the `time` feature carries no types of its own; enable a backend, either `time-chrono` or \
+     `time-jiff`"
 );
 
 #[doc(hidden)]
