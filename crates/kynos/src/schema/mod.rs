@@ -105,10 +105,12 @@
 //! | --- | --- | --- |
 //! | `serde_json::Value`, `Map`, `RawValue` | the schema would be `true` | a derived type, or [`Unchecked`](unchecked::Unchecked) |
 //! | `HashMap<String, Value>` | `additionalProperties: true` | `HashMap<String, T> where T: Schema` |
-//! | `usize`, `isize` | maps to `int32` or `int64` depending on the build target; a wire contract must not depend on where it was compiled | `u32`/`u64`/`i32`/`i64` |
-//! | `u128`, `i128` | outside JSON's safe integer range, and no OAS format exists | `String` with a `pattern`, or `u64` |
-//! | `SystemTime`, `Instant`, `Duration` | serde emits a seconds/nanos struct nobody wants as a contract | a `chrono` or `time` type; an ISO 8601 newtype for durations |
-//! | `PathBuf`, `OsString` | platform-dependent, not guaranteed to be UTF-8 | `String` |
+//! | `usize`, `isize` | the width depends on the build target, and a wire contract must not depend on where it was compiled | `u32`/`u64`/`i32`/`i64`, which name their width |
+//! | `u128`, `i128` | outside JSON's safe integer range, and no registered format covers them | a newtype over `String` carrying its own [`Schema`], or `u64` |
+//! | `SystemTime`, `Instant`, `Duration` | serde emits a seconds/nanos pair nobody wants as a contract | `chrono::DateTime<Utc>` or `jiff::Timestamp`; `jiff::Span` for a duration |
+//! | `chrono::TimeDelta` | serializes as a `[seconds, nanos]` array, the shape `Duration` is refused for | `jiff::Span`, or a newtype emitting `string`/`duration` |
+//! | `chrono::DateTime<Local>` | the offset comes from the process environment, so the contract would depend on where the server runs | `DateTime<Utc>`, or `DateTime<FixedOffset>` to keep an offset |
+//! | `PathBuf`, `OsString` | platform-dependent, not guaranteed to be UTF-8 | `String`, which claims nothing beyond being text |
 //! | `Box<dyn Trait>` | no schema exists | a closed enum deriving [`Schema`] |
 //!
 //! # How this module is laid out

@@ -210,7 +210,11 @@ trybuild = { workspace = true }
 # test that serializes the type and looks. That needs the serde integration the
 # library itself does not.
 bigdecimal = { workspace = true, features = ["serde"] }
-chrono = { workspace = true, features = ["alloc", "serde"] }
+# `clock` is what makes `Local` exist. Kynos's own dependency does not enable
+# it, but chrono's defaults do, so an application almost always has it -- and
+# the UI case proving `DateTime<Local>` is refused has to fail for that reason
+# rather than because the type is missing.
+chrono = { workspace = true, features = ["alloc", "clock", "serde"] }
 # `tzdb-bundle-always` rather than the platform database, so a test that names a
 # zone does not depend on what the host has installed.
 jiff = { workspace = true, features = [
