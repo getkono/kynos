@@ -45,6 +45,21 @@ required-features = ["openapi31", "server", "http2"]
 name = "graceful_shutdown"
 required-features = ["openapi31", "server", "http1"]
 
+[[example]]
+name = "scalars"
+required-features = [
+  "openapi31",
+  "macros",
+  "server",
+  "http1",
+  "json",
+  "uuid",
+  "time-chrono",
+  "time-jiff",
+  "decimal-rust",
+  "decimal-big",
+]
+
 [features]
 default = [
   "openapi31",
