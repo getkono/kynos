@@ -1,0 +1,5 @@
+error: `describtion` is not part of the `#[reply(...)]` grammar
+ --> tests/ui/macros/reply_unknown_member.rs:8:27
+  |
+8 |     #[reply(status = 200, describtion = "the finished report")]
+  |                           ^^^^^^^^^^^

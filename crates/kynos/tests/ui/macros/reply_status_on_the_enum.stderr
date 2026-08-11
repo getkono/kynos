@@ -1,0 +1,5 @@
+error: a status belongs on each variant, because the point of a `Reply` enum is that its variants answer differently. Move it to the variants
+ --> tests/ui/macros/reply_status_on_the_enum.rs:7:18
+  |
+7 | #[reply(status = 200)]
+  |                  ^^^

@@ -1,0 +1,5 @@
+error: variant `Created` carries its response body, and a body is one described type. Give these fields a struct deriving `Schema` and hold it in a single-field variant, or drop them for an empty body
+ --> tests/ui/macros/reply_struct_variant.rs:9:13
+  |
+9 |     Created { id: u32, revision: u32 },
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^

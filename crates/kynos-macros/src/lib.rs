@@ -238,8 +238,30 @@ pub fn derive_api_error(item: TokenStream) -> TokenStream {
 
 /// Declares a closed set of responses, one variant per status.
 ///
+/// ```ignore
+/// #[derive(Reply)]
+/// enum CreateReply {
+///     #[reply(status = 201, description = "the user as stored")]
+///     Created(User),
+///
+///     #[reply(status = 200, description = "an identical user already existed")]
+///     AlreadyExists(User),
+/// }
+/// ```
+///
 /// For an operation with more than one success shape. Modelled on
 /// poem-openapi's `ApiResponse`, which is the best existing treatment of this.
+///
+/// `status` is required on every variant and must be between 200 and 599: a 1xx
+/// is an interim response, and a handler returns the final one. No two variants
+/// may declare the same status, since the description keys a reply's variants
+/// by status alone — that is what "one variant per status" means, and it is the
+/// one place this derive is stricter than [`ApiError`](macro@ApiError), whose
+/// variants carry a `detail` that tells two occurrences of a status apart.
+///
+/// A variant's fields are its response body, so a variant holds either nothing,
+/// for the empty body, or exactly one type describing the body. An anonymous
+/// record has no name to register a component under.
 #[proc_macro_derive(Reply, attributes(reply))]
 pub fn derive_reply(item: TokenStream) -> TokenStream {
     derive::reply::expand(item)

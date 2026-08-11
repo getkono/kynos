@@ -104,6 +104,14 @@ The derive rejects a struct, with a diagnostic pointing at `Created`, `Accepted`
 and `NoContent`, because the point of `Reply` is a *closed set* and a struct has
 one shape.
 
+Each variant declares its own status, `#[reply(status = N)]`, between 200 and
+599 — a 1xx is an interim response and a handler returns the final one. Two
+variants may not share a status, which is where `Reply` is stricter than
+[`ApiError`](errors.md): a problem carries a `detail` telling two occurrences of
+one status apart, and a reply's variants are keyed by status alone. A variant's
+fields are its response body, so it holds exactly one described type, or none
+for the empty body.
+
 ## Negotiation, on both sides
 
 | Direction | Selected by | Type | Distinctness proved by |

@@ -114,7 +114,9 @@ enum StoreError {
 
 #[derive(Reply)]
 enum CreateReply {
+    #[reply(status = 201, description = "the user as stored")]
     Created(User),
+    #[reply(status = 409)]
     Conflict,
 }
 
