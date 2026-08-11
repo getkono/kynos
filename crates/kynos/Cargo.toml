@@ -88,6 +88,10 @@ required-features = ["openapi31", "macros", "server", "http1", "json"]
 name = "negotiation"
 required-features = ["openapi31", "macros", "server", "http1", "json"]
 
+[[example]]
+name = "composition"
+required-features = ["openapi31", "macros", "server", "http1"]
+
 [features]
 default = [
   "openapi31",
