@@ -30,9 +30,11 @@
 //! | Rust | Schema |
 //! | --- | --- |
 //! | `bool` | `boolean` |
-//! | `String`, `char` | `string`; `char` is bounded to one character |
-//! | `i8`–`i32`, `u8`–`u16` | `integer`/`int32`, with the type's exact range |
-//! | `u32`, `i64`, `u64` | `integer`/`int64` — the OAS formats are *signed*, so a `u32` maximum does not fit `int32`; the unsigned two add `minimum: 0` |
+//! | `String` | `string` |
+//! | `char` | `string`/`char`, bounded to one character |
+//! | `i8`–`i32` | `integer`/`int8`–`int32`, with the type's exact range |
+//! | `u8`–`u32` | `integer`/`uint8`–`uint32`, with the type's exact range |
+//! | `i64`, `u64` | `integer`/`int64`, `uint64`; of their bounds only `u64`'s `minimum: 0` survives an `f64`, so it is the only one stated |
 //! | `f32`, `f64` | `number`/`float`, `number`/`double` |
 //! | `Option<T>` | `T`, widened to admit `null` |
 //! | `Box<T>`, `Arc<T>` | `T`, under `T`'s own component name |
@@ -43,6 +45,12 @@
 //! | tuples up to twelve | `array` with `prefixItems`, closed |
 //! | `()` | `null` |
 //! | `Ipv4Addr`, `Ipv6Addr`, `IpAddr` | `string`/`ipv4`, `string`/`ipv6`, either |
+//!
+//! Each `format` above is either defined by OpenAPI itself or registered in the
+//! OAI Format Registry, where support is optional — so every constraint a format
+//! implies is also emitted as a keyword, and a tool that ignores the format
+//! loses nothing. `docs/schema.md` is normative for the whole mapping and
+//! records where each format comes from.
 //!
 //! Date, time, decimal and UUID types are not here, because the crates that
 //! define them are not Kynos dependencies. Reach them through a derived newtype
