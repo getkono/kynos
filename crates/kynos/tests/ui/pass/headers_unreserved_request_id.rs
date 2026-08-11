@@ -1,4 +1,4 @@
-#[derive(kynos::Headers)]
+#[derive(kynos::HeaderParams)]
 struct Credentials {
     x_request_id: String,
 }

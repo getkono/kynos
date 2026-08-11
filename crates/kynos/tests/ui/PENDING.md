@@ -13,7 +13,7 @@ Covered: 1, 2, 4, 5, 6, 7, 10, 11. Pending: 3, 8, 9.
 | --- | --- | --- |
 | 3 | Wildcard and catch-all routes | `PathTemplate::parse` accepts `{*path}` on purpose: a variable name is unconstrained in OpenAPI, and an externally authored description holding one has to round-trip. The narrower rule is enforced where routes are registered, which is a run-time check in a `todo!()`-bodied body rather than a type-level one. Landing this needs the router's registration path. |
 | 8 | Request-derived values as dependencies | `Inject<CurrentUser>` typechecks whenever the context provides a `CurrentUser`, and nothing in the type system distinguishes a value read from the request from application state. The rule is a review convention today. |
-| 9 | Header-based API versioning | The README says so itself: a version header declared with `#[derive(Headers)]` compiles, and no mechanism rejects it. Advice rather than a rule. |
+| 9 | Header-based API versioning | The README says so itself: a version header declared with `#[derive(HeaderParams)]` compiles, and no mechanism rejects it. Advice rather than a rule. |
 
 Anti-pattern 1 landed as the part of it that a single build can check: a
 `tower::Layer` is not accepted where an `Interceptor` is required. That

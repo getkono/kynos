@@ -11,7 +11,7 @@
 #![allow(dead_code)]
 
 use kynos::{
-    ApiError, Headers, PathParams, QueryParams, Reply, Schema, SecurityScheme, Tag,
+    ApiError, HeaderParams, PathParams, QueryParams, Reply, Schema, SecurityScheme, Tag,
     extract::params::{
         header::HeaderParams, path::PathParams as PathParamsTrait,
         query::QueryParams as QueryParamsTrait,
@@ -58,14 +58,14 @@ struct ListQuery {
     per: u32,
 }
 
-#[derive(Headers)]
+#[derive(HeaderParams)]
 struct Conditional {
     #[header(rename = "If-None-Match")]
     if_none_match: String,
 }
 
 #[cfg(feature = "cookie")]
-#[derive(kynos::Cookies)]
+#[derive(kynos::CookieParams)]
 struct Session {
     #[cookie(rename = "session_id")]
     session: String,

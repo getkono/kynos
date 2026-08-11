@@ -18,7 +18,7 @@
 use core::convert::Infallible;
 
 use kynos::{
-    Headers, PathParams, QueryParams, Schema,
+    HeaderParams, PathParams, QueryParams, Schema,
     error::rejection::{
         AuthRejection, BodyRejection, HeaderRejection, NegotiationRejection, PathRejection,
         QueryRejection,
@@ -58,7 +58,7 @@ struct Page {
     page: u32,
 }
 
-#[derive(Headers)]
+#[derive(HeaderParams)]
 struct Wanted {
     x_request_id: String,
 }
@@ -74,11 +74,11 @@ fn a_parameter_extractor_rejects_with_its_own_type() {
 #[test]
 fn a_cookie_extractor_rejects_with_its_own_type() {
     use kynos::{
-        Cookies, error::rejection::CookieRejection,
+        CookieParams, error::rejection::CookieRejection,
         extract::params::cookie::Cookies as CookieExtractor,
     };
 
-    #[derive(Cookies)]
+    #[derive(CookieParams)]
     struct Session {
         session: String,
     }

@@ -9,7 +9,7 @@ use crate::{
 
 /// A response carrying declared headers alongside its body.
 ///
-/// `H` derives `Headers`, so each header appears in `Response.headers` with its
+/// `H` derives `HeaderParams`, so each header appears in `Response.headers` with
 /// own schema.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WithHeaders<T, H> {

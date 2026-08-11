@@ -272,13 +272,13 @@ pub fn derive_query_params(item: TokenStream) -> TokenStream {
 /// derived from a response's content map. Repeated fields such as `Set-Cookie`
 /// remain separate header values rather than being comma joined. The
 /// diagnostic names the right tool for each reserved field.
-#[proc_macro_derive(Headers, attributes(header))]
+#[proc_macro_derive(HeaderParams, attributes(header))]
 pub fn derive_headers(item: TokenStream) -> TokenStream {
     derive::headers::expand(item)
 }
 
 /// Declares a group of request cookies.
-#[proc_macro_derive(Cookies, attributes(cookie))]
+#[proc_macro_derive(CookieParams, attributes(cookie))]
 pub fn derive_cookies(item: TokenStream) -> TokenStream {
     derive::cookies::expand(item)
 }

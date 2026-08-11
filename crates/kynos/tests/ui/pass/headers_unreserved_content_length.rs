@@ -1,4 +1,4 @@
-#[derive(kynos::Headers)]
+#[derive(kynos::HeaderParams)]
 struct Payload {
     #[header(rename = "Content-Length")]
     content_length: String,

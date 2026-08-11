@@ -1,4 +1,4 @@
-#[derive(kynos::Headers)]
+#[derive(kynos::HeaderParams)]
 struct Payload {
     #[header(rename = "Content-Type")]
     content_type: String,

@@ -10,7 +10,7 @@ use crate::{
 
 /// Declared request headers.
 ///
-/// `T` derives `Headers`. Declaring `Accept`, `Content-Type` or `Authorization`
+/// `T` derives `HeaderParams`. Declaring `Accept`, `Content-Type` or `Authorization`
 /// is a compile error: the specification says a parameter definition for those
 /// is ignored, so accepting one would put a claim in the description that no
 /// consumer will honour. Use content negotiation for the first two and

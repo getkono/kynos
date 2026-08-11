@@ -41,7 +41,7 @@ Each of these is something another Rust framework offers and Kynos does not, and
 
 **4. Runtime-chosen status codes.** `HttpResponse::build(code)` and a bare `StatusCode` return have no equivalent here. A status the description does not list is a status it is wrong about. Status is part of the return type; use `#[derive(Reply)]` when an operation has several.
 
-**5. `Accept`, `Content-Type` or `Authorization` as header parameters.** The specification says a parameter definition for these *shall be ignored*, so declaring one is a claim no consumer will honour. `#[derive(Headers)]` rejects them at compile time and names the right tool: content negotiation for the first two, `#[derive(SecurityScheme)]` for the third.
+**5. `Accept`, `Content-Type` or `Authorization` as header parameters.** The specification says a parameter definition for these *shall be ignored*, so declaring one is a claim no consumer will honour. `#[derive(HeaderParams)]` rejects them at compile time and names the right tool: content negotiation for the first two, `#[derive(SecurityScheme)]` for the third.
 
 **6. `serde_json::Value` bodies.** No `Schema` implementation, so `Json<Value>` does not compile. A payload that really is unconstrained must say so in the type — `Unchecked<Value>` — which is annotated in the document and reported by `validate`. Weakness is allowed; *silent* weakness is not. The same rule removes `usize` (maps to `int32` or `int64` depending on the build target), `SystemTime` (serde emits a seconds/nanos struct) and `Box<dyn Trait>`.
 
@@ -49,7 +49,7 @@ Each of these is something another Rust framework offers and Kynos does not, and
 
 **8. Request-derived values as dependencies.** A `CurrentUser` read from an `Authorization` header is not application state; injecting it would make the requirement invisible in the description. It arrives through `Auth<S>`, so enforcing a credential and declaring it are one act.
 
-**9. Header-based API versioning.** OpenAPI expresses paths. Put the version in the path. This is the one item here with no mechanical enforcement — a version header declared with `#[derive(Headers)]` compiles — so it is advice rather than a rule the compiler keeps.
+**9. Header-based API versioning.** OpenAPI expresses paths. Put the version in the path. This is the one item here with no mechanical enforcement — a version header declared with `#[derive(HeaderParams)]` compiles — so it is advice rather than a rule the compiler keeps.
 
 **10. Per-route trailing-slash or case normalization.** One app-level policy, or none. Paths in a description are exact.
 

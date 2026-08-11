@@ -1,4 +1,4 @@
-//! `#[derive(Cookies)]`.
+//! `#[derive(CookieParams)]`.
 
 use proc_macro::TokenStream;
 use quote::quote;

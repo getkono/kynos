@@ -90,7 +90,7 @@ There is no way to choose a status at run time.
 | [`Created<T>`](../crates/kynos/src/response/status.rs) | 201 | `location` is a required field, not an option |
 | [`Accepted<T>`](../crates/kynos/src/response/status.rs) | 202 | |
 | [`Redirect<CODE>`](../crates/kynos/src/response/status.rs) | `CODE` | 301, 302, 303, 307 or 308 only |
-| [`WithHeaders<T, H>`](../crates/kynos/src/response/headers.rs) | `T`'s | `H` derives `Headers`, so `Response.headers` is complete |
+| [`WithHeaders<T, H>`](../crates/kynos/src/response/headers.rs) | `T`'s | `H` derives `HeaderParams`, so `Response.headers` is complete |
 
 `Redirect<CODE>` is bounded on `(): ValidRedirectCode<CODE>`, a witness
 implemented for exactly those five codes. Both the trait and `()` are foreign to
@@ -122,10 +122,10 @@ a cross-codec pair needs both features and no single gate covers a group.
 `Accept` parameter, because the specification says a parameter definition for
 that field shall be ignored. What describes the negotiation is the operation's
 `content` map, contributed by the representation tuple; `Accept`'s own
-`Describe` contributes only rejection responses, the 406 among them. The
-`Representation` and
-`Representations` traits are sealed in a private module: the set of offerable
-representations is exactly the set of codecs Kynos can describe.
+`Describe` contributes only rejection responses, the 406 among them. The `Representation` and `Representations` traits are public and sealed by a
+private supertrait: the set of offerable representations is exactly the set of
+codecs Kynos can describe, and the bound is still nameable by a program generic
+over what it offers.
 
 ## Rules
 
@@ -136,7 +136,7 @@ Each is a rule with a mechanical enforcement point.
 | --- | --- | --- |
 | 2 | No handler receives the raw request, its body, or its whole header map | `Describe` has no blanket implementation, and Kynos ships none for `Request`, `Body` or `HeaderMap` |
 | 4 | No status is chosen at run time | `IntoResponse` is unimplemented for `StatusCode`, `String`, `&str` and tuples of them; `Responses` is unimplemented for `Problem`, whose status is a field. See [`errors.md`](errors.md#a-problem-is-a-representation-not-a-response) |
-| 5 | `Accept`, `Content-Type` and `Authorization` are never header parameters | `#[derive(Headers)]` rejects them by folded name, and names the right tool for each |
+| 5 | `Accept`, `Content-Type` and `Authorization` are never header parameters | `#[derive(HeaderParams)]` rejects them by folded name, and names the right tool for each |
 | 6 | No unconstrained body type | `serde_json::Value` and friends have no [`Schema`](../crates/kynos/src/schema/mod.rs) implementation |
 
 **#2.** A handler that wants an arbitrary header declares it with
