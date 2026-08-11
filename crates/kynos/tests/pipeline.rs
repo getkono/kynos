@@ -127,3 +127,28 @@ fn a_router_accepts_what_routes_produces() {
     }
     let _ = build;
 }
+
+/// The one tag written on the attribute rather than on a builder.
+#[derive(kynos::Tag)]
+struct Users;
+
+/// Listed under a tag.
+#[kynos::get("/users/tagged", tag = Users)]
+async fn tagged_list() -> NoContent {
+    todo!()
+}
+
+/// A tag on the attribute is a compile-time fact about the operation, so it
+/// belongs to the same constant set as the method, the path and the summary.
+///
+/// The three builder levels — `Router::tag`, `Group::tag` and
+/// `EndpointBuilder::tag` — apply a tag to whatever they enclose. This is the
+/// fourth, and it is the only one the description can read without building a
+/// router.
+#[test]
+fn a_route_tag_reaches_the_endpoint_metadata() {
+    use kynos::router::endpoint::meta::EndpointMeta;
+
+    assert_eq!(<tagged_list as EndpointMeta>::TAGS, ["Users"]);
+    assert!(<health as EndpointMeta>::TAGS.is_empty());
+}

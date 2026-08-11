@@ -51,4 +51,18 @@ pub trait EndpointMeta {
 
     /// Whether the handler carried `#[deprecated]`.
     const DEPRECATED: bool;
+
+    /// The tags the route attribute named, in declaration order.
+    ///
+    /// Empty when it named none. This is the fourth and innermost of the four
+    /// places a tag can be applied — [`Router::tag`](crate::Router::tag),
+    /// [`Group::tag`](crate::router::group::Group::tag) and
+    /// [`EndpointBuilder::tag`](crate::router::endpoint::builder::EndpointBuilder::tag)
+    /// are the other three — and the only one readable without building a
+    /// router, since it is a fact about the operation rather than about what
+    /// encloses it.
+    ///
+    /// A slice rather than an `Option`, because the enclosing levels contribute
+    /// their own and the Operation Object's `tags` is an array either way.
+    const TAGS: &'static [&'static str];
 }

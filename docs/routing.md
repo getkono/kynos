@@ -88,6 +88,15 @@ feature. It serves the route and gets no `paths` entry, recording it under
 | [`Router::intercept`](../crates/kynos/src/router/mod.rs) | every operation in the router | every one of their descriptions |
 | [`Router::observe`](../crates/kynos/src/router/mod.rs) | every operation in the router | nothing — observers change nothing |
 
+A tag is applied at four scopes, and they add rather than override:
+`Router::tag`, `Group::tag`, `EndpointBuilder::tag`, and `tag = T` on the route
+attribute itself. Only the last is a fact about the operation rather than about
+what encloses it, which is why it is the only one readable without building a
+router — it becomes
+[`EndpointMeta::TAGS`](../crates/kynos/src/router/endpoint/meta.rs). The
+attribute names one tag; the enclosing scopes are how an operation acquires the
+rest.
+
 Scope in the document matches scope in the router, exactly. A group is the
 recommended unit of API structure — one per resource — because attaching
 authentication to a group documents it on every operation underneath, correctly,

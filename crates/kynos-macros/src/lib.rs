@@ -46,7 +46,10 @@ use proc_macro::TokenStream;
 /// operation and contributes its 500 response. It is a compile-time error to
 /// use it when the final binary is built with `panic = "abort"`.
 ///
-/// Accepts `operation_id = "..."` and `tag = SomeTag` after the path.
+/// Accepts `operation_id = "..."` and `tag = SomeTag` after the path. The tag
+/// becomes `EndpointMeta::TAGS`, which is what puts it in the description; it
+/// may be named once, since `Router::tag`, `Group::tag` and
+/// `EndpointBuilder::tag` are how an operation acquires the rest.
 #[proc_macro_attribute]
 pub fn get(attribute: TokenStream, item: TokenStream) -> TokenStream {
     route::expand("GET", attribute, item)
