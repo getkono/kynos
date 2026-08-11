@@ -60,6 +60,10 @@ required-features = [
   "decimal-big",
 ]
 
+[[example]]
+name = "schema"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
 [features]
 default = [
   "openapi31",
