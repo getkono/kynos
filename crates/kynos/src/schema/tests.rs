@@ -473,3 +473,28 @@ mod shapes {
         assert!(<String as MapKey>::key_constraints().is_empty());
     }
 }
+
+/// `Unchecked` says something about the description, not about the encoding.
+///
+/// It exists to sit in a request or response body, and a body is serialized, so
+/// a wrapper that changed the bytes would make the annotation cost a nesting
+/// level a consumer never asked for.
+mod unchecked_is_transparent {
+    use crate::schema::unchecked::Unchecked;
+
+    #[test]
+    fn the_wrapper_does_not_reach_the_wire() {
+        let wrapped = Unchecked(serde_json::json!({ "supplier": "acme" }));
+        assert_eq!(
+            serde_json::to_value(&wrapped).expect("serializable"),
+            serde_json::json!({ "supplier": "acme" })
+        );
+    }
+
+    #[test]
+    fn the_wrapper_is_not_expected_back() {
+        let read: Unchecked<serde_json::Value> =
+            serde_json::from_str(r#"{"supplier":"acme"}"#).expect("deserializable");
+        assert_eq!(read.into_inner(), serde_json::json!({ "supplier": "acme" }));
+    }
+}

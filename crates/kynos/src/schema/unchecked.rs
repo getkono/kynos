@@ -16,7 +16,25 @@ use crate::schema::{Schema, registry::Registry};
 ///
 /// `Router::deny_unchecked_schemas` turns the resulting warning into a build
 /// error, for teams that want to forbid it outright.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// Transparent to serde, because the annotation is a fact about the
+/// description and not about the encoding. `Unchecked<T>` and `T` are the same
+/// bytes, so wrapping a field costs a consumer nothing — and a wrapper that did
+/// reach the wire would make the only sanctioned way to carry an arbitrary
+/// payload the one way that changes its shape.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(transparent)]
 pub struct Unchecked<T>(pub T);
 
 impl<T> Unchecked<T> {
