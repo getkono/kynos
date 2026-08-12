@@ -30,10 +30,6 @@ name = "state"
 required-features = ["openapi31", "macros", "server", "http1"]
 
 [[example]]
-name = "http2"
-required-features = ["openapi31", "server", "http2"]
-
-[[example]]
 name = "graceful_shutdown"
 required-features = ["openapi31", "macros", "server", "http1"]
 
@@ -159,7 +155,7 @@ required-features = [
 
 [[example]]
 name = "tls"
-required-features = ["openapi31", "server", "http1", "tls"]
+required-features = ["openapi31", "server", "http1", "http2", "tls"]
 
 [features]
 default = [

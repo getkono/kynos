@@ -67,13 +67,12 @@ needs more than the defaults. Each file's own header explains why it needs them.
 | Example | Shows | Features |
 | --- | --- | --- |
 | [`security_schemes.rs`](security_schemes.rs) | Every kind of security scheme as a type, from `Auth<S>` to the emitted requirement | — |
-| [`tls.rs`](tls.rs) | Serving over TLS, including client certificates and SNI | `tls` |
+| [`tls.rs`](tls.rs) | Serving over TLS: client certificates, SNI, and the HTTP/1 and HTTP/2 configs ALPN chooses between | `tls` |
 
 ## Serving
 
 | Example | Shows | Features |
 | --- | --- | --- |
-| [`http2.rs`](http2.rs) | A minimal cleartext HTTP/2 server | — |
 | [`graceful_shutdown.rs`](graceful_shutdown.rs) | Every shutdown trigger, the drain deadline, and reading the bound addresses | — |
 | [`auto_reload.rs`](auto_reload.rs) | Inheriting a listening socket so a rebuild does not drop it | — |
 

@@ -1,11 +1,11 @@
-//! Serving over TLS, including client certificates and SNI.
+//! Serving over TLS, including client certificates, SNI and protocol tuning.
 //!
 //! Run it without the macros or the JSON codec — the transport is the subject
 //! here, not the API:
 //!
 //! ```text
 //! cargo run -p kynos --example tls --no-default-features \
-//!   --features openapi31,server,http1,tls
+//!   --features openapi31,server,http1,http2,tls
 //! ```
 //!
 //! The certificates are minted at startup with `rcgen`, so this runs with
@@ -30,6 +30,11 @@
 //! * **`handshake_timeout` is fallible.** Zero is rejected rather than accepted
 //!   as "no timeout", because a handshake that never completes is the cheapest
 //!   way to hold a connection open forever.
+//! * **Both protocol configs are set here because ALPN is where the choice is
+//!   made.** Under TLS the client and server negotiate `h2` or `http/1.1`
+//!   during the handshake, so a server offering both needs both configured.
+//!   Without TLS there is no negotiation: `Server::http2` alone serves
+//!   cleartext HTTP/2 — h2c — which clients reach only by prior knowledge.
 //!
 //! `prepare` splits binding from serving, which is what lets a test learn the
 //! port before any request is sent — `local_addrs` is meaningless before the
@@ -41,7 +46,7 @@ use kynos::{
     Router,
     server::{
         Server,
-        protocol::Http1Config,
+        protocol::{Http1Config, Http2Config},
         tls::{ClientCertificateConfig, TlsConfig, error::TlsError},
     },
 };
@@ -119,6 +124,10 @@ async fn main() -> kynos::Result<()> {
         // callers -- which is why it is built from `default` and a setter rather
         // than from a struct literal.
         .http1(Http1Config::default().keep_alive(true))
+        // The other half of the ALPN offer. `max_concurrent_streams` is the
+        // HTTP/2 analogue of `max_connections` below: one connection carries
+        // many requests, so capping connections alone caps nothing.
+        .http2(Http2Config::default().max_concurrent_streams(256))
         // A ceiling on accepted connections, which is the backstop a timeout is
         // not: a slow client holds a slot, and this bounds how many slots there
         // are.
