@@ -18,6 +18,7 @@ use crate::{
     middleware::{
         Interceptor, Observer,
         catch_panic::{Catch, PanicPolicy, Propagate},
+        stack::{CompatibleStack, CompatibleWith, Cons},
     },
     router::{
         endpoint::set::IntoEndpoints,
@@ -35,20 +36,29 @@ use crate::{
 /// every handler resolves its state from. A handler asking for something the
 /// context does not provide is a compile error, not a runtime panic.
 #[derive(Debug)]
-pub struct Router<C, P = Propagate> {
+pub struct Router<C, P = Propagate, I = ()> {
     // `fn() -> _` so that the parameters name a shape without deciding this
     // builder's auto traits: a router is `Send` because what it holds is, not
     // because `C` happens to be.
-    _private: std::marker::PhantomData<fn() -> (C, P)>,
+    //
+    // `I` is the interceptors mounted here, as a type-level list. Nothing reads
+    // it at run time -- the chain itself is erased -- but `intercept` and the
+    // composition methods bound on it, which is what makes two colliding
+    // interceptors a compile error rather than a build-time one.
+    // The lint is measuring the three parameters the type genuinely
+    // has; factoring them into an alias would hide the shape rather
+    // than simplify it.
+    #[allow(clippy::type_complexity)]
+    _private: std::marker::PhantomData<fn() -> (C, P, I)>,
 }
 
-impl<C> Default for Router<C, Propagate> {
+impl<C> Default for Router<C, Propagate, ()> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<C> Router<C, Propagate> {
+impl<C> Router<C, Propagate, ()> {
     /// Creates an empty router.
     #[must_use]
     pub fn new() -> Self {
@@ -56,7 +66,7 @@ impl<C> Router<C, Propagate> {
     }
 }
 
-impl<C, P: PanicPolicy> Router<C, P> {
+impl<C, P: PanicPolicy, I> Router<C, P, I> {
     /// Converts panics from covered operations into documented 500 responses.
     ///
     /// The policy is carried in the router's type and resolved when the service
@@ -102,28 +112,44 @@ impl<C, P: PanicPolicy> Router<C, P> {
 
     /// Mounts operations at the router's root.
     #[must_use]
-    pub fn mount<E: IntoEndpoints<C>>(self, endpoints: E) -> Self {
+    pub fn mount<E: IntoEndpoints<C>>(self, endpoints: E) -> Self
+    where
+        E::Stacks: CompatibleStack<I, C>,
+    {
+        let () = <E::Stacks as CompatibleStack<I, C>>::CHECK;
         let _ = endpoints;
         todo!()
     }
 
     /// Mounts a group.
     #[must_use]
-    pub fn group<GP: PanicPolicy>(self, group: Group<C, GP>) -> Self {
+    pub fn group<GP: PanicPolicy, GI>(self, group: Group<C, GP, GI>) -> Self
+    where
+        GI: CompatibleStack<I, C>,
+    {
+        let () = <GI as CompatibleStack<I, C>>::CHECK;
         let _ = group;
         todo!()
     }
 
     /// Mounts another router beneath a path prefix.
     #[must_use]
-    pub fn nest<NP: PanicPolicy>(self, prefix: &'static str, router: Router<C, NP>) -> Self {
+    pub fn nest<NP: PanicPolicy, NI>(self, prefix: &'static str, router: Router<C, NP, NI>) -> Self
+    where
+        NI: CompatibleStack<I, C>,
+    {
+        let () = <NI as CompatibleStack<I, C>>::CHECK;
         let _ = (prefix, router);
         todo!()
     }
 
     /// Merges another router at the same level.
     #[must_use]
-    pub fn merge<OP: PanicPolicy>(self, router: Router<C, OP>) -> Self {
+    pub fn merge<OP: PanicPolicy, OI>(self, router: Router<C, OP, OI>) -> Self
+    where
+        OI: CompatibleStack<I, C>,
+    {
+        let () = <OI as CompatibleStack<I, C>>::CHECK;
         let _ = router;
         todo!()
     }
@@ -142,10 +168,15 @@ impl<C, P: PanicPolicy> Router<C, P> {
 
     /// Applies an interceptor to every operation in the router.
     #[must_use]
-    pub fn intercept<I: Interceptor<C>>(self, interceptor: I) -> Self
+    pub fn intercept<N: Interceptor<C>>(self, interceptor: N) -> Router<C, P, Cons<N, I>>
     where
         C: Sync + 'static,
+        I: CompatibleWith<N, C>,
     {
+        // Forcing the const is what puts the error on this call rather than in
+        // `middleware::stack`. Two interceptors adding one header, or
+        // answering with one status, stop here.
+        let () = <I as CompatibleWith<N, C>>::CHECK;
         let _ = interceptor;
         todo!()
     }

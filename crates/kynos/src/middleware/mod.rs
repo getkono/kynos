@@ -50,6 +50,7 @@ pub mod cors;
 pub mod limits;
 pub mod rate_limit;
 pub mod request_id;
+pub mod stack;
 
 // Object-safe forms of the two RPITIT traits, so a heterogeneous chain fits in
 // one collection. Private: `Pin<Box<dyn Future>>` never reaches a user

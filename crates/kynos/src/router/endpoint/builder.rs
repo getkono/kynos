@@ -8,6 +8,7 @@ use crate::{
     middleware::{
         Interceptor,
         catch_panic::{Catch, PanicPolicy, Propagate},
+        stack::{CompatibleWith, Cons},
     },
     router::{
         endpoint::{
@@ -40,16 +41,20 @@ use crate::{
 /// # let _ = router;
 /// ```
 #[derive(Debug)]
-pub struct EndpointBuilder<C, H, A, P = Propagate> {
+pub struct EndpointBuilder<C, H, A, P = Propagate, I = ()> {
     // `fn() -> _` rather than the bare tuple: the parameters exist to name a
     // shape, and letting them decide whether this builder is `Send` would make
     // `Endpoints::push` reject handlers that are perfectly sound. The lint is
-    // measuring the four parameters the type genuinely has.
+    // measuring the parameters the type genuinely has.
+    //
+    // `I` is the interceptors mounted on this one operation, which `mount`
+    // checks against the router's own -- the reason `routes!` expands to a
+    // tuple rather than to an already-erased collection.
     #[allow(clippy::type_complexity)]
-    _private: std::marker::PhantomData<fn() -> (C, H, A, P)>,
+    _private: std::marker::PhantomData<fn() -> (C, H, A, P, I)>,
 }
 
-impl<C, H: Handler<C, A>, A> EndpointBuilder<C, H, A, Propagate> {
+impl<C, H: Handler<C, A>, A> EndpointBuilder<C, H, A, Propagate, ()> {
     /// Begins an endpoint for `handler`.
     #[must_use]
     pub fn new(method: Method, path: PathTemplate, handler: H) -> Self {
@@ -58,7 +63,7 @@ impl<C, H: Handler<C, A>, A> EndpointBuilder<C, H, A, Propagate> {
     }
 }
 
-impl<C, H: Handler<C, A>, A, P: PanicPolicy> EndpointBuilder<C, H, A, P> {
+impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
     /// Begins an endpoint whose panic policy is already decided.
     ///
     /// What a route attribute expands into: the attribute knows the policy at
@@ -149,16 +154,21 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy> EndpointBuilder<C, H, A, P> {
     /// the same way — and so that `routes![a, b]` still typechecks when only
     /// one of them carries an interceptor.
     #[must_use]
-    pub fn intercept<N: Interceptor<C>>(self, interceptor: N) -> Self
+    pub fn intercept<N: Interceptor<C>>(
+        self,
+        interceptor: N,
+    ) -> EndpointBuilder<C, H, A, P, Cons<N, I>>
     where
         C: Sync + 'static,
+        I: CompatibleWith<N, C>,
     {
+        let () = <I as CompatibleWith<N, C>>::CHECK;
         let _ = interceptor;
         todo!()
     }
 }
 
-impl<C, H, A, P> IntoEndpoints<C> for EndpointBuilder<C, H, A, P>
+impl<C, H, A, P, I> IntoEndpoints<C> for EndpointBuilder<C, H, A, P, I>
 where
     C: Send + Sync + 'static,
     H: Handler<C, A>,
@@ -169,13 +179,17 @@ where
     // -> _>` precisely so its auto traits do not leak.
     A: 'static,
     P: PanicPolicy,
+    I: 'static,
 {
+    /// Whatever `intercept` accumulated on this one operation.
+    type Stacks = I;
+
     fn into_endpoints(self, sink: &mut Endpoints<C>) {
         sink.push(self);
     }
 }
 
-impl<C, H, A, P> Endpoint<C> for EndpointBuilder<C, H, A, P>
+impl<C, H, A, P, I: 'static> Endpoint<C> for EndpointBuilder<C, H, A, P, I>
 where
     C: Send + Sync + 'static,
     H: Handler<C, A>,

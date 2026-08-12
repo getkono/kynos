@@ -4,6 +4,7 @@ use crate::{
     middleware::{
         Interceptor,
         catch_panic::{Catch, PanicPolicy, Propagate},
+        stack::{CompatibleStack, CompatibleWith, Cons},
     },
     router::{endpoint::set::IntoEndpoints, operation::Tag},
 };
@@ -16,12 +17,17 @@ use crate::{
 /// — so attaching authentication to a group documents it on every operation
 /// underneath, correctly, without anyone maintaining that by hand.
 #[derive(Debug)]
-pub struct Group<C, P = Propagate> {
-    // See `Router`: the parameters name a shape, not this value's auto traits.
-    _private: std::marker::PhantomData<fn() -> (C, P)>,
+pub struct Group<C, P = Propagate, I = ()> {
+    // See `Router`: the parameters name a shape, not this value's auto traits,
+    // and `I` is the interceptors mounted here as a type-level list.
+    // The lint is measuring the three parameters the type genuinely
+    // has; factoring them into an alias would hide the shape rather
+    // than simplify it.
+    #[allow(clippy::type_complexity)]
+    _private: std::marker::PhantomData<fn() -> (C, P, I)>,
 }
 
-impl<C> Group<C, Propagate> {
+impl<C> Group<C, Propagate, ()> {
     /// Creates a group mounted at `prefix`.
     #[must_use]
     pub fn new(prefix: &'static str) -> Self {
@@ -30,7 +36,7 @@ impl<C> Group<C, Propagate> {
     }
 }
 
-impl<C, P: PanicPolicy> Group<C, P> {
+impl<C, P: PanicPolicy, I> Group<C, P, I> {
     /// Converts panics from covered operations into documented 500 responses.
     ///
     /// The policy is carried in the group's type and resolved while its
@@ -65,17 +71,23 @@ impl<C, P: PanicPolicy> Group<C, P> {
 
     /// Applies an interceptor to every operation in this group.
     #[must_use]
-    pub fn intercept<I: Interceptor<C>>(self, interceptor: I) -> Self
+    pub fn intercept<N: Interceptor<C>>(self, interceptor: N) -> Group<C, P, Cons<N, I>>
     where
         C: Sync + 'static,
+        I: CompatibleWith<N, C>,
     {
+        let () = <I as CompatibleWith<N, C>>::CHECK;
         let _ = interceptor;
         todo!()
     }
 
     /// Mounts operations into this group.
     #[must_use]
-    pub fn mount<E: IntoEndpoints<C>>(self, endpoints: E) -> Self {
+    pub fn mount<E: IntoEndpoints<C>>(self, endpoints: E) -> Self
+    where
+        E::Stacks: CompatibleStack<I, C>,
+    {
+        let () = <E::Stacks as CompatibleStack<I, C>>::CHECK;
         let _ = endpoints;
         todo!()
     }

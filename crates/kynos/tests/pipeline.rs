@@ -78,12 +78,18 @@ fn compile_only(check: impl FnOnce()) {
     }
 }
 
+/// `routes!` yields a tuple, not an already-erased collection.
+///
+/// That is what keeps each operation's own interceptors visible at the mount
+/// site: an `Endpoints` cannot say what its members carry, so building one here
+/// would erase the stacks `Router::mount` has to check.
 #[test]
 fn routes_collects_every_operation() {
     compile_only(|| {
-        let endpoints: Endpoints<App> = kynos::routes![health, get_user, create_user];
-        assert_eq!(endpoints.len(), 3);
-        assert!(!endpoints.is_empty());
+        let mut sink = Endpoints::<App>::new();
+        kynos::routes![health, get_user, create_user].into_endpoints(&mut sink);
+        assert_eq!(sink.len(), 3);
+        assert!(!sink.is_empty());
     });
 }
 
@@ -100,8 +106,11 @@ fn endpoint_collections_compose() {
             .into_endpoints(&mut sink);
         assert_eq!(sink.len(), 3);
 
+        // An array or a vector still composes, but only over one element
+        // type -- and two `routes!` calls naming different handlers are
+        // different tuples. Nesting them in a tuple is the general form.
         let mut sink = Endpoints::<App>::new();
-        [kynos::routes![health], kynos::routes![get_user]].into_endpoints(&mut sink);
+        [kynos::routes![health], kynos::routes![health]].into_endpoints(&mut sink);
         assert_eq!(sink.len(), 2);
 
         let mut sink = Endpoints::<App>::new();

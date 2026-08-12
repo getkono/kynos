@@ -175,8 +175,22 @@ interceptors calls the terminal directly and pays nothing.
 
 A phantom list of interceptor *types* rides alongside for checking, which the
 objection above does not reach: it is not a composed chain, nothing is called
-through it, and `Next` keeps its two parameters. That list is what lets
-`Router::intercept` reject a conflict at compile time.
+through it, and `Next` keeps its two parameters. `Router`, `Group` and
+`EndpointBuilder` each carry one, and
+[`CompatibleWith`](../crates/kynos/src/middleware/stack.rs) is what
+`intercept` bounds on — so two interceptors that would collide are rejected
+where the second is mounted.
+
+Whole stacks meet at `group`, `nest`, `merge` and `mount`, and `CompatibleStack`
+checks that cross-product. `mount` is why `routes!` expands to a tuple rather
+than to an `Endpoints`: a collection cannot say what its members carry, so
+building one would erase the endpoint-scoped interceptors the check needs. Two
+*operations* are never checked against each other, since no request reaches
+both.
+
+What the check compares is `const` data — `HeaderParams::NAMES` and
+`ShortCircuit::STATUSES` — so it costs nothing at run time and nothing in the
+emitted document. Header names compare case-insensitively, per RFC 9110.
 
 An interceptor is handed the [`Route`](../crates/kynos/src/router/operation.rs)
 it covers while it runs, through `Next::route`. That is what keeps a metric

@@ -2,7 +2,10 @@
 
 use std::sync::Arc;
 
-use crate::router::endpoint::{DynEndpoint, Endpoint};
+use crate::{
+    middleware::stack::Both,
+    router::endpoint::{DynEndpoint, Endpoint},
+};
 
 /// A set of operations waiting to be mounted.
 ///
@@ -83,17 +86,30 @@ impl<C> Endpoints<C> {
             of those"
 )]
 pub trait IntoEndpoints<C> {
+    /// The interceptors these operations carry, as a type-level list.
+    ///
+    /// `()` for anything already erased. `routes!` expands to a tuple rather
+    /// than a collection precisely so this survives to the mount site, where it
+    /// is checked against the router's own stack.
+    type Stacks;
+
     /// Appends these operations to `sink`.
     fn into_endpoints(self, sink: &mut Endpoints<C>);
 }
 
 impl<C> IntoEndpoints<C> for Endpoints<C> {
+    /// Already erased: an `Endpoints` cannot say what its members carry, which
+    /// is why `routes!` does not build one.
+    type Stacks = ();
+
     fn into_endpoints(self, sink: &mut Endpoints<C>) {
         sink.absorb(self);
     }
 }
 
 impl<C, T: IntoEndpoints<C>, const N: usize> IntoEndpoints<C> for [T; N] {
+    type Stacks = T::Stacks;
+
     fn into_endpoints(self, sink: &mut Endpoints<C>) {
         for item in self {
             item.into_endpoints(sink);
@@ -102,6 +118,8 @@ impl<C, T: IntoEndpoints<C>, const N: usize> IntoEndpoints<C> for [T; N] {
 }
 
 impl<C, T: IntoEndpoints<C>> IntoEndpoints<C> for Vec<T> {
+    type Stacks = T::Stacks;
+
     fn into_endpoints(self, sink: &mut Endpoints<C>) {
         for item in self {
             item.into_endpoints(sink);
@@ -111,12 +129,31 @@ impl<C, T: IntoEndpoints<C>> IntoEndpoints<C> for Vec<T> {
 
 /// Emits `IntoEndpoints` for one tuple arity.
 macro_rules! tuple_endpoints {
-    ($($member:ident),+) => {
-        impl<C, $($member: IntoEndpoints<C>),+> IntoEndpoints<C> for ($($member,)+) {
+    ($head:ident) => {
+        impl<C, $head: IntoEndpoints<C>> IntoEndpoints<C> for ($head,) {
+            type Stacks = $head::Stacks;
+
             #[allow(non_snake_case)]
             fn into_endpoints(self, sink: &mut Endpoints<C>) {
-                let ($($member,)+) = self;
-                $( $member.into_endpoints(sink); )+
+                let ($head,) = self;
+                $head.into_endpoints(sink);
+            }
+        }
+    };
+    ($head:ident, $($tail:ident),+) => {
+        impl<C, $head: IntoEndpoints<C>, $($tail: IntoEndpoints<C>),+> IntoEndpoints<C>
+            for ($head, $($tail,)+)
+        {
+            // `Both` rather than a concatenation: two operations cannot collide
+            // with each other, because no request reaches both. Only each one
+            // against the router's own stack is worth checking.
+            type Stacks = Both<$head::Stacks, <($($tail,)+) as IntoEndpoints<C>>::Stacks>;
+
+            #[allow(non_snake_case)]
+            fn into_endpoints(self, sink: &mut Endpoints<C>) {
+                let ($head, $($tail,)+) = self;
+                $head.into_endpoints(sink);
+                $( $tail.into_endpoints(sink); )+
             }
         }
     };

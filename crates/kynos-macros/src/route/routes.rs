@@ -31,21 +31,18 @@ pub(crate) fn expand_routes(input: TokenStream) -> TokenStream {
     // from whatever this is mounted into, the arguments from the handler's
     // signature. The mount site is therefore where a handler asking for a
     // dependency the context lacks becomes a compile error.
-    let pushes = paths.iter().map(|path| {
+    // A tuple, not an `Endpoints`. Each member keeps its own type, so an
+    // interceptor mounted on one operation survives to the mount site and is
+    // checked against the router's stack there. Collecting into `Endpoints`
+    // first would erase exactly the thing the check needs.
+    let members = paths.iter().map(|path| {
         quote! {
-            ::kynos::router::endpoint::set::Endpoints::push(
-                &mut __endpoints,
-                ::kynos::__private::endpoint::from_meta::<_, #path, _, _>(#path),
-            );
+            ::kynos::__private::endpoint::from_meta::<_, #path, _, _>(#path),
         }
     });
 
     quote! {
-        {
-            let mut __endpoints = ::kynos::router::endpoint::set::Endpoints::new();
-            #(#pushes)*
-            __endpoints
-        }
+        ( #(#members)* )
     }
     .into()
 }

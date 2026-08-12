@@ -1,4 +1,4 @@
-error[E0599]: no method named `trailing_slashes` found for struct `EndpointBuilder<C, H, A, P>` in the current scope
+error[E0599]: no method named `trailing_slashes` found for struct `EndpointBuilder<C, H, A, P, I>` in the current scope
   --> tests/ui/antipattern/endpoint_trailing_slashes.rs:19:10
    |
 14 |           let _ = EndpointBuilder::<(), _, _>::new(
