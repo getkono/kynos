@@ -180,13 +180,6 @@ pub enum SpecError {
     #[error("`example` and `examples` are mutually exclusive")]
     ExampleExclusivity,
 
-    /// An Example Object set more than one of its value fields.
-    #[error("an Example Object must set only one value field, found {found}")]
-    ExampleValueExclusivity {
-        /// How many value fields were set.
-        found: usize,
-    },
-
     /// A Link Object did not identify exactly one target operation.
     #[error("a Link Object must set exactly one of `operationRef` and `operationId`")]
     LinkTargetExclusivity,

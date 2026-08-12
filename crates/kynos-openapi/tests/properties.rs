@@ -488,41 +488,53 @@ fn arb_ref_or<S: Strategy + 'static>(item: S) -> BoxedStrategy<RefOr<S::Value>> 
 
 // --- Content -------------------------------------------------------------
 
+/// Every shape an Example Object's value fields can legally take, and no other.
+///
+/// The specification's exclusions are asymmetric — `dataValue` pairs with
+/// either `serializedValue` or `externalValue`, while `value` pairs with
+/// nothing — so a strategy over four independent `Option`s would spend most of
+/// its draws on documents that cannot exist. Enumerating the constructors is
+/// what makes the round-trip property cover every example that can.
+fn arb_example_carrier() -> BoxedStrategy<Example> {
+    #[cfg(feature = "openapi32")]
+    {
+        prop_oneof![
+            arb_present_json().prop_map(Example::new),
+            arb_text().prop_map(Example::external),
+            arb_present_json().prop_map(Example::data),
+            arb_text().prop_map(Example::serialized),
+            (arb_present_json(), arb_text())
+                .prop_map(|(data, serialized)| Example::data_serialized(data, serialized)),
+            (arb_present_json(), arb_text())
+                .prop_map(|(data, uri)| Example::data_external(data, uri)),
+        ]
+        .boxed()
+    }
+
+    #[cfg(not(feature = "openapi32"))]
+    {
+        prop_oneof![
+            arb_present_json().prop_map(Example::new),
+            arb_text().prop_map(Example::external),
+        ]
+        .boxed()
+    }
+}
+
 fn arb_example() -> BoxedStrategy<Example> {
     (
         arb_opt_text(),
         arb_opt_text(),
-        prop::option::of(arb_present_json()),
-        prop::option::of(arb_present_json()),
-        arb_opt_text(),
-        arb_opt_text(),
+        prop::option::of(arb_example_carrier()),
         arb_extensions(EXTENSION_KEYS),
     )
-        .prop_map(
-            |(
-                summary,
-                description,
-                value,
-                data_value,
-                serialized_value,
-                external_value,
-                extensions,
-            )| {
-                #[cfg(not(feature = "openapi32"))]
-                let _ = (data_value, serialized_value);
-                Example {
-                    summary,
-                    description,
-                    value,
-                    #[cfg(feature = "openapi32")]
-                    data_value,
-                    #[cfg(feature = "openapi32")]
-                    serialized_value,
-                    external_value,
-                    extensions,
-                }
-            },
-        )
+        .prop_map(|(summary, description, carrier, extensions)| {
+            let mut example = carrier.unwrap_or_default();
+            example.summary = summary;
+            example.description = description;
+            example.extensions = extensions;
+            example
+        })
         .boxed()
 }
 
