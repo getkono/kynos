@@ -146,6 +146,48 @@ return, and it never reaches a client.
 A handler writes a plain `Result<T, E>`; the alias in that position would
 suggest a relationship to the framework error type that does not exist.
 
+## The build failure reports through the application
+
+Kynos ships no error reporter: no `Debug` renderer, no `.context()`, no
+backtrace. `main` is where a build failure is rendered, and that is the
+application's to choose — `anyhow`, `eyre`, `color-eyre`, or a plain
+`Box<dyn Error>`.
+
+What Kynos owes them is one property, asserted in
+[`tests/reporting.rs`](../crates/kynos/tests/reporting.rs):
+
+> `Error` implements `std::error::Error + Send + Sync + 'static`.
+
+That is exactly the bound `impl From<E> for eyre::Report` requires, so it is
+what decides whether an application can `?` a `kynos::Result` out of `main` at
+all. It is also what makes the cause chain worth keeping: those crates render a
+failure by walking `source()` recursively, and `anyhow` supplies a backtrace
+when the underlying error provides none — which Kynos cannot do on stable, since
+`Error::provide` is unstable and `thiserror`'s `#[backtrace]` needs nightly.
+
+**Policy: a `From` into `Error` is a promise that the source alone is the whole
+story.** `TlsError` earns one because every variant names both what was being
+configured and what was wrong with it. A bare `std::io::Error` does not, because
+it cannot say what was being opened — which is why `Error::Io` was removed and
+why the io failures the framework actually raises go through `ServerError::Bind`
+and friends, each naming its address. `serde_json::Error` and
+`serde_yaml_ng::Error` convert into separate variants rather than one, so the
+conversion is what records which emitter failed.
+
+**Policy: a cause is kept as a `source()`, not formatted into a `String`.** Two
+exceptions, and both are stated where they apply. A value rendered in a *list*
+must have a self-contained `Display`, so it carries no cause that would
+duplicate it — `Error::Invalid` names every violation in its message because a
+chain holds one error and a validation run produces a set, and `Violation` does
+the same one level down. And `SpecError::MalformedAnnotation` keeps text because
+its cause is a `serde_json::Error`, which is neither `Clone` nor `PartialEq`, so
+holding it would cost the derives the property tests rely on.
+
+Where a cause is kept but its type should not escape, it is boxed:
+`TlsError` holds `Box<dyn Error + Send + Sync>` so a rustls failure stays
+walkable without rustls's semantic version becoming Kynos's, or its name
+appearing outside `server/tls/`.
+
 ## Where the union happens
 
 `Handler::describe` contributes each argument's `Describe`, then each argument's
@@ -200,3 +242,32 @@ configuration. The cost is that `extensions` is a `BTreeMap<String, Value>`
 rather than something typed, which is a real loss at the edges and the reason
 `#[problem(extension)]` exists: the map is an implementation detail of the wire
 form, not the way an author is expected to write an error.
+
+### Why `kynos::Error` is not `anyhow::Error` or `eyre::Report`
+
+eyre is a fork of anyhow, and the two share the representation that makes them
+attractive here: a one-word narrow pointer, a blanket `From`, and a `Debug` that
+prints the whole chain.
+
+Neither implements `std::error::Error`, and that is structural rather than an
+omission — a blanket `impl<E: Error + Send + Sync + 'static> From<E> for Self`
+collides with core's reflexive `impl<T> From<T> for T` the moment the type
+implements `Error`. A design picks one or the other.
+
+That decides it. `impl From<E> for eyre::Report` requires
+`E: StdError + Send + Sync + 'static`, so re-exporting `anyhow::Error` as
+`kynos::Error` would stop an application wrapping its own `main` in eyre — the
+case the type exists to serve. A newtype could implement `Error`, but hits the
+same wall for its own blanket `From`, so every conversion is hand-written
+anyway, while pattern matching is lost.
+
+[`architecture.md`](architecture.md#dependencies) closes the question
+independently: *"a crate absent from it is not a candidate, and 'can we add X?'
+is answered by naming the row X displaces"*. The only `Errors` row is
+`thiserror`, ambient because it *"is a derive that reaches no public
+signature"*. An anyhow-shaped crate is the opposite — its type **is** the public
+signature — so it displaces nothing.
+
+The conclusion is not that Kynos should build its own reporter. It is that Kynos
+should be a well-behaved `std::error::Error` and let the application's reporter
+do the rendering, which is less code and a better result than either.
