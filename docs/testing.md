@@ -30,7 +30,7 @@ Four of the five integration files exist for one reason each;
 | --- | --- |
 | [`pipeline.rs`](../crates/kynos/tests/pipeline.rs) | an `async fn` is a `Handler`, `routes!` collects it, `Endpoints` accepts it, and mounting reaches the context that supplies its dependencies |
 | [`derives.rs`](../crates/kynos/tests/derives.rs) | every derive expands to a well-formed implementation of the trait it claims |
-| [`typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) | a route attribute's `uri` percent-encodes its parameters |
+| [`typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) | a route attribute's `relative_uri` percent-encodes its parameters |
 | [`compile/panic_recovery.rs`](../crates/kynos/tests/compile/panic_recovery.rs) | `catch_panics` refuses to compile under `panic = "abort"` |
 
 `panic_recovery.rs` is a `harness = false` test target rather than an ordinary

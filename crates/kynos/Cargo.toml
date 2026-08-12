@@ -138,6 +138,17 @@ required-features = [
   "unchecked",
 ]
 
+[[example]]
+name = "testing"
+required-features = [
+  "openapi31",
+  "macros",
+  "server",
+  "http1",
+  "json",
+  "test-util",
+]
+
 [features]
 default = [
   "openapi31",
