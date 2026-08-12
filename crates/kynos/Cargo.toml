@@ -92,6 +92,10 @@ required-features = ["openapi31", "macros", "server", "http1", "json"]
 name = "composition"
 required-features = ["openapi31", "macros", "server", "http1"]
 
+[[example]]
+name = "protobuf"
+required-features = ["openapi31", "macros", "server", "http1", "protobuf"]
+
 [features]
 default = [
   "openapi31",
