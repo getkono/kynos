@@ -4,7 +4,7 @@
 //! cargo run -p kynos --example errors
 //! ```
 //!
-//! Three things are worth noticing, because together they are the whole error
+//! Five things are worth noticing, because together they are the whole error
 //! model:
 //!
 //! * **Nothing lists the statuses.** `StoreError` says 404, 409 and 507 by
@@ -19,10 +19,36 @@
 //!   document that actually goes on the wire — carries its status in a field
 //!   and therefore cannot be returned from a handler at all. Naming an error
 //!   type is what makes the status set a `const`.
+//! * **A rejection is one type per extractor, and each names only its own
+//!   statuses.** `Path<T>` rejects with [`PathRejection`], `Query<T>` with
+//!   [`QueryRejection`], `Json<T>` with [`BodyRejection`]. A single shared union
+//!   would be sound and would still make a handler that reads one path
+//!   parameter advertise the 401 it can never answer — which a client generator
+//!   turns into dead retry logic.
+//! * **Four of the responses below come from no handler at all.** A fallback
+//!   policy produces the 404 and the 405, `catch_panics` produces the 500, and
+//!   an interceptor produces the 401. Each reaches the description by a
+//!   different route, and not one of them appears in a signature.
+//!
+//! [`interceptor.rs`](interceptor.rs) covers contributions properly, and
+//! [`composition.rs`](composition.rs) covers the fallback policies as router
+//! structure. They appear here because a reader asking "where did this status
+//! come from" should find every answer in one file.
+//!
+//! [`PathRejection`]: kynos::error::rejection::PathRejection
+//! [`QueryRejection`]: kynos::error::rejection::QueryRejection
+//! [`BodyRejection`]: kynos::error::rejection::BodyRejection
 
 use std::net::Ipv4Addr;
 
-use kynos::{prelude::*, server::Server};
+use kynos::{
+    http,
+    middleware::{Interceptor, Next, contribution::OperationContribution},
+    openapi::{self, StatusPattern},
+    prelude::*,
+    router::{operation::Route, policy::FallbackPolicy},
+    server::Server,
+};
 use serde::{Deserialize, Serialize};
 
 /// A user of the service.
@@ -42,6 +68,23 @@ struct UserPath {
     id: u64,
 }
 
+/// How the user list is paged.
+///
+/// A second fallible extractor, and the reason 400 is listed once rather than
+/// twice: `QueryRejection` and `PathRejection` are different types that happen
+/// to agree on a status, and an operation's `responses` is a union rather than a
+/// list.
+#[allow(dead_code)]
+#[derive(Schema, QueryParams)]
+struct Page {
+    /// Where to resume from.
+    after: Option<u64>,
+
+    /// How many to return.
+    #[schema(minimum = 1, maximum = 100)]
+    limit: u32,
+}
+
 /// The store's own failure.
 ///
 /// Deliberately says nothing about HTTP: a storage layer that knows about
@@ -56,6 +99,23 @@ struct RowMissing(u64);
 /// One variant per failure a consumer should be able to tell apart. The
 /// `base` is the prefix every variant's `type` URI shares, so a client can
 /// branch on a stable identifier rather than on prose.
+///
+/// `OverQuota` reaches a client as this, which is the shape every error in the
+/// service takes:
+///
+/// ```json
+/// {
+///   "type": "https://errors.example.com/over-quota",
+///   "title": "Quota exceeded",
+///   "status": 507,
+///   "detail": "the store is over its 10000 row budget",
+///   "limit": 10000
+/// }
+/// ```
+///
+/// `detail` is the `Display` output, so `thiserror` writes it once. `limit` sits
+/// beside the registered members rather than nested under them, which is what
+/// RFC 9457 calls an extension.
 #[derive(Debug, thiserror::Error, ApiError)]
 #[problem(base = "https://errors.example.com/")]
 enum StoreError {
@@ -80,6 +140,33 @@ enum StoreError {
     },
 }
 
+/// Requires a shared secret, and declares the 401 it can answer with.
+///
+/// The fourth way a status reaches an operation. Because this can answer before
+/// the handler runs, every operation it covers must document that it can — which
+/// is what the contribution does, and what a `tower::Layer` has no way to say.
+struct RequireSecret;
+
+impl<C: Sync + 'static> Interceptor<C> for RequireSecret {
+    fn contribution(&self, route: Route<'_>) -> OperationContribution {
+        let _ = route;
+        OperationContribution::none().with_response(
+            StatusPattern::Code(401),
+            openapi::Response::new("the shared secret was absent or wrong"),
+        )
+    }
+
+    async fn intercept(
+        &self,
+        request: http::Request,
+        context: &C,
+        next: Next<'_, C>,
+    ) -> http::Response {
+        let _ = context;
+        next.run(request).await
+    }
+}
+
 /// Fetches one user.
 ///
 /// The `?` converts `RowMissing` into `StoreError::NotFound`, and the operation
@@ -90,6 +177,18 @@ enum StoreError {
 async fn get_user(Path(path): Path<UserPath>) -> Result<Json<User>, StoreError> {
     let user = load(path.id)?;
     Ok(Json(user))
+}
+
+/// Lists users.
+///
+/// `catch_panics` puts a recovery boundary around this one operation and
+/// contributes the 500 that boundary can produce. Without it a panic is not a
+/// documented response — it is the connection ending, which no description can
+/// express and no client can tell apart from a network failure.
+#[kynos::get("/users", catch_panics)]
+async fn list_users(Query(page): Query<Page>) -> Result<Json<Vec<User>>, StoreError> {
+    let _ = page;
+    Ok(Json(Vec::new()))
 }
 
 /// Creates a user.
@@ -116,10 +215,20 @@ fn insert(user: User) -> Result<User, StoreError> {
 
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
-    let router = Router::<()>::new().mount(kynos::routes![get_user, create_user]);
+    let router = Router::<()>::new()
+        .intercept(RequireSecret)
+        // Both are already `Problem`; naming them is what makes it deliberate.
+        // A client that meets one error shape everywhere can parse errors once,
+        // and the two responses no operation describes are exactly the ones a
+        // client that has gone wrong will meet first.
+        .not_found(FallbackPolicy::Problem)
+        .method_not_allowed(FallbackPolicy::Problem)
+        .mount(kynos::routes![get_user, list_users, create_user]);
 
-    // Every status either handler can answer with is in here, and none of them
-    // was written down twice.
+    // Every status any of this can answer with is in here, and none of them was
+    // written down twice: 404, 409 and 507 from `StoreError`, 400 from the
+    // fallible extractors, 401 from the interceptor, and 500 from the recovery
+    // boundary on `list_users`.
     let document = router.openapi()?;
     println!("{}", document.to_json()?);
 
