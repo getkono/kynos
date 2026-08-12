@@ -127,6 +127,17 @@ required-features = [
   "trace",
 ]
 
+[[example]]
+name = "unchecked"
+required-features = [
+  "openapi31",
+  "macros",
+  "server",
+  "http1",
+  "json",
+  "unchecked",
+]
+
 [features]
 default = [
   "openapi31",
