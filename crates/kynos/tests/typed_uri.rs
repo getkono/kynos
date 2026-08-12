@@ -1,4 +1,8 @@
 //! Compile and runtime checks for route-generated typed URIs.
+//!
+//! `relative_uri` is named for what it renders: the route attribute's own path
+//! template, filled in. A `Group` or `nest` prefix is applied while the router
+//! is built and is not visible here.
 
 // The route attribute lives behind `macros`, and the feature powerset check
 // runs with `--no-dev-deps`, so without this gate the build breaks in a
@@ -45,6 +49,6 @@ async fn report(Path(_): Path<ReportPath>, Query(_): Query<ReportQuery>) {}
 
 #[test]
 fn route_attributes_generate_typed_percent_encoded_uris() {
-    let uri = report::uri(ReportPath, ReportQuery);
+    let uri = report::relative_uri(ReportPath, ReportQuery);
     assert_eq!(uri, "/reports/annual%2F2026?download=true");
 }

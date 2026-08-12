@@ -88,6 +88,13 @@ feature. It serves the route and gets no `paths` entry, recording it under
 | [`Router::intercept`](../crates/kynos/src/router/mod.rs) | every operation in the router | every one of their descriptions |
 | [`Router::observe`](../crates/kynos/src/router/mod.rs) | every operation in the router | nothing — observers change nothing |
 
+A route attribute also emits `relative_uri`, taking exactly the path and query
+types that route extracts — so a link that no longer matches its target is a
+compile error. It is *relative* because the attribute knows only its own path
+template: a `Group` or `nest` prefix is applied here, while the router is built,
+which is after the expansion and out of its reach. A route mounted at the router
+root needs no join; one under a prefix does.
+
 A tag is applied at four scopes, and they add rather than override:
 `Router::tag`, `Group::tag`, `EndpointBuilder::tag`, and `tag = T` on the route
 attribute itself. Only the last is a fact about the operation rather than about

@@ -20,9 +20,12 @@
 //!   outside and `Redirect::<304>` does not compile. That rules out writing 302
 //!   where 307 was meant and silently changing the method on replay.
 //! * **A location is a typed URI, not a format string.** Every route attribute
-//!   emits `uri`, taking exactly the path and query types that route extracts.
-//!   A link that no longer matches its target is a compile error rather than a
-//!   404 a consumer finds first.
+//!   emits `relative_uri`, taking exactly the path and query types that route
+//!   extracts. A link that no longer matches its target is a compile error
+//!   rather than a 404 a consumer finds first. It is named *relative* because a
+//!   `Group` or `nest` prefix is applied while the router is built and is not
+//!   visible to the attribute; every route here is mounted at the root, so
+//!   there is no prefix to join.
 
 use std::net::Ipv4Addr;
 
@@ -97,13 +100,14 @@ async fn get_user(Path(path): Path<UserPath>) -> Json<User> {
 /// made is: nowhere.
 #[kynos::post("/users")]
 async fn create_user(Json(user): Json<User>) -> Created<Json<User>> {
-    // The typed URI is the point. `get_user::uri` takes exactly the path type
-    // `get_user` extracts -- one argument, because that route extracts one
-    // thing -- so changing the route's parameters breaks this line rather than
-    // the link. It returns an `http::Uri`, which a location header wants as a
-    // string.
-    let location = get_user::uri(UserPath { id: user.id });
-    Created::at(location.to_string(), Json(user))
+    // The typed URI is the point. `get_user::relative_uri` takes exactly the
+    // path type `get_user` extracts -- one argument, because that route
+    // extracts one thing -- so changing the route's parameters breaks this line
+    // rather than the link.
+    Created::at(
+        get_user::relative_uri(UserPath { id: user.id }).to_string(),
+        Json(user),
+    )
 }
 
 /// Creates a user, idempotently.
@@ -139,7 +143,7 @@ async fn list_users() -> WithHeaders<Json<Vec<User>>, RateLimit> {
 /// is not a redirect at all.
 #[kynos::get("/accounts")]
 async fn legacy_accounts() -> Redirect<303> {
-    Redirect::to(list_users::uri().to_string())
+    Redirect::to(list_users::relative_uri().to_string())
 }
 
 /// Deletes a user.

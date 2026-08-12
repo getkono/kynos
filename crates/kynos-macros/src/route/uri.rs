@@ -38,35 +38,53 @@ pub(crate) fn endpoint_uri_impl(
         }
     });
 
+    // The name is the warning. A route attribute knows only the path it was
+    // written with; a `Group` prefix and a `nest` prefix are applied while the
+    // router is built, which is after this expansion and out of its reach. So
+    // what this renders is relative to wherever the route ends up mounted, and
+    // calling it `uri` invited a caller to put a path that does not resolve
+    // into a `Location` header.
+    let relative_doc = "Builds this endpoint's URI **relative to wherever it is mounted**.\n\n        A route attribute knows only its own path template. A `Group` prefix or a `nest`         prefix is applied while the router is built, so a route under `Group::new(\"/users\")`         renders `/{id}` here and not `/users/{id}`; join the prefix yourself when the route is         not mounted at the router root.";
+
     let uri = match (path_type, query_type) {
         (None, None) => quote! {
             impl #endpoint {
-                /// Builds this endpoint's URI.
-                pub fn uri() -> ::kynos::http::Uri {
+                #[doc = #relative_doc]
+                pub fn relative_uri() -> ::kynos::http::Uri {
                     ::kynos::__private::uri::endpoint_uri(#path)
                 }
             }
         },
         (Some(path_type), None) => quote! {
             impl #endpoint {
-                /// Builds this endpoint's URI from its exact path parameters.
-                pub fn uri(path: #path_type) -> ::kynos::http::Uri {
+                #[doc = #relative_doc]
+                ///
+                /// Takes exactly the path parameters this route extracts.
+                pub fn relative_uri(path: #path_type) -> ::kynos::http::Uri {
                     ::kynos::__private::uri::endpoint_uri_with_path(#path, &path)
                 }
             }
         },
         (None, Some(query_type)) => quote! {
             impl #endpoint {
-                /// Builds this endpoint's URI from its exact query parameters.
-                pub fn uri(query: #query_type) -> ::kynos::http::Uri {
+                #[doc = #relative_doc]
+                ///
+                /// Takes exactly the query parameters this route extracts.
+                pub fn relative_uri(query: #query_type) -> ::kynos::http::Uri {
                     ::kynos::__private::uri::endpoint_uri_with_query(#path, &query)
                 }
             }
         },
         (Some(path_type), Some(query_type)) => quote! {
             impl #endpoint {
-                /// Builds this endpoint's URI from its exact path and query parameters.
-                pub fn uri(path: #path_type, query: #query_type) -> ::kynos::http::Uri {
+                #[doc = #relative_doc]
+                ///
+                /// Takes exactly the path and query parameters this route
+                /// extracts.
+                pub fn relative_uri(
+                    path: #path_type,
+                    query: #query_type,
+                ) -> ::kynos::http::Uri {
                     ::kynos::__private::uri::endpoint_uri_with_path_and_query(#path, &path, &query)
                 }
             }

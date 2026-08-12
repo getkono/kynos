@@ -60,7 +60,7 @@ fn endpoint_uri_uses_the_exact_extracted_parameter_types() {
         .into_token_stream()
         .to_string();
 
-    assert!(expansion.contains("pub fn uri (path : ReportPath , query : ReportQuery)"));
+    assert!(expansion.contains("pub fn relative_uri (path : ReportPath , query : ReportQuery ,)"));
 }
 
 #[test]
