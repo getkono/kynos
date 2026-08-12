@@ -100,6 +100,17 @@ required-features = ["openapi31", "macros", "server", "http1", "protobuf"]
 name = "streaming"
 required-features = ["openapi32", "macros", "server", "http1", "json"]
 
+[[example]]
+name = "document"
+required-features = [
+  "openapi32",
+  "macros",
+  "server",
+  "http1",
+  "json",
+  "yaml",
+]
+
 [features]
 default = [
   "openapi31",
