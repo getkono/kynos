@@ -1,12 +1,60 @@
 //! Rate limiting.
 
-use std::future::Future;
+use std::{future::Future, time::Duration};
 
 use crate::{
+    error::problem::Problem,
     http,
     middleware::{Interceptor, Next, contribution::OperationContribution},
+    response::{IntoResponse, Responses},
     router::operation::Route,
+    schema::registry::Registry,
 };
+
+/// What [`RateLimit`] answers with when a policy denies a request.
+///
+/// Carries its own `Retry-After`, which the policy already computed: a
+/// [`Decision::Deny`] knows the delay, and the type that reports it is the type
+/// that describes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RateLimited {
+    /// How long the client should wait before retrying.
+    pub retry_after: Duration,
+}
+
+impl IntoResponse for RateLimited {
+    fn into_response(self) -> http::Response {
+        let mut response = Problem::new(http::StatusCode::TOO_MANY_REQUESTS)
+            .with_detail("the client has exceeded its request rate")
+            .into_response();
+
+        if let Ok(value) = http::HeaderValue::from_str(&self.retry_after.as_secs().to_string()) {
+            response
+                .headers_mut()
+                .insert(http::header::RETRY_AFTER, value);
+        }
+
+        response
+    }
+}
+
+impl Responses for RateLimited {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        kynos_openapi::Responses::new().with(
+            429,
+            kynos_openapi::Response::new("the client has exceeded its request rate").with_header(
+                "Retry-After",
+                kynos_openapi::Header::new(kynos_openapi::Schema::of_type(
+                    kynos_openapi::model::schema::types::SchemaType::String,
+                ))
+                .with_description(
+                    "How long to wait before retrying, in seconds or as an HTTP-date",
+                ),
+            ),
+        )
+    }
+}
 
 /// The result of consulting a rate-limit policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

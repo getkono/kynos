@@ -1,10 +1,73 @@
 //! Limits, and the responses they make possible.
+//!
+//! Each limit here owns a type for the response it answers with. That is what
+//! keeps the declaration and the behaviour one fact rather than two: the status
+//! a limit can produce is the status its response type describes, and a header
+//! that rides that status — `Retry-After` on a 503 — is described by the same
+//! type that sets it, rather than by a separate entry keyed on the status.
+
+use std::time::Duration;
+
+use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
+    error::problem::Problem,
     http,
     middleware::{Interceptor, Next, contribution::OperationContribution},
+    response::{IntoResponse, Responses},
     router::operation::Route,
+    schema::registry::Registry,
 };
+
+/// Describes `Retry-After`, which is a delta-seconds count or an HTTP-date.
+///
+/// A string, because the field is one or the other and a schema claiming it is
+/// always an integer would be wrong half the time.
+fn retry_after_header() -> kynos_openapi::Header {
+    kynos_openapi::Header::new(kynos_openapi::Schema::of_type(SchemaType::String))
+        .with_description("How long to wait before retrying, in seconds or as an HTTP-date")
+}
+
+/// Sets `Retry-After` on `response` when there is a delay to advertise.
+fn set_retry_after(response: &mut http::Response, retry_after: Option<Duration>) {
+    // Deliberately not a let-chain: those are stable well above the declared
+    // MSRV, and this is not worth raising the floor for.
+    let Some(delay) = retry_after else { return };
+
+    if let Ok(value) = http::HeaderValue::from_str(&delay.as_secs().to_string()) {
+        response
+            .headers_mut()
+            .insert(http::header::RETRY_AFTER, value);
+    }
+}
+
+/// What [`BodySize`] answers with when a body is too large.
+///
+/// Carries the limit it enforced, so the response can say what was exceeded
+/// rather than only that something was.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BodySizeExceeded {
+    /// The maximum body size, in bytes.
+    pub limit: u64,
+}
+
+impl IntoResponse for BodySizeExceeded {
+    fn into_response(self) -> http::Response {
+        Problem::new(http::StatusCode::PAYLOAD_TOO_LARGE)
+            .with_detail(format!("the request body exceeds {} bytes", self.limit))
+            .into_response()
+    }
+}
+
+impl Responses for BodySizeExceeded {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        kynos_openapi::Responses::new().with(
+            413,
+            kynos_openapi::Response::new("the request body exceeds the configured limit"),
+        )
+    }
+}
 
 /// Caps the size of a request body.
 ///
@@ -47,6 +110,34 @@ impl<C: Sync + 'static> Interceptor<C> for BodySize {
     }
 }
 
+/// What [`Timeout`] answers with when a handler runs too long.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TimedOut {
+    /// The limit the handler passed.
+    pub after: Duration,
+}
+
+impl IntoResponse for TimedOut {
+    fn into_response(self) -> http::Response {
+        Problem::new(http::StatusCode::GATEWAY_TIMEOUT)
+            .with_detail(format!(
+                "the handler did not finish within {} seconds",
+                self.after.as_secs()
+            ))
+            .into_response()
+    }
+}
+
+impl Responses for TimedOut {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        kynos_openapi::Responses::new().with(
+            504,
+            kynos_openapi::Response::new("the handler did not finish within the configured limit"),
+        )
+    }
+}
+
 /// Caps how long a handler may run.
 ///
 /// Contributes 504.
@@ -81,6 +172,38 @@ impl<C: Sync + 'static> Interceptor<C> for Timeout {
     ) -> http::Response {
         let _ = (request, context, next);
         todo!()
+    }
+}
+
+/// What [`Concurrency`] answers with when every slot is taken.
+///
+/// The `Retry-After` header is *this type's*, not a separate entry keyed on
+/// 503: the type that sets the header is the type that describes it, so the two
+/// cannot come apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AtCapacity {
+    /// How long a client should wait, when there is a useful answer.
+    pub retry_after: Option<Duration>,
+}
+
+impl IntoResponse for AtCapacity {
+    fn into_response(self) -> http::Response {
+        let mut response = Problem::new(http::StatusCode::SERVICE_UNAVAILABLE)
+            .with_detail("the service is at its concurrency limit")
+            .into_response();
+        set_retry_after(&mut response, self.retry_after);
+        response
+    }
+}
+
+impl Responses for AtCapacity {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        kynos_openapi::Responses::new().with(
+            503,
+            kynos_openapi::Response::new("the service is at its concurrency limit")
+                .with_header("Retry-After", retry_after_header()),
+        )
     }
 }
 
