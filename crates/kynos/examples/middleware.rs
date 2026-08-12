@@ -1,4 +1,5 @@
-//! The interceptors Kynos ships, and what each one puts in the description.
+//! Writing middleware that declares what it does, and the interceptors Kynos
+//! ships.
 //!
 //! Run it with compression and tracing on:
 //!
@@ -6,17 +7,23 @@
 //! cargo run -p kynos --example middleware --features compression
 //! ```
 //!
-//! [`interceptor.rs`](interceptor.rs) shows how to write one. This file is the
-//! catalogue: what is built in, at which scope each belongs, and what each adds
-//! to the operations it covers.
+//! A `tower::Layer` can change the status, rewrite the body, add headers or
+//! refuse the request, and nothing in its type says which — so wrapping an
+//! operation in one silently invalidates its description. An `Interceptor`
+//! declares an `OperationContribution` instead, and that declaration propagates
+//! into every operation it covers, automatically and correctly.
 //!
-//! Four things are worth noticing:
+//! Five things are worth noticing:
 //!
 //! * **An interceptor declares what it contributes.** That declaration is the
 //!   whole reason middleware is not opaque here: a layer that adds a 429, a
 //!   `Retry-After` header or a security requirement says so, and the
 //!   description of every operation it covers gains it. A `tower::Layer` cannot
 //!   be accepted precisely because it has no way to say any of that.
+//! * **The declaration is inert data.** `contribution` is called once per
+//!   covered operation while the router is built, never per request. A
+//!   description you could only obtain by running the server is a description
+//!   you could not check in CI.
 //! * **Two interceptors that disagree are a build error.** `merge` on
 //!   `OperationContribution` fails rather than picking a winner, so two layers
 //!   claiming different things about the same 429 are caught while the router
@@ -24,7 +31,7 @@
 //! * **An observer is a different thing, and `Trace` is one.** It cannot
 //!   change a request or a response, so it contributes nothing to any
 //!   description. That is the right shape for tracing: a log line is not part
-//!   of the contract.
+//!   of the contract. [`tracing.rs`](tracing.rs) writes one.
 //! * **Scope is the same question as documentation scope.** An interceptor on
 //!   the router covers every operation and appears in every description; one on
 //!   a group covers that group. There is no way to apply one and not document
@@ -36,7 +43,9 @@
 use std::{net::Ipv4Addr, time::Duration};
 
 use kynos::{
+    http,
     middleware::{
+        Interceptor, Next,
         compression::Compression,
         contribution::OperationContribution,
         cors::Cors,
@@ -44,8 +53,13 @@ use kynos::{
         request_id::{Counter, RequestId, RequestIdSource},
         trace::Trace,
     },
-    openapi::{Method, Parameter, ParameterIn, Schema as OpenApiSchema},
+    openapi::{
+        self, Method, Parameter, ParameterIn, Schema as OpenApiSchema, StatusPattern,
+        model::schema::types::SchemaType,
+    },
     prelude::*,
+    response::{IntoResponse, status::NoContent},
+    router::operation::Route,
     server::Server,
 };
 use serde::{Deserialize, Serialize};
@@ -67,37 +81,88 @@ struct User {
 struct Monotonic;
 
 impl RequestIdSource for Monotonic {
-    fn next_id(&self) -> kynos::http::HeaderValue {
-        kynos::http::HeaderValue::from_static("00000000-0000-4000-8000-000000000000")
+    fn next_id(&self) -> http::HeaderValue {
+        http::HeaderValue::from_static("00000000-0000-4000-8000-000000000000")
     }
 }
 
-/// An interceptor that reads a tenant header and says so.
+/// Requires a shared secret, and declares the 401 it answers with.
 ///
-/// The contribution is the point: this adds a parameter to every operation it
-/// covers, so a header the service requires cannot be one the description omits.
+/// The first of the two hand-written interceptors here, and the one that
+/// short-circuits. Because it can answer before the handler runs, every
+/// operation it covers must document that it can — which is exactly what the
+/// contribution does. Without it the emitted description would promise a set of
+/// responses the service does not honour.
+struct RequireSecret {
+    header: &'static str,
+    secret: &'static str,
+}
+
+impl<C: Sync + 'static> Interceptor<C> for RequireSecret {
+    fn contribution(&self, route: Route<'_>) -> OperationContribution {
+        // `route` is the operation being covered, so one interceptor can say
+        // different things about different operations. Here it only labels.
+        let _ = route.operation_id();
+
+        OperationContribution::none().with_response(
+            StatusPattern::Code(401),
+            openapi::Response::new("the shared secret was absent or wrong"),
+        )
+    }
+
+    async fn intercept(
+        &self,
+        request: http::Request,
+        context: &C,
+        next: Next<'_, C>,
+    ) -> http::Response {
+        let _ = context;
+
+        let presented = request
+            .headers()
+            .get(self.header)
+            .and_then(|value| value.to_str().ok());
+
+        if presented == Some(self.secret) {
+            return next.run(request).await;
+        }
+
+        // The 401 the contribution declares, actually sent. An interceptor
+        // whose body cannot produce what its contribution promises is a
+        // description that lies, and this file is the place to not do that.
+        Problem::new(http::StatusCode::UNAUTHORIZED)
+            .with_detail("the shared secret was absent or wrong")
+            .into_response()
+    }
+}
+
+/// Reads a tenant header, and says so.
+///
+/// The second hand-written one, and the one that contributes a *parameter*
+/// rather than a response: a header the service requires cannot be one the
+/// description omits.
 #[derive(Clone)]
 struct Tenant;
 
-impl<C: Sync + 'static> kynos::middleware::Interceptor<C> for Tenant {
+impl<C: Sync + 'static> Interceptor<C> for Tenant {
     async fn intercept(
         &self,
-        request: kynos::http::Request,
+        request: http::Request,
         context: &C,
-        next: kynos::middleware::Next<'_, C>,
-    ) -> kynos::http::Response {
+        next: Next<'_, C>,
+    ) -> http::Response {
         let _ = context;
         next.run(request).await
     }
 
     // `Route` is in scope, so a contribution can differ per operation. This one
     // does not, but a rate limiter documenting its own bucket would.
-    fn contribution(&self, route: kynos::router::operation::Route<'_>) -> OperationContribution {
+    fn contribution(&self, route: Route<'_>) -> OperationContribution {
         let _ = route;
         let mut parameter = Parameter::new(
             "X-Tenant",
             ParameterIn::Header,
-            OpenApiSchema::of_type(kynos::openapi::model::schema::types::SchemaType::String),
+            OpenApiSchema::of_type(SchemaType::String),
         );
         parameter.description = Some("Which tenant this request acts on".to_owned());
         parameter.required = Some(true);
@@ -117,6 +182,12 @@ async fn list_users() -> Json<Vec<User>> {
 async fn upload_avatar(Json(user): Json<User>) -> NoContent {
     let _ = user;
     todo!("the router is still a skeleton; this example exists to typecheck")
+}
+
+/// Serves an administrative report.
+#[kynos::get("/reports")]
+async fn reports() -> NoContent {
+    NoContent
 }
 
 #[tokio::main]
@@ -165,12 +236,21 @@ async fn main() -> kynos::Result<()> {
         .intercept(BodySize::new(1_048_576))
         .intercept(Timeout::new(Duration::from_secs(30)))
         .intercept(Concurrency::new(256))
-        // A hand-written one, at group scope, so only these operations declare
-        // the tenant header.
+        // The hand-written ones, at group scope, so only these operations
+        // declare the tenant header and only those the shared secret. Scope in
+        // the router is scope in the description.
         .group(
             Group::new("/tenanted")
                 .intercept(Tenant)
                 .mount(kynos::routes![upload_avatar]),
+        )
+        .group(
+            Group::new("/admin")
+                .intercept(RequireSecret {
+                    header: "X-Admin-Secret",
+                    secret: "opensesame",
+                })
+                .mount(kynos::routes![reports]),
         )
         .mount(kynos::routes![list_users]);
 

@@ -30,7 +30,7 @@
 //!   an interceptor produces the 401. Each reaches the description by a
 //!   different route, and not one of them appears in a signature.
 //!
-//! [`interceptor.rs`](interceptor.rs) covers contributions properly, and
+//! [`middleware.rs`](middleware.rs) covers contributions properly, and
 //! [`composition.rs`](composition.rs) covers the fallback policies as router
 //! structure. They appear here because a reader asking "where did this status
 //! come from" should find every answer in one file.

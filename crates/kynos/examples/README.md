@@ -58,8 +58,7 @@ needs more than the defaults. Each file's own header explains why it needs them.
 
 | Example | Shows | Features |
 | --- | --- | --- |
-| [`interceptor.rs`](interceptor.rs) | Writing middleware that declares what it does to the exchange | — |
-| [`middleware.rs`](middleware.rs) | The interceptors Kynos ships, and what each one contributes to the description | `compression` |
+| [`middleware.rs`](middleware.rs) | Writing an interceptor, and the ones Kynos ships | `compression` |
 | [`tracing.rs`](tracing.rs) | Spans reaching a real subscriber, and why an observer declares nothing | — |
 | [`print_request_response.rs`](print_request_response.rs) | An interceptor buffering both bodies, and what reading them costs the description | — |
 

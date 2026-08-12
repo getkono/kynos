@@ -29,7 +29,7 @@
 //! `layer_unchecked` *is* a gap worth closing, and the remedy is barely more
 //! work: an `Interceptor` declaring an `OperationContribution` gets every
 //! covered operation documented correctly and automatically. See
-//! [`interceptor.rs`](interceptor.rs).
+//! [`middleware.rs`](middleware.rs).
 
 use std::net::Ipv4Addr;
 
