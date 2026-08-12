@@ -752,7 +752,7 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
 fn tls_rejects_empty_pem_and_zero_handshake_timeouts() {
     assert!(matches!(
         crate::server::tls::TlsConfig::from_pem(b"", b""),
-        Err(crate::server::tls::error::TlsError::Pem { .. })
+        Err(crate::server::tls::error::TlsError::EmptyPem { .. })
     ));
 
     const SERVER_CERTIFICATE: &[u8] = include_bytes!("../../tests/fixtures/tls/server.pem");
@@ -768,8 +768,29 @@ fn tls_rejects_empty_pem_and_zero_handshake_timeouts() {
         .expect("certificate parses as a trust anchor");
     assert!(matches!(
         client.with_pem_crls(b""),
-        Err(crate::server::tls::error::TlsError::Pem { .. })
+        Err(crate::server::tls::error::TlsError::EmptyPem { .. })
     ));
+}
+
+/// A malformed PEM is a rustls failure Kynos wraps, and the wrapper says only
+/// which material was expected. Without the cause, "invalid certificate PEM" is
+/// the whole diagnostic and the reader learns nothing about what the parser
+/// actually objected to.
+#[cfg(feature = "tls")]
+#[test]
+fn a_malformed_pem_keeps_its_parser_failure_as_a_cause() {
+    let error =
+        crate::server::tls::TlsConfig::from_pem(b"-----BEGIN CERTIFICATE-----\nnot base64", b"")
+            .expect_err("a truncated certificate does not parse");
+
+    assert!(matches!(
+        error,
+        crate::server::tls::error::TlsError::Pem { .. }
+    ));
+    assert!(
+        std::error::Error::source(&error).is_some(),
+        "the parser failure must survive as a cause, not as a formatted string"
+    );
 }
 
 #[cfg(feature = "tls")]

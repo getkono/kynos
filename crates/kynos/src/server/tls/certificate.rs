@@ -25,13 +25,10 @@ pub(in crate::server) fn parse_certificates(
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|error| TlsError::Pem {
             kind,
-            message: error.to_string(),
+            source: Box::new(error),
         })?;
     if certificates.is_empty() {
-        return Err(TlsError::Pem {
-            kind,
-            message: "no PEM item found".to_owned(),
-        });
+        return Err(TlsError::EmptyPem { kind });
     }
     Ok(certificates)
 }
@@ -45,7 +42,7 @@ pub(in crate::server) fn parse_certificate_material(
     let private_key =
         PrivateKeyDer::from_pem_slice(private_key).map_err(|error| TlsError::Pem {
             kind: "private key",
-            message: error.to_string(),
+            source: Box::new(error),
         })?;
     Ok(CertificateMaterial {
         names,
@@ -61,11 +58,11 @@ pub(in crate::server) fn certified_key(
     let key = provider
         .key_provider
         .load_private_key(material.private_key)
-        .map_err(|error| TlsError::PrivateKey(error.to_string()))?;
+        .map_err(|error| TlsError::PrivateKey(Box::new(error)))?;
     let certified = CertifiedKey::new(material.certificates, key);
     certified
         .keys_match()
-        .map_err(|error| TlsError::PrivateKey(error.to_string()))?;
+        .map_err(|error| TlsError::PrivateKey(Box::new(error)))?;
     Ok(Arc::new(certified))
 }
 
