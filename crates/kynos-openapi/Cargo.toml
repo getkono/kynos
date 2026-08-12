@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[[example]]
+name = "standalone"
+required-features = ["openapi32", "yaml"]
+
 [features]
 default = ["openapi31"]
 # The 3.1 object model. Baseline: every other feature builds on it.
