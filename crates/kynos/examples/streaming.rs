@@ -24,6 +24,10 @@
 //!   property of streaming rather than of Kynos, and it is why a streamed
 //!   operation should validate everything it can before returning.
 //!
+//! Server-Sent Events are the fourth sequential media type, and the only one
+//! with protocol rules of its own — event names, resumption, reconnection
+//! advice. [`sse.rs`](sse.rs) covers them.
+//!
 //! `QueryString<T, M>` is the other 3.2-only construct here: a parameter whose
 //! value is the *entire* query string, media-typed. It exists for the APIs
 //! whose filter language is not `key=value` pairs — a JSON filter, an RSQL
@@ -41,7 +45,6 @@ use kynos::{
     response::stream::{
         binary::BinaryStream,
         json::{JsonLines, JsonSeq},
-        sse::{Event, KeepAlive, Sse},
     },
     server::Server,
 };
@@ -75,34 +78,6 @@ impl futures_core::Stream for Countdown {
             at_millis: i64::from(self.remaining),
             value: f64::from(self.remaining),
         }))
-    }
-}
-
-/// The same, carrying server-sent events.
-struct Ticks {
-    remaining: u32,
-}
-
-impl futures_core::Stream for Ticks {
-    // A `Result`, because an event stream can fail after the status is sent.
-    // The error terminates the stream; it cannot retract the 200 already on the
-    // wire, which is why the item type admits one at all.
-    type Item = Result<Event<Reading>, std::io::Error>;
-
-    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if self.remaining == 0 {
-            return Poll::Ready(None);
-        }
-        self.remaining -= 1;
-        Poll::Ready(Some(Ok(Event::new(Reading {
-            at_millis: i64::from(self.remaining),
-            value: f64::from(self.remaining),
-        })
-        // `event` names the type a browser's `addEventListener` selects on,
-        // and `id` is what a client sends back as `Last-Event-ID` when it
-        // reconnects. Both are part of the contract, not decoration.
-        .event("reading")
-        .id(self.remaining.to_string()))))
     }
 }
 
@@ -162,20 +137,6 @@ async fn stream_sequence() -> JsonSeq<Countdown> {
     }
 }
 
-/// Streams readings as server-sent events.
-///
-/// Keep-alive is a comment line the protocol requires a client to ignore, sent
-/// so that an idle connection is not reaped by an intermediary. It carries no
-/// data and appears in no description.
-#[kynos::get("/readings/live")]
-async fn stream_events() -> Sse<Ticks> {
-    Sse::new(Ticks { remaining: 10 }).keep_alive(
-        KeepAlive::new()
-            .interval(std::time::Duration::from_secs(15))
-            .comment("still connected"),
-    )
-}
-
 /// Streams an export as raw bytes.
 ///
 /// The marker names the media type, exactly as it does for a non-streamed
@@ -204,7 +165,6 @@ async fn main() -> kynos::Result<()> {
     let router = Router::<()>::new().mount(kynos::routes![
         stream_lines,
         stream_sequence,
-        stream_events,
         stream_export,
         search,
     ]);
