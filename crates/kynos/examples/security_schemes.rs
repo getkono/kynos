@@ -35,15 +35,16 @@
 //!   an authorization server can grant. `ReadReports` declares them on the
 //!   *operation* through `Scoped`, which is what this particular endpoint
 //!   demands. Both are checked, neither is a string a handler passes.
-//! * **A context declares what it can verify.** One `App`, eight
+//! * **A context declares what it can verify.** One `App`, seven
 //!   implementations, so the set of schemes an application supports is visible
-//!   in one place rather than spread across the handlers requiring them.
+//!   in one place rather than spread across the handlers requiring them. Only
+//!   one of them verifies for real; the other six say so in their name.
 //!
 //! The challenge is declared on the scheme rather than on the authenticator, so
 //! the `WWW-Authenticate` a client receives and the one the description
 //! advertises are one string.
 
-use std::net::Ipv4Addr;
+use std::{collections::HashMap, net::Ipv4Addr};
 
 use kynos::{
     error::rejection::AuthRejection,
@@ -58,9 +59,14 @@ use kynos::{
 };
 
 /// What a verified token yields a handler.
+///
+/// `scopes` is what makes `authorize` a real check rather than a formality: the
+/// grants ride with the credential, so the comparison is against something the
+/// token actually said.
 #[derive(Clone, Debug)]
 struct Claims {
     subject: String,
+    scopes: Vec<String>,
 }
 
 /// A bearer token, in the `Authorization` header.
@@ -131,13 +137,85 @@ struct DelegatedAccess;
 #[security(openid_connect(url = "https://auth.example.com/.well-known/openid-configuration"))]
 struct Federated;
 
-/// One verifier, standing in for seven.
+/// A verifier that actually verifies.
 ///
-/// Real ones differ — a token is verified against a key, a session against a
-/// store — and none of that is Kynos's business. What matters here is the
-/// shape: an authenticator is chosen by the compiler from the scheme type, so
-/// a handler taking `Auth<S>` against a context that cannot verify `S` is a
-/// compile error rather than a 500.
+/// Opaque tokens against a table, because the point is the *shape* of the two
+/// methods rather than the cryptography: a real one checks a signature or hits
+/// a session store, and Kynos ships neither. What matters is that
+/// `authenticate` reads the request and can fail, and that `authorize` compares
+/// the scopes an operation demands against the ones the credential carries.
+struct Tokens {
+    issued: HashMap<&'static str, Claims>,
+}
+
+impl Tokens {
+    /// Two callers, one of whom may read reports.
+    fn seeded() -> Self {
+        let mut issued = HashMap::new();
+        issued.insert(
+            "tok_reader",
+            Claims {
+                subject: "user-1".to_owned(),
+                scopes: vec!["reports:read".to_owned()],
+            },
+        );
+        issued.insert(
+            "tok_plain",
+            Claims {
+                subject: "user-2".to_owned(),
+                scopes: Vec::new(),
+            },
+        );
+        Self { issued }
+    }
+}
+
+impl<C: Sync> Authenticator<AccessToken, C> for Tokens {
+    async fn authenticate(&self, parts: &Parts, context: &C) -> Result<Claims, AuthRejection> {
+        let _ = context;
+
+        // `Unauthenticated` for all three failures -- absent, malformed, and
+        // unknown -- because telling a caller which one it was tells an
+        // attacker which tokens exist.
+        parts
+            .headers
+            .get(kynos::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .and_then(|token| self.issued.get(token))
+            .cloned()
+            .ok_or(AuthRejection::Unauthenticated)
+    }
+
+    async fn authorize(
+        &self,
+        credential: &Claims,
+        scopes: &'static [&'static str],
+        context: &C,
+    ) -> Result<(), AuthRejection> {
+        let _ = context;
+
+        // Every demanded scope must be granted. `Forbidden` and not
+        // `Unauthenticated`: the credential was valid, it just does not reach.
+        if scopes
+            .iter()
+            .all(|demanded| credential.scopes.iter().any(|held| held == demanded))
+        {
+            Ok(())
+        } else {
+            Err(AuthRejection::Forbidden)
+        }
+    }
+}
+
+/// One stand-in, for the six schemes whose verifier would be arbitrary.
+///
+/// A session is checked against a store, a client certificate against a CA, a
+/// federated identity against a discovery document — none of that is Kynos's
+/// business, and inventing six of them would teach nothing `Tokens` does not.
+/// What this one still shows is the shape: an authenticator is chosen by the
+/// compiler from the scheme type, so a handler taking `Auth<S>` against a
+/// context that cannot verify `S` is a compile error rather than a 500.
 struct Rejects;
 
 impl<S: SecurityScheme, C: Sync> Authenticator<S, C> for Rejects
@@ -169,11 +247,25 @@ where
 
 /// The application context.
 ///
-/// One field, seven implementations. A context declares what it can verify, and
-/// the set of schemes an application supports is therefore visible in one place
-/// rather than spread across the handlers that happen to require them.
+/// Two fields, seven implementations. A context declares what it can verify, so
+/// the set of schemes an application supports is visible in one place rather
+/// than spread across the handlers that happen to require them.
 struct App {
+    tokens: Tokens,
     verifier: Rejects,
+}
+
+/// The one scheme with a real verifier, wired by hand.
+///
+/// The association is per scheme, so `AccessToken` reaching `Tokens` while
+/// everything else reaches `Rejects` costs one implementation rather than a
+/// branch anywhere.
+impl Authenticates<AccessToken> for App {
+    type Authenticator = Tokens;
+
+    fn authenticator(&self) -> &Self::Authenticator {
+        &self.tokens
+    }
 }
 
 macro_rules! verifies {
@@ -191,7 +283,6 @@ macro_rules! verifies {
 }
 
 verifies!(
-    AccessToken,
     ServiceKey,
     SessionCookie,
     Basic<Credentials>,
@@ -296,7 +387,12 @@ async fn main() -> kynos::Result<()> {
     let document = router.openapi()?;
     println!("{}", document.to_json()?);
 
-    Server::new(router.build(App { verifier: Rejects })?)
+    let context = App {
+        tokens: Tokens::seeded(),
+        verifier: Rejects,
+    };
+
+    Server::new(router.build(context)?)
         .bind((Ipv4Addr::UNSPECIFIED, 3000))
         .serve()
         .await
