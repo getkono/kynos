@@ -23,14 +23,20 @@ That is why unit tests appear at
 [`response/negotiate/tests.rs`](../crates/kynos/src/response/negotiate/tests.rs)
 rather than inline.
 
-Four of the five integration files exist for one reason each;
+Five of the six integration files exist for one reason each;
 `hermeticity.rs` is a different kind of thing and is covered below.
+
+`conformance.rs` is `#[ignore]`d rather than absent: `Router::build` and
+everything below it are `todo!()`, so it panics rather than fails today. An
+ignored test that names its blocker is a better record of the gap than a missing
+file, and removing the attribute is the whole change when the router lands.
 
 | File | Asserts |
 | --- | --- |
 | [`pipeline.rs`](../crates/kynos/tests/pipeline.rs) | an `async fn` is a `Handler`, `routes!` collects it, `Endpoints` accepts it, and mounting reaches the context that supplies its dependencies |
 | [`derives.rs`](../crates/kynos/tests/derives.rs) | every derive expands to a well-formed implementation of the trait it claims |
 | [`typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) | a route attribute's `relative_uri` percent-encodes its parameters |
+| [`conformance.rs`](../crates/kynos/tests/conformance.rs) | that the responses a suite observed match what the document promises, and that every declared response was exercised |
 | [`compile/panic_recovery.rs`](../crates/kynos/tests/compile/panic_recovery.rs) | `catch_panics` refuses to compile under `panic = "abort"` |
 
 `panic_recovery.rs` is a `harness = false` test target rather than an ordinary
