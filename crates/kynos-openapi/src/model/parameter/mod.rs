@@ -22,7 +22,7 @@ use crate::{
 pub enum ParameterIn {
     /// A named query string parameter.
     ///
-    /// The default, so that [`Parameter`] can derive [`Default`]; a parameter
+    /// The default only because a location has to be one of these; a parameter
     /// built through the constructors always has its location set explicitly.
     #[default]
     Query,
@@ -70,9 +70,10 @@ impl fmt::Display for ParameterIn {
 
 /// A single operation parameter.
 ///
-/// Exactly one of [`schema`](Parameter::schema) and
-/// [`content`](Parameter::content) must be present.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+/// The value is described by a [`ParameterShape`], which is one of `schema` or
+/// `content` and never both or neither.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "RawParameter", into = "RawParameter")]
 pub struct Parameter {
     /// The name of the parameter, case-sensitive.
     ///
@@ -98,76 +99,117 @@ pub struct Parameter {
     pub required: Option<bool>,
 
     /// Whether the parameter is deprecated.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deprecated: Option<bool>,
 
     /// Whether an empty value is permitted. Query parameters only.
     ///
     /// Not recommended in 3.1, and formally deprecated in 3.2.
-    #[serde(
-        rename = "allowEmptyValue",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
     pub allow_empty_value: Option<bool>,
 
-    /// How the parameter value is serialized.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub style: Option<Style>,
-
-    /// Whether an array or object generates one parameter per member.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub explode: Option<bool>,
-
-    /// Whether reserved URI characters may appear unencoded.
-    #[serde(
-        rename = "allowReserved",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub allow_reserved: Option<bool>,
-
-    /// The schema of the parameter value.
-    ///
-    /// Mutually exclusive with [`content`](Parameter::content).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub schema: Option<Schema>,
+    shape: ParameterShape,
 
     /// A single example of the parameter value.
     ///
     /// Mutually exclusive with [`examples`](Parameter::examples).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub example: Option<Value>,
 
     /// Examples of the parameter value.
     ///
     /// Mutually exclusive with [`example`](Parameter::example).
-    #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub examples: Map<RefOr<Example>>,
 
-    /// The parameter value described by media type.
-    ///
-    /// Mutually exclusive with [`schema`](Parameter::schema). The map must hold
-    /// exactly one entry.
-    #[serde(default, skip_serializing_if = "Map::is_empty")]
-    pub content: Map<MediaType>,
-
     /// Specification extensions.
-    #[serde(flatten)]
     pub extensions: Extensions,
+}
+
+/// How a parameter's value is described.
+///
+/// A parameter carries `schema` or `content`, never both and never neither.
+/// `style`, `explode` and `allowReserved` only mean anything alongside a
+/// schema, so they live in that variant rather than beside it — setting a style
+/// on a content-described parameter is not a mistake to report, it is a
+/// sentence with nowhere to be written.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ParameterShape {
+    /// The simple case: a schema, plus how its value is serialized.
+    Schema {
+        /// The schema defining the parameter's type.
+        schema: Schema,
+
+        /// How the value is serialized.
+        style: Option<Style>,
+
+        /// Whether an array or object generates one parameter per member.
+        explode: Option<bool>,
+
+        /// Whether reserved URI characters may appear unencoded.
+        allow_reserved: Option<bool>,
+    },
+
+    /// The complex case: one media type describing the value.
+    ///
+    /// The specification allows exactly one entry, so this holds one pair
+    /// rather than a map that has to be counted. Boxed because a `MediaType`
+    /// dwarfs the schema-side fields, and every parameter would otherwise pay
+    /// for the larger of the two.
+    Content {
+        /// The media type the value is carried as.
+        media_type: String,
+
+        /// What that media type describes.
+        value: Box<MediaType>,
+    },
 }
 
 impl Parameter {
     /// Creates a schema-described parameter.
     pub fn new(name: impl Into<String>, location: ParameterIn, schema: Schema) -> Self {
+        Self::shaped(
+            name,
+            location,
+            ParameterShape::Schema {
+                schema,
+                style: None,
+                explode: None,
+                allow_reserved: None,
+            },
+        )
+    }
+
+    /// Creates a parameter described by one media type.
+    ///
+    /// For the values a sequence of `style` rules cannot express — JSON in a
+    /// query string, a nested filter.
+    pub fn with_content(
+        name: impl Into<String>,
+        location: ParameterIn,
+        media_type: impl Into<String>,
+        value: MediaType,
+    ) -> Self {
+        Self::shaped(
+            name,
+            location,
+            ParameterShape::Content {
+                media_type: media_type.into(),
+                value: Box::new(value),
+            },
+        )
+    }
+
+    fn shaped(name: impl Into<String>, location: ParameterIn, shape: ParameterShape) -> Self {
         Self {
             name: name.into(),
             location,
+            description: None,
             // A path parameter is required by definition, so filling this in is
             // a correctness measure rather than a convenience.
             required: (location == ParameterIn::Path).then_some(true),
-            schema: Some(schema),
-            ..Self::default()
+            deprecated: None,
+            allow_empty_value: None,
+            shape,
+            example: None,
+            examples: Map::new(),
+            extensions: Extensions::default(),
         }
     }
 
@@ -206,25 +248,265 @@ impl Parameter {
     }
 
     /// Sets the serialization style and explode flag.
+    ///
+    /// A no-op on a content-described parameter, which has no style to set.
     #[must_use]
     pub fn with_style(mut self, style: Style, explode: bool) -> Self {
-        self.style = Some(style);
-        self.explode = Some(explode);
+        if let ParameterShape::Schema {
+            style: slot,
+            explode: exploded,
+            ..
+        } = &mut self.shape
+        {
+            *slot = Some(style);
+            *exploded = Some(explode);
+        }
         self
     }
 
-    /// Returns the effective style, falling back to the location's default.
+    /// How this parameter's value is described.
     #[must_use]
-    pub fn effective_style(&self) -> Style {
-        self.style
-            .unwrap_or_else(|| Style::default_for(self.location))
+    pub fn shape(&self) -> &ParameterShape {
+        &self.shape
+    }
+
+    /// The same, mutably.
+    ///
+    /// Handing out `&mut` costs nothing here: every [`ParameterShape`] is a
+    /// valid description, so there is no combination a caller could reach by
+    /// editing one that it could not reach by building one.
+    pub fn shape_mut(&mut self) -> &mut ParameterShape {
+        &mut self.shape
+    }
+
+    /// The schema, when this parameter is described by one.
+    #[must_use]
+    pub fn schema(&self) -> Option<&Schema> {
+        match &self.shape {
+            ParameterShape::Schema { schema, .. } => Some(schema),
+            ParameterShape::Content { .. } => None,
+        }
+    }
+
+    /// The media type and its description, when this parameter uses `content`.
+    #[must_use]
+    pub fn content(&self) -> Option<(&str, &MediaType)> {
+        match &self.shape {
+            ParameterShape::Content { media_type, value } => Some((media_type, &**value)),
+            ParameterShape::Schema { .. } => None,
+        }
+    }
+
+    /// The declared style, if any. Always `None` for a content-described
+    /// parameter.
+    #[must_use]
+    pub fn style(&self) -> Option<Style> {
+        match self.shape {
+            ParameterShape::Schema { style, .. } => style,
+            ParameterShape::Content { .. } => None,
+        }
+    }
+
+    /// Whether reserved URI characters may appear unencoded.
+    #[must_use]
+    pub fn allow_reserved(&self) -> Option<bool> {
+        match self.shape {
+            ParameterShape::Schema { allow_reserved, .. } => allow_reserved,
+            ParameterShape::Content { .. } => None,
+        }
+    }
+
+    /// Returns the effective style, falling back to the location's default.
+    ///
+    /// `None` for a content-described parameter: `style` does not apply to one,
+    /// so there is no default to fall back to either.
+    #[must_use]
+    pub fn effective_style(&self) -> Option<Style> {
+        match self.shape {
+            ParameterShape::Schema { style, .. } => {
+                Some(style.unwrap_or_else(|| Style::default_for(self.location)))
+            }
+            ParameterShape::Content { .. } => None,
+        }
     }
 
     /// Returns the effective explode flag, falling back to the style's default.
     #[must_use]
-    pub fn effective_explode(&self) -> bool {
-        self.explode
-            .unwrap_or_else(|| self.effective_style().default_explode())
+    pub fn effective_explode(&self) -> Option<bool> {
+        match self.shape {
+            ParameterShape::Schema { explode, .. } => Some(
+                explode
+                    .unwrap_or_else(|| self.effective_style().is_some_and(Style::default_explode)),
+            ),
+            ParameterShape::Content { .. } => None,
+        }
+    }
+}
+
+/// The wire shape: the value fields flat, as the specification writes them.
+#[derive(Serialize, Deserialize)]
+struct RawParameter {
+    name: String,
+
+    #[serde(rename = "in")]
+    location: ParameterIn,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    required: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    deprecated: Option<bool>,
+
+    #[serde(
+        rename = "allowEmptyValue",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    allow_empty_value: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    style: Option<Style>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    explode: Option<bool>,
+
+    #[serde(
+        rename = "allowReserved",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    allow_reserved: Option<bool>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    schema: Option<Schema>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    example: Option<Value>,
+
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    examples: Map<RefOr<Example>>,
+
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    content: Map<MediaType>,
+
+    #[serde(flatten)]
+    extensions: Extensions,
+}
+
+/// A Parameter or Header Object whose value description does not hold together.
+#[derive(Debug)]
+pub(crate) enum ShapeConflict {
+    /// Neither `schema` nor `content` was given.
+    Neither,
+
+    /// Both `schema` and `content` were given.
+    Both,
+
+    /// `content` held a number of entries other than one.
+    ContentNotSingular(usize),
+}
+
+impl fmt::Display for ShapeConflict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Neither => f.write_str("one of `schema` and `content` is required"),
+            Self::Both => f.write_str("`schema` and `content` are mutually exclusive"),
+            Self::ContentNotSingular(found) => {
+                write!(f, "`content` must hold exactly one entry, found {found}")
+            }
+        }
+    }
+}
+
+/// Splits the wire fields into a shape, or says why they will not go.
+pub(crate) fn shape_from(
+    schema: Option<Schema>,
+    content: Map<MediaType>,
+) -> Result<(Schema, Option<(String, MediaType)>), ShapeConflict> {
+    match (schema, content.len()) {
+        (Some(_), 1..) => Err(ShapeConflict::Both),
+        (None, 0) => Err(ShapeConflict::Neither),
+        (None, 1) => {
+            let (media_type, value) = content
+                .into_iter()
+                .next()
+                .expect("a map of length one has an entry");
+            Ok((Schema::Bool(true), Some((media_type, value))))
+        }
+        (None, found) => Err(ShapeConflict::ContentNotSingular(found)),
+        (Some(schema), 0) => Ok((schema, None)),
+    }
+}
+
+impl TryFrom<RawParameter> for Parameter {
+    type Error = ShapeConflict;
+
+    fn try_from(raw: RawParameter) -> Result<Self, Self::Error> {
+        let shape = match shape_from(raw.schema, raw.content)? {
+            (_, Some((media_type, value))) => ParameterShape::Content {
+                media_type,
+                value: Box::new(value),
+            },
+            (schema, None) => ParameterShape::Schema {
+                schema,
+                style: raw.style,
+                explode: raw.explode,
+                allow_reserved: raw.allow_reserved,
+            },
+        };
+
+        Ok(Self {
+            name: raw.name,
+            location: raw.location,
+            description: raw.description,
+            required: raw.required,
+            deprecated: raw.deprecated,
+            allow_empty_value: raw.allow_empty_value,
+            shape,
+            example: raw.example,
+            examples: raw.examples,
+            extensions: raw.extensions,
+        })
+    }
+}
+
+impl From<Parameter> for RawParameter {
+    fn from(parameter: Parameter) -> Self {
+        let (schema, style, explode, allow_reserved, content) = match parameter.shape {
+            ParameterShape::Schema {
+                schema,
+                style,
+                explode,
+                allow_reserved,
+            } => (Some(schema), style, explode, allow_reserved, Map::new()),
+            ParameterShape::Content { media_type, value } => (
+                None,
+                None,
+                None,
+                None,
+                Map::from_iter([(media_type, *value)]),
+            ),
+        };
+
+        Self {
+            name: parameter.name,
+            location: parameter.location,
+            description: parameter.description,
+            required: parameter.required,
+            deprecated: parameter.deprecated,
+            allow_empty_value: parameter.allow_empty_value,
+            style,
+            explode,
+            allow_reserved,
+            schema,
+            example: parameter.example,
+            examples: parameter.examples,
+            content,
+            extensions: parameter.extensions,
+        }
     }
 }
 

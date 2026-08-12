@@ -63,7 +63,11 @@ pub use crate::{
         external_docs::ExternalDocumentation,
         info::{Contact, Info, License},
         link::Link,
-        parameter::{Parameter, ParameterIn, header::Header, style::Style},
+        parameter::{
+            Parameter, ParameterIn, ParameterShape,
+            header::{Header, HeaderShape},
+            style::Style,
+        },
         paths::{
             Paths, item::PathItem, method::Method, operation::Operation, template::PathTemplate,
         },

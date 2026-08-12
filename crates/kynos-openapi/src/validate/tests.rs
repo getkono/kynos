@@ -205,25 +205,6 @@ fn headers_the_spec_ignores_may_not_be_declared_as_parameters() {
 }
 
 #[test]
-fn a_parameter_must_set_exactly_one_of_schema_and_content() {
-    let mut parameter = Parameter::query("filter", Schema::any());
-    parameter.schema = None;
-
-    let item = PathItem::new().with_operation(
-        Method::Get,
-        Operation::new("listUsers")
-            .with_parameter(parameter)
-            .with_responses(ok_responses()),
-    );
-
-    let found = errors(&document_with(&[("/users", item)]));
-    assert!(matches!(
-        found.as_slice(),
-        [SpecError::SchemaContentExclusivity { .. }]
-    ));
-}
-
-#[test]
 fn styles_are_checked_against_the_parameter_location() {
     let parameter = Parameter::header("X-Trace", Schema::of_type(SchemaType::String))
         .with_style(Style::DeepObject, false);

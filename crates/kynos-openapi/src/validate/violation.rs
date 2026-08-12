@@ -141,22 +141,6 @@ pub enum SpecError {
         location: String,
     },
 
-    /// A parameter or header set neither or both of `schema` and `content`.
-    #[error("`{name}` must set exactly one of `schema` and `content`")]
-    SchemaContentExclusivity {
-        /// The parameter or header name.
-        name: String,
-    },
-
-    /// A `content` map did not hold exactly one entry.
-    #[error("the `content` of `{name}` must hold exactly one entry, found {found}")]
-    ContentNotSingular {
-        /// The parameter or header name.
-        name: String,
-        /// How many entries were present.
-        found: usize,
-    },
-
     /// A serialization style is not legal at a parameter's location.
     #[error("style `{style}` may not be used with `in: {location}`")]
     IllegalStyle {

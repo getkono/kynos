@@ -41,8 +41,69 @@ fn explode_defaults_to_true_only_for_form() {
 #[test]
 fn effective_style_and_explode_fall_back_to_defaults() {
     let parameter = Parameter::query("tags", Schema::of_type(SchemaType::Array));
-    assert_eq!(parameter.effective_style(), Style::Form);
-    assert!(parameter.effective_explode());
+    assert_eq!(parameter.effective_style(), Some(Style::Form));
+    assert_eq!(parameter.effective_explode(), Some(true));
+}
+
+#[test]
+fn a_content_described_parameter_has_no_style_to_report() {
+    use crate::model::body::media_type::MediaType;
+
+    let parameter = Parameter::with_content(
+        "filter",
+        ParameterIn::Query,
+        "application/json",
+        MediaType::default(),
+    );
+
+    // Not "the default style" -- no style at all. `style` is a schema-side
+    // field, and a content-described parameter has no place to put one.
+    assert_eq!(parameter.style(), None);
+    assert_eq!(parameter.effective_style(), None);
+    assert_eq!(parameter.effective_explode(), None);
+    assert!(parameter.schema().is_none());
+    assert_eq!(
+        parameter.content().map(|(name, _)| name),
+        Some("application/json")
+    );
+}
+
+#[test]
+fn a_parameter_round_trips_through_each_shape() {
+    use crate::model::body::media_type::MediaType;
+
+    for parameter in [
+        Parameter::query("tags", Schema::of_type(SchemaType::Array)).with_style(Style::Form, true),
+        Parameter::with_content(
+            "filter",
+            ParameterIn::Query,
+            "application/json",
+            MediaType::default(),
+        ),
+    ] {
+        let json = serde_json::to_string(&parameter).expect("serializable");
+        let parsed: Parameter = serde_json::from_str(&json).expect("deserializable");
+        assert_eq!(parsed, parameter);
+    }
+}
+
+#[test]
+fn a_parameter_describing_its_value_twice_or_not_at_all_is_refused() {
+    let neither = serde_json::from_str::<Parameter>(r#"{"name":"a","in":"query"}"#)
+        .expect_err("one of `schema` and `content` is required");
+    assert!(neither.to_string().contains("required"));
+
+    let both = serde_json::from_str::<Parameter>(
+        r#"{"name":"a","in":"query","schema":true,"content":{"application/json":{}}}"#,
+    )
+    .expect_err("`schema` and `content` are mutually exclusive");
+    assert!(both.to_string().contains("mutually exclusive"));
+
+    let two = serde_json::from_str::<Parameter>(
+        r#"{"name":"a","in":"query","content":{"application/json":{},"text/plain":{}}}"#,
+    )
+    .expect_err("`content` must hold exactly one entry");
+    assert!(two.to_string().contains("exactly one entry"));
 }
 
 #[test]

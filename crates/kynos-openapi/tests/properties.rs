@@ -12,10 +12,11 @@
 
 use kynos_openapi::{
     Callback, Components, Contact, Discriminator, Document, Encoding, Example, Extensions,
-    ExternalDocumentation, Header, Info, License, Link, Map, MediaType, Method, OAuthFlow,
-    OAuthFlows, Operation, Parameter, ParameterIn, PathItem, PathTemplate, Paths, Ref, RefOr,
-    RequestBody, Response, Responses, Schema, SchemaObject, SecurityRequirement, SecurityScheme,
-    Server, ServerVariable, Severity, SpecError, SpecVersion, Style, Tag, Violation, Xml,
+    ExternalDocumentation, Header, HeaderShape, Info, License, Link, Map, MediaType, Method,
+    OAuthFlow, OAuthFlows, Operation, Parameter, ParameterIn, ParameterShape, PathItem,
+    PathTemplate, Paths, Ref, RefOr, RequestBody, Response, Responses, Schema, SchemaObject,
+    SecurityRequirement, SecurityScheme, Server, ServerVariable, Severity, SpecError, SpecVersion,
+    Style, Tag, Violation, Xml,
     annotation::{
         NOT_AUTHORITATIVE_ANNOTATION, OPAQUE_OPERATION_ANNOTATION, OPAQUE_ROUTES_ANNOTATION,
     },
@@ -561,17 +562,34 @@ fn arb_header() -> BoxedStrategy<Header> {
                 example,
                 examples,
                 extensions,
-            )| Header {
-                description,
-                required,
-                deprecated,
-                style,
-                explode,
-                schema,
-                example,
-                examples,
-                content: Map::new(),
-                extensions,
+            )| {
+                // One shape or the other, never both and never neither --
+                // `HeaderShape` has no way to spell the combinations the old
+                // four `Option`s could.
+                let mut header = match schema {
+                    Some(schema) => {
+                        let mut header = Header::new(schema);
+                        if let HeaderShape::Schema {
+                            style: slot,
+                            explode: exploded,
+                            ..
+                        } = header.shape_mut()
+                        {
+                            *slot = style;
+                            *exploded = explode;
+                        }
+                        header
+                    }
+                    None => Header::with_content("application/json", MediaType::default()),
+                };
+
+                header.description = description;
+                header.required = required;
+                header.deprecated = deprecated;
+                header.example = example;
+                header.examples = examples;
+                header.extensions = extensions;
+                header
             },
         )
         .boxed()
@@ -765,21 +783,40 @@ fn arb_parameter() -> BoxedStrategy<Parameter> {
                 schema,
                 example,
                 (examples, content, extensions),
-            )| Parameter {
-                name,
-                location,
-                description,
-                required,
-                deprecated,
-                allow_empty_value,
-                style,
-                explode,
-                allow_reserved,
-                schema,
-                example,
-                examples,
-                content,
-                extensions,
+            )| {
+                // `content` decides the shape when there is no schema, so the
+                // generator draws one description or the other rather than a
+                // combination `ParameterShape` cannot hold.
+                let mut parameter = if let Some(schema) = schema {
+                    let mut parameter = Parameter::new(name, location, schema);
+                    if let ParameterShape::Schema {
+                        style: slot,
+                        explode: exploded,
+                        allow_reserved: reserved,
+                        ..
+                    } = parameter.shape_mut()
+                    {
+                        *slot = style;
+                        *exploded = explode;
+                        *reserved = allow_reserved;
+                    }
+                    parameter
+                } else {
+                    let (media_type, value) = content
+                        .into_iter()
+                        .next()
+                        .unwrap_or_else(|| ("application/json".to_owned(), MediaType::default()));
+                    Parameter::with_content(name, location, media_type, value)
+                };
+
+                parameter.description = description;
+                parameter.required = required;
+                parameter.deprecated = deprecated;
+                parameter.allow_empty_value = allow_empty_value;
+                parameter.example = example;
+                parameter.examples = examples;
+                parameter.extensions = extensions;
+                parameter
             },
         )
         .boxed()

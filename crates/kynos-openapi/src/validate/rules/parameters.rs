@@ -55,26 +55,12 @@ pub(in crate::validate) fn check_parameter_list(
             ));
         }
 
-        let has_schema = parameter.schema.is_some();
-        let has_content = !parameter.content.is_empty();
-        if has_schema == has_content {
-            violations.push(Violation::error(
-                location,
-                SpecError::SchemaContentExclusivity {
-                    name: parameter.name.clone(),
-                },
-            ));
-        } else if has_content && parameter.content.len() != 1 {
-            violations.push(Violation::error(
-                location,
-                SpecError::ContentNotSingular {
-                    name: parameter.name.clone(),
-                    found: parameter.content.len(),
-                },
-            ));
-        }
+        // The schema/content exclusion and the single-entry `content` rule used
+        // to be checked here. `ParameterShape` holds one or the other and its
+        // `Content` variant holds one pair, so neither violation can reach this
+        // function.
 
-        if let Some(style) = parameter.style {
+        if let Some(style) = parameter.style() {
             if !style.is_valid_for(parameter.location) {
                 violations.push(Violation::error(
                     location,
@@ -100,24 +86,9 @@ pub(in crate::validate) fn check_header(
     header: &Header,
     violations: &mut Vec<Violation>,
 ) {
-    let has_schema = header.schema.is_some();
-    let has_content = !header.content.is_empty();
-    if has_schema == has_content {
-        violations.push(Violation::error(
-            location,
-            SpecError::SchemaContentExclusivity {
-                name: name.to_owned(),
-            },
-        ));
-    } else if has_content && header.content.len() != 1 {
-        violations.push(Violation::error(
-            location,
-            SpecError::ContentNotSingular {
-                name: name.to_owned(),
-                found: header.content.len(),
-            },
-        ));
-    }
+    // See `check_parameter_list`: a header's shape is one of the two by
+    // construction, so there is nothing left to check here.
+    let _ = name;
 
     if header.example.is_some() && !header.examples.is_empty() {
         violations.push(Violation::error(location, SpecError::ExampleExclusivity));

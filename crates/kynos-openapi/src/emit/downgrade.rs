@@ -76,7 +76,7 @@ fn collect_operation_blockers(location: &str, operation: &Operation, blockers: &
         if parameter.location == ParameterIn::Querystring {
             blockers.push(format!("{location}/parameters/{}", parameter.name));
         }
-        if parameter.style == Some(crate::model::parameter::style::Style::Cookie) {
+        if parameter.style() == Some(crate::model::parameter::style::Style::Cookie) {
             blockers.push(format!("{location}/parameters/{}/style", parameter.name));
         }
     }
