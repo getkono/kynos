@@ -109,6 +109,10 @@ name = "tracing"
 required-features = ["openapi31", "macros", "server", "http1", "trace"]
 
 [[example]]
+name = "auto_reload"
+required-features = ["openapi31", "macros", "server", "http1"]
+
+[[example]]
 name = "document"
 required-features = [
   "openapi32",
@@ -347,6 +351,10 @@ jiff = { workspace = true, features = [
 # prepared and nothing committed -- no PEM in the repository to expire, and no
 # reader blocked on generating one first.
 rcgen = { workspace = true }
+# The auto-reload example inherits a socket from `systemfd`. Reading a file
+# descriptor out of the environment is the supervisor's protocol rather than the
+# framework's, so the crate that speaks it stays a dev-dependency.
+listenfd = { workspace = true }
 rust_decimal = { workspace = true, features = ["serde"] }
 # Kynos depends on the `tracing` facade and deliberately never on a subscriber,
 # so the tracing example has to install one itself -- otherwise the feature's

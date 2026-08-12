@@ -28,6 +28,7 @@ hyper = "1.7.0"
 hyper-util = "0.1.16"
 indexmap = "2.11.0"
 jiff = { version = "0.2.35", default-features = false }
+listenfd = "1.0.2"
 multer = "3.1.0"
 percent-encoding = "2.3.2"
 prost = "0.14.4"
