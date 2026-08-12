@@ -545,3 +545,15 @@ fn violation_order_does_not_depend_on_hashing() {
         assert_eq!(errors(&document), first);
     }
 }
+
+/// A reporter renders a failure by walking `source()`, so a violation that ends
+/// the chain leaves `error at /paths/~1users/get` as the last thing anyone
+/// reads. The location is context; the `SpecError` is the cause.
+#[test]
+fn a_violation_names_its_spec_error_as_its_cause() {
+    let violation = Violation::error("/paths/~1users/get", SpecError::NoResponses);
+
+    let cause = std::error::Error::source(&violation).expect("a violation has a cause");
+
+    assert_eq!(cause.to_string(), SpecError::NoResponses.to_string());
+}

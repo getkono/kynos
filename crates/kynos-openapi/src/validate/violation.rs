@@ -48,6 +48,18 @@ impl std::fmt::Display for Violation {
     }
 }
 
+/// A violation is a location and a severity wrapped around a [`SpecError`], so
+/// what is wrong with the document is its cause and where it is is context.
+///
+/// This is what lets a reporter that walks `source()` reach the specification
+/// failure itself. `Display` already names the location, so the two layers do
+/// not restate each other.
+impl std::error::Error for Violation {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
 /// Escapes one map key for use as a JSON Pointer token, per RFC 6901.
 ///
 /// Every `paths` key contains a `/`, so a location that embeds one unescaped
