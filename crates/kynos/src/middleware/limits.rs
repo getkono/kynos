@@ -14,7 +14,7 @@ use crate::{
     error::problem::Problem,
     http,
     middleware::{Interceptor, Next, contribution::OperationContribution},
-    response::{IntoResponse, Responses},
+    response::{IntoResponse, Responses, ShortCircuit},
     router::operation::Route,
     schema::registry::Registry,
 };
@@ -57,6 +57,10 @@ impl IntoResponse for BodySizeExceeded {
             .with_detail(format!("the request body exceeds {} bytes", self.limit))
             .into_response()
     }
+}
+
+impl ShortCircuit for BodySizeExceeded {
+    const STATUSES: &'static [u16] = &[413];
 }
 
 impl Responses for BodySizeExceeded {
@@ -128,6 +132,10 @@ impl IntoResponse for TimedOut {
     }
 }
 
+impl ShortCircuit for TimedOut {
+    const STATUSES: &'static [u16] = &[504];
+}
+
 impl Responses for TimedOut {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let _ = registry;
@@ -194,6 +202,10 @@ impl IntoResponse for AtCapacity {
         set_retry_after(&mut response, self.retry_after);
         response
     }
+}
+
+impl ShortCircuit for AtCapacity {
+    const STATUSES: &'static [u16] = &[503];
 }
 
 impl Responses for AtCapacity {

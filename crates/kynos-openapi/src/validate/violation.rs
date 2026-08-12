@@ -141,6 +141,24 @@ pub enum SpecError {
         location: String,
     },
 
+    /// An interceptor's short circuit declared statuses its responses do not
+    /// describe, or the reverse.
+    ///
+    /// Only reachable from a hand-written `ShortCircuit`; the one the
+    /// `ApiError` derive emits comes from the same declaration as the
+    /// responses and cannot disagree with them.
+    #[error(
+        "`{name}` declares statuses {declared:?} as a short circuit but describes {described:?}"
+    )]
+    ShortCircuitMismatch {
+        /// The short-circuit type.
+        name: String,
+        /// What its `STATUSES` const claimed.
+        declared: Vec<u16>,
+        /// What its `Responses` actually described.
+        described: Vec<u16>,
+    },
+
     /// A serialization style is not legal at a parameter's location.
     #[error("style `{style}` may not be used with `in: {location}`")]
     IllegalStyle {

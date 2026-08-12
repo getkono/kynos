@@ -114,6 +114,15 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                 ::core::todo!()
             }
         }
+
+        // The same list again, as a `const`, so that two interceptors claiming
+        // one status is a compile error rather than a build-time one. It is
+        // emitted here rather than written by hand precisely so it cannot
+        // disagree with the `Responses` above: both come from the `#[problem]`
+        // attributes, read once.
+        impl #impl_generics ::kynos::response::ShortCircuit for #name #ty_generics #where_clause {
+            const STATUSES: &'static [u16] = &[#(#statuses),*];
+        }
     })
 }
 

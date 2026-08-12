@@ -76,6 +76,102 @@ pub trait Responses {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses;
 }
 
+/// A response an interceptor can produce without reaching the handler.
+///
+/// [`Responses`] already says what such a type describes, but it says it by
+/// building a value from a [`Registry`], and a `const fn` cannot call it. Two
+/// interceptors covering one operation and claiming the same status is a
+/// conflict worth catching while the program is compiled rather than while the
+/// router is built, so the statuses are also available as a `const`.
+///
+/// # Keeping the two in step
+///
+/// `STATUSES` and [`Responses::responses`] are two statements of one fact, so
+/// they can disagree. Two things stop that mattering:
+///
+/// * `#[derive(kynos::ApiError)]` emits this implementation from the statuses
+///   it already reads, so the ordinary path cannot disagree with itself.
+/// * A hand-written implementation is checked while the router is built, and a
+///   mismatch is reported as
+///   [`SpecError::ShortCircuitMismatch`](kynos_openapi::SpecError::ShortCircuitMismatch).
+///
+/// Which leaves the const as an optimisation of a fact rather than a second
+/// source of it.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be an interceptor's short circuit",
+    label = "not a short circuit",
+    note = "an interceptor answers with a type that says which statuses it can produce; derive it \
+            with `#[derive(kynos::ApiError)]`",
+    note = "use `std::convert::Infallible` for an interceptor that always reaches the handler"
+)]
+pub trait ShortCircuit: IntoResponse + Responses {
+    /// The statuses this type can answer with.
+    const STATUSES: &'static [u16];
+}
+
+/// The statuses a [`kynos_openapi::Responses`] value declares as exact codes.
+///
+/// Wildcard patterns and `default` are skipped: they are ranges rather than
+/// claims about one status, and a short circuit that answers with a range has
+/// nothing exact for the conflict check to compare.
+#[must_use]
+pub fn described_statuses(responses: &kynos_openapi::Responses) -> Vec<u16> {
+    responses
+        .responses
+        .keys()
+        .filter_map(|key| key.parse::<u16>().ok())
+        .collect()
+}
+
+/// Checks that a [`ShortCircuit`]'s const and its responses agree.
+///
+/// Returns the violation when they do not. Called while the router is built,
+/// which is the only place both halves are available at once — the const is
+/// visible to the compiler and the responses need a [`Registry`].
+///
+/// Always `None` for a type whose implementation the `ApiError` derive emitted,
+/// since both halves come from one declaration there.
+#[must_use]
+pub fn short_circuit_mismatch<S: ShortCircuit>(
+    registry: &mut Registry,
+) -> Option<kynos_openapi::SpecError> {
+    mismatch_between(
+        std::any::type_name::<S>(),
+        S::STATUSES,
+        &S::responses(registry),
+    )
+}
+
+/// The comparison itself, without the type parameter.
+///
+/// Split out so it can be tested against hand-built values: the generic form
+/// needs a `Responses` produced from a `Registry`, and what is worth asserting
+/// is the comparison, not the plumbing.
+fn mismatch_between(
+    name: &str,
+    statuses: &[u16],
+    responses: &kynos_openapi::Responses,
+) -> Option<kynos_openapi::SpecError> {
+    let normalize = |mut codes: Vec<u16>| {
+        codes.sort_unstable();
+        codes.dedup();
+        codes
+    };
+
+    let declared = normalize(statuses.to_vec());
+    let described = normalize(described_statuses(responses));
+
+    if declared == described {
+        return None;
+    }
+
+    Some(kynos_openapi::SpecError::ShortCircuitMismatch {
+        name: name.to_owned(),
+        declared,
+        described,
+    })
+}
+
 impl IntoResponse for () {
     fn into_response(self) -> Response {
         todo!()
@@ -107,6 +203,14 @@ impl Responses for Infallible {
     }
 }
 
+/// The short circuit of an interceptor that never short-circuits.
+///
+/// An empty `STATUSES` conflicts with nothing, so a pass-through interceptor
+/// composes with every other one and adds nothing to any description.
+impl ShortCircuit for Infallible {
+    const STATUSES: &'static [u16] = &[];
+}
+
 /// `Result` unions the responses of both sides.
 ///
 /// This is where a handler's success and failure descriptions come together: a
@@ -133,5 +237,65 @@ where
             Ok(value) => value.into_response(),
             Err(error) => error.into_response(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::convert::Infallible;
+
+    use super::{ShortCircuit, described_statuses, mismatch_between, short_circuit_mismatch};
+    use crate::schema::registry::Registry;
+
+    fn responses(statuses: &[u16]) -> kynos_openapi::Responses {
+        statuses
+            .iter()
+            .fold(kynos_openapi::Responses::new(), |responses, &status| {
+                responses.with(status, kynos_openapi::Response::new("a response"))
+            })
+    }
+
+    #[test]
+    fn only_exact_codes_are_compared() {
+        let mut declared = responses(&[503]);
+        declared = declared.with_pattern(
+            kynos_openapi::StatusPattern::ServerError,
+            kynos_openapi::RefOr::Item(kynos_openapi::Response::new("any server error")),
+        );
+        declared = declared.with_default(kynos_openapi::Response::new("anything else"));
+
+        // `5XX` and `default` are ranges, not claims about one status, so a
+        // short circuit has nothing exact to be compared against there.
+        assert_eq!(described_statuses(&declared), vec![503]);
+    }
+
+    #[test]
+    fn agreement_in_any_order_is_agreement() {
+        assert!(mismatch_between("Limits", &[503, 429], &responses(&[429, 503])).is_none());
+        assert!(mismatch_between("Repeats", &[503, 503], &responses(&[503])).is_none());
+    }
+
+    #[test]
+    fn a_status_declared_but_not_described_is_reported() {
+        let found = mismatch_between("Liar", &[418], &responses(&[503]))
+            .expect("418 is declared and never described");
+
+        assert!(matches!(
+            found,
+            kynos_openapi::SpecError::ShortCircuitMismatch { ref declared, ref described, .. }
+                if declared == &[418] && described == &[503]
+        ));
+        assert!(found.to_string().contains("Liar"));
+    }
+
+    #[test]
+    fn a_status_described_but_not_declared_is_reported() {
+        assert!(mismatch_between("Quiet", &[], &responses(&[500])).is_some());
+    }
+
+    #[test]
+    fn an_interceptor_that_never_answers_declares_nothing() {
+        assert_eq!(<Infallible as ShortCircuit>::STATUSES, &[] as &[u16]);
+        assert!(short_circuit_mismatch::<Infallible>(&mut Registry::default()).is_none());
     }
 }

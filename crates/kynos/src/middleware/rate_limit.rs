@@ -6,7 +6,7 @@ use crate::{
     error::problem::Problem,
     http,
     middleware::{Interceptor, Next, contribution::OperationContribution},
-    response::{IntoResponse, Responses},
+    response::{IntoResponse, Responses, ShortCircuit},
     router::operation::Route,
     schema::registry::Registry,
 };
@@ -36,6 +36,10 @@ impl IntoResponse for RateLimited {
 
         response
     }
+}
+
+impl ShortCircuit for RateLimited {
+    const STATUSES: &'static [u16] = &[429];
 }
 
 impl Responses for RateLimited {
