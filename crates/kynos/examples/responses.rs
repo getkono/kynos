@@ -103,11 +103,9 @@ async fn create_user(Json(user): Json<User>) -> Created<Json<User>> {
     // The typed URI is the point. `get_user::relative_uri` takes exactly the
     // path type `get_user` extracts -- one argument, because that route
     // extracts one thing -- so changing the route's parameters breaks this line
-    // rather than the link.
-    Created::at(
-        get_user::relative_uri(UserPath { id: user.id }).to_string(),
-        Json(user),
-    )
+    // rather than the link. `Location` is what lets the `http::Uri` it returns
+    // arrive without a conversion here.
+    Created::at(get_user::relative_uri(UserPath { id: user.id }), Json(user))
 }
 
 /// Creates a user, idempotently.
@@ -143,7 +141,7 @@ async fn list_users() -> WithHeaders<Json<Vec<User>>, RateLimit> {
 /// is not a redirect at all.
 #[kynos::get("/accounts")]
 async fn legacy_accounts() -> Redirect<303> {
-    Redirect::to(list_users::relative_uri().to_string())
+    Redirect::to(list_users::relative_uri())
 }
 
 /// Deletes a user.

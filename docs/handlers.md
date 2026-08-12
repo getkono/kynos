@@ -92,6 +92,14 @@ There is no way to choose a status at run time.
 | [`Redirect<CODE>`](../crates/kynos/src/response/status.rs) | `CODE` | 301, 302, 303, 307 or 308 only |
 | [`WithHeaders<T, H>`](../crates/kynos/src/response/headers.rs) | `T`'s | `H` derives `HeaderParams`, so `Response.headers` is complete |
 
+`Created` and `Redirect` both carry a
+[`Location`](../crates/kynos/src/response/status.rs), which exists because a
+route attribute's `relative_uri` returns an `http::Uri` and neither that type
+nor `String` is Kynos's to write a conversion between. Naming the concept is
+what lets a typed URI and a string literal both arrive without a call-site
+conversion. It validates nothing: a `Location` field value is a URI reference,
+and relative forms are legal.
+
 `Redirect<CODE>` is bounded on `(): ValidRedirectCode<CODE>`, a witness
 implemented for exactly those five codes. Both the trait and `()` are foreign to
 a downstream crate, so the set cannot be widened from outside, and

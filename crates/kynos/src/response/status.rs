@@ -6,6 +6,74 @@ use crate::{
     schema::registry::Registry,
 };
 
+/// Where a response points a client next.
+///
+/// The value of a `Location` header, and the reason it is a type rather than a
+/// `String`: a route attribute's
+/// `relative_uri` returns an [`http::Uri`], and neither that
+/// type nor `String` belongs to Kynos, so no `From` between them can be written
+/// here. Naming the concept is what lets both spellings arrive without a
+/// conversion at every call site.
+///
+/// ```
+/// use kynos::response::status::Location;
+///
+/// let literal = Location::from("/users/42");
+/// let owned = Location::from(String::from("/users/42"));
+/// let parsed = Location::from("/users/42".parse::<kynos::http::Uri>().unwrap());
+/// assert_eq!(literal, owned);
+/// assert_eq!(literal, parsed);
+/// ```
+///
+/// [`http::Uri`]: crate::http::Uri
+///
+/// A location is deliberately *not* validated here. A `Location` field value is
+/// a URI reference, which includes relative forms that only mean something
+/// against the request URI, so rejecting anything at this point would refuse
+/// values the specification permits.
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Location(String);
+
+impl Location {
+    /// The location as it will appear in the header.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Takes the string out.
+    #[must_use]
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+}
+
+impl From<String> for Location {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for Location {
+    fn from(value: &str) -> Self {
+        Self(value.to_owned())
+    }
+}
+
+// The conversion this type exists for. A typed URI is the sanctioned way to
+// name another operation, so handing one to `Created::at` must cost nothing.
+impl From<crate::http::Uri> for Location {
+    fn from(value: crate::http::Uri) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl std::fmt::Display for Location {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// A 204 No Content response.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NoContent;
@@ -20,12 +88,14 @@ pub struct Created<T> {
     /// The created representation.
     pub body: T,
     /// Where the new resource lives.
-    pub location: String,
+    pub location: Location,
 }
 
 impl<T> Created<T> {
     /// Creates a 201 response for a resource at `location`.
-    pub fn at(location: impl Into<String>, body: T) -> Self {
+    ///
+    /// Takes a string, or a route attribute's `relative_uri` directly.
+    pub fn at(location: impl Into<Location>, body: T) -> Self {
         Self {
             body,
             location: location.into(),
@@ -60,12 +130,14 @@ impl<T> Accepted<T> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Redirect<const CODE: u16> {
     /// The target of the redirect.
-    pub location: String,
+    pub location: Location,
 }
 
 impl<const CODE: u16> Redirect<CODE> {
     /// Redirects to `location`.
-    pub fn to(location: impl Into<String>) -> Self {
+    ///
+    /// Takes a string, or a route attribute's `relative_uri` directly.
+    pub fn to(location: impl Into<Location>) -> Self {
         Self {
             location: location.into(),
         }
@@ -140,5 +212,54 @@ where
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let _ = registry;
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// A location arrives from three spellings, and the third is the reason the
+    /// type exists.
+    ///
+    /// `relative_uri` returns an `http::Uri`, and neither that type nor `String`
+    /// belongs to Kynos — so without a type of its own here, the sanctioned way to
+    /// name another operation could not be handed to the two constructors that
+    /// take a location.
+    mod a_location_takes_every_spelling {
+        use crate::response::status::{Created, Location, Redirect};
+
+        #[test]
+        fn the_three_spellings_agree() {
+            let uri: crate::http::Uri = "/users/42".parse().expect("a valid reference");
+
+            assert_eq!(Location::from("/users/42"), Location::from(uri));
+            assert_eq!(
+                Location::from("/users/42"),
+                Location::from(String::from("/users/42"))
+            );
+        }
+
+        #[test]
+        fn a_typed_uri_reaches_a_created_response() {
+            let uri: crate::http::Uri = "/users/42".parse().expect("a valid reference");
+            let created = Created::at(uri, ());
+
+            assert_eq!(created.location.as_str(), "/users/42");
+        }
+
+        #[test]
+        fn a_typed_uri_reaches_a_redirect() {
+            let uri: crate::http::Uri = "/users".parse().expect("a valid reference");
+            let redirect = Redirect::<303>::to(uri);
+
+            assert_eq!(redirect.location.as_str(), "/users");
+        }
+
+        /// A `Location` field value is a URI reference, which includes relative
+        /// forms that only mean something against the request URI. Rejecting one
+        /// here would refuse a value the specification permits.
+        #[test]
+        fn a_relative_reference_is_not_refused() {
+            assert_eq!(Location::from("../sibling").as_str(), "../sibling");
+        }
     }
 }
