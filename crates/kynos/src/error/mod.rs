@@ -88,3 +88,16 @@ pub enum Error {
     #[error(transparent)]
     Server(#[from] crate::server::error::ServerError),
 }
+
+/// `From` is not transitive, so the `TlsError` to `ServerError` link does not on
+/// its own let `?` carry a TLS failure out of a `kynos::Result` function.
+///
+/// It is written out because the source qualifies for one: every `TlsError`
+/// variant names both what was being configured and what was wrong with it, so
+/// the conversion loses nothing and has nothing to add.
+#[cfg(feature = "tls")]
+impl From<crate::server::tls::error::TlsError> for Error {
+    fn from(error: crate::server::tls::error::TlsError) -> Self {
+        Self::Server(error.into())
+    }
+}

@@ -41,7 +41,6 @@ use kynos::{
     Router,
     server::{
         Server,
-        error::ServerError,
         protocol::Http1Config,
         tls::{ClientCertificateConfig, TlsConfig, error::TlsError},
     },
@@ -75,8 +74,11 @@ fn self_signed(names: &[&str]) -> Material {
 
 /// Assembles the TLS configuration.
 ///
-/// Its own function because every step returns `TlsError`, and gathering them
-/// here means one conversion at the call site rather than one per line.
+/// Its own function because the builder is a chain: every step takes `self` and
+/// returns `Result<Self, TlsError>`, so the whole thing is one expression and
+/// wants one place to be. `main` could `?` each step directly — `kynos::Error`
+/// converts from a `TlsError` — but it would read as five statements instead of
+/// the single configuration it is.
 fn tls_config(
     default: &Material,
     tenant: &Material,
@@ -108,7 +110,7 @@ async fn main() -> kynos::Result<()> {
     // server's.
     let partners = self_signed(&["partner-ca.example.test"]);
 
-    let tls = tls_config(&default, &tenant, &partners).map_err(ServerError::from)?;
+    let tls = tls_config(&default, &tenant, &partners)?;
 
     let server = Server::new(Router::<()>::new().build(())?)
         .bind((Ipv4Addr::UNSPECIFIED, 8443))

@@ -82,3 +82,31 @@ fn the_conflict_speaks_for_itself() {
         expected
     );
 }
+
+/// `From` is not transitive. Both hops existed -- `TlsError` into `ServerError`
+/// and `ServerError` into `Error` -- and `?` still refused a TLS failure in a
+/// `kynos::Result` function, which is why the example had to name the
+/// intermediate type by hand.
+#[cfg(feature = "tls")]
+#[test]
+fn a_tls_failure_becomes_a_build_failure() {
+    use crate::{server::error::ServerError, server::tls::error::TlsError};
+
+    let error = Error::from(TlsError::ZeroHandshakeTimeout);
+
+    assert!(matches!(error, Error::Server(ServerError::Tls(_))));
+}
+
+/// Both hops are `#[error(transparent)]`, so travelling two of them adds no
+/// words: what a reader gets is the TLS failure's own sentence rather than
+/// "the server could not start".
+#[cfg(feature = "tls")]
+#[test]
+fn a_tls_failure_still_speaks_for_itself() {
+    use crate::server::tls::error::TlsError;
+
+    assert_eq!(
+        Error::from(TlsError::ZeroHandshakeTimeout).to_string(),
+        TlsError::ZeroHandshakeTimeout.to_string()
+    );
+}
