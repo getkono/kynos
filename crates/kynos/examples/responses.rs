@@ -89,8 +89,10 @@ enum CreateReply {
 /// carries no ceremony.
 #[kynos::get("/users/{id}")]
 async fn get_user(Path(path): Path<UserPath>) -> Json<User> {
-    let _ = path;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    Json(User {
+        id: path.id,
+        name: "Ada Lovelace".to_owned(),
+    })
 }
 
 /// Creates a user.
@@ -111,8 +113,13 @@ async fn create_user(Json(user): Json<User>) -> Created<Json<User>> {
 /// Creates a user, idempotently.
 #[kynos::put("/users")]
 async fn upsert_user(Json(user): Json<User>) -> CreateReply {
-    let _ = user;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    // Which variant is the whole decision, and the status follows from it --
+    // there is no second place where a code is chosen.
+    if user.id == 0 {
+        CreateReply::Created(user)
+    } else {
+        CreateReply::AlreadyExists(user)
+    }
 }
 
 /// Queues a bulk import.
@@ -121,8 +128,7 @@ async fn upsert_user(Json(user): Json<User>) -> CreateReply {
 /// watch it, which is the only thing a client can act on.
 #[kynos::post("/users/imports")]
 async fn queue_import(Json(user): Json<User>) -> Accepted<Json<User>> {
-    let _ = user;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    Accepted::new(Json(user))
 }
 
 /// Lists users, with rate-limit headers.
@@ -131,7 +137,18 @@ async fn queue_import(Json(user): Json<User>) -> Accepted<Json<User>> {
 /// different response — and `H`'s derive is what puts them in `Response.headers`.
 #[kynos::get("/users")]
 async fn list_users() -> WithHeaders<Json<Vec<User>>, RateLimit> {
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    let users = vec![User {
+        id: 1,
+        name: "Ada Lovelace".to_owned(),
+    }];
+
+    WithHeaders::new(
+        Json(users),
+        RateLimit {
+            remaining: 99,
+            reset: 60,
+        },
+    )
 }
 
 /// Redirects the legacy path to the current one.
@@ -147,8 +164,8 @@ async fn legacy_accounts() -> Redirect<303> {
 /// Deletes a user.
 #[kynos::delete("/users/{id}")]
 async fn delete_user(Path(path): Path<UserPath>) -> NoContent {
-    let _ = path;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    println!("deleting {}", path.id);
+    NoContent
 }
 
 #[tokio::main]

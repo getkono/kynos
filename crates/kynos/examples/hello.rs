@@ -63,15 +63,21 @@ async fn health() -> NoContent {
 /// Lists users.
 #[kynos::get("/users")]
 async fn list_users(Query(page): Query<Page>) -> Json<Vec<User>> {
-    let _ = page;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    println!("page {:?}, {:?} per page", page.page, page.per_page);
+
+    Json(vec![User {
+        id: 1,
+        name: "Ada Lovelace".to_owned(),
+    }])
 }
 
 /// Fetches one user.
 #[kynos::get("/users/{id}")]
 async fn get_user(Path(path): Path<UserPath>) -> Json<User> {
-    let _ = path;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    Json(User {
+        id: path.id,
+        name: "Ada Lovelace".to_owned(),
+    })
 }
 
 /// Creates a user.
@@ -81,8 +87,10 @@ async fn get_user(Path(path): Path<UserPath>) -> Json<User> {
 /// the head.
 #[kynos::post("/users")]
 async fn create_user(Json(user): Json<User>) -> Created<Json<User>> {
-    let _ = user;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    // The typed URI takes exactly the path type `get_user` extracts, so
+    // changing that route's parameters breaks this line rather than the link
+    // it produces.
+    Created::at(get_user::relative_uri(UserPath { id: user.id }), Json(user))
 }
 
 #[tokio::main]
