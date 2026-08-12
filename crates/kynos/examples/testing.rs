@@ -62,15 +62,27 @@ enum StoreError {
 /// Fetches one user.
 #[kynos::get("/users/{id}")]
 async fn get_user(Path(path): Path<UserPath>) -> Json<User> {
-    let _ = path;
-    todo!("the router is still a skeleton")
+    Json(User {
+        id: path.id,
+        name: "Ada Lovelace".to_owned(),
+    })
 }
 
 /// Creates a user.
 #[kynos::post("/users")]
 async fn create_user(Json(user): Json<User>) -> Result<Created<Json<User>>, StoreError> {
-    let _ = user;
-    todo!("the router is still a skeleton")
+    // `main` asserts a 409 below, so this has to be able to produce one. A
+    // handler that could only succeed would make that assertion unprovable --
+    // and a test asserting something the service cannot do is worse than no
+    // test, because it looks like coverage.
+    if user.name == "taken" {
+        return Err(StoreError::NameTaken);
+    }
+
+    Ok(Created::at(
+        get_user::relative_uri(UserPath { id: user.id }),
+        Json(user),
+    ))
 }
 
 /// Builds the service under test.
