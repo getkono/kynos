@@ -86,8 +86,8 @@ async fn list_users() -> NoContent {
 /// Fetches one user.
 #[kynos::get("/{id}")]
 async fn get_user(Path(path): Path<UserPath>) -> NoContent {
-    let _ = path;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    println!("reading {}", path.id);
+    NoContent
 }
 
 /// What `/{id}` captures.
@@ -105,8 +105,8 @@ struct UserPath {
 /// therefore requires the `openapi32` feature.
 #[kynos::operation(method = "PATCH", path = "/{id}/suspension", tag = Admin)]
 async fn suspend_user(Path(path): Path<UserPath>) -> NoContent {
-    let _ = path;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    println!("suspending {}", path.id);
+    NoContent
 }
 
 /// A router that knows nothing about where it will be mounted.

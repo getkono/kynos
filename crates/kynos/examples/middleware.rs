@@ -183,14 +183,17 @@ impl<C: Sync + 'static> Interceptor<C> for Tenant {
 /// Lists users.
 #[kynos::get("/users")]
 async fn list_users() -> Json<Vec<User>> {
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    Json(vec![User {
+        id: 1,
+        name: "Ada Lovelace".to_owned(),
+    }])
 }
 
 /// Uploads an avatar.
 #[kynos::post("/users/avatar")]
 async fn upload_avatar(Json(user): Json<User>) -> NoContent {
-    let _ = user;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    println!("avatar for {}", user.name);
+    NoContent
 }
 
 /// Serves an administrative report.

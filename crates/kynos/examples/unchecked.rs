@@ -27,14 +27,15 @@
 //!   second, and Kynos would rather point at it than pretend.
 //!
 //! `layer_unchecked` *is* a gap worth closing, and the remedy is barely more
-//! work: an `Interceptor` declaring an `OperationContribution` gets every
-//! covered operation documented correctly and automatically. See
+//! work: an `Interceptor` names the responses it can answer with and the
+//! headers it adds as associated types, and every covered operation is
+//! documented correctly and automatically. See
 //! [`middleware.rs`](middleware.rs).
 
 use std::net::Ipv4Addr;
 
 use kynos::{
-    http::{Method, Request, Response},
+    http::{Method, Request, Response, StatusCode, body::Body, header},
     prelude::*,
     server::Server,
 };
@@ -54,7 +55,10 @@ struct User {
 /// as it would be alone — the stamp is on the document, not on this.
 #[kynos::get("/users")]
 async fn list_users() -> Json<Vec<User>> {
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    Json(vec![User {
+        id: 1,
+        name: "Ada Lovelace".to_owned(),
+    }])
 }
 
 /// Serves a file out of a directory tree.
@@ -71,8 +75,15 @@ async fn list_users() -> Json<Vec<User>> {
 /// `async fn(Request) -> Response`. No extractor, no `Describe` -- which is
 /// precisely what makes it undescribable, and why the door is separate.
 async fn serve_asset(request: Request) -> Response {
-    let _ = request;
-    todo!("an unchecked handler is an ordinary async fn; this one is a stub")
+    // Built by hand, because there is no return type here to build it from --
+    // which is the whole reason this route cannot be described.
+    let body = format!("would serve {}", request.uri().path());
+    let mut response = Response::new(Body::from_bytes(bytes::Bytes::from(body)));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        kynos::http::HeaderValue::from_static("text/plain"),
+    );
+    response
 }
 
 /// Upgrades a connection to a WebSocket.
@@ -82,7 +93,13 @@ async fn serve_asset(request: Request) -> Response {
 /// specification models at any version.
 async fn open_socket(request: Request) -> Response {
     let _ = request;
-    todo!("an unchecked handler is an ordinary async fn; this one is a stub")
+
+    // A real upgrade hands the connection to a socket driver. The 501 is what
+    // this example can honestly do, and it is still a response no description
+    // mentions -- which is the point.
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = StatusCode::NOT_IMPLEMENTED;
+    response
 }
 
 #[tokio::main]

@@ -70,7 +70,10 @@ struct User {
 /// Lists users.
 #[kynos::get("/users")]
 async fn list_users() -> Json<Vec<User>> {
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    Json(vec![User {
+        id: 1,
+        name: "Ada Lovelace".to_owned(),
+    }])
 }
 
 /// Searches users with a filter body.
@@ -79,8 +82,9 @@ async fn list_users() -> Json<Vec<User>> {
 /// 3.1 further down.
 #[kynos::query("/users")]
 async fn search(Json(filter): Json<User>) -> Json<Vec<User>> {
-    let _ = filter;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    // A body on a read, which is what `QUERY` exists for and what makes this
+    // document 3.2.
+    Json(vec![filter])
 }
 
 /// Serves this API's own description.

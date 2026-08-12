@@ -168,14 +168,16 @@ impl<C: Sync + 'static> Interceptor<C> for Print {
 /// Creates a user.
 #[kynos::post("/users")]
 async fn create_user(Json(user): Json<User>) -> Created<Json<User>> {
-    let _ = user;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    Created::at(format!("/users/{}", user.id), Json(user))
 }
 
 /// Lists users.
 #[kynos::get("/users")]
 async fn list_users() -> Json<Vec<User>> {
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    Json(vec![User {
+        id: 1,
+        name: "Ada Lovelace".to_owned(),
+    }])
 }
 
 #[tokio::main]
