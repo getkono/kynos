@@ -487,9 +487,15 @@ fn a_paths_key_that_is_not_a_template_is_reported() {
     }))
     .expect("a `paths` key is a plain string, so this parses");
 
-    assert!(errors(&document).iter().any(
-        |e| matches!(e, SpecError::InvalidPathTemplate { template, .. } if template == "/a b|c")
-    ));
+    // The reason is the parse failure itself, not its text, so this can name
+    // which rule the key broke rather than matching on a formatted string.
+    assert!(errors(&document).iter().any(|e| matches!(
+        e,
+        SpecError::InvalidPathTemplate {
+            template,
+            reason: crate::model::paths::template::InvalidPathTemplate::IllegalLiteralCharacter { .. },
+        } if template == "/a b|c"
+    )));
 }
 
 /// The location must be a resolvable JSON Pointer, which means the `/` inside a

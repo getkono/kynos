@@ -48,7 +48,7 @@ impl Validator {
                         &location,
                         SpecError::InvalidPathTemplate {
                             template: raw.clone(),
-                            reason: error.to_string(),
+                            reason: error,
                         },
                     ));
                     continue;

@@ -98,12 +98,17 @@ pub enum SpecError {
     ///
     /// Reachable only for a description read from somewhere else: a template
     /// Kynos constructs is checked when it is parsed.
+    ///
+    /// `reason` holds the parse failure itself rather than its text, so a caller
+    /// can match on which rule the key broke. It is interpolated rather than
+    /// declared as a `#[source]`: a violation is rendered in a list, so its
+    /// message has to be self-contained, and a cause could then only repeat it.
     #[error("`{template}` is not a legal path template: {reason}")]
     InvalidPathTemplate {
         /// The offending key.
         template: String,
         /// Why it is not one.
-        reason: String,
+        reason: crate::model::paths::template::InvalidPathTemplate,
     },
 
     /// A path template variable has no corresponding parameter.
@@ -307,6 +312,12 @@ pub enum SpecError {
     AuthorityNotStamped,
 
     /// A Kynos annotation was present but not in the shape Kynos emits.
+    ///
+    /// `detail` is text where
+    /// [`InvalidPathTemplate`](Self::InvalidPathTemplate)'s `reason` is a value,
+    /// and the asymmetry is forced rather than chosen: this cause is a
+    /// `serde_json::Error`, which is neither `Clone` nor `PartialEq`, so keeping
+    /// it would cost the derives every other value in the validation model has.
     #[error("`{name}` is present but is not in the form Kynos emits: {detail}")]
     MalformedAnnotation {
         /// The offending field name.
