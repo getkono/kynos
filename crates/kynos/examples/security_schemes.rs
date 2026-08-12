@@ -7,12 +7,14 @@
 //!   --features openapi31,macros,server,http1
 //! ```
 //!
-//! [`security.rs`](security.rs) shows one scheme end to end, including the
-//! authenticator and the context that proves it can verify a credential. This
-//! file is the other half: the *kinds* a description can carry, and what each
-//! one claims.
+//! A credential is required and described by the same act. `Auth<S>` is not
+//! application state and injecting it would make the requirement invisible: an
+//! operation taking one cannot be served without the credential, and cannot be
+//! described without saying so. The context proves it can authenticate, so a
+//! router built with a context implementing no `Authenticates<S>` does not
+//! compile — in the same way, and at the same place, as a missing dependency.
 //!
-//! Three things are worth noticing:
+//! Five things are worth noticing:
 //!
 //! * **The scheme's kind is in the attribute, not in a string somewhere.** A
 //!   misspelled kind is a compile error, and the grammar nests the kind so that
@@ -28,6 +30,14 @@
 //!   parameter definition for those is ignored. An API key in a header is for
 //!   the `X-Api-Key`-shaped schemes; a credential in `Authorization` is `http`,
 //!   `bearer` or `basic`.
+//! * **Scopes are a type either way, and the two ways differ.** `DelegatedAccess`
+//!   declares them on the *scheme*, which is what OAuth 2.0 publishes as the set
+//!   an authorization server can grant. `ReadReports` declares them on the
+//!   *operation* through `Scoped`, which is what this particular endpoint
+//!   demands. Both are checked, neither is a string a handler passes.
+//! * **A context declares what it can verify.** One `App`, eight
+//!   implementations, so the set of schemes an application supports is visible
+//!   in one place rather than spread across the handlers requiring them.
 //!
 //! The challenge is declared on the scheme rather than on the authenticator, so
 //! the `WWW-Authenticate` a client receives and the one the description
@@ -41,7 +51,7 @@ use kynos::{
     prelude::*,
     security::{
         Authenticates, Authenticator, SecurityScheme,
-        auth::Auth,
+        auth::{Auth, Scoped, Scopes},
         schemes::{Basic, Credentials, MutualTls},
     },
     server::Server,
@@ -242,6 +252,28 @@ async fn federated_me(auth: Auth<Federated>) -> NoContent {
     NoContent
 }
 
+/// The scopes one operation demands, as a type.
+///
+/// Distinct from the scopes on `DelegatedAccess`: those are what the
+/// authorization server publishes it can grant, these are what this endpoint
+/// insists on. A scheme can offer more than any one operation needs.
+struct ReadReports;
+
+impl Scopes for ReadReports {
+    const SCOPES: &'static [&'static str] = &["reports:read"];
+}
+
+/// Only a caller holding `reports:read` may see this.
+///
+/// `Scoped` rather than `Auth`, so the scopes are part of the argument's type.
+/// The description and the check read them from the same place and cannot name
+/// different ones.
+#[kynos::get("/reports")]
+async fn reports(caller: Scoped<AccessToken, ReadReports>) -> NoContent {
+    let _ = caller.into_inner();
+    NoContent
+}
+
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
     let router = Router::<App>::new()
@@ -258,6 +290,7 @@ async fn main() -> kynos::Result<()> {
             partner_event,
             delegated_users,
             federated_me,
+            reports,
         ]);
 
     let document = router.openapi()?;

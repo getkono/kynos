@@ -66,8 +66,7 @@ needs more than the defaults. Each file's own header explains why it needs them.
 
 | Example | Shows | Features |
 | --- | --- | --- |
-| [`security.rs`](security.rs) | One scheme end to end, from `Auth<S>` to the emitted requirement | — |
-| [`security_schemes.rs`](security_schemes.rs) | Every kind of security scheme, declared as a type | — |
+| [`security_schemes.rs`](security_schemes.rs) | Every kind of security scheme as a type, from `Auth<S>` to the emitted requirement | — |
 | [`tls.rs`](tls.rs) | Serving over TLS, including client certificates and SNI | `tls` |
 
 ## Serving
