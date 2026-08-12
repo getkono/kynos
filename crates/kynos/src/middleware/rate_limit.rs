@@ -5,9 +5,8 @@ use std::{future::Future, time::Duration};
 use crate::{
     error::problem::Problem,
     http,
-    middleware::{Interceptor, Next, contribution::OperationContribution},
+    middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
-    router::operation::Route,
     schema::registry::Registry,
 };
 
@@ -125,30 +124,26 @@ impl<P> RateLimit<P> {
             window,
         }
     }
-
-    /// This interceptor's contribution.
-    #[must_use]
-    pub fn contribution(&self) -> OperationContribution {
-        todo!()
-    }
 }
 
 impl<C: Sync + 'static, P: RateLimitPolicy<C>> Interceptor<C> for RateLimit<P> {
-    fn contribution(&self, _route: Route<'_>) -> OperationContribution {
-        Self::contribution(self)
-    }
+    type Reads = ();
+    type Adds = ();
+    type Short = RateLimited;
 
     async fn intercept(
         &self,
         request: http::Request,
+        reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> http::Response {
+    ) -> Result<Continued<()>, RateLimited> {
         let _ = (
             &self.policy,
             self.requests,
             self.window,
             request,
+            reads,
             context,
             next,
         );

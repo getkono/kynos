@@ -2,11 +2,31 @@
 //!
 //! Out-of-document: content coding is transport, and OpenAPI does not model it.
 
+use std::convert::Infallible;
+
 use crate::{
+    extract::params::header::HeaderParams,
     http,
-    middleware::{Interceptor, Next, contribution::OperationContribution},
-    router::operation::Route,
+    middleware::{Continued, Interceptor, Next},
 };
+
+/// What compression sets on a response it encoded.
+///
+/// `DESCRIBED` is `false`: both headers are defined by HTTP itself and handled
+/// by every client without being told. Declaring the names is still what stops
+/// a second interceptor touching them -- the check does not care whether a
+/// consumer wanted to hear about them.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ContentEncoding;
+
+impl HeaderParams for ContentEncoding {
+    const NAMES: &'static [&'static str] = &["content-encoding", "vary"];
+    const DESCRIBED: bool = false;
+
+    fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
+        todo!()
+    }
+}
 
 /// Compresses responses when the client accepts it.
 #[derive(Clone, Copy, Debug, Default)]
@@ -30,17 +50,20 @@ impl Compression {
 }
 
 impl<C: Sync + 'static> Interceptor<C> for Compression {
-    fn contribution(&self, _route: Route<'_>) -> OperationContribution {
-        OperationContribution::none()
-    }
+    type Reads = ();
+    type Adds = ContentEncoding;
+
+    /// Always continues: compression re-encodes a response, never replaces it.
+    type Short = Infallible;
 
     async fn intercept(
         &self,
         request: http::Request,
+        reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> http::Response {
-        let _ = (request, context, next);
+    ) -> Result<Continued<ContentEncoding>, Infallible> {
+        let _ = (request, reads, context, next);
         todo!()
     }
 }

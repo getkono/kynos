@@ -33,7 +33,7 @@ Permanently out-of-scope
 
 Each of these is something another Rust framework offers and Kynos does not, and in every case the reason is the same: it would put a claim in the description that the running service does not honour. Where an escape hatch exists it is named.
 
-**1. Arbitrary middleware.** A `tower::Layer` can change the status, rewrite the body, add headers or refuse the request, and its type says nothing about which. Wrapping an operation in one silently invalidates its description. Write an `Interceptor` and declare an `OperationContribution` instead — it is barely more work, and in exchange every covered operation documents the effect automatically. Escape hatch: `layer_unchecked`, behind `unchecked`.
+**1. Arbitrary middleware.** A `tower::Layer` can change the status, rewrite the body, add headers or refuse the request, and its type says nothing about which. Wrapping an operation in one silently invalidates its description. Write an `Interceptor` instead, whose signature *is* the declaration: the responses it can answer with, the headers it adds and the headers it reads are three associated types, so it cannot say one thing and do another. Every covered operation documents the effect automatically. Escape hatch: `layer_unchecked`, behind `unchecked`.
 
 **2. Raw request access.** There is no `Request`, `Body` or `HeaderMap` extractor. These are exactly the holes through which aide and utoipa emit documents with silent gaps. Declare what you read with `Headers<T>`; if a body genuinely is arbitrary, say `Unchecked<T>`.
 

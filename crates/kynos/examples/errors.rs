@@ -43,11 +43,9 @@ use std::net::Ipv4Addr;
 
 use kynos::{
     http,
-    middleware::{Interceptor, Next, contribution::OperationContribution},
-    openapi::{self, StatusPattern},
+    middleware::{Continued, Interceptor, Next},
     prelude::*,
-    response::IntoResponse,
-    router::{operation::Route, policy::FallbackPolicy},
+    router::policy::FallbackPolicy,
     server::Server,
 };
 use serde::{Deserialize, Serialize};
@@ -154,32 +152,37 @@ struct MaintenanceWindow {
     draining: bool,
 }
 
+/// The 503 the window answers with.
+///
+/// An `ApiError` like every other failure in this file, so the status no
+/// handler mentions still reaches a client in the shape all the others do.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("the store is being migrated")]
+#[problem(base = "https://errors.example.com/", status = 503)]
+struct Draining;
+
 impl<C: Sync + 'static> Interceptor<C> for MaintenanceWindow {
-    fn contribution(&self, route: Route<'_>) -> OperationContribution {
-        let _ = route;
-        OperationContribution::none().with_response(
-            StatusPattern::Code(503),
-            openapi::Response::new("the store is being migrated"),
-        )
-    }
+    type Reads = ();
+    type Adds = ();
+
+    /// The declaration and the answer, in one type. There is no second place
+    /// to say 503, so there is nowhere for the two to disagree.
+    type Short = Draining;
 
     async fn intercept(
         &self,
         request: http::Request,
+        reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> http::Response {
-        let _ = context;
+    ) -> Result<Continued<()>, Draining> {
+        let _ = (context, reads);
 
-        if !self.draining {
-            return next.run(request).await;
+        if self.draining {
+            return Err(Draining);
         }
 
-        // `Problem` again, so the status no handler mentions still arrives in
-        // the shape every other error in this service takes.
-        Problem::new(http::StatusCode::SERVICE_UNAVAILABLE)
-            .with_detail("the store is being migrated")
-            .into_response()
+        Ok(next.run(request).await)
     }
 }
 

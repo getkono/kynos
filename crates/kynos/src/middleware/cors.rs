@@ -10,13 +10,53 @@
 //! [`Cors::document_response_headers`] when the CORS response headers are part
 //! of what you want clients to know about.
 
-use std::{borrow::Cow, marker::PhantomData};
+use std::{borrow::Cow, convert::Infallible, marker::PhantomData};
 
 use crate::{
+    extract::params::header::HeaderParams,
     http,
-    middleware::{Interceptor, Next, contribution::OperationContribution},
-    router::operation::Route,
+    middleware::{Continued, Interceptor, Next},
 };
+
+/// The response headers CORS adds to a real (non-preflight) response.
+///
+/// `DESCRIBED` is what [`Cors`]'s type-state selects. Either way the names are
+/// declared, so a second interceptor touching `Access-Control-Allow-Origin`
+/// fails to compile whichever state this is in.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CorsHeaders<const DESCRIBED: bool = true>;
+
+impl<const DESCRIBED: bool> HeaderParams for CorsHeaders<DESCRIBED> {
+    const NAMES: &'static [&'static str] = &[
+        "access-control-allow-origin",
+        "access-control-allow-credentials",
+        "access-control-expose-headers",
+    ];
+
+    const DESCRIBED: bool = DESCRIBED;
+
+    fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
+        todo!()
+    }
+}
+
+/// Maps [`Cors`]'s type-state onto the header group it declares.
+///
+/// A trait rather than a `bool` on `Cors` for the reason the state is a type at
+/// all: what an interceptor declares is read from its type, and a field cannot
+/// be read from one.
+pub trait CorsDocumentation: Send + Sync + 'static {
+    /// The header group this state declares.
+    type Headers: HeaderParams;
+}
+
+impl CorsDocumentation for Undocumented {
+    type Headers = CorsHeaders<false>;
+}
+
+impl CorsDocumentation for Documented {
+    type Headers = CorsHeaders<true>;
+}
 
 /// A [`Cors`] that keeps its response headers out of the description.
 ///
@@ -144,18 +184,27 @@ impl Cors<Undocumented> {
     }
 }
 
-impl<C: Sync + 'static, D: Send + Sync + 'static> Interceptor<C> for Cors<D> {
-    fn contribution(&self, _route: Route<'_>) -> OperationContribution {
-        todo!()
-    }
+impl<C: Sync + 'static, D: CorsDocumentation> Interceptor<C> for Cors<D> {
+    type Reads = ();
+    type Adds = D::Headers;
+
+    /// CORS never answers here.
+    ///
+    /// A preflight answers `OPTIONS`, which is a different request from the
+    /// operation this chain is serving -- so it is routed rather than
+    /// intercepted, the way an unmatched method is already answered before any
+    /// chain runs. An operation that cannot answer a preflight should not
+    /// describe one.
+    type Short = Infallible;
 
     async fn intercept(
         &self,
         request: http::Request,
+        reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> http::Response {
-        let _ = (request, context, next);
+    ) -> Result<Continued<D::Headers>, Infallible> {
+        let _ = (request, reads, context, next);
         todo!()
     }
 }

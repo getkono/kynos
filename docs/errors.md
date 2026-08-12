@@ -133,7 +133,7 @@ the time a handler argument is built.
 **Interceptor statuses.** 429, 503 and 504 belong to
 [`RateLimit`, `Concurrency` and `Timeout`](../crates/kynos/src/middleware/limits.rs),
 which return a response directly and declare it through
-`OperationContribution`. They are not extractor rejections and have no rejection
+an interceptor's `Short`. They are not extractor rejections and have no rejection
 variant; an interceptor builds a `Problem` itself. See
 [`middleware.md`](middleware.md#operationcontribution).
 

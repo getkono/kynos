@@ -5,11 +5,17 @@
 A layer's type must declare everything it can do to a response that the
 handler's type does not already say.
 
-Everything below follows from that sentence. The mechanism is
-[`OperationContribution`](../crates/kynos/src/middleware/contribution.rs), and
-the reason it
-is a closed set rather than an open one is that an interceptor doing something
-the set cannot express is doing something OpenAPI cannot describe.
+Everything below follows from that sentence. The mechanism is the
+[`Interceptor`](../crates/kynos/src/middleware/mod.rs) trait's three associated
+types, and the reason they are a closed set rather than an open one is that an
+interceptor doing something the set cannot express is doing something OpenAPI
+cannot describe.
+
+| Associated type | What it declares | What it obliges |
+| --- | --- | --- |
+| `Short` | the responses it can answer with alone | `Err(Short)` is the only way to answer without the handler |
+| `Adds` | the response headers it attaches | `Continued<Adds>` is the return type, so it must attach them |
+| `Reads` | the request headers it consumes | it is handed that group, and nothing else |
 
 ## Soundness, not exactness
 
@@ -28,28 +34,51 @@ occurs has merely written dead code.
 Stating the weaker invariant is what makes it enforceable, and an enforceable
 weak claim is worth more than an unenforceable strong one.
 
-## OperationContribution
+## Why the declaration is the signature
 
 Three properties, each load-bearing:
 
-**It is inert data.** A contribution is inspectable at build time without
-running the service. `Interceptor::contribution` is called once per operation
-while the router is built, never per request. If learning what the stack emits
-required executing the stack, the guarantee would be gone — a document you can
-only obtain by running the server is a document you cannot check in CI.
+**It is inert data.** What an interceptor declares is read from its types, so it
+is inspectable without running the service — or, for the parts that are `const`,
+without running anything at all. If learning what the stack emits required
+executing the stack, the guarantee would be gone: a document you can only obtain
+by running the server is a document you cannot check in CI.
 
-**Composition is order-sensitive.** Contributions do not commute. Compression
-rewriting headers after authentication has added a 401 produces a different
-document than the reverse order, and the composition rules must reflect that
-rather than sorting it away. `merge` returning
-[`ContributionConflict`](../crates/kynos/src/middleware/contribution.rs) is the
-other half of
-this: two interceptors that disagree about what a 429 means are caught when the
-router is built, not in production.
+**It cannot disagree with behaviour.** There is no `contribution` method,
+because a method returning a description beside a method producing responses is
+two statements of one fact. `Short` is both the declaration and the only way to
+answer; `Adds` is both the declaration and the return type. An interceptor that
+declares a 401 it never sends, or a header it never attaches, does not compile.
+
+**Conflicts are a compile error.** Two interceptors covering one route and both
+claiming 429, or both setting `Retry-After`, are rejected by
+`Router::intercept`'s bound rather than by a check at build time. What survives
+in [`ContributionConflict`](../crates/kynos/src/middleware/contribution.rs) is
+the vocabulary for the subtrees where the types are erased and the check cannot
+run — those taken under `layer_unchecked`.
 
 **It applies per-operation, after routing.** An interceptor mounted on a subtree
-contributes to the operations in that subtree and to nothing else. Scope in the
-document matches scope in the router.
+covers the operations in that subtree and nothing else. Scope in the document
+matches scope in the router.
+
+## Declaring is not describing
+
+Every header an interceptor sets is *declared*, so the conflict check sees it.
+Whether it is *described* is a separate question, answered by
+`HeaderParams::DESCRIBED`.
+
+`Vary`, `Content-Encoding` and the CORS set are defined by HTTP itself and
+handled by every client without being told, so their groups set `DESCRIBED` to
+`false` and stay out of the emitted document. This does not weaken anything: a
+second interceptor touching one of those names still fails to compile. The two
+questions are "can this collide" and "does a consumer need to hear about it",
+and only the first is about correctness.
+
+A body is declared nowhere at all — `Continued::take_body` and
+`Continued::set_body` need no declaration, because a body has no name to collide
+on. Two interceptors rewriting one compose; two setting one header do not. An
+encoding a consumer must know about is a header, which is why `Compression`
+declares `Content-Encoding` rather than re-encoding silently.
 
 ## Opaque
 
@@ -132,8 +161,8 @@ incrementally will not adopt it.
 
 ## Composition
 
-Interceptors are erased, at every level. A router, a group and an endpoint hold
-the same list and compose it the same way.
+Interceptors are erased *for execution*, at every level. A router, a group and
+an endpoint hold the same list and run it the same way.
 
 That is not a performance trade against a statically composed chain — it is the
 only shape available.
@@ -144,13 +173,21 @@ writes. The terminal is boxed regardless, since `Endpoint` returns an opaque
 future and a router holds endpoints it cannot name. A route with no
 interceptors calls the terminal directly and pays nothing.
 
+A phantom list of interceptor *types* rides alongside for checking, which the
+objection above does not reach: it is not a composed chain, nothing is called
+through it, and `Next` keeps its two parameters. That list is what lets
+`Router::intercept` reject a conflict at compile time.
+
 An interceptor is handed the [`Route`](../crates/kynos/src/router/operation.rs)
-it covers, both when it declares its contribution and when it runs. Declaring
-per-operation keeps the contribution inert — the operation is known at build
-time — while letting one interceptor say different things about different
-operations. Running with it is what keeps a metric label keyed by the
-`paths` key rather than by the request path, so label cardinality is bounded
-and the label cannot disagree with the description.
+it covers while it runs, through `Next::route`. That is what keeps a metric
+label keyed by the `paths` key rather than by the request path, so label
+cardinality is bounded and the label cannot disagree with the description.
+
+It is *not* handed one while declaring, because there is no declaring step left
+to hand it to. Declaring differently per operation is expressed by mounting
+different instances at different scopes — which is the same principle as above,
+and which every interceptor Kynos ships was already doing: all seven ignored the
+`Route` argument the old `contribution` method gave them.
 
 ## Conformance
 

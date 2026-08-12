@@ -9,25 +9,23 @@
 //!
 //! A `tower::Layer` can change the status, rewrite the body, add headers or
 //! refuse the request, and nothing in its type says which — so wrapping an
-//! operation in one silently invalidates its description. An `Interceptor`
-//! declares an `OperationContribution` instead, and that declaration propagates
-//! into every operation it covers, automatically and correctly.
+//! operation in one silently invalidates its description. An `Interceptor`'s
+//! signature *is* its declaration, and that declaration propagates into every
+//! operation it covers, automatically and correctly.
 //!
 //! Five things are worth noticing:
 //!
-//! * **An interceptor declares what it contributes.** That declaration is the
-//!   whole reason middleware is not opaque here: a layer that adds a 429, a
-//!   `Retry-After` header or a security requirement says so, and the
-//!   description of every operation it covers gains it. A `tower::Layer` cannot
-//!   be accepted precisely because it has no way to say any of that.
-//! * **The declaration is inert data.** `contribution` is called once per
-//!   covered operation while the router is built, never per request. A
-//!   description you could only obtain by running the server is a description
-//!   you could not check in CI.
-//! * **Two interceptors that disagree are a build error.** `merge` on
-//!   `OperationContribution` fails rather than picking a winner, so two layers
-//!   claiming different things about the same 429 are caught while the router
-//!   is built rather than in production.
+//! * **There is nothing to keep in step.** `Short` is the responses an
+//!   interceptor can answer with *and* the only way to answer; `Adds` is the
+//!   headers it attaches *and* its return type; `Reads` is the headers it
+//!   declares *and* what it is handed. A `tower::Layer` cannot be accepted
+//!   precisely because it has no way to say any of that.
+//! * **The declaration is inert data.** It is read from types, so a description
+//!   never requires running the service to obtain. A description you could only
+//!   get by starting the server is one you could not check in CI.
+//! * **Two interceptors that disagree do not compile.** Two claiming the same
+//!   status, or setting the same header, are rejected where they are mounted
+//!   rather than when the router is built — let alone in production.
 //! * **An observer is a different thing, and `Trace` is one.** It cannot
 //!   change a request or a response, so it contributes nothing to any
 //!   description. That is the right shape for tracing: a log line is not part
@@ -40,26 +38,21 @@
 //! `RateLimit` is deliberately absent: it is not fully implemented, and an
 //! example of a partial thing is worse than none.
 
-use std::{net::Ipv4Addr, time::Duration};
+use std::{convert::Infallible, net::Ipv4Addr, time::Duration};
 
 use kynos::{
     http,
     middleware::{
-        Interceptor, Next,
+        Continued, Interceptor, Next,
         compression::Compression,
-        contribution::OperationContribution,
         cors::Cors,
         limits::{BodySize, Concurrency, Timeout},
         request_id::{Counter, RequestId, RequestIdSource},
         trace::Trace,
     },
-    openapi::{
-        self, Method, Parameter, ParameterIn, Schema as OpenApiSchema, StatusPattern,
-        model::schema::types::SchemaType,
-    },
+    openapi::Method,
     prelude::*,
-    response::{IntoResponse, status::NoContent},
-    router::operation::Route,
+    response::status::NoContent,
     server::Server,
 };
 use serde::{Deserialize, Serialize};
@@ -98,88 +91,92 @@ impl RequestIdSource for Monotonic {
     }
 }
 
-/// Requires a shared secret, and declares the 401 it answers with.
+/// The credential `RequireSecret` looks for.
+///
+/// Declared as a group so it arrives extracted. An interceptor cannot claim to
+/// read a header it never looks at, because reading it is how it gets one.
+#[derive(HeaderParams)]
+struct AdminSecret {
+    #[header(rename = "X-Admin-Secret")]
+    secret: Option<String>,
+}
+
+/// The 401 `RequireSecret` answers with.
+///
+/// `#[derive(ApiError)]` emits both halves of the declaration from one place:
+/// the responses the document prints, and the `const` the compiler compares
+/// when two interceptors cover one route.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("the shared secret was absent or wrong")]
+#[problem(status = 401)]
+struct SecretRejected;
+
+/// Requires a shared secret.
 ///
 /// The first of the two hand-written interceptors here, and the one that
-/// short-circuits. Because it can answer before the handler runs, every
-/// operation it covers must document that it can — which is exactly what the
-/// contribution does. Without it the emitted description would promise a set of
-/// responses the service does not honour.
+/// short-circuits. It declares nothing separately: `Short` is the 401 it can
+/// answer with, and returning `Err` is the only way to answer at all — so the
+/// description cannot promise a set of responses the service does not honour,
+/// and cannot omit one it does.
 struct RequireSecret {
-    header: &'static str,
     secret: &'static str,
 }
 
 impl<C: Sync + 'static> Interceptor<C> for RequireSecret {
-    fn contribution(&self, route: Route<'_>) -> OperationContribution {
-        // `route` is the operation being covered, so one interceptor can say
-        // different things about different operations. Here it only labels.
-        let _ = route.operation_id();
-
-        OperationContribution::none().with_response(
-            StatusPattern::Code(401),
-            openapi::Response::new("the shared secret was absent or wrong"),
-        )
-    }
+    type Reads = AdminSecret;
+    type Adds = ();
+    type Short = SecretRejected;
 
     async fn intercept(
         &self,
         request: http::Request,
+        reads: AdminSecret,
         context: &C,
         next: Next<'_, C>,
-    ) -> http::Response {
+    ) -> Result<Continued<()>, SecretRejected> {
         let _ = context;
 
-        let presented = request
-            .headers()
-            .get(self.header)
-            .and_then(|value| value.to_str().ok());
-
-        if presented == Some(self.secret) {
-            return next.run(request).await;
+        if reads.secret.as_deref() != Some(self.secret) {
+            return Err(SecretRejected);
         }
 
-        // The 401 the contribution declares, actually sent. An interceptor
-        // whose body cannot produce what its contribution promises is a
-        // description that lies, and this file is the place to not do that.
-        Problem::new(http::StatusCode::UNAUTHORIZED)
-            .with_detail("the shared secret was absent or wrong")
-            .into_response()
+        Ok(next.run(request).await)
     }
 }
 
-/// Reads a tenant header, and says so.
+/// The tenant every request under `/tenanted` must name.
+#[derive(HeaderParams)]
+struct TenantHeader {
+    /// Not an `Option`, so the derive declares the parameter required.
+    #[header(rename = "X-Tenant")]
+    tenant: String,
+}
+
+/// Reads a tenant header, and says so by reading it.
 ///
-/// The second hand-written one, and the one that contributes a *parameter*
-/// rather than a response: a header the service requires cannot be one the
-/// description omits.
+/// The second hand-written one, and the one that declares a *parameter* rather
+/// than a response. There is no separate declaration to keep in step: the group
+/// it names in `Reads` is the group it is handed.
 #[derive(Clone)]
 struct Tenant;
 
 impl<C: Sync + 'static> Interceptor<C> for Tenant {
+    type Reads = TenantHeader;
+    type Adds = ();
+
+    /// Never answers on its own: a missing `X-Tenant` is a rejection the
+    /// extraction produces, not something this body decides.
+    type Short = Infallible;
+
     async fn intercept(
         &self,
         request: http::Request,
+        reads: TenantHeader,
         context: &C,
         next: Next<'_, C>,
-    ) -> http::Response {
-        let _ = context;
-        next.run(request).await
-    }
-
-    // `Route` is in scope, so a contribution can differ per operation. This one
-    // does not, but a rate limiter documenting its own bucket would.
-    fn contribution(&self, route: Route<'_>) -> OperationContribution {
-        let _ = route;
-        let mut parameter = Parameter::new(
-            "X-Tenant",
-            ParameterIn::Header,
-            OpenApiSchema::of_type(SchemaType::String),
-        );
-        parameter.description = Some("Which tenant this request acts on".to_owned());
-        parameter.required = Some(true);
-
-        OperationContribution::none().with_parameter(parameter)
+    ) -> Result<Continued<()>, Infallible> {
+        let _ = (context, reads.tenant);
+        Ok(next.run(request).await)
     }
 }
 
@@ -263,7 +260,6 @@ async fn main() -> kynos::Result<()> {
         .group(
             Group::new("/admin")
                 .intercept(RequireSecret {
-                    header: "X-Admin-Secret",
                     secret: "opensesame",
                 })
                 .mount(kynos::routes![reports]),

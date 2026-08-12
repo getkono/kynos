@@ -189,10 +189,10 @@ impl<C, P: crate::middleware::catch_panic::PanicPolicy> Router<C, P> {
     /// operation underneath becomes a claim Kynos can no longer stand behind.
     ///
     /// Prefer writing an [`Interceptor`](crate::middleware::Interceptor). It is
-    /// barely more work: declare an
-    /// [`OperationContribution`](crate::middleware::contribution::OperationContribution)
-    /// saying what the layer does to the exchange, and in return every covered
-    /// operation documents it correctly and automatically.
+    /// barely more work: name the responses it can answer with, the headers it
+    /// adds and the headers it reads as its three associated types, and in
+    /// return every covered operation documents it correctly and automatically
+    /// — and two interceptors that would collide stop compiling.
     /// Every operation in this router's subtree is flagged
     /// [`OpaqueReason::UntypedLayer`](kynos_openapi::OpaqueReason::UntypedLayer),
     /// and nothing outside it is.

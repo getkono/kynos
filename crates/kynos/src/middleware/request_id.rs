@@ -2,11 +2,12 @@
 
 use std::marker::PhantomData;
 
+use std::convert::Infallible;
+
 use crate::{
     extract::params::header::HeaderParams,
     http,
-    middleware::{Interceptor, Next, contribution::OperationContribution},
-    router::operation::Route,
+    middleware::{Continued, Interceptor, Next},
 };
 
 /// Supplies identifiers for requests that arrive without one.
@@ -151,17 +152,27 @@ impl<S: RequestIdSource, H: HeaderParams> RequestId<S, H> {
 impl<C: Sync + 'static, S: RequestIdSource, H: HeaderParams + Send + Sync + 'static> Interceptor<C>
     for RequestId<S, H>
 {
-    fn contribution(&self, _route: Route<'_>) -> OperationContribution {
-        todo!()
-    }
+    type Reads = ();
+    type Adds = H;
+
+    /// Always continues: an identifier is added to whatever the chain returns.
+    type Short = Infallible;
 
     async fn intercept(
         &self,
         request: http::Request,
+        reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> http::Response {
-        let _ = (request, context, next, self.trust_client);
+    ) -> Result<Continued<H>, Infallible> {
+        let _ = (
+            request,
+            reads,
+            context,
+            next,
+            self.trust_client,
+            &self.source,
+        );
         todo!()
     }
 }

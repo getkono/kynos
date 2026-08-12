@@ -8,7 +8,6 @@ use crate::{
     middleware::{
         Interceptor,
         catch_panic::{Catch, PanicPolicy, Propagate},
-        contribution::OperationContribution,
     },
     router::{
         endpoint::{
@@ -139,13 +138,6 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy> EndpointBuilder<C, H, A, P> {
     /// Marks the operation deprecated.
     #[must_use]
     pub fn deprecated(self) -> Self {
-        todo!()
-    }
-
-    /// Merges an extra contribution into the operation's description.
-    #[must_use]
-    pub fn contribute(self, contribution: OperationContribution) -> Self {
-        let _ = contribution;
         todo!()
     }
 

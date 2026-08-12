@@ -12,8 +12,10 @@
 use std::{future::Future, pin::Pin};
 
 use crate::{
+    extract::params::header::HeaderParams,
     http::{Request, Response},
-    middleware::{Interceptor, Next, contribution::OperationContribution},
+    middleware::{Continued, Interceptor, Next},
+    response::IntoResponse,
     router::operation::{OperationCx, Route},
 };
 
@@ -21,7 +23,12 @@ use crate::{
 // Driven by `Next::run` and `Router::build`, both still `todo!()`.
 #[allow(dead_code)]
 pub(crate) trait ErasedInterceptor<C>: Send + Sync + 'static {
-    fn contribution(&self, route: Route<'_>) -> OperationContribution;
+    /// Adds this interceptor's three declarations to `operation`.
+    ///
+    /// The whole of what an interceptor says, read from its associated types
+    /// rather than from a value it returned -- which is why there is nothing
+    /// here for an implementation to get wrong.
+    fn describe(&self, route: Route<'_>, operation: &mut OperationCx<'_>);
 
     fn intercept<'a>(
         &'a self,
@@ -36,8 +43,12 @@ where
     C: Sync + 'static,
     I: Interceptor<C>,
 {
-    fn contribution(&self, route: Route<'_>) -> OperationContribution {
-        Interceptor::contribution(self, route)
+    fn describe(&self, route: Route<'_>, operation: &mut OperationCx<'_>) {
+        let _ = (route, operation);
+        // Reads `<I::Reads as HeaderParams>::parameters`,
+        // `<I::Adds as HeaderParams>::response_headers` and
+        // `<I::Short as Responses>::responses`, all from the types.
+        todo!()
     }
 
     fn intercept<'a>(
@@ -46,7 +57,20 @@ where
         context: &'a C,
         next: Next<'a, C>,
     ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
-        Box::pin(Interceptor::intercept(self, request, context, next))
+        Box::pin(async move {
+            // Extraction happens here so that `intercept` receives what it
+            // declared rather than a request to go looking in.
+            let reads = match <I::Reads as HeaderParams>::decode(request.headers()) {
+                Ok(reads) => reads,
+                Err(rejection) => return rejection.into_response(),
+            };
+
+            // The two ways to answer, collapsed into the one the writer needs.
+            match Interceptor::intercept(self, request, reads, context, next).await {
+                Ok(continued) => Continued::into_response(continued),
+                Err(short) => IntoResponse::into_response(short),
+            }
+        })
     }
 }
 

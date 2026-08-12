@@ -13,9 +13,8 @@ use kynos_openapi::model::schema::types::SchemaType;
 use crate::{
     error::problem::Problem,
     http,
-    middleware::{Interceptor, Next, contribution::OperationContribution},
+    middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
-    router::operation::Route,
     schema::registry::Registry,
 };
 
@@ -90,26 +89,21 @@ impl BodySize {
     pub fn new(bytes: u64) -> Self {
         Self { limit: bytes }
     }
-
-    /// This interceptor's contribution.
-    #[must_use]
-    pub fn contribution(&self) -> OperationContribution {
-        todo!()
-    }
 }
 
 impl<C: Sync + 'static> Interceptor<C> for BodySize {
-    fn contribution(&self, _route: Route<'_>) -> OperationContribution {
-        Self::contribution(self)
-    }
+    type Reads = ();
+    type Adds = ();
+    type Short = BodySizeExceeded;
 
     async fn intercept(
         &self,
         request: http::Request,
+        reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> http::Response {
-        let _ = (request, context, next);
+    ) -> Result<Continued<()>, BodySizeExceeded> {
+        let _ = (request, reads, context, next, self.limit);
         todo!()
     }
 }
@@ -160,25 +154,21 @@ impl Timeout {
     pub fn new(limit: std::time::Duration) -> Self {
         Self { limit }
     }
-
-    /// This interceptor's contribution.
-    pub fn contribution(&self) -> OperationContribution {
-        todo!()
-    }
 }
 
 impl<C: Sync + 'static> Interceptor<C> for Timeout {
-    fn contribution(&self, _route: Route<'_>) -> OperationContribution {
-        Self::contribution(self)
-    }
+    type Reads = ();
+    type Adds = ();
+    type Short = TimedOut;
 
     async fn intercept(
         &self,
         request: http::Request,
+        reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> http::Response {
-        let _ = (request, context, next);
+    ) -> Result<Continued<()>, TimedOut> {
+        let _ = (request, reads, context, next, self.limit);
         todo!()
     }
 }
@@ -233,25 +223,21 @@ impl Concurrency {
     pub fn new(limit: usize) -> Self {
         Self { limit }
     }
-
-    /// This interceptor's contribution.
-    pub fn contribution(&self) -> OperationContribution {
-        todo!()
-    }
 }
 
 impl<C: Sync + 'static> Interceptor<C> for Concurrency {
-    fn contribution(&self, _route: Route<'_>) -> OperationContribution {
-        Self::contribution(self)
-    }
+    type Reads = ();
+    type Adds = ();
+    type Short = AtCapacity;
 
     async fn intercept(
         &self,
         request: http::Request,
+        reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> http::Response {
-        let _ = (request, context, next);
+    ) -> Result<Continued<()>, AtCapacity> {
+        let _ = (request, reads, context, next, self.limit);
         todo!()
     }
 }

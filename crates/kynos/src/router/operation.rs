@@ -2,7 +2,7 @@
 
 use kynos_openapi::{ComponentName, Method, StatusPattern};
 
-use crate::{middleware::contribution::ContributionConflict, schema::registry::Registry};
+use crate::schema::registry::Registry;
 
 /// The operation a request matched.
 ///
@@ -174,20 +174,6 @@ impl OperationCx<'_> {
     /// Adds a tag.
     pub fn add_tag(&mut self, name: &str) {
         let _ = name;
-        todo!()
-    }
-
-    /// Merges an interceptor's declared contribution.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ContributionConflict`] when this contribution and something
-    /// already merged disagree about the same part of the description.
-    pub fn contribute(
-        &mut self,
-        contribution: &crate::middleware::contribution::OperationContribution,
-    ) -> Result<(), ContributionConflict> {
-        let _ = contribution;
         todo!()
     }
 

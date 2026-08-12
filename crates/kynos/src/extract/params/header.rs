@@ -26,7 +26,25 @@ pub struct Headers<T>(pub T);
 /// can be emitted more than once without comma joining.
 pub trait HeaderParams: Sized {
     /// The header names this group declares.
+    ///
+    /// Read by the compiler as well as by the emitter: two interceptors
+    /// covering one route and naming the same header here is a compile error,
+    /// which is why it is a `const` rather than something a builder decides.
     const NAMES: &'static [&'static str];
+
+    /// Whether these headers appear in the emitted description.
+    ///
+    /// Separate from [`NAMES`](HeaderParams::NAMES) because the two answer
+    /// different questions. `NAMES` is what the *conflict check* compares, and
+    /// every header an interceptor sets belongs there whether or not a
+    /// consumer needs to be told about it. This says whether being told is
+    /// useful.
+    ///
+    /// `false` suits the headers HTTP itself defines and every client already
+    /// handles — `Vary`, `Content-Encoding`, the CORS set. Setting it does not
+    /// weaken the check: a second interceptor touching the same header still
+    /// fails to compile.
+    const DESCRIBED: bool = true;
 
     /// Decodes this group from request headers.
     fn decode(headers: &HeaderMap) -> Result<Self, HeaderRejection> {
@@ -51,6 +69,34 @@ pub trait HeaderParams: Sized {
     ) -> kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>> {
         let _ = registry;
         todo!()
+    }
+}
+
+/// The empty group: no headers read, none added, nothing declared.
+///
+/// What an interceptor names when it reads no header, or adds none.
+impl HeaderParams for () {
+    const NAMES: &'static [&'static str] = &[];
+
+    fn decode(headers: &HeaderMap) -> Result<Self, HeaderRejection> {
+        let _ = headers;
+        Ok(())
+    }
+
+    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+        Vec::new()
+    }
+
+    fn parameters(registry: &mut Registry) -> Vec<kynos_openapi::Parameter> {
+        let _ = registry;
+        Vec::new()
+    }
+
+    fn response_headers(
+        registry: &mut Registry,
+    ) -> kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>> {
+        let _ = registry;
+        kynos_openapi::Map::new()
     }
 }
 

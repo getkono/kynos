@@ -43,12 +43,9 @@ use std::net::Ipv4Addr;
 use bytes::Bytes;
 use http_body_util::BodyExt;
 use kynos::{
-    http::{self, StatusCode, body::Body},
-    middleware::{Interceptor, Next, contribution::OperationContribution, limits::BodySize},
-    openapi::StatusPattern,
+    http::{self, body::Body},
+    middleware::{Continued, Interceptor, Next, limits::BodySize},
     prelude::*,
-    response::IntoResponse,
-    router::operation::Route,
     server::Server,
 };
 use serde::{Deserialize, Serialize};
@@ -89,31 +86,36 @@ impl Print {
     }
 }
 
-impl<C: Sync + 'static> Interceptor<C> for Print {
-    fn contribution(&self, route: Route<'_>) -> OperationContribution {
-        let _ = route;
+/// What reading a body can cost.
+///
+/// Not `Infallible`. Both of these are responses no handler beneath this
+/// interceptor can produce, and both become reachable the moment the body is
+/// read here rather than by an extractor -- so both are in `Short`, which is
+/// the only place they could be.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum Unreadable {
+    #[error("the request body could not be read")]
+    #[problem(status = 400)]
+    Request,
 
-        // Not `none()`. Both of these are responses no handler beneath this
-        // interceptor can produce, and both become reachable the moment the
-        // body is read here rather than by an extractor.
-        OperationContribution::none()
-            .with_response(
-                StatusPattern::Code(400),
-                kynos::openapi::Response::new("the request body could not be read"),
-            )
-            .with_response(
-                StatusPattern::Code(500),
-                kynos::openapi::Response::new("the response body could not be read"),
-            )
-    }
+    #[error("the response body could not be read")]
+    #[problem(status = 500)]
+    Response,
+}
+
+impl<C: Sync + 'static> Interceptor<C> for Print {
+    type Reads = ();
+    type Adds = ();
+    type Short = Unreadable;
 
     async fn intercept(
         &self,
         request: http::Request,
+        reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> http::Response {
-        let _ = context;
+    ) -> Result<Continued<()>, Unreadable> {
+        let _ = (context, reads);
         // Keyed by the operation rather than by the request's own path, so the
         // line matches the `paths` key a reader will look the operation up by.
         let route = next.route();
@@ -133,30 +135,33 @@ impl<C: Sync + 'static> Interceptor<C> for Print {
         let (parts, body) = request.into_parts();
         let Some(bytes) = Self::drain(body).await else {
             // The body is gone, so the chain cannot be continued -- there is
-            // nothing left to hand it. This is the branch the 400 above exists
-            // for.
-            return Problem::new(StatusCode::BAD_REQUEST).into_response();
+            // nothing left to hand it. This is the branch the 400 exists for,
+            // and returning it is the only way to answer at all.
+            return Err(Unreadable::Request);
         };
         Self::show("-->", &bytes);
 
         // Rebuilt from the same bytes, so the handler beneath sees a request
         // indistinguishable from the one that arrived.
-        let response = next
+        let mut continued = next
             .run(http::Request::from_parts(parts, Body::from_bytes(bytes)))
             .await;
 
-        println!("<-- {}", response.status());
-        for (name, value) in response.headers() {
+        println!("<-- {}", continued.status());
+        for (name, value) in continued.headers() {
             println!("<-- {name}: {}", String::from_utf8_lossy(value.as_bytes()));
         }
 
-        let (parts, body) = response.into_parts();
-        let Some(bytes) = Self::drain(body).await else {
-            return Problem::new(StatusCode::INTERNAL_SERVER_ERROR).into_response();
+        // The body comes out and goes back; the status and headers are not
+        // reachable from here at all, which is what stops a printer becoming a
+        // rewriter by accident.
+        let Some(bytes) = Self::drain(continued.take_body()).await else {
+            return Err(Unreadable::Response);
         };
         Self::show("<--", &bytes);
 
-        http::Response::from_parts(parts, Body::from_bytes(bytes))
+        continued.set_body(Body::from_bytes(bytes));
+        Ok(continued)
     }
 }
 
