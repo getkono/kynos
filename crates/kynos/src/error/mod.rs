@@ -73,10 +73,6 @@ pub enum Error {
     #[error("the description could not be serialized")]
     Serialize(#[from] serde_json::Error),
 
-    /// The listener could not be bound, or the server could not start.
-    #[error("the server could not start")]
-    Io(#[from] std::io::Error),
-
     /// The server configuration or transport failed.
     #[cfg(feature = "server")]
     #[error(transparent)]
