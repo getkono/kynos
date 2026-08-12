@@ -38,7 +38,15 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub enum Error {
     /// The router describes an API that OpenAPI cannot express, or expresses
     /// incorrectly.
-    #[error("the router does not describe a valid API")]
+    ///
+    /// Every violation is named in the message rather than offered as a cause:
+    /// `source()` carries one error and a validation run produces a set, so a
+    /// chain cannot hold them. This variant has no cause for that reason, which
+    /// also keeps a reporter from printing the first violation twice.
+    #[error(
+        "the router does not describe a valid API:\n{}",
+        violations.iter().map(|violation| format!("  {violation}")).collect::<Vec<_>>().join("\n")
+    )]
     Invalid {
         /// Every violation found, most structural first.
         violations: Vec<kynos_openapi::Violation>,
