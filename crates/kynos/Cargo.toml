@@ -113,6 +113,10 @@ name = "auto_reload"
 required-features = ["openapi31", "macros", "server", "http1"]
 
 [[example]]
+name = "print_request_response"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
+[[example]]
 name = "document"
 required-features = [
   "openapi32",
