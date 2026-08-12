@@ -67,6 +67,10 @@ rule to the rest of the graph.
   private.
 - Every public type is either a re-export from `http`, `bytes` or `serde`, or
   something Kynos is prepared to own indefinitely.
+- Fields the specification makes mutually exclusive are one enum, not several
+  `Option`s, and no validator rule restates the exclusion. See
+  [why exclusions are types](#why-exclusions-are-types-rather-than-rules) for
+  the bound on this.
 - Features are additive only.
 - Macros expand to readable code and carry user spans.
 - Ship 1.0, freeze the core, and put subsequent velocity into satellite crates.
@@ -293,6 +297,40 @@ authoring slot.
 
 *Non-normative. This section explains the reasoning behind the rules above so
 that revisiting them is possible on the merits.*
+
+### Why exclusions are types rather than rules
+
+The OpenAPI specification states a good many exclusions between optional fields:
+a Parameter Object carries `schema` or `content`, a Media Type Object shows
+`example` or `examples`, a Link Object names `operationRef` or `operationId`.
+Each can be modelled as the fields the specification writes plus a rule that
+rejects the bad combinations, or as a type whose values are the good ones.
+
+`model/` takes the second, and the deciding argument is what happens to the
+validator under the first. A rule no document can violate is not a check, it is
+dead code — and a validator carrying dead rules is one a reader cannot trust to
+be exhaustive. Removing them leaves a module whose contents are exactly what a
+type cannot say on its own: uniqueness across a whole document, correspondence
+between a path template and its parameters, names that must resolve against
+declarations elsewhere.
+
+The consequences are the point rather than a side effect. The illegal
+combination cannot be built, cannot be parsed, and cannot be emitted, so the
+three ways a description reaches a client generator are closed at once instead
+of one at a time. The constructors are then a list of the specification's legal
+combinations, which is a thing a reviewer can check against the specification.
+And a field that only means something alongside another — `style` beside a
+schema, never beside a `content` — lives in the variant that gives it meaning,
+so setting it where it does not apply is not a mistake to report but a sentence
+with nowhere to be written.
+
+The bound is round-tripping. `kynos-openapi` must hold descriptions it did not
+produce ([`routing.md`](routing.md#why-the-model-is-more-permissive-than-the-router)),
+so only combinations that make a *document* invalid may become unrepresentable.
+A rule about what Kynos is willing to *serve* is a router rule, and belongs in
+the narrower layer. Deprecation is not exclusion either: `SchemaObject::example`
+is superseded by `examples` rather than excluded by it, and both stay so that a
+parsed description survives the trip back out.
 
 ### Where io_uring would actually pay
 
