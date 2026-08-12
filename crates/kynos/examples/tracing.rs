@@ -166,7 +166,7 @@ async fn main() -> kynos::Result<()> {
         // Mounted first so the identifier exists before the span that records
         // it. `Trace` puts `request_id` on every span, and without a source
         // there is nothing to put there.
-        .intercept(RequestId::new().header("x-request-id").trust_client(false))
+        .intercept(RequestId::new().trust_client(false))
         // What Kynos ships: one span per operation, carrying `method`,
         // `matched_path`, `operation_id`, `status`, `latency` and `request_id`.
         // `record_headers` is an allow-list rather than a deny-list, so a header

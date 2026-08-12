@@ -1,6 +1,9 @@
 //! Correlation identifiers.
 
+use std::marker::PhantomData;
+
 use crate::{
+    extract::params::header::HeaderParams,
     http,
     middleware::{Interceptor, Next, contribution::OperationContribution},
     router::operation::Route,
@@ -33,55 +36,94 @@ impl RequestIdSource for Counter {
     }
 }
 
-/// Assigns each request an identifier and echoes it back.
+/// The header [`RequestId`] uses unless told otherwise.
 ///
-/// This is an interceptor because it adds a response header. Its
-/// contribution keeps that wire-visible behavior in every covered
-/// operation's description.
-pub struct RequestId<S = Counter> {
-    source: S,
-    _private: std::marker::PhantomData<fn() -> S>,
+/// A [`HeaderParams`] group rather than a name in a field, because the
+/// description is built while the router is: `NAMES` is a `const`, and a name
+/// chosen at run time is a name no document could have printed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct XRequestId(
+    /// The identifier carried by this request.
+    pub http::HeaderValue,
+);
+
+impl HeaderParams for XRequestId {
+    const NAMES: &'static [&'static str] = &["x-request-id"];
+
+    fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
+        vec![(
+            http::HeaderName::from_static("x-request-id"),
+            self.0.clone(),
+        )]
+    }
 }
 
-// Hand-written for the reason `UncheckedInner`'s are: `PhantomData<fn() -> S>`
-// needs nothing of `S`, and the source is what actually decides these.
-impl<S: Clone> Clone for RequestId<S> {
+/// Assigns each request an identifier and echoes it back.
+///
+/// This is an interceptor because it adds a response header. Its contribution
+/// keeps that wire-visible behavior in every covered operation's description,
+/// and `H` is what makes the two the same fact: the header the description
+/// names is the header the response carries, because there is only one place
+/// the name is written.
+pub struct RequestId<S = Counter, H = XRequestId> {
+    source: S,
+    trust_client: bool,
+    _header: PhantomData<fn() -> H>,
+}
+
+// Hand-written for the reason `UncheckedInner`'s are: `PhantomData<fn() -> H>`
+// needs nothing of `H`, and the source is what actually decides these.
+impl<S: Clone, H> Clone for RequestId<S, H> {
     fn clone(&self) -> Self {
         Self {
             source: self.source.clone(),
-            _private: std::marker::PhantomData,
+            trust_client: self.trust_client,
+            _header: PhantomData,
         }
     }
 }
 
-impl<S: std::fmt::Debug> std::fmt::Debug for RequestId<S> {
+impl<S: std::fmt::Debug, H: HeaderParams> std::fmt::Debug for RequestId<S, H> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RequestId")
             .field("source", &self.source)
+            .field("header", &H::NAMES)
+            .field("trust_client", &self.trust_client)
             .finish_non_exhaustive()
     }
 }
 
-impl Default for RequestId<Counter> {
+impl Default for RequestId<Counter, XRequestId> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl RequestId<Counter> {
+impl RequestId<Counter, XRequestId> {
     /// Uses `X-Request-Id`, generating one when the client sends none.
     #[must_use]
     pub fn new() -> Self {
-        todo!()
+        Self {
+            source: Counter::default(),
+            trust_client: false,
+            _header: PhantomData,
+        }
     }
 }
 
-impl<S: RequestIdSource> RequestId<S> {
-    /// Uses a different header name.
+impl<S: RequestIdSource, H: HeaderParams> RequestId<S, H> {
+    /// Uses a different header group.
+    ///
+    /// Takes the group as a type parameter rather than a name, so that changing
+    /// the header changes what every covered operation declares. A group
+    /// naming more than one header sets and documents all of them.
     #[must_use]
-    pub fn header(self, name: &'static str) -> Self {
-        let _ = name;
-        todo!()
+    pub fn header<G: HeaderParams>(self) -> RequestId<S, G> {
+        RequestId {
+            source: self.source,
+            trust_client: self.trust_client,
+            _header: PhantomData,
+        }
     }
 
     /// Echoes a client-supplied identifier instead of always generating one.
@@ -90,20 +132,25 @@ impl<S: RequestIdSource> RequestId<S> {
     /// into logs and downstream requests is a decision worth making explicitly
     /// rather than a default worth inheriting.
     #[must_use]
-    pub fn trust_client(self, trust: bool) -> Self {
-        let _ = trust;
-        todo!()
+    pub fn trust_client(mut self, trust: bool) -> Self {
+        self.trust_client = trust;
+        self
     }
 
     /// Replaces the identifier source.
     #[must_use]
-    pub fn source<T: RequestIdSource>(self, source: T) -> RequestId<T> {
-        let _ = source;
-        todo!()
+    pub fn source<T: RequestIdSource>(self, source: T) -> RequestId<T, H> {
+        RequestId {
+            source,
+            trust_client: self.trust_client,
+            _header: PhantomData,
+        }
     }
 }
 
-impl<C: Sync + 'static, S: RequestIdSource> Interceptor<C> for RequestId<S> {
+impl<C: Sync + 'static, S: RequestIdSource, H: HeaderParams + Send + Sync + 'static> Interceptor<C>
+    for RequestId<S, H>
+{
     fn contribution(&self, _route: Route<'_>) -> OperationContribution {
         todo!()
     }
@@ -114,7 +161,7 @@ impl<C: Sync + 'static, S: RequestIdSource> Interceptor<C> for RequestId<S> {
         context: &C,
         next: Next<'_, C>,
     ) -> http::Response {
-        let _ = (request, context, next);
+        let _ = (request, context, next, self.trust_client);
         todo!()
     }
 }

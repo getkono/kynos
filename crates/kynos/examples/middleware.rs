@@ -71,6 +71,18 @@ struct User {
     name: String,
 }
 
+/// The header this service correlates on.
+///
+/// A group rather than a name, because `RequestId` is described while the
+/// router is built: the set of headers it adds has to be a `const`, and a name
+/// passed at run time is a name no document could have printed.
+#[allow(dead_code)]
+#[derive(HeaderParams)]
+struct CorrelationId {
+    #[header(rename = "X-Correlation-Id")]
+    correlation_id: String,
+}
+
 /// Identifiers minted from a monotonic clock rather than a counter.
 ///
 /// `Counter` is unique within one process and no further, which is enough to
@@ -202,7 +214,7 @@ async fn main() -> kynos::Result<()> {
                 .allow_origins(["https://app.example.com"])
                 .allow_methods([Method::Get, Method::Post])
                 .allow_headers(["content-type", "x-tenant"])
-                .expose_headers(["x-request-id"])
+                .expose_headers(["x-correlation-id"])
                 .max_age(Duration::from_secs(600))
                 .allow_credentials()
                 .document_response_headers(),
@@ -210,9 +222,13 @@ async fn main() -> kynos::Result<()> {
         // Correlation. `trust_client` is false by default, and that default is
         // the security-relevant one: an identifier a caller chose is an
         // identifier a caller can forge into somebody else's logs.
+        //
+        // `header` takes a *group type*, not a name. The header this sets and
+        // the header every covered operation declares are then the same fact,
+        // read from one `const`, rather than two strings that have to agree.
         .intercept(
             RequestId::new()
-                .header("x-request-id")
+                .header::<CorrelationId>()
                 .trust_client(false)
                 .source(Monotonic),
         )
@@ -225,7 +241,7 @@ async fn main() -> kynos::Result<()> {
         .observe(
             Trace::new()
                 .level(tracing::Level::INFO)
-                .record_headers(&["x-request-id", "x-tenant"]),
+                .record_headers(&["x-correlation-id", "x-tenant"]),
         )
         // Compression negotiates on `Accept-Encoding`. `min_size` exists
         // because compressing a 40-byte body costs more than it saves.
