@@ -178,10 +178,6 @@ pub enum SpecError {
         name: String,
     },
 
-    /// Both the singular and plural example fields were set.
-    #[error("`example` and `examples` are mutually exclusive")]
-    ExampleExclusivity,
-
     /// A Link Object did not identify exactly one target operation.
     #[error("a Link Object must set exactly one of `operationRef` and `operationId`")]
     LinkTargetExclusivity,

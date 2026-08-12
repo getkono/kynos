@@ -11,10 +11,8 @@ use crate::{
     validate::{
         Validator,
         rules::{
-            content::check_media_type,
-            extensions::check_extensions,
-            parameters::{check_header, check_parameter_list},
-            paths::check_path_correspondence,
+            content::check_media_type, extensions::check_extensions,
+            parameters::check_parameter_list, paths::check_path_correspondence,
         },
         violation::{SpecError, Violation},
     },
@@ -105,16 +103,10 @@ pub(in crate::validate) fn check_operation_content(
                 violations,
             );
         }
-        for (name, header) in &response.headers {
-            if let Some(header) = header.as_item() {
-                check_header(
-                    &format!("{response_location}/headers/{name}"),
-                    name,
-                    header,
-                    violations,
-                );
-            }
-        }
+        // A response header used to be checked here. Its shape is one of
+        // `schema` and `content`, and its examples are one of `example` and
+        // `examples`, both by construction, so a header now carries nothing
+        // this function could reject.
         for (name, link) in &response.links {
             if let Some(link) = link.as_item() {
                 let set = usize::from(link.operation_ref.is_some())

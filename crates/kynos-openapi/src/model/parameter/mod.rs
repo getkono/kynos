@@ -11,8 +11,14 @@ use serde_json::Value;
 use crate::{
     Map,
     model::{
-        body::media_type::MediaType, example::Example, extensions::Extensions,
-        parameter::style::Style, reference::RefOr, schema::Schema,
+        body::media_type::MediaType,
+        example::{
+            Example, Examples, ExamplesConflict, examples_from, examples_into, examples_with_named,
+        },
+        extensions::Extensions,
+        parameter::style::Style,
+        reference::{Ref, RefOr},
+        schema::Schema,
     },
 };
 
@@ -71,7 +77,8 @@ impl fmt::Display for ParameterIn {
 /// A single operation parameter.
 ///
 /// The value is described by a [`ParameterShape`], which is one of `schema` or
-/// `content` and never both or neither.
+/// `content` and never both or neither, and shown by an [`Examples`], which is
+/// the inline `example` or the named `examples` and never both.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "RawParameter", into = "RawParameter")]
 pub struct Parameter {
@@ -108,15 +115,7 @@ pub struct Parameter {
 
     shape: ParameterShape,
 
-    /// A single example of the parameter value.
-    ///
-    /// Mutually exclusive with [`examples`](Parameter::examples).
-    pub example: Option<Value>,
-
-    /// Examples of the parameter value.
-    ///
-    /// Mutually exclusive with [`example`](Parameter::example).
-    pub examples: Map<RefOr<Example>>,
+    examples: Option<Examples>,
 
     /// Specification extensions.
     pub extensions: Extensions,
@@ -207,8 +206,7 @@ impl Parameter {
             deprecated: None,
             allow_empty_value: None,
             shape,
-            example: None,
-            examples: Map::new(),
+            examples: None,
             extensions: Extensions::default(),
         }
     }
@@ -264,6 +262,39 @@ impl Parameter {
         self
     }
 
+    /// Shows the value with one inline example.
+    ///
+    /// Replaces any named examples: the two forms exclude each other, so there
+    /// is no state that holds both.
+    #[must_use]
+    pub fn with_example(mut self, value: impl Into<Value>) -> Self {
+        self.examples = Some(Examples::Inline(value.into()));
+        self
+    }
+
+    /// Adds a named example, replacing any inline one.
+    #[must_use]
+    pub fn with_named_example(mut self, name: impl Into<String>, example: Example) -> Self {
+        self.examples = Some(examples_with_named(
+            self.examples,
+            name.into(),
+            RefOr::Item(example),
+        ));
+        self
+    }
+
+    /// Adds a named example held in
+    /// [`Components::examples`](crate::Components::examples).
+    #[must_use]
+    pub fn with_named_example_ref(mut self, name: impl Into<String>, example: Ref) -> Self {
+        self.examples = Some(examples_with_named(
+            self.examples,
+            name.into(),
+            RefOr::Ref(example),
+        ));
+        self
+    }
+
     /// How this parameter's value is described.
     #[must_use]
     pub fn shape(&self) -> &ParameterShape {
@@ -313,6 +344,30 @@ impl Parameter {
         match self.shape {
             ParameterShape::Schema { allow_reserved, .. } => allow_reserved,
             ParameterShape::Content { .. } => None,
+        }
+    }
+
+    /// The examples this parameter carries, if it carries any.
+    #[must_use]
+    pub fn examples(&self) -> Option<&Examples> {
+        self.examples.as_ref()
+    }
+
+    /// The inline example, when the value is shown with one.
+    #[must_use]
+    pub fn example(&self) -> Option<&Value> {
+        match &self.examples {
+            Some(Examples::Inline(value)) => Some(value),
+            Some(Examples::Named(_)) | None => None,
+        }
+    }
+
+    /// The named examples, when the value is shown with those.
+    #[must_use]
+    pub fn named_examples(&self) -> Option<&Map<RefOr<Example>>> {
+        match &self.examples {
+            Some(Examples::Named(named)) => Some(named),
+            Some(Examples::Inline(_)) | None => None,
         }
     }
 
@@ -386,14 +441,48 @@ struct RawParameter {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     example: Option<Value>,
 
-    #[serde(default, skip_serializing_if = "Map::is_empty")]
-    examples: Map<RefOr<Example>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    examples: Option<Map<RefOr<Example>>>,
 
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     content: Map<MediaType>,
 
     #[serde(flatten)]
     extensions: Extensions,
+}
+
+/// A Parameter or Header Object whose fields do not hold together.
+///
+/// Two independent ways to be ill-formed, kept apart so that each reads as the
+/// sentence the specification writes.
+#[derive(Debug)]
+pub(crate) enum ParameterConflict {
+    /// The value is described by neither `schema` nor `content`, or by both.
+    Shape(ShapeConflict),
+
+    /// The value is shown by both `example` and `examples`.
+    Examples(ExamplesConflict),
+}
+
+impl fmt::Display for ParameterConflict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Shape(conflict) => conflict.fmt(f),
+            Self::Examples(conflict) => conflict.fmt(f),
+        }
+    }
+}
+
+impl From<ShapeConflict> for ParameterConflict {
+    fn from(conflict: ShapeConflict) -> Self {
+        Self::Shape(conflict)
+    }
+}
+
+impl From<ExamplesConflict> for ParameterConflict {
+    fn from(conflict: ExamplesConflict) -> Self {
+        Self::Examples(conflict)
+    }
 }
 
 /// A Parameter or Header Object whose value description does not hold together.
@@ -442,7 +531,7 @@ pub(crate) fn shape_from(
 }
 
 impl TryFrom<RawParameter> for Parameter {
-    type Error = ShapeConflict;
+    type Error = ParameterConflict;
 
     fn try_from(raw: RawParameter) -> Result<Self, Self::Error> {
         let shape = match shape_from(raw.schema, raw.content)? {
@@ -466,8 +555,7 @@ impl TryFrom<RawParameter> for Parameter {
             deprecated: raw.deprecated,
             allow_empty_value: raw.allow_empty_value,
             shape,
-            example: raw.example,
-            examples: raw.examples,
+            examples: examples_from(raw.example, raw.examples)?,
             extensions: raw.extensions,
         })
     }
@@ -491,6 +579,8 @@ impl From<Parameter> for RawParameter {
             ),
         };
 
+        let (example, examples) = examples_into(parameter.examples);
+
         Self {
             name: parameter.name,
             location: parameter.location,
@@ -502,8 +592,8 @@ impl From<Parameter> for RawParameter {
             explode,
             allow_reserved,
             schema,
-            example: parameter.example,
-            examples: parameter.examples,
+            example,
+            examples,
             content,
             extensions: parameter.extensions,
         }

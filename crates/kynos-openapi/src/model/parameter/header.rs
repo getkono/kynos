@@ -7,10 +7,10 @@ use crate::{
     Map,
     model::{
         body::media_type::MediaType,
-        example::Example,
+        example::{Example, Examples, examples_from, examples_into, examples_with_named},
         extensions::Extensions,
-        parameter::{ShapeConflict, shape_from, style::Style},
-        reference::RefOr,
+        parameter::{ParameterConflict, shape_from, style::Style},
+        reference::{Ref, RefOr},
         schema::Schema,
     },
 };
@@ -36,7 +36,8 @@ pub fn is_ignored_header_parameter(name: &str) -> bool {
 /// A response header, or a header used by an [`Encoding`](crate::Encoding).
 ///
 /// This is a Parameter Object without `name` and `in`. Its style, when present,
-/// must be [`Style::Simple`], and `allowEmptyValue` must not be used.
+/// must be [`Style::Simple`], and `allowEmptyValue` must not be used. Like a
+/// parameter it holds one [`HeaderShape`] and one [`Examples`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "RawHeader", into = "RawHeader")]
 pub struct Header {
@@ -53,11 +54,7 @@ pub struct Header {
 
     shape: HeaderShape,
 
-    /// A single example of the header value.
-    pub example: Option<Value>,
-
-    /// Examples of the header value.
-    pub examples: Map<RefOr<Example>>,
+    examples: Option<Examples>,
 
     /// Specification extensions.
     pub extensions: Extensions,
@@ -120,8 +117,7 @@ impl Header {
             required: None,
             deprecated: None,
             shape,
-            example: None,
-            examples: Map::new(),
+            examples: None,
             extensions: Extensions::default(),
         }
     }
@@ -168,6 +164,63 @@ impl Header {
         }
     }
 
+    /// The examples this header carries, if it carries any.
+    #[must_use]
+    pub fn examples(&self) -> Option<&Examples> {
+        self.examples.as_ref()
+    }
+
+    /// The inline example, when the value is shown with one.
+    #[must_use]
+    pub fn example(&self) -> Option<&Value> {
+        match &self.examples {
+            Some(Examples::Inline(value)) => Some(value),
+            Some(Examples::Named(_)) | None => None,
+        }
+    }
+
+    /// The named examples, when the value is shown with those.
+    #[must_use]
+    pub fn named_examples(&self) -> Option<&Map<RefOr<Example>>> {
+        match &self.examples {
+            Some(Examples::Named(named)) => Some(named),
+            Some(Examples::Inline(_)) | None => None,
+        }
+    }
+
+    /// Shows the value with one inline example.
+    ///
+    /// Replaces any named examples: the two forms exclude each other, so there
+    /// is no state that holds both.
+    #[must_use]
+    pub fn with_example(mut self, value: impl Into<Value>) -> Self {
+        self.examples = Some(Examples::Inline(value.into()));
+        self
+    }
+
+    /// Adds a named example, replacing any inline one.
+    #[must_use]
+    pub fn with_named_example(mut self, name: impl Into<String>, example: Example) -> Self {
+        self.examples = Some(examples_with_named(
+            self.examples,
+            name.into(),
+            RefOr::Item(example),
+        ));
+        self
+    }
+
+    /// Adds a named example held in
+    /// [`Components::examples`](crate::Components::examples).
+    #[must_use]
+    pub fn with_named_example_ref(mut self, name: impl Into<String>, example: Ref) -> Self {
+        self.examples = Some(examples_with_named(
+            self.examples,
+            name.into(),
+            RefOr::Ref(example),
+        ));
+        self
+    }
+
     /// Sets the description.
     #[must_use]
     pub fn with_description(mut self, description: impl Into<String>) -> Self {
@@ -207,8 +260,8 @@ struct RawHeader {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     example: Option<Value>,
 
-    #[serde(default, skip_serializing_if = "Map::is_empty")]
-    examples: Map<RefOr<Example>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    examples: Option<Map<RefOr<Example>>>,
 
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     content: Map<MediaType>,
@@ -218,7 +271,7 @@ struct RawHeader {
 }
 
 impl TryFrom<RawHeader> for Header {
-    type Error = ShapeConflict;
+    type Error = ParameterConflict;
 
     fn try_from(raw: RawHeader) -> Result<Self, Self::Error> {
         let shape = match shape_from(raw.schema, raw.content)? {
@@ -238,8 +291,7 @@ impl TryFrom<RawHeader> for Header {
             required: raw.required,
             deprecated: raw.deprecated,
             shape,
-            example: raw.example,
-            examples: raw.examples,
+            examples: examples_from(raw.example, raw.examples)?,
             extensions: raw.extensions,
         })
     }
@@ -258,6 +310,8 @@ impl From<Header> for RawHeader {
             }
         };
 
+        let (example, examples) = examples_into(header.examples);
+
         Self {
             description: header.description,
             required: header.required,
@@ -265,8 +319,8 @@ impl From<Header> for RawHeader {
             style,
             explode,
             schema,
-            example: header.example,
-            examples: header.examples,
+            example,
+            examples,
             content,
             extensions: header.extensions,
         }

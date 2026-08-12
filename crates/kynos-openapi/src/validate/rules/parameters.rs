@@ -5,10 +5,7 @@ use std::collections::HashSet;
 
 use crate::{
     model::{
-        parameter::{
-            Parameter, ParameterIn,
-            header::{Header, is_ignored_header_parameter},
-        },
+        parameter::{Parameter, ParameterIn, header::is_ignored_header_parameter},
         reference::RefOr,
     },
     validate::{
@@ -72,25 +69,10 @@ pub(in crate::validate) fn check_parameter_list(
             }
         }
 
-        if parameter.example.is_some() && !parameter.examples.is_empty() {
-            violations.push(Violation::error(location, SpecError::ExampleExclusivity));
-        }
+        // The `example`/`examples` exclusion used to be checked here too. A
+        // parameter carries one `Examples` holding one form or the other, so
+        // that violation cannot reach this function either.
 
         check_extensions(location, &parameter.extensions, violations);
-    }
-}
-
-pub(in crate::validate) fn check_header(
-    location: &str,
-    name: &str,
-    header: &Header,
-    violations: &mut Vec<Violation>,
-) {
-    // See `check_parameter_list`: a header's shape is one of the two by
-    // construction, so there is nothing left to check here.
-    let _ = name;
-
-    if header.example.is_some() && !header.examples.is_empty() {
-        violations.push(Violation::error(location, SpecError::ExampleExclusivity));
     }
 }

@@ -92,6 +92,26 @@ const VERSIONS: &[SpecVersion] = &[
 
 const ADDITIONAL_METHODS: &[&str] = &["LINK", "PURGE"];
 
+/// Shows an object with one form of example or the other, never both.
+///
+/// `Examples` has no way to spell the combination the two drawn fields could,
+/// so the inline value wins when one was drawn and the named map is used
+/// otherwise. The three objects that carry examples share these method names,
+/// which is what makes one macro serve all of them.
+macro_rules! with_arb_examples {
+    ($object:expr, $example:expr, $examples:expr) => {
+        match $example {
+            Some(value) => $object.with_example(value),
+            None => $examples
+                .into_iter()
+                .fold($object, |object, (name, example)| match example {
+                    RefOr::Item(example) => object.with_named_example(name, example),
+                    RefOr::Ref(reference) => object.with_named_example_ref(name, reference),
+                }),
+        }
+    };
+}
+
 // --- Leaf strategies -----------------------------------------------------
 
 fn arb_text() -> impl Strategy<Value = String> {
@@ -586,10 +606,8 @@ fn arb_header() -> BoxedStrategy<Header> {
                 header.description = description;
                 header.required = required;
                 header.deprecated = deprecated;
-                header.example = example;
-                header.examples = examples;
                 header.extensions = extensions;
-                header
+                with_arb_examples!(header, example, examples)
             },
         )
         .boxed()
@@ -652,17 +670,7 @@ fn arb_media_type() -> BoxedStrategy<MediaType> {
                 media_type.encoding = encoding;
                 media_type.extensions = extensions;
 
-                match example {
-                    Some(value) => media_type.with_example(value),
-                    None => examples
-                        .into_iter()
-                        .fold(media_type, |media_type, (name, example)| match example {
-                            RefOr::Item(example) => media_type.with_named_example(name, example),
-                            RefOr::Ref(reference) => {
-                                media_type.with_named_example_ref(name, reference)
-                            }
-                        }),
-                }
+                with_arb_examples!(media_type, example, examples)
             },
         )
         .boxed()
@@ -824,10 +832,8 @@ fn arb_parameter() -> BoxedStrategy<Parameter> {
                 parameter.required = required;
                 parameter.deprecated = deprecated;
                 parameter.allow_empty_value = allow_empty_value;
-                parameter.example = example;
-                parameter.examples = examples;
                 parameter.extensions = extensions;
-                parameter
+                with_arb_examples!(parameter, example, examples)
             },
         )
         .boxed()
