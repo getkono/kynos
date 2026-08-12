@@ -115,6 +115,18 @@ required-features = [
 name = "security_schemes"
 required-features = ["openapi31", "macros", "server", "http1"]
 
+[[example]]
+name = "middleware"
+required-features = [
+  "openapi31",
+  "macros",
+  "server",
+  "http1",
+  "json",
+  "compression",
+  "trace",
+]
+
 [features]
 default = [
   "openapi31",
