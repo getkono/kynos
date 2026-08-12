@@ -126,14 +126,35 @@ struct BookingPath {
 /// Fetches one booking.
 #[kynos::get("/bookings/{id}")]
 async fn get_booking(Path(path): Path<BookingPath>) -> Json<Booking> {
-    let _ = path;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    // Every value here is built through its own crate's API, which is the
+    // point: Kynos describes these types and constructs none of them.
+    Json(Booking {
+        id: path.id,
+        booked_at: chrono::DateTime::from_timestamp(1_776_000_000, 0)
+            .expect("a valid unix timestamp"),
+        confirmed_at: jiff::Timestamp::from_second(1_776_000_600).expect("a valid unix timestamp"),
+        starts_at: "2026-08-11T09:00:00-04:00[America/New_York]"
+            .parse()
+            .expect("a valid RFC 9557 zoned timestamp"),
+        price: rust_decimal::Decimal::new(12_950, 2),
+        exchange_rate: "1.0937482910".parse().expect("a valid decimal"),
+        seats: 4,
+    })
 }
 
 /// Reports when a service can be booked.
 #[kynos::get("/availability")]
 async fn get_availability() -> Json<Availability> {
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    Json(Availability {
+        on: jiff::civil::date(2026, 8, 11),
+        opens_at: jiff::civil::time(9, 0, 0, 0),
+        last_reviewed: chrono::NaiveDate::from_ymd_opt(2026, 7, 1)
+            .expect("a valid date")
+            .and_hms_opt(12, 0, 0)
+            .expect("a valid time"),
+        // `PT1H30M`, which is the form the schema's `duration` format names.
+        slot_length: jiff::Span::new().hours(1).minutes(30),
+    })
 }
 
 #[tokio::main]

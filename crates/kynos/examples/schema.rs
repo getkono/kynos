@@ -139,14 +139,48 @@ struct Ingest {
 /// Returns the whole catalogue.
 #[kynos::get("/catalogue")]
 async fn get_catalogue() -> Json<Catalogue> {
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    let sku = Sku("ABC-0001".to_owned());
+
+    // Every value here satisfies the constraints declared above -- the SKU
+    // matches `propertyNames`, the slug matches its pattern, the tag list is
+    // within its bounds. A schema nothing in the file could satisfy would be a
+    // schema worth doubting.
+    let product = Product {
+        display_name: "Mechanical Keyboard".to_owned(),
+        slug: "mechanical-keyboard".to_owned(),
+        price_cents: 12_950,
+        tags: vec!["input".to_owned(), "keyboard".to_owned()],
+        summary: Some("Eighty-seven keys and no regrets.".to_owned()),
+    };
+
+    Json(Catalogue {
+        products: HashMap::from([(Sku(sku.0.clone()), product)]),
+        pricing: HashMap::from([(
+            sku,
+            Pricing::Tiered {
+                tiers: vec![
+                    Tier {
+                        from_quantity: 1,
+                        cents: 12_950,
+                    },
+                    Tier {
+                        from_quantity: 10,
+                        cents: 11_500,
+                    },
+                ],
+            },
+        )]),
+    })
 }
 
 /// Accepts a supplier feed.
 #[kynos::post("/ingest")]
 async fn post_ingest(Json(ingest): Json<Ingest>) -> NoContent {
-    let _ = ingest;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    // The constrained half is a `String` and the unconstrained half is behind
+    // `Unchecked`, so reading them looks different in exactly the way the
+    // description says they are.
+    println!("{}: {}", ingest.supplier, ingest.payload.into_inner());
+    NoContent
 }
 
 #[tokio::main]
