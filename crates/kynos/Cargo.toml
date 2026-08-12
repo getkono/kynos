@@ -111,6 +111,10 @@ required-features = [
   "yaml",
 ]
 
+[[example]]
+name = "security_schemes"
+required-features = ["openapi31", "macros", "server", "http1"]
+
 [features]
 default = [
   "openapi31",
