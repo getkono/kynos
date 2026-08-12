@@ -69,9 +69,14 @@ pub enum Error {
     #[error(transparent)]
     Contribution(#[from] crate::middleware::contribution::ContributionConflict),
 
-    /// The document could not be serialized.
-    #[error("the description could not be serialized")]
-    Serialize(#[from] serde_json::Error),
+    /// The description could not be emitted as JSON.
+    ///
+    /// Named after the emitter rather than after serialization in general: the
+    /// conversion is what records which one failed, so a caller reading the
+    /// message does not have to work out which of a document's two encodings
+    /// was in play.
+    #[error("the description could not be emitted as JSON")]
+    Json(#[from] serde_json::Error),
 
     /// The server configuration or transport failed.
     #[cfg(feature = "server")]
