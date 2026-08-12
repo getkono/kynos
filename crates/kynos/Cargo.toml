@@ -149,6 +149,10 @@ required-features = [
   "test-util",
 ]
 
+[[example]]
+name = "tls"
+required-features = ["openapi31", "server", "http1", "tls"]
+
 [features]
 default = [
   "openapi31",
@@ -326,6 +330,10 @@ jiff = { workspace = true, features = [
   "serde",
   "tzdb-bundle-always",
 ] }
+# The TLS example mints its own certificate at startup, so it runs with nothing
+# prepared and nothing committed -- no PEM in the repository to expire, and no
+# reader blocked on generating one first.
+rcgen = { workspace = true }
 rust_decimal = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["serde"] }
 

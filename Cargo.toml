@@ -31,6 +31,7 @@ jiff = { version = "0.2.35", default-features = false }
 multer = "3.1.0"
 percent-encoding = "2.3.2"
 prost = "0.14.4"
+rcgen = "0.14.9"
 proc-macro2 = "1.0.101"
 proptest = "1.11.0"
 quote = "1.0.40"
