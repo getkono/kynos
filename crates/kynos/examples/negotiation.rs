@@ -19,9 +19,15 @@
 //!   lists. There is no way to add an arm at run time.
 //! * **`Representation` is sealed, and still nameable.** The offerable set is
 //!   exactly the codecs Kynos can describe. Both traits are public — they
-//!   appear in `Accept::respond`'s bound, and a bound nobody can write down is
+//!   appear in `Accept::respond_with`'s bound, and a bound nobody can write down is
 //!   a bound nobody can satisfy deliberately — but a private supertrait is what
 //!   stops an outside implementation, rather than the module being shut.
+//!
+//! * **Only the chosen representation is built.** `respond_with` takes closures
+//!   rather than values, so the PDF below is rendered for a client that asked
+//!   for a PDF and for nobody else. Handing `respond` three finished values
+//!   would mean rendering all three and discarding two — work no request asked
+//!   for, and invisible until one of the alternatives is expensive.
 //!
 //! Tuple order is meaningful: it breaks the tie when a client's `Accept` ranks
 //! two alternatives equally. Put the representation you would rather serve
@@ -45,7 +51,7 @@ use kynos::{
 use serde::{Deserialize, Serialize};
 
 /// A monthly report.
-#[derive(Schema, Serialize, Deserialize)]
+#[derive(Clone, Schema, Serialize, Deserialize)]
 struct Report {
     month: String,
     total_cents: u64,
@@ -65,11 +71,27 @@ struct ReportPath {
 /// JSON first: it is what an integration wants, and it wins a tie.
 type ReportFormats = (Json<Report>, Text, Binary<Pdf>);
 
+/// Renders a report as a PDF.
+///
+/// Stands in for something genuinely expensive — a layout engine, a font
+/// cache, a subprocess. It exists so the example is honest about what eager
+/// negotiation would have cost: this would run on every request, including the
+/// ones that asked for JSON.
+fn render_pdf(report: &Report) -> Vec<u8> {
+    let mut pdf = b"%PDF-1.7\n% a real renderer would go here\n".to_vec();
+    pdf.extend_from_slice(format!("% {} {}\n", report.month, report.total_cents).as_bytes());
+    pdf
+}
+
 /// Serves a report as JSON, plain text or a PDF.
 ///
 /// Three arms, one `content` map, and no branch in this function chooses a
-/// media type: `respond` scores the client's ranked preferences against the
-/// tuple's media types and returns the 406 when nothing matches.
+/// media type: `respond_with` scores the client's ranked preferences against
+/// the tuple's media types and returns the 406 when nothing matches.
+///
+/// The closures all borrow `report` rather than one of them owning it, which is
+/// why the source is passed separately: three arms cannot each take the same
+/// value, and a captured one would put that problem in every handler.
 #[kynos::get("/reports/{month}")]
 async fn get_report(
     Path(path): Path<ReportPath>,
@@ -79,9 +101,16 @@ async fn get_report(
         month: path.month,
         total_cents: 1_234_500,
     };
-    let text = format!("{}: {}", report.month, report.total_cents);
 
-    accept.respond((Json(report), Text(text), Binary::new(Vec::<u8>::new())))
+    accept.respond_with(
+        &report,
+        (
+            |report: &Report| Json(report.clone()),
+            |report: &Report| Text(format!("{}: {}", report.month, report.total_cents)),
+            // Not called unless a PDF is what won.
+            |report: &Report| Binary::new(render_pdf(report)),
+        ),
+    )
 }
 
 /// A program generic over what it offers.
