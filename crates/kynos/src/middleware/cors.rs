@@ -10,7 +10,7 @@
 //! [`Cors::document_response_headers`] when the CORS response headers are part
 //! of what you want clients to know about.
 
-use std::borrow::Cow;
+use std::{borrow::Cow, marker::PhantomData};
 
 use crate::{
     http,
@@ -18,19 +18,41 @@ use crate::{
     router::operation::Route,
 };
 
+/// A [`Cors`] that keeps its response headers out of the description.
+///
+/// The default, because CORS headers are a property of the deployment rather
+/// than of the API, and most descriptions are cleaner without them.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Undocumented;
+
+/// A [`Cors`] that declares its response headers.
+///
+/// Reached only through [`Cors::document_response_headers`], which is why the
+/// choice is a type rather than a flag: what an interceptor declares is read
+/// while the router is built, and a `bool` set at run time is not something a
+/// description can be derived from.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Documented;
+
 /// CORS configuration.
+///
+/// `D` records whether the response headers appear in the description. It is
+/// [`Undocumented`] unless [`document_response_headers`](Cors::document_response_headers)
+/// is called, and every other builder leaves it alone.
 #[derive(Clone, Debug, Default)]
-pub struct Cors {
-    _private: (),
+pub struct Cors<D = Undocumented> {
+    _documented: PhantomData<fn() -> D>,
 }
 
-impl Cors {
+impl Cors<Undocumented> {
     /// A configuration permitting nothing, to be widened deliberately.
     #[must_use]
     pub fn new() -> Self {
         todo!()
     }
+}
 
+impl<D> Cors<D> {
     /// Permits these origins.
     #[must_use]
     pub fn allow_origins<I, S>(self, origins: I) -> Self
@@ -108,15 +130,21 @@ impl Cors {
     pub fn allow_credentials(self) -> Self {
         todo!()
     }
+}
 
+impl Cors<Undocumented> {
     /// Also declares the CORS response headers in the description.
+    ///
+    /// Changes the type, because it changes what every covered operation says.
+    /// A `bool` here would be a claim the description is derived from and that
+    /// nothing checks; a type is one the compiler carries.
     #[must_use]
-    pub fn document_response_headers(self) -> Self {
+    pub fn document_response_headers(self) -> Cors<Documented> {
         todo!()
     }
 }
 
-impl<C: Sync + 'static> Interceptor<C> for Cors {
+impl<C: Sync + 'static, D: Send + Sync + 'static> Interceptor<C> for Cors<D> {
     fn contribution(&self, _route: Route<'_>) -> OperationContribution {
         todo!()
     }
