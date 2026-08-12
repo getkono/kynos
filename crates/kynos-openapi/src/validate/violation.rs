@@ -48,17 +48,17 @@ impl std::fmt::Display for Violation {
     }
 }
 
-/// A violation is a location and a severity wrapped around a [`SpecError`], so
-/// what is wrong with the document is its cause and where it is is context.
+/// A violation is a line in a report rather than a link in a chain, so it
+/// carries no cause.
 ///
-/// This is what lets a reporter that walks `source()` reach the specification
-/// failure itself. `Display` already names the location, so the two layers do
-/// not restate each other.
-impl std::error::Error for Violation {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.error)
-    }
-}
+/// A validation run yields a list, and every consumer prints that list —
+/// `Router::validate` hands one back, and `Error::Invalid` renders one. `Display`
+/// is self-contained for that reason, so offering the [`SpecError`] it already
+/// names as a `source()` would make any reporter print the same sentence twice.
+///
+/// The implementation is still worth having: it is what lets a single violation
+/// be boxed, returned through `?`, or downcast back out of a `dyn Error`.
+impl std::error::Error for Violation {}
 
 /// Escapes one map key for use as a JSON Pointer token, per RFC 6901.
 ///

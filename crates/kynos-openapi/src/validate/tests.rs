@@ -546,14 +546,20 @@ fn violation_order_does_not_depend_on_hashing() {
     }
 }
 
-/// A reporter renders a failure by walking `source()`, so a violation that ends
-/// the chain leaves `error at /paths/~1users/get` as the last thing anyone
-/// reads. The location is context; the `SpecError` is the cause.
+/// A violation is printed, not walked: `Router::validate` hands back a list and
+/// `Error::Invalid` renders one, so `Display` has to carry the whole thing.
+/// Offering the `SpecError` it already names as a cause as well would make every
+/// reporter print that sentence twice.
 #[test]
-fn a_violation_names_its_spec_error_as_its_cause() {
+fn a_violation_says_everything_in_one_line() {
     let violation = Violation::error("/paths/~1users/get", SpecError::NoResponses);
 
-    let cause = std::error::Error::source(&violation).expect("a violation has a cause");
+    let rendered = violation.to_string();
 
-    assert_eq!(cause.to_string(), SpecError::NoResponses.to_string());
+    assert!(rendered.contains("/paths/~1users/get"), "{rendered}");
+    assert!(
+        rendered.contains(&SpecError::NoResponses.to_string()),
+        "{rendered}"
+    );
+    assert!(std::error::Error::source(&violation).is_none());
 }
