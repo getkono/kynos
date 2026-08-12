@@ -95,28 +95,36 @@ async fn openapi_json(Inject(description): Inject<Description>) -> Binary<media:
 }
 
 /// Everything about this API that no type can know.
+///
+/// One expression rather than nine assignments to a `mut` binding. `Info` is
+/// ordinary data, so the shape of the value is the shape of the code, and a
+/// field left out is visible as an absence rather than as a line that never
+/// appeared.
 fn describe() -> Info {
-    let mut info = Info::new("Example Users API", "1.4.0");
-    info.summary = Some("Accounts, and what can be done to them".to_owned());
-    info.description = Some(
-        "The first paragraph of each handler's doc comment becomes that \
-         operation's summary, and the rest its description. This field is the \
-         same idea for the API as a whole."
-            .to_owned(),
-    );
-    info.terms_of_service = Some("https://example.com/terms".to_owned());
-    info.contact = Some(Contact {
-        name: Some("API Platform".to_owned()),
-        url: Some("https://example.com/support".to_owned()),
-        email: Some("api@example.com".to_owned()),
-        ..Contact::default()
-    });
-    // One constructor per shape, because `identifier` and `url` are mutually
-    // exclusive and a struct with both fields would let a program say so. An
-    // SPDX expression is machine-readable and a URL is not, which is why this
-    // is the one to reach for.
-    info.license = Some(License::spdx("Apache-2.0", "Apache-2.0"));
-    info
+    Info {
+        summary: Some("Accounts, and what can be done to them".to_owned()),
+        description: Some(
+            "The first paragraph of each handler's doc comment becomes that \
+             operation's summary, and the rest its description. This field is \
+             the same idea for the API as a whole."
+                .to_owned(),
+        ),
+        terms_of_service: Some("https://example.com/terms".to_owned()),
+        contact: Some(Contact {
+            name: Some("API Platform".to_owned()),
+            url: Some("https://example.com/support".to_owned()),
+            email: Some("api@example.com".to_owned()),
+            ..Contact::default()
+        }),
+        // One constructor per shape, because `identifier` and `url` are
+        // mutually exclusive and a struct with both fields would let a program
+        // say so. An SPDX expression is machine-readable and a URL is not,
+        // which is why this is the one to reach for.
+        license: Some(License::spdx("Apache-2.0", "Apache-2.0")),
+        // `title` and `version` are the two the specification requires, so
+        // they come from the constructor rather than from a field here.
+        ..Info::new("Example Users API", "1.4.0")
+    }
 }
 
 /// Where this API is deployed, as a template.
@@ -126,16 +134,18 @@ fn describe() -> Info {
 fn deployment() -> ApiServer {
     ApiServer::new("https://{region}.api.example.com/v1")
         .with_description("Regional production endpoints")
-        .with_variable("region", {
-            let mut region = ServerVariable::new("eu-west-1");
-            region.enumeration = Some(vec![
-                "eu-west-1".to_owned(),
-                "us-east-1".to_owned(),
-                "ap-south-1".to_owned(),
-            ]);
-            region.description = Some("The deployment a client should reach".to_owned());
-            region
-        })
+        .with_variable(
+            "region",
+            ServerVariable {
+                enumeration: Some(vec![
+                    "eu-west-1".to_owned(),
+                    "us-east-1".to_owned(),
+                    "ap-south-1".to_owned(),
+                ]),
+                description: Some("The deployment a client should reach".to_owned()),
+                ..ServerVariable::new("eu-west-1")
+            },
+        )
 }
 
 #[tokio::main]
