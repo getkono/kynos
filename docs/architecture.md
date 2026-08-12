@@ -126,7 +126,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | tower interop, outward | `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
 | tower interop, inward | `tower` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | designed |
 | Document ordering | `indexmap` | [`kynos-openapi`](../crates/kynos-openapi/src/lib.rs) | built |
-| YAML emission | `serde_yaml_ng` | [`kynos-openapi/emit/`](../crates/kynos-openapi/src/emit/) | built |
+| YAML emission | `serde_yaml_ng` | [`kynos-openapi/emit/`](../crates/kynos-openapi/src/emit/), [`error/mod.rs`](../crates/kynos/src/error/mod.rs) | built |
 | Macro parsing | `proc-macro2`, `quote`, `syn` | [`kynos-macros`](../crates/kynos-macros/src/) | built |
 | HTTP/3, QUIC | — | — | out of scope |
 

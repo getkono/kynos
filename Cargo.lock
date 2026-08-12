@@ -780,6 +780,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
+ "serde_yaml_ng",
  "thiserror",
  "tokio",
  "tokio-rustls",

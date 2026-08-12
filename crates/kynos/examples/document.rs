@@ -155,15 +155,11 @@ async fn main() -> kynos::Result<()> {
     println!("{}", document.to_json()?);
 
     // YAML is the same document, not a different one. Worth emitting when the
-    // audience is a human reading a diff rather than a code generator.
-    //
-    // Matched rather than `?`d: `kynos::Error` converts from `serde_json::Error`
-    // and not from the YAML one, so the two emitters are not interchangeable in
-    // a `kynos::Result` function.
-    match document.to_yaml() {
-        Ok(yaml) => println!("{yaml}"),
-        Err(error) => println!("the description could not be emitted as YAML: {error}"),
-    }
+    // audience is a human reading a diff rather than a code generator. It is
+    // `?`d exactly like the JSON above: the two emitters are interchangeable in
+    // a `kynos::Result` function, and the variant each converts into is what
+    // records which one failed.
+    println!("{}", document.to_yaml()?);
 
     // The refusal, demonstrated rather than described. `search` uses `QUERY`,
     // which 3.1 cannot express, so this is an error and not a document with one

@@ -78,6 +78,11 @@ pub enum Error {
     #[error("the description could not be emitted as JSON")]
     Json(#[from] serde_json::Error),
 
+    /// The description could not be emitted as YAML.
+    #[cfg(feature = "yaml")]
+    #[error("the description could not be emitted as YAML")]
+    Yaml(#[from] serde_yaml_ng::Error),
+
     /// The server configuration or transport failed.
     #[cfg(feature = "server")]
     #[error(transparent)]

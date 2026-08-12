@@ -229,7 +229,11 @@ decimal-big = ["decimal", "dep:bigdecimal"]
 trace = ["dep:tracing"]
 
 # --- Document emission -----------------------------------------------------
-yaml = ["kynos-openapi/yaml"]
+# The facade names `serde_yaml_ng` itself, rather than only forwarding, because
+# `Error` converts from the YAML emitter's failure the same way it converts from
+# the JSON one. A passthrough would leave the two emitters unusable in the same
+# `kynos::Result` function.
+yaml = ["dep:serde_yaml_ng", "kynos-openapi/yaml"]
 
 # --- Testing ---------------------------------------------------------------
 test-util = []
@@ -296,6 +300,7 @@ rust_decimal = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_urlencoded = { workspace = true, optional = true }
+serde_yaml_ng = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 tokio-rustls = { workspace = true, optional = true }
