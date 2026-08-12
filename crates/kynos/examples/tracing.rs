@@ -170,11 +170,13 @@ async fn main() -> kynos::Result<()> {
         // What Kynos ships: one span per operation, carrying `method`,
         // `matched_path`, `operation_id`, `status`, `latency` and `request_id`.
         // `record_headers` is an allow-list rather than a deny-list, so a header
-        // carrying a credential cannot reach a log by being forgotten.
+        // carrying a credential cannot reach a log by being forgotten -- which
+        // is why only the correlation identifier this file mounts appears here,
+        // and not every header a request might carry.
         .observe(
             Trace::new()
-                .level(tracing::Level::INFO)
-                .record_headers(&["x-request-id", "x-tenant"]),
+                .level(tracing::Level::DEBUG)
+                .record_headers(&["x-request-id"]),
         )
         // What this application adds. Observers compose: both run, and neither
         // can interfere with the other because neither can touch the exchange.

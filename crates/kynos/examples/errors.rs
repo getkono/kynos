@@ -27,7 +27,7 @@
 //!   turns into dead retry logic.
 //! * **Four of the responses below come from no handler at all.** A fallback
 //!   policy produces the 404 and the 405, `catch_panics` produces the 500, and
-//!   an interceptor produces the 401. Each reaches the description by a
+//!   an interceptor produces the 503. Each reaches the description by a
 //!   different route, and not one of them appears in a signature.
 //!
 //! [`middleware.rs`](middleware.rs) covers contributions properly, and
@@ -46,6 +46,7 @@ use kynos::{
     middleware::{Interceptor, Next, contribution::OperationContribution},
     openapi::{self, StatusPattern},
     prelude::*,
+    response::IntoResponse,
     router::{operation::Route, policy::FallbackPolicy},
     server::Server,
 };
@@ -140,19 +141,25 @@ enum StoreError {
     },
 }
 
-/// Requires a shared secret, and declares the 401 it can answer with.
+/// Refuses everything while the store is being migrated.
 ///
 /// The fourth way a status reaches an operation. Because this can answer before
 /// the handler runs, every operation it covers must document that it can — which
 /// is what the contribution does, and what a `tower::Layer` has no way to say.
-struct RequireSecret;
+///
+/// [`middleware.rs`](middleware.rs) is where interceptors are the subject; this
+/// one exists so that every status this service can answer with is visible in
+/// one file.
+struct MaintenanceWindow {
+    draining: bool,
+}
 
-impl<C: Sync + 'static> Interceptor<C> for RequireSecret {
+impl<C: Sync + 'static> Interceptor<C> for MaintenanceWindow {
     fn contribution(&self, route: Route<'_>) -> OperationContribution {
         let _ = route;
         OperationContribution::none().with_response(
-            StatusPattern::Code(401),
-            openapi::Response::new("the shared secret was absent or wrong"),
+            StatusPattern::Code(503),
+            openapi::Response::new("the store is being migrated"),
         )
     }
 
@@ -163,7 +170,16 @@ impl<C: Sync + 'static> Interceptor<C> for RequireSecret {
         next: Next<'_, C>,
     ) -> http::Response {
         let _ = context;
-        next.run(request).await
+
+        if !self.draining {
+            return next.run(request).await;
+        }
+
+        // `Problem` again, so the status no handler mentions still arrives in
+        // the shape every other error in this service takes.
+        Problem::new(http::StatusCode::SERVICE_UNAVAILABLE)
+            .with_detail("the store is being migrated")
+            .into_response()
     }
 }
 
@@ -216,7 +232,7 @@ fn insert(user: User) -> Result<User, StoreError> {
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
     let router = Router::<()>::new()
-        .intercept(RequireSecret)
+        .intercept(MaintenanceWindow { draining: false })
         // Both are already `Problem`; naming them is what makes it deliberate.
         // A client that meets one error shape everywhere can parse errors once,
         // and the two responses no operation describes are exactly the ones a
@@ -227,7 +243,7 @@ async fn main() -> kynos::Result<()> {
 
     // Every status any of this can answer with is in here, and none of them was
     // written down twice: 404, 409 and 507 from `StoreError`, 400 from the
-    // fallible extractors, 401 from the interceptor, and 500 from the recovery
+    // fallible extractors, 503 from the interceptor, and 500 from the recovery
     // boundary on `list_users`.
     let document = router.openapi()?;
     println!("{}", document.to_json()?);
