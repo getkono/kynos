@@ -245,7 +245,19 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
         todo!()
     }
 
-    /// Produces the OpenAPI description.
+    /// Produces the OpenAPI description, at the lowest version that expresses
+    /// this API without loss.
+    ///
+    /// 3.1 for an API using no 3.2-only construct, and 3.2 for one that does —
+    /// a `QUERY` operation, a streamed response, an `in: querystring`
+    /// parameter. Lowest rather than highest, because a description a consumer
+    /// can read is worth more than one that advertises a version number, and
+    /// nothing is lost by saying 3.1 when 3.1 is enough.
+    ///
+    /// Note that this is *not* decided by the `openapi32` feature. Cargo
+    /// unifies features across a dependency graph, so a crate elsewhere in the
+    /// build enabling it would otherwise bump the version of a document whose
+    /// own API never changed.
     ///
     /// # Errors
     ///
@@ -256,6 +268,12 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     }
 
     /// Produces the description targeting a specific specification version.
+    ///
+    /// Targets, never downgrades: asking for a version that cannot express
+    /// this API is an error listing what blocks it, not a document with the
+    /// offending operations quietly missing. Reach for this when a consumer's
+    /// toolchain pins a version, and let [`openapi`](Router::openapi) decide
+    /// otherwise.
     ///
     /// # Errors
     ///

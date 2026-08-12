@@ -7,7 +7,7 @@
 //! cargo run -p kynos --example document --features openapi32,yaml
 //! ```
 //!
-//! Four things are worth noticing:
+//! Five things are worth noticing:
 //!
 //! * **`info` and `server` are the only things a program has to say.** Every
 //!   `paths` entry, every schema and every response comes from the types. What
@@ -19,11 +19,14 @@
 //!   requirement naming a scheme nobody declared. `openapi` and `build` run the
 //!   same checks and fail; `validate` returns them, warnings included, so a
 //!   test can assert on them.
-//! * **`openapi_as` refuses rather than downgrades.** `search` uses the `QUERY`
-//!   method, which 3.1 has no Path Item field for. Asking for a 3.1 document
-//!   therefore fails, and that is the whole point: a silent downgrade would
-//!   emit a description that omits a real operation, which is worse than no
-//!   description at all.
+//! * **The version follows the API, not the feature flag.** `openapi` emits the
+//!   lowest version that expresses this one without loss — 3.2 here, because
+//!   `search` uses the `QUERY` method. It is not decided by `openapi32` being
+//!   enabled: Cargo unifies features across a dependency graph, so a document's
+//!   version cannot follow a flag some unrelated crate might turn on.
+//! * **`openapi_as` targets rather than downgrades.** Asking for 3.1 fails, and
+//!   that is the whole point: a silent downgrade would emit a description
+//!   omitting a real operation, which is worse than no description at all.
 //! * **Serving the document is an ordinary route.** There is no special hook,
 //!   because there does not need to be one.
 //!
@@ -160,7 +163,8 @@ async fn main() -> kynos::Result<()> {
 
     // The refusal, demonstrated rather than described. `search` uses `QUERY`,
     // which 3.1 cannot express, so this is an error and not a document with one
-    // operation quietly missing.
+    // operation quietly missing -- and the reason `openapi` above chose 3.2
+    // without being asked to.
     match router.openapi_as(SpecVersion::V3_1) {
         Ok(_) => println!("unexpected: 3.1 accepted a QUERY operation"),
         Err(error) => println!("3.1 refused, correctly: {error}"),

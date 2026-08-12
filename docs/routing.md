@@ -128,7 +128,7 @@ nothing there for a caller to reach into.
 | Method | Consumes | Returns | Fails when |
 | --- | --- | --- | --- |
 | `validate(&self)` | nothing | every `Violation`, warnings included | the router cannot be described at all |
-| `openapi(&self)` | nothing | the `Document` | any violation is error-level |
+| `openapi(&self)` | nothing | the `Document`, at the lowest version expressing this API without loss | any violation is error-level |
 | `openapi_as(&self, v)` | nothing | the `Document` at version `v` | as above, or the API uses a construct `v` cannot express |
 | `build(self, context)` | the router | a servable `Service<C>` | any violation is error-level |
 
@@ -138,10 +138,27 @@ differ only in variable name, a security requirement naming a scheme nobody
 declared. `build` runs the same structural checks, so an API that cannot be
 described correctly fails at startup rather than at documentation time.
 
-`openapi_as` exists because a 3.2-only construct is a hard error rather than a
-degradation. A Server-Sent Events response requested as 3.1 has no `itemSchema`
-to describe it with, and Kynos would rather not emit than emit an inaccurate
-stream description.
+### Which version `openapi` emits
+
+The lowest one that expresses the API without loss: 3.1 for an API using no
+3.2-only construct, and 3.2 for one that uses a `QUERY` operation, a streamed
+response or an `in: querystring` parameter. Lowest rather than highest, because
+a description a consumer's toolchain can read is worth more than one
+advertising a version number, and nothing is lost by saying 3.1 when 3.1 is
+enough.
+
+**Not the `openapi32` feature.** Cargo unifies features across a dependency
+graph, so which version a document claims cannot follow a flag any crate in the
+build might turn on — a program whose own API never changed would otherwise
+start emitting `openapi: 3.2.0` because something unrelated enabled it. The
+feature gates which constructs a program can *write*; `openapi` reads which it
+actually *used*.
+
+`openapi_as` targets a version and never degrades to one. A 3.2-only construct
+requested as 3.1 is a hard error listing what blocks it: a Server-Sent Events
+response has no `itemSchema` in 3.1 to describe it with, and Kynos would rather
+not emit at all than emit a description with the stream quietly missing. Reach
+for it when a consumer pins a version, and let `openapi` decide otherwise.
 
 ## Typed URIs
 
