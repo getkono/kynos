@@ -222,6 +222,41 @@ Each row has a `compile_fail` case under
 differs in exactly the property under test; the count is asserted, so a row added
 without a case fails the build.
 
+## `Schema` is not a serde bound
+
+`Schema` names no serde trait, and it should not. The two answer different
+questions and are bounded separately at every use site:
+
+| Half | Bound | Why |
+| --- | --- | --- |
+| what goes on the wire | `Serialize` / `DeserializeOwned` | `Json<T>: FromRequest`, `Json<T>: IntoResponse` |
+| what the document claims | `Schema` | `Json<T>: Describe`, `Json<T>: Responses` |
+
+`#[derive(Schema, Serialize, Deserialize)]` is therefore three answers to three
+questions, not one repeated three times. It is common because most described
+types are JSON bodies that genuinely round-trip both ways — not because the
+derives are redundant.
+
+Coupling them would be a real narrowing, and the examples already show what it
+would break:
+
+- `protobuf.rs` derives `prost::Message` and `Schema` with no serde at all. A
+  described type is not always a serde type.
+- `payloads.rs` derives `Schema` alone for a multipart body, because a multipart
+  payload is decoded part by part rather than through a `Deserializer`.
+- A response-only type would be forced to implement `Deserialize`, and a
+  request-only type `Serialize`, each to satisfy a direction it never travels.
+
+There is also a versioning cost: a serde supertrait would put a specific serde
+major version in a framework trait bound, so a program could not describe a type
+whose serde differed from the framework's.
+
+The two are conjoined at exactly one place —
+[`Representation`](../crates/kynos/src/response/negotiate/representation.rs),
+where a negotiated alternative must both serialize and describe itself — and
+even there the conjunction is written at the impl site rather than pushed into
+the trait.
+
 ## Rules
 
 | # | Rule | Enforced by |
@@ -231,6 +266,7 @@ without a case fails the build.
 | 3 | A scalar crate is named only under `schema/impls/` | the containment greps in [`nfr.md`](nfr.md#dependencies) |
 | 4 | An umbrella feature without a backend does not compile | `compile_error!` in the crate root |
 | 5 | No unconstrained schema is emitted silently | absence of `Schema`, and `Unchecked` for saying so deliberately |
+| 6 | `Schema` names no serde trait | the trait's own declaration, and `protobuf.rs` compiling without serde |
 
 ## Rationale
 
