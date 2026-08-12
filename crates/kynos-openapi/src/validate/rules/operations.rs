@@ -103,21 +103,10 @@ pub(in crate::validate) fn check_operation_content(
                 violations,
             );
         }
-        // A response header used to be checked here. Its shape is one of
-        // `schema` and `content`, and its examples are one of `example` and
-        // `examples`, both by construction, so a header now carries nothing
-        // this function could reject.
-        for (name, link) in &response.links {
-            if let Some(link) = link.as_item() {
-                let set = usize::from(link.operation_ref.is_some())
-                    + usize::from(link.operation_id.is_some());
-                if set != 1 {
-                    violations.push(Violation::error(
-                        format!("{response_location}/links/{name}"),
-                        SpecError::LinkTargetExclusivity,
-                    ));
-                }
-            }
-        }
+        // A response header and a response link used to be checked here. A
+        // header's shape is one of `schema` and `content` and its examples are
+        // one of `example` and `examples`; a link names one of `operationRef`
+        // and `operationId`. All three hold by construction, so neither object
+        // carries anything this function could reject.
     }
 }

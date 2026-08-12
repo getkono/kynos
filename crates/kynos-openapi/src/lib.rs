@@ -62,7 +62,7 @@ pub use crate::{
         extensions::Extensions,
         external_docs::ExternalDocumentation,
         info::{Contact, Info, License},
-        link::Link,
+        link::{Link, LinkTarget},
         parameter::{
             Parameter, ParameterIn, ParameterShape,
             header::{Header, HeaderShape},

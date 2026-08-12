@@ -2,8 +2,12 @@
 //!
 //! Everything checked here is a rule the OpenAPI specification states but that
 //! the type system cannot enforce on its own — uniqueness across a whole
-//! document, correspondence between a path template and its parameters, mutual
-//! exclusions between optional fields.
+//! document, correspondence between a path template and its parameters, names
+//! that must resolve against what the document declares elsewhere.
+//!
+//! Mutual exclusions between fields are deliberately not among them. The model
+//! spells those as types, so a document that violates one can be neither built
+//! nor parsed and never reaches a rule here.
 //!
 //! Kynos runs this when a router is built, so a description that would mislead
 //! a client generator fails at startup rather than being published.

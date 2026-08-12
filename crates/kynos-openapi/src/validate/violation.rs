@@ -178,10 +178,6 @@ pub enum SpecError {
         name: String,
     },
 
-    /// A Link Object did not identify exactly one target operation.
-    #[error("a Link Object must set exactly one of `operationRef` and `operationId`")]
-    LinkTargetExclusivity,
-
     /// An operation declared no responses.
     #[error("an operation must declare at least one response")]
     NoResponses,

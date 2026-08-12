@@ -715,14 +715,21 @@ fn arb_link() -> BoxedStrategy<Link> {
                 description,
                 server,
                 extensions,
-            )| Link {
-                operation_ref,
-                operation_id,
-                parameters,
-                request_body,
-                description,
-                server,
-                extensions,
+            )| {
+                // One target or the other, never both and never neither --
+                // `LinkTarget` has no way to spell the combinations the two
+                // `Option`s could.
+                let mut link = match operation_id {
+                    Some(operation_id) => Link::to_operation(operation_id),
+                    None => Link::to_operation_ref(operation_ref.unwrap_or_default()),
+                };
+
+                link.parameters = parameters;
+                link.request_body = request_body;
+                link.description = description;
+                link.server = server;
+                link.extensions = extensions;
+                link
             },
         )
         .boxed()
