@@ -105,6 +105,10 @@ name = "sse"
 required-features = ["openapi32", "macros", "server", "http1"]
 
 [[example]]
+name = "tracing"
+required-features = ["openapi31", "macros", "server", "http1", "trace"]
+
+[[example]]
 name = "document"
 required-features = [
   "openapi32",
@@ -344,6 +348,10 @@ jiff = { workspace = true, features = [
 # reader blocked on generating one first.
 rcgen = { workspace = true }
 rust_decimal = { workspace = true, features = ["serde"] }
+# Kynos depends on the `tracing` facade and deliberately never on a subscriber,
+# so the tracing example has to install one itself -- otherwise the feature's
+# whole output would be invisible to the reader it exists for.
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 uuid = { workspace = true, features = ["serde"] }
 
 [lints]
