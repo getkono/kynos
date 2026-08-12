@@ -82,8 +82,11 @@ struct Receipt {
 /// without either being written twice.
 #[kynos::post("/samples")]
 async fn ingest(Protobuf(batch): Protobuf<Batch>) -> Protobuf<Receipt> {
-    let _ = batch;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    // `max_items` is a schema constraint, so a batch that broke it never
+    // reached here -- which is why this counts rather than checks.
+    Protobuf(Receipt {
+        stored: u32::try_from(batch.samples.len()).unwrap_or(u32::MAX),
+    })
 }
 
 #[tokio::main]

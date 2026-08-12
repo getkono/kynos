@@ -125,22 +125,32 @@ struct Upload {
 /// carrying neither media type is a documented 415.
 #[kynos::post("/products")]
 async fn create_product(body: OneOf<Json<Product>, Form<ProductForm>>) -> NoContent {
-    let _ = body;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    // Which arm arrived is a `match`, not a media-type string comparison: the
+    // decision was made while decoding, and this is where it lands.
+    match body {
+        OneOf::Left(Json(product)) => println!("json: {}", product.name),
+        OneOf::Right(Form(form)) => println!("form: {}", form.name),
+    }
+
+    NoContent
 }
 
 /// Accepts a plain-text note.
 #[kynos::post("/products/notes")]
 async fn create_note(Text(note): Text) -> NoContent {
-    let _ = note;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    println!("note of {} bytes", note.len());
+    NoContent
 }
 
 /// Accepts an image upload.
 #[kynos::post("/products/images")]
 async fn upload_images(MultipartForm(upload): MultipartForm<Upload>) -> NoContent {
-    let _ = upload;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    println!("upload: {}", upload.name);
+    for image in &upload.images {
+        println!("image of {} bytes", image.bytes.len());
+    }
+
+    NoContent
 }
 
 /// Accepts a raw PNG.
@@ -154,8 +164,8 @@ async fn upload_images(MultipartForm(upload): MultipartForm<Upload>) -> NoConten
 /// with no value: the handler binds the whole thing and calls `into_inner`.
 #[kynos::put("/products/{id}/image")]
 async fn replace_image(Path(path): Path<ProductPath>, body: Binary<Png>) -> NoContent {
-    let _ = (path, body.into_inner());
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    println!("{}: {} bytes of png", path.id, body.into_inner().len());
+    NoContent
 }
 
 /// Accepts a vendor manifest, or a plain-text one.
@@ -167,8 +177,12 @@ async fn replace_image(Path(path): Path<ProductPath>, body: Binary<Png>) -> NoCo
 /// `Text` fixes its media type in its type, which is what makes this provable.
 #[kynos::post("/products/manifests")]
 async fn upload_manifest(body: OneOf<Binary<Manifest>, Text>) -> NoContent {
-    let _ = body;
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    match body {
+        OneOf::Left(manifest) => println!("vendor manifest: {} bytes", manifest.into_inner().len()),
+        OneOf::Right(Text(manifest)) => println!("plain manifest: {} bytes", manifest.len()),
+    }
+
+    NoContent
 }
 
 /// What `/products/{id}/image` captures.

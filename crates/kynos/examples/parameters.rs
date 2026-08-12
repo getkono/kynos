@@ -118,8 +118,27 @@ impl<C: Sync> FromRequestParts<C> for ApiVersion {
     type Rejection = kynos::error::rejection::HeaderRejection;
 
     async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
-        let _ = (parts, context);
-        todo!("the router is still a skeleton; this example exists to typecheck")
+        let _ = context;
+
+        // Absent, non-ASCII and unparseable are one rejection, because the
+        // operation documents one 400 and a client can act on all three the
+        // same way.
+        let invalid = |detail: &str| kynos::error::rejection::HeaderRejection::Invalid {
+            name: "X-Api-Version".to_owned(),
+            detail: detail.to_owned(),
+        };
+
+        let value = parts
+            .headers
+            .get("X-Api-Version")
+            .ok_or_else(|| invalid("the header is required"))?;
+
+        value
+            .to_str()
+            .map_err(|_| invalid("the value is not ASCII"))?
+            .parse()
+            .map(Self)
+            .map_err(|_| invalid("the value is not a version number"))
     }
 }
 
@@ -152,16 +171,13 @@ async fn get_user(
 ) -> Json<User> {
     // `matched` is the `paths` key with its `{}` intact, never the request's
     // own path, which is what makes it a bounded metric label.
-    let _ = (
-        path,
-        page,
-        conditional,
-        preferences,
-        version.0,
-        matched.0,
-        peer.0,
-    );
-    todo!("the router is still a skeleton; this example exists to typecheck")
+    println!("v{} from {} for {}", version.0, peer.0, matched.0);
+    let _ = (page, conditional, preferences);
+
+    Json(User {
+        id: path.id,
+        name: "Ada Lovelace".to_owned(),
+    })
 }
 
 #[tokio::main]
