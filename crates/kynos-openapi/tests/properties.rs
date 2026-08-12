@@ -639,18 +639,29 @@ fn arb_media_type() -> BoxedStrategy<MediaType> {
             |(schema, item_schema, example, examples, encoding, prefix_encoding, extensions)| {
                 #[cfg(not(feature = "openapi32"))]
                 let _ = (item_schema, prefix_encoding);
-                MediaType {
-                    schema,
-                    #[cfg(feature = "openapi32")]
-                    item_schema,
-                    example,
-                    examples,
-                    encoding,
-                    #[cfg(feature = "openapi32")]
-                    prefix_encoding,
-                    #[cfg(feature = "openapi32")]
-                    item_encoding: None,
-                    extensions,
+
+                // One form of example or the other -- `Examples` has no way to
+                // spell the combination the two `Option`s could.
+                let mut media_type = MediaType::default();
+                media_type.schema = schema;
+                #[cfg(feature = "openapi32")]
+                {
+                    media_type.item_schema = item_schema;
+                    media_type.prefix_encoding = prefix_encoding;
+                }
+                media_type.encoding = encoding;
+                media_type.extensions = extensions;
+
+                match example {
+                    Some(value) => media_type.with_example(value),
+                    None => examples
+                        .into_iter()
+                        .fold(media_type, |media_type, (name, example)| match example {
+                            RefOr::Item(example) => media_type.with_named_example(name, example),
+                            RefOr::Ref(reference) => {
+                                media_type.with_named_example_ref(name, reference)
+                            }
+                        }),
                 }
             },
         )

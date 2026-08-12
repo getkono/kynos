@@ -12,9 +12,10 @@ pub(in crate::validate) fn check_media_type(
     content: &MediaType,
     violations: &mut Vec<Violation>,
 ) {
-    if content.example.is_some() && !content.examples.is_empty() {
-        violations.push(Violation::error(location, SpecError::ExampleExclusivity));
-    }
+    // The `example`/`examples` exclusion used to be checked here. A `MediaType`
+    // carries one [`Examples`] holding one form or the other, so a document
+    // setting both cannot reach this function: it fails to deserialize, and
+    // there is no way to build one.
 
     if let Some(schema) = &content.schema {
         if is_unchecked(schema) {

@@ -3,7 +3,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::model::extensions::Extensions;
+use crate::{
+    Map,
+    model::{extensions::Extensions, reference::RefOr},
+};
 
 /// A worked example of a parameter, request body, response body or header.
 ///
@@ -309,6 +312,80 @@ impl From<Example> for RawExample {
             extensions: example.extensions,
         }
     }
+}
+
+/// The examples an object shows its value with, in whichever form it uses.
+///
+/// A Parameter, Header or Media Type Object may carry one inline `example` or a
+/// map of named `examples`, and the specification makes the two mutually
+/// exclusive. An enum rather than two `Option` fields, for the reason
+/// [`SecurityScheme`](crate::model::security::SecurityScheme) is one: an
+/// unusable combination that cannot be spelled needs no rule to reject it.
+///
+/// Note that the singular form is not an [`Example`]: `example` is the value
+/// itself, written inline, while `examples` maps names to Example Objects that
+/// can also carry a summary, a description or an external payload.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Examples {
+    /// One example of the value, written to `example`.
+    Inline(Value),
+
+    /// Named examples, written to `examples`.
+    ///
+    /// Each is an [`Example`] or a reference to one in
+    /// [`Components::examples`](crate::Components::examples).
+    Named(Map<RefOr<Example>>),
+}
+
+/// An object setting both of the mutually exclusive example fields.
+#[derive(Debug)]
+pub(crate) struct ExamplesConflict;
+
+impl std::fmt::Display for ExamplesConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("`example` and `examples` are mutually exclusive")
+    }
+}
+
+/// Folds the wire fields into one form, or says they will not go.
+pub(crate) fn examples_from(
+    example: Option<Value>,
+    examples: Option<Map<RefOr<Example>>>,
+) -> Result<Option<Examples>, ExamplesConflict> {
+    match (example, examples) {
+        (Some(_), Some(_)) => Err(ExamplesConflict),
+        (Some(value), None) => Ok(Some(Examples::Inline(value))),
+        (None, Some(named)) => Ok(Some(Examples::Named(named))),
+        (None, None) => Ok(None),
+    }
+}
+
+/// Splits one form back into the wire fields.
+pub(crate) fn examples_into(
+    examples: Option<Examples>,
+) -> (Option<Value>, Option<Map<RefOr<Example>>>) {
+    match examples {
+        Some(Examples::Inline(value)) => (Some(value), None),
+        Some(Examples::Named(named)) => (None, Some(named)),
+        None => (None, None),
+    }
+}
+
+/// Adds a named example to whatever an object carries already.
+///
+/// An inline example is dropped rather than kept beside the named one: the two
+/// forms exclude each other, so there is no state that holds both.
+pub(crate) fn examples_with_named(
+    examples: Option<Examples>,
+    name: String,
+    example: RefOr<Example>,
+) -> Examples {
+    let mut named = match examples {
+        Some(Examples::Named(named)) => named,
+        Some(Examples::Inline(_)) | None => Map::new(),
+    };
+    named.insert(name, example);
+    Examples::Named(named)
 }
 
 #[cfg(test)]

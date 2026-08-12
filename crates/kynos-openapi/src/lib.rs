@@ -58,7 +58,7 @@ pub use crate::{
         callback::Callback,
         components::{ComponentName, Components},
         document::{Document, SpecVersion},
-        example::Example,
+        example::{Example, ExampleValue, Examples},
         extensions::Extensions,
         external_docs::ExternalDocumentation,
         info::{Contact, Info, License},
