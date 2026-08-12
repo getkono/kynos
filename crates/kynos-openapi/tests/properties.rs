@@ -1219,18 +1219,28 @@ fn arb_contact() -> BoxedStrategy<Contact> {
         .boxed()
 }
 
+/// The three shapes a License Object can take, and no fourth.
+///
+/// A strategy over `(name, Option<identifier>, Option<url>)` would generate a
+/// document that sets both, which `License` has no way to represent — so the
+/// generator enumerates the constructors instead, and the round-trip property
+/// then covers every license that can exist.
 fn arb_license() -> BoxedStrategy<License> {
     (
         arb_text(),
-        arb_opt_text(),
-        arb_opt_text(),
+        prop::option::of(
+            prop::bool::ANY.prop_flat_map(|spdx| arb_text().prop_map(move |link| (spdx, link))),
+        ),
         arb_extensions(EXTENSION_KEYS),
     )
-        .prop_map(|(name, identifier, url, extensions)| License {
-            name,
-            identifier,
-            url,
-            extensions,
+        .prop_map(|(name, link, extensions)| {
+            let mut license = match link {
+                Some((true, identifier)) => License::spdx(name, identifier),
+                Some((false, url)) => License::with_url(name, url),
+                None => License::named(name),
+            };
+            license.extensions = extensions;
+            license
         })
         .boxed()
 }

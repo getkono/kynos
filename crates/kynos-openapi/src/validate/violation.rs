@@ -187,10 +187,6 @@ pub enum SpecError {
         found: usize,
     },
 
-    /// A License Object set both `identifier` and `url`.
-    #[error("`identifier` and `url` are mutually exclusive on a License Object")]
-    LicenseExclusivity,
-
     /// A Link Object did not identify exactly one target operation.
     #[error("a Link Object must set exactly one of `operationRef` and `operationId`")]
     LinkTargetExclusivity,

@@ -52,17 +52,10 @@ impl Validator {
             violations.push(Violation::error("#", SpecError::EmptyDocument));
         }
 
-        if document
-            .info
-            .license
-            .as_ref()
-            .is_some_and(|license| license.identifier.is_some() && license.url.is_some())
-        {
-            violations.push(Violation::error(
-                "#/info/license",
-                SpecError::LicenseExclusivity,
-            ));
-        }
+        // A License Object setting both `identifier` and `url` used to be
+        // checked here. `License` now holds at most one of the two, so a
+        // document carrying both cannot reach this function: it fails to
+        // deserialize, and there is no way to build one.
 
         self.check_servers(document, &mut violations);
         self.check_tags(document, &mut violations);

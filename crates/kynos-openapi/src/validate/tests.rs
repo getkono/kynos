@@ -338,20 +338,6 @@ fn duplicate_tag_names_are_rejected() {
 }
 
 #[test]
-fn a_conflicting_license_is_rejected() {
-    let mut document = document_with(&[]);
-    let mut license = crate::License::spdx("MIT", "MIT");
-    license.url = Some("https://example.com".to_owned());
-    document.info.license = Some(license);
-
-    assert!(
-        errors(&document)
-            .iter()
-            .any(|e| matches!(e, SpecError::LicenseExclusivity))
-    );
-}
-
-#[test]
 fn validate_reports_errors_and_hides_warnings() {
     let item = PathItem::new().with_operation(Method::Get, Operation::new("listUsers"));
     let document = document_with(&[("/users", item)]);

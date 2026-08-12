@@ -108,14 +108,11 @@ fn describe() -> Info {
         email: Some("api@example.com".to_owned()),
         ..Contact::default()
     });
-    // `identifier` and `url` are mutually exclusive: an SPDX expression is
-    // machine-readable and a URL is not, so saying both invites them to
-    // disagree.
-    info.license = Some(License {
-        name: "Apache-2.0".to_owned(),
-        identifier: Some("Apache-2.0".to_owned()),
-        ..License::default()
-    });
+    // One constructor per shape, because `identifier` and `url` are mutually
+    // exclusive and a struct with both fields would let a program say so. An
+    // SPDX expression is machine-readable and a URL is not, which is why this
+    // is the one to reach for.
+    info.license = Some(License::spdx("Apache-2.0", "Apache-2.0"));
     info
 }
 
