@@ -115,13 +115,10 @@ async fn main() -> kynos::Result<()> {
     let server = Server::new(Router::<()>::new().build(())?)
         .bind((Ipv4Addr::UNSPECIFIED, 8443))
         .tls(tls)
-        .http1({
-            // `#[non_exhaustive]`, so it grows without breaking callers --
-            // which also means starting from `default` rather than a literal.
-            let mut http1 = Http1Config::default();
-            http1.keep_alive = true;
-            http1
-        })
+        // `Http1Config` is `#[non_exhaustive]`, so it grows without breaking
+        // callers -- which is why it is built from `default` and a setter rather
+        // than from a struct literal.
+        .http1(Http1Config::default().keep_alive(true))
         // A ceiling on accepted connections, which is the backstop a timeout is
         // not: a slow client holds a slot, and this bounds how many slots there
         // are.
