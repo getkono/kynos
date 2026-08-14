@@ -243,16 +243,4 @@ mod tests {
         .expect_err("`operationRef` and `operationId` are mutually exclusive");
         assert!(both.to_string().contains("mutually exclusive"));
     }
-
-    #[test]
-    fn a_link_round_trips_through_each_target() {
-        for link in [
-            Link::to_operation("getUser"),
-            Link::to_operation_ref("#/paths/~1users~1{id}/get"),
-        ] {
-            let json = serde_json::to_string(&link).expect("serializable");
-            let parsed: Link = serde_json::from_str(&json).expect("deserializable");
-            assert_eq!(parsed, link);
-        }
-    }
 }

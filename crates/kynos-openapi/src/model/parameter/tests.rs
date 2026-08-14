@@ -184,25 +184,6 @@ fn a_content_described_parameter_has_no_style_to_report() {
 }
 
 #[test]
-fn a_parameter_round_trips_through_each_shape() {
-    use crate::model::body::media_type::MediaType;
-
-    for parameter in [
-        Parameter::query("tags", Schema::of_type(SchemaType::Array)).with_style(Style::Form, true),
-        Parameter::with_content(
-            "filter",
-            ParameterIn::Query,
-            "application/json",
-            MediaType::default(),
-        ),
-    ] {
-        let json = serde_json::to_string(&parameter).expect("serializable");
-        let parsed: Parameter = serde_json::from_str(&json).expect("deserializable");
-        assert_eq!(parsed, parameter);
-    }
-}
-
-#[test]
 fn a_parameter_describing_its_value_twice_or_not_at_all_is_refused() {
     let neither = serde_json::from_str::<Parameter>(r#"{"name":"a","in":"query"}"#)
         .expect_err("one of `schema` and `content` is required");

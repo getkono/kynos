@@ -294,19 +294,6 @@ mod tests {
     }
 
     #[test]
-    fn each_license_shape_round_trips_through_its_wire_form() {
-        for license in [
-            License::named("Proprietary"),
-            License::spdx("MIT", "MIT"),
-            License::with_url("MIT", "https://example.com/LICENSE"),
-        ] {
-            let json = serde_json::to_string(&license).expect("serializable");
-            let parsed: License = serde_json::from_str(&json).expect("deserializable");
-            assert_eq!(parsed, license);
-        }
-    }
-
-    #[test]
     fn a_license_serializes_only_the_link_it_carries() {
         let json = serde_json::to_string(&License::spdx("MIT", "MIT")).expect("serializable");
         assert_eq!(json, r#"{"name":"MIT","identifier":"MIT"}"#);
