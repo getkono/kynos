@@ -98,6 +98,10 @@ jobs:
         uses: ./.github/actions/setup
         with:
           cargo-cache-key: features
+      # Ahead of `features:check`, which rewrites manifests in place while it
+      # walks the powerset: a run that shares a job with it must not follow it.
+      - name: Test at baseline features
+        run: mise run test:baseline
       - name: Check every feature combination
         run: mise run features:check
       # Also a check that a build configuration is rejected, so it belongs

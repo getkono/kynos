@@ -40,6 +40,22 @@ run = "cargo clippy --fix --workspace --all-targets --allow-dirty --allow-staged
 description = "Test all workspace targets"
 run = "cargo nextest run --workspace --all-targets --all-features"
 
+[tasks."test:baseline"]
+description = "Test all workspace targets at baseline features"
+# Every other test task passes `--all-features`, and `features:check` passes
+# `--no-dev-deps`, so before this task no test target was ever *built* with an
+# optional feature off -- against 67 `#[cfg]` sites in `kynos-openapi/src`
+# alone. A gate no test build exercises is a gate whose off-state is unknown.
+#
+# Baseline is the default feature set: `kynos-openapi`'s default is `openapi31`
+# and `kynos`'s selects it, so `--no-default-features --features openapi31`
+# would name the same build.
+#
+# The `ui` suite is excluded for the reason `ui:check` exists: trybuild
+# snapshots record the diagnostics of an `--all-features` build, and a trait
+# that is absent here rewords them.
+run = "cargo nextest run --workspace --all-targets -E 'not binary(ui)'"
+
 [tasks."test:doc"]
 description = "Run doc tests, which carry the compile-fail guarantees"
 run = "cargo test --workspace --all-features --doc"
@@ -155,6 +171,7 @@ run = [
   { task = "format:check" },
   { task = "lint" },
   { task = "test" },
+  { task = "test:baseline" },
   { task = "test:doc" },
   { task = "ui:check" },
   { task = "docs:check" },
