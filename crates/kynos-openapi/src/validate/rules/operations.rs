@@ -16,7 +16,7 @@ use crate::{
             parameters::{check_header_map, check_parameter_list},
             paths::check_path_correspondence,
         },
-        violation::{SpecError, Violation},
+        violation::{SpecError, Violation, pointer_token},
     },
 };
 
@@ -86,7 +86,10 @@ pub(in crate::validate) fn check_operation_content(
     if let Some(RefOr::Item(body)) = &operation.request_body {
         for (media_type, content) in &body.content {
             check_media_type(
-                &format!("{location}/requestBody/{media_type}"),
+                &format!(
+                    "{location}/requestBody/content/{}",
+                    pointer_token(media_type)
+                ),
                 content,
                 violations,
             );
@@ -100,7 +103,7 @@ pub(in crate::validate) fn check_operation_content(
         let response_location = format!("{location}/responses/{status}");
         for (media_type, content) in &response.content {
             check_media_type(
-                &format!("{response_location}/content/{media_type}"),
+                &format!("{response_location}/content/{}", pointer_token(media_type)),
                 content,
                 violations,
             );
