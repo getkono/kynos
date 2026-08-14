@@ -103,6 +103,17 @@ copy: it carries the normalized form and the variable list that `build_template`
 recorded while assembling the string, so the property compares the parser against
 something that never consulted it.
 
+A *property* is not the only shape that rule takes. Where the input space is
+finite and small, enumerating it is the stronger statement, because a sweep is
+total where a draw from the same space is a sample of it.
+`wildcards_cover_their_class_and_nothing_else` sweeps all of `100..=599` against
+a transcribed table, and
+`every_arrangement_of_blank_lines_splits_without_losing_a_word` in
+[`route/tests.rs`](../crates/kynos-macros/src/route/tests.rs) sweeps all
+thirty-two arrangements of five lines. Read the Parser row as asking for an
+independent oracle rather than for `proptest` specifically: a generator over a
+space small enough to close is the weaker of the two.
+
 ### Two rules that are not code kinds
 
 **A `todo!()`-bodied item owes its `no_run` doctest and nothing further.**
