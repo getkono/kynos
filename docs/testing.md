@@ -1,8 +1,8 @@
 # Testing
 
-What each kind of test can prove that no other kind can, and where it lives.
-[`nfr.md`](nfr.md) records which guarantees these are asked to enforce; this
-document is about the mechanics.
+What each kind of test can prove that no other kind can, where it lives, and
+which kind a given module owes. [`nfr.md`](nfr.md) records which guarantees
+these are asked to enforce; this document is about the mechanics.
 
 ## The taxonomy
 
@@ -12,7 +12,7 @@ document is about the mechanics.
 | Doctest | the item's own documentation | `mise run test:doc` | that documented code compiles, and that undocumentable code does not | in use |
 | Integration | [`crates/kynos/tests/`](../crates/kynos/tests/) | `cargo nextest` | that the public surface composes as a user would compose it | in use |
 | UI snapshot | `crates/kynos/tests/ui/` | `trybuild` | the exact text of a diagnostic | built |
-| Property | `crates/kynos-openapi/tests/properties.rs` | `proptest` | round-tripping, determinism and totality over generated documents | built |
+| Property | `crates/kynos-openapi/tests/`, over `support/`'s generators | `proptest` | round-tripping, determinism and totality over generated documents | built |
 | Conformance | a harness over a fixture app | `proptest` over live responses | *emitted ⊇ observable* against a running service | not built |
 
 A module becomes a directory once it holds two independently-changing concerns
@@ -23,8 +23,8 @@ That is why unit tests appear at
 [`response/negotiate/tests.rs`](../crates/kynos/src/response/negotiate/tests.rs)
 rather than inline.
 
-Five of the six integration files exist for one reason each;
-`hermeticity.rs` is a different kind of thing and is covered below.
+Each integration file exists for one reason. `hermeticity.rs` and `ui.rs` are
+different kinds of thing and are covered below.
 
 `conformance.rs` is `#[ignore]`d rather than absent: `Router::build` and
 everything below it are `todo!()`, so it panics rather than fails today. An
@@ -35,9 +35,18 @@ file, and removing the attribute is the whole change when the router lands.
 | --- | --- |
 | [`pipeline.rs`](../crates/kynos/tests/pipeline.rs) | an `async fn` is a `Handler`, `routes!` collects it, `Endpoints` accepts it, and mounting reaches the context that supplies its dependencies |
 | [`derives.rs`](../crates/kynos/tests/derives.rs) | every derive expands to a well-formed implementation of the trait it claims |
+| [`errors.rs`](../crates/kynos/tests/errors.rs) | each extractor rejects with the rejection type its signature names |
+| [`reporting.rs`](../crates/kynos/tests/reporting.rs) | every error type a caller can receive is `Error + Send + Sync + 'static` |
 | [`typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) | a route attribute's `relative_uri` percent-encodes its parameters |
+| [`size.rs`](../crates/kynos/tests/size.rs) | a build failure does not inline a `Violation`, and a `Result` costs no more than it |
 | [`conformance.rs`](../crates/kynos/tests/conformance.rs) | that the responses a suite observed match what the document promises, and that every declared response was exercised |
 | [`compile/panic_recovery.rs`](../crates/kynos/tests/compile/panic_recovery.rs) | `catch_panics` refuses to compile under `panic = "abort"` |
+
+`crates/kynos-openapi/tests/` holds four more: `properties.rs` and
+`templates.rs` for the document and path-template properties, `wire.rs` for the
+per-type wire shapes, and its own `size.rs`. `support/` beside them is not a
+target — it is the generator module the property files share, included by
+`#[path]` because an integration binary cannot be depended on.
 
 `panic_recovery.rs` is a `harness = false` test target rather than an ordinary
 one, because [`mise run panic:check`](../mise.toml) asserts that *building* it
@@ -50,6 +59,93 @@ a snapshot records. [`mise run ui:check`](../mise.toml) is its own task and its
 own CI step for that reason — and the exclusion belongs on the coverage command
 rather than on the nextest profile, because a profile-wide filter would remove
 the suite from every job that sets `NEXTEST_PROFILE`.
+
+## The allocation
+
+The taxonomy says what each kind of test proves. This says which kind a module
+owes — and, in the last column, which kinds it does not.
+
+That last column is the one that keeps a suite affordable. Without it,
+"test thoroughly" reads as "test every way you can think of": the same property
+gets asserted three times in three styles, and a module nobody happened to think
+about gets nothing. Both failures are invisible in a coverage number.
+
+Five kinds of code account for the workspace.
+
+| Kind | Recognised by | Owes | Does not owe |
+| --- | --- | --- | --- |
+| Value type | a `Serialize`/`Deserialize` derive, and no logic beyond builders and accessors | the crate's round-trip and determinism properties, reached through a shared generator; and one exact-JSON case fixing its wire shape | per-field tests, accessor tests, a hand-written round-trip |
+| Closed enumeration | an enum or `const` table mirroring a fixed list in the specification | one table test whose closure fails when a variant is added | cases covering some of the variants |
+| Parser | an open input space — a `&str`, arbitrary JSON, a whole document | a property against an independently constructed oracle; and one case per error variant, counted against the source | round-tripping alone |
+| Type-level surface | a trait, a bound, an arity impl, a derive, or a rule that something must not compile | a doctest for the rule, a `.stderr` snapshot for its wording, a witness fn for the bound | running it — above all against a `todo!()` |
+| Runtime I/O | a socket, a timer, a task or a signal | an integration test over a real socket | a mock of the runtime |
+
+A value type owes two things because neither implies the other. A round-trip
+proves that `parse ∘ emit` is the identity, and a misspelled field name satisfies
+that perfectly: nothing in the model sets `deny_unknown_fields`, so `descripton`
+is absorbed by the flattened `Extensions`, written back unchanged, and compares
+equal — while the real `description` stays `None` from end to end. The round-trip
+proves nothing was lost. The exact-JSON case is what holds the shape to the
+specification.
+
+A closed enumeration is checked across the whole set because a sample of it
+reads as the whole set and is not. `the_style_location_table_is_closed` asserted
+five of forty style/location pairs, and `explode_defaults_to_true_only_for_form`
+asserted two of eight — and the six it skipped included `cookie`, which 3.2
+gives the same `explode` default as `form` and which the model answered `false`
+for. The name claimed closedness; the body sampled.
+
+*Independently constructed* is the whole of the parser rule. An oracle derived
+from the parser under test agrees with it by construction, including wherever
+both are wrong. `TemplateCase` in
+[`tests/support/`](../crates/kynos-openapi/tests/support/mod.rs) is the shape to
+copy: it carries the normalized form and the variable list that `build_template`
+recorded while assembling the string, so the property compares the parser against
+something that never consulted it.
+
+### Two rules that are not code kinds
+
+**A `todo!()`-bodied item owes its `no_run` doctest and nothing further.**
+Anything more asserts that `todo!()` panics. This is why `router/`,
+`extract/params/` and most of `middleware/` carry almost no tests — the
+API-skeleton milestone working as designed, not debt. Each `black_box(false)`
+guard marks one body whose obligation begins when it lands.
+
+**Conformance is a system obligation, not a module one.** No allocation above
+substitutes for it, which is why the row stays in the taxonomy while unbuilt.
+When it is built, the parsing half has a corpus waiting: the three active
+references carry several hundred official example documents in fenced blocks —
+66 JSON and 83 YAML in `3.1.2.md` alone — and extracting them is the intended
+source for [`nfr.md`](nfr.md#document-model)'s *emitted documents validate
+against both 3.1 and 3.2 validators*. Most fences hold a single object rather
+than a whole document, so the extractor is a piece of work in its own right.
+
+### Cross-cutting
+
+Three obligations hold whatever the kind.
+
+**Every test target compiles and runs at baseline, not only under
+`--all-features`.** [`mise run test`](../mise.toml) passes `--all-features` and
+`features:check` passes `--no-dev-deps`, so until
+[`mise run test:baseline`](../mise.toml) landed, no test target had ever been
+built under `openapi31` alone — against the hundred-odd `openapi32` `#[cfg]`
+sites in `kynos-openapi/src`. A feature gate no test build exercises is a gate
+whose off-state is unknown, and the suite passing on the first baseline run does
+not retire the obligation: it held by luck rather than by check.
+
+**A gap [`nfr.md`](nfr.md) documents is characterized.** Excluding a known-lossy
+shape from a generator keeps the property honest, but on its own it leaves the
+behaviour unrecorded: closing the gap turns nothing red, and widening it turns
+nothing red either. Each exclusion pairs with a test asserting what happens
+today, named so it reads as a record rather than an endorsement, and each side
+points at the other.
+
+**Exhaustiveness is asserted, not intended.** Wherever a closed set has one case
+apiece, a test counts the set against the cases and fails when the two part
+company. `every_rejected_schema_type_has_a_case` in
+[`tests/ui.rs`](../crates/kynos/tests/ui.rs) was the first; the model's wire
+shapes and `SpecError`'s variants are counted the same way. A reviewer cannot
+see the case that was not written.
 
 ## The pass-control rule
 

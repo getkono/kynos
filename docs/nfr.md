@@ -58,7 +58,8 @@ disabled, or passes trivially and hides the regression it was meant to catch.
 | --- | --- | --- | --- |
 | compatibility | Public API surface is diffed on every change; an addition requires explicit budget approval, a removal fails the build | `cargo-public-api` | `needs-tooling` |
 | compatibility | Every release tag is gated on semantic-version correctness | `cargo-semver-checks` | `needs-tooling` |
-| correctness | The IR round-trips through serialization losslessly | `proptest` over generated IR values | `enforced`, with two exclusions below |
+| correctness | The IR round-trips through serialization losslessly | `proptest` over generated IR values | `enforced`, with two exclusions below, each characterized |
+| correctness | Every model type emits the field names and nesting the specification gives it | One exact-JSON case per type in `tests/wire.rs`, counted against the type list | `enforced` |
 | correctness | Emitted documents validate against both 3.1 and 3.2 validators | CI step over a fixture app covering the full type matrix | `planned` |
 | correctness | Emitted documents are byte-deterministic across runs and platforms | CI comparing repeated generation and cross-OS builds | `planned` |
 | dx | No public item exposes `Pin`, `BoxFuture` or a tokio type | `cargo-public-api` assertion | `needs-tooling` |
@@ -73,15 +74,21 @@ satellite crate.
 Two shapes are excluded from the round-trip property, and both are real gaps
 rather than test convenience:
 
-- **A JSON `null` example does not survive.** Every `Option<Value>` field —
-  `Example::value`, a parameter's `example`, a schema's `const` and `default`,
-  and four others — is `skip_serializing_if = "Option::is_none"`, so
-  `Some(Value::Null)` writes `null` and reads back as `None`. JSON `null` is a
-  legal example and a legal default, so a description that uses one is
-  silently changed. The remedy is a double-`Option` deserializer at each site.
+- **A JSON `null` example does not survive.** The loss is on the way in rather
+  than the way out: `Some(Value::Null)` writes `null` faithfully, and
+  `Option<Value>` then folds that `null` back into `None` when it is read. It
+  costs a parameter's `example`, a schema's `const` and `default`, and the
+  other `Option<Value>` fields alike. JSON `null` is a legal example and a
+  legal default, so a description that uses one is silently changed. The remedy
+  is a double-`Option` deserializer at each site.
 - **A `PathItem` carrying both `$ref` and sibling fields loses the siblings.**
   It reads back as a `RefOr::Ref`. Kynos never emits one, but the type permits
   constructing it, so the model can hold a value it cannot write down.
+
+Each is excluded in `tests/support/` so the property stays honest, and asserted
+in `tests/wire.rs` so the behaviour is on the record. Without the second half an
+exclusion is indistinguishable from an oversight, and closing the gap would turn
+no test red — which is the wrong signal for work that fixes something.
 
 The `dx` row currently holds by construction — the crate has no runtime
 dependency at all, which is deliberate — but nothing prevents that from
@@ -212,6 +219,7 @@ property the second row measures.
 | --- | --- | --- | --- |
 | reliability | The declared MSRV builds | `mise run msrv:check`, dedicated CI job | `enforced` |
 | reliability | Every reachable feature combination compiles | `mise run features:check` (`cargo hack --feature-powerset`) | `enforced` |
+| reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
 | reliability | Tests are hermetic; no shared state, no ordering dependence, no retries | `cargo-nextest` process isolation, `retries = 0`, guarded by `crates/kynos/tests/hermeticity.rs` | `enforced` |
 | reliability | Panic recovery refuses to compile under `panic = "abort"` | `mise run panic:check` | `enforced` |
 | reliability | Commits follow Conventional Commits | `convco`, via git hook and CI | `enforced` |
