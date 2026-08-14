@@ -11,12 +11,12 @@
 //! document, however malformed, makes the checker panic or diverge.
 
 use kynos_openapi::{
-    Callback, Components, Contact, Discriminator, Document, Encoding, Example, Extensions,
-    ExternalDocumentation, Header, HeaderShape, HeaderStyle, Info, License, Link, Map, MediaType,
-    Method, OAuthFlow, OAuthFlows, Operation, Parameter, ParameterIn, ParameterShape, PathItem,
-    PathTemplate, Paths, Ref, RefOr, RequestBody, Response, Responses, Schema, SchemaObject,
-    SecurityRequirement, SecurityScheme, Server, ServerVariable, Severity, SpecError, SpecVersion,
-    Style, Tag, Violation, Xml,
+    Callback, Components, Contact, Discriminator, Document, Encoding, EncodingStyle, Example,
+    Extensions, ExternalDocumentation, Header, HeaderShape, HeaderStyle, Info, License, Link, Map,
+    MediaType, Method, OAuthFlow, OAuthFlows, Operation, Parameter, ParameterIn, ParameterShape,
+    PathItem, PathTemplate, Paths, Ref, RefOr, RequestBody, Response, Responses, Schema,
+    SchemaObject, SecurityRequirement, SecurityScheme, Server, ServerVariable, Severity, SpecError,
+    SpecVersion, Style, Tag, Violation, Xml,
     annotation::{
         NOT_AUTHORITATIVE_ANNOTATION, OPAQUE_OPERATION_ANNOTATION, OPAQUE_ROUTES_ANNOTATION,
     },
@@ -73,6 +73,15 @@ const STYLES: &[Style] = &[
     Style::DeepObject,
     #[cfg(feature = "openapi32")]
     Style::Cookie,
+];
+
+// The query styles, which are the ones an encoding is given. `EncodingStyle`
+// has no way to spell the others, so there is no pool entry for them.
+const ENCODING_STYLES: &[EncodingStyle] = &[
+    EncodingStyle::Form,
+    EncodingStyle::SpaceDelimited,
+    EncodingStyle::PipeDelimited,
+    EncodingStyle::DeepObject,
 ];
 
 const LOCATIONS: &[ParameterIn] = &[
@@ -619,7 +628,7 @@ fn arb_encoding() -> BoxedStrategy<Encoding> {
     (
         arb_opt_text(),
         arb_map(PARAMETER_NAMES, arb_ref_or(arb_header()), 1),
-        prop::option::of(select(STYLES)),
+        prop::option::of(select(ENCODING_STYLES)),
         arb_flag(),
         arb_flag(),
         arb_extensions(EXTENSION_KEYS),

@@ -66,7 +66,7 @@ pub use crate::{
         parameter::{
             Parameter, ParameterIn, ParameterShape,
             header::{Header, HeaderShape},
-            style::{HeaderStyle, Style},
+            style::{EncodingStyle, HeaderStyle, Style},
         },
         paths::{
             Paths, item::PathItem, method::Method, operation::Operation, template::PathTemplate,
