@@ -266,11 +266,20 @@ that triggered them. Bumping the pin and re-recording the snapshots is one
 commit whose diff is reviewed as a diff.
 
 **`on_unimplemented` attributes must land before any snapshot is recorded.**
-Eleven traits already carry `#[diagnostic::on_unimplemented]` —
+Fourteen traits carry `#[diagnostic::on_unimplemented]` —
 `Provides`, `Handler`, `FromRequestParts`, `FromRequest`, `Describe`,
-`RequestContent`, `IntoResponse`, `Responses`, `Schema`, `MapKey` and
-`Alternative`. Each one replaces the compiler's generic "the trait bound is not
-satisfied" with a message naming the fix.
+`RequestContent`, `IntoResponse`, `Responses`, `Schema`, `MapKey`,
+`Alternative`, `ShortCircuit`, `EndpointMeta` and `IntoEndpoints`. Each one
+replaces the compiler's generic "the trait bound is not satisfied" with a
+message naming the fix.
+
+`every_guided_diagnostic_has_a_snapshot` in
+[`tests/ui.rs`](../crates/kynos/tests/ui.rs) maps each to the snapshot that
+records it and counts the pairs against the attributes in the source. Eight of
+the fourteen had none, so more than half of what this requirement names was
+unchecked. The mapping is written out rather than searched for, because half the
+messages deliberately never spell the trait: `Handler`'s says "is not a Kynos
+handler", which is the improvement rather than something to grep for.
 
 Recording snapshots first would pin the generic message as the expected output,
 so adding the attribute a trait needs would then show up as a test failure — and

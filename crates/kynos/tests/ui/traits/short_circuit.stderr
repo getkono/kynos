@@ -1,0 +1,24 @@
+error[E0277]: `NotAResponse` cannot be an interceptor's short circuit
+ --> tests/ui/traits/short_circuit.rs:8:22
+  |
+8 |     short_circuits::<NotAResponse>();
+  |                      ^^^^^^^^^^^^ not a short circuit
+  |
+help: the trait `ShortCircuit` is not implemented for `NotAResponse`
+ --> tests/ui/traits/short_circuit.rs:3:1
+  |
+3 | struct NotAResponse;
+  | ^^^^^^^^^^^^^^^^^^^
+  = note: an interceptor answers with a type that says which statuses it can produce; derive it with `#[derive(kynos::ApiError)]`
+  = note: use `std::convert::Infallible` for an interceptor that always reaches the handler
+  = help: the following other types implement trait `ShortCircuit`:
+            AtCapacity
+            BodySizeExceeded
+            Infallible
+            RateLimited
+            kynos::middleware::limits::TimedOut
+note: required by a bound in `short_circuits`
+ --> tests/ui/traits/short_circuit.rs:5:22
+  |
+5 | fn short_circuits<T: kynos::response::ShortCircuit>() {}
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `short_circuits`

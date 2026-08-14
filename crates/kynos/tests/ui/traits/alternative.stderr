@@ -1,0 +1,19 @@
+error[E0277]: `Text` and `Text` cannot be alternatives
+  --> tests/ui/traits/alternative.rs:11:26
+   |
+11 |     alternatives::<Text, Text>();
+   |                          ^^^^ overlapping alternatives
+   |
+   = help: the trait `Alternative<Text>` is not implemented for `Text`
+   = note: two alternatives must be distinguishable by content type, so `OneOf` cannot hold two bodies that share one — dispatch order would decide which won, and no description can express that
+   = help: `Text` implements trait `Alternative<Rhs>`:
+             Alternative<MultipartForm<T>>
+             Alternative<Protobuf<T>>
+             Alternative<kynos::extract::body::binary::Binary<M>>
+             Alternative<kynos::extract::body::form::Form<T>>
+             Alternative<kynos::prelude::Json<T>>
+note: required by a bound in `alternatives`
+  --> tests/ui/traits/alternative.rs:8:41
+   |
+ 8 | fn alternatives<Rhs: RequestContent, T: Alternative<Rhs>>() {}
+   |                                         ^^^^^^^^^^^^^^^^ required by this bound in `alternatives`

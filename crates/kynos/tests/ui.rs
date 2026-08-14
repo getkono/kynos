@@ -26,6 +26,7 @@ fn ui() {
     cases.compile_fail("tests/ui/macros/*.rs");
     cases.compile_fail("tests/ui/schema/*.rs");
     cases.compile_fail("tests/ui/antipattern/*.rs");
+    cases.compile_fail("tests/ui/traits/*.rs");
     cases.pass("tests/ui/pass/*.rs");
 }
 
@@ -85,4 +86,81 @@ fn compile_fail_cases(directory: PathBuf) -> usize {
         .filter_map(Result::ok)
         .filter(|entry| entry.path().extension().is_some_and(|it| it == "rs"))
         .count()
+}
+
+/// Every trait carrying `#[diagnostic::on_unimplemented]`, against the snapshot
+/// that records what it says.
+///
+/// [`nfr.md`](../../../docs/nfr.md) marks "no diagnostic names an internal
+/// type" enforced by this suite, and eight of the fourteen guided traits had no
+/// snapshot at all: `Handler`, `Describe`, `RequestContent`, `Alternative`,
+/// `MapKey`, `ShortCircuit`, `EndpointMeta` and `IntoEndpoints`. The attribute
+/// is what replaces rustc's generic "the trait bound is not satisfied" with a
+/// message naming the fix, so an unsnapshotted one is a message nobody checks.
+///
+/// An explicit mapping rather than a search for the trait's name, because half
+/// the messages deliberately never spell it: `Handler`'s says "is not a Kynos
+/// handler", which is the improvement being made and not something to grep for.
+#[test]
+fn every_guided_diagnostic_has_a_snapshot() {
+    /// One row per `#[diagnostic::on_unimplemented]` in `crates/kynos/src`.
+    const RECORDED: &[(&str, &str)] = &[
+        ("Alternative", "traits/alternative.stderr"),
+        ("Describe", "traits/describe.stderr"),
+        ("EndpointMeta", "traits/endpoint_meta.stderr"),
+        ("FromRequest", "antipattern/raw_request_extractor.stderr"),
+        (
+            "FromRequestParts",
+            "antipattern/raw_header_map_extractor.stderr",
+        ),
+        ("Handler", "traits/handler.stderr"),
+        ("IntoEndpoints", "traits/into_endpoints.stderr"),
+        ("IntoResponse", "antipattern/bare_status_code.stderr"),
+        ("MapKey", "traits/map_key.stderr"),
+        ("Provides", "antipattern/inject_without_provider.stderr"),
+        ("RequestContent", "traits/request_content.stderr"),
+        ("Responses", "antipattern/problem_as_return_type.stderr"),
+        ("Schema", "schema/serde_json_value.stderr"),
+        ("ShortCircuit", "traits/short_circuit.stderr"),
+    ];
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for (trait_name, snapshot) in RECORDED {
+        let path = root.join("tests/ui").join(snapshot);
+        let recorded = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("`{trait_name}` names {snapshot}, which is not there"));
+        assert!(
+            !recorded.trim().is_empty(),
+            "`{trait_name}`'s snapshot is empty, so it records no diagnostic"
+        );
+    }
+
+    let guided = guided_traits_in_source(&root.join("src"));
+    assert_eq!(
+        guided,
+        RECORDED.len(),
+        "`crates/kynos/src` guides {guided} trait(s) and {} have a snapshot; a diagnostic nobody \
+         snapshotted is a diagnostic nobody checked",
+        RECORDED.len()
+    );
+}
+
+/// The `#[diagnostic::on_unimplemented]` attributes under `directory`.
+fn guided_traits_in_source(directory: &Path) -> usize {
+    let mut found = 0;
+    for entry in fs::read_dir(directory).expect("the crate's own source is readable") {
+        let path = entry.expect("readable entry").path();
+        if path.is_dir() {
+            found += guided_traits_in_source(&path);
+            continue;
+        }
+        if path.extension().is_none_or(|extension| extension != "rs") {
+            continue;
+        }
+        found += fs::read_to_string(&path)
+            .expect("readable source")
+            .matches("#[diagnostic::on_unimplemented")
+            .count();
+    }
+    found
 }
