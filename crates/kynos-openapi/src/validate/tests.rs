@@ -675,13 +675,20 @@ const RAISED_ELSEWHERE: &[&str] = &[
 /// One document per variant, each named by the variant it must raise and the
 /// version to validate it at. Only `EmptyDocument` needs a version other than
 /// the baseline: 3.1 permits a document that declares nothing.
+///
+/// Split by the rule module that raises each group, which is also the order
+/// `Validator::validate` runs them in.
 fn ledger() -> Vec<(&'static str, SpecVersion, Document)> {
-    use crate::model::{
-        parameter::header::Header,
-        schema::Schema,
-        server::{Server, ServerVariable},
-        tag::Tag,
-    };
+    let mut cases = ledger_paths();
+    cases.extend(ledger_parameters());
+    cases.extend(ledger_document());
+    cases.extend(ledger_opacity());
+    cases
+}
+
+/// Cases for the path, template and parameter rules.
+fn ledger_paths() -> Vec<(&'static str, SpecVersion, Document)> {
+    use crate::model::schema::Schema;
 
     let operation = || Operation::new("listUsers").with_responses(ok_responses());
     let get = |operation: Operation| PathItem::new().with_operation(Method::Get, operation);
@@ -739,6 +746,20 @@ fn ledger() -> Vec<(&'static str, SpecVersion, Document)> {
             })),
         )]),
     );
+    cases
+}
+
+/// Cases for the parameter and header rules.
+fn ledger_parameters() -> Vec<(&'static str, SpecVersion, Document)> {
+    use crate::model::{parameter::header::Header, schema::Schema};
+
+    let operation = || Operation::new("listUsers").with_responses(ok_responses());
+    let get = |operation: Operation| PathItem::new().with_operation(Method::Get, operation);
+
+    let mut cases: Vec<(&'static str, SpecVersion, Document)> = Vec::new();
+    let mut push =
+        |name: &'static str, document: Document| cases.push((name, SpecVersion::V3_1, document));
+
     push(
         "DuplicateParameter",
         document_with(&[(
@@ -785,6 +806,24 @@ fn ledger() -> Vec<(&'static str, SpecVersion, Document)> {
         "NoResponses",
         document_with(&[("/users", get(Operation::new("listUsers")))]),
     );
+    cases
+}
+
+/// Cases for the whole-document rules: components, tags, servers, security.
+fn ledger_document() -> Vec<(&'static str, SpecVersion, Document)> {
+    use crate::model::{
+        schema::Schema,
+        server::{Server, ServerVariable},
+        tag::Tag,
+    };
+
+    let operation = || Operation::new("listUsers").with_responses(ok_responses());
+    let get = |operation: Operation| PathItem::new().with_operation(Method::Get, operation);
+
+    let mut cases: Vec<(&'static str, SpecVersion, Document)> = Vec::new();
+    let mut push =
+        |name: &'static str, document: Document| cases.push((name, SpecVersion::V3_1, document));
+
     push("InvalidComponentName", {
         let mut document = document_with(&[("/users", get(operation()))]);
         document
@@ -861,6 +900,21 @@ fn ledger() -> Vec<(&'static str, SpecVersion, Document)> {
             })),
         )]),
     );
+    cases
+}
+
+/// Cases for the opacity rules, which are what make a document's authority
+/// claim checkable rather than asserted.
+fn ledger_opacity() -> Vec<(&'static str, SpecVersion, Document)> {
+    use crate::model::schema::Schema;
+
+    let operation = || Operation::new("listUsers").with_responses(ok_responses());
+    let get = |operation: Operation| PathItem::new().with_operation(Method::Get, operation);
+
+    let mut cases: Vec<(&'static str, SpecVersion, Document)> = Vec::new();
+    let mut push =
+        |name: &'static str, document: Document| cases.push((name, SpecVersion::V3_1, document));
+
     push("UncheckedSchema", {
         let mut unconstrained = Operation::new("ingest").with_responses(ok_responses());
         unconstrained.request_body =
