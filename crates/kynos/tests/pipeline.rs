@@ -266,3 +266,105 @@ fn the_arity_list_ends_where_its_witness_does() {
          an arity added without a witness is one nothing asks to typecheck"
     );
 }
+
+// --- The route attributes ------------------------------------------------
+
+// Nine attributes write a method into `EndpointMeta::METHOD`, and two of them
+// were exercised. `patch`, `head`, `options` and `trace` appeared in no test
+// and no example anywhere in the workspace, and `put` and `delete` only in
+// examples, which are built rather than asserted. Six of the nine could have
+// written any method at all.
+
+#[kynos::put("/things")]
+async fn put_thing() -> NoContent {
+    NoContent
+}
+
+#[kynos::patch("/things")]
+async fn patch_thing() -> NoContent {
+    NoContent
+}
+
+#[kynos::delete("/things")]
+async fn delete_thing() -> NoContent {
+    NoContent
+}
+
+#[kynos::head("/things")]
+async fn head_thing() -> NoContent {
+    NoContent
+}
+
+#[kynos::options("/things")]
+async fn options_thing() -> NoContent {
+    NoContent
+}
+
+#[kynos::trace("/things")]
+async fn trace_thing() -> NoContent {
+    NoContent
+}
+
+/// `QUERY` has no Path Item field before OpenAPI 3.2, so the attribute that
+/// writes it is gated the same way.
+#[cfg(feature = "openapi32")]
+#[kynos::query("/things")]
+async fn query_thing() -> NoContent {
+    NoContent
+}
+
+/// The escape hatch for a method with no attribute of its own, given one that
+/// has: what is under test is that it writes what it was told.
+#[kynos::operation(method = "GET", path = "/things/described")]
+async fn described_thing() -> NoContent {
+    NoContent
+}
+
+#[test]
+fn each_route_attribute_writes_its_own_method() {
+    use kynos::router::endpoint::meta::EndpointMeta;
+
+    // Also handlers, not only carriers of a constant: an attribute that wrote
+    // the right method onto something unmountable would pass the assertions
+    // below and nothing else here would notice.
+    is_handler::<App, _, _>(put_thing);
+    is_handler::<App, _, _>(patch_thing);
+    is_handler::<App, _, _>(delete_thing);
+    is_handler::<App, _, _>(head_thing);
+    is_handler::<App, _, _>(options_thing);
+    is_handler::<App, _, _>(trace_thing);
+    #[cfg(feature = "openapi32")]
+    is_handler::<App, _, _>(query_thing);
+    is_handler::<App, _, _>(described_thing);
+
+    assert_eq!(<health as EndpointMeta>::METHOD, "GET");
+    assert_eq!(<create_user as EndpointMeta>::METHOD, "POST");
+    assert_eq!(<put_thing as EndpointMeta>::METHOD, "PUT");
+    assert_eq!(<patch_thing as EndpointMeta>::METHOD, "PATCH");
+    assert_eq!(<delete_thing as EndpointMeta>::METHOD, "DELETE");
+    assert_eq!(<head_thing as EndpointMeta>::METHOD, "HEAD");
+    assert_eq!(<options_thing as EndpointMeta>::METHOD, "OPTIONS");
+    assert_eq!(<trace_thing as EndpointMeta>::METHOD, "TRACE");
+    #[cfg(feature = "openapi32")]
+    assert_eq!(<query_thing as EndpointMeta>::METHOD, "QUERY");
+    assert_eq!(<described_thing as EndpointMeta>::METHOD, "GET");
+}
+
+/// The attributes, counted against the entry points that declare them.
+///
+/// Under `openapi32`, because `query` is gated there and the full set only
+/// exists in that build -- which is the one `mise run test` uses.
+#[cfg(feature = "openapi32")]
+#[test]
+fn every_route_attribute_has_a_case() {
+    const SOURCE: &str = include_str!("../../kynos-macros/src/lib.rs");
+    /// The eight ungated attributes, `query`, and `operation`.
+    const WITNESSED: usize = 10;
+
+    let declared = SOURCE.matches("#[proc_macro_attribute]").count();
+    assert_eq!(
+        declared, WITNESSED,
+        "`kynos-macros` declares {declared} attribute(s) and {WITNESSED} are witnessed; an \
+         attribute added without a case is one whose method nothing reads"
+    );
+}
