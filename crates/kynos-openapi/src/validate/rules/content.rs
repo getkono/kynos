@@ -4,7 +4,10 @@
 use crate::{
     annotation::UNCHECKED_SCHEMA_ANNOTATION,
     model::{body::media_type::MediaType, schema::Schema},
-    validate::violation::{SpecError, Violation},
+    validate::{
+        rules::parameters::check_header_map,
+        violation::{SpecError, Violation, pointer_token},
+    },
 };
 
 pub(in crate::validate) fn check_media_type(
@@ -21,6 +24,14 @@ pub(in crate::validate) fn check_media_type(
         if is_unchecked(schema) {
             violations.push(Violation::warning(location, SpecError::UncheckedSchema));
         }
+    }
+
+    for (property, encoding) in &content.encoding {
+        check_header_map(
+            &format!("{location}/encoding/{}/headers", pointer_token(property)),
+            &encoding.headers,
+            violations,
+        );
     }
 }
 

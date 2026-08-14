@@ -11,8 +11,10 @@ use crate::{
     validate::{
         Validator,
         rules::{
-            content::check_media_type, extensions::check_extensions,
-            parameters::check_parameter_list, paths::check_path_correspondence,
+            content::check_media_type,
+            extensions::check_extensions,
+            parameters::{check_header_map, check_parameter_list},
+            paths::check_path_correspondence,
         },
         violation::{SpecError, Violation},
     },
@@ -103,10 +105,16 @@ pub(in crate::validate) fn check_operation_content(
                 violations,
             );
         }
-        // A response header and a response link used to be checked here. A
-        // header's shape is one of `schema` and `content` and its examples are
-        // one of `example` and `examples`; a link names one of `operationRef`
-        // and `operationId`. All three hold by construction, so neither object
-        // carries anything this function could reject.
+        // A response link used to be checked here too: it names one of
+        // `operationRef` and `operationId`, which holds by construction, so a
+        // link carries nothing this function could reject. The same is true of
+        // a header's shape, its examples and its style -- but not of its name,
+        // which is a key in the map rather than anything the value's type can
+        // reach, so that one is still a rule.
+        check_header_map(
+            &format!("{response_location}/headers"),
+            &response.headers,
+            violations,
+        );
     }
 }

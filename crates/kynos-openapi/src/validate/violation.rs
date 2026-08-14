@@ -178,6 +178,18 @@ pub enum SpecError {
         name: String,
     },
 
+    /// A header was declared in a `headers` map despite being ignored.
+    ///
+    /// The parameter-side counterpart is [`SpecError::IgnoredHeaderParameter`].
+    #[error(
+        "`{name}` must not be declared here: the media type is stated separately, so \
+         the specification says such a definition is ignored"
+    )]
+    IgnoredHeader {
+        /// The offending header name.
+        name: String,
+    },
+
     /// An operation declared no responses.
     #[error("an operation must declare at least one response")]
     NoResponses,

@@ -33,6 +33,25 @@ pub fn is_ignored_header_parameter(name: &str) -> bool {
         .any(|ignored| ignored.eq_ignore_ascii_case(name))
 }
 
+/// Header names that must not be declared in a `headers` map.
+///
+/// A response states its media type in `content` and an encoded part states
+/// its own in `contentType`, so the specification says a `Content-Type` entry
+/// in either map shall be ignored. The list is shorter than
+/// [`IGNORED_HEADER_PARAMETERS`] because `Accept` and `Authorization` are
+/// request headers, which neither map describes.
+pub const IGNORED_HEADERS: &[&str] = &["Content-Type"];
+
+/// Whether `name` is a header that must not be declared in a `headers` map.
+///
+/// Comparison is ASCII case-insensitive, as it is for a parameter.
+#[must_use]
+pub fn is_ignored_header(name: &str) -> bool {
+    IGNORED_HEADERS
+        .iter()
+        .any(|ignored| ignored.eq_ignore_ascii_case(name))
+}
+
 /// A response header, or a header used by an [`Encoding`](crate::Encoding).
 ///
 /// This is a Parameter Object without `name` and `in`, and without
