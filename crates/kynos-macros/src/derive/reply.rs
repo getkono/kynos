@@ -37,7 +37,7 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
     }
 }
 
-fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     // The point of the derive is a *closed set* of responses, one variant per
     // status. A struct has one shape and therefore one status, which the
     // status types in `response::status` already express.

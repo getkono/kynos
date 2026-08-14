@@ -57,7 +57,7 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
     }
 }
 
-fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     // A scheme is a marker: it names a way of authenticating and carries no
     // data. What carries data is the credential, named by the associated type.
     unit_struct(input, "SecurityScheme", "names a way of authenticating")?;

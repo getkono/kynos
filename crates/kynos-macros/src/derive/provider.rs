@@ -14,7 +14,7 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
     }
 }
 
-fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "Provider")?;
 
     let provided: Vec<&Field> = fields

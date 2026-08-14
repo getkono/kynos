@@ -18,3 +18,6 @@ pub(crate) mod reply;
 pub(crate) mod schema;
 pub(crate) mod security_scheme;
 pub(crate) mod tag;
+
+#[cfg(test)]
+mod tests;
