@@ -219,6 +219,14 @@ the deliverable, and running them would only prove that `todo!()` panics.
 `black_box` rather than `if false`, because the compiler must not be permitted
 to prove the branch dead and skip the analysis that is the entire point.
 
+**A guarded body holds no assertions.** Nothing inside one runs, so an
+`assert_eq!` there is a claim the suite appears to make and never checks — the
+one failure mode a reader cannot see, since the test passes and reads as though
+it verified something. `routes_collects_every_operation` and
+`endpoint_collections_compose` each asserted a count this way. Put the calls
+that must typecheck inside the guard and nothing else; the assertion belongs
+with the body when it lands.
+
 The guard is temporary by design. Every use of it is a marker for a body that
 has not been implemented, and each should disappear as its body lands rather
 than being kept as a testing idiom.

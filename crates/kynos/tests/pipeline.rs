@@ -83,18 +83,23 @@ fn compile_only(check: impl FnOnce()) {
 /// That is what keeps each operation's own interceptors visible at the mount
 /// site: an `Endpoints` cannot say what its members carry, so building one here
 /// would erase the stacks `Router::mount` has to check.
+///
+/// Nothing is asserted about what lands in the sink, because nothing here runs:
+/// `into_endpoints` reaches `EndpointBuilder`, whose body is `todo!()`. The
+/// count belongs with that body when it lands.
 #[test]
 fn routes_collects_every_operation() {
     compile_only(|| {
         let mut sink = Endpoints::<App>::new();
         kynos::routes![health, get_user, create_user].into_endpoints(&mut sink);
-        assert_eq!(sink.len(), 3);
-        assert!(!sink.is_empty());
     });
 }
 
 /// A tuple, an array and a vector are all one `mount` argument, which is what
 /// lets a router be assembled from several `routes!` calls.
+///
+/// Each form is spelled out because each resolves to a different
+/// implementation, and typechecking is the whole of what is claimed here.
 #[test]
 fn endpoint_collections_compose() {
     compile_only(|| {
@@ -104,18 +109,15 @@ fn endpoint_collections_compose() {
             kynos::routes![get_user, create_user],
         )
             .into_endpoints(&mut sink);
-        assert_eq!(sink.len(), 3);
 
         // An array or a vector still composes, but only over one element
         // type -- and two `routes!` calls naming different handlers are
         // different tuples. Nesting them in a tuple is the general form.
         let mut sink = Endpoints::<App>::new();
         [kynos::routes![health], kynos::routes![health]].into_endpoints(&mut sink);
-        assert_eq!(sink.len(), 2);
 
         let mut sink = Endpoints::<App>::new();
         vec![kynos::routes![health]].into_endpoints(&mut sink);
-        assert_eq!(sink.len(), 1);
     });
 }
 
