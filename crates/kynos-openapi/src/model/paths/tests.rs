@@ -218,15 +218,74 @@ fn operations_are_addressed_by_method() {
 }
 
 #[test]
-fn methods_render_in_wire_case() {
-    assert_eq!(Method::Get.to_string(), "GET");
-    assert_eq!(Method::Delete.as_wire_str(), "DELETE");
+fn the_method_list_is_complete() {
+    assert_eq!(Method::all(), EVERY_METHOD);
+}
+
+/// Every method with a dedicated Path Item field, transcribed rather than read
+/// from [`Method::all`], so a variant dropped from that list fails here.
+const EVERY_METHOD: &[Method] = &[
+    Method::Get,
+    Method::Put,
+    Method::Post,
+    Method::Delete,
+    Method::Options,
+    Method::Head,
+    Method::Patch,
+    Method::Trace,
+    #[cfg(feature = "openapi32")]
+    Method::Query,
+];
+
+/// A method's two spellings: the HTTP token, and the Path Item field name.
+///
+/// They are different mappings — `as_wire_str` is uppercase and serde's
+/// `rename_all = "lowercase"` is not — and each was previously checked against
+/// itself. `from_wire_str` was compared to `as_wire_str`, which is one table
+/// read twice, so two spellings swapped between variants agreed in both
+/// directions; and of the nine field names, one was pinned.
+///
+/// An exhaustive match, so a method added to [`Method`] stops this file
+/// compiling until both of its spellings are written down.
+fn spellings(method: Method) -> (&'static str, &'static str) {
+    match method {
+        Method::Get => ("GET", "get"),
+        Method::Put => ("PUT", "put"),
+        Method::Post => ("POST", "post"),
+        Method::Delete => ("DELETE", "delete"),
+        Method::Options => ("OPTIONS", "options"),
+        Method::Head => ("HEAD", "head"),
+        Method::Patch => ("PATCH", "patch"),
+        Method::Trace => ("TRACE", "trace"),
+        #[cfg(feature = "openapi32")]
+        Method::Query => ("QUERY", "query"),
+    }
 }
 
 #[test]
-fn every_method_round_trips_through_its_wire_spelling() {
-    for method in Method::all() {
-        assert_eq!(Method::from_wire_str(method.as_wire_str()), Some(*method));
+fn every_method_carries_the_two_spellings_the_specification_gives_it() {
+    for &method in EVERY_METHOD {
+        let (token, field) = spellings(method);
+
+        assert_eq!(method.as_wire_str(), token, "{method:?} as a method token");
+        assert_eq!(method.to_string(), token, "{method:?} rendered");
+        assert_eq!(
+            Method::from_wire_str(token),
+            Some(method),
+            "{token} parsed back"
+        );
+
+        assert_eq!(
+            serde_json::to_value(method).expect("a method is representable"),
+            serde_json::Value::String(field.to_owned()),
+            "{method:?} as a Path Item field"
+        );
+        assert_eq!(
+            serde_json::from_value::<Method>(serde_json::Value::String(field.to_owned()))
+                .expect("a field name the model writes, the model reads"),
+            method,
+            "{field} read back"
+        );
     }
 }
 
