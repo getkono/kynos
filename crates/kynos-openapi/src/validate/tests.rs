@@ -1014,3 +1014,45 @@ fn every_variant_has_a_case() {
         raised.len()
     );
 }
+
+/// A media type name is a map key that always holds a `/`, and it lives under
+/// `content`, which the Request Body Object requires.
+///
+/// Both halves are about the same thing: the location has to be a pointer a
+/// caller can resolve to the offending object. `violation_locations_escape_their_path_keys`
+/// covers the path key; nothing covered the media type, which is the other key
+/// on the way down and the only one guaranteed to contain a separator.
+#[test]
+fn violation_locations_name_the_media_type_they_came_from() {
+    use crate::model::body::{RequestBody, media_type::MediaType};
+
+    let item = PathItem::new().with_operation(
+        Method::Post,
+        Operation::new("createOrder")
+            .with_request_body(RequestBody::new(
+                "application/json",
+                // Unconstrained, so `check_media_type` reports it and the
+                // location it reports is the thing under test.
+                MediaType::new(Schema::any()),
+            ))
+            .with_responses(Responses::new().with(
+                200,
+                Response::with_content("ok", "application/json", MediaType::new(Schema::any())),
+            )),
+    );
+    let found = violations(&document_with(&[("/orders", item)]));
+    let located: Vec<&str> = found
+        .iter()
+        .filter(|violation| matches!(violation.error, SpecError::UncheckedSchema))
+        .map(|violation| violation.location.as_str())
+        .collect();
+
+    assert!(
+        located.contains(&"#/paths/~1orders/post/requestBody/content/application~1json"),
+        "a request body's media type: {located:?}"
+    );
+    assert!(
+        located.contains(&"#/paths/~1orders/post/responses/200/content/application~1json"),
+        "a response's media type: {located:?}"
+    );
+}
