@@ -114,6 +114,13 @@ thirty-two arrangements of five lines. Read the Parser row as asking for an
 independent oracle rather than for `proptest` specifically: a generator over a
 space small enough to close is the weaker of the two.
 
+An attribute grammar is not a parser in this sense. `RouteArgs::parse` reads
+four keys and `wire_name` resolves three sources in precedence order: the input
+space is the key set rather than the token stream, and generating over it
+re-derives the match arms it was meant to check. Such a grammar owes what a
+closed enumeration owes — one case per diagnostic, counted against the source —
+with the wording left to a `.stderr` snapshot, where a reader sees it rendered.
+
 ### Two rules that are not code kinds
 
 **A `todo!()`-bodied item owes its `no_run` doctest and nothing further.**

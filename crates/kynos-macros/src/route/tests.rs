@@ -1,4 +1,4 @@
-use quote::{ToTokens, quote};
+use quote::ToTokens;
 
 use crate::route::{args::RouteArgs, attrs::split_doc, uri::endpoint_uri_impl};
 
@@ -173,31 +173,177 @@ fn endpoint_uri_rejects_a_template_without_a_path_extractor() {
     assert!(error.to_string().contains("no Path<T> extractor"));
 }
 
-#[test]
-fn catch_panics_is_a_bare_route_option() {
-    let args =
-        RouteArgs::parse(quote!(path = "/health", catch_panics)).expect("valid route arguments");
+/// The arguments a route attribute accepts, and what it says when they are
+/// wrong.
+///
+/// A closed key set rather than an open input space: four keys, each read once.
+/// So the obligation here is one case per diagnostic, counted against the
+/// source, and a sweep of the orders they may arrive in -- not a generator,
+/// which would re-derive the match arms it was meant to check.
+mod arguments {
+    use proc_macro2::TokenStream as TokenStream2;
+    use quote::quote;
 
-    assert!(args.catch_panics);
-}
+    use super::RouteArgs;
 
-/// `method` belongs to `#[kynos::operation]` alone. The shared parser must
-/// keep rejecting it, so that `#[kynos::get("/x", method = "POST")]` cannot
-/// serve one method while the description names another.
-#[test]
-fn a_per_method_attribute_rejects_a_method_argument() {
-    let Err(error) = RouteArgs::parse(quote!(path = "/health", method = "POST")) else {
-        panic!("a per-method attribute must not accept `method`")
-    };
+    /// One row per `syn::Error::new` site in `args.rs`.
+    ///
+    /// Each row is the input that reaches its site and a fragment of what it
+    /// says. The fragment identifies *which* diagnostic fired, not its wording:
+    /// the exact text is `trybuild`'s to hold, in
+    /// `crates/kynos/tests/ui/macros/`, where a reader sees it rendered.
+    fn cases() -> Vec<(&'static str, TokenStream2, &'static str)> {
+        vec![
+            (
+                "a bare word that is not `catch_panics`",
+                quote!(path = "/health", nonsense),
+                "expected a path string literal",
+            ),
+            (
+                "a second tag, which would silently discard the first",
+                quote!(path = "/health", tag = Users, tag = Admin),
+                "already names a tag",
+            ),
+            (
+                "an argument no attribute reads",
+                quote!(path = "/health", nonsense = "x"),
+                "unknown route argument",
+            ),
+            (
+                "a list where a value belongs",
+                quote!(path = "/health", tag(Users)),
+                "expected `name = value`, not a list",
+            ),
+            (
+                "no path at all",
+                quote!(operation_id = "getHealth"),
+                "needs a path",
+            ),
+            (
+                "a path that is not a string",
+                quote!(path = 7),
+                "expected a string literal",
+            ),
+            (
+                "a tag that is not a path expression",
+                quote!(path = "/health", tag = "Users"),
+                "expected the name of a type deriving `Tag`",
+            ),
+            (
+                "a tag naming more than one segment",
+                quote!(path = "/health", tag = tags::Users),
+                "expected the name of a type deriving `Tag`",
+            ),
+        ]
+    }
 
-    assert!(error.to_string().contains("unknown route argument"));
-}
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        for (description, tokens, expected) in cases() {
+            let Err(error) = RouteArgs::parse(tokens) else {
+                panic!("{description} must be rejected");
+            };
+            let reported = error.to_string();
+            assert!(
+                reported.contains(expected),
+                "{description}: expected a diagnostic containing {expected:?}, got {reported:?}"
+            );
+        }
+    }
 
-#[test]
-fn an_unknown_route_argument_is_still_rejected() {
-    let Err(error) = RouteArgs::parse(quote!(path = "/health", nonsense = "x")) else {
-        panic!("an argument no attribute reads must not be silently ignored")
-    };
+    /// A count, not a mapping.
+    ///
+    /// It catches the drift that happens -- a rule added without a case -- and
+    /// not a case rewritten to reach a site another already covers. Two sites
+    /// share a message (`expect_ident` refuses a non-path and a multi-segment
+    /// path in the same words), so the rows are what distinguish them.
+    #[test]
+    fn every_route_argument_diagnostic_has_a_case() {
+        const SOURCE: &str = include_str!("args.rs");
 
-    assert!(error.to_string().contains("unknown route argument"));
+        let sites = SOURCE.matches("syn::Error::new(").count();
+        assert_eq!(
+            cases().len(),
+            sites,
+            "`args.rs` raises {sites} diagnostic(s) and {} have a case; an argument rule added \
+             without one is a rule that can stop firing silently",
+            cases().len()
+        );
+    }
+
+    /// `method` belongs to `#[kynos::operation]` alone. The shared parser must
+    /// keep rejecting it, so that `#[kynos::get("/x", method = "POST")]` cannot
+    /// serve one method while the description names another.
+    #[test]
+    fn a_per_method_attribute_rejects_a_method_argument() {
+        let Err(error) = RouteArgs::parse(quote!(path = "/health", method = "POST")) else {
+            panic!("a per-method attribute must not accept `method`")
+        };
+
+        assert!(error.to_string().contains("unknown route argument"));
+    }
+
+    #[test]
+    fn catch_panics_is_a_bare_route_option() {
+        let args = RouteArgs::parse(quote!(path = "/health", catch_panics))
+            .expect("valid route arguments");
+
+        assert!(args.catch_panics);
+    }
+
+    /// The arguments are read in a loop, so the order they arrive in must not
+    /// change what is read. Swept over every permutation of the four rather
+    /// than shown in one, because an order-dependent read is exactly the defect
+    /// a single example cannot see.
+    #[test]
+    fn the_arguments_parse_alike_in_every_order() {
+        let pieces: [TokenStream2; 4] = [
+            quote!(path = "/health"),
+            quote!(operation_id = "getHealth"),
+            quote!(tag = Users),
+            quote!(catch_panics),
+        ];
+
+        for order in permutations(&[0, 1, 2, 3]) {
+            let tokens = order
+                .iter()
+                .map(|index| pieces[*index].clone())
+                .reduce(|left, right| quote!(#left, #right))
+                .expect("four pieces");
+
+            let args = RouteArgs::parse(tokens).unwrap_or_else(|error| {
+                panic!("order {order:?} must parse, got {error}");
+            });
+
+            assert_eq!(args.path.value(), "/health", "order {order:?}");
+            assert_eq!(
+                args.operation_id.map(|id| id.value()).as_deref(),
+                Some("getHealth"),
+                "order {order:?}"
+            );
+            assert_eq!(
+                args.tag.map(|tag| tag.to_string()).as_deref(),
+                Some("Users"),
+                "order {order:?}"
+            );
+            assert!(args.catch_panics, "order {order:?}");
+        }
+    }
+
+    /// Every ordering of `items`, by repeated removal.
+    fn permutations(items: &[usize]) -> Vec<Vec<usize>> {
+        if items.len() <= 1 {
+            return vec![items.to_vec()];
+        }
+        let mut orders = Vec::new();
+        for (index, item) in items.iter().enumerate() {
+            let mut rest = items.to_vec();
+            rest.remove(index);
+            for mut tail in permutations(&rest) {
+                tail.insert(0, *item);
+                orders.push(tail);
+            }
+        }
+        orders
+    }
 }
