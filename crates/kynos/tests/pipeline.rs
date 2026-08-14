@@ -161,3 +161,108 @@ fn a_route_tag_reaches_the_endpoint_metadata() {
     assert_eq!(<tagged_list as EndpointMeta>::TAGS, ["Users"]);
     assert!(<health as EndpointMeta>::TAGS.is_empty());
 }
+
+// --- The arity list ------------------------------------------------------
+
+// `Handler` is implemented by a macro run once per arity, twice each: one
+// implementation where the last argument consumes the body, one where every
+// argument reads only the head. Thirty-three implementations in all, and
+// `an_async_fn_is_a_handler` reaches three of them.
+//
+// A macro list is not a thing a reader checks by eye, and the arity that
+// breaks when one is dropped is the last one. So the bounds are witnessed:
+// nothing in between can be missing while both ends are present, because they
+// are all written by the same expansion.
+
+/// One argument, reading the head. The first entry in the list.
+async fn one_part(a1: Inject<Pool>) -> NoContent {
+    let _ = a1;
+    NoContent
+}
+
+/// One argument, consuming the body.
+async fn one_body(body: Json<User>) -> NoContent {
+    let _ = body;
+    NoContent
+}
+
+/// Sixteen arguments, reading the head. The last entry in the list.
+#[allow(clippy::too_many_arguments)]
+async fn sixteen_parts(
+    a1: Inject<Pool>,
+    a2: Inject<Pool>,
+    a3: Inject<Pool>,
+    a4: Inject<Pool>,
+    a5: Inject<Pool>,
+    a6: Inject<Pool>,
+    a7: Inject<Pool>,
+    a8: Inject<Pool>,
+    a9: Inject<Pool>,
+    a10: Inject<Pool>,
+    a11: Inject<Pool>,
+    a12: Inject<Pool>,
+    a13: Inject<Pool>,
+    a14: Inject<Pool>,
+    a15: Inject<Pool>,
+    a16: Inject<Pool>,
+) -> NoContent {
+    let _ = (
+        a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16,
+    );
+    NoContent
+}
+
+/// Sixteen arguments, the last consuming the body.
+#[allow(clippy::too_many_arguments)]
+async fn sixteen_with_body(
+    a1: Inject<Pool>,
+    a2: Inject<Pool>,
+    a3: Inject<Pool>,
+    a4: Inject<Pool>,
+    a5: Inject<Pool>,
+    a6: Inject<Pool>,
+    a7: Inject<Pool>,
+    a8: Inject<Pool>,
+    a9: Inject<Pool>,
+    a10: Inject<Pool>,
+    a11: Inject<Pool>,
+    a12: Inject<Pool>,
+    a13: Inject<Pool>,
+    a14: Inject<Pool>,
+    a15: Inject<Pool>,
+    body: Json<User>,
+) -> NoContent {
+    let _ = (
+        a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, body,
+    );
+    NoContent
+}
+
+#[test]
+fn both_ends_of_the_arity_list_are_handlers() {
+    // Zero takes neither marker: there is nothing to tell apart.
+    is_handler::<App, _, _>(health);
+
+    is_handler::<App, _, _>(one_part);
+    is_handler::<App, _, _>(one_body);
+    is_handler::<App, _, _>(sixteen_parts);
+    is_handler::<App, _, _>(sixteen_with_body);
+}
+
+/// The witnessed top arity, counted against the list that produces it.
+///
+/// Witnessing both ends says nothing about where the list ends, so this is what
+/// notices the list growing: extend it to twenty and the top witness above is
+/// no longer the top.
+#[test]
+fn the_arity_list_ends_where_its_witness_does() {
+    const SOURCE: &str = include_str!("../src/handler/impls.rs");
+    const WITNESSED: usize = 16;
+
+    let arities = SOURCE.matches("impl_handler!(").count();
+    assert_eq!(
+        arities, WITNESSED,
+        "`impls.rs` implements {arities} arities and the top one witnessed is {WITNESSED}; \
+         an arity added without a witness is one nothing asks to typecheck"
+    );
+}
