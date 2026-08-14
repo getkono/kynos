@@ -112,8 +112,16 @@ impl Style {
     }
 
     /// Whether `explode` defaults to `true` for this style.
+    ///
+    /// The two styles that pair a name with each value default to exploding;
+    /// every other style defaults to `false`.
     #[must_use]
     pub fn default_explode(self) -> bool {
-        self == Self::Form
+        match self {
+            Self::Form => true,
+            #[cfg(feature = "openapi32")]
+            Self::Cookie => true,
+            _ => false,
+        }
     }
 }
