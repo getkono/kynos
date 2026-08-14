@@ -221,6 +221,75 @@ fn styles_are_checked_against_the_parameter_location() {
 }
 
 #[test]
+fn a_response_header_named_content_type_is_reported() {
+    use crate::model::parameter::header::Header;
+
+    // The specification says a response header named `Content-Type` shall be
+    // ignored, which makes declaring one a silent lie the same way an ignored
+    // header parameter is.
+    let response = Response::new("ok").with_header(
+        "Content-Type",
+        Header::new(Schema::of_type(SchemaType::String)),
+    );
+
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("listUsers").with_responses(Responses::new().with(200, response)),
+    );
+
+    let found = errors(&document_with(&[("/users", item)]));
+    assert_eq!(
+        found.len(),
+        1,
+        "a `Content-Type` response header should be reported exactly once, got {found:?}"
+    );
+    assert!(
+        found[0].to_string().contains("Content-Type"),
+        "the violation should name the header, got: {}",
+        found[0]
+    );
+}
+
+#[test]
+fn an_encoding_header_named_content_type_is_reported() {
+    use crate::model::{
+        body::{RequestBody, encoding::Encoding, media_type::MediaType},
+        parameter::header::Header,
+    };
+
+    // The same rule reaches an encoding's headers, and header names are
+    // case-insensitive, so the spelling must not decide whether it is caught.
+    let encoding = Encoding::new("text/plain").with_header(
+        "content-type",
+        Header::new(Schema::of_type(SchemaType::String)),
+    );
+
+    let body = RequestBody::new(
+        "multipart/form-data",
+        MediaType::new(Schema::of_type(SchemaType::Object)).with_encoding("part", encoding),
+    );
+
+    let item = PathItem::new().with_operation(
+        Method::Post,
+        Operation::new("upload")
+            .with_request_body(body)
+            .with_responses(ok_responses()),
+    );
+
+    let found = errors(&document_with(&[("/uploads", item)]));
+    assert_eq!(
+        found.len(),
+        1,
+        "a `content-type` encoding header should be reported exactly once, got {found:?}"
+    );
+    assert!(
+        found[0].to_string().contains("content-type"),
+        "the violation should name the header, got: {}",
+        found[0]
+    );
+}
+
+#[test]
 fn an_operation_must_declare_a_response() {
     let item = PathItem::new().with_operation(Method::Get, Operation::new("listUsers"));
     let found = errors(&document_with(&[("/users", item)]));
