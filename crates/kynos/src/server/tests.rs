@@ -866,3 +866,108 @@ fn request_http1(address: std::net::SocketAddr) -> String {
         .expect("response reads");
     response
 }
+
+/// Every configuration `validate_protocol_config` refuses.
+///
+/// Six branches, none of them reached before. A limit that stops being checked
+/// is one hyper is handed instead -- where a zero window stalls a connection
+/// and an oversized send buffer does not fit the protocol field it is written
+/// to. The branch is the whole value of the function, so each gets a case.
+///
+/// Gated on both protocols because the function takes one argument per enabled
+/// protocol; the feature matrix builds combinations with only one, and there
+/// the signature is a different one.
+#[cfg(all(feature = "http1", feature = "http2"))]
+mod protocol_configuration {
+    use std::time::Duration;
+
+    use crate::server::{
+        error::ServerError,
+        protocol::{
+            Http1Config, Http2Config, Http2FlowControl, Http2KeepAlive, validate_protocol_config,
+        },
+    };
+
+    fn refused(http1: Http1Config, http2: Http2Config) -> String {
+        match validate_protocol_config(http1, http2) {
+            Err(ServerError::InvalidConfiguration(reason)) => reason.to_owned(),
+            Err(other) => panic!("expected an invalid configuration, got {other}"),
+            Ok(()) => panic!("this configuration must be refused"),
+        }
+    }
+
+    /// One row per branch: what was set, and what it must be told.
+    fn cases() -> Vec<(&'static str, Http1Config, Http2Config, &'static str)> {
+        vec![
+            (
+                "no room for a single header",
+                Http1Config::default().max_headers(0),
+                Http2Config::default(),
+                "HTTP/1 max_headers must be non-zero",
+            ),
+            (
+                "a read buffer under the floor",
+                Http1Config::default().max_buffer_size(8_191),
+                Http2Config::default(),
+                "HTTP/1 max_buffer_size must be at least 8192",
+            ),
+            (
+                "a header read timeout that expires at once",
+                Http1Config::default().header_read_timeout(Some(Duration::ZERO)),
+                Http2Config::default(),
+                "HTTP/1 header_read_timeout must be non-zero when enabled",
+            ),
+            (
+                "a send buffer larger than the field that carries it",
+                Http1Config::default(),
+                Http2Config::default().max_send_buffer_size(u32::MAX as usize + 1),
+                "HTTP/2 limits must be non-zero and fit their protocol fields",
+            ),
+            (
+                "a fixed flow-control window that admits nothing",
+                Http1Config::default(),
+                Http2Config::default().flow_control(Http2FlowControl::Fixed {
+                    initial_stream_window_size: 0,
+                    initial_connection_window_size: 1024,
+                }),
+                "HTTP/2 fixed flow-control windows must be non-zero",
+            ),
+            (
+                "a keep-alive that never waits",
+                Http1Config::default(),
+                Http2Config::default().keep_alive(Some(Http2KeepAlive {
+                    interval: Duration::ZERO,
+                    timeout: Duration::from_secs(5),
+                })),
+                "HTTP/2 keep-alive durations must be non-zero",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_case_is_refused_for_the_reason_it_names() {
+        for (description, http1, http2, expected) in cases() {
+            assert_eq!(refused(http1, http2), expected, "{description}");
+        }
+    }
+
+    #[test]
+    fn the_defaults_are_accepted() {
+        validate_protocol_config(Http1Config::default(), Http2Config::default())
+            .expect("the defaults Kynos ships must be a configuration it accepts");
+    }
+
+    /// A count, so a limit added without a case fails the build.
+    #[test]
+    fn every_refusal_has_a_case() {
+        const SOURCE: &str = include_str!("protocol.rs");
+
+        let branches = SOURCE.matches("ServerError::InvalidConfiguration(").count();
+        assert_eq!(
+            cases().len(),
+            branches,
+            "`protocol.rs` refuses {branches} configuration(s) and {} have a case",
+            cases().len()
+        );
+    }
+}
