@@ -10,11 +10,15 @@
 //! [`every_wire_type_has_a_case`] counts them against the source so a type
 //! added without one fails the build.
 
+// `every_keyword` pins sixty keys in one `json!`, and the macro recurses once
+// per key.
+#![recursion_limit = "256"]
+
 use std::collections::BTreeSet;
 
 use kynos_openapi::{
     Callback, ComponentName, Components, Contact, Discriminator, Document, Encoding, EncodingStyle,
-    Example, Extensions, ExternalDocumentation, Header, HeaderStyle, Info, License, Link,
+    Example, Extensions, ExternalDocumentation, Header, HeaderStyle, Info, License, Link, Map,
     MediaType, Method, OAuthFlow, OAuthFlows, Operation, Parameter, ParameterIn, PathItem,
     PathTemplate, Paths, Ref, RefOr, RequestBody, Response, Responses, Schema, SchemaObject,
     SecurityRequirement, SecurityScheme, Server, ServerVariable, SpecVersion, Style, Tag, Xml,
@@ -119,14 +123,12 @@ fn schema_cases() -> Vec<Case> {
         // `Schema` is untagged over a bool and an object, so the boolean form
         // has to emit a bare `true` rather than a wrapper.
         case("Schema", &Schema::any(), json!(true)),
-        case(
-            "SchemaObject",
-            &SchemaObject {
-                max_length: Some(64),
-                ..SchemaObject::default()
-            },
-            json!({ "maxLength": 64 }),
-        ),
+        // Every keyword at once rather than a representative one. See
+        // [`every_keyword`] for why one is not enough.
+        {
+            let (object, expected) = every_keyword();
+            case("SchemaObject", &object, expected)
+        },
         case("SchemaType", &SchemaType::Integer, json!("integer")),
         // Untagged again: one type is a string, several are an array. This is
         // how 3.1 spells nullability, and why `nullable` is never emitted.
@@ -555,4 +557,202 @@ fn a_path_item_with_a_ref_and_siblings_loses_its_siblings() {
         "the item read back as a reference, not as itself"
     );
     assert_ne!(parsed, original, "so the operation did not survive");
+}
+
+// --- Every schema keyword ------------------------------------------------
+
+/// A `SchemaObject` with every keyword set, beside the exact JSON it emits.
+///
+/// `SchemaObject` carries sixty keywords and the case in `schema_cases`
+/// pins one of them. The other fifty-nine were spelled by a `serde(rename)`
+/// nothing read: `unknown_keywords` is `#[serde(flatten)]`, so a misspelled
+/// rename is written under the wrong key, read back into the flattened map,
+/// and compares equal through the round-trip property. The keyword simply
+/// stops existing, and every test in the crate still passes.
+///
+/// Each value is distinguishable from its neighbours so that two renames
+/// swapped between adjacent fields do not cancel out.
+fn every_keyword() -> (SchemaObject, Value) {
+    (every_keyword_set(), every_keyword_emitted())
+}
+
+/// The value half of [`every_keyword`].
+#[expect(
+    deprecated,
+    reason = "`example` is superseded by `examples` and still emits, so its spelling is still \
+              part of the wire shape; a deprecated keyword nobody pins is one that can be \
+              renamed silently"
+)]
+fn every_keyword_set() -> SchemaObject {
+    let one = || [("Node".to_owned(), Schema::any())].into_iter().collect();
+
+    SchemaObject {
+        schema_dialect: Some("https://json-schema.org/draft/2020-12/schema".to_owned()),
+        id: Some("https://example.com/order.json".to_owned()),
+        reference: Some("#/components/schemas/Order".to_owned()),
+        anchor: Some("order".to_owned()),
+        dynamic_ref: Some("#node".to_owned()),
+        dynamic_anchor: Some("node".to_owned()),
+        comment: Some("not part of the description".to_owned()),
+        defs: one(),
+        all_of: Some(vec![Schema::any()]),
+        any_of: Some(vec![Schema::any(), Schema::never()]),
+        one_of: Some(vec![Schema::never()]),
+        not: Some(Box::new(Schema::never())),
+        if_schema: Some(Box::new(Schema::any())),
+        then_schema: Some(Box::new(Schema::never())),
+        else_schema: Some(Box::new(Schema::any())),
+        dependent_schemas: one(),
+        prefix_items: Some(vec![Schema::never()]),
+        items: Some(Box::new(Schema::any())),
+        contains: Some(Box::new(Schema::never())),
+        properties: one(),
+        pattern_properties: one(),
+        additional_properties: Some(Box::new(Schema::never())),
+        property_names: Some(Box::new(Schema::any())),
+        unevaluated_items: Some(Box::new(Schema::never())),
+        unevaluated_properties: Some(Box::new(Schema::any())),
+        ty: Some(TypeSet::One(SchemaType::Object)),
+        const_value: Some(json!("fixed")),
+        enumeration: Some(vec![json!("a"), json!("b")]),
+        multiple_of: Some(2.5),
+        maximum: Some(10.5),
+        exclusive_maximum: Some(11.5),
+        minimum: Some(1.5),
+        exclusive_minimum: Some(0.5),
+        max_length: Some(64),
+        min_length: Some(1),
+        pattern: Some("^order-".to_owned()),
+        max_items: Some(9),
+        min_items: Some(2),
+        unique_items: Some(true),
+        max_contains: Some(4),
+        min_contains: Some(3),
+        max_properties: Some(6),
+        min_properties: Some(5),
+        required: Some(vec!["id".to_owned()]),
+        dependent_required: [("id".to_owned(), vec!["revision".to_owned()])]
+            .into_iter()
+            .collect(),
+        format: Some("uuid".to_owned()),
+        content_encoding: Some("base64".to_owned()),
+        content_media_type: Some("application/json".to_owned()),
+        content_schema: Some(Box::new(Schema::any())),
+        title: Some("Order".to_owned()),
+        description: Some("A placed order.".to_owned()),
+        default: Some(json!({ "id": "none" })),
+        deprecated: Some(true),
+        read_only: Some(true),
+        write_only: Some(false),
+        examples: Some(vec![json!("order-1")]),
+        discriminator: Some(Discriminator::new("petType")),
+        xml: Some(Xml {
+            name: Some("order".to_owned()),
+            ..Xml::default()
+        }),
+        external_docs: Some(ExternalDocumentation::new("https://example.com/docs")),
+        example: Some(json!("order-0")),
+        // Left empty on purpose: it is `#[serde(flatten)]`, so anything here
+        // would emit keys that are not keywords and the count below would stop
+        // meaning what it says.
+        unknown_keywords: Map::default(),
+    }
+}
+
+/// The JSON half of [`every_keyword`].
+fn every_keyword_emitted() -> Value {
+    json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://example.com/order.json",
+        "$ref": "#/components/schemas/Order",
+        "$anchor": "order",
+        "$dynamicRef": "#node",
+        "$dynamicAnchor": "node",
+        "$comment": "not part of the description",
+        "$defs": { "Node": true },
+        "allOf": [true],
+        "anyOf": [true, false],
+        "oneOf": [false],
+        "not": false,
+        "if": true,
+        "then": false,
+        "else": true,
+        "dependentSchemas": { "Node": true },
+        "prefixItems": [false],
+        "items": true,
+        "contains": false,
+        "properties": { "Node": true },
+        "patternProperties": { "Node": true },
+        "additionalProperties": false,
+        "propertyNames": true,
+        "unevaluatedItems": false,
+        "unevaluatedProperties": true,
+        "type": "object",
+        "const": "fixed",
+        "enum": ["a", "b"],
+        "multipleOf": 2.5,
+        "maximum": 10.5,
+        "exclusiveMaximum": 11.5,
+        "minimum": 1.5,
+        "exclusiveMinimum": 0.5,
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^order-",
+        "maxItems": 9,
+        "minItems": 2,
+        "uniqueItems": true,
+        "maxContains": 4,
+        "minContains": 3,
+        "maxProperties": 6,
+        "minProperties": 5,
+        "required": ["id"],
+        "dependentRequired": { "id": ["revision"] },
+        "format": "uuid",
+        "contentEncoding": "base64",
+        "contentMediaType": "application/json",
+        "contentSchema": true,
+        "title": "Order",
+        "description": "A placed order.",
+        "default": { "id": "none" },
+        "deprecated": true,
+        "readOnly": true,
+        "writeOnly": false,
+        "examples": ["order-1"],
+        "discriminator": { "propertyName": "petType" },
+        "xml": { "name": "order" },
+        "externalDocs": { "url": "https://example.com/docs" },
+        "example": "order-0",
+    })
+}
+
+/// The pinned keys, counted against the fields the struct declares.
+///
+/// Without this, a keyword added to `SchemaObject` is a keyword with no pinned
+/// spelling — which is the state this test was written to end.
+#[test]
+fn every_schema_keyword_has_a_pinned_spelling() {
+    const SOURCE: &str = include_str!("../src/model/schema/object.rs");
+
+    let body = SOURCE
+        .split_once("pub struct SchemaObject {")
+        .expect("the struct is declared in this file")
+        .1;
+    // One `pub` field per keyword, less the flattened catch-all, which is not
+    // a keyword and emits no key of its own.
+    let declared = body
+        .lines()
+        .filter(|line| line.trim_start().starts_with("pub "))
+        .count()
+        - 1;
+
+    let (_, expected) = every_keyword();
+    let pinned = expected.as_object().expect("a JSON object").len();
+
+    assert_eq!(
+        pinned, declared,
+        "`SchemaObject` declares {declared} keyword(s) and {pinned} have a pinned spelling; a \
+         keyword added without one is written under whatever name its rename says, absorbed by \
+         the flattened `unknown_keywords` on the way back, and round-trips perfectly while \
+         meaning nothing"
+    );
 }
