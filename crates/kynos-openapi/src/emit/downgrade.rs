@@ -84,7 +84,10 @@ fn collect_operation_blockers(location: &str, operation: &Operation, blockers: &
     if let Some(RefOr::Item(body)) = &operation.request_body {
         for (media_type, content) in &body.content {
             collect_media_type_blockers(
-                &format!("{location}/requestBody/content/{media_type}"),
+                &format!(
+                    "{location}/requestBody/content/{}",
+                    pointer_token(media_type)
+                ),
                 content,
                 blockers,
             );
@@ -100,7 +103,10 @@ fn collect_operation_blockers(location: &str, operation: &Operation, blockers: &
         }
         for (media_type, content) in &response.content {
             collect_media_type_blockers(
-                &format!("{location}/responses/{status}/content/{media_type}"),
+                &format!(
+                    "{location}/responses/{status}/content/{}",
+                    pointer_token(media_type)
+                ),
                 content,
                 blockers,
             );
