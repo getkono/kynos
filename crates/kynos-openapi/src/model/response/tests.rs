@@ -20,12 +20,59 @@ fn only_the_five_documented_wildcards_are_accepted() {
     assert!("600".parse::<StatusPattern>().is_err());
 }
 
+/// Each wildcard and the class it covers.
+///
+/// An exhaustive match, so a wildcard added to [`StatusPattern`] stops this
+/// file compiling until its range is written down. `Code` is excluded because
+/// it is not a class -- it is checked separately below.
+fn covered_class(pattern: StatusPattern) -> Option<std::ops::RangeInclusive<u16>> {
+    match pattern {
+        StatusPattern::Informational => Some(100..=199),
+        StatusPattern::Success => Some(200..=299),
+        StatusPattern::Redirection => Some(300..=399),
+        StatusPattern::ClientError => Some(400..=499),
+        StatusPattern::ServerError => Some(500..=599),
+        StatusPattern::Code(_) => None,
+    }
+}
+
 #[test]
-fn wildcards_cover_their_class() {
-    assert!(StatusPattern::ClientError.matches(404));
-    assert!(!StatusPattern::ClientError.matches(500));
-    assert!(StatusPattern::Code(404).matches(404));
-    assert!(!StatusPattern::Code(404).matches(400));
+fn wildcards_cover_their_class_and_nothing_else() {
+    const WILDCARDS: &[StatusPattern] = &[
+        StatusPattern::Informational,
+        StatusPattern::Success,
+        StatusPattern::Redirection,
+        StatusPattern::ClientError,
+        StatusPattern::ServerError,
+    ];
+
+    for &pattern in WILDCARDS {
+        let class = covered_class(pattern).expect("a wildcard covers a class");
+        // Every status a response can carry, against every wildcard: the
+        // boundaries are where an off-by-one would hide.
+        for code in 100..=599u16 {
+            assert_eq!(
+                pattern.matches(code),
+                class.contains(&code),
+                "{pattern:?} against {code}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_exact_code_matches_only_itself() {
+    for code in [200u16, 404, 500] {
+        let pattern = StatusPattern::Code(code);
+        assert!(covered_class(pattern).is_none());
+        for other in 100..=599u16 {
+            assert_eq!(
+                pattern.matches(other),
+                other == code,
+                "{code} against {other}"
+            );
+        }
+    }
 }
 
 #[test]
