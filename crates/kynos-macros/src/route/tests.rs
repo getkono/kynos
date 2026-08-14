@@ -1,5 +1,3 @@
-use quote::ToTokens;
-
 use crate::route::{args::RouteArgs, attrs::split_doc, uri::endpoint_uri_impl};
 
 fn lines(input: &[&str]) -> Vec<String> {
@@ -149,28 +147,249 @@ mod doc_comments {
     }
 }
 
-#[test]
-fn endpoint_uri_uses_the_exact_extracted_parameter_types() {
-    let function: syn::ItemFn = syn::parse_quote! {
-        async fn report(Path(path): Path<ReportPath>, Query(query): Query<ReportQuery>) {}
-    };
-    let expansion = endpoint_uri_impl(&function, "/reports/{name}", &["name".to_owned()])
-        .expect("valid endpoint")
-        .into_token_stream()
-        .to_string();
+/// The typed `relative_uri` constructor emitted beside each handler.
+///
+/// Which parameters it takes and which builder it calls are decided by whether
+/// the handler extracts `Path<T>`, `Query<T>`, both or neither. Four arms, so
+/// four cases: the arms differ from one another and nothing else covers them.
+mod typed_uri {
+    use quote::ToTokens;
+    use syn::ItemFn;
 
-    assert!(expansion.contains("pub fn relative_uri (path : ReportPath , query : ReportQuery ,)"));
-}
+    use super::endpoint_uri_impl;
 
-#[test]
-fn endpoint_uri_rejects_a_template_without_a_path_extractor() {
-    let function: syn::ItemFn = syn::parse_quote! {
-        async fn report() {}
-    };
-    let error = endpoint_uri_impl(&function, "/reports/{name}", &["name".to_owned()])
-        .expect_err("missing Path<T> must fail");
+    /// What the emitter decided, read back out of the expansion.
+    #[derive(Debug, PartialEq, Eq)]
+    struct Emission {
+        /// Each parameter as `name: Type`.
+        parameters: Vec<String>,
+        /// The `__private::uri` builder the body calls.
+        builder: String,
+        /// Whether a `const` assertion pinning the parameter names came with it.
+        checks_names: bool,
+    }
 
-    assert!(error.to_string().contains("no Path<T> extractor"));
+    /// Parses the expansion rather than matching its text.
+    ///
+    /// `quote` decides the spacing, so a `contains` over the stringified tokens
+    /// breaks whenever the emitter is reformatted and passes whenever a wrong
+    /// expansion happens to contain the fragment. Reading the parsed signature
+    /// asks what the emitter actually decided.
+    fn emitted(function: &ItemFn, path: &str, variables: &[&str]) -> Emission {
+        let variables: Vec<String> = variables.iter().map(|name| (*name).to_owned()).collect();
+        let tokens = endpoint_uri_impl(function, path, &variables).expect("a valid endpoint");
+        let file: syn::File = syn::parse2(tokens).expect("the expansion parses as items");
+
+        let block = file
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Impl(block) => Some(block),
+                _ => None,
+            })
+            .expect("an inherent impl");
+        let constructor = block
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::ImplItem::Fn(function) => Some(function),
+                _ => None,
+            })
+            .expect("a `relative_uri` constructor");
+
+        assert_eq!(constructor.sig.ident, "relative_uri");
+
+        let parameters = constructor
+            .sig
+            .inputs
+            .iter()
+            .map(|input| {
+                let syn::FnArg::Typed(argument) = input else {
+                    panic!("`relative_uri` is an associated function, not a method")
+                };
+                format!(
+                    "{}: {}",
+                    argument.pat.to_token_stream(),
+                    argument.ty.to_token_stream()
+                )
+            })
+            .collect();
+
+        let [syn::Stmt::Expr(syn::Expr::Call(call), None)] = &constructor.block.stmts[..] else {
+            panic!("`relative_uri` is one call")
+        };
+        let syn::Expr::Path(callee) = call.func.as_ref() else {
+            panic!("the call names a path")
+        };
+
+        Emission {
+            parameters,
+            builder: callee
+                .path
+                .segments
+                .last()
+                .expect("a builder name")
+                .ident
+                .to_string(),
+            checks_names: file
+                .items
+                .iter()
+                .any(|item| matches!(item, syn::Item::Const(_))),
+        }
+    }
+
+    #[test]
+    fn a_route_without_parameters_takes_none() {
+        let function: ItemFn = syn::parse_quote! {
+            async fn report() {}
+        };
+
+        assert_eq!(
+            emitted(&function, "/reports", &[]),
+            Emission {
+                parameters: vec![],
+                builder: "endpoint_uri".to_owned(),
+                // Nothing to check: no `Path<T>` means no names to line up.
+                checks_names: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_route_with_path_variables_takes_the_extracted_path_type() {
+        let function: ItemFn = syn::parse_quote! {
+            async fn report(Path(path): Path<ReportPath>) {}
+        };
+
+        assert_eq!(
+            emitted(&function, "/reports/{name}", &["name"]),
+            Emission {
+                parameters: vec!["path: ReportPath".to_owned()],
+                builder: "endpoint_uri_with_path".to_owned(),
+                checks_names: true,
+            }
+        );
+    }
+
+    #[test]
+    fn a_route_with_a_query_extractor_takes_the_extracted_query_type() {
+        let function: ItemFn = syn::parse_quote! {
+            async fn report(Query(query): Query<ReportQuery>) {}
+        };
+
+        assert_eq!(
+            emitted(&function, "/reports", &[]),
+            Emission {
+                parameters: vec!["query: ReportQuery".to_owned()],
+                builder: "endpoint_uri_with_query".to_owned(),
+                checks_names: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_route_extracting_both_takes_both_in_that_order() {
+        let function: ItemFn = syn::parse_quote! {
+            async fn report(Path(path): Path<ReportPath>, Query(query): Query<ReportQuery>) {}
+        };
+
+        assert_eq!(
+            emitted(&function, "/reports/{name}", &["name"]),
+            Emission {
+                parameters: vec![
+                    "path: ReportPath".to_owned(),
+                    "query: ReportQuery".to_owned(),
+                ],
+                builder: "endpoint_uri_with_path_and_query".to_owned(),
+                checks_names: true,
+            }
+        );
+    }
+
+    /// One row per `syn::Error::new` site in `uri.rs`, counted below.
+    fn cases() -> Vec<(
+        &'static str,
+        ItemFn,
+        &'static str,
+        &'static [&'static str],
+        &'static str,
+    )> {
+        vec![
+            (
+                "a Path<T> extractor on a route with no variables",
+                syn::parse_quote!(
+                    async fn report(Path(path): Path<ReportPath>) {}
+                ),
+                "/reports",
+                &[],
+                "no path variables",
+            ),
+            (
+                "path variables with no Path<T> extractor",
+                syn::parse_quote!(
+                    async fn report() {}
+                ),
+                "/reports/{name}",
+                &["name"],
+                "no Path<T> extractor",
+            ),
+            (
+                "a Path extractor with no type argument",
+                syn::parse_quote!(
+                    async fn report(Path(path): Path) {}
+                ),
+                "/reports/{name}",
+                &["name"],
+                "Path needs one type argument",
+            ),
+            (
+                "a Path extractor whose argument is not a type",
+                syn::parse_quote!(
+                    async fn report(Path(path): Path<'a>) {}
+                ),
+                "/reports/{name}",
+                &["name"],
+                "Path needs one type argument",
+            ),
+            (
+                "two Path<T> extractors on one handler",
+                syn::parse_quote!(
+                    async fn report(Path(one): Path<A>, Path(two): Path<B>) {}
+                ),
+                "/reports/{name}",
+                &["name"],
+                "only once",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        for (description, function, path, variables, expected) in cases() {
+            let variables: Vec<String> = variables.iter().map(|name| (*name).to_owned()).collect();
+            let Err(error) = endpoint_uri_impl(&function, path, &variables) else {
+                panic!("{description} must be rejected");
+            };
+            let reported = error.to_string();
+            assert!(
+                reported.contains(expected),
+                "{description}: expected a diagnostic containing {expected:?}, got {reported:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_typed_uri_diagnostic_has_a_case() {
+        const SOURCE: &str = include_str!("uri.rs");
+
+        let sites = SOURCE.matches("syn::Error::new(").count();
+        assert_eq!(
+            cases().len(),
+            sites,
+            "`uri.rs` raises {sites} diagnostic(s) and {} have a case",
+            cases().len()
+        );
+    }
 }
 
 /// The arguments a route attribute accepts, and what it says when they are
