@@ -96,3 +96,53 @@ impl Default for Body {
         Self::empty()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use http_body_util::BodyExt;
+
+    use super::{Body, Bytes, HttpBody};
+
+    /// Reads a body to the bytes it carries, driving `poll_frame` to its end.
+    async fn drain(body: Body) -> Bytes {
+        body.collect()
+            .await
+            .expect("a body built from bytes cannot fail")
+            .to_bytes()
+    }
+
+    #[tokio::test]
+    async fn an_empty_body_carries_no_bytes() {
+        assert!(drain(Body::empty()).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_body_carries_exactly_the_bytes_it_was_given() {
+        let bytes = Bytes::from_static(br#"{"id":1}"#);
+        assert_eq!(drain(Body::from_bytes(bytes.clone())).await, bytes);
+    }
+
+    #[tokio::test]
+    async fn the_default_body_is_the_empty_one() {
+        assert!(drain(Body::default()).await.is_empty());
+    }
+
+    /// Both answers come from a lock rather than from the erased body directly,
+    /// so they are worth asking before anything has read a frame -- which is
+    /// when a `Content-Length` is decided.
+    #[test]
+    fn an_empty_body_states_its_end_and_its_length() {
+        let body = Body::empty();
+
+        assert!(body.is_end_stream());
+        assert_eq!(body.size_hint().exact(), Some(0));
+    }
+
+    #[test]
+    fn a_body_states_its_length_before_it_is_read() {
+        let body = Body::from_bytes(Bytes::from_static(b"1234"));
+
+        assert!(!body.is_end_stream());
+        assert_eq!(body.size_hint().exact(), Some(4));
+    }
+}
