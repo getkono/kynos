@@ -8,7 +8,7 @@ these are asked to enforce; this document is about the mechanics.
 
 | Kind | Lives in | Runs under | Proves | Status |
 | --- | --- | --- | --- | --- |
-| Unit | a sibling `tests.rs` beside the module | `cargo nextest` | internal logic, including private items | in use |
+| Unit | a sibling `tests.rs`, or an inline `mod tests` while the module is one file | `cargo nextest` | internal logic, including private items | in use |
 | Doctest | the item's own documentation | `mise run test:doc` | that documented code compiles, and that undocumentable code does not | in use |
 | Integration | [`crates/kynos/tests/`](../crates/kynos/tests/) | `cargo nextest` | that the public surface composes as a user would compose it | in use |
 | UI snapshot | `crates/kynos/tests/ui/` | `trybuild` | the exact text of a diagnostic | built |
@@ -33,8 +33,8 @@ file, and removing the attribute is the whole change when the router lands.
 
 | File | Asserts |
 | --- | --- |
-| [`pipeline.rs`](../crates/kynos/tests/pipeline.rs) | an `async fn` is a `Handler`, `routes!` collects it, `Endpoints` accepts it, and mounting reaches the context that supplies its dependencies |
-| [`derives.rs`](../crates/kynos/tests/derives.rs) | every derive expands to a well-formed implementation of the trait it claims |
+| [`pipeline.rs`](../crates/kynos/tests/pipeline.rs) | an `async fn` is a `Handler`, `routes!` collects it, `Endpoints` accepts it, mounting reaches the context that supplies its dependencies, each route attribute writes its own method, and both ends of the arity list typecheck |
+| [`derives.rs`](../crates/kynos/tests/derives.rs) | every derive expands to a well-formed implementation of the trait it claims, counted against the macros the crate exports |
 | [`errors.rs`](../crates/kynos/tests/errors.rs) | each extractor rejects with the rejection type its signature names |
 | [`reporting.rs`](../crates/kynos/tests/reporting.rs) | every error type a caller can receive is `Error + Send + Sync + 'static` |
 | [`typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) | a route attribute's `relative_uri` percent-encodes its parameters |
@@ -138,6 +138,21 @@ source for [`nfr.md`](nfr.md#document-model)'s *emitted documents validate
 against both 3.1 and 3.2 validators*. Most fences hold a single object rather
 than a whole document, so the extractor is a piece of work in its own right.
 
+### Where the macro crate's tests live
+
+`kynos-macros` cannot depend on `kynos`, so anything needing the facade — a
+derive's *expansion* compiling, a diagnostic's wording — lives in
+`crates/kynos/tests/`. What stays in the macro crate is what can be checked
+without it: the attribute grammars, the shape checks the derives share, and the
+signature the typed-URI emitter writes.
+
+Its diagnostics are held twice on purpose, and the halves do different jobs.
+`derive/tests.rs` asserts *which* rule fired, counted against the
+`syn::Error::new` sites so a rule added without a case fails the build;
+`tests/ui/macros/` asserts what that rule *says*. Neither substitutes for the
+other: a count cannot read a message, and a snapshot suite cannot notice a rule
+nobody wrote a case for.
+
 ### Cross-cutting
 
 Three obligations hold whatever the kind.
@@ -181,8 +196,12 @@ signature typechecked, not because the rejections worked. The failure is silent
 by construction: a test that asserts absence cannot report that it found too
 much absence.
 
-Every case in `tests/ui/` obeys it: `tests/ui/pass/` holds one control per
-negative, and a case whose control cannot be written does not land — it goes in
+`tests/ui/` holds four groups: `macros/` for the attribute grammars, `schema/`
+for the refusal table, `antipattern/` for the README's list, and `traits/` for
+the bounds whose diagnostics have no other home.
+
+Every case in `tests/ui/` obeys the pass-control rule: `tests/ui/pass/` holds
+one control per negative, and a case whose control cannot be written does not land — it goes in
 [`PENDING.md`](../crates/kynos/tests/ui/PENDING.md) with the blocker named.
 
 That ledger is where the rule earns its keep. `#[kynos::operation]` was
