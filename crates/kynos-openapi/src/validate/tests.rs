@@ -605,3 +605,358 @@ fn a_violation_says_everything_in_one_line() {
     );
     assert!(std::error::Error::source(&violation).is_none());
 }
+
+// --- The variant ledger ---------------------------------------------------
+
+/// A variant's name, as an exhaustive match.
+///
+/// This is the first of the two guards: adding a variant to [`SpecError`] stops
+/// this file compiling until the variant is named here. The second guard,
+/// [`every_variant_has_a_case`], is what then forces it to be *raised*.
+fn variant_name(error: &SpecError) -> &'static str {
+    match error {
+        SpecError::DuplicateOperationId { .. } => "DuplicateOperationId",
+        SpecError::DuplicatePathTemplate { .. } => "DuplicatePathTemplate",
+        SpecError::InvalidPathTemplate { .. } => "InvalidPathTemplate",
+        SpecError::UndeclaredPathVariable { .. } => "UndeclaredPathVariable",
+        SpecError::UnusedPathParameter { .. } => "UnusedPathParameter",
+        SpecError::PathParameterNotRequired { .. } => "PathParameterNotRequired",
+        SpecError::DuplicateParameter { .. } => "DuplicateParameter",
+        SpecError::ShortCircuitMismatch { .. } => "ShortCircuitMismatch",
+        SpecError::IllegalStyle { .. } => "IllegalStyle",
+        SpecError::IgnoredHeaderParameter { .. } => "IgnoredHeaderParameter",
+        SpecError::IgnoredHeader { .. } => "IgnoredHeader",
+        SpecError::NoResponses => "NoResponses",
+        SpecError::InvalidComponentName { .. } => "InvalidComponentName",
+        SpecError::DuplicateTag { .. } => "DuplicateTag",
+        SpecError::UnknownTagParent { .. } => "UnknownTagParent",
+        SpecError::TagParentCycle { .. } => "TagParentCycle",
+        SpecError::UnknownSecurityScheme { .. } => "UnknownSecurityScheme",
+        SpecError::UndocumentedTag { .. } => "UndocumentedTag",
+        SpecError::EmptyServerVariableEnum { .. } => "EmptyServerVariableEnum",
+        SpecError::ServerVariableDefaultNotInEnum { .. } => "ServerVariableDefaultNotInEnum",
+        SpecError::InvalidExtensionName { .. } => "InvalidExtensionName",
+        SpecError::UncheckedSchema => "UncheckedSchema",
+        SpecError::NotAuthoritative => "NotAuthoritative",
+        SpecError::OpaqueOperation { .. } => "OpaqueOperation",
+        SpecError::OpaqueRoute { .. } => "OpaqueRoute",
+        SpecError::AuthorityNotStamped => "AuthorityNotStamped",
+        SpecError::MalformedAnnotation { .. } => "MalformedAnnotation",
+        SpecError::EmptyDocument => "EmptyDocument",
+        SpecError::RequiresV3_2 { .. } => "RequiresV3_2",
+    }
+}
+
+/// Variants no validation run raises, and what raises each instead.
+///
+/// Every one of these is reachable — none is a placeholder. Listing them is
+/// what keeps [`every_variant_has_a_case`] a statement about this validator
+/// rather than about the enum.
+const RAISED_ELSEWHERE: &[&str] = &[
+    // `Document::emit` refuses a lossy downgrade. `tests/properties.rs`
+    // asserts the whole of that contract.
+    "RequiresV3_2",
+    // `kynos`'s `short_circuit_mismatch` compares an interceptor's declared
+    // statuses against the responses it describes. No document reaches it, and
+    // `crates/kynos/src/response/mod.rs` covers it where it lives.
+    "ShortCircuitMismatch",
+    // Tag hierarchy arrived in 3.2, so `check_tag_hierarchy` is compiled out of
+    // a baseline build along with the only code paths that raise these two.
+    #[cfg(not(feature = "openapi32"))]
+    "UnknownTagParent",
+    #[cfg(not(feature = "openapi32"))]
+    "TagParentCycle",
+    // 3.1 permits a document that declares nothing, and a baseline build has no
+    // `SpecVersion::V3_2` to validate against instead.
+    #[cfg(not(feature = "openapi32"))]
+    "EmptyDocument",
+];
+
+/// One document per variant, each named by the variant it must raise and the
+/// version to validate it at. Only `EmptyDocument` needs a version other than
+/// the baseline: 3.1 permits a document that declares nothing.
+fn ledger() -> Vec<(&'static str, SpecVersion, Document)> {
+    use crate::model::{
+        parameter::header::Header,
+        schema::Schema,
+        server::{Server, ServerVariable},
+        tag::Tag,
+    };
+
+    let operation = || Operation::new("listUsers").with_responses(ok_responses());
+    let get = |operation: Operation| PathItem::new().with_operation(Method::Get, operation);
+
+    let mut cases: Vec<(&'static str, SpecVersion, Document)> = Vec::new();
+    let mut push =
+        |name: &'static str, document: Document| cases.push((name, SpecVersion::V3_1, document));
+
+    push(
+        "DuplicateOperationId",
+        document_with(&[("/a", get(operation())), ("/b", get(operation()))]),
+    );
+    push(
+        "DuplicatePathTemplate",
+        document_with(&[
+            (
+                "/pets/{petId}",
+                get(Operation::new("a").with_responses(ok_responses())),
+            ),
+            (
+                "/pets/{name}",
+                get(Operation::new("b").with_responses(ok_responses())),
+            ),
+        ]),
+    );
+    push(
+        "InvalidPathTemplate",
+        serde_json::from_value(serde_json::json!({
+            "openapi": "3.1.2",
+            "info": { "title": "T", "version": "1" },
+            "paths": { "/a b|c": { "get": { "responses": { "200": { "description": "ok" } } } } }
+        }))
+        .expect("a `paths` key is a plain string, so this parses"),
+    );
+    push(
+        "UndeclaredPathVariable",
+        document_with(&[("/users/{id}", get(operation()))]),
+    );
+    push(
+        "UnusedPathParameter",
+        document_with(&[(
+            "/users",
+            get(operation()
+                .with_parameter(Parameter::path("id", Schema::of_type(SchemaType::String)))),
+        )]),
+    );
+    push(
+        "PathParameterNotRequired",
+        document_with(&[(
+            "/users/{id}",
+            get(operation().with_parameter({
+                let mut parameter = Parameter::path("id", Schema::of_type(SchemaType::String));
+                parameter.required = None;
+                parameter
+            })),
+        )]),
+    );
+    push(
+        "DuplicateParameter",
+        document_with(&[(
+            "/users",
+            get(operation()
+                .with_parameter(Parameter::query("q", Schema::of_type(SchemaType::String)))
+                .with_parameter(Parameter::query("q", Schema::of_type(SchemaType::String)))),
+        )]),
+    );
+    push(
+        "IllegalStyle",
+        document_with(&[(
+            "/users",
+            get(operation().with_parameter(
+                Parameter::query("q", Schema::of_type(SchemaType::String))
+                    .with_style(Style::Simple, false),
+            )),
+        )]),
+    );
+    push(
+        "IgnoredHeaderParameter",
+        document_with(&[(
+            "/users",
+            get(operation().with_parameter(Parameter::header(
+                "Accept",
+                Schema::of_type(SchemaType::String),
+            ))),
+        )]),
+    );
+    push(
+        "IgnoredHeader",
+        document_with(&[(
+            "/users",
+            get(operation().with_responses(Responses::new().with(
+                200,
+                Response::new("ok").with_header(
+                    "Content-Type",
+                    Header::new(Schema::of_type(SchemaType::String)),
+                ),
+            ))),
+        )]),
+    );
+    push(
+        "NoResponses",
+        document_with(&[("/users", get(Operation::new("listUsers")))]),
+    );
+    push("InvalidComponentName", {
+        let mut document = document_with(&[("/users", get(operation()))]);
+        document
+            .components
+            .schemas
+            .insert("not a name".to_owned(), Schema::of_type(SchemaType::String));
+        document
+    });
+    push("DuplicateTag", {
+        let mut document = document_with(&[("/users", get(operation()))]);
+        document.tags = vec![Tag::new("orders"), Tag::new("orders")];
+        document
+    });
+    #[cfg(feature = "openapi32")]
+    push("UnknownTagParent", {
+        let mut document = document_with(&[("/users", get(operation()))]);
+        document.tags = vec![Tag::new("orders").with_parent("absent")];
+        document
+    });
+    #[cfg(feature = "openapi32")]
+    push("TagParentCycle", {
+        let mut document = document_with(&[("/users", get(operation()))]);
+        document.tags = vec![
+            Tag::new("a").with_parent("b"),
+            Tag::new("b").with_parent("a"),
+        ];
+        document
+    });
+    push(
+        "UnknownSecurityScheme",
+        document_with(&[(
+            "/users",
+            get(operation().with_security(SecurityRequirement::scheme("Undeclared"))),
+        )]),
+    );
+    push(
+        "UndocumentedTag",
+        document_with(&[("/users", get(operation().with_tag("orders")))]),
+    );
+    push("EmptyServerVariableEnum", {
+        let mut document = document_with(&[("/users", get(operation()))]);
+        document.servers = vec![Server::new("https://example.com/{region}").with_variable(
+            "region",
+            ServerVariable {
+                enumeration: Some(Vec::new()),
+                default_value: "eu".to_owned(),
+                description: None,
+                extensions: crate::model::extensions::Extensions::new(),
+            },
+        )];
+        document
+    });
+    push("ServerVariableDefaultNotInEnum", {
+        let mut document = document_with(&[("/users", get(operation()))]);
+        document.servers = vec![Server::new("https://example.com/{region}").with_variable(
+            "region",
+            ServerVariable {
+                enumeration: Some(vec!["us".to_owned()]),
+                default_value: "eu".to_owned(),
+                description: None,
+                extensions: crate::model::extensions::Extensions::new(),
+            },
+        )];
+        document
+    });
+    push(
+        "InvalidExtensionName",
+        document_with(&[(
+            "/users",
+            get(operation().with_parameter({
+                let mut parameter = Parameter::query("q", Schema::of_type(SchemaType::String));
+                parameter.extensions.insert("not-prefixed", true);
+                parameter
+            })),
+        )]),
+    );
+    push("UncheckedSchema", {
+        let mut unconstrained = Operation::new("ingest").with_responses(ok_responses());
+        unconstrained.request_body =
+            Some(crate::RefOr::Item(crate::RequestBody::json(Schema::any())));
+        document_with(&[(
+            "/ingest",
+            PathItem::new().with_operation(Method::Post, unconstrained),
+        )])
+    });
+
+    // One opaque operation raises three at once: the operation is reported, the
+    // document is no longer authoritative, and the stamp saying so is present.
+    push("OpaqueOperation", opaque_document());
+    push("NotAuthoritative", opaque_document());
+    push("AuthorityNotStamped", {
+        let mut document = opaque_document();
+        document
+            .extensions
+            .0
+            .shift_remove(crate::annotation::NOT_AUTHORITATIVE_ANNOTATION);
+        document
+    });
+    push("OpaqueRoute", {
+        let mut document = document_with(&[("/users", get(operation()))]);
+        crate::annotation::OpaqueRoute::new(
+            "/assets/{*path}",
+            crate::annotation::OpaqueReason::UntypedRoute,
+        )
+        .append_to(&mut document)
+        .expect("nothing to conflict with");
+        document.restamp_authority();
+        document
+    });
+    push("MalformedAnnotation", {
+        let mut document = document_with(&[("/users", get(operation()))]);
+        document.extensions.insert(
+            crate::annotation::OPAQUE_ROUTES_ANNOTATION,
+            serde_json::json!("nonsense"),
+        );
+        document
+    });
+
+    // 3.1 permits a document that declares nothing, so this one case carries a
+    // different version rather than a different document.
+    #[cfg(feature = "openapi32")]
+    cases.push((
+        "EmptyDocument",
+        SpecVersion::V3_2,
+        Document::new(SpecVersion::V3_2, Info::new("Test", "1.0.0")),
+    ));
+
+    cases
+}
+
+/// Each ledger entry raises the variant it is filed under.
+#[test]
+fn each_ledger_case_raises_the_variant_it_names() {
+    for (expected, version, document) in ledger() {
+        let raised: Vec<&'static str> = Validator::new(version)
+            .validate(&document)
+            .iter()
+            .map(|violation| variant_name(&violation.error))
+            .collect();
+        assert!(
+            raised.contains(&expected),
+            "`{expected}` was not raised; got {raised:?}"
+        );
+    }
+}
+
+/// Every variant the validator can raise has a ledger entry raising it.
+///
+/// The count comes from the source rather than from a second list, so a variant
+/// added without a case fails here instead of being silently uncovered. That is
+/// the same instrument as `every_rejected_schema_type_has_a_case` in
+/// `crates/kynos/tests/ui.rs`, pointed at this enum.
+#[test]
+fn every_variant_has_a_case() {
+    let declared = include_str!("violation.rs")
+        .matches("\n    #[error")
+        .count();
+
+    let mut raised: Vec<&'static str> = ledger()
+        .iter()
+        .flat_map(|(_, version, document)| Validator::new(*version).validate(document))
+        .map(|violation| variant_name(&violation.error))
+        .collect();
+    raised.sort_unstable();
+    raised.dedup();
+
+    let uncovered = declared - RAISED_ELSEWHERE.len();
+    assert_eq!(
+        raised.len(),
+        uncovered,
+        "{declared} variants declared, {} raised elsewhere, {} covered here: {raised:?}",
+        RAISED_ELSEWHERE.len(),
+        raised.len()
+    );
+}
