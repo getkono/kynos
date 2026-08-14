@@ -110,3 +110,115 @@ fn a_tls_failure_still_speaks_for_itself() {
         TlsError::ZeroHandshakeTimeout.to_string()
     );
 }
+
+/// One case per variant of [`Error`], the framework's own build-time failure.
+///
+/// Three of the seven were reached before this: `Invalid`, `Contribution` and
+/// `Server`. The other four had no test at all, which for `Path`, `Schema` and
+/// the two emitters means nothing checked that they render anything a caller
+/// could act on -- `reporting.rs` proves the *type* is reportable, not that a
+/// variant of it says something.
+mod variants {
+    use std::collections::BTreeSet;
+
+    use super::{Error, invalid};
+
+    /// Every variant, named. An exhaustive match, so a variant added to
+    /// [`Error`] stops this file compiling until it is given a case.
+    fn variant_name(error: &Error) -> &'static str {
+        match error {
+            Error::Invalid { .. } => "Invalid",
+            Error::Path(_) => "Path",
+            Error::Schema(_) => "Schema",
+            Error::Contribution(_) => "Contribution",
+            Error::Json(_) => "Json",
+            #[cfg(feature = "yaml")]
+            Error::Yaml(_) => "Yaml",
+            #[cfg(feature = "server")]
+            Error::Server(_) => "Server",
+        }
+    }
+
+    /// One constructed value per variant, with a fragment of what it must say.
+    fn ledger() -> Vec<(Error, &'static str)> {
+        vec![
+            (invalid(), "does not describe a valid API"),
+            (
+                Error::Path(
+                    kynos_openapi::PathTemplate::parse("users")
+                        .expect_err("a template without a leading slash"),
+                ),
+                "/",
+            ),
+            (
+                Error::Schema(crate::schema::registry::SchemaConflict {
+                    name: "Order".to_owned(),
+                }),
+                "`Order` is claimed by two structurally different schemas",
+            ),
+            (
+                Error::Contribution(
+                    crate::middleware::contribution::ContributionConflict::DefaultResponse,
+                ),
+                "two interceptors declare different `default` responses",
+            ),
+            (
+                Error::Json(
+                    serde_json::from_str::<u8>("not a number").expect_err("a parse failure"),
+                ),
+                "could not be emitted as JSON",
+            ),
+            #[cfg(feature = "yaml")]
+            (
+                Error::Yaml(serde_yaml_ng::from_str::<u8>("[").expect_err("a parse failure")),
+                "could not be emitted as YAML",
+            ),
+            #[cfg(feature = "server")]
+            (
+                Error::Server(crate::server::error::ServerError::NoListeners),
+                "listener",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_variant_says_what_failed() {
+        for (error, expected) in ledger() {
+            let name = variant_name(&error);
+            let rendered = error.to_string();
+
+            assert!(
+                rendered.contains(expected),
+                "{name}: expected a message containing {expected:?}, got {rendered:?}"
+            );
+        }
+    }
+
+    /// The ledger against the variants, transcribed.
+    ///
+    /// The exhaustive match above catches a variant added without a *name*; it
+    /// cannot catch one added without a constructed value, because a match arm
+    /// nothing reaches still compiles.
+    #[test]
+    fn every_variant_has_a_case() {
+        let covered: BTreeSet<&str> = ledger()
+            .iter()
+            .map(|(error, _)| variant_name(error))
+            .collect();
+        let declared: BTreeSet<&str> = [
+            "Invalid",
+            "Path",
+            "Schema",
+            "Contribution",
+            "Json",
+            #[cfg(feature = "yaml")]
+            "Yaml",
+            #[cfg(feature = "server")]
+            "Server",
+        ]
+        .into_iter()
+        .collect();
+
+        assert_eq!(covered, declared);
+    }
+}
