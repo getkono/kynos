@@ -68,7 +68,8 @@ rule to the rest of the graph.
 - Every public type is either a re-export from `http`, `bytes` or `serde`, or
   something Kynos is prepared to own indefinitely.
 - Fields the specification makes mutually exclusive are one enum, not several
-  `Option`s, and no validator rule restates the exclusion. See
+  `Option`s, and a field whose legal values are a subset of some wider type is
+  that subset. No validator rule restates either. See
   [why exclusions are types](#why-exclusions-are-types-rather-than-rules) for
   the bound on this.
 - Features are additive only.
@@ -323,6 +324,30 @@ And a field that only means something alongside another — `style` beside a
 schema, never beside a `content` — lives in the variant that gives it meaning,
 so setting it where it does not apply is not a mistake to report but a sentence
 with nowhere to be written.
+
+Exclusion is one of three cases, and the other two fall on either side of it.
+
+A *narrowed domain* is a field whose legal values are a subset of some wider
+type's. A Header Object's `style` is the extreme version: the specification
+gives it exactly one legal value, `simple`. This is the same argument with one
+field instead of two — the illegal values are illegal unconditionally, so a rule
+checking for them is dead the moment the type stops admitting them. `HeaderStyle`
+and `EncodingStyle` are `Style` narrowed this way.
+
+A *pairing* is two fields that constrain each other while both stay settable,
+and it stays a rule. A Parameter Object's `style` is legal or not depending on
+its `location`, and `location` is a public field, so a valid pair can be
+invalidated after construction; `IllegalStyle` therefore has work to do. The
+distinction is not whether the specification writes a table but whether the
+other side of the constraint is a live field. A header has no `in` to disagree
+with — it is fixed by the header's position in the document — so the same table
+collapses, for a header, into a domain.
+
+What survives all three are facts about *names*: the key a value is filed
+under, which no value's type reaches however narrow its fields become. A
+`Content-Type` entry in a `headers` map is ignored by the specification, and no
+`Header` can say so about itself, so that stays a rule beside uniqueness and
+path correspondence.
 
 The bound is round-tripping. `kynos-openapi` must hold descriptions it did not
 produce ([`routing.md`](routing.md#why-the-model-is-more-permissive-than-the-router)),
