@@ -9,7 +9,7 @@ use crate::{
         body::media_type::MediaType,
         example::{Example, Examples, examples_from, examples_into, examples_with_named},
         extensions::Extensions,
-        parameter::{ParameterConflict, shape_from, style::Style},
+        parameter::{ParameterConflict, shape_from, style::HeaderStyle},
         reference::{Ref, RefOr},
         schema::Schema,
     },
@@ -35,8 +35,8 @@ pub fn is_ignored_header_parameter(name: &str) -> bool {
 
 /// A response header, or a header used by an [`Encoding`](crate::Encoding).
 ///
-/// This is a Parameter Object without `name` and `in`. Its style, when present,
-/// must be [`Style::Simple`], and `allowEmptyValue` must not be used. Like a
+/// This is a Parameter Object without `name` and `in`, and without
+/// `allowEmptyValue`, which the specification refuses a header. Like a
 /// parameter it holds one [`HeaderShape`] and one [`Examples`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "RawHeader", into = "RawHeader")]
@@ -72,8 +72,8 @@ pub enum HeaderShape {
         /// The schema defining the header's type.
         schema: Schema,
 
-        /// How the value is serialized. Must be [`Style::Simple`] when present.
-        style: Option<Style>,
+        /// How the value is serialized.
+        style: Option<HeaderStyle>,
 
         /// Whether an array or object generates one value per member.
         explode: Option<bool>,
@@ -157,11 +157,33 @@ impl Header {
 
     /// The declared style, if any.
     #[must_use]
-    pub fn style(&self) -> Option<Style> {
+    pub fn style(&self) -> Option<HeaderStyle> {
         match self.shape {
             HeaderShape::Schema { style, .. } => style,
             HeaderShape::Content { .. } => None,
         }
+    }
+
+    /// Sets the serialization style and explode flag.
+    ///
+    /// A no-op on a content-described header, which has no style to set.
+    ///
+    /// Naming [`HeaderStyle::Simple`] is not redundant even though it is the
+    /// only style a header may take: the specification distinguishes a header
+    /// that states it from one that leaves it out, and a description that
+    /// stated it is emitted back the way it arrived.
+    #[must_use]
+    pub fn with_style(mut self, style: HeaderStyle, explode: bool) -> Self {
+        if let HeaderShape::Schema {
+            style: slot,
+            explode: exploded,
+            ..
+        } = &mut self.shape
+        {
+            *slot = Some(style);
+            *exploded = Some(explode);
+        }
+        self
     }
 
     /// The examples this header carries, if it carries any.
@@ -249,7 +271,7 @@ struct RawHeader {
     deprecated: Option<bool>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    style: Option<Style>,
+    style: Option<HeaderStyle>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     explode: Option<bool>,

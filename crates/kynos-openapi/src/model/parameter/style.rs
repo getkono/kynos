@@ -36,6 +36,25 @@ pub enum Style {
     Cookie,
 }
 
+/// The one style a header may declare.
+///
+/// A [`Style`] narrowed to the value the specification leaves legal. A header
+/// has no `in` field for a style to disagree with, so the restriction is not a
+/// pairing between two fields but a domain: one variant, and a description
+/// naming any other style does not parse.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HeaderStyle {
+    /// Comma-separated values, defined by RFC 6570.
+    Simple,
+}
+
+impl From<HeaderStyle> for Style {
+    fn from(_: HeaderStyle) -> Self {
+        Self::Simple
+    }
+}
+
 impl Style {
     /// The style applied when none is stated, given a parameter location.
     #[must_use]

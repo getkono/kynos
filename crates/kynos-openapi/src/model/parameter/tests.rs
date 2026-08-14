@@ -117,6 +117,71 @@ fn a_parameter_shown_both_ways_at_once_is_refused() {
 }
 
 #[test]
+fn a_header_declaring_any_other_style_is_refused() {
+    use crate::model::parameter::header::Header;
+
+    // The specification gives a header one legal style, so the others are not
+    // a combination to report but a word `HeaderStyle` cannot read.
+    for style in ["form", "matrix", "label", "spaceDelimited", "deepObject"] {
+        let json = format!(r#"{{"schema":true,"style":"{style}"}}"#);
+        let error = serde_json::from_str::<Header>(&json)
+            .expect_err("`simple` is the only style a header may declare");
+
+        assert!(
+            error.to_string().contains("simple"),
+            "the error for `{style}` should name the style that is legal, got: {error}"
+        );
+    }
+}
+
+#[test]
+fn a_header_round_trips_through_each_form_of_style() {
+    use crate::model::parameter::{header::Header, style::HeaderStyle};
+
+    // Stating `simple` and leaving it out are different descriptions of the
+    // same serialization, and each survives the trip back out as it arrived.
+    let stated =
+        Header::new(Schema::of_type(SchemaType::String)).with_style(HeaderStyle::Simple, false);
+    assert_eq!(stated.style(), Some(HeaderStyle::Simple));
+    assert_eq!(
+        serde_json::to_value(&stated).expect("serializable"),
+        serde_json::json!({"style": "simple", "explode": false, "schema": {"type": "string"}})
+    );
+
+    let absent = Header::new(Schema::of_type(SchemaType::String));
+    assert_eq!(absent.style(), None);
+    assert_eq!(
+        serde_json::to_value(&absent).expect("serializable"),
+        serde_json::json!({"schema": {"type": "string"}})
+    );
+
+    for header in [stated, absent] {
+        let json = serde_json::to_string(&header).expect("serializable");
+        let parsed: Header = serde_json::from_str(&json).expect("deserializable");
+        assert_eq!(parsed, header);
+    }
+}
+
+#[test]
+fn a_content_described_header_has_no_style_to_set() {
+    use crate::model::{
+        body::media_type::MediaType,
+        parameter::{header::Header, style::HeaderStyle},
+    };
+
+    // The same reason a content-described parameter has none: `style` lives in
+    // the schema variant, so there is nowhere for this call to write.
+    let header = Header::with_content("text/plain", MediaType::default())
+        .with_style(HeaderStyle::Simple, true);
+
+    assert_eq!(header.style(), None);
+    assert_eq!(
+        serde_json::to_value(&header).expect("serializable"),
+        serde_json::json!({"content": {"text/plain": {}}})
+    );
+}
+
+#[test]
 fn a_header_shown_both_ways_at_once_is_refused() {
     use crate::model::parameter::header::Header;
 

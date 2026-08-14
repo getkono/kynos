@@ -12,8 +12,8 @@
 
 use kynos_openapi::{
     Callback, Components, Contact, Discriminator, Document, Encoding, Example, Extensions,
-    ExternalDocumentation, Header, HeaderShape, Info, License, Link, Map, MediaType, Method,
-    OAuthFlow, OAuthFlows, Operation, Parameter, ParameterIn, ParameterShape, PathItem,
+    ExternalDocumentation, Header, HeaderShape, HeaderStyle, Info, License, Link, Map, MediaType,
+    Method, OAuthFlow, OAuthFlows, Operation, Parameter, ParameterIn, ParameterShape, PathItem,
     PathTemplate, Paths, Ref, RefOr, RequestBody, Response, Responses, Schema, SchemaObject,
     SecurityRequirement, SecurityScheme, Server, ServerVariable, Severity, SpecError, SpecVersion,
     Style, Tag, Violation, Xml,
@@ -564,7 +564,9 @@ fn arb_header() -> BoxedStrategy<Header> {
         arb_opt_text(),
         arb_flag(),
         arb_flag(),
-        prop::option::of(select(STYLES)),
+        // Only the presence of a style is drawn: `HeaderStyle` has one variant,
+        // because that is all the specification leaves a header.
+        prop::option::of(Just(HeaderStyle::Simple)),
         arb_flag(),
         prop::option::of(arb_schema()),
         prop::option::of(arb_present_json()),
