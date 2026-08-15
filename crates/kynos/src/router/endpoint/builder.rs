@@ -347,10 +347,6 @@ where
     H: Handler<C, A>,
     A: 'static,
 {
-    fn describe(&self, operation: &mut OperationCx<'_>) {
-        <H as Handler<C, A>>::describe(operation);
-    }
-
     fn call<'a>(
         &'a self,
         request: Request,

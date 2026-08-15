@@ -129,10 +129,13 @@ where
 /// Separate from [`ErasedInterceptor`] because the terminal has no `next` to
 /// call, and folding it in would mean every interceptor could be handed a chain
 /// that ends in nothing.
+///
+/// Serving only. A terminal has no `describe`, because the description is
+/// assembled from the *endpoints* a router mounted rather than from the
+/// terminals it later builds out of them — so a `describe` here would be a
+/// second answer to a question already answered, reachable from nothing.
 #[allow(dead_code)]
 pub(crate) trait ErasedTerminal<C>: Send + Sync + 'static {
-    fn describe(&self, operation: &mut OperationCx<'_>);
-
     fn call<'a>(
         &'a self,
         request: Request,

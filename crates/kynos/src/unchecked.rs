@@ -51,7 +51,7 @@ use crate::{
     http::{Request, Response, StatusCode},
     middleware::{catch_panic::PanicPolicy, erased::ErasedTerminal},
     response::IntoResponse,
-    router::{Router, dispatch::Dispatch, group::Group, operation::OperationCx, service::Service},
+    router::{Router, dispatch::Dispatch, group::Group, service::Service},
 };
 
 /// A boxed response future.
@@ -194,12 +194,6 @@ where
     C: Sync + 'static,
     H: UncheckedHandler<C>,
 {
-    fn describe(&self, operation: &mut OperationCx<'_>) {
-        // Nothing to say. An unchecked handler declares neither its inputs nor
-        // its responses, which is exactly what put it behind this door.
-        let _ = operation;
-    }
-
     fn call<'a>(
         &'a self,
         request: Request,

@@ -26,7 +26,7 @@ use crate::{
     response::IntoResponse,
     router::{
         endpoint::DynEndpoint,
-        operation::{OperationCx, Route},
+        operation::Route,
         policy::{FallbackPolicy, TrailingSlashPolicy},
     },
     schema::registry::Registry,
@@ -88,10 +88,6 @@ impl<C> EndpointTerminal<C> {
 }
 
 impl<C: Send + Sync + 'static> ErasedTerminal<C> for EndpointTerminal<C> {
-    fn describe(&self, operation: &mut OperationCx<'_>) {
-        self.endpoint.describe(operation);
-    }
-
     fn call<'a>(
         &'a self,
         request: Request,
@@ -117,12 +113,6 @@ impl PreflightTerminal {
 }
 
 impl<C: Send + Sync + 'static> ErasedTerminal<C> for PreflightTerminal {
-    /// Nothing. A preflight is a browser protocol detail rather than an
-    /// operation, and no `Router::describe` pass ever reaches this.
-    fn describe(&self, operation: &mut OperationCx<'_>) {
-        let _ = operation;
-    }
-
     fn call<'a>(
         &'a self,
         request: Request,
