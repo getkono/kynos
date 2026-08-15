@@ -320,6 +320,13 @@ tracing = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
+# An integration target drives `Service::call` and then has to read the
+# response, which means naming the body's own crates. Both are already
+# dependencies of the library, so this adds nothing to the graph -- and unlike
+# a genuinely new dev-dependency it cannot perturb the `.stderr` snapshots that
+# embed rustc's "the following other types implement" list.
+bytes = { workspace = true }
+http-body-util = { workspace = true }
 hyper = { workspace = true, features = ["client", "http1", "http2"] }
 # Applications derive serde alongside `kynos::Schema`, and the schema derive
 # reads those attributes, so the tests have to be able to write them.
