@@ -6,7 +6,13 @@
 //! that rides that status — `Retry-After` on a 503 — is described by the same
 //! type that sets it, rather than by a separate entry keyed on the status.
 
-use std::time::Duration;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use bytes::{Bytes, BytesMut};
 use http_body_util::BodyExt;
@@ -235,8 +241,15 @@ impl<C: Sync + 'static> Interceptor<C> for Timeout {
         context: &C,
         next: Next<'_, C>,
     ) -> Result<Continued<()>, TimedOut> {
-        let _ = (request, reads, context, next, self.limit);
-        todo!()
+        let _ = (reads, context);
+
+        // The timer is the one thing this cannot do for itself. Dropping the
+        // chain's future is what stops the handler: there is no other way to
+        // abandon work that is already running.
+        match tokio::time::timeout(self.limit, next.run(request)).await {
+            Ok(continued) => Ok(continued),
+            Err(_elapsed) => Err(TimedOut { after: self.limit }),
+        }
     }
 }
 
@@ -279,16 +292,48 @@ impl Responses for AtCapacity {
 /// Caps concurrent in-flight requests.
 ///
 /// Contributes 503 and a `Retry-After` response header.
-#[derive(Clone, Copy, Debug)]
+///
+/// Requests are refused rather than queued: a queue is a delay a client cannot
+/// see, and 503 is the answer [`AtCapacity`] describes. Cloning shares the
+/// count, so one limit stays one limit however many copies the router holds.
+#[derive(Clone, Debug)]
 pub struct Concurrency {
     /// The maximum number of requests in flight at once.
     pub limit: usize,
+    in_flight: Arc<AtomicUsize>,
 }
 
 impl Concurrency {
     /// Limits in-flight requests to `limit`.
     pub fn new(limit: usize) -> Self {
-        Self { limit }
+        Self {
+            limit,
+            in_flight: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// Takes a slot, or `None` when every one is held.
+    fn acquire(&self) -> Option<Slot> {
+        self.in_flight
+            .fetch_update(Ordering::Acquire, Ordering::Relaxed, |in_flight| {
+                (in_flight < self.limit).then(|| in_flight + 1)
+            })
+            .ok()
+            .map(|_| Slot(Arc::clone(&self.in_flight)))
+    }
+}
+
+/// One in-flight slot, released when it is dropped.
+///
+/// A guard rather than a pair of counter updates: the chain's future can be
+/// dropped at any await point, and a slot that leaked on cancellation would
+/// shrink the limit until the process restarted.
+#[derive(Debug)]
+struct Slot(Arc<AtomicUsize>);
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Release);
     }
 }
 
@@ -304,7 +349,15 @@ impl<C: Sync + 'static> Interceptor<C> for Concurrency {
         context: &C,
         next: Next<'_, C>,
     ) -> Result<Continued<()>, AtCapacity> {
-        let _ = (request, reads, context, next, self.limit);
-        todo!()
+        let _ = (reads, context);
+
+        // No `Retry-After`: how long a slot takes to free is a property of the
+        // requests already running, and a number invented here would be one the
+        // service cannot honour.
+        let Some(_slot) = self.acquire() else {
+            return Err(AtCapacity { retry_after: None });
+        };
+
+        Ok(next.run(request).await)
     }
 }
