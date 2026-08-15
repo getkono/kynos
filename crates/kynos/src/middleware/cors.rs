@@ -61,6 +61,14 @@ impl<const DESCRIBED: bool> HeaderParams for CorsHeaders<DESCRIBED> {
 
     const DESCRIBED: bool = DESCRIBED;
 
+    // The answer depends on which origin asked, whenever the allow-list holds
+    // more than one — and a shared cache that did not know would hand one
+    // origin's `Access-Control-Allow-Origin` to another, which is the whole of
+    // the CORS check defeated. Declared unconditionally rather than only for a
+    // multi-origin configuration, because the header a cache keys on must not
+    // depend on a builder call the cache cannot see.
+    const VARIES: &'static [&'static str] = &["origin"];
+
     fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
         let Some(origin) = self.origin.clone() else {
             // Nothing was permitted, and a CORS header the protocol did not
