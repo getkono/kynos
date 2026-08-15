@@ -341,3 +341,89 @@ pub trait Observer<C>: Send + Sync + 'static {
         let _ = (payload, route);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Continued, HeaderParams};
+    use crate::http::{HeaderName, HeaderValue, Response, header};
+
+    /// A group that declares no header of its own and varies on `origin` —
+    /// the shape `Cors` takes.
+    struct VariesOnOrigin;
+
+    impl HeaderParams for VariesOnOrigin {
+        const NAMES: &'static [&'static str] = &[];
+        const VARIES: &'static [&'static str] = &["origin"];
+
+        fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+            Vec::new()
+        }
+    }
+
+    /// The `Vary` a response carries after `headers` rides on it.
+    fn vary_after<G: HeaderParams>(existing: Option<&str>, headers: G) -> Option<String> {
+        let mut response = Response::new(crate::http::body::Body::empty());
+
+        if let Some(existing) = existing {
+            response.headers_mut().insert(
+                header::VARY,
+                HeaderValue::from_str(existing).expect("a representable Vary"),
+            );
+        }
+
+        Continued::new(response)
+            .with_headers(headers)
+            .into_response()
+            .headers()
+            .get(header::VARY)
+            .map(|value| value.to_str().expect("a printable Vary").to_owned())
+    }
+
+    /// The failure this exists to stop: `with_headers` used `insert`, so a
+    /// second contribution replaced the first rather than joining it — and a
+    /// response varying on two fields that advertised one is a cache poisoning
+    /// bug rather than a missing nicety.
+    #[test]
+    fn a_vary_union_keeps_the_field_names_already_present() {
+        let vary = vary_after(Some("accept"), VariesOnOrigin).expect("a Vary");
+        let names: Vec<_> = vary.split(',').map(str::trim).collect();
+
+        assert!(names.contains(&"accept"), "lost the existing field: {vary}");
+        assert!(names.contains(&"origin"), "never added its own: {vary}");
+    }
+
+    /// `Vary` is a set of field names, and RFC 9110 section 5.1 makes a field
+    /// name case-insensitive, so the same name in two spellings is one member.
+    #[test]
+    fn a_vary_union_adds_no_name_twice_whatever_its_case() {
+        let vary = vary_after(Some("Origin"), VariesOnOrigin).expect("a Vary");
+        let names: Vec<_> = vary.split(',').map(str::trim).collect();
+
+        assert_eq!(names.len(), 1, "repeated one field name: {vary}");
+    }
+
+    /// `Vary: *` already says the response depends on more than the field names
+    /// can express, so adding one narrows nothing and must not appear to.
+    #[test]
+    fn a_wildcard_vary_absorbs_every_name_added_to_it() {
+        let vary = vary_after(Some("*"), VariesOnOrigin).expect("a Vary");
+
+        assert_eq!(vary, "*");
+    }
+
+    /// A group varying on nothing leaves the header absent rather than empty.
+    #[test]
+    fn a_group_that_varies_on_nothing_writes_no_vary() {
+        struct Silent;
+
+        impl HeaderParams for Silent {
+            const NAMES: &'static [&'static str] = &[];
+
+            fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+                Vec::new()
+            }
+        }
+
+        assert_eq!(vary_after(None, Silent), None);
+    }
+}
