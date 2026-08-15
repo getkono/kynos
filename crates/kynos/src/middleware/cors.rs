@@ -95,12 +95,32 @@ impl<const DESCRIBED: bool> HeaderParams for CorsHeaders<DESCRIBED> {
     }
 }
 
+/// What closes the set of documentation states.
+///
+/// Sealed so that [`Cors`] has exactly two instantiations. The router reads a
+/// `Cors` back out of a type-erased chain by identity — see
+/// [`ErasedInterceptor::as_any`](crate::middleware::erased) — and a downcast
+/// enumerates the concrete types it is willing to recognise. An open state
+/// parameter would make that set unbounded, so a third state would silently
+/// stop being seen rather than fail to compile.
+mod sealed {
+    /// The private supertrait. Deliberately empty.
+    pub trait Sealed {}
+}
+
+impl sealed::Sealed for Undocumented {}
+impl sealed::Sealed for Documented {}
+
 /// Maps [`Cors`]'s type-state onto the header group it declares.
 ///
 /// A trait rather than a `bool` on `Cors` for the reason the state is a type at
 /// all: what an interceptor declares is read from its type, and a field cannot
 /// be read from one.
-pub trait CorsDocumentation: Send + Sync + 'static {
+///
+/// Sealed: the two states below are the whole set, and
+/// `every_cors_documentation_state_is_one_of_the_two_the_router_recognises`
+/// fails if a third is ever added.
+pub trait CorsDocumentation: sealed::Sealed + Send + Sync + 'static {
     /// The header group this state declares.
     type Headers: HeaderParams;
 
