@@ -35,7 +35,10 @@ pub mod status;
 #[cfg(feature = "openapi32")]
 pub mod stream;
 
-use crate::{http::Response, schema::registry::Registry};
+use crate::{
+    http::{Response, body::Body},
+    schema::registry::Registry,
+};
 
 /// A value that can be written as an HTTP response.
 ///
@@ -172,16 +175,26 @@ fn mismatch_between(
     })
 }
 
+/// The empty body, which is 200 like every other bare body type.
+///
+/// 204 is a claim of its own — that there is no content and none is coming —
+/// and [`NoContent`](status::NoContent) is how a handler makes it. A handler
+/// that returned nothing at all was not asked which it meant, so it gets the
+/// status a body type has when no wrapper changes it.
 impl IntoResponse for () {
     fn into_response(self) -> Response {
-        todo!()
+        Response::new(Body::empty())
     }
 }
 
+/// Describes that 200, with no content: there is no representation to name.
 impl Responses for () {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let _ = registry;
-        todo!()
+        kynos_openapi::Responses::new().with(
+            200,
+            kynos_openapi::Response::new("the request succeeded, and the response has no body"),
+        )
     }
 }
 
@@ -216,14 +229,26 @@ impl ShortCircuit for Infallible {
 /// This is where a handler's success and failure descriptions come together: a
 /// `Result<Json<User>, ApiError>` documents 200 alongside every status
 /// `ApiError` can produce, with no restatement anywhere.
+///
+/// # When both sides claim one status
+///
+/// The success side wins, and the failure side's entry for that status is
+/// dropped. Two reasons: it is the rule
+/// [`kynos_openapi::Responses::merge_from`] already applies everywhere else a
+/// description is joined, so a status has one meaning throughout the document;
+/// and a description keys responses by status alone, so of the two only one can
+/// be emitted whatever is chosen here. An error type sharing a status with the
+/// success type is asking for a status that means two things, which is a
+/// [`Reply`](crate::Reply) enum rather than a `Result`.
 impl<T, E> Responses for Result<T, E>
 where
     T: Responses,
     E: Responses,
 {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        let _ = registry;
-        todo!()
+        let mut responses = T::responses(registry);
+        responses.merge_from(&E::responses(registry));
+        responses
     }
 }
 
