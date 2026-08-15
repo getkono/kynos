@@ -143,13 +143,21 @@ intention rather than a guarantee.
 | performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `kynos-bench` |
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `kynos-bench` |
 | compatibility | `Listener::Tokio` is the only public item naming a tokio type | `cargo-public-api` assertion over the framework surface | `needs-tooling` |
-| compatibility | The runtime is named under `crates/kynos/src/server/` and nowhere else | CI grep for `tokio` outside that module tree | `planned` |
+| compatibility | Every `tokio` mention outside `crates/kynos/src/server/` appears in the allowance table in [`architecture.md`](architecture.md#runtime-policy), and the table has exactly four rows | CI grep for `tokio` outside that module tree, counted against the table | `planned` |
 
 The last two rows are the enforcement of the tokio-only policy in
 [`architecture.md`](architecture.md#runtime-policy). There is no runtime
 abstraction trait to keep private, so what CI has to check is the opposite:
-that direct tokio use stays inside the one module that is allowed to have it,
-and that it reaches users only through the listener handover it is meant to.
+that direct tokio use stays where it is allowed, and that it reaches users only
+through the listener handover it is meant to.
+
+The containment row is written against an enumerated table rather than against
+`server/` alone, and that is a correction rather than a loosening: the grep as
+originally stated **fails today**, at `middleware/limits.rs` and
+`middleware/compression.rs`, and had done since before it was written down.
+Counting against a four-row table is checkable in this repository's
+exhaustiveness idiom — a fifth site fails the build — where the older sentence
+could only ever have been wired by deleting it.
 
 The `blocked-on-dependency` row is the one requirement a pinned dependency
 prevents rather than delays: hyper releases HTTP/2 flow-control capacity when a
