@@ -73,3 +73,74 @@ impl<T: CookieParams> Describe for Cookies<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::CookieParams;
+    use crate::{error::rejection::CookieRejection, http::HeaderMap};
+
+    /// A group that has said nothing about how it is spelled.
+    #[derive(Debug)]
+    struct Unspelled;
+
+    impl CookieParams for Unspelled {
+        const NAMES: &'static [&'static str] = &["session"];
+    }
+
+    #[test]
+    #[should_panic(expected = "does not decode cookies")]
+    fn a_group_that_declares_no_decoder_says_so() {
+        let _ = Unspelled::decode(&HeaderMap::new());
+    }
+
+    /// The control, which also pins the reason the signature takes the whole
+    /// map: a request may carry more than one `Cookie` field, and the jar is
+    /// their concatenation rather than the first of them.
+    #[test]
+    fn a_group_that_declares_a_decoder_sees_every_cookie_field() {
+        #[derive(Debug, PartialEq)]
+        struct Recorded(Vec<String>);
+
+        impl CookieParams for Recorded {
+            const NAMES: &'static [&'static str] = &["session"];
+
+            fn decode(headers: &HeaderMap) -> Result<Self, CookieRejection> {
+                Ok(Self(
+                    headers
+                        .get_all(crate::http::header::COOKIE)
+                        .iter()
+                        .map(|value| value.to_str().expect("a printable field").to_owned())
+                        .collect(),
+                ))
+            }
+        }
+
+        let mut headers = HeaderMap::new();
+        headers.append(
+            crate::http::header::COOKIE,
+            crate::http::HeaderValue::from_static("a=1"),
+        );
+        headers.append(
+            crate::http::header::COOKIE,
+            crate::http::HeaderValue::from_static("b=2"),
+        );
+
+        assert_eq!(
+            Recorded::decode(&headers).expect("decoded"),
+            Recorded(vec!["a=1".to_owned(), "b=2".to_owned()])
+        );
+    }
+
+    /// The description names every declared cookie and marks none required: a
+    /// group that has not said which cookies a request must carry has not said
+    /// they all are.
+    #[test]
+    fn the_default_description_requires_no_cookie_it_names() {
+        let mut registry = crate::schema::registry::Registry::new();
+        let parameters = Unspelled::parameters(&mut registry);
+
+        assert_eq!(parameters.len(), 1);
+        assert_eq!(parameters[0].name, "session");
+        assert_eq!(parameters[0].required, None);
+    }
+}

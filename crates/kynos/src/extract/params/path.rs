@@ -194,3 +194,164 @@ impl<T: PathParams + Schema> Describe for Path<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Path, PathCaptures, PathParams, decode_capture};
+    use crate::{
+        error::rejection::PathRejection,
+        extract::FromRequestParts,
+        http::{Request, body::Body},
+    };
+
+    /// One variable, decoded by hand.
+    ///
+    /// Hand-written rather than derived: the derived decoder is the macro
+    /// crate's to test, and `docs/testing.md` allocates it there. What is under
+    /// test here is what reaches `decode` — the capture lookup, the
+    /// percent-decoding and the two rejections — not what a derive does with it.
+    #[derive(Debug, PartialEq)]
+    struct Named(String);
+
+    impl PathParams for Named {
+        const NAMES: &'static [&'static str] = &["name"];
+
+        fn decode(values: &[(&str, &str)]) -> Result<Self, PathRejection> {
+            Ok(Self(values[0].1.to_owned()))
+        }
+    }
+
+    /// A group naming a variable the route does not capture.
+    #[derive(Debug, PartialEq)]
+    struct Absent(String);
+
+    impl PathParams for Absent {
+        const NAMES: &'static [&'static str] = &["missing"];
+
+        fn decode(values: &[(&str, &str)]) -> Result<Self, PathRejection> {
+            Ok(Self(values[0].1.to_owned()))
+        }
+    }
+
+    /// A group that has said nothing about how it is spelled.
+    #[derive(Debug)]
+    struct Undecodable;
+
+    impl PathParams for Undecodable {
+        const NAMES: &'static [&'static str] = &["name"];
+    }
+
+    /// Builds a request whose extensions hold what a match would have captured.
+    fn matched(path: &'static str, captures: &[(&'static str, &'static str)]) -> Request {
+        let mut request = Request::new(Body::empty());
+        *request.uri_mut() = path.parse().expect("a usable path");
+
+        let recorded = PathCaptures::new(
+            path,
+            captures.iter().map(|(name, value)| {
+                // Borrowed out of `path` itself, which is what the router
+                // yields and what `PathCaptures::new` asserts.
+                let start = path.find(value).expect("a capture inside the path");
+                (*name, &path[start..start + value.len()])
+            }),
+        );
+        request.extensions_mut().insert(recorded);
+
+        request
+    }
+
+    async fn extract<T: PathParams + Send>(request: Request) -> Result<T, PathRejection> {
+        let (mut parts, _) = request.into_parts();
+        Path::<T>::from_request_parts(&mut parts, &())
+            .await
+            .map(|Path(value)| value)
+    }
+
+    #[tokio::test]
+    async fn a_captured_value_reaches_the_group_that_declared_it() {
+        let decoded: Named = extract(matched("/users/ada", &[("name", "ada")]))
+            .await
+            .expect("a decodable capture");
+
+        assert_eq!(decoded, Named("ada".to_owned()));
+    }
+
+    /// A variable holding `%2F` arrives as `/` rather than as the two segments
+    /// it was encoded to avoid becoming.
+    #[tokio::test]
+    async fn a_percent_encoded_capture_arrives_decoded() {
+        let decoded: Named = extract(matched(
+            "/reports/annual%2F2026",
+            &[("name", "annual%2F2026")],
+        ))
+        .await
+        .expect("a decodable capture");
+
+        assert_eq!(decoded, Named("annual/2026".to_owned()));
+    }
+
+    /// A capture the route never made is a rejection naming the variable, not a
+    /// panic and not an empty string.
+    #[tokio::test]
+    async fn a_variable_the_route_did_not_capture_is_rejected_by_name() {
+        let rejection = extract::<Absent>(matched("/users/ada", &[("name", "ada")]))
+            .await
+            .expect_err("a rejection");
+
+        assert!(
+            matches!(&rejection, PathRejection::Invalid { name, .. } if name == "missing"),
+            "{rejection:?}"
+        );
+    }
+
+    /// A percent-escape that decodes to bytes no `str` can hold is a rejection
+    /// rather than a lossy replacement: a caller told the service one thing and
+    /// would otherwise be answered about another.
+    #[tokio::test]
+    async fn a_capture_that_is_not_utf8_once_decoded_is_rejected() {
+        let rejection = extract::<Named>(matched("/users/%FF", &[("name", "%FF")]))
+            .await
+            .expect_err("a rejection");
+
+        assert!(
+            matches!(&rejection, PathRejection::Invalid { detail, .. } if detail.contains("UTF-8")),
+            "{rejection:?}"
+        );
+    }
+
+    /// The decoding half of the trait panics by default, so a group written for
+    /// one direction only says so rather than silently decoding to nothing.
+    #[test]
+    #[should_panic(expected = "does not decode path parameters")]
+    fn a_group_that_declares_no_decoder_says_so() {
+        let _ = Undecodable::decode(&[("name", "ada")]);
+    }
+
+    /// Its control: a group that *does* declare one is not touched by the
+    /// default. Without this the case above would pass against a trait whose
+    /// every method panicked.
+    #[test]
+    fn a_group_that_declares_a_decoder_uses_it() {
+        assert_eq!(
+            Named::decode(&[("name", "ada")]).expect("a decoded group"),
+            Named("ada".to_owned())
+        );
+    }
+
+    /// The other direction has the same default, and the same control.
+    #[test]
+    #[should_panic(expected = "does not encode path parameters")]
+    fn a_group_that_declares_no_encoder_says_so() {
+        let _ = Undecodable.encode();
+    }
+
+    /// A capture with nothing to decode is handed back untouched, which is what
+    /// keeps the common case allocation-free.
+    #[test]
+    fn a_capture_needing_no_decoding_is_not_copied() {
+        assert!(matches!(
+            decode_capture("plain"),
+            Ok(std::borrow::Cow::Borrowed("plain"))
+        ));
+    }
+}

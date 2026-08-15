@@ -240,3 +240,89 @@ impl<T: Schema, M: MediaType> Describe for QueryString<T, M> {
         ));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::QueryParams;
+    use crate::{
+        error::rejection::QueryRejection,
+        schema::{Schema, registry::Registry},
+    };
+
+    /// A group that has said nothing about how it is spelled.
+    #[derive(Debug)]
+    struct Unspelled;
+
+    impl Schema for Unspelled {
+        fn schema(registry: &mut Registry) -> kynos_openapi::Schema {
+            let _ = registry;
+            kynos_openapi::Schema::any()
+        }
+    }
+
+    impl QueryParams for Unspelled {}
+
+    /// Both value-shaped defaults say which trait is missing rather than
+    /// decoding to nothing.
+    #[test]
+    #[should_panic(expected = "does not decode a query string")]
+    fn a_group_that_declares_no_decoder_says_so() {
+        let _ = Unspelled::decode(Some("a=1"));
+    }
+
+    #[test]
+    #[should_panic(expected = "does not encode a query string")]
+    fn a_group_that_declares_no_encoder_says_so() {
+        let _ = Unspelled.encode();
+    }
+
+    /// The control: a group that declares a decoder is not touched by the
+    /// default, and sees the distinction the signature draws — `None` for a
+    /// request with no `?` at all, `Some("")` for a bare one.
+    #[test]
+    fn a_group_that_declares_a_decoder_sees_the_query_it_was_given() {
+        #[derive(Debug, PartialEq)]
+        struct Recorded(Option<String>);
+
+        impl Schema for Recorded {
+            fn schema(registry: &mut Registry) -> kynos_openapi::Schema {
+                let _ = registry;
+                kynos_openapi::Schema::any()
+            }
+        }
+
+        impl QueryParams for Recorded {
+            fn decode(query: Option<&str>) -> Result<Self, QueryRejection> {
+                Ok(Self(query.map(str::to_owned)))
+            }
+        }
+
+        assert_eq!(Recorded::decode(None).expect("decoded"), Recorded(None));
+        assert_eq!(
+            Recorded::decode(Some("")).expect("decoded"),
+            Recorded(Some(String::new()))
+        );
+        assert_eq!(
+            Recorded::decode(Some("a=1")).expect("decoded"),
+            Recorded(Some("a=1".to_owned()))
+        );
+    }
+
+    /// A structured syntax suffix is JSON, which is what lets a vendor media
+    /// type be decoded as the JSON it is.
+    #[cfg(feature = "openapi32")]
+    #[test]
+    fn a_json_suffixed_media_type_is_read_as_json() {
+        use super::is_json;
+
+        assert!(is_json("application/json"));
+        assert!(is_json("application/json; charset=utf-8"));
+        assert!(is_json("APPLICATION/JSON"));
+        assert!(is_json("application/vnd.acme.filter+json"));
+
+        assert!(!is_json("application/xml"));
+        assert!(!is_json("text/plain"));
+        // A suffix is a suffix of the base type, not of the parameters.
+        assert!(!is_json("application/xml; note=+json"));
+    }
+}
