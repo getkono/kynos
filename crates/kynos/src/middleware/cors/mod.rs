@@ -10,6 +10,8 @@
 //! [`Cors::document_response_headers`] when the CORS response headers are part
 //! of what you want clients to know about.
 
+pub(crate) mod preflight;
+
 use std::{borrow::Cow, convert::Infallible, marker::PhantomData, time::Duration};
 
 use crate::{
