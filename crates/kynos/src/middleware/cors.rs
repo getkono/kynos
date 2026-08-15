@@ -170,31 +170,43 @@ pub struct Documented;
 /// is called, and every other builder leaves it alone.
 #[derive(Clone, Debug, Default)]
 pub struct Cors<D = Undocumented> {
+    config: CorsConfig,
+    _documented: PhantomData<fn() -> D>,
+}
+
+/// Everything a [`Cors`] was configured with, without its type-state.
+///
+/// Split out because the router reads a configuration back out of a type-erased
+/// chain, and a non-generic type is one the downcast can name once rather than
+/// once per state. It is also what makes
+/// [`document_response_headers`](Cors::document_response_headers) a two-field
+/// move rather than a ten-field reconstruction that a new option could silently
+/// be left out of.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CorsConfig {
     /// The permitted origins, matched case-insensitively.
-    origins: Vec<Cow<'static, str>>,
+    pub(crate) origins: Vec<Cow<'static, str>>,
     /// Whether every origin is permitted.
-    any_origin: bool,
+    pub(crate) any_origin: bool,
     /// Whether credentialed requests are permitted.
-    credentials: bool,
+    pub(crate) credentials: bool,
     /// The response headers a client may read.
-    expose: Vec<Cow<'static, str>>,
+    pub(crate) expose: Vec<Cow<'static, str>>,
     // What follows is answered on preflight, and a preflight is an `OPTIONS`
     // request routed rather than intercepted -- so it is configured here and
-    // read where that request is answered, which is why nothing in this file
-    // reads it.
+    // read where that request is answered.
     /// Overrides the methods preflight advertises.
     #[allow(dead_code)]
-    methods: Option<Vec<kynos_openapi::Method>>,
+    pub(crate) methods: Option<Vec<kynos_openapi::Method>>,
     /// The request headers preflight permits.
     #[allow(dead_code)]
-    headers: Vec<Cow<'static, str>>,
+    pub(crate) headers: Vec<Cow<'static, str>>,
     /// Whether preflight permits every request header.
     #[allow(dead_code)]
-    any_header: bool,
+    pub(crate) any_header: bool,
     /// How long a preflight result may be cached.
     #[allow(dead_code)]
-    max_age: Option<Duration>,
-    _documented: PhantomData<fn() -> D>,
+    pub(crate) max_age: Option<Duration>,
 }
 
 impl Cors<Undocumented> {
@@ -213,7 +225,9 @@ impl<D> Cors<D> {
         I: IntoIterator<Item = S>,
         S: Into<Cow<'static, str>>,
     {
-        self.origins.extend(origins.into_iter().map(Into::into));
+        self.config
+            .origins
+            .extend(origins.into_iter().map(Into::into));
         self
     }
 
@@ -225,7 +239,7 @@ impl<D> Cors<D> {
     /// than producing a header browsers will refuse.
     #[must_use]
     pub fn allow_any_origin(mut self) -> Self {
-        self.any_origin = true;
+        self.config.any_origin = true;
         self
     }
 
@@ -240,7 +254,7 @@ impl<D> Cors<D> {
     where
         I: IntoIterator<Item = kynos_openapi::Method>,
     {
-        self.methods = Some(methods.into_iter().collect());
+        self.config.methods = Some(methods.into_iter().collect());
         self
     }
 
@@ -251,14 +265,16 @@ impl<D> Cors<D> {
         I: IntoIterator<Item = S>,
         S: Into<Cow<'static, str>>,
     {
-        self.headers.extend(names.into_iter().map(Into::into));
+        self.config
+            .headers
+            .extend(names.into_iter().map(Into::into));
         self
     }
 
     /// Permits any request header.
     #[must_use]
     pub fn allow_any_header(mut self) -> Self {
-        self.any_header = true;
+        self.config.any_header = true;
         self
     }
 
@@ -269,26 +285,28 @@ impl<D> Cors<D> {
         I: IntoIterator<Item = S>,
         S: Into<Cow<'static, str>>,
     {
-        self.expose.extend(names.into_iter().map(Into::into));
+        self.config.expose.extend(names.into_iter().map(Into::into));
         self
     }
 
     /// How long a preflight result may be cached.
     #[must_use]
     pub fn max_age(mut self, age: std::time::Duration) -> Self {
-        self.max_age = Some(age);
+        self.config.max_age = Some(age);
         self
     }
 
     /// Permits credentialed requests.
     #[must_use]
     pub fn allow_credentials(mut self) -> Self {
-        self.credentials = true;
+        self.config.credentials = true;
         self
     }
+}
 
+impl CorsConfig {
     /// Whether this origin is one of the permitted ones.
-    fn permits(&self, origin: &http::HeaderValue) -> bool {
+    pub(crate) fn permits(&self, origin: &http::HeaderValue) -> bool {
         if self.any_origin {
             return true;
         }
@@ -303,7 +321,7 @@ impl<D> Cors<D> {
     }
 
     /// The headers this configuration adds to a response to `request`.
-    fn headers_for(&self, request: &http::HeaderMap) -> CorsHeaders<true> {
+    pub(crate) fn headers_for(&self, request: &http::HeaderMap) -> CorsHeaders<true> {
         // No `Origin` is not a cross-origin request, and answering one that was
         // never asked is how a permissive header reaches a client that never
         // needed it.
@@ -333,7 +351,7 @@ impl<D> Cors<D> {
     }
 
     /// The exposed response headers, as one field value.
-    fn exposed(&self) -> Option<http::HeaderValue> {
+    pub(crate) fn exposed(&self) -> Option<http::HeaderValue> {
         if self.expose.is_empty() {
             return None;
         }
@@ -358,14 +376,7 @@ impl Cors<Undocumented> {
     #[must_use]
     pub fn document_response_headers(self) -> Cors<Documented> {
         Cors {
-            origins: self.origins,
-            any_origin: self.any_origin,
-            credentials: self.credentials,
-            expose: self.expose,
-            methods: self.methods,
-            headers: self.headers,
-            any_header: self.any_header,
-            max_age: self.max_age,
+            config: self.config,
             _documented: PhantomData,
         }
     }
@@ -396,7 +407,7 @@ impl<C: Sync + 'static, D: CorsDocumentation> Interceptor<C> for Cors<D> {
         // `Origin` is read from the request rather than declared in `Reads`:
         // it is set by the browser and never by the caller, so a parameter
         // declaring it would describe something no consumer can supply.
-        let headers = self.headers_for(request.headers());
+        let headers = self.config.headers_for(request.headers());
 
         Ok(next.run(request).await.with_headers(D::label(headers)))
     }
