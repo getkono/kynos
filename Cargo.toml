@@ -83,8 +83,14 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 # `kynos::error::Error` and friends read better than `kynos::error::KynosError`.
 module_name_repetitions = "allow"
-# The API surface is currently `todo!()`-bodied, so Clippy cannot see how
-# arguments and receivers are consumed. Revisit once bodies land.
+# These three were allowed because the surface was `todo!()`-bodied and Clippy
+# could not see how arguments and receivers were consumed. The bodies have now
+# landed, so the condition has been met and the suppression is no longer
+# structural -- it is a deliberate, separate cleanup. Lifting all three today
+# reports nineteen sites across all three crates, several of them in
+# `kynos-openapi`, which never had a `todo!()`. Each is a judgement about a
+# public signature on the eve of a freeze rather than a mechanical fix, so they
+# are taken one at a time rather than in a sweep.
 needless_pass_by_value = "allow"
 unused_self = "allow"
 must_use_candidate = "allow"
