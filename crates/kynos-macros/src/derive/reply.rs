@@ -9,18 +9,34 @@
 //!
 //! `status` is what makes the set closed, and it is checked three ways: it must
 //! be present on every variant, it must name a final response, and no two
-//! variants may share one. `description` is parsed and checked so the grammar
-//! is settled and a typo is still an error; it is read when `responses` stops
-//! being a placeholder, falling back to the variant's own doc comment — the
-//! same treatment `#[derive(ApiError)]` gives the members its `into_problem`
-//! will need.
+//! variants may share one. `description` is what the response says it means,
+//! falling back to the variant's own doc comment and then to the status code's
+//! reason phrase, so a variant is described without being described twice.
+//!
+//! # What carries a variant's body onto the wire
+//!
+//! `serde::Serialize`, required of a bodied variant's payload by the emitted
+//! `into_response` rather than by a bound anyone writes.
+//!
+//! It follows from the description this derive already emits: a bodied variant
+//! is described as `application/json`, and a payload that cannot be serialized
+//! as JSON would make that description a claim the handler cannot honour. The
+//! alternative bound, `IntoResponse`, is the wrong one — Kynos deliberately has
+//! no `IntoResponse for u32` or `for String`, and a reply variant legitimately
+//! holds either.
+//!
+//! A unit variant writes its status and an empty body, and needs no bound at
+//! all.
 
 use proc_macro::TokenStream;
-use proc_macro2::Span;
-use quote::quote;
+use proc_macro2::{Span, TokenStream as TokenStream2};
+use quote::{quote, quote_spanned};
 use syn::{
-    Attribute, Data, DeriveInput, Fields, LitInt, LitStr, parse_macro_input, spanned::Spanned,
+    Attribute, Data, DeriveInput, Fields, LitInt, LitStr, Variant, parse_macro_input,
+    spanned::Spanned,
 };
+
+use crate::derive::common::doc_string;
 
 /// The range a reply's status may fall in.
 ///
@@ -61,7 +77,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 
     // A status on the enum itself would apply to every variant, which is the
     // opposite of what a closed set of responses is for.
-    if let Some((_, span)) = parse_reply(&input.attrs)? {
+    if let Some((_, span)) = parse_reply(&input.attrs)?.status {
         return Err(syn::Error::new(
             span,
             "a status belongs on each variant, because the point of a `Reply` enum is that its \
@@ -70,10 +86,13 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     }
 
     let mut seen: Vec<(u16, Span)> = Vec::new();
+    let mut declared: Vec<TokenStream2> = Vec::new();
+    let mut written: Vec<TokenStream2> = Vec::new();
     for variant in &data.variants {
         body_is_one_named_type(variant)?;
 
-        let Some((status, span)) = parse_reply(&variant.attrs)? else {
+        let args = parse_reply(&variant.attrs)?;
+        let Some((status, span)) = args.status else {
             return Err(syn::Error::new(
                 variant.ident.span(),
                 format!(
@@ -99,6 +118,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             ));
         }
         seen.push((status, span));
+        declared.push(response(variant, status, args.description.as_deref()));
+        written.push(write(variant, status));
     }
 
     let name = &input.ident;
@@ -107,7 +128,9 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     Ok(quote! {
         impl #impl_generics ::kynos::response::IntoResponse for #name #ty_generics #where_clause {
             fn into_response(self) -> ::kynos::http::Response {
-                ::core::todo!()
+                match self {
+                    #(#written)*
+                }
             }
         }
 
@@ -115,19 +138,93 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             fn responses(
                 registry: &mut ::kynos::schema::registry::Registry,
             ) -> ::kynos::openapi::Responses {
-                let _ = registry;
-                ::core::todo!()
+                let mut responses = ::kynos::openapi::Responses::new();
+                #(#declared)*
+                responses
             }
         }
     })
 }
 
-/// Reads one item's `#[reply(...)]` lists, validating every member.
+/// One variant, as the response it declares.
 ///
-/// Returns the status and its span when one was given. `description` is
-/// checked for shape and discarded; see the module documentation.
-fn parse_reply(attrs: &[Attribute]) -> syn::Result<Option<(u16, Span)>> {
-    let mut status = None;
+/// A variant carrying a body describes it as JSON, which is the representation
+/// a described type reaches a consumer as unless a body wrapper says otherwise;
+/// a unit variant describes a response with no content at all.
+fn response(variant: &Variant, status: u16, description: Option<&str>) -> TokenStream2 {
+    let description = description
+        .map(ToOwned::to_owned)
+        .or_else(|| doc_string(&variant.attrs));
+    let description = description.map_or_else(
+        || {
+            quote! {
+                ::kynos::http::StatusCode::from_u16(#status)
+                    .ok()
+                    .and_then(|status| status.canonical_reason())
+                    .unwrap_or("the request succeeded")
+            }
+        },
+        |text| quote!(#text),
+    );
+
+    let body = match &variant.fields {
+        Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
+            let ty = &fields.unnamed[0].ty;
+            Some(quote!(registry.resolve::<#ty>()))
+        }
+        _ => None,
+    };
+
+    let built = body.map_or_else(
+        || quote!(::kynos::openapi::Response::new(#description)),
+        |schema| {
+            quote! {
+                ::kynos::openapi::Response::with_content(
+                    #description,
+                    ::kynos::openapi::model::body::mime_names::APPLICATION_JSON,
+                    ::kynos::openapi::MediaType::new(#schema),
+                )
+            }
+        },
+    );
+
+    quote!(responses = responses.with(#status, #built);)
+}
+
+/// One variant, as the match arm that writes it.
+///
+/// The mirror of [`response`]: a bodied variant writes the `application/json`
+/// that function described it as, and a unit variant the empty body. Both carry
+/// the status the variant declared, so what a consumer receives and what the
+/// description promised come from one attribute.
+fn write(variant: &Variant, status: u16) -> TokenStream2 {
+    let ident = &variant.ident;
+
+    match &variant.fields {
+        Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
+            // Spanned on the payload's type, so a payload without `Serialize`
+            // is reported against the variant a user wrote.
+            let span = fields.unnamed[0].ty.span();
+            quote_spanned! {span=>
+                Self::#ident(body) => ::kynos::__private::reply::json(#status, &body),
+            }
+        }
+        _ => quote! {
+            Self::#ident => ::kynos::__private::reply::empty(#status),
+        },
+    }
+}
+
+/// What one item's `#[reply(...)]` lists said.
+#[derive(Default)]
+struct ReplyArgs {
+    status: Option<(u16, Span)>,
+    description: Option<String>,
+}
+
+/// Reads one item's `#[reply(...)]` lists, validating every member.
+fn parse_reply(attrs: &[Attribute]) -> syn::Result<ReplyArgs> {
+    let mut args = ReplyArgs::default();
 
     for attr in attrs {
         if !attr.path().is_ident("reply") {
@@ -153,17 +250,16 @@ fn parse_reply(attrs: &[Attribute]) -> syn::Result<Option<(u16, Span)>> {
                             ),
                         ));
                     }
-                    if status.is_some() {
+                    if args.status.is_some() {
                         return Err(syn::Error::new(
                             literal.span(),
                             "this already declares a status, and a response has one",
                         ));
                     }
-                    status = Some((code, literal.span()));
+                    args.status = Some((code, literal.span()));
                 }
-                // Checked for shape now, read when `responses` lands.
                 "description" => {
-                    let _: LitStr = meta.value()?.parse()?;
+                    args.description = Some(meta.value()?.parse::<LitStr>()?.value());
                 }
                 other => {
                     return Err(syn::Error::new(
@@ -176,7 +272,7 @@ fn parse_reply(attrs: &[Attribute]) -> syn::Result<Option<(u16, Span)>> {
         })?;
     }
 
-    Ok(status)
+    Ok(args)
 }
 
 /// A variant's fields are its response body, and a body is one described type.

@@ -3,7 +3,7 @@
 
 use kynos::{Reply, Schema};
 
-#[derive(Schema)]
+#[derive(Schema, serde::Serialize)]
 struct Created {
     id: u32,
     revision: u32,

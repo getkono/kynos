@@ -22,7 +22,7 @@ use kynos::{
     security::SecurityScheme as SecuritySchemeTrait,
 };
 
-#[derive(Schema)]
+#[derive(Schema, serde::Serialize)]
 struct User {
     id: u64,
     name: String,
