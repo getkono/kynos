@@ -170,25 +170,67 @@ impl OperationCx<'_> {
     /// header is evidence the response happens, so omitting it would be worse
     /// than describing it thinly. A header already declared under that name is
     /// left alone, and a response held as a `$ref` is not reached into.
+    ///
+    /// A *range* pattern never mints its own entry. It reaches the responses
+    /// the operation already declares within it, and contributes nothing when
+    /// there are none.
+    ///
+    /// Both halves fix the same thing. The specification gives a consumer
+    /// resolving a status the exact key first, so a header filed under `2XX`
+    /// beside a declared `200` is one no reader of that operation's 200 will
+    /// ever find — and the minted `2XX` is then a response the service cannot
+    /// produce, which is a claim in the description that nothing can keep. For
+    /// an operation declaring no success at all — a redirect — the wildcard
+    /// would be the same untruth with nothing beside it, so the header is
+    /// dropped instead. That understates the description by one header on a
+    /// response that has one; the alternative overstates it by a response that
+    /// does not exist, and `nfr.md`'s *emitted ⊇ observable* is the direction
+    /// that must not break.
     pub fn add_response_header(
         &mut self,
         status: StatusPattern,
         name: impl Into<String>,
         header: kynos_openapi::Header,
     ) {
-        let response = self
-            .operation
-            .responses
-            .responses
-            .entry(status.to_string())
-            .or_insert_with(|| RefOr::Item(Response::new(describe_status(status))));
+        let name = name.into();
 
-        if let RefOr::Item(response) = response {
-            response
-                .headers
-                .entry(name.into())
-                .or_insert_with(|| RefOr::Item(header));
+        if status.is_range() {
+            let covered: Vec<String> = self
+                .operation
+                .responses
+                .responses
+                .keys()
+                .filter(|key| {
+                    key.parse::<StatusPattern>()
+                        .is_ok_and(|declared| covered_by(status, declared))
+                })
+                .cloned()
+                .collect();
+
+            for key in covered {
+                declare_header(
+                    &mut self.operation.responses.responses,
+                    &key,
+                    &name,
+                    &header,
+                );
+            }
+
+            return;
         }
+
+        let key = status.to_string();
+        self.operation
+            .responses
+            .responses
+            .entry(key.clone())
+            .or_insert_with(|| RefOr::Item(Response::new(describe_status(status))));
+        declare_header(
+            &mut self.operation.responses.responses,
+            &key,
+            &name,
+            &header,
+        );
     }
 
     /// Sets the operation identifier.
@@ -234,6 +276,34 @@ impl OperationCx<'_> {
 ///
 /// A `Response` must have one, and the reason phrase RFC 9110 registers for the
 /// status is the most any caller has said about it.
+/// Whether `declared` names responses `range` covers.
+///
+/// An exact code is covered when the range matches it; an identical range is
+/// covered by itself, so a second contribution under `2XX` still lands on the
+/// `2XX` a first one created rather than beside it.
+fn covered_by(range: StatusPattern, declared: StatusPattern) -> bool {
+    match declared {
+        StatusPattern::Code(code) => range.matches(code),
+        other => other == range,
+    }
+}
+
+/// Files `header` under `name` on the response at `key`, leaving a name already
+/// declared alone and never reaching into a `$ref`.
+fn declare_header(
+    responses: &mut kynos_openapi::Map<RefOr<kynos_openapi::Response>>,
+    key: &str,
+    name: &str,
+    header: &kynos_openapi::Header,
+) {
+    if let Some(RefOr::Item(response)) = responses.get_mut(key) {
+        response
+            .headers
+            .entry(name.to_owned())
+            .or_insert_with(|| RefOr::Item(header.clone()));
+    }
+}
+
 fn describe_status(status: StatusPattern) -> String {
     let class = match status {
         StatusPattern::Code(code) => {

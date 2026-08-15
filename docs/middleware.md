@@ -74,6 +74,16 @@ second interceptor touching one of those names still fails to compile. The two
 questions are "can this collide" and "does a consumer need to hear about it",
 and only the first is about correctness.
 
+**Where a described header lands.** An interceptor's `Adds` group is filed
+against the *successful* responses the operation already declares, one entry
+each — not under a `2XX` wildcard beside them. A consumer resolving a status
+takes the exact key first, so a header under `2XX` next to a declared `200` is
+one no reader of that operation's 200 will ever find, and the `2XX` entry is
+then a response the service cannot produce. An operation declaring no success
+at all — a redirect — gets no entry rather than an invented one: the header is
+still sent, and understating a description by one header beats claiming a
+response that does not exist.
+
 A body is declared nowhere at all — `Continued::take_body` and
 `Continued::set_body` need no declaration, because a body has no name to collide
 on. Two interceptors rewriting one compose; two setting one header do not. An
