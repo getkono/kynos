@@ -155,6 +155,37 @@ pub trait Producers<S, T: Representations>: sealed::SealedProducers {
     fn produce_at(self, source: &S, index: usize) -> Response;
 }
 
+/// Folds one alternative's responses into the offer's.
+///
+/// Every alternative answers with the same status, so what an offer contributes
+/// is one response listing every media type — the `content` map the module
+/// documentation calls the actual description of the negotiation — rather than
+/// one response per arm, which a Responses Object keyed by status could not hold
+/// anyway.
+///
+/// A `$ref` on either side carries no `content` map to union, so it only fills a
+/// status nothing has claimed yet.
+fn merge_content(offered: &mut kynos_openapi::Responses, from: kynos_openapi::Responses) {
+    if offered.default_response.is_none() {
+        offered.default_response = from.default_response;
+    }
+
+    for (status, response) in from.responses {
+        if !offered.responses.contains_key(&status) {
+            offered.responses.insert(status, response);
+            continue;
+        }
+
+        if let (
+            Some(kynos_openapi::RefOr::Item(claimed)),
+            kynos_openapi::RefOr::Item(alternative),
+        ) = (offered.responses.get_mut(&status), response)
+        {
+            claimed.content.extend(alternative.content);
+        }
+    }
+}
+
 /// Seals producer tuples by arity.
 ///
 /// Unparameterized, because a marker trait cannot carry the closure bounds
@@ -185,8 +216,9 @@ macro_rules! tuple_representations {
             }
 
             fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-                let _ = registry;
-                todo!()
+                let mut offered = kynos_openapi::Responses::new();
+                $(merge_content(&mut offered, $type::responses(registry));)+
+                offered
             }
         }
 

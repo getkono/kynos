@@ -224,9 +224,28 @@ struct Preference {
 impl<C: Sync, T: Send> FromRequestParts<C> for Accept<T> {
     type Rejection = NegotiationRejection;
 
-    async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
-        let _ = (parts, context);
-        todo!()
+    async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
+        let mut values = parts.headers.get_all(crate::http::header::ACCEPT).iter();
+
+        // RFC 9110 12.5.1: a request with no `Accept` accepts any media type.
+        // A field that is *present* and empty is a different claim, and reaches
+        // `parse` so that it is answered as the malformed value it is.
+        let Some(first) = values.next() else {
+            return Self::parse("*/*");
+        };
+
+        // A field that may appear more than once is equivalent to one field
+        // holding the comma-separated list, which is the form `parse` reads.
+        let mut field = String::new();
+        for value in std::iter::once(first).chain(values) {
+            let value = value.to_str().map_err(|_| invalid_accept())?;
+            if !field.is_empty() {
+                field.push(',');
+            }
+            field.push_str(value);
+        }
+
+        Self::parse(&field)
     }
 }
 
