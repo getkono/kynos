@@ -691,6 +691,24 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
         let mut registry = Registry::new();
         let mut violations = self.violations.clone();
 
+        // Read before anything is described. Everything else an interceptor
+        // says is read from its types, so the compiler has already checked it;
+        // this is the one question about a *value*, and a configuration that
+        // cannot be honoured should not produce a document at all.
+        //
+        // Here rather than in `build` so that `validate`, `openapi`,
+        // `openapi_as` and `build` all report it — the same reason
+        // `Error::Contribution` is raised from this function.
+        for interceptor in self.interceptors.iter().chain(
+            self.mounted
+                .iter()
+                .flat_map(|mounted| &mounted.interceptors),
+        ) {
+            if let Some(conflict) = cors_conflict(interceptor) {
+                return Err(Error::Middleware(conflict));
+            }
+        }
+
         for (name, scheme) in &self.security_schemes {
             match kynos_openapi::ComponentName::new(*name) {
                 Ok(name) => registry.declare_security_scheme(name, scheme.clone()),
@@ -974,6 +992,28 @@ fn unique_tags(declared: &[kynos_openapi::Tag]) -> Vec<kynos_openapi::Tag> {
 
 /// Why Kynos will not route a path its model can nonetheless hold.
 ///
+/// The configuration conflict an interceptor carries, if it is one the router
+/// recognises and it has one.
+///
+/// The only place Kynos reads an interceptor as a *value* rather than through
+/// its types, and it is deliberately not a capability: the match below is a
+/// closed list of two, `Cors`'s state parameter is sealed so there cannot be a
+/// third, and a third-party interceptor is never asked. Nothing read here
+/// reaches the description.
+fn cors_conflict<C: 'static>(
+    interceptor: &Arc<dyn ErasedInterceptor<C>>,
+) -> Option<crate::middleware::MiddlewareError> {
+    use crate::middleware::cors::{Cors, Documented, Undocumented};
+
+    let value = interceptor.as_any();
+
+    value
+        .downcast_ref::<Cors<Undocumented>>()
+        .map(Cors::config)
+        .or_else(|| value.downcast_ref::<Cors<Documented>>().map(Cors::config))
+        .and_then(crate::middleware::cors::CorsConfig::conflict)
+}
+
 /// The routing contract is narrower than the document model on purpose: a
 /// catch-all matches a set of paths no single template describes, and a segment
 /// carrying two variables is a shape the matcher cannot take apart. Both checks

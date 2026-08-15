@@ -218,6 +218,15 @@ impl Cors<Undocumented> {
 }
 
 impl<D> Cors<D> {
+    /// What this was configured with.
+    ///
+    /// Crate-internal: the router reads it to check the configuration and to
+    /// answer a preflight, and neither is something an application needs a
+    /// second way to reach.
+    pub(crate) fn config(&self) -> &CorsConfig {
+        &self.config
+    }
+
     /// Permits these origins.
     #[must_use]
     pub fn allow_origins<I, S>(mut self, origins: I) -> Self
@@ -235,8 +244,9 @@ impl<D> Cors<D> {
     ///
     /// Incompatible with [`allow_credentials`](Cors::allow_credentials): the
     /// CORS protocol forbids `Access-Control-Allow-Origin: *` on a credentialed
-    /// response, so selecting both is rejected when the router is built rather
-    /// than producing a header browsers will refuse.
+    /// response, so selecting both is refused while the router is built —
+    /// [`Error::Middleware`](crate::Error::Middleware) — rather than producing a
+    /// header browsers will refuse.
     #[must_use]
     pub fn allow_any_origin(mut self) -> Self {
         self.config.any_origin = true;
@@ -305,6 +315,18 @@ impl<D> Cors<D> {
 }
 
 impl CorsConfig {
+    /// The combination this configuration cannot honour, if it selected one.
+    ///
+    /// Read while the router is built. There is nothing here a type could have
+    /// caught: both halves are set by `mut self -> Self` builders, deliberately,
+    /// so that an allow-list read from the environment at startup can be applied
+    /// conditionally — and a value a builder decides is not one a `const` can
+    /// see.
+    pub(crate) fn conflict(&self) -> Option<crate::middleware::MiddlewareError> {
+        (self.any_origin && self.credentials)
+            .then_some(crate::middleware::MiddlewareError::CredentialedWildcardOrigin)
+    }
+
     /// Whether this origin is one of the permitted ones.
     pub(crate) fn permits(&self, origin: &http::HeaderValue) -> bool {
         if self.any_origin {
@@ -333,10 +355,9 @@ impl CorsConfig {
             return CorsHeaders::default();
         }
 
-        // `*` is refused by every browser on a credentialed response, so a
-        // configuration selecting both is served the origin it was asked about.
-        // The pair is rejected when the router is built; until it is, echoing is
-        // the reading that keeps the response usable.
+        // `*` is refused by every browser on a credentialed response. The pair
+        // cannot reach here -- `conflict` refuses it while the router is built --
+        // so the second arm is what a named allow-list produces, not a fallback.
         let allowed = if self.any_origin && !self.credentials {
             http::HeaderValue::from_static("*")
         } else {
@@ -410,5 +431,63 @@ impl<C: Sync + 'static, D: CorsDocumentation> Interceptor<C> for Cors<D> {
         let headers = self.config.headers_for(request.headers());
 
         Ok(next.run(request).await.with_headers(D::label(headers)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CorsConfig, CorsDocumentation, Documented, Undocumented};
+    use crate::extract::params::header::HeaderParams;
+
+    /// The router reads a `Cors` back out of a type-erased chain by downcasting
+    /// to each state in turn, so the set of states has to be closed and this is
+    /// what closes it. `CorsDocumentation` is sealed, so a third state cannot be
+    /// added downstream; this fails when one is added *here* without teaching
+    /// the probe about it.
+    #[test]
+    fn every_cors_documentation_state_is_one_of_the_two_the_router_recognises() {
+        fn described<D: CorsDocumentation>() -> bool {
+            <D::Headers as HeaderParams>::DESCRIBED
+        }
+
+        // Transcribed, not derived: a list read from the trait would agree with
+        // it however many states there were.
+        let states = [
+            ("Undocumented", described::<Undocumented>()),
+            ("Documented", described::<Documented>()),
+        ];
+
+        assert_eq!(states.len(), 2, "a state was added without a probe arm");
+        assert_eq!(states[0], ("Undocumented", false));
+        assert_eq!(states[1], ("Documented", true));
+    }
+
+    #[test]
+    fn permitting_any_origin_alongside_credentials_is_a_conflict() {
+        let config = CorsConfig {
+            any_origin: true,
+            credentials: true,
+            ..CorsConfig::default()
+        };
+
+        assert!(config.conflict().is_some());
+    }
+
+    /// Each half alone is an ordinary deployment: a public API allows any
+    /// origin, and a credentialed one names its origins.
+    #[test]
+    fn permitting_any_origin_alone_is_not_a_conflict() {
+        let any_origin = CorsConfig {
+            any_origin: true,
+            ..CorsConfig::default()
+        };
+        let credentialed = CorsConfig {
+            origins: vec!["https://app.example.com".into()],
+            credentials: true,
+            ..CorsConfig::default()
+        };
+
+        assert!(any_origin.conflict().is_none());
+        assert!(credentialed.conflict().is_none());
     }
 }

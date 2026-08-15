@@ -136,6 +136,31 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
     ) -> impl Future<Output = Result<Continued<Self::Adds>, Self::Short>> + Send;
 }
 
+/// An interceptor configured with a combination it cannot honour.
+///
+/// Every other thing an interceptor declares is read from its types, so the
+/// compiler catches it. These are the ones a *builder* decides at run time,
+/// where there is no type to read — so they are checked once, while the router
+/// is assembled, and never per request.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum MiddlewareError {
+    /// A [`Cors`](cors::Cors) permitted every origin and credentials together.
+    ///
+    /// The CORS protocol forbids `Access-Control-Allow-Origin: *` on a
+    /// credentialed response, so there is no response satisfying both. Refusing
+    /// is not pedantry: the fallback is to echo the request's own origin, which
+    /// turns "allow any origin" plus "allow credentials" into
+    /// reflect-any-origin-with-credentials — the most permissive configuration
+    /// the protocol has, reached by asking for something else.
+    #[error(
+        "a CORS configuration permits any origin and also permits credentials, which the protocol \
+         forbids; drop `allow_credentials`, or replace `allow_any_origin` with the origins \
+         `allow_origins` should name"
+    )]
+    CredentialedWildcardOrigin,
+}
+
 /// Merges `names` into whatever `Vary` a response already carries.
 ///
 /// A union rather than an insert, because `Vary` is the one response header two

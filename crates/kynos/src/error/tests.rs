@@ -131,6 +131,7 @@ mod variants {
             Error::Path(_) => "Path",
             Error::Schema(_) => "Schema",
             Error::Contribution(_) => "Contribution",
+            Error::Middleware(_) => "Middleware",
             Error::Json(_) => "Json",
             #[cfg(feature = "yaml")]
             Error::Yaml(_) => "Yaml",
@@ -161,6 +162,10 @@ mod variants {
                     crate::middleware::contribution::ContributionConflict::DefaultResponse,
                 ),
                 "two interceptors declare different `default` responses",
+            ),
+            (
+                Error::Middleware(crate::middleware::MiddlewareError::CredentialedWildcardOrigin),
+                "permits any origin and also permits credentials",
             ),
             (
                 Error::Json(
@@ -210,6 +215,7 @@ mod variants {
             "Path",
             "Schema",
             "Contribution",
+            "Middleware",
             "Json",
             #[cfg(feature = "yaml")]
             "Yaml",

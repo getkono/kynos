@@ -69,6 +69,16 @@ pub enum Error {
     #[error(transparent)]
     Contribution(#[from] crate::middleware::contribution::ContributionConflict),
 
+    /// An interceptor was configured with a combination it cannot honour.
+    ///
+    /// Distinct from [`Contribution`](Error::Contribution), which is two
+    /// interceptors disagreeing with each other. This is one interceptor
+    /// disagreeing with the protocol it implements, and it is a *value* rather
+    /// than a type — which is why it is caught while the router is built rather
+    /// than by the compiler.
+    #[error(transparent)]
+    Middleware(#[from] crate::middleware::MiddlewareError),
+
     /// The description could not be emitted as JSON.
     ///
     /// Named after the emitter rather than after serialization in general: the
