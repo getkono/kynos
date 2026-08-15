@@ -4,7 +4,5 @@
 use kynos::router::{group::Group, policy::TrailingSlashPolicy};
 
 fn main() {
-    if std::hint::black_box(false) {
-        let _ = Group::<()>::new("/v1").trailing_slashes(TrailingSlashPolicy::Redirect);
-    }
+    let _ = Group::<()>::new("/v1").trailing_slashes(TrailingSlashPolicy::Redirect);
 }

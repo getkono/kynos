@@ -10,8 +10,6 @@ use kynos::router::endpoint::set::IntoEndpoints;
 async fn list() {}
 
 fn main() {
-    if std::hint::black_box(false) {
-        let mut sink = kynos::router::endpoint::set::Endpoints::<()>::new();
-        kynos::routes![list].into_endpoints(&mut sink);
-    }
+    let mut sink = kynos::router::endpoint::set::Endpoints::<()>::new();
+    kynos::routes![list].into_endpoints(&mut sink);
 }

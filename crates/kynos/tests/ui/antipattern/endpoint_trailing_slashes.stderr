@@ -1,13 +1,13 @@
 error[E0599]: no method named `trailing_slashes` found for struct `EndpointBuilder<C, H, A, P, I>` in the current scope
-  --> tests/ui/antipattern/endpoint_trailing_slashes.rs:19:10
+  --> tests/ui/antipattern/endpoint_trailing_slashes.rs:18:6
    |
-14 |           let _ = EndpointBuilder::<(), _, _>::new(
-   |  _________________-
-15 | |             openapi::Method::Get,
-16 | |             openapi::PathTemplate::parse("/health").expect("valid path"),
-17 | |             health,
-18 | |         )
-19 | |         .trailing_slashes(TrailingSlashPolicy::Redirect);
-   | |         -^^^^^^^^^^^^^^^^ method not found in `EndpointBuilder<(), fn() -> impl Future<Output = NoContent> {health}, ()>`
-   | |_________|
+13 |       let _ = EndpointBuilder::<(), _, _>::new(
+   |  _____________-
+14 | |         openapi::Method::Get,
+15 | |         openapi::PathTemplate::parse("/health").expect("valid path"),
+16 | |         health,
+17 | |     )
+18 | |     .trailing_slashes(TrailingSlashPolicy::Redirect);
+   | |     -^^^^^^^^^^^^^^^^ method not found in `EndpointBuilder<(), fn() -> impl Future<Output = NoContent> {health}, ()>`
+   | |_____|
    |

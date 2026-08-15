@@ -10,12 +10,10 @@ async fn health() -> NoContent {
 }
 
 fn main() {
-    if std::hint::black_box(false) {
-        let _ = EndpointBuilder::<(), _, _>::new(
-            openapi::Method::Get,
-            openapi::PathTemplate::parse("/health").expect("valid path"),
-            health,
-        )
-        .trailing_slashes(TrailingSlashPolicy::Redirect);
-    }
+    let _ = EndpointBuilder::<(), _, _>::new(
+        openapi::Method::Get,
+        openapi::PathTemplate::parse("/health").expect("valid path"),
+        health,
+    )
+    .trailing_slashes(TrailingSlashPolicy::Redirect);
 }

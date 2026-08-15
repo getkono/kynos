@@ -232,31 +232,29 @@ The `Provides` case has a positive control in
 That is weaker than a sibling block: a unit test and a doctest can drift apart,
 and the reader of the compile-fail case does not see the control.
 
-## The compile-only guard
+## The compile-only guard, retired
 
 ```rust
 if std::hint::black_box(false) { .. }
 ```
 
-This asserts that a call *typechecks* without executing it. It is used in
-[`tests/compile/panic_recovery.rs`](../crates/kynos/tests/compile/panic_recovery.rs),
-and it exists because the pre-v1 API skeleton is `todo!()`-bodied: the types are
-the deliverable, and running them would only prove that `todo!()` panics.
+This asserted that a call *typechecks* without executing it, and existed
+because the pre-v1 API skeleton was `todo!()`-bodied: the types were the
+deliverable, and running them would only have proved that `todo!()` panics.
+`black_box` rather than `if false`, so the compiler could not prove the branch
+dead and skip the analysis that was the entire point.
 
-`black_box` rather than `if false`, because the compiler must not be permitted
-to prove the branch dead and skip the analysis that is the entire point.
+It is recorded here because it left a mark on the suite rather than because it
+is available. **A guarded body holds no assertions.** Nothing inside one runs,
+so an `assert_eq!` there is a claim the suite appears to make and never checks
+— the one failure mode a reader cannot see, since the test passes and reads as
+though it verified something. `routes_collects_every_operation` and
+`endpoint_collections_compose` each asserted a count that way, and each got its
+count back when the body landed.
 
-**A guarded body holds no assertions.** Nothing inside one runs, so an
-`assert_eq!` there is a claim the suite appears to make and never checks — the
-one failure mode a reader cannot see, since the test passes and reads as though
-it verified something. `routes_collects_every_operation` and
-`endpoint_collections_compose` each asserted a count this way, and each got its
-count back when the body landed. Put the calls that must typecheck inside the
-guard and nothing else; the assertion belongs with the body.
-
-The guard is temporary by design. Every use of it is a marker for a body that
-has not been implemented, and each should disappear as its body lands rather
-than being kept as a testing idiom.
+Every use of the guard was a marker for an unimplemented body, and the bodies
+have all landed. There are none left, and a new one is not a testing idiom to
+reach for — it is the sign of a surface that should not have been written yet.
 
 ## Hermeticity
 
