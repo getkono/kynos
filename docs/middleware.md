@@ -80,6 +80,29 @@ on. Two interceptors rewriting one compose; two setting one header do not. An
 encoding a consumer must know about is a header, which is why `Compression`
 declares `Content-Encoding` rather than re-encoding silently.
 
+## Vary is declared apart from the names
+
+`Vary` is the one response header two interceptors may both contribute to, so it
+has a channel of its own: `HeaderParams::VARIES` rather than `NAMES`.
+
+RFC 9110 §12.5.5 defines it as an unordered set of field names. `Compression`
+varies on `Accept-Encoding` and `Cors` varies on `Origin`, and both belong on the
+same response — a browser-facing service wants that pairing. Naming `vary` in
+`NAMES` would make it a compile error, and the conflict check is right about
+every *other* header, so the fix is to stop calling this one a conflict rather
+than to weaken the check.
+
+Kynos merges what is declared into whatever `Vary` the response already carries:
+case-insensitively, because a field name is; and never past `*`, which already
+says the response depends on more than field names can express. The merge runs
+in both places a group reaches the wire — `Continued::with_headers` and
+`WithHeaders::into_response` — so the two cannot disagree.
+
+`VARIES` is never described. A shared cache reads `Vary`; a client generator has
+no use for it. Getting this wrong is not a missing nicety: a CORS response that
+varies on `Origin` without saying so lets a cache hand one origin's
+`Access-Control-Allow-Origin` to another, which defeats the check entirely.
+
 ## Opaque
 
 The vocabulary is
