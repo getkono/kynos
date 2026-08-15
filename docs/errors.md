@@ -107,7 +107,7 @@ All live in [`error::rejection`](../crates/kynos/src/error/rejection.rs).
 | `QueryRejection` | 400 | `Query<T>`, `QueryString<T, M>` |
 | `HeaderRejection` | 400 | `Headers<T>` |
 | `CookieRejection` | 400 | `Cookies<T>` |
-| `BodyRejection` | 400, 413, 415, 422 | every body extractor, and `OneOf<L, R>` |
+| `BodyRejection` | 400, 415, 422 | every body extractor, and `OneOf<L, R>` |
 | `NegotiationRejection` | 400, 406 | `Accept<T>` |
 | `AuthRejection` | 401, 403 | `Auth<S>`, `Scoped<S, R>` |
 

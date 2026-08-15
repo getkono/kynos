@@ -232,13 +232,13 @@ pub enum BodyRejection {
         /// What the client sent, if anything.
         received: Option<String>,
     },
-
-    /// The body exceeded the configured limit. Produces 413.
-    #[error("the request body is too large")]
-    TooLarge {
-        /// The configured maximum, in bytes.
-        limit: u64,
-    },
+    // There is deliberately no `TooLarge` variant. Capping a body is
+    // `middleware::limits::BodySize`'s job, and it answers 413 through its own
+    // `BodySizeExceeded` short circuit before a body extractor is reached — so
+    // an extractor never meets an oversized body. A variant here would declare
+    // a 413 on every operation taking a body, including the ones no `BodySize`
+    // covers, which is a status the service cannot produce. `assert_conformance`
+    // caught exactly that.
 }
 
 impl BodyRejection {
@@ -249,7 +249,6 @@ impl BodyRejection {
             Self::Syntax { .. } => StatusCode::BAD_REQUEST,
             Self::Schema { .. } => StatusCode::UNPROCESSABLE_ENTITY,
             Self::UnsupportedMediaType { .. } => StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            Self::TooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
         }
     }
 }
@@ -262,7 +261,6 @@ impl IntoProblem for BodyRejection {
     fn statuses() -> &'static [StatusCode] {
         &[
             StatusCode::BAD_REQUEST,
-            StatusCode::PAYLOAD_TOO_LARGE,
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             StatusCode::UNPROCESSABLE_ENTITY,
         ]

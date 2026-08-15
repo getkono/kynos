@@ -8,6 +8,8 @@
 
 use std::time::Duration;
 
+use bytes::{Bytes, BytesMut};
+use http_body_util::BodyExt;
 use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
@@ -91,6 +93,47 @@ impl BodySize {
     }
 }
 
+/// The length the request declared, when it declared one.
+fn declared_length(headers: &http::HeaderMap) -> Option<u64> {
+    headers
+        .get(http::header::CONTENT_LENGTH)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// Reads `body` while the running total stays within `limit`.
+///
+/// `None` once the limit is passed, which is decided on the frame that passes
+/// it rather than after the whole body has arrived — a chunked body declares no
+/// length, so the count is the only bound there is.
+///
+/// A read that fails yields what arrived before it did. That is not a size
+/// violation and must not be reported as one; the body extractor beneath sees a
+/// truncated payload and rejects it with the status it already describes.
+async fn read_capped(mut body: crate::http::body::Body, limit: u64) -> Option<Bytes> {
+    let mut collected = BytesMut::new();
+
+    while let Some(frame) = body.frame().await {
+        let Ok(frame) = frame else { break };
+        let Ok(data) = frame.into_data() else {
+            continue;
+        };
+
+        let collected_so_far = u64::try_from(collected.len()).unwrap_or(u64::MAX);
+        let arriving = u64::try_from(data.len()).unwrap_or(u64::MAX);
+        if collected_so_far.saturating_add(arriving) > limit {
+            return None;
+        }
+
+        collected.extend_from_slice(&data);
+    }
+
+    Some(collected.freeze())
+}
+
 impl<C: Sync + 'static> Interceptor<C> for BodySize {
     type Reads = ();
     type Adds = ();
@@ -103,8 +146,32 @@ impl<C: Sync + 'static> Interceptor<C> for BodySize {
         context: &C,
         next: Next<'_, C>,
     ) -> Result<Continued<()>, BodySizeExceeded> {
-        let _ = (request, reads, context, next, self.limit);
-        todo!()
+        let _ = (reads, context);
+
+        // A declared length is the cheapest answer: an oversized upload is
+        // refused before a byte of it is read.
+        if let Some(declared) = declared_length(request.headers()) {
+            if declared > self.limit {
+                return Err(BodySizeExceeded { limit: self.limit });
+            }
+
+            // The protocol driver delivers no more than the length it was told,
+            // so the body passes through untouched and a streaming upload stays
+            // one.
+            return Ok(next.run(request).await);
+        }
+
+        // No declared length, so the count is the only bound: the body is read
+        // frame by frame and abandoned the moment it passes the limit. What
+        // arrives within it is handed on verbatim, since the only body Kynos can
+        // rebuild is one built from bytes.
+        let (parts, body) = request.into_parts();
+        let Some(bytes) = read_capped(body, self.limit).await else {
+            return Err(BodySizeExceeded { limit: self.limit });
+        };
+
+        let request = http::Request::from_parts(parts, crate::http::body::Body::from_bytes(bytes));
+        Ok(next.run(request).await)
     }
 }
 
