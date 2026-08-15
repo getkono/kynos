@@ -80,6 +80,41 @@ on. Two interceptors rewriting one compose; two setting one header do not. An
 encoding a consumer must know about is a header, which is why `Compression`
 declares `Content-Encoding` rather than re-encoding silently.
 
+## Preflight
+
+A CORS preflight is answered by the router, not by a chain.
+
+It is registered as an operation on the matched path while the service is built,
+after the description has been assembled. That ordering is the whole design:
+
+- **It contributes no `paths` key.** Not because a filter removes it, but
+  because `describe` had already finished when it was created.
+- **It appears in no `Allow` header.** The `Allow` loop runs before
+  registration, so a 405 still names only the operations the description
+  declares.
+- **A path that declares its own `OPTIONS` gets no synthesized one.** The
+  user's operation wins by construction rather than by a race.
+- **It runs no interceptor.** A browser sends a preflight with no credentials
+  and no `Authorization`; an auth interceptor short-circuiting it would break
+  CORS for every operation on the path. `middleware.md` says an interceptor
+  covers the *operations* in its subtree, and a preflight is not one. Observers
+  still see it, which is right — a preflight is worth logging.
+
+An `OPTIONS` that is *not* a preflight — no `Origin`, or no
+`Access-Control-Request-Method` — is answered exactly as it was before CORS was
+mounted: the same `method_not_allowed` policy, the same `Allow` value.
+
+The methods a preflight advertises are the ones the covering scope declares, so
+a `Cors` on a group owning `GET /x` advertises `GET` even where the router also
+owns `POST /x`. `Cors::allow_methods` overrides that, for a deployment fronting
+routes Kynos does not serve.
+
+**One limit.** An endpoint-scoped `Cors` answers no preflight: an endpoint's own
+interceptors stay inside the endpoint, which is what runs them, so preflight
+registration cannot see them. Mount CORS at a router or group scope.
+`a_cors_mounted_on_one_endpoint_answers_no_preflight` records the behaviour, so
+closing the gap turns a test red rather than nothing.
+
 ## The one interceptor the router recognises by identity
 
 Everything above is read from an interceptor's *types*. There is exactly one
