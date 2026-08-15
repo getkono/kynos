@@ -144,14 +144,9 @@ required-features = [
 
 [[example]]
 name = "testing"
-required-features = [
-  "openapi31",
-  "macros",
-  "server",
-  "http1",
-  "json",
-  "test-util",
-]
+# No `server` and no `http1`: this example drives a built `Service` directly,
+# which is the whole point of it.
+required-features = ["openapi31", "macros", "json", "test-util"]
 
 [[example]]
 name = "tls"

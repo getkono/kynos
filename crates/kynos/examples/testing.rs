@@ -4,11 +4,9 @@
 //! cargo run -p kynos --example testing --features test-util
 //! ```
 //!
-//! **This example cannot run yet.** `Router::build` and every method below it
-//! are `todo!()`, so `main` panics on the first call. The runnable form of the
-//! same thing is [`tests/conformance.rs`](../tests/conformance.rs), which is
-//! `#[ignore]`d for the same reason and will start passing when the router
-//! does. What both files establish now is the *shape* of a conformance test.
+//! The runnable form of the same thing is
+//! [`tests/conformance.rs`](../tests/conformance.rs), which asserts what this
+//! prints.
 //!
 //! Three things are worth noticing:
 //!
@@ -29,10 +27,13 @@
 //! The two assertions are opposites and both are needed: one says nothing
 //! happened that the document did not predict, the other says nothing the
 //! document predicts has gone unexercised.
+//!
+//! The second one still reports a gap here, and the gap is real rather than a
+//! shortfall in what this file exercises — see `main`.
 
-use std::net::Ipv4Addr;
+use std::panic::{self, AssertUnwindSafe, UnwindSafe};
 
-use kynos::{http::StatusCode, prelude::*, server::Server, test::TestClient};
+use kynos::{http::StatusCode, prelude::*, test::TestClient};
 use serde::{Deserialize, Serialize};
 
 /// A user of the service.
@@ -124,17 +125,101 @@ async fn main() -> kynos::Result<()> {
         .assert_status(StatusCode::CONFLICT)
         .assert_problem_type("https://errors.example.com/name-taken");
 
+    // Everything else the two operations declare. A rejection is a declared
+    // response like any other, so exercising the API means exercising the ways
+    // it says no -- which is the work `assert_declared_responses_covered`
+    // below exists to make visible rather than optional.
+    exercise_the_rejections(&client).await;
+
     // Nothing happened that the document did not predict.
     client.assert_conformance();
+    println!("every observed response conforms to the description");
 
-    // Nothing the document predicts has gone unexercised. This one fails as
-    // written: the 201 from `create_user` and the 400 from `Path<UserPath>`
-    // have not been produced above, which is exactly the report it exists to
-    // give.
-    client.assert_declared_responses_covered();
+    // The other direction: nothing the document predicts has gone unexercised.
+    //
+    // This one still reports a gap, and the gap is not in this file. Every
+    // body extractor declares 413 through `BodyRejection`, but the only thing
+    // that ever produces one is `middleware::limits::BodySize`, which this
+    // service does not install -- so the description promises a response the
+    // service cannot send. That is precisely the class of untruth this
+    // assertion exists to find, and the fix is to install the limit or to stop
+    // promising it, never to stop asking.
+    //
+    // An example has to reach its last line, so the report is caught and
+    // printed. A test lets it fail.
+    println!(
+        "{}",
+        report(AssertUnwindSafe(
+            || client.assert_declared_responses_covered()
+        ))
+    );
 
-    Server::new(service()?)
-        .bind((Ipv4Addr::UNSPECIFIED, 3000))
-        .serve()
+    Ok(())
+}
+
+/// Produces every rejection the two operations declare and can reach.
+async fn exercise_the_rejections(client: &TestClient<()>) {
+    // A path variable that is not a `u64`.
+    client
+        .get("/users/not-a-number")
+        .send()
         .await
+        .assert_status(StatusCode::BAD_REQUEST);
+
+    // A body that is not JSON at all: an empty one ends before any value
+    // begins, which is a syntax error rather than a schema one.
+    client
+        .post("/users")
+        .header("content-type", "application/json")
+        .send()
+        .await
+        .assert_status(StatusCode::BAD_REQUEST);
+
+    // A media type the operation never claimed.
+    client
+        .post("/users")
+        .header("content-type", "text/plain")
+        .send()
+        .await
+        .assert_status(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+    // Valid JSON of the wrong shape, which is the distinction 400 and 422
+    // draw: the document parsed, and then said something the schema forbids.
+    client
+        .post("/users")
+        .json(&serde_json::json!({ "id": "one", "name": 1 }))
+        .send()
+        .await
+        .assert_status(StatusCode::UNPROCESSABLE_ENTITY);
+
+    // The successful creation, which is the response a suite is most likely to
+    // have and least likely to notice missing.
+    client
+        .post("/users")
+        .json(&User {
+            id: 1,
+            name: "fresh".to_owned(),
+        })
+        .send()
+        .await
+        .assert_status(StatusCode::CREATED);
+}
+
+/// Runs an assertion and returns what it said, instead of ending the program.
+///
+/// Only an example needs this. A test lets a failing assertion fail, which is
+/// the entire value of having written it.
+fn report(assertion: impl FnOnce() + UnwindSafe) -> String {
+    let hook = panic::take_hook();
+    panic::set_hook(Box::new(|_| {}));
+    let outcome = panic::catch_unwind(assertion);
+    panic::set_hook(hook);
+
+    match outcome {
+        Ok(()) => "every declared response was exercised".to_owned(),
+        Err(payload) => payload
+            .downcast_ref::<String>()
+            .cloned()
+            .unwrap_or_else(|| "the assertion failed".to_owned()),
+    }
 }
