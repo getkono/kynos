@@ -48,7 +48,6 @@ impl PathCaptures {
     ///
     /// Panics if a value does not lie inside `path`, which would mean the
     /// captures and the path came from two different requests.
-    #[allow(dead_code)]
     pub(crate) fn new<'a>(
         path: &str,
         captures: impl IntoIterator<Item = (&'static str, &'a str)>,

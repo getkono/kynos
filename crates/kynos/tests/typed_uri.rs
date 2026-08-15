@@ -69,7 +69,7 @@ impl QueryParams for ReportQuery {
     }
 }
 
-#[allow(dead_code, clippy::unused_async)]
+#[allow(clippy::unused_async)]
 #[kynos::get("/reports/{name}")]
 async fn report(Path(_): Path<ReportPath>, Query(_): Query<ReportQuery>) {}
 

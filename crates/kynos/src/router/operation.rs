@@ -23,7 +23,6 @@ pub struct Route<'a> {
 
 impl<'a> Route<'a> {
     /// Names an operation.
-    #[allow(dead_code)]
     pub(crate) fn new(path: &'a str, operation_id: &'a str, method: Method) -> Self {
         Self {
             path,

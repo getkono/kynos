@@ -93,7 +93,6 @@ impl<C> Service<C> {
     /// context and the matcher, which is why a `Service<C>` is `Send + Sync`
     /// whatever `C` is — the context is captured here once rather than being
     /// threaded through every request.
-    #[allow(dead_code)]
     pub(crate) fn new<F, Fut>(document: Document, handler: F) -> Self
     where
         F: Fn(crate::http::Request) -> Fut + Send + Sync + 'static,

@@ -198,16 +198,12 @@ pub(crate) struct CorsConfig {
     // request routed rather than intercepted -- so it is configured here and
     // read where that request is answered.
     /// Overrides the methods preflight advertises.
-    #[allow(dead_code)]
     pub(crate) methods: Option<Vec<kynos_openapi::Method>>,
     /// The request headers preflight permits.
-    #[allow(dead_code)]
     pub(crate) headers: Vec<Cow<'static, str>>,
     /// Whether preflight permits every request header.
-    #[allow(dead_code)]
     pub(crate) any_header: bool,
     /// How long a preflight result may be cached.
-    #[allow(dead_code)]
     pub(crate) max_age: Option<Duration>,
 }
 

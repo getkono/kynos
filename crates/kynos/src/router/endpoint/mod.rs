@@ -47,7 +47,6 @@ pub trait Endpoint<C>: Send + Sync + 'static {
 ///
 /// Private: boxing the future is how erasure is paid for, and no public
 /// signature names a boxed future.
-#[allow(dead_code)]
 pub(crate) trait DynEndpoint<C>: Send + Sync + 'static {
     fn method(&self) -> Method;
 

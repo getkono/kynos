@@ -237,7 +237,6 @@ impl<H> std::fmt::Debug for Continued<H> {
 
 impl Continued<()> {
     /// Wraps what the rest of the chain produced.
-    #[allow(dead_code)]
     pub(crate) fn new(response: Response) -> Self {
         Self {
             response,
@@ -322,7 +321,6 @@ impl<H: HeaderParams> Continued<H> {
 /// A cursor rather than a linked structure: running the rest of the chain is
 /// taking the head of a slice, and reaching the end is calling the endpoint. A
 /// route with no interceptors therefore pays nothing.
-#[allow(dead_code)]
 pub struct Next<'a, C> {
     remaining: &'a [Arc<dyn ErasedInterceptor<C>>],
     terminal: &'a dyn ErasedTerminal<C>,
@@ -341,7 +339,6 @@ impl<C> std::fmt::Debug for Next<'_, C> {
 
 impl<'a, C: Sync + 'static> Next<'a, C> {
     /// Begins a chain.
-    #[allow(dead_code)]
     pub(crate) fn new(
         remaining: &'a [Arc<dyn ErasedInterceptor<C>>],
         terminal: &'a dyn ErasedTerminal<C>,

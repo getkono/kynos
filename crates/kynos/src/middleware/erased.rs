@@ -22,7 +22,6 @@ use crate::{
 };
 
 /// The object-safe form of [`Interceptor`].
-#[allow(dead_code)]
 pub(crate) trait ErasedInterceptor<C>: Send + Sync + 'static {
     /// Adds this interceptor's three declarations to `operation`.
     ///
@@ -134,7 +133,6 @@ where
 /// assembled from the *endpoints* a router mounted rather than from the
 /// terminals it later builds out of them — so a `describe` here would be a
 /// second answer to a question already answered, reachable from nothing.
-#[allow(dead_code)]
 pub(crate) trait ErasedTerminal<C>: Send + Sync + 'static {
     fn call<'a>(
         &'a self,
