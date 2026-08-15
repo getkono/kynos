@@ -80,6 +80,29 @@ on. Two interceptors rewriting one compose; two setting one header do not. An
 encoding a consumer must know about is a header, which is why `Compression`
 declares `Content-Encoding` rather than re-encoding silently.
 
+## Why the rate-limit headers keep a prefix
+
+`RateLimit` emits `X-RateLimit-Limit`, `X-RateLimit-Remaining` and
+`X-RateLimit-Reset`, and RFC 6648 has deprecated `X-` prefixes for new headers
+since 2012. The choice is deliberate.
+
+The unprefixed triple belongs to `draft-ietf-httpapi-ratelimit-headers`, which
+has already *replaced* it with a single structured `RateLimit` field plus
+`RateLimit-Policy`. These names are `DESCRIBED`, so they reach generated
+clients — which makes a wrong name expensive rather than cosmetic. Emitting the
+unprefixed triple would squat three names a working group is actively revising,
+and claiming settled ground that is not settled is the failure this project's
+architecture notes exist to catch.
+
+The reversal is cheap and additive when the draft lands: a second `HeaderParams`
+group and a type-state transition on `RateLimit`, shaped exactly like
+`Cors::document_response_headers`.
+
+One thing worth knowing about the two halves. The 429's headers ride on
+`Responses`; a success's ride on `Adds`. They never co-occur on one response,
+because a short-circuit never calls `with_headers` — so the conflict check,
+which compares `Adds` against `Adds`, is not weakened by the pair.
+
 ## Preflight
 
 A CORS preflight is answered by the router, not by a chain.
