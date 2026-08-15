@@ -782,6 +782,7 @@ dependencies = [
  "kynos-macros",
  "kynos-openapi",
  "listenfd",
+ "matchit",
  "multer",
  "percent-encoding",
  "prost",
@@ -873,6 +874,12 @@ checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
 dependencies = [
  "regex-automata",
 ]
+
+[[package]]
+name = "matchit"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8863b587001c1b9a8a4e36008cebc6b3612cb1226fe2de94858e06092687b608"
 
 [[package]]
 name = "memchr"

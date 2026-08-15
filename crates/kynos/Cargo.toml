@@ -297,6 +297,7 @@ hyper-util = { workspace = true, optional = true, features = [
   "tokio",
 ] }
 jiff = { workspace = true, optional = true }
+matchit = { workspace = true }
 multer = { workspace = true, optional = true }
 percent-encoding = { workspace = true }
 prost = { workspace = true, optional = true }
