@@ -108,28 +108,29 @@ by naming the row X displaces rather than by arguing that X is good.
 | Runtime, sockets, timers, signals | `tokio` | `server/` | built |
 | Request and response types | `http` | ambient | built |
 | Byte buffers | `bytes` | ambient | built |
-| Body trait and erasure | `http-body`, `http-body-util` | [`http/body.rs`](../crates/kynos/src/http/body.rs) | built |
+| Body trait and erasure | `http-body`, `http-body-util` | [`http/body.rs`](../crates/kynos/src/http/body.rs), [`extract/body/mod.rs`](../crates/kynos/src/extract/body/mod.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
 | Protocol driver, HTTP/1 and HTTP/2 | `hyper` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs), [`http/body.rs`](../crates/kynos/src/http/body.rs) | built |
 | tokio adapters for the driver | `hyper-util` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs) | built |
 | HTTP/1 parsing | `httparse` | never — reached through `hyper` | built |
 | HTTP/2 framing | `h2` | never — reached through `hyper` | built |
 | TLS | `rustls`, via `tokio-rustls` | [`server/tls/`](../crates/kynos/src/server/tls/) | built |
-| Route matching | `matchit` | [`router/`](../crates/kynos/src/router/) | chosen |
+| Route matching | `matchit` | [`router/`](../crates/kynos/src/router/) | built |
+| JSON Schema instance validation | `jsonschema` | [`test/conformance.rs`](../crates/kynos/src/test/conformance.rs), gated on `test-util` | built |
 | Percent-encoding | `percent-encoding` | [`__private/uri.rs`](../crates/kynos/src/__private/uri.rs) | built |
 | Errors | `thiserror` | ambient | built |
-| Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | built in `server/`, designed in `middleware/` |
-| Streaming bodies | `futures-core` | [`response/stream/`](../crates/kynos/src/response/stream/), gated on `openapi32` | designed |
+| Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | built |
+| Streaming bodies | `futures-core` | [`response/stream/`](../crates/kynos/src/response/stream/), [`http/body.rs`](../crates/kynos/src/http/body.rs), gated on `openapi32` | built |
 | JSON | `serde_json` | ambient with `serde` | built |
-| Form codec | `serde_urlencoded` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs) | designed |
-| Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | designed |
-| Protobuf codec | `prost` | [`extract/body/protobuf.rs`](../crates/kynos/src/extract/body/protobuf.rs), [`response/codec/protobuf.rs`](../crates/kynos/src/response/codec/protobuf.rs) | designed |
-| Cookies | `cookie` | [`extract/params/cookie.rs`](../crates/kynos/src/extract/params/cookie.rs) | designed |
+| Form codec | `serde_urlencoded` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs) | built |
+| Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | built |
+| Protobuf codec | `prost` | [`extract/body/protobuf.rs`](../crates/kynos/src/extract/body/protobuf.rs), [`response/codec/protobuf.rs`](../crates/kynos/src/response/codec/protobuf.rs) | built |
+| Cookies | `cookie` | [`extract/params/cookie.rs`](../crates/kynos/src/extract/params/cookie.rs) | built |
 | Scalar formats, identifiers | `uuid` | [`schema/impls/identifier.rs`](../crates/kynos/src/schema/impls/identifier.rs) | built |
 | Scalar formats, dates and times | `chrono`, `jiff` | [`schema/impls/temporal/`](../crates/kynos/src/schema/impls/temporal/) | built |
 | Scalar formats, decimals | `rust_decimal`, `bigdecimal` | [`schema/impls/decimal/`](../crates/kynos/src/schema/impls/decimal/) | built |
-| Compression | `async-compression` | [`middleware/compression.rs`](../crates/kynos/src/middleware/compression.rs) | designed |
+| Compression | `async-compression` | [`middleware/compression.rs`](../crates/kynos/src/middleware/compression.rs) | built |
 | tower interop, outward | `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
-| tower interop, inward | `tower` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | designed |
+| tower interop, inward | `tower` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
 | Document ordering | `indexmap` | [`kynos-openapi`](../crates/kynos-openapi/src/lib.rs) | built |
 | YAML emission | `serde_yaml_ng` | [`kynos-openapi/emit/`](../crates/kynos-openapi/src/emit/), [`error/mod.rs`](../crates/kynos/src/error/mod.rs) | built |
 | Macro parsing | `proc-macro2`, `quote`, `syn` | [`kynos-macros`](../crates/kynos-macros/src/) | built |
@@ -148,14 +149,17 @@ code that reaches it is implemented; it has no owning module to be a skeleton.
 `httparse` and `h2` are the clear cases: no member declares either, and they
 are reached only through `hyper`.
 
-`matchit` and the three scalar-format rows are the `chosen` ones. Each is
-recorded because the decision is made and the alternatives are closed — see
-[below](#what-does-not-move-and-why) — but declaring a dependency the tree does
-not name would break the consumed-by-a-member requirement in
-[`nfr.md`](nfr.md#dependencies) for no gain. `matchit` arrives with the router
-implementation; each scalar crate arrives with the `Schema` implementation that
-names it, and becomes `built` in the same commit, since a leaf implementation
-has no skeleton phase to be `designed` in.
+`chosen` currently has no occupants, and the rows that held it are the reason
+the status is worth keeping. The three scalar-format rows were `chosen` while
+the decision was made and the alternatives closed — see
+[below](#what-does-not-move-and-why) — because declaring a dependency the tree
+does not name would break the consumed-by-a-member requirement in
+[`nfr.md`](nfr.md#dependencies) for no gain. Each arrived with the `Schema`
+implementation that names it and became `built` in the same commit, since a leaf
+implementation has no skeleton phase to be `designed` in.
+
+`matchit` was the fourth and left the same way: it arrived with the router
+implementation, which is exactly what a `chosen` row predicts happening to it.
 
 `hyper` has two sites rather than one because the body handover is where its
 `Incoming` type enters, and `http/body.rs` is by design the only place the
@@ -226,20 +230,26 @@ is: they widen the coupling surface the runtime policy exists to bound.
 
 ### What the table does not yet claim
 
-Several rows are `designed` because the manifest runs ahead of the skeleton:
-`multer`, `serde_urlencoded`, `async-compression` and `cookie` are declared by
-`crates/kynos` and named by no code in it. Each is gated behind an
-off-by-default feature, so no default build carries a dependency it does not
-use — which is why `futures-core` became optional too, rather than being
-compiled into every 3.1 build for a module 3.1 cannot reach.
+Nothing, as of the skeleton landing. Every row is `built`: the API-skeleton
+milestone is over, the `todo!()` bodies are implemented, and each crate the
+table names is reached by code that runs.
 
-Two rows are `designed` for a subtler reason: the crate is named, but only in
-the bound of a body that is still `todo!()`. `futures-core` appears in the
-`Stream` bounds of the response types under `response/stream/`, whose builders
-are real and whose responses are not; `tower` appears only in the bound of
-`layer_unchecked`. `tower-service` is separate and genuinely `built`, because
-the outward direction — mounting a Kynos service into someone else's stack —
-is implemented.
+That is a change worth recording rather than quietly deleting. `multer`,
+`serde_urlencoded`, `async-compression` and `cookie` were `designed` because the
+manifest ran ahead of the skeleton — declared by `crates/kynos` and named by no
+code in it. `futures-core` and `tower` were `designed` for a subtler reason: the
+crate was named, but only in the bound of a body that was still `todo!()`. All
+six are now consumed at exactly the path this table gives them, which is the
+property the *Named in* column exists to be checkable against.
+
+Each optional row is still gated behind an off-by-default feature, so no default
+build carries a dependency it does not use — which is why `futures-core` is
+optional rather than compiled into every 3.1 build for a module 3.1 cannot
+reach, and why `jsonschema` is reachable only through `test-util`.
+
+`chosen` therefore has no occupants either. It stays in the status table because
+the state it names is real and will recur: a decision made, and the alternatives
+closed, before any manifest records it.
 
 `mime` and `pin-project-lite` were in this list and are gone. Neither was a
 deferred wiring job: media types are carried as `&'static str` on purpose, for
