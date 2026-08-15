@@ -150,3 +150,194 @@ fn a_cookie_rejection_is_a_bad_request() {
     assert_eq!(rejection.status(), StatusCode::BAD_REQUEST);
     assert_eq!(CookieRejection::statuses(), [StatusCode::BAD_REQUEST]);
 }
+
+// --- The closed set --------------------------------------------------------
+
+/// Every rejection type, counted against the ones this file exercises.
+///
+/// The cases above witness a set someone chose, and nothing tied that set to
+/// the rejections the module declares. A rejection added without a case is one
+/// whose status nothing checks against what it declares — which is the failure
+/// `declares` exists to catch, silently unrun.
+///
+/// Under `cookie`, because `CookieRejection` is gated there and the full set
+/// only exists in that build.
+#[cfg(feature = "cookie")]
+#[test]
+fn every_rejection_a_caller_can_receive_has_a_case() {
+    const SOURCE: &str = include_str!("../rejection.rs");
+
+    /// Every rejection witnessed above, transcribed in declaration order.
+    const WITNESSED: [&str; 7] = [
+        "PathRejection",
+        "QueryRejection",
+        "HeaderRejection",
+        "CookieRejection",
+        "BodyRejection",
+        "NegotiationRejection",
+        "AuthRejection",
+    ];
+
+    let declared: Vec<&str> = SOURCE
+        .lines()
+        .filter_map(|line| line.strip_prefix("pub enum "))
+        .filter_map(|rest| rest.strip_suffix(" {"))
+        .collect();
+
+    assert_eq!(
+        declared, WITNESSED,
+        "a rejection was added or renamed without a case here"
+    );
+}
+
+/// Every variant of every rejection: its name, the status it produces, and the
+/// set its own type declares.
+///
+/// The matches are exhaustive, so a variant added to any of the seven stops
+/// this file compiling until it is given a row — the idiom `error/tests.rs`
+/// uses for `Error`, applied to the types a *caller* meets rather than the one
+/// a builder does.
+fn ledger() -> Vec<(&'static str, StatusCode, &'static [StatusCode])> {
+    fn path(rejection: PathRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
+        let name = match rejection {
+            PathRejection::Invalid { .. } => "PathRejection::Invalid",
+        };
+        (name, rejection.status(), PathRejection::statuses())
+    }
+
+    fn query(rejection: QueryRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
+        let name = match rejection {
+            QueryRejection::Invalid { .. } => "QueryRejection::Invalid",
+        };
+        (name, rejection.status(), QueryRejection::statuses())
+    }
+
+    fn header(rejection: HeaderRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
+        let name = match rejection {
+            HeaderRejection::Invalid { .. } => "HeaderRejection::Invalid",
+        };
+        (name, rejection.status(), HeaderRejection::statuses())
+    }
+
+    fn body(rejection: BodyRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
+        let name = match rejection {
+            BodyRejection::Syntax { .. } => "BodyRejection::Syntax",
+            BodyRejection::Schema { .. } => "BodyRejection::Schema",
+            BodyRejection::UnsupportedMediaType { .. } => "BodyRejection::UnsupportedMediaType",
+        };
+        (name, rejection.status(), BodyRejection::statuses())
+    }
+
+    fn negotiation(
+        rejection: NegotiationRejection,
+    ) -> (&'static str, StatusCode, &'static [StatusCode]) {
+        let name = match rejection {
+            NegotiationRejection::MalformedAccept { .. } => "NegotiationRejection::MalformedAccept",
+            NegotiationRejection::NotAcceptable => "NegotiationRejection::NotAcceptable",
+        };
+        (name, rejection.status(), NegotiationRejection::statuses())
+    }
+
+    fn auth(rejection: AuthRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
+        let name = match rejection {
+            AuthRejection::Unauthenticated { .. } => "AuthRejection::Unauthenticated",
+            AuthRejection::Forbidden => "AuthRejection::Forbidden",
+        };
+        (name, rejection.status(), AuthRejection::statuses())
+    }
+
+    let text = |detail: &str| detail.to_owned();
+
+    vec![
+        path(PathRejection::Invalid {
+            name: text("id"),
+            detail: text("not a number"),
+        }),
+        query(QueryRejection::Invalid {
+            name: text("limit"),
+            detail: text("not a number"),
+        }),
+        header(HeaderRejection::Invalid {
+            name: text("if-none-match"),
+            detail: text("not an entity tag"),
+        }),
+        body(BodyRejection::Syntax {
+            detail: text("unexpected end of input"),
+        }),
+        body(BodyRejection::Schema {
+            failures: [(text("/name"), text("expected a string"))]
+                .into_iter()
+                .collect(),
+        }),
+        body(BodyRejection::UnsupportedMediaType {
+            received: Some(text("text/plain")),
+        }),
+        negotiation(NegotiationRejection::MalformedAccept {
+            detail: text("a bare comma"),
+        }),
+        negotiation(NegotiationRejection::NotAcceptable),
+        auth(AuthRejection::unauthenticated()),
+        auth(AuthRejection::Forbidden),
+    ]
+}
+
+/// Every variant produces a status its own type declares.
+///
+/// The exhaustive matches above catch a variant added without a *name*; they
+/// cannot catch one added without a constructed value, because a match arm
+/// nothing reaches still compiles. So the list is transcribed and counted, and
+/// each row is checked against the set its type advertises.
+#[test]
+fn every_variant_produces_a_status_its_type_declares() {
+    const WITNESSED: [&str; 10] = [
+        "PathRejection::Invalid",
+        "QueryRejection::Invalid",
+        "HeaderRejection::Invalid",
+        "BodyRejection::Syntax",
+        "BodyRejection::Schema",
+        "BodyRejection::UnsupportedMediaType",
+        "NegotiationRejection::MalformedAccept",
+        "NegotiationRejection::NotAcceptable",
+        "AuthRejection::Unauthenticated",
+        "AuthRejection::Forbidden",
+    ];
+
+    let rows = ledger();
+    let named: Vec<&str> = rows.iter().map(|(name, _, _)| *name).collect();
+
+    assert_eq!(named, WITNESSED, "a variant was added or renamed");
+
+    for (name, produced, declared) in rows {
+        assert!(
+            declared.contains(&produced),
+            "{name} produces {produced} and its type declares {declared:?}"
+        );
+    }
+}
+
+/// Every named variant renders a sentence rather than a debug dump, which is
+/// what a caller reporting one prints.
+#[test]
+fn every_variant_renders_a_sentence() {
+    for rejection in [
+        BodyRejection::Syntax {
+            detail: "unexpected end of input".to_owned(),
+        },
+        BodyRejection::Schema {
+            failures: [("/name".to_owned(), "expected a string".to_owned())]
+                .into_iter()
+                .collect(),
+        },
+        BodyRejection::UnsupportedMediaType {
+            received: Some("text/plain".to_owned()),
+        },
+    ] {
+        let rendered = rejection.to_string();
+
+        assert!(!rendered.is_empty());
+        assert!(
+            !rendered.contains('{'),
+            "`{rendered}` reads like a debug dump rather than a sentence"
+        );
+    }
+}
