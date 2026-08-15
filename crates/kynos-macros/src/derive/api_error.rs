@@ -10,20 +10,27 @@
 //!         | type = "<absolute URI>"
 //! ```
 //!
-//! `status` is the only member read today: it becomes the `statuses()` const,
-//! which is what the description is built from. The rest are parsed and checked
-//! so the grammar is settled and a typo is still an error, and are read when
-//! `into_problem` stops being a placeholder — the same treatment
-//! `#[derive(SecurityScheme)]` gives the members its `describe` will need.
+//! `status` is what closes the set: it becomes the `statuses()` const, the
+//! `ShortCircuit` const and the keys of the `Responses`, all read once so that
+//! none of the three can disagree. `title` and `type` fill the problem detail's
+//! two type-level members, and `base` supplies the prefix a variant with no
+//! `type` of its own hangs its slug under — so an application declares the
+//! prefix once and every variant gets a stable identifier without writing a
+//! URI per failure.
+//!
+//! `detail` is the occurrence-specific member and comes from `Display`, which
+//! is why `thiserror` is the expected companion: the `#[error("...")]` a Rust
+//! reader sees is the sentence an API consumer receives.
 
 use proc_macro::TokenStream;
-use proc_macro2::Span;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
-    Attribute, Data, DeriveInput, Fields, LitInt, LitStr, parse_macro_input, spanned::Spanned,
+    Attribute, Data, DeriveInput, Fields, Ident, LitInt, LitStr, parse_macro_input,
+    spanned::Spanned,
 };
 
-use crate::derive::common::skip_value;
+use crate::derive::common::{doc_string, skip_value};
 
 /// The range a problem detail's status may fall in.
 ///
@@ -39,7 +46,7 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
     }
 }
 
-pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
     if let Data::Union(data) = &input.data {
         return Err(syn::Error::new(
             data.union_token.span(),
@@ -47,7 +54,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         ));
     }
 
-    let statuses = statuses(input)?;
+    let failures = failures(input)?;
+    let statuses = distinct_statuses(&failures);
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
@@ -66,6 +74,9 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         };
     };
 
+    let problem = into_problem(&failures);
+    let responses = responses(&failures, &statuses);
+
     // `Responses` comes from the same declaration as `into_problem`, so a
     // status the error can return and a status the description advertises
     // cannot drift apart.
@@ -76,7 +87,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             for #name #ty_generics #where_clause
         {
             fn into_problem(self) -> ::kynos::Problem {
-                ::core::todo!()
+                #problem
             }
 
             fn statuses() -> &'static [::kynos::http::StatusCode] {
@@ -110,8 +121,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             fn responses(
                 registry: &mut ::kynos::schema::registry::Registry,
             ) -> ::kynos::openapi::Responses {
-                let _ = registry;
-                ::core::todo!()
+                #responses
             }
         }
 
@@ -126,19 +136,141 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     })
 }
 
-/// Every status the type can produce, in declaration order and without repeats.
+/// One way the type can fail: a pattern that matches it, and what it says.
+struct Failure {
+    /// The pattern `into_problem` matches this failure with, already carrying
+    /// bindings for every published extension member.
+    pattern: TokenStream2,
+
+    /// The extension members, as the name each is published under and the
+    /// binding the pattern gave it.
+    extensions: Vec<(String, Ident)>,
+
+    status: u16,
+    type_uri: Option<String>,
+    title: Option<String>,
+
+    /// The prose a reader already wrote, used where no `title` was given.
+    doc: Option<String>,
+}
+
+/// The `into_problem` body.
+///
+/// `detail` is taken from `Display` before the value is destructured, since the
+/// two want it at once: the sentence describes the whole error, and the
+/// extension members are moved out of it.
+fn into_problem(failures: &[Failure]) -> TokenStream2 {
+    let arms = failures.iter().map(|failure| {
+        let pattern = &failure.pattern;
+        let status = failure.status;
+
+        let with_type = failure
+            .type_uri
+            .as_ref()
+            .map(|uri| quote!(problem.type_uri = ::std::borrow::Cow::Borrowed(#uri);));
+        let with_title = failure
+            .title
+            .as_ref()
+            .map(|title| quote!(problem.title = ::std::borrow::Cow::Borrowed(#title);));
+        let with_extensions = failure
+            .extensions
+            .iter()
+            .map(|(name, binding)| quote!(problem = problem.with_extension(#name, #binding);));
+
+        quote! {
+            #pattern => {
+                let status = ::kynos::http::StatusCode::from_u16(#status)
+                    .expect("the derive checked this code");
+                // `new` supplies the status code's own reason phrase as the
+                // title, which is what RFC 9457 asks for when the type carries
+                // no semantics of its own.
+                let mut problem = ::kynos::Problem::new(status);
+                #with_type
+                #with_title
+                problem.detail = ::core::option::Option::Some(detail);
+                #(#with_extensions)*
+                problem
+            }
+        }
+    });
+
+    quote! {
+        let detail = ::std::string::ToString::to_string(&self);
+        match self {
+            #(#arms)*
+        }
+    }
+}
+
+/// The `responses` body: one response per distinct status.
+///
+/// Every error response is a problem detail, so the schema is `Problem`'s and
+/// is registered once as a component rather than repeated per operation.
+fn responses(failures: &[Failure], statuses: &[u16]) -> TokenStream2 {
+    let entries = statuses.iter().map(|status| {
+        // The first failure declaring a status names it. Several may share one
+        // — two 404s that differ in `detail` — and the description carries one
+        // response per status, so the first is the one a reader sees.
+        let description = failures
+            .iter()
+            .find(|failure| failure.status == *status)
+            .and_then(|failure| failure.title.clone().or_else(|| failure.doc.clone()))
+            .map_or_else(
+                || {
+                    quote! {
+                        ::kynos::http::StatusCode::from_u16(#status)
+                            .ok()
+                            .and_then(|status| status.canonical_reason())
+                            .unwrap_or("the request failed")
+                    }
+                },
+                |text| quote!(#text),
+            );
+
+        quote! {
+            responses = responses.with(
+                #status,
+                ::kynos::openapi::Response::with_content(
+                    #description,
+                    ::kynos::openapi::model::body::mime_names::APPLICATION_PROBLEM_JSON,
+                    ::kynos::openapi::MediaType::new(::core::clone::Clone::clone(&schema)),
+                ),
+            );
+        }
+    });
+
+    quote! {
+        let schema = registry.resolve::<::kynos::Problem>();
+        let mut responses = ::kynos::openapi::Responses::new();
+        #(#entries)*
+        responses
+    }
+}
+
+/// The statuses in declaration order, without repeats.
 ///
 /// A repeated code is not an error — two variants may well be different 404s —
 /// but the description carries one response per status, so the list is deduped
 /// before it becomes one.
-fn statuses(input: &DeriveInput) -> syn::Result<Vec<u16>> {
-    let mut collected = Vec::new();
+fn distinct_statuses(failures: &[Failure]) -> Vec<u16> {
+    let mut seen: Vec<u16> = Vec::new();
+    for failure in failures {
+        if !seen.contains(&failure.status) {
+            seen.push(failure.status);
+        }
+    }
+    seen
+}
+
+/// Every way the type can fail, read from the `#[problem(...)]` declarations.
+fn failures(input: &DeriveInput) -> syn::Result<Vec<Failure>> {
+    let base = parse_problem(&input.attrs, Position::Type)?.base;
 
     match &input.data {
         Data::Enum(data) => {
             // A status on the enum itself would apply to every variant, which
             // is the opposite of what a closed set of failures is for.
-            if let Some(status) = parse_problem(&input.attrs, Position::Type)? {
+            if let Some(status) = parse_problem(&input.attrs, Position::Type)?.status {
                 return Err(syn::Error::new(
                     status.1,
                     "a status belongs on each variant, because the point of an `ApiError` enum is \
@@ -146,45 +278,123 @@ fn statuses(input: &DeriveInput) -> syn::Result<Vec<u16>> {
                 ));
             }
 
-            for variant in &data.variants {
-                reject_unnamed_extensions(&variant.fields)?;
+            data.variants
+                .iter()
+                .map(|variant| {
+                    reject_unnamed_extensions(&variant.fields)?;
 
-                let Some((status, _)) = parse_problem(&variant.attrs, Position::Variant)? else {
-                    return Err(syn::Error::new(
-                        variant.ident.span(),
-                        format!(
-                            "variant `{}` does not say what status it produces; add \
-                             `#[problem(status = ...)]`",
-                            variant.ident
-                        ),
-                    ));
-                };
-                collected.push(status);
-            }
+                    let args = parse_problem(&variant.attrs, Position::Variant)?;
+                    let Some((status, _)) = args.status else {
+                        return Err(syn::Error::new(
+                            variant.ident.span(),
+                            format!(
+                                "variant `{}` does not say what status it produces; add \
+                                 `#[problem(status = ...)]`",
+                                variant.ident
+                            ),
+                        ));
+                    };
+
+                    let extensions = extensions(&variant.fields);
+                    let bindings = extensions.iter().map(|(_, binding)| binding);
+                    let name = &variant.ident;
+
+                    Ok(Failure {
+                        pattern: quote!(Self::#name { #(#bindings,)* .. }),
+                        extensions,
+                        status,
+                        type_uri: type_uri(&args, base.as_deref(), &variant.ident),
+                        title: args.title,
+                        doc: doc_string(&variant.attrs),
+                    })
+                })
+                .collect()
         }
+
         Data::Struct(data) => {
             reject_unnamed_extensions(&data.fields)?;
 
-            let Some((status, _)) = parse_problem(&input.attrs, Position::Type)? else {
+            let args = parse_problem(&input.attrs, Position::Type)?;
+            let Some((status, _)) = args.status else {
                 return Err(syn::Error::new(
                     input.ident.span(),
                     "this error does not say what status it produces; add \
                      `#[problem(status = ...)]`, or use an enum when it can fail several ways",
                 ));
             };
-            collected.push(status);
+
+            let extensions = extensions(&data.fields);
+            let bindings = extensions.iter().map(|(_, binding)| binding);
+
+            Ok(vec![Failure {
+                pattern: quote!(Self { #(#bindings,)* .. }),
+                extensions,
+                status,
+                type_uri: type_uri(&args, base.as_deref(), &input.ident),
+                title: args.title,
+                doc: doc_string(&input.attrs),
+            }])
         }
+
         Data::Union(_) => unreachable!("rejected above"),
     }
+}
 
-    let mut seen = Vec::new();
-    collected.retain(|status| {
-        let fresh = !seen.contains(status);
-        seen.push(*status);
-        fresh
+/// The URI identifying this failure's *type*, if the declaration gives one.
+///
+/// An explicit `type` wins. Otherwise a `base` on the type supplies the prefix
+/// and the variant's own name the slug, which is what lets an application
+/// declare one prefix and still hand every failure a stable identifier. With
+/// neither, the problem keeps `about:blank` — the reading RFC 9457 gives to a
+/// problem whose status is the whole story.
+fn type_uri(args: &ProblemArgs, base: Option<&str>, name: &Ident) -> Option<String> {
+    if let Some(uri) = &args.type_uri {
+        return Some(uri.clone());
+    }
+    base.map(|base| format!("{base}{}", kebab(&name.to_string())))
+}
+
+/// A Rust type or variant name as a URI slug.
+fn kebab(name: &str) -> String {
+    let mut slug = String::with_capacity(name.len() + 4);
+    for (index, character) in name.char_indices() {
+        if character.is_uppercase() && index != 0 {
+            slug.push('-');
+        }
+        slug.extend(character.to_lowercase());
+    }
+    slug
+}
+
+/// The named fields marked `#[problem(extension)]`, as the name each is
+/// published under and the identifier the pattern binds it to.
+fn extensions(fields: &Fields) -> Vec<(String, Ident)> {
+    let Fields::Named(named) = fields else {
+        return Vec::new();
+    };
+
+    named
+        .named
+        .iter()
+        .filter(|field| field.attrs.iter().any(is_extension))
+        .filter_map(|field| field.ident.clone().map(|ident| (ident.to_string(), ident)))
+        .collect()
+}
+
+/// Whether one attribute is `#[problem(extension)]`.
+fn is_extension(attr: &Attribute) -> bool {
+    if !attr.path().is_ident("problem") {
+        return false;
+    }
+    let mut found = false;
+    let _ = attr.parse_nested_meta(|meta| {
+        if meta.path.is_ident("extension") {
+            found = true;
+            return Ok(());
+        }
+        skip_value(&meta)
     });
-
-    Ok(collected)
+    found
 }
 
 /// Where a `#[problem(...)]` list is written, which decides its legal members.
@@ -194,12 +404,18 @@ enum Position {
     Variant,
 }
 
+/// What one item's `#[problem(...)]` lists said.
+#[derive(Default)]
+struct ProblemArgs {
+    status: Option<(u16, Span)>,
+    title: Option<String>,
+    type_uri: Option<String>,
+    base: Option<String>,
+}
+
 /// Reads one item's `#[problem(...)]` lists, validating every member.
-///
-/// Returns the status and its span when one was given. The other members are
-/// checked for shape and discarded; see the module documentation.
-fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Result<Option<(u16, Span)>> {
-    let mut status = None;
+fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Result<ProblemArgs> {
+    let mut args = ProblemArgs::default();
 
     for attr in attrs {
         if !attr.path().is_ident("problem") {
@@ -225,20 +441,18 @@ fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Result<Option<
                             ),
                         ));
                     }
-                    if status.is_some() {
+                    if args.status.is_some() {
                         return Err(syn::Error::new(
                             literal.span(),
                             "this already declares a status, and a response has one",
                         ));
                     }
-                    status = Some((code, literal.span()));
+                    args.status = Some((code, literal.span()));
                 }
-                // Checked for shape now, read when `into_problem` lands.
-                "title" | "type" => {
-                    let _: LitStr = meta.value()?.parse()?;
-                }
+                "title" => args.title = Some(meta.value()?.parse::<LitStr>()?.value()),
+                "type" => args.type_uri = Some(meta.value()?.parse::<LitStr>()?.value()),
                 "base" if position == Position::Type => {
-                    let _: LitStr = meta.value()?.parse()?;
+                    args.base = Some(meta.value()?.parse::<LitStr>()?.value());
                 }
                 "base" => {
                     return Err(syn::Error::new(
@@ -264,7 +478,7 @@ fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Result<Option<
         })?;
     }
 
-    Ok(status)
+    Ok(args)
 }
 
 /// `#[problem(extension)]` names a member by the field's own name, so a field
