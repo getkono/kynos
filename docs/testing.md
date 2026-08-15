@@ -13,7 +13,7 @@ these are asked to enforce; this document is about the mechanics.
 | Integration | [`crates/kynos/tests/`](../crates/kynos/tests/) | `cargo nextest` | that the public surface composes as a user would compose it | in use |
 | UI snapshot | `crates/kynos/tests/ui/` | `trybuild` | the exact text of a diagnostic | built |
 | Property | `crates/kynos-openapi/tests/`, over `support/`'s generators | `proptest` | round-tripping, determinism and totality over generated documents | built |
-| Conformance | a harness over a fixture app | `proptest` over live responses | *emitted ⊇ observable* against a running service | not built |
+| Conformance | a harness over a fixture app | `TestClient` over live responses | *emitted ⊇ observable* against a running service | in use |
 
 A module becomes a directory once it holds two independently-changing concerns
 or exceeds ~400 lines, and its tests move to a sibling `tests.rs` at that point.
@@ -26,10 +26,13 @@ rather than inline.
 Each integration file exists for one reason. `hermeticity.rs` and `ui.rs` are
 different kinds of thing and are covered below.
 
-`conformance.rs` is `#[ignore]`d rather than absent: `Router::build` and
-everything below it are `todo!()`, so it panics rather than fails today. An
-ignored test that names its blocker is a better record of the gap than a missing
-file, and removing the attribute is the whole change when the router lands.
+`conformance.rs` runs now that the router and `test/` have landed, and both of
+its assertions pass. Its sibling `every_declared_response_is_exercised` still
+carries an `#[ignore]` naming a 413 that `BodyRejection` no longer declares —
+the defect the harness found on its first run, recorded at
+[`error/rejection.rs`](../crates/kynos/src/error/rejection.rs)'s
+`TooLarge` comment and fixed in the same push. The attribute outlived its
+reason and is removed with the rest of the testing debt.
 
 | File | Asserts |
 | --- | --- |
@@ -123,11 +126,17 @@ with the wording left to a `.stderr` snapshot, where a reader sees it rendered.
 
 ### Two rules that are not code kinds
 
-**A `todo!()`-bodied item owes its `no_run` doctest and nothing further.**
-Anything more asserts that `todo!()` panics. This is why `router/`,
-`extract/params/` and most of `middleware/` carry almost no tests — the
-API-skeleton milestone working as designed, not debt. Each `black_box(false)`
-guard marks one body whose obligation begins when it lands.
+**A `todo!()`-bodied item owed its `no_run` doctest and nothing further.**
+Anything more would have asserted that `todo!()` panics.
+
+**That rule has now lapsed, and what it deferred is owed.** The API-skeleton
+milestone is over: the bodies under `router/`, `extract/`, `response/`,
+`middleware/`, `security/`, `schema/` and the derives are implemented. Each
+`black_box(false)` guard marked one body whose obligation began when it landed,
+and they have landed — so every such guard is now a test that should be replaced
+by one exercising the body it was standing in for, and the modules the previous
+paragraph excused are the ones carrying the largest gap. This is debt now, where
+before it was design.
 
 **Conformance is a system obligation, not a module one.** No allocation above
 substitutes for it, which is why the row stays in the taxonomy while unbuilt.
