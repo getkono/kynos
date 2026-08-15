@@ -666,6 +666,12 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
             entry.allow = dispatch::allow_header(&methods);
         }
 
+        // After the `Allow` loop, so the synthesized `OPTIONS` is in no `Allow`
+        // header, and after `describe` has already run, so it is in no `paths`
+        // key either. Both are properties of *when* this happens rather than of
+        // a filter someone has to maintain.
+        install_preflight(&mut paths, &self.method_not_allowed);
+
         let dispatch = Arc::new(Dispatch {
             matcher,
             paths,
@@ -992,6 +998,90 @@ fn unique_tags(declared: &[kynos_openapi::Tag]) -> Vec<kynos_openapi::Tag> {
 
 /// Why Kynos will not route a path its model can nonetheless hold.
 ///
+/// Registers a preflight answer on every path a `Cors` covers.
+///
+/// One `Served` per path rather than a branch in `Dispatch::serve`: a preflight
+/// then flows through the machinery that already exists — the matcher finds the
+/// path, `position` finds the method — and `Dispatch` needs to hold no CORS
+/// configuration of its own.
+///
+/// Skipped where the path already declares `OPTIONS`. A hand-written operation
+/// wins, and it wins by construction rather than by a race in `position`'s
+/// linear scan.
+///
+/// The interceptor list on the synthesized entry is deliberately empty. A
+/// browser sends a preflight with no credentials and no `Authorization`, so an
+/// auth interceptor short-circuiting it would break CORS for every operation on
+/// the path — and `docs/middleware.md` says an interceptor covers the
+/// *operations* in its subtree, which a preflight is not. Observers still see
+/// it, because they sit outside the chain.
+fn install_preflight<C: Send + Sync + 'static>(
+    paths: &mut [PathEntry<C>],
+    method_not_allowed: &FallbackPolicy,
+) {
+    for entry in paths {
+        if entry
+            .operations
+            .iter()
+            .any(|operation| operation.method == kynos_openapi::Method::Options)
+        {
+            continue;
+        }
+
+        // The configuration covering this path, and the methods it covers. An
+        // interceptor mounted on a group owning `GET /x` while the router owns
+        // `POST /x` advertises `GET` only, which is what keeps preflight and the
+        // description agreeing about what exists.
+        let mut config = None;
+        let mut covered = Vec::new();
+
+        for operation in &entry.operations {
+            let found = operation
+                .interceptors
+                .iter()
+                .find_map(|interceptor| cors_config(interceptor));
+
+            if let Some(found) = found {
+                config.get_or_insert_with(|| found.clone());
+                covered.push(operation.method);
+            }
+        }
+
+        let Some(config) = config else { continue };
+
+        let preflight = crate::middleware::cors::preflight::Preflight::new(
+            config,
+            &covered,
+            entry.allow.clone(),
+            method_not_allowed.clone(),
+        );
+
+        entry.operations.push(dispatch::Served {
+            method: kynos_openapi::Method::Options,
+            operation_id: String::new(),
+            terminal: Arc::new(dispatch::PreflightTerminal::new(preflight)),
+            interceptors: Vec::new(),
+            catch_panics: false,
+            #[cfg(feature = "unchecked")]
+            unchecked_layers: Vec::new(),
+        });
+    }
+}
+
+/// The CORS configuration an interceptor carries, if it is one.
+fn cors_config<C: 'static>(
+    interceptor: &Arc<dyn ErasedInterceptor<C>>,
+) -> Option<&crate::middleware::cors::CorsConfig> {
+    use crate::middleware::cors::{Cors, Documented, Undocumented};
+
+    let value = interceptor.as_any();
+
+    value
+        .downcast_ref::<Cors<Undocumented>>()
+        .map(Cors::config)
+        .or_else(|| value.downcast_ref::<Cors<Documented>>().map(Cors::config))
+}
+
 /// The configuration conflict an interceptor carries, if it is one the router
 /// recognises and it has one.
 ///
@@ -1003,15 +1093,7 @@ fn unique_tags(declared: &[kynos_openapi::Tag]) -> Vec<kynos_openapi::Tag> {
 fn cors_conflict<C: 'static>(
     interceptor: &Arc<dyn ErasedInterceptor<C>>,
 ) -> Option<crate::middleware::MiddlewareError> {
-    use crate::middleware::cors::{Cors, Documented, Undocumented};
-
-    let value = interceptor.as_any();
-
-    value
-        .downcast_ref::<Cors<Undocumented>>()
-        .map(Cors::config)
-        .or_else(|| value.downcast_ref::<Cors<Documented>>().map(Cors::config))
-        .and_then(crate::middleware::cors::CorsConfig::conflict)
+    cors_config(interceptor).and_then(crate::middleware::cors::CorsConfig::conflict)
 }
 
 /// The routing contract is narrower than the document model on purpose: a

@@ -101,6 +101,38 @@ impl<C: Send + Sync + 'static> ErasedTerminal<C> for EndpointTerminal<C> {
     }
 }
 
+/// A CORS preflight, as the end of a chain that has no interceptors in it.
+///
+/// Registered on a path while the service is built, after `describe` has
+/// finished — which is what makes it out-of-document by construction rather
+/// than by a filter someone has to remember.
+pub(crate) struct PreflightTerminal {
+    preflight: crate::middleware::cors::preflight::Preflight,
+}
+
+impl PreflightTerminal {
+    pub(crate) fn new(preflight: crate::middleware::cors::preflight::Preflight) -> Self {
+        Self { preflight }
+    }
+}
+
+impl<C: Send + Sync + 'static> ErasedTerminal<C> for PreflightTerminal {
+    /// Nothing. A preflight is a browser protocol detail rather than an
+    /// operation, and no `Router::describe` pass ever reaches this.
+    fn describe(&self, operation: &mut OperationCx<'_>) {
+        let _ = operation;
+    }
+
+    fn call<'a>(
+        &'a self,
+        request: Request,
+        context: &'a C,
+    ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
+        let _ = context;
+        Box::pin(async move { self.preflight.answer(&request) })
+    }
+}
+
 /// One declared operation, ready to serve.
 pub(crate) struct Served<C> {
     pub(crate) method: Method,
