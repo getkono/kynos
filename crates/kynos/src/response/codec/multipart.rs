@@ -208,20 +208,33 @@ fn render(parts: Vec<Part>, boundary: &str) -> Bytes {
 /// A `Content-Disposition` parameter, as the quoted-string it travels in.
 ///
 /// RFC 7578 carries the field name and the file name as quoted-strings and says
-/// to send them as UTF-8, so the text itself is left alone and only the two
-/// characters a quoted-string cannot hold unescaped are escaped. A line ending
-/// inside a header value would end the header rather than appear in it, so it
-/// is dropped: a name that spans two lines is a name that would inject a third
-/// party's header.
+/// to send them as UTF-8, so the text itself is left alone and only what a
+/// quoted-string cannot hold is touched.
+///
+/// Three characters cannot be held. A `"` is escaped, because that is the one
+/// escape every reader of this format performs. A line ending would end the
+/// header rather than appear in it, so it is dropped: a name that spans two
+/// lines is a name that would inject a third party's header.
+///
+/// A `\` is dropped for the same reason as a line ending — it cannot be
+/// represented, only misread. Escaping it as `\\` produces a name readers
+/// return with both backslashes, including
+/// [`multer`](https://docs.rs/multer), the reader Kynos itself uses on the
+/// extracting half; and a name *ending* in one makes the whole header
+/// unparseable, since the scan for the closing quote treats the escape as
+/// covering it and runs off the end. Percent-encoding it, which is what the
+/// HTML form algorithm does for `"`, only moves the problem: nothing on the
+/// reading side percent-decodes. Dropping is the one option under which every
+/// name Kynos writes is a name Kynos reads back.
 fn quoted(value: &str) -> String {
     let mut quoted = String::with_capacity(value.len());
     for character in value.chars() {
         match character {
-            '\\' | '"' => {
+            '"' => {
                 quoted.push('\\');
-                quoted.push(character);
+                quoted.push('"');
             }
-            '\r' | '\n' => {}
+            '\\' | '\r' | '\n' => {}
             _ => quoted.push(character),
         }
     }
@@ -328,18 +341,12 @@ mod tests {
         assert_eq!(reparse(body, &delimiter).await, parts);
     }
 
-    /// A name carrying the characters a quoted-string cannot hold unescaped
-    /// still comes back as itself.
-    ///
-    /// `\` is the one that fails today. `quoted` writes it as `\\`, and the
-    /// reader Kynos itself uses on the extracting half un-escapes only `\"` —
-    /// so a name holding a backslash comes back holding two, and a name ending
-    /// in one makes the whole `Content-Disposition` unparseable, because the
-    /// scan for the closing quote treats it as an escape and runs off the end.
+    /// A name carrying the one character a quoted-string escapes still comes
+    /// back as itself.
     #[tokio::test]
     async fn a_name_needing_escapes_survives_a_round_trip() {
         let parts = vec![Part {
-            name: r#"od"d\name"#.to_owned(),
+            name: r#"od"d name"#.to_owned(),
             file_name: Some(r#"a "quoted" file.txt"#.to_owned()),
             content_type: None,
             bytes: bytes::Bytes::from_static(b"x"),
@@ -349,6 +356,30 @@ mod tests {
         let body = render(parts.clone(), &delimiter);
 
         assert_eq!(reparse(body, &delimiter).await, parts);
+    }
+
+    /// A backslash is dropped rather than escaped, and the name still parses.
+    ///
+    /// The lossy case, pinned in both halves: what is written, and that a name
+    /// *ending* in a backslash -- the input that made the whole header
+    /// unparseable when it was escaped -- reads back cleanly now.
+    #[tokio::test]
+    async fn a_backslash_is_dropped_rather_than_written_unreadably() {
+        assert_eq!(quoted(r"od\d"), "odd".to_owned());
+
+        let parts = vec![Part {
+            name: r"trailing\".to_owned(),
+            file_name: None,
+            content_type: None,
+            bytes: bytes::Bytes::from_static(b"x"),
+        }];
+
+        let delimiter = boundary(&parts);
+        let body = render(parts, &delimiter);
+        let read_back = reparse(body, &delimiter).await;
+
+        assert_eq!(read_back.len(), 1);
+        assert_eq!(read_back[0].name, "trailing".to_owned());
     }
 
     /// The delimiter is raised until no part encapsulates it, which RFC 2046
