@@ -22,30 +22,54 @@ pub trait CookieParams: Sized {
     const NAMES: &'static [&'static str];
 
     /// Decodes this group from the request's cookie header fields.
+    ///
+    /// The whole [`HeaderMap`] rather than the `Cookie` field alone, because a
+    /// request may carry more than one and the jar is their concatenation.
+    ///
+    /// # Panics
+    ///
+    /// The default panics. Derive `CookieParams`, or write this by hand, before
+    /// extracting the group.
     fn decode(headers: &HeaderMap) -> Result<Self, CookieRejection> {
         let _ = headers;
-        todo!()
+        unimplemented!(
+            "`{}` does not decode cookies: derive `CookieParams` on it, or implement `decode` by \
+             hand",
+            std::any::type_name::<Self>()
+        )
     }
 
     /// Describes the declared OpenAPI cookie parameters.
+    ///
+    /// The default describes the declared [`NAMES`](CookieParams::NAMES) with an
+    /// unconstrained schema, and marks none of them required: a group that has
+    /// not said which cookies a request must carry has not said they all are.
+    ///
+    /// `style` is left unstated: `form` is the default for a cookie parameter,
+    /// so stating it would only repeat the location.
     fn parameters(registry: &mut Registry) -> Vec<kynos_openapi::Parameter> {
         let _ = registry;
-        todo!()
+        Self::NAMES
+            .iter()
+            .copied()
+            .map(|name| kynos_openapi::Parameter::cookie(name, kynos_openapi::Schema::any()))
+            .collect()
     }
 }
 
 impl<C: Sync, T: CookieParams + Send> FromRequestParts<C> for Cookies<T> {
     type Rejection = CookieRejection;
 
-    async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
-        let _ = (parts, context);
-        todo!()
+    async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
+        T::decode(&parts.headers).map(Cookies)
     }
 }
 
 impl<T: CookieParams> Describe for Cookies<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let _ = operation;
-        todo!()
+        let parameters = T::parameters(operation.registry());
+        for parameter in parameters {
+            operation.add_parameter(parameter);
+        }
     }
 }
