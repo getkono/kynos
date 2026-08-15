@@ -149,6 +149,32 @@ fn serde_rename(field: &Field) -> syn::Result<Option<String>> {
     Ok(found)
 }
 
+/// The text of an item's doc comment, with its paragraphs intact.
+///
+/// What a derive falls back to when no description was written explicitly: the
+/// sentence a Rust reader already sees is the sentence an API consumer should
+/// receive, and asking for it twice is how the two come to disagree.
+pub(crate) fn doc_string(attrs: &[syn::Attribute]) -> Option<String> {
+    let text = attrs
+        .iter()
+        .filter_map(|attribute| match &attribute.meta {
+            syn::Meta::NameValue(pair) if pair.path.is_ident("doc") => match &pair.value {
+                syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(text),
+                    ..
+                }) => Some(text.value()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .map(|line| line.trim().to_owned())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let text = text.trim().to_owned();
+    (!text.is_empty()).then_some(text)
+}
+
 /// A `const NAMES` item listing the wire names of every field, in order.
 pub(crate) fn names_const(names: &[String]) -> TokenStream2 {
     let literals = names

@@ -4,7 +4,12 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, parse_macro_input, spanned::Spanned};
 
-use crate::derive::common::{named_fields, names_const, reject_duplicate_names, wire_name};
+use crate::derive::{
+    common::{named_fields, names_const, reject_duplicate_names, wire_name},
+    params::{
+        Param, construct, decode_field, header_encode_body, parameters_body, response_headers_body,
+    },
+};
 
 /// Fields a header parameter definition may not name, and what to reach for.
 ///
@@ -57,39 +62,76 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
-    let names = names_const(&names);
+    let names_item = names_const(&names);
+
+    let params = Param::pair(fields, &names);
+    let rejection = quote!(::kynos::error::rejection::HeaderRejection);
+
+    // Only the first value of a repeated field is read. A field this group
+    // declares is one typed value; the repeated ones -- `Set-Cookie` above all
+    // -- are what `encode` keeps separate, and no OpenAPI parameter describes
+    // a group of them.
+    let reads = params.iter().map(|param| {
+        let wire = param.name();
+        let found = quote! {
+            match headers.get(#wire) {
+                ::core::option::Option::Some(value) => match value.to_str() {
+                    ::core::result::Result::Ok(text) => ::core::option::Option::Some(text),
+                    ::core::result::Result::Err(_) => {
+                        return ::core::result::Result::Err(
+                            ::kynos::error::rejection::HeaderRejection::Invalid {
+                                name: ::std::string::String::from(#wire),
+                                detail: ::std::string::String::from(
+                                    "the value is not printable ASCII",
+                                ),
+                            },
+                        );
+                    }
+                },
+                ::core::option::Option::None => ::core::option::Option::None,
+            }
+        };
+        decode_field(param, &rejection, &found, "the header is required")
+    });
+    let value = construct(&params);
+
+    let parameters = parameters_body(
+        &params,
+        &quote!(::kynos::openapi::ParameterIn::Header),
+        false,
+    );
+    let response_headers = response_headers_body(&params);
+    let encode = header_encode_body(&params);
 
     Ok(quote! {
         impl #impl_generics ::kynos::extract::params::header::HeaderParams
             for #name #ty_generics #where_clause
         {
-            #names
+            #names_item
 
             fn decode(
                 headers: &::kynos::http::HeaderMap,
             ) -> ::core::result::Result<Self, ::kynos::error::rejection::HeaderRejection> {
-                let _ = headers;
-                ::core::todo!()
+                #(#reads)*
+                #value
             }
 
             fn encode(
                 &self,
             ) -> ::std::vec::Vec<(::kynos::http::HeaderName, ::kynos::http::HeaderValue)> {
-                ::core::todo!()
+                #encode
             }
 
             fn parameters(
                 registry: &mut ::kynos::schema::registry::Registry,
             ) -> ::std::vec::Vec<::kynos::openapi::Parameter> {
-                let _ = registry;
-                ::core::todo!()
+                #parameters
             }
 
             fn response_headers(
                 registry: &mut ::kynos::schema::registry::Registry,
             ) -> ::kynos::openapi::Map<::kynos::openapi::RefOr<::kynos::openapi::Header>> {
-                let _ = registry;
-                ::core::todo!()
+                #response_headers
             }
         }
     })
