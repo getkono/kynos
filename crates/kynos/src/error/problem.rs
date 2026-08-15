@@ -2,18 +2,32 @@
 
 use std::{borrow::Cow, collections::BTreeMap};
 
+use bytes::Bytes;
+use serde::ser::SerializeMap;
 use serde_json::Value;
 
 use kynos_openapi::{
     ComponentName, Schema as OpenApiSchema, SchemaObject,
-    model::schema::types::{SchemaType, TypeSet},
+    model::{
+        body::mime_names::APPLICATION_PROBLEM_JSON,
+        schema::types::{SchemaType, TypeSet},
+    },
 };
 
 use crate::{
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, body::Body, header},
     response::IntoResponse,
     schema::{Schema, registry::Registry},
 };
+
+/// The type URI of a problem carrying no semantics beyond its status code.
+///
+/// RFC 9457 registers it as the value assumed when `type` is absent; Kynos
+/// writes it out, because the schema declares `type` as required.
+const ABOUT_BLANK: &str = "about:blank";
+
+/// The members RFC 9457 registers, which an extension may not shadow.
+const RESERVED: [&str; 5] = ["type", "title", "status", "detail", "instance"];
 
 /// An RFC 9457 problem detail.
 ///
@@ -71,10 +85,17 @@ pub struct Problem {
 
 impl Problem {
     /// Creates a problem with `about:blank` as its type.
+    ///
+    /// The title is the status code's reason phrase, which is what RFC 9457
+    /// asks for when the type carries no semantics of its own.
     #[must_use]
     pub fn new(status: StatusCode) -> Self {
-        let _ = status;
-        todo!()
+        let title = status.canonical_reason().map_or_else(
+            || Cow::Owned(status.as_u16().to_string()),
+            Cow::Borrowed::<str>,
+        );
+
+        Self::of_type(status, ABOUT_BLANK, title)
     }
 
     /// Creates a problem with an identifying type URI and title.
@@ -84,32 +105,39 @@ impl Problem {
         type_uri: impl Into<Cow<'static, str>>,
         title: impl Into<Cow<'static, str>>,
     ) -> Self {
-        let _ = (status, type_uri, title);
-        todo!()
+        Self {
+            type_uri: type_uri.into(),
+            title: title.into(),
+            status,
+            detail: None,
+            instance: None,
+            extensions: BTreeMap::new(),
+        }
     }
 
     /// Sets the occurrence-specific explanation.
     #[must_use]
     pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
-        let _ = &mut self;
-        let _ = detail;
-        todo!()
+        self.detail = Some(detail.into());
+        self
     }
 
     /// Sets the URI identifying this occurrence.
     #[must_use]
     pub fn with_instance(mut self, instance: impl Into<String>) -> Self {
-        let _ = &mut self;
-        let _ = instance;
-        todo!()
+        self.instance = Some(instance.into());
+        self
     }
 
     /// Attaches an additional member.
+    ///
+    /// A key naming one of the five registered members never reaches the wire:
+    /// an extension that shadowed `type`, `title`, `status`, `detail` or
+    /// `instance` would put two entries under one name.
     #[must_use]
     pub fn with_extension(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
-        let _ = &mut self;
-        let _ = (key, value);
-        todo!()
+        self.extensions.insert(key.into(), value.into());
+        self
     }
 }
 
@@ -166,10 +194,43 @@ pub trait IntoProblem {
 /// [`serde::Serialize`], `type_uri` is written as RFC 9457's `type`, and the
 /// extension members are flattened alongside the registered ones rather than
 /// nested under a field of their own.
+///
+/// `type` and `status` are always written, which is what the schema declares as
+/// required. `title` is omitted when empty, and `detail` and `instance` when
+/// absent. An extension whose key names a registered member is dropped, since
+/// one name cannot hold two values.
 impl serde::Serialize for Problem {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let _ = serializer;
-        todo!()
+        let extensions = || {
+            self.extensions
+                .iter()
+                .filter(|(key, _)| !RESERVED.contains(&key.as_str()))
+        };
+
+        let len = 2
+            + usize::from(!self.title.is_empty())
+            + usize::from(self.detail.is_some())
+            + usize::from(self.instance.is_some())
+            + extensions().count();
+
+        let mut map = serializer.serialize_map(Some(len))?;
+
+        map.serialize_entry("type", &self.type_uri)?;
+        if !self.title.is_empty() {
+            map.serialize_entry("title", &self.title)?;
+        }
+        map.serialize_entry("status", &self.status.as_u16())?;
+        if let Some(detail) = &self.detail {
+            map.serialize_entry("detail", detail)?;
+        }
+        if let Some(instance) = &self.instance {
+            map.serialize_entry("instance", instance)?;
+        }
+        for (key, value) in extensions() {
+            map.serialize_entry(key, value)?;
+        }
+
+        map.end()
     }
 }
 
@@ -183,7 +244,23 @@ impl serde::Serialize for Problem {
 /// that matters.
 impl IntoResponse for Problem {
     fn into_response(self) -> crate::http::Response {
-        todo!()
+        let status = self.status;
+        // A problem holds strings, a status and JSON values, none of which can
+        // fail to serialize. The fallback is there so that a response path
+        // never panics: a document naming the status is still a problem
+        // document, and the status line stays the one the problem chose.
+        let body = serde_json::to_vec(&self).unwrap_or_else(|_| {
+            format!(r#"{{"type":"{ABOUT_BLANK}","status":{}}}"#, status.as_u16()).into_bytes()
+        });
+
+        let mut response = crate::http::Response::new(Body::from_bytes(Bytes::from(body)));
+        *response.status_mut() = status;
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static(APPLICATION_PROBLEM_JSON),
+        );
+
+        response
     }
 }
 
