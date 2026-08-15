@@ -28,11 +28,9 @@ different kinds of thing and are covered below.
 
 `conformance.rs` runs now that the router and `test/` have landed, and both of
 its assertions pass. `every_declared_response_is_exercised` carried an
-`#[ignore]` naming a 413 that `BodyRejection` no longer declares — the defect
-the harness found on its first run, recorded at
-[`error/rejection.rs`](../crates/kynos/src/error/rejection.rs)'s `TooLarge`
-comment and fixed in the same push. The attribute outlived its reason and went
-with it.
+`#[ignore]` naming a 413 that `BodyRejection` no longer declares — one of
+[the defects the harness found](#what-the-harness-found-on-its-first-run). The
+attribute outlived its reason and went with it.
 
 | File | Asserts |
 | --- | --- |
@@ -43,6 +41,9 @@ with it.
 | [`typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) | a route attribute's `relative_uri` percent-encodes its parameters |
 | [`size.rs`](../crates/kynos/tests/size.rs) | a build failure does not inline a `Violation`, and a `Result` costs no more than it |
 | [`conformance.rs`](../crates/kynos/tests/conformance.rs) | that the responses a suite observed match what the document promises, and that every declared response was exercised |
+| [`matrix.rs`](../crates/kynos/tests/matrix.rs) | the same two assertions over every layer Kynos owns, which is the only place a wrong *document* fails a test |
+| [`dispatch.rs`](../crates/kynos/tests/dispatch.rs), [`routing.rs`](../crates/kynos/tests/routing.rs), [`panics.rs`](../crates/kynos/tests/panics.rs) | every outcome one request can reach, the routes the router declines, and that recovery happens only where it was asked for |
+| [`limits.rs`](../crates/kynos/tests/limits.rs), [`interceptors.rs`](../crates/kynos/tests/interceptors.rs), [`middleware.rs`](../crates/kynos/tests/middleware.rs), [`cors.rs`](../crates/kynos/tests/cors.rs), [`description.rs`](../crates/kynos/tests/description.rs), [`sse.rs`](../crates/kynos/tests/sse.rs) | each interceptor doing what it declares, setting only what it declared, and declaring it on exactly the operations it covers |
 | [`compile/panic_recovery.rs`](../crates/kynos/tests/compile/panic_recovery.rs) | `catch_panics` refuses to compile under `panic = "abort"` |
 
 `crates/kynos-openapi/tests/` holds four more: `properties.rs` and
@@ -50,6 +51,15 @@ with it.
 per-type wire shapes, and its own `size.rs`. `support/` beside them is not a
 target — it is the generator module the property files share, included by
 `#[path]` because an integration binary cannot be depended on.
+
+`crates/kynos/tests/support/` is the same idiom: the fixture app the runtime
+targets drive, and one request builder over the public `Service::call`. Over
+`Service::call` rather than [`TestClient`](../crates/kynos/src/test/mod.rs),
+because `test-util` is not a default feature — a target reaching for the client
+compiles to nothing under `mise run test:baseline`, and that task is only a
+baseline while the feature stays off. `conformance.rs` deliberately keeps its
+own fixture: it is described in two places as the runnable form of
+`examples/testing.rs`, and a reader checks that correspondence by eye.
 
 `panic_recovery.rs` is a `harness = false` test target rather than an ordinary
 one, because [`mise run panic:check`](../mise.toml) asserts that *building* it
@@ -127,25 +137,22 @@ with the wording left to a `.stderr` snapshot, where a reader sees it rendered.
 ### Two rules that are not code kinds
 
 **A `todo!()`-bodied item owed its `no_run` doctest and nothing further.**
-Anything more would have asserted that `todo!()` panics.
-
-**That rule has now lapsed, and what it deferred is owed.** The API-skeleton
-milestone is over: the bodies under `router/`, `extract/`, `response/`,
-`middleware/`, `security/`, `schema/` and the derives are implemented. Each
-`black_box(false)` guard marked one body whose obligation began when it landed,
-and they have landed — so every such guard is now a test that should be replaced
-by one exercising the body it was standing in for, and the modules the previous
-paragraph excused are the ones carrying the largest gap. This is debt now, where
-before it was design.
+Anything more would have asserted that `todo!()` panics. That rule is spent: the
+API-skeleton milestone is over, the bodies landed, and what it deferred has been
+paid — `router/`, `extract/params/`, `response/codec/`, `response/stream/`,
+`middleware/`, `security/` and `src/test/` each left zero executing test
+functions behind. It is recorded rather than deleted because a future skeleton
+milestone would reach for it again, and because the shape of what it deferred is
+the reason those modules were the last to be covered.
 
 **Conformance is a system obligation, not a module one.** No allocation above
-substitutes for it, which is why the row stays in the taxonomy while unbuilt.
-When it is built, the parsing half has a corpus waiting: the three active
-references carry several hundred official example documents in fenced blocks —
-66 JSON and 83 YAML in `3.1.2.md` alone — and extracting them is the intended
-source for [`nfr.md`](nfr.md#document-model)'s *emitted documents validate
-against both 3.1 and 3.2 validators*. Most fences hold a single object rather
-than a whole document, so the extractor is a piece of work in its own right.
+substitutes for it, which is why it has a row of its own. The parsing half still
+has a corpus waiting: the three active references carry several hundred official
+example documents in fenced blocks — 66 JSON and 83 YAML in `3.1.2.md` alone —
+and extracting them is the intended source for
+[`nfr.md`](nfr.md#document-model)'s *emitted documents validate against both 3.1
+and 3.2 validators*. Most fences hold a single object rather than a whole
+document, so the extractor is a piece of work in its own right.
 
 ### Where the macro crate's tests live
 
@@ -338,11 +345,46 @@ nobody asked for.
 ### Why the conformance harness is the one that matters
 
 Everything else in this document tests the framework's types. The conformance
-harness would test the framework's *claim* — that a running service never
-returns a response the emitted document omits. Until it exists, the soundness
-invariant in [`middleware.md`](middleware.md) is an intention held up by
-review.
+harness tests the framework's *claim* — that a running service never returns a
+response the emitted document omits. Without it, the soundness invariant in
+[`middleware.md`](middleware.md) would be an intention held up by review.
 
-It is last rather than first because it needs a service that actually runs, and
-the surface is still `todo!()`-bodied. That ordering is a fact about the
-schedule, not a judgement about priority.
+It is built, and it runs in two places.
+[`tests/conformance.rs`](../crates/kynos/tests/conformance.rs) is the narrow
+one, over the two operations `examples/testing.rs` assembles.
+[`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) is the wide one, over every
+layer Kynos owns: the operations, a credential guard, a `WithHeaders` return, a
+redirect, a query group, and every interceptor at router or group scope.
+
+It was built last rather than first because it needs a service that actually
+runs. That ordering was a fact about the schedule, not a judgement about
+priority — and the section below records what it found the first time it was
+pointed at something.
+
+## What the harness found on its first run
+
+Twice now, the answer has been a defect no other kind of test in this document
+could have seen. Both are recorded here because the harness is expensive to
+justify on principle and cheap to justify on evidence.
+
+**A 413 no operation could produce.** `BodyRejection` declared `413` on every
+operation that reads a body, and the only thing that ever produced one was
+`middleware::limits::BodySize`. A service without that limit therefore promised
+a response it could not send. Line coverage cannot see this: every line of the
+declaration runs, and the gap is between the document and the service rather
+than inside either. The fix was to remove the variant — recorded at
+[`error/rejection.rs`](../crates/kynos/src/error/rejection.rs)'s `TooLarge`
+comment — and it is what let `every_declared_response_is_exercised` stop being
+`#[ignore]`d.
+
+**A response header declared where nothing resolves it.** An interceptor's
+`Adds` group was filed under the `2XX` wildcard beside the operation's declared
+`200`. The specification resolves an observed status to the exact key first, so
+no reader of that 200 ever saw the header — and the `2XX` entry was a response
+nothing could produce. `tests/matrix.rs` reported it nine times, once per
+operation, on the first run of `assert_declared_responses_covered` over the
+whole owned-layer matrix. Every other test in the suite passed throughout.
+
+Both share a shape worth naming: the code was right, the document was wrong, and
+the two disagreed in a direction only a live exchange checked against the
+description can expose.
