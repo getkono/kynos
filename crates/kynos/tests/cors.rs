@@ -242,3 +242,114 @@ fn the_description_gains_no_options_operation_from_a_preflight() {
         "a preflight reached the description: {emitted}"
     );
 }
+
+/// A real cross-origin response carries `Vary: Origin`, or a shared cache will
+/// hand one origin's `Access-Control-Allow-Origin` to another.
+#[tokio::test]
+async fn a_cross_origin_response_varies_on_the_origin_it_answered() {
+    let service = router()
+        .intercept(Cors::new().allow_origins(["https://app.example.com"]))
+        .build(())
+        .expect("a describable router");
+
+    let (_, fields) = send(
+        &service,
+        Method::GET,
+        "/widgets",
+        &[("origin", "https://app.example.com")],
+    )
+    .await;
+
+    let vary = field(&fields, header::VARY).expect("a Vary header");
+    assert!(
+        vary.split(',').any(|name| name.trim() == "origin"),
+        "{vary}"
+    );
+}
+
+/// A group-scoped `Cors` advertises the methods *that group* declares, not
+/// every method on the path. Scope in the router is scope in the answer, which
+/// is the property shape (a) of the design could not have preserved.
+#[tokio::test]
+async fn a_group_scoped_cors_advertises_only_the_methods_it_covers() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![delete_widget])
+        .group(
+            kynos::router::group::Group::new("/")
+                .mount(kynos::routes![list_widgets])
+                .intercept(Cors::new().allow_origins(["https://app.example.com"])),
+        )
+        .build(())
+        .expect("a describable router");
+
+    let (status, fields) = send(
+        &service,
+        Method::OPTIONS,
+        "/widgets",
+        &[
+            ("origin", "https://app.example.com"),
+            ("access-control-request-method", "GET"),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let methods = field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS).expect("the method list");
+
+    assert!(methods.contains("GET"), "{methods}");
+    assert!(
+        !methods.contains("DELETE"),
+        "advertised a method the covering scope does not hold: {methods}"
+    );
+}
+
+/// A known limit, characterized rather than left to be discovered.
+///
+/// An endpoint-scoped interceptor stays inside the endpoint — that is what runs
+/// it — so it never reaches `Served::interceptors`, which is where preflight
+/// registration looks. Hoisting it would move it out from under the endpoint's
+/// own `catch_panics`, which is a real behaviour change for a case nobody has
+/// asked for.
+///
+/// `docs/testing.md`: a documented gap is characterized, so that closing it
+/// turns something red rather than nothing.
+#[tokio::test]
+async fn a_cors_mounted_on_one_endpoint_answers_no_preflight() {
+    use kynos::{openapi, router::endpoint::builder::EndpointBuilder};
+
+    let endpoint = EndpointBuilder::<(), _, _>::new(
+        openapi::Method::Get,
+        openapi::PathTemplate::parse("/widgets").expect("a valid path"),
+        list_widgets_handler,
+    )
+    .intercept(Cors::new().allow_origins(["https://app.example.com"]));
+
+    let service = Router::<()>::new()
+        .mount(endpoint)
+        .build(())
+        .expect("a describable router");
+
+    let (status, _) = send(
+        &service,
+        Method::OPTIONS,
+        "/widgets",
+        &[
+            ("origin", "https://app.example.com"),
+            ("access-control-request-method", "GET"),
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::METHOD_NOT_ALLOWED,
+        "endpoint-scoped CORS started answering preflights; that is an improvement, and this \
+         characterization is what should change"
+    );
+}
+
+/// The plain `async fn` behind the endpoint-scoped fixture above, since a route
+/// attribute expands into a type rather than a callable.
+async fn list_widgets_handler() -> NoContent {
+    NoContent
+}
