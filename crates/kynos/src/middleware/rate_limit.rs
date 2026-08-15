@@ -110,7 +110,13 @@ pub trait RateLimitPolicy<C>: Send + Sync + 'static {
 #[derive(Clone, Debug)]
 pub struct RateLimit<P> {
     policy: P,
+    // The configured rate is what the `RateLimit-*` headers would report, and
+    // reporting a header means declaring it. `Adds` is `()`, so there is no
+    // header this may set and nothing yet reads either field; they are read
+    // once a group covering those names is declared.
+    #[allow(dead_code)]
     requests: u32,
+    #[allow(dead_code)]
     window: std::time::Duration,
 }
 
@@ -138,15 +144,14 @@ impl<C: Sync + 'static, P: RateLimitPolicy<C>> Interceptor<C> for RateLimit<P> {
         context: &C,
         next: Next<'_, C>,
     ) -> Result<Continued<()>, RateLimited> {
-        let _ = (
-            &self.policy,
-            self.requests,
-            self.window,
-            request,
-            reads,
-            context,
-            next,
-        );
-        todo!()
+        let () = reads;
+
+        // The policy owns the counters, so consulting it is the whole of the
+        // decision: a denial already carries the delay it computed, which is
+        // what the 429 reports and what its description promises.
+        match self.policy.check(&request, context).await {
+            Decision::Allow { remaining: _ } => Ok(next.run(request).await),
+            Decision::Deny { retry_after } => Err(RateLimited { retry_after }),
+        }
     }
 }
