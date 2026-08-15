@@ -239,7 +239,6 @@ if std::hint::black_box(false) { .. }
 ```
 
 This asserts that a call *typechecks* without executing it. It is used in
-[`tests/pipeline.rs`](../crates/kynos/tests/pipeline.rs) and
 [`tests/compile/panic_recovery.rs`](../crates/kynos/tests/compile/panic_recovery.rs),
 and it exists because the pre-v1 API skeleton is `todo!()`-bodied: the types are
 the deliverable, and running them would only prove that `todo!()` panics.
@@ -251,9 +250,9 @@ to prove the branch dead and skip the analysis that is the entire point.
 `assert_eq!` there is a claim the suite appears to make and never checks — the
 one failure mode a reader cannot see, since the test passes and reads as though
 it verified something. `routes_collects_every_operation` and
-`endpoint_collections_compose` each asserted a count this way. Put the calls
-that must typecheck inside the guard and nothing else; the assertion belongs
-with the body when it lands.
+`endpoint_collections_compose` each asserted a count this way, and each got its
+count back when the body landed. Put the calls that must typecheck inside the
+guard and nothing else; the assertion belongs with the body.
 
 The guard is temporary by design. Every use of it is a marker for a body that
 has not been implemented, and each should disappear as its body lands rather

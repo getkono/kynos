@@ -4,10 +4,12 @@
 //! `Handler` had no implementations and no way to acquire any, so an
 //! attribute-annotated function produced a type that nothing could mount.
 //!
-//! Bodies are still `todo!()`, so nothing here runs a handler. What it proves
-//! is that the *types* line up: that an `async fn` is a `Handler`, that
-//! `routes!` collects one, that `Endpoints` accepts what it collects, and that
-//! a handler asking for a dependency reaches the context that supplies it.
+//! What it proves is that the *types* line up: that an `async fn` is a
+//! `Handler`, that `routes!` collects one, that `Endpoints` accepts what it
+//! collects, and that a handler asking for a dependency reaches the context
+//! that supplies it. The handlers are given real bodies so the collection
+//! assertions can count what actually landed, which is the part a typecheck
+//! cannot say.
 
 #![cfg(all(feature = "macros", feature = "json"))]
 #![allow(dead_code)]
@@ -49,15 +51,18 @@ async fn health() -> NoContent {
 /// A head-only handler: every argument reads the request head.
 #[kynos::get("/users/{id}")]
 async fn get_user(Path(path): Path<UserPath>, Inject(pool): Inject<Pool>) -> Json<User> {
-    let _ = (path, pool);
-    todo!()
+    let _ = pool;
+    Json(User {
+        id: path.id,
+        name: "Ada Lovelace".to_owned(),
+    })
 }
 
 /// A body-consuming handler: the last argument takes the body.
 #[kynos::post("/users")]
 async fn create_user(Inject(pool): Inject<Pool>, Json(user): Json<User>) -> Created<Json<User>> {
-    let _ = (pool, user);
-    todo!()
+    let _ = pool;
+    Created::at(get_user::relative_uri(UserPath { id: user.id }), Json(user))
 }
 
 fn is_handler<C, A, H: Handler<C, A>>(_: H) {}
@@ -69,56 +74,45 @@ fn an_async_fn_is_a_handler() {
     is_handler::<App, _, _>(create_user);
 }
 
-/// Anything that builds an endpoint runs behind a branch that is never taken:
-/// `EndpointBuilder`'s body is still `todo!()`, so the assertion is that this
-/// *typechecks*. `tests/compile/panic_recovery.rs` uses the same guard.
-fn compile_only(check: impl FnOnce()) {
-    if std::hint::black_box(false) {
-        check();
-    }
-}
-
 /// `routes!` yields a tuple, not an already-erased collection.
 ///
 /// That is what keeps each operation's own interceptors visible at the mount
 /// site: an `Endpoints` cannot say what its members carry, so building one here
 /// would erase the stacks `Router::mount` has to check.
-///
-/// Nothing is asserted about what lands in the sink, because nothing here runs:
-/// `into_endpoints` reaches `EndpointBuilder`, whose body is `todo!()`. The
-/// count belongs with that body when it lands.
 #[test]
 fn routes_collects_every_operation() {
-    compile_only(|| {
-        let mut sink = Endpoints::<App>::new();
-        kynos::routes![health, get_user, create_user].into_endpoints(&mut sink);
-    });
+    let mut sink = Endpoints::<App>::new();
+    kynos::routes![health, get_user, create_user].into_endpoints(&mut sink);
+
+    assert_eq!(sink.len(), 3);
 }
 
 /// A tuple, an array and a vector are all one `mount` argument, which is what
 /// lets a router be assembled from several `routes!` calls.
 ///
 /// Each form is spelled out because each resolves to a different
-/// implementation, and typechecking is the whole of what is claimed here.
+/// implementation, and each is counted: an implementation that collected the
+/// outer container and dropped what it held would still typecheck.
 #[test]
 fn endpoint_collections_compose() {
-    compile_only(|| {
-        let mut sink = Endpoints::<App>::new();
-        (
-            kynos::routes![health],
-            kynos::routes![get_user, create_user],
-        )
-            .into_endpoints(&mut sink);
+    let mut sink = Endpoints::<App>::new();
+    (
+        kynos::routes![health],
+        kynos::routes![get_user, create_user],
+    )
+        .into_endpoints(&mut sink);
+    assert_eq!(sink.len(), 3);
 
-        // An array or a vector still composes, but only over one element
-        // type -- and two `routes!` calls naming different handlers are
-        // different tuples. Nesting them in a tuple is the general form.
-        let mut sink = Endpoints::<App>::new();
-        [kynos::routes![health], kynos::routes![health]].into_endpoints(&mut sink);
+    // An array or a vector still composes, but only over one element type --
+    // and two `routes!` calls naming different handlers are different tuples.
+    // Nesting them in a tuple is the general form.
+    let mut sink = Endpoints::<App>::new();
+    [kynos::routes![health], kynos::routes![health]].into_endpoints(&mut sink);
+    assert_eq!(sink.len(), 2);
 
-        let mut sink = Endpoints::<App>::new();
-        vec![kynos::routes![health]].into_endpoints(&mut sink);
-    });
+    let mut sink = Endpoints::<App>::new();
+    vec![kynos::routes![health]].into_endpoints(&mut sink);
+    assert_eq!(sink.len(), 1);
 }
 
 /// An empty set is a real value, and the only thing here that needs no builder.
@@ -146,7 +140,7 @@ struct Users;
 /// Listed under a tag.
 #[kynos::get("/users/tagged", tag = Users)]
 async fn tagged_list() -> NoContent {
-    todo!()
+    NoContent
 }
 
 /// A tag on the attribute is a compile-time fact about the operation, so it
@@ -159,6 +153,11 @@ async fn tagged_list() -> NoContent {
 #[test]
 fn a_route_tag_reaches_the_endpoint_metadata() {
     use kynos::router::endpoint::meta::EndpointMeta;
+
+    // A handler as well as a carrier of a constant, for the reason
+    // `each_route_attribute_writes_its_own_method` gives: a tag written onto
+    // something unmountable would pass the assertion below unnoticed.
+    is_handler::<App, _, _>(tagged_list);
 
     assert_eq!(<tagged_list as EndpointMeta>::TAGS, ["Users"]);
     assert!(<health as EndpointMeta>::TAGS.is_empty());
