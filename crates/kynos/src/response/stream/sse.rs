@@ -174,6 +174,52 @@ impl<T> Event<T> {
 /// `Pin<Box<S>>` is `Unpin` whatever `S` is, and `unsafe` is forbidden here.
 struct Records<S> {
     events: Pin<Box<S>>,
+    keep_alive: Option<Heartbeat>,
+}
+
+/// The timer that keeps an idle stream from being reaped.
+///
+/// A keep-alive is the one body whose own contract *is* a timer: nothing
+/// outside this stream can know when it last produced, and the connection
+/// driver cannot inspect a body to find out. `docs/architecture.md` records
+/// this as one of the enumerated places the runtime is named outside `server/`.
+struct Heartbeat {
+    /// How long a silence may last before a comment is sent.
+    interval: std::time::Duration,
+    /// Boxed for the reason [`Records::events`] is: `Pin<Box<Sleep>>` is
+    /// `Unpin`, and `unsafe` is forbidden here.
+    sleep: Pin<Box<tokio::time::Sleep>>,
+    /// The comment record, rendered once. Cloning a `Bytes` is a refcount bump.
+    record: bytes::Bytes,
+}
+
+impl Heartbeat {
+    fn new(keep_alive: &KeepAlive) -> Self {
+        Self {
+            interval: keep_alive.interval,
+            sleep: Box::pin(tokio::time::sleep(keep_alive.interval)),
+            record: heartbeat_record(&keep_alive.comment),
+        }
+    }
+
+    /// Pushes the deadline out by one interval.
+    fn restart(&mut self) {
+        self.sleep
+            .as_mut()
+            .reset(tokio::time::Instant::now() + self.interval);
+    }
+}
+
+/// The bytes one keep-alive message occupies on the wire.
+///
+/// A comment record: `: text`, one line per line of the comment, then the blank
+/// line that ends it. An empty comment gives `: `, which is the heartbeat every
+/// SSE client already ignores — and which is why the default carries no text.
+fn heartbeat_record(comment: &str) -> bytes::Bytes {
+    let mut record = String::new();
+    field(&mut record, "", comment);
+    record.push('\n');
+    bytes::Bytes::from(record)
 }
 
 impl<S, T, E> futures_core::Stream for Records<S>
@@ -185,10 +231,34 @@ where
     type Item = Result<bytes::Bytes, BoxError>;
 
     fn poll_next(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.get_mut().events.as_mut().poll_next(context) {
-            Poll::Ready(Some(Ok(event))) => Poll::Ready(Some(encode(&event))),
-            Poll::Ready(Some(Err(error))) => Poll::Ready(Some(Err(error.into()))),
-            Poll::Ready(None) => Poll::Ready(None),
+        let records = self.get_mut();
+
+        // The events first: anything they produced resets the silence this is
+        // measuring, so a busy stream never sends a comment at all.
+        match records.events.as_mut().poll_next(context) {
+            Poll::Ready(Some(Ok(event))) => {
+                if let Some(keep_alive) = records.keep_alive.as_mut() {
+                    keep_alive.restart();
+                }
+                return Poll::Ready(Some(encode(&event)));
+            }
+            Poll::Ready(Some(Err(error))) => return Poll::Ready(Some(Err(error.into()))),
+            Poll::Ready(None) => return Poll::Ready(None),
+            Poll::Pending => {}
+        }
+
+        let Some(keep_alive) = records.keep_alive.as_mut() else {
+            return Poll::Pending;
+        };
+
+        // Both futures are now registered -- the events above returned
+        // `Pending` after storing the waker, and this stores it too -- so
+        // whichever fires first wakes the task and neither wakeup is lost.
+        match keep_alive.sleep.as_mut().poll(context) {
+            Poll::Ready(()) => {
+                keep_alive.restart();
+                Poll::Ready(Some(Ok(keep_alive.record.clone())))
+            }
             Poll::Pending => Poll::Pending,
         }
     }
@@ -246,6 +316,7 @@ where
     fn into_response(self) -> Response {
         let records = Records {
             events: Box::pin(self.events),
+            keep_alive: self.keep_alive.as_ref().map(Heartbeat::new),
         };
 
         let mut response = Response::new(Body::from_stream(records));
@@ -320,4 +391,84 @@ fn text() -> kynos_openapi::Schema {
         ty: Some(TypeSet::One(SchemaType::String)),
         ..SchemaObject::default()
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Event, encode, heartbeat_record};
+
+    /// Re-parses a record into its `(field, value)` pairs, using a reader
+    /// transcribed from the `text/event-stream` grammar rather than from
+    /// [`encode`].
+    ///
+    /// An oracle derived from the writer would agree with it by construction,
+    /// including wherever both are wrong — which is the whole of the Parser rule
+    /// in `docs/testing.md`.
+    fn reparse(record: &[u8]) -> Vec<(String, String)> {
+        let text = std::str::from_utf8(record).expect("a UTF-8 record");
+        let mut fields = Vec::new();
+
+        for line in text.split('\n') {
+            if line.is_empty() {
+                // The blank line that dispatches the event.
+                continue;
+            }
+
+            // The format splits on the first colon; one space after it is part
+            // of the delimiter rather than of the value.
+            let (name, value) = line.split_once(':').expect("a `name: value` line");
+            fields.push((
+                name.to_owned(),
+                value.strip_prefix(' ').unwrap_or(value).to_owned(),
+            ));
+        }
+
+        fields
+    }
+
+    #[test]
+    fn a_keep_alive_comment_is_framed_as_a_record_a_client_ignores() {
+        let record = heartbeat_record("ping");
+
+        // An empty field name is the comment form, which every client discards.
+        assert_eq!(reparse(&record), [(String::new(), "ping".to_owned())]);
+        assert!(
+            record.ends_with(b"\n\n"),
+            "a record ends with the blank line that dispatches it"
+        );
+    }
+
+    /// A line break inside a value would otherwise end the field, so a
+    /// multi-line comment travels as several fields of the same name.
+    #[test]
+    fn a_multi_line_keep_alive_comment_is_written_one_line_per_field() {
+        let record = heartbeat_record("first\nsecond");
+
+        assert_eq!(
+            reparse(&record),
+            [
+                (String::new(), "first".to_owned()),
+                (String::new(), "second".to_owned()),
+            ]
+        );
+    }
+
+    /// The default carries no text, which is the shortest thing a client will
+    /// still read as a live connection.
+    #[test]
+    fn a_keep_alive_with_no_comment_is_still_a_record() {
+        let record = heartbeat_record("");
+
+        assert_eq!(&record[..], b": \n\n");
+    }
+
+    /// The same framing an event's own fields take, so a comment and an event
+    /// cannot disagree about what a record is.
+    #[test]
+    fn an_event_ends_with_the_blank_line_that_dispatches_it() {
+        let record = encode(&Event::new(1_u8)).expect("an encodable event");
+
+        assert!(record.ends_with(b"\n\n"));
+        assert_eq!(reparse(&record), [("data".to_owned(), "1".to_owned())]);
+    }
 }
