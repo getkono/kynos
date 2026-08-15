@@ -32,8 +32,6 @@ struct User {
 }
 
 /// What `/users/{id}` captures.
-// The fields are read by the generated decoder, which is still `todo!()`.
-#[allow(dead_code)]
 #[derive(Schema, PathParams)]
 struct UserPath {
     /// The identifier from the path.

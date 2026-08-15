@@ -203,8 +203,9 @@ varies on `Origin` without saying so lets a cache hand one origin's
 
 The vocabulary is
 [built](../crates/kynos-openapi/src/annotation/mod.rs) and
-[checked](../crates/kynos-openapi/src/validate/rules/opaque.rs); what still
-has a `todo!()` body is the router side that produces it.
+[checked](../crates/kynos-openapi/src/validate/rules/opaque.rs), and the router
+side that produces it is
+[in `router/service.rs`](../crates/kynos/src/router/service.rs)'s `mark_opaque`.
 
 `unchecked` and `Opaque` are cause and effect, not alternatives, and the
 distinction is worth being precise about:
@@ -225,7 +226,7 @@ it reaches:
 
 | Escape hatch | Record | Where |
 | --- | --- | --- |
-| [`Unchecked<T>`](../crates/kynos/src/schema/unchecked.rs) | `x-kynos-unchecked` on the schema | Reporting is built; the annotation is emitted by a `todo!()` body |
+| [`Unchecked<T>`](../crates/kynos/src/schema/unchecked.rs) | `x-kynos-unchecked` on the schema | The schema only; the operation is not marked, because a hand-written schema is not an undeclared effect |
 | `layer_unchecked`, `into_tower_unchecked` | `x-kynos-opaque` on each covered operation | The covered subtree only, never the whole document |
 | `route_unchecked` | An entry in `x-kynos-opaque-routes` | The document root; no `paths` key |
 | `upgrade_unchecked` | An entry in `x-kynos-opaque-routes` | The document root; no `paths` key |

@@ -419,9 +419,12 @@ fn standard_types_are_anonymous() {
     assert!(<(u32, u32) as Schema>::name().is_none());
 }
 
-/// The composite implementations resolve their members through the registry,
-/// whose body is still `todo!()`, so their helpers are exercised directly.
-/// Without this nothing checks the shapes those helpers produce.
+/// The shapes the composite implementations build, exercised through their
+/// helpers directly.
+///
+/// Through the helpers rather than through `Registry::resolve`, because a
+/// resolved schema is a `$ref` for anything with a name: what is under test
+/// here is the shape, and the reference would hide it.
 mod shapes {
     use kynos_openapi::{
         Schema as OpenApiSchema,

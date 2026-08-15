@@ -22,7 +22,6 @@ use crate::{
 };
 
 /// The object-safe form of [`Interceptor`].
-// Driven by `Next::run` and `Router::build`, both still `todo!()`.
 #[allow(dead_code)]
 pub(crate) trait ErasedInterceptor<C>: Send + Sync + 'static {
     /// Adds this interceptor's three declarations to `operation`.

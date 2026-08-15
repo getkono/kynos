@@ -237,7 +237,6 @@ impl<H> std::fmt::Debug for Continued<H> {
 
 impl Continued<()> {
     /// Wraps what the rest of the chain produced.
-    // Called by `Next::run`, whose body is still `todo!()`.
     #[allow(dead_code)]
     pub(crate) fn new(response: Response) -> Self {
         Self {
@@ -323,7 +322,6 @@ impl<H: HeaderParams> Continued<H> {
 /// A cursor rather than a linked structure: running the rest of the chain is
 /// taking the head of a slice, and reaching the end is calling the endpoint. A
 /// route with no interceptors therefore pays nothing.
-// Read by `Next::run` and populated by `Router::build`, both still `todo!()`.
 #[allow(dead_code)]
 pub struct Next<'a, C> {
     remaining: &'a [Arc<dyn ErasedInterceptor<C>>],
@@ -343,7 +341,6 @@ impl<C> std::fmt::Debug for Next<'_, C> {
 
 impl<'a, C: Sync + 'static> Next<'a, C> {
     /// Begins a chain.
-    // Called by `Router::build`, whose body is still `todo!()`.
     #[allow(dead_code)]
     pub(crate) fn new(
         remaining: &'a [Arc<dyn ErasedInterceptor<C>>],

@@ -269,7 +269,7 @@ rejection_response!(CookieRejection);
 /// The request body could not be turned into the handler's argument.
 ///
 /// The one rejection with a genuinely wide status set, because deciding a body
-/// is unacceptable happens in four distinct ways.
+/// is unacceptable happens in three distinct ways.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum BodyRejection {

@@ -41,11 +41,12 @@ be argued with honestly later, rather than merely overturned. Nothing in a
 
 ## Relationship to the code
 
-These documents describe the intended contract, which the pre-v1 API skeleton
-does not yet implement in full. Where a document specifies something that does
-not exist, it says so explicitly and names the state as designed rather than
-built. That gap is the point: the contract is written first so the
-implementation has something to satisfy.
+These documents describe the contract. It is written first, so the
+implementation has something to satisfy — and where a document still specifies
+something that does not exist, it says so explicitly and names the state as
+designed rather than built. [`nfr.md`](nfr.md) is where that ledger is kept:
+it records which guarantees CI actually enforces, and it is worth keeping only
+while it never claims one that CI does not.
 
 Benchmark methodology is not here. It lives with the harness that runs it, in
 [`getkono/kynos-bench`](https://github.com/getkono/kynos-bench), because a

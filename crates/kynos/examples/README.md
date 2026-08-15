@@ -9,12 +9,6 @@ cargo run -p kynos --example <name>
 The **Features** column is what to append as `--features …` when an example
 needs more than the defaults. Each file's own header explains why it needs them.
 
-> **These do not serve traffic yet.** Kynos is at its API-skeleton milestone:
-> `Router::new` and most of what it returns are still `todo!()`, so every example
-> panics on its first line. They exist to typecheck the public surface and to
-> argue the design decisions behind it. The server itself — binding, accepting,
-> TLS, graceful shutdown — is real code; what it serves is not yet.
-
 ## Start here
 
 | Example | Shows | Features |
