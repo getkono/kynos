@@ -120,6 +120,12 @@ name = "security_schemes"
 required-features = ["openapi31", "macros", "server", "http1"]
 
 [[example]]
+name = "cors"
+# No `server`: this example drives a built `Service` directly, because what it
+# demonstrates is the two exchanges a browser makes rather than a socket.
+required-features = ["openapi31", "macros", "json"]
+
+[[example]]
 name = "middleware"
 required-features = [
   "openapi31",
