@@ -35,9 +35,9 @@ buffer that consumes much of what it came for.
   timers (request timeout, keepalive, shutdown grace), and the shutdown
   signal. Holding that count is about auditability and a small public surface,
   not about keeping a swap open.
-- Bodies are streams of `Bytes`. A body producer is never runtime-aware, which
-  is what keeps the coupling surface at five points instead of spreading through
-  everything that can emit a response.
+- Bodies are streams of `Bytes`. A body producer is never runtime-aware —
+  *except where the body's own contract is a timer*, which is the Server-Sent
+  Events keep-alive and nothing else. See the allowance table below.
 - File I/O, database pools, `spawn_blocking` and body producers sit outside that
   boundary and stay the application's concern.
 - io_uring is not a second runtime and does not become one here. If
@@ -45,11 +45,36 @@ buffer that consumes much of what it came for.
   parallel connection driver inside this crate is out of scope, and io_uring is
   not a design constraint today.
 
-The policy is already visible in the tree: `crates/kynos-openapi/` carries no
-runtime dependency at all, and `crates/kynos/src/server/` is the only place
-the runtime is named. Work that would widen that set is the work this section
-exists to reject. [Dependencies](#dependencies) applies the same containment
-rule to the rest of the graph.
+The coupling surface inside `server/` is exactly the five points above, and
+that has not changed. What has is the claim that `server/` is the *only* place
+the runtime is named. It was already false at two sites when it was written, and
+a third has since been added deliberately.
+
+A rule that is false is worth less than a list that is checkable, so the claim
+is now an enumeration:
+
+| Site | Names | Why it is not in `server/` |
+| --- | --- | --- |
+| `server/{accept,connection,mod}.rs`, `server/tls/` | the five coupling points | — |
+| `middleware/limits.rs` | `tokio::time::timeout` | the timer wraps the chain's future, which does not exist until after routing |
+| `middleware/compression.rs` | `tokio::io::{AsyncRead, ReadBuf}` | `async-compression`'s encoders are written against tokio's I/O traits; no byte here crosses a socket |
+| `response/stream/sse.rs` | `tokio::time::{Instant, Sleep, sleep}` | a keep-alive is a property of one body, and the connection driver cannot know a body is an event stream |
+
+**Four rows, and the count is the check.** [`nfr.md`](nfr.md#runtime) states the
+containment requirement against this table rather than against `server/` alone,
+so a fifth site is a failing build rather than a silently broken sentence.
+
+Moving the SSE timer into `server/` was considered and rejected. `TestClient`
+and `Service::call` drive a built service with no server at all — which is what
+[`examples/testing.rs`](../crates/kynos/examples/testing.rs) exists to show — so
+a keep-alive owned by the connection driver would silently not happen in every
+test and every tower deployment, and it would add a general mechanism to `Body`
+for one caller.
+
+`crates/kynos-openapi/` still carries no runtime dependency at all. Work that
+would add a fifth row is the work this section exists to reject.
+[Dependencies](#dependencies) applies the same containment rule to the rest of
+the graph.
 
 ### Public API surface
 
