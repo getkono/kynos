@@ -7,11 +7,10 @@ with a control asserts nothing.
 
 ## README anti-patterns
 
-Covered: 1, 2, 4, 5, 6, 7, 10, 11. Pending: 3, 8, 9.
+Covered: 1, 2, 4, 5, 6, 7, 10, 11. Pending: 8, 9. Resolved elsewhere: 3.
 
 | # | Anti-pattern | Blocker |
 | --- | --- | --- |
-| 3 | Wildcard and catch-all routes | `PathTemplate::parse` accepts `{*path}` on purpose: a variable name is unconstrained in OpenAPI, and an externally authored description holding one has to round-trip. The narrower rule is enforced where routes are registered, which is a run-time check in a `todo!()`-bodied body rather than a type-level one. Landing this needs the router's registration path. |
 | 8 | Request-derived values as dependencies | `Inject<CurrentUser>` typechecks whenever the context provides a `CurrentUser`, and nothing in the type system distinguishes a value read from the request from application state. The rule is a review convention today. |
 | 9 | Header-based API versioning | The README says so itself: a version header declared with `#[derive(HeaderParams)]` compiles, and no mechanism rejects it. Advice rather than a rule. |
 
@@ -22,6 +21,12 @@ checked here — the negative needs the feature off, and this suite's snapshots
 are recorded with it on. See below.
 
 ## Resolved since this ledger was written
+
+`Wildcard and catch-all routes` (anti-pattern 3) was listed here as blocked on
+the router's registration path. That path landed, and the case landed with it —
+but not in this suite. The refusal is a run-time one with no diagnostic text to
+snapshot, so it lives at [`tests/routing.rs`](../routing.rs) as an integration
+case, each refusal paired with the control this ledger's own preamble asks for.
 
 `#[kynos::operation]` was listed here as having no possible control, because no
 program using it compiled: it read `method` itself and then handed its whole
