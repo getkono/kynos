@@ -11,7 +11,7 @@ only if it never claims a guarantee CI does not actually enforce.
 | `enforced` | A CI job runs this today. Regressions fail the build |
 | `planned` | The requirement is settled and the method needs no tool this repository lacks; it is simply not wired |
 | `needs-tooling` | Settled, and blocked on installing something. The tool is named |
-| `blocked-on-impl` | The surface is still `todo!()`-bodied, so there is nothing to assert against yet |
+| `blocked-on-impl` | The surface the method would assert against does not exist yet |
 | `blocked-on-dependency` | A pinned dependency does not expose what the requirement needs. The dependency and the remedy are named |
 | `kynos-bench` | Owned by [`getkono/kynos-bench`](https://github.com/getkono/kynos-bench), not by this repository |
 
@@ -66,10 +66,13 @@ disabled, or passes trivially and hides the regression it was meant to catch.
 | operability | `--check` mode exits nonzero on drift from the committed document | A binary target, used as a required gate on the framework's own examples | `blocked-on-impl` |
 | performance | Generation time and output size scale sub-quadratically in operation count | Measured at 10/100/1000 operations with a fitted-slope assertion | `kynos-bench` |
 
-The `--check` row's blocker is not a `todo!()` body: the workspace declares no
+The `--check` row's blocker was never a `todo!()` body: the workspace declares no
 binary target at all, and no command-line surface is designed anywhere. It is
 recorded here because the emitter is here, but it may well belong to a
-satellite crate.
+satellite crate. That, and the two observability rows below, are the only three
+`blocked-on-impl` rows left — the API-skeleton milestone accounted for the rest,
+and each moved to the status its evidence actually supports rather than all of
+them moving to `enforced`.
 
 Two shapes are excluded from the round-trip property, and both are real gaps
 rather than test convenience:
@@ -101,10 +104,10 @@ the requirement above is that it be *verified*, not merely intended.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| performance | Zero heap allocations on the routing path | Counting allocator asserting `alloc_count == 0` across a 10k-request replay, over routes of at most three parameters and no static/dynamic sibling overlap | `blocked-on-impl` |
+| performance | Zero heap allocations on the routing path | Counting allocator asserting `alloc_count == 0` across a 10k-request replay, over routes of at most three parameters and no static/dynamic sibling overlap | `planned` |
 | performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `kynos-bench` |
-| reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; `Router::validate` for those only visible once the tree is assembled | `enforced` for the macro half; `blocked-on-impl` for the tree |
-| operability | Metric labels derive from operation IDs, never request paths | Unit test asserting label cardinality is constant under adversarial path input | `blocked-on-impl` |
+| reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; [`tests/routing.rs`](../crates/kynos/tests/routing.rs) over `Router::validate` for those only visible once the tree is assembled, each refusal with its pass control | `enforced` |
+| operability | Metric labels derive from operation IDs, never request paths | [`tests/dispatch.rs`](../crates/kynos/tests/dispatch.rs) asserting `MatchedPath` is the template rather than the request target, so two concrete paths under one template produce one label | `enforced` |
 
 The allocation row is scoped rather than absolute because of what the pinned
 router actually guarantees; [`routing.md`](routing.md) records the two cases
@@ -116,29 +119,30 @@ later is a measurement, not a rewrite.
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | reliability | No extractor panics on any input | `cargo-fuzz` target per extractor, run nightly, corpus committed | `needs-tooling` |
-| security | Body size, header count and header size limits are enforced by default | Rejection at limit+1 with no allocation proportional to input size | `blocked-on-impl` |
-| correctness | Every Rust type expressible as a handler input has a valid JSON Schema projection | Property test over a macro fixture set, validated against 3.1 and 3.2 validators | `blocked-on-impl` |
-| dx | Every rejection produces an error naming the field and the fix | `trybuild` UI tests plus snapshot tests on runtime error bodies | `blocked-on-impl` |
+| security | Body size, header count and header size limits are enforced by default | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting rejection at limit+1, and that a declared length past the limit is refused before the body is read | `enforced` for the rejection; `planned` for the allocation bound |
+| correctness | Every Rust type expressible as a handler input has a valid JSON Schema projection | Property test over a macro fixture set, validated against 3.1 and 3.2 validators | `planned` |
+| dx | Every rejection produces an error naming the field and the fix | `trybuild` UI tests, plus [`error/rejection/tests.rs`](../crates/kynos/src/error/rejection/tests.rs) counting every variant and asserting each renders a sentence rather than a debug dump | `enforced` for the counting; `planned` for the snapshots |
 
 ## Middleware
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| correctness | Emitted document ⊇ observable responses | Conformance harness property-testing live responses against the generated document across the owned-layer matrix | `blocked-on-impl` |
-| correctness | Contribution composition is order-sensitive and deterministic | Permuted stacks produce differing, stable documents | `blocked-on-impl` |
-| reliability | `Opaque` propagates to every affected operation and omits none | Unit test over a synthetic router tree | `blocked-on-impl` |
+| correctness | Emitted document ⊇ observable responses | [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) checking live responses against the generated document across the owned-layer matrix, in both directions | `enforced` |
+| correctness | Contribution composition is order-sensitive and deterministic | Permuted stacks produce differing, stable documents | `planned` |
+| reliability | `Opaque` propagates to every affected operation and omits none | Unit test over a synthetic router tree | `planned` |
 | performance | Per-layer added p99 ≤ TBD | `criterion` at stack depth 0/4/8 with a regression gate | `kynos-bench` |
 
-The first and third rows are the enforcement of
-[`middleware.md`](middleware.md). Until they run, the soundness invariant is an
-intention rather than a guarantee.
+The first row is the enforcement of [`middleware.md`](middleware.md), and it
+runs: without it the soundness invariant would be an intention rather than a
+guarantee. It has already earned its keep twice — see
+[`testing.md`](testing.md#what-the-harness-found-on-its-first-run).
 
 ## Runtime
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | reliability | Graceful shutdown drains all in-flight requests with zero dropped responses | Integration tests in `crates/kynos/src/server/tests.rs` covering HTTP/1 drain, HTTP/2 stream drain, TLS handshake cancellation, and timeout exhaustion | `enforced` |
-| reliability | Backpressure is bounded by default via connection count, queue depth and timeouts | Load test at 2× capacity asserting bounded memory and shed responses rather than unbounded growth | `blocked-on-impl` |
+| reliability | Backpressure is bounded by default via connection count, queue depth and timeouts | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting a request past the concurrency cap is shed with 503 rather than queued; a load test at 2× capacity for the memory bound | `enforced` for the shedding; `planned` for the load test |
 | reliability | HTTP/2 request-body flow control is released as the body is consumed, not as frames arrive | Load test streaming a large body to a slow consumer, asserting the receive window closes | `blocked-on-dependency` |
 | performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `kynos-bench` |
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `kynos-bench` |
@@ -247,7 +251,7 @@ what they unblock:
 | `trybuild` | Compile-fail and UI rows in routing, extraction and macros | Already in `[workspace.dependencies]`; needs only a consumer |
 | `proptest` | IR round-tripping, schema projection, the conformance harness | |
 | `cargo-fuzz` | Extractor panic-freedom | Needs a committed corpus and a nightly job |
-| `cargo-semver-checks` | Release-tag gating | Only meaningful once the API surface stops being `todo!()`-bodied |
+| `cargo-semver-checks` | Release-tag gating | Meaningful now that the surface is implemented; needs a release tag to compare against |
 
 `criterion` is intentionally absent from this list. Benchmarks live in
 [`getkono/kynos-bench`](https://github.com/getkono/kynos-bench) along with the
