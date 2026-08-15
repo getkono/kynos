@@ -136,6 +136,56 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
     ) -> impl Future<Output = Result<Continued<Self::Adds>, Self::Short>> + Send;
 }
 
+/// Merges `names` into whatever `Vary` a response already carries.
+///
+/// A union rather than an insert, because `Vary` is the one response header two
+/// interceptors may both contribute to: RFC 9110 section 12.5.5 defines it as an
+/// unordered set of field names, so `Compression` varying on `Accept-Encoding`
+/// and `Cors` varying on `Origin` both belong on the same response. Overwriting
+/// would leave a cache keying on one of the two, which is a stale-response bug
+/// rather than a missing nicety.
+///
+/// Field names are case-insensitive (RFC 9110 section 5.1), so a name already
+/// present in another spelling is not added again. `Vary: *` already says the
+/// response depends on more than field names can express, so nothing narrows it.
+pub(crate) fn vary_on(fields: &mut crate::http::HeaderMap, names: &'static [&'static str]) {
+    if names.is_empty() {
+        return;
+    }
+
+    let existing = fields
+        .get(crate::http::header::VARY)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+
+    if existing.split(',').any(|name| name.trim() == "*") {
+        return;
+    }
+
+    let mut merged: Vec<&str> = existing
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect();
+
+    for name in names {
+        if !merged
+            .iter()
+            .any(|present| present.eq_ignore_ascii_case(name))
+        {
+            merged.push(name);
+        }
+    }
+
+    // An unrepresentable value is dropped rather than panicking: every name
+    // reaching this is a `&'static str` a `HeaderParams` implementation wrote
+    // down, and a response path that panics is worse than one missing a cache
+    // hint.
+    if let Ok(value) = crate::http::HeaderValue::from_str(&merged.join(", ")) {
+        fields.insert(crate::http::header::VARY, value);
+    }
+}
+
 /// A response that came back through the rest of the chain.
 ///
 /// Obtainable only from [`Next::run`], which is what makes
@@ -182,6 +232,8 @@ impl<H: HeaderParams> Continued<H> {
         for (name, value) in headers.encode() {
             self.response.headers_mut().insert(name, value);
         }
+
+        vary_on(self.response.headers_mut(), G::VARIES);
 
         Continued {
             response: self.response,

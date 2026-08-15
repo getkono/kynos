@@ -45,6 +45,12 @@ where
             fields.append(name, value);
         }
 
+        // The same merge `Continued::with_headers` performs, so the two paths a
+        // `HeaderParams` group can reach the wire by cannot disagree about what
+        // a response varies on. A derived group varies on nothing, so this is a
+        // no-op today and stays honest if one ever does.
+        crate::middleware::vary_on(fields, H::VARIES);
+
         response
     }
 }
