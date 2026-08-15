@@ -8,9 +8,11 @@
 //! exactly one type, so widening it back to a union fails to compile rather
 //! than quietly enlarging every document in the description.
 //!
-//! Nothing here runs an extractor. `from_request_parts` is still `todo!()`;
-//! what is checked is that the associated types resolve as
-//! [`docs/errors.md`](../../../docs/errors.md) says they do.
+//! Nothing here runs an extractor: what is checked is that the associated types
+//! resolve as [`docs/errors.md`](../../../docs/errors.md) says they do. The
+//! rejections themselves — every variant, its status, and the set its type
+//! declares — are checked where they live, in
+//! [`error/rejection/tests.rs`](../src/error/rejection/tests.rs).
 
 #![cfg(feature = "macros")]
 #![allow(dead_code)]

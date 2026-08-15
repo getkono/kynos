@@ -1,11 +1,13 @@
 //! Every derive expands to a well-formed implementation.
 //!
-//! Bodies are still `todo!()`, so nothing here runs one. What is checked is
-//! that the expansion *compiles* and that the trait is actually implemented —
-//! which is the difference between a derive that emits a placeholder body and
-//! one that panics the compiler at expansion time. Until that difference
-//! existed, no example, doctest or compile-fail case could name a user type at
-//! all.
+//! What is checked is that each expansion *compiles* and that the trait is
+//! actually implemented — which is the difference between a derive that emits a
+//! well-formed body and one that panics the compiler at expansion time. Until
+//! that difference existed, no example, doctest or compile-fail case could name
+//! a user type at all.
+//!
+//! What a derived decoder then *does* is not checked here. That is the macro
+//! crate's, and `docs/testing.md` allocates it there.
 
 #![cfg(feature = "macros")]
 #![allow(dead_code)]
