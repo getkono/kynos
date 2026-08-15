@@ -1,7 +1,9 @@
 //! Responses whose status is fixed by their type.
 
+use kynos_openapi::model::schema::types::SchemaType;
+
 use crate::{
-    http::Response,
+    http::{HeaderValue, Response, StatusCode, body::Body, header},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
 };
@@ -157,42 +159,141 @@ impl ValidRedirectCode<303> for () {}
 impl ValidRedirectCode<307> for () {}
 impl ValidRedirectCode<308> for () {}
 
+/// The status a bare body type describes itself under.
+///
+/// Changing it is what every wrapper in this module is for.
+const BODY_STATUS: u16 = 200;
+
+/// Sets `Location` on `response`, unless the value cannot be a field value.
+///
+/// The only strings refused here are ones holding a control character, which a
+/// URI reference never legitimately does and which a field value must never
+/// carry: writing one out would let a caller-supplied string forge the rest of
+/// the message. Omitting the field is the safe half of that trade, and
+/// [`Location`] accepts everything else the specification permits.
+fn set_location(response: &mut Response, location: &Location) {
+    if let Ok(value) = HeaderValue::from_str(location.as_str()) {
+        response.headers_mut().insert(header::LOCATION, value);
+    }
+}
+
+/// Describes a `Location` field that is always sent.
+///
+/// A string rather than a schema with a `format`, because the value is a URI
+/// *reference* and the relative forms are as legal as the absolute ones.
+fn location_header(description: &str) -> kynos_openapi::Header {
+    kynos_openapi::Header::new(kynos_openapi::Schema::of_type(SchemaType::String))
+        .with_description(description)
+        .required(true)
+}
+
+/// Takes the response a body describes for itself, re-described for the status
+/// its wrapper fixes.
+///
+/// A bare body type describes itself under 200, so the wrapper's own status is
+/// where that response belongs: the content, headers and links carry over, and
+/// the description becomes the wrapper's, since what a 201 or a 202 means is
+/// the half of the statement a body was never in a position to make. Anything
+/// the body declared under another status stays where it is — that was not
+/// 200's to re-key — and a body describing no 200 at all leaves the wrapper
+/// describing an empty response, which is what it then produces.
+///
+/// A `$ref` is left in place rather than re-described, because it names a
+/// response the document holds elsewhere and every other use of it would be
+/// re-described too.
+fn body_response(
+    description: &str,
+    body: &mut kynos_openapi::Responses,
+) -> kynos_openapi::Response {
+    let key = kynos_openapi::StatusPattern::Code(BODY_STATUS).to_string();
+
+    match body.responses.shift_remove(&key) {
+        Some(kynos_openapi::RefOr::Item(mut response)) => {
+            description.clone_into(&mut response.description);
+            response
+        }
+        Some(reference) => {
+            body.responses.insert(key, reference);
+            kynos_openapi::Response::new(description)
+        }
+        None => kynos_openapi::Response::new(description),
+    }
+}
+
+/// What each redirect status tells a client, as RFC 9110 defines it.
+///
+/// The five differ in two ways a consumer acts on — whether the move is
+/// permanent, and whether the method survives the replay — so one description
+/// for all of them would leave out the whole of the choice.
+fn redirect_description(code: u16) -> &'static str {
+    match code {
+        301 => "the resource has a new permanent URI, given by `Location`",
+        302 => "the resource is temporarily at the URI given by `Location`",
+        303 => "the response to this request is at the URI given by `Location`, retrieved with GET",
+        307 => "the resource is temporarily at `Location`; the method is preserved on replay",
+        308 => "the resource has a new permanent URI in `Location`; the method survives replay",
+        // Unreachable while `ValidRedirectCode` witnesses exactly the five
+        // statuses above, which is what bounds every caller.
+        _ => "the client is directed to the URI given by `Location`",
+    }
+}
+
 impl IntoResponse for NoContent {
     fn into_response(self) -> Response {
-        todo!()
+        let mut response = Response::new(Body::empty());
+        *response.status_mut() = StatusCode::NO_CONTENT;
+        response
     }
 }
 
 impl Responses for NoContent {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let _ = registry;
-        todo!()
+        kynos_openapi::Responses::new().with(
+            204,
+            kynos_openapi::Response::new("the request succeeded and there is no content to send"),
+        )
     }
 }
 
 impl<T: IntoResponse> IntoResponse for Created<T> {
     fn into_response(self) -> Response {
-        todo!()
+        let mut response = self.body.into_response();
+        *response.status_mut() = StatusCode::CREATED;
+        set_location(&mut response, &self.location);
+        response
     }
 }
 
 impl<T: Responses> Responses for Created<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        let _ = registry;
-        todo!()
+        let mut responses = T::responses(registry);
+        let created = body_response("the resource was created", &mut responses).with_header(
+            "Location",
+            location_header("Where the created resource lives"),
+        );
+
+        responses.with(201, created)
     }
 }
 
 impl<T: IntoResponse> IntoResponse for Accepted<T> {
     fn into_response(self) -> Response {
-        todo!()
+        let mut response = self.body.into_response();
+        *response.status_mut() = StatusCode::ACCEPTED;
+        response
     }
 }
 
 impl<T: Responses> Responses for Accepted<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        let _ = registry;
-        todo!()
+        let mut responses = T::responses(registry);
+        let accepted = body_response(
+            "the request was accepted, and the processing it asked for has not completed",
+            &mut responses,
+        );
+
+        responses.with(202, accepted)
     }
 }
 
@@ -201,7 +302,13 @@ where
     (): ValidRedirectCode<CODE>,
 {
     fn into_response(self) -> Response {
-        todo!()
+        let mut response = Response::new(Body::empty());
+        // The witness admits five statuses and every one of them is a status
+        // code, so the conversion cannot fail for a `Redirect` that exists.
+        *response.status_mut() =
+            StatusCode::from_u16(CODE).expect("a witnessed redirect code is a status code");
+        set_location(&mut response, &self.location);
+        response
     }
 }
 
@@ -211,7 +318,11 @@ where
 {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let _ = registry;
-        todo!()
+        kynos_openapi::Responses::new().with(
+            CODE,
+            kynos_openapi::Response::new(redirect_description(CODE))
+                .with_header("Location", location_header("Where to go instead")),
+        )
     }
 }
 
