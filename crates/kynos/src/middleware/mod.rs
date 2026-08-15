@@ -53,9 +53,9 @@ pub mod request_id;
 pub mod stack;
 
 // Object-safe forms of the two RPITIT traits, so a heterogeneous chain fits in
-// one collection. Private: `Pin<Box<dyn Future>>` never reaches a user
-// signature.
-mod erased;
+// one collection. `pub(crate)` because the router holds the chain and runs it;
+// never `pub`, so `Pin<Box<dyn Future>>` reaches no user signature.
+pub(crate) mod erased;
 
 #[cfg(feature = "compression")]
 pub mod compression;
@@ -287,8 +287,23 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
     /// The only source of a [`Continued`], which is what leaves
     /// [`Interceptor::Short`] as the sole other way an interceptor can answer.
     pub async fn run(self, request: Request) -> Continued<()> {
-        let _ = request;
-        todo!()
+        // Taking the head of the slice is the whole of "running the rest": an
+        // empty remainder is the endpoint, so a route with no interceptors
+        // reaches the handler with nothing in between.
+        let response = match self.remaining.split_first() {
+            Some((head, remaining)) => {
+                let next = Self {
+                    remaining,
+                    terminal: self.terminal,
+                    context: self.context,
+                    route: self.route,
+                };
+                (**head).intercept(request, self.context, next).await
+            }
+            None => self.terminal.call(request, self.context).await,
+        };
+
+        Continued::new(response)
     }
 
     /// The operation this request matched.

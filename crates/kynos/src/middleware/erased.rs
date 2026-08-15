@@ -11,11 +11,13 @@
 
 use std::{future::Future, pin::Pin};
 
+use kynos_openapi::{RefOr, StatusPattern};
+
 use crate::{
     extract::params::header::HeaderParams,
     http::{Request, Response},
     middleware::{Continued, Interceptor, Next},
-    response::IntoResponse,
+    response::{IntoResponse, Responses},
     router::operation::{OperationCx, Route},
 };
 
@@ -44,11 +46,36 @@ where
     I: Interceptor<C>,
 {
     fn describe(&self, route: Route<'_>, operation: &mut OperationCx<'_>) {
-        let _ = (route, operation);
-        // Reads `<I::Reads as HeaderParams>::parameters`,
-        // `<I::Adds as HeaderParams>::response_headers` and
-        // `<I::Short as Responses>::responses`, all from the types.
-        todo!()
+        // An interceptor declares the same thing for every operation it covers.
+        // Declaring differently per operation is expressed by mounting a
+        // different instance at a different scope, which is why nothing here
+        // reads the route.
+        let _ = route;
+
+        // The whole of what an interceptor says, read from its associated types
+        // rather than from a value it returned. A group that is declared but not
+        // described contributes nothing here and still collides at compile time.
+        if <I::Reads as HeaderParams>::DESCRIBED {
+            let parameters = <I::Reads as HeaderParams>::parameters(operation.registry());
+            for parameter in parameters {
+                operation.add_parameter(parameter);
+            }
+        }
+
+        let responses = <I::Short as Responses>::responses(operation.registry());
+        operation.add_responses(responses);
+
+        if <I::Adds as HeaderParams>::DESCRIBED {
+            let headers = <I::Adds as HeaderParams>::response_headers(operation.registry());
+            for (name, header) in headers {
+                // A `$ref` names a header defined under `components`, which the
+                // operation already reaches; only an inline definition has
+                // anything to add here.
+                if let RefOr::Item(header) = header {
+                    operation.add_response_header(StatusPattern::Success, name, header);
+                }
+            }
+        }
     }
 
     fn intercept<'a>(
