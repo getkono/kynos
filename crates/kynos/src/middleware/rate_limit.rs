@@ -4,11 +4,98 @@ use std::{future::Future, time::Duration};
 
 use crate::{
     error::problem::Problem,
+    extract::params::header::HeaderParams,
     http,
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
     schema::registry::Registry,
 };
+
+/// The rate-limit headers a response carries, in the spelling Kynos emits.
+///
+/// # Why the `X-` prefix
+///
+/// The unprefixed `RateLimit-Limit` / `-Remaining` / `-Reset` triple belongs to
+/// `draft-ietf-httpapi-ratelimit-headers`, which has already *replaced* it with
+/// a single structured `RateLimit` field plus `RateLimit-Policy`. These names
+/// are [`DESCRIBED`](HeaderParams::DESCRIBED), so they reach generated clients —
+/// which makes squatting three names a working group is actively revising
+/// expensive rather than cosmetic. The `X-` prefix is unambiguously the
+/// application's.
+///
+/// RFC 6648 deprecates `X-` prefixes for new headers, and that is the
+/// acknowledged cost of the choice rather than an oversight.
+///
+/// When the draft settles, adding the standard spelling is additive: a second
+/// `HeaderParams` group and a type-state transition on [`RateLimit`], shaped
+/// exactly like
+/// [`Cors::document_response_headers`](crate::middleware::cors::Cors::document_response_headers).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RateLimitHeaders {
+    /// The ceiling the limit was configured with.
+    pub limit: u32,
+    /// Requests remaining in the current window.
+    pub remaining: u32,
+    /// How long until the window resets.
+    pub reset: Duration,
+}
+
+impl HeaderParams for RateLimitHeaders {
+    const NAMES: &'static [&'static str] = &[
+        "x-ratelimit-limit",
+        "x-ratelimit-remaining",
+        "x-ratelimit-reset",
+    ];
+
+    fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
+        [
+            ("x-ratelimit-limit", self.limit.to_string()),
+            ("x-ratelimit-remaining", self.remaining.to_string()),
+            ("x-ratelimit-reset", self.reset.as_secs().to_string()),
+        ]
+        .into_iter()
+        .filter_map(|(name, value)| {
+            Some((
+                http::HeaderName::from_static(name),
+                http::HeaderValue::from_str(&value).ok()?,
+            ))
+        })
+        .collect()
+    }
+
+    fn response_headers(
+        registry: &mut Registry,
+    ) -> kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>> {
+        let _ = registry;
+
+        // Hand-written rather than derived: each of the three is a count, and a
+        // count is an integer — where a derive over a `Duration` field would
+        // give a string.
+        let count = |description: &str| {
+            kynos_openapi::RefOr::Item(
+                kynos_openapi::Header::new(kynos_openapi::Schema::of_type(
+                    kynos_openapi::model::schema::types::SchemaType::Integer,
+                ))
+                .with_description(description),
+            )
+        };
+
+        let mut headers = kynos_openapi::Map::new();
+        headers.insert(
+            "X-RateLimit-Limit".to_owned(),
+            count("Requests permitted per window"),
+        );
+        headers.insert(
+            "X-RateLimit-Remaining".to_owned(),
+            count("Requests remaining in the current window"),
+        );
+        headers.insert(
+            "X-RateLimit-Reset".to_owned(),
+            count("Seconds until the current window resets"),
+        );
+        headers
+    }
+}
 
 /// What [`RateLimit`] answers with when a policy denies a request.
 ///
@@ -19,6 +106,8 @@ use crate::{
 pub struct RateLimited {
     /// How long the client should wait before retrying.
     pub retry_after: Duration,
+    /// The ceiling that was exceeded.
+    pub limit: u32,
 }
 
 impl IntoResponse for RateLimited {
@@ -33,6 +122,18 @@ impl IntoResponse for RateLimited {
                 .insert(http::header::RETRY_AFTER, value);
         }
 
+        // The same three a success carries. A denial's reset *is* its retry
+        // delay, so reporting it lands no new obligation on the policy.
+        for (name, value) in (RateLimitHeaders {
+            limit: self.limit,
+            remaining: 0,
+            reset: self.retry_after,
+        })
+        .encode()
+        {
+            response.headers_mut().insert(name, value);
+        }
+
         response
     }
 }
@@ -43,18 +144,26 @@ impl ShortCircuit for RateLimited {
 
 impl Responses for RateLimited {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        let _ = registry;
         kynos_openapi::Responses::new().with(
             429,
-            kynos_openapi::Response::new("the client has exceeded its request rate").with_header(
-                "Retry-After",
-                kynos_openapi::Header::new(kynos_openapi::Schema::of_type(
-                    kynos_openapi::model::schema::types::SchemaType::String,
-                ))
-                .with_description(
-                    "How long to wait before retrying, in seconds or as an HTTP-date",
+            RateLimitHeaders::response_headers(registry)
+                .into_iter()
+                .fold(
+                    kynos_openapi::Response::new("the client has exceeded its request rate")
+                        .with_header(
+                            "Retry-After",
+                            kynos_openapi::Header::new(kynos_openapi::Schema::of_type(
+                                kynos_openapi::model::schema::types::SchemaType::String,
+                            ))
+                            .with_description(
+                                "How long to wait before retrying, in seconds or as an HTTP-date",
+                            ),
+                        ),
+                    |response, (name, header)| match header {
+                        kynos_openapi::RefOr::Item(header) => response.with_header(name, header),
+                        kynos_openapi::RefOr::Ref(_) => response,
+                    },
                 ),
-            ),
         )
     }
 }
@@ -92,7 +201,8 @@ pub trait RateLimitPolicy<C>: Send + Sync + 'static {
 
 /// Limits request rate per client.
 ///
-/// Contributes 429, a `Retry-After` header, and the `RateLimit-*` headers.
+/// Contributes 429, a `Retry-After` header, and the
+/// [`X-RateLimit-*`](RateLimitHeaders) headers.
 /// Kynos supplies the description and the response; the *policy* — how a
 /// client is identified, where counters live — is the application's, since
 /// prescribing a store would mean prescribing a dependency.
@@ -145,7 +255,7 @@ impl<P> RateLimit<P> {
 
 impl<C: Sync + 'static, P: RateLimitPolicy<C>> Interceptor<C> for RateLimit<P> {
     type Reads = ();
-    type Adds = ();
+    type Adds = RateLimitHeaders;
     type Short = RateLimited;
 
     async fn intercept(
@@ -154,18 +264,24 @@ impl<C: Sync + 'static, P: RateLimitPolicy<C>> Interceptor<C> for RateLimit<P> {
         reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> Result<Continued<()>, RateLimited> {
+    ) -> Result<Continued<RateLimitHeaders>, RateLimited> {
         let () = reads;
 
         // The policy owns the counters, so consulting it is the whole of the
         // decision: a denial already carries the delay it computed, which is
         // what the 429 reports and what its description promises.
         match self.policy.check(&request, context).await {
-            Decision::Allow {
-                remaining: _,
-                reset: _,
-            } => Ok(next.run(request).await),
-            Decision::Deny { retry_after } => Err(RateLimited { retry_after }),
+            Decision::Allow { remaining, reset } => {
+                Ok(next.run(request).await.with_headers(RateLimitHeaders {
+                    limit: self.requests,
+                    remaining,
+                    reset,
+                }))
+            }
+            Decision::Deny { retry_after } => Err(RateLimited {
+                retry_after,
+                limit: self.requests,
+            }),
         }
     }
 }
