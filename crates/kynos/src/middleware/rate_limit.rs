@@ -116,31 +116,30 @@ pub trait RateLimitPolicy<C>: Send + Sync + 'static {
 ///     }
 /// }
 ///
-/// let limit = RateLimit::new(100, Duration::from_secs(60), PerClient);
+/// let limit = RateLimit::new(100, PerClient);
 /// # let _ = limit;
 /// ```
 #[derive(Clone, Debug)]
 pub struct RateLimit<P> {
     policy: P,
-    // The configured rate is what the `RateLimit-*` headers would report, and
-    // reporting a header means declaring it. `Adds` is `()`, so there is no
-    // header this may set and nothing yet reads either field; they are read
-    // once a group covering those names is declared.
-    #[allow(dead_code)]
+    /// The ceiling this reports, which is the one thing about the configured
+    /// rate a response can state as a fact.
+    ///
+    /// There is deliberately no `window` beside it. A window's *length* is not
+    /// the time until it resets, and reporting the first as the second would be
+    /// a number the service cannot honour; the policy owns the counters, so the
+    /// policy is what knows the edge. See [`Decision::Allow`].
     requests: u32,
-    #[allow(dead_code)]
-    window: std::time::Duration,
 }
 
 impl<P> RateLimit<P> {
-    /// Allows `requests` per `window`, consulting `policy` for each request.
+    /// Allows `requests` per window, consulting `policy` for each request.
+    ///
+    /// The window itself is the policy's: it maintains the counters, so it is
+    /// the only thing that can say when one resets.
     #[must_use]
-    pub fn new(requests: u32, window: std::time::Duration, policy: P) -> Self {
-        Self {
-            policy,
-            requests,
-            window,
-        }
+    pub fn new(requests: u32, policy: P) -> Self {
+        Self { policy, requests }
     }
 }
 
