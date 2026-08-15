@@ -2,7 +2,7 @@
 
 use crate::{
     extract::media::MediaType,
-    http::Response,
+    http::{HeaderValue, Response, body::Body, header},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
 };
@@ -47,7 +47,14 @@ where
     E: Into<Box<dyn std::error::Error + Send + Sync>> + 'static,
 {
     fn into_response(self) -> Response {
-        todo!()
+        // The chunks are already the bytes to send, so nothing here frames
+        // them: the stream reaches the body unchanged.
+        let mut response = Response::new(Body::from_stream(self.stream));
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static(M::MEDIA_TYPE),
+        );
+        response
     }
 }
 
@@ -56,8 +63,19 @@ where
     S: futures_core::Stream,
     M: MediaType,
 {
-    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        let _ = registry;
-        todo!()
+    // `itemSchema` rather than `schema`, which is what 3.2 added the field for:
+    // an item is described independently of the rest so a consumer can process
+    // one as it arrives. Each item is the empty Schema Object for the reason a
+    // non-streamed `Binary<M>` body is -- raw bytes sit outside the type system
+    // JSON Schema describes, and calling them a `string` would be a lie.
+    fn responses(_registry: &mut Registry) -> kynos_openapi::Responses {
+        kynos_openapi::Responses::new().with(
+            200,
+            kynos_openapi::Response::with_content(
+                "OK",
+                M::MEDIA_TYPE,
+                kynos_openapi::MediaType::sequential(kynos_openapi::Schema::Object(Box::default())),
+            ),
+        )
     }
 }
