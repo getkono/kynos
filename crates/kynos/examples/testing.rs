@@ -27,11 +27,6 @@
 //! The two assertions are opposites and both are needed: one says nothing
 //! happened that the document did not predict, the other says nothing the
 //! document predicts has gone unexercised.
-//!
-//! The second one still reports a gap here, and the gap is real rather than a
-//! shortfall in what this file exercises — see `main`.
-
-use std::panic::{self, AssertUnwindSafe, UnwindSafe};
 
 use kynos::{http::StatusCode, prelude::*, test::TestClient};
 use serde::{Deserialize, Serialize};
@@ -137,22 +132,14 @@ async fn main() -> kynos::Result<()> {
 
     // The other direction: nothing the document predicts has gone unexercised.
     //
-    // This one still reports a gap, and the gap is not in this file. Every
-    // body extractor declares 413 through `BodyRejection`, but the only thing
-    // that ever produces one is `middleware::limits::BodySize`, which this
-    // service does not install -- so the description promises a response the
-    // service cannot send. That is precisely the class of untruth this
-    // assertion exists to find, and the fix is to install the limit or to stop
-    // promising it, never to stop asking.
-    //
-    // An example has to reach its last line, so the report is caught and
-    // printed. A test lets it fail.
-    println!(
-        "{}",
-        report(AssertUnwindSafe(
-            || client.assert_declared_responses_covered()
-        ))
-    );
+    // This reported a gap until recently, and the gap was not in this file:
+    // every body extractor declared a 413 through `BodyRejection` that only
+    // `middleware::limits` could ever send, so the description promised a
+    // response this service cannot produce. That is exactly the class of
+    // untruth this assertion exists to find, and it was fixed by removing the
+    // declaration rather than by lowering the bar.
+    client.assert_declared_responses_covered();
+    println!("every declared response was exercised");
 
     Ok(())
 }
@@ -203,23 +190,4 @@ async fn exercise_the_rejections(client: &TestClient<()>) {
         .send()
         .await
         .assert_status(StatusCode::CREATED);
-}
-
-/// Runs an assertion and returns what it said, instead of ending the program.
-///
-/// Only an example needs this. A test lets a failing assertion fail, which is
-/// the entire value of having written it.
-fn report(assertion: impl FnOnce() + UnwindSafe) -> String {
-    let hook = panic::take_hook();
-    panic::set_hook(Box::new(|_| {}));
-    let outcome = panic::catch_unwind(assertion);
-    panic::set_hook(hook);
-
-    match outcome {
-        Ok(()) => "every declared response was exercised".to_owned(),
-        Err(payload) => payload
-            .downcast_ref::<String>()
-            .cloned()
-            .unwrap_or_else(|| "the assertion failed".to_owned()),
-    }
 }

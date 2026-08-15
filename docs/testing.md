@@ -27,12 +27,12 @@ Each integration file exists for one reason. `hermeticity.rs` and `ui.rs` are
 different kinds of thing and are covered below.
 
 `conformance.rs` runs now that the router and `test/` have landed, and both of
-its assertions pass. Its sibling `every_declared_response_is_exercised` still
-carries an `#[ignore]` naming a 413 that `BodyRejection` no longer declares —
-the defect the harness found on its first run, recorded at
-[`error/rejection.rs`](../crates/kynos/src/error/rejection.rs)'s
-`TooLarge` comment and fixed in the same push. The attribute outlived its
-reason and is removed with the rest of the testing debt.
+its assertions pass. `every_declared_response_is_exercised` carried an
+`#[ignore]` naming a 413 that `BodyRejection` no longer declares — the defect
+the harness found on its first run, recorded at
+[`error/rejection.rs`](../crates/kynos/src/error/rejection.rs)'s `TooLarge`
+comment and fixed in the same push. The attribute outlived its reason and went
+with it.
 
 | File | Asserts |
 | --- | --- |

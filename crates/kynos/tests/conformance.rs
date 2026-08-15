@@ -5,19 +5,12 @@
 //! that the responses a suite actually observed match what the emitted document
 //! promises.
 //!
-//! One of the two is still `#[ignore]`d, and no longer because the router is a
-//! skeleton — that landed. `every_declared_response_is_exercised` reports a gap
-//! this fixture cannot close from outside the framework, and the attribute
-//! names it. An ignored test that says why is a better record of the gap than a
-//! missing file, and removing the attribute is the whole change when the
-//! declaration is fixed.
-//!
-//! Run it deliberately with:
-//!
-//! ```text
-//! cargo nextest run -p kynos --test conformance --all-features \
-//!   --run-ignored all
-//! ```
+//! Both directions run. `every_declared_response_is_exercised` was `#[ignore]`d
+//! for a declaration this fixture could not exercise: every body extractor
+//! promised a 413 through `BodyRejection`, and only `middleware::limits` ever
+//! produced one. Removing that variant removed the gap, so the attribute went
+//! with it — the fix for a promise nothing can keep is to stop making it, never
+//! to stop asking.
 
 #![cfg(all(feature = "macros", feature = "json", feature = "test-util"))]
 
@@ -101,8 +94,6 @@ async fn observed_responses_match_the_description() {
 /// that finds the 409 a description promises and no test has ever exercised —
 /// a gap line coverage cannot see, because the promise lives in the document.
 #[tokio::test]
-#[ignore = "BodyRejection declares 413 on every operation that reads a body, but only \
-            middleware::limits::BodySize produces one, so this fixture cannot exercise it"]
 async fn every_declared_response_is_exercised() {
     let client = TestClient::new(service().expect("a describable router"));
 
