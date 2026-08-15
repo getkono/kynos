@@ -54,26 +54,26 @@ pub struct ContentEncoding {
 }
 
 impl HeaderParams for ContentEncoding {
-    const NAMES: &'static [&'static str] = &["content-encoding", "vary"];
+    const NAMES: &'static [&'static str] = &["content-encoding"];
     const DESCRIBED: bool = false;
 
+    // `Vary` rides on every response, encoded or not: what the cache has to know
+    // is that the answer depends on `Accept-Encoding`, which is true the moment
+    // this interceptor is mounted. It is declared here rather than in `NAMES`
+    // because it is a set the framework unions -- naming it above would make
+    // `Compression` and `Cors` covering one route a compile error, and they are
+    // a pairing every browser-facing service wants.
+    const VARIES: &'static [&'static str] = &["accept-encoding"];
+
     fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
-        // `Vary` rides on every response, encoded or not: what the cache has to
-        // know is that the answer depends on `Accept-Encoding`, which is true
-        // the moment this interceptor is mounted.
-        let mut headers = vec![(
-            http::header::VARY,
-            http::HeaderValue::from_static("accept-encoding"),
-        )];
+        let Some(coding) = self.coding else {
+            return Vec::new();
+        };
 
-        if let Some(coding) = self.coding {
-            headers.push((
-                http::header::CONTENT_ENCODING,
-                http::HeaderValue::from_static(coding.token()),
-            ));
-        }
-
-        headers
+        vec![(
+            http::header::CONTENT_ENCODING,
+            http::HeaderValue::from_static(coding.token()),
+        )]
     }
 }
 
