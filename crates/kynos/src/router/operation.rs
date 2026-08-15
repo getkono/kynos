@@ -1,8 +1,8 @@
 //! Describing one operation while the router is built.
 
-use kynos_openapi::{ComponentName, Method, StatusPattern};
+use kynos_openapi::{ComponentName, Method, RefOr, Response, StatusPattern};
 
-use crate::schema::registry::Registry;
+use crate::{http::StatusCode, schema::registry::Registry};
 
 /// The operation a request matched.
 ///
@@ -83,9 +83,23 @@ impl<'a> OperationCx<'a> {
 
 impl OperationCx<'_> {
     /// Adds a parameter to the operation.
+    ///
+    /// A parameter is identified by its name and location, and the first
+    /// declaration of a given pair wins: two inputs describing the same query
+    /// parameter contribute one entry, not a duplicate the specification
+    /// forbids.
     pub fn add_parameter(&mut self, parameter: kynos_openapi::Parameter) {
-        let _ = parameter;
-        todo!()
+        let declared = self.operation.parameters.iter().any(|existing| {
+            matches!(
+                existing,
+                RefOr::Item(item)
+                    if item.name == parameter.name && item.location == parameter.location
+            )
+        });
+
+        if !declared {
+            self.operation.parameters.push(RefOr::Item(parameter));
+        }
     }
 
     /// Sets the operation's request body.
@@ -98,14 +112,24 @@ impl OperationCx<'_> {
     /// a hand-written [`Describe`](crate::extract::describe::Describe)
     /// implementation that claims a body it does not consume.
     pub fn set_request_body(&mut self, body: kynos_openapi::RequestBody) {
-        let _ = body;
-        todo!()
+        assert!(
+            self.operation.request_body.is_none(),
+            "the operation already declares a request body; only one handler argument may \
+             implement `FromRequest`, so a second one comes from a hand-written `Describe`"
+        );
+        self.operation.request_body = Some(RefOr::Item(body));
     }
 
     /// Adds a security requirement.
+    ///
+    /// Repeating a requirement already declared is a no-op: a list of
+    /// requirements is satisfied when any one of them is, so a duplicate adds
+    /// nothing but noise.
     pub fn add_security(&mut self, requirement: kynos_openapi::SecurityRequirement) {
-        let _ = requirement;
-        todo!()
+        let declared = self.operation.security.get_or_insert_with(Vec::new);
+        if !declared.contains(&requirement) {
+            declared.push(requirement);
+        }
     }
 
     /// Registers a security scheme under `components`.
@@ -123,64 +147,109 @@ impl OperationCx<'_> {
         name: ComponentName,
         scheme: kynos_openapi::SecurityScheme,
     ) {
-        let _ = (name, scheme);
-        todo!()
+        self.registry.declare_security_scheme(name, scheme);
     }
 
     /// Merges responses an input's rejection can produce.
+    ///
+    /// What the operation already declares wins: an input describes what its
+    /// own rejection looks like, and the handler's own response for a status is
+    /// the more specific of the two. Only statuses the operation says nothing
+    /// about are taken from `responses`.
     pub fn add_responses(&mut self, responses: kynos_openapi::Responses) {
-        let _ = responses;
-        todo!()
+        self.operation.responses.merge_from(&responses);
     }
 
     /// Declares a header this input causes the operation to send.
     ///
     /// `WWW-Authenticate` on a 401 is the motivating case: the challenge is
     /// part of what a client must handle, and only the scheme knows it.
+    ///
+    /// The response filed under `status` gains the header, and is created with
+    /// a generic description if the operation does not declare one yet — the
+    /// header is evidence the response happens, so omitting it would be worse
+    /// than describing it thinly. A header already declared under that name is
+    /// left alone, and a response held as a `$ref` is not reached into.
     pub fn add_response_header(
         &mut self,
         status: StatusPattern,
         name: impl Into<String>,
         header: kynos_openapi::Header,
     ) {
-        let _ = (status, name.into(), header);
-        todo!()
+        let response = self
+            .operation
+            .responses
+            .responses
+            .entry(status.to_string())
+            .or_insert_with(|| RefOr::Item(Response::new(describe_status(status))));
+
+        if let RefOr::Item(response) = response {
+            response
+                .headers
+                .entry(name.into())
+                .or_insert_with(|| RefOr::Item(header));
+        }
     }
 
     /// Sets the operation identifier.
     pub fn set_operation_id(&mut self, id: &str) {
-        let _ = id;
-        todo!()
+        self.operation.operation_id = Some(id.to_owned());
     }
 
     /// Sets the summary.
     pub fn set_summary(&mut self, summary: &str) {
-        let _ = summary;
-        todo!()
+        self.operation.summary = Some(summary.to_owned());
     }
 
     /// Sets the description.
     pub fn set_description(&mut self, description: &str) {
-        let _ = description;
-        todo!()
+        self.operation.description = Some(description.to_owned());
     }
 
     /// Marks the operation deprecated.
+    ///
+    /// `false` leaves the field out rather than stating the default, so a
+    /// description never carries `deprecated: false`.
     pub fn set_deprecated(&mut self, deprecated: bool) {
-        let _ = deprecated;
-        todo!()
+        self.operation.deprecated = deprecated.then_some(true);
     }
 
     /// Adds a tag.
+    ///
+    /// Adding a tag the operation already carries is a no-op: `tags` is a set
+    /// spelled as an array, and a repeated entry names no further group.
     pub fn add_tag(&mut self, name: &str) {
-        let _ = name;
-        todo!()
+        if !self.operation.tags.iter().any(|tag| tag == name) {
+            self.operation.tags.push(name.to_owned());
+        }
     }
 
     /// The registry, for describing a schema this input needs.
     pub fn registry(&mut self) -> &mut Registry {
         self.registry
     }
+}
+
+/// The description given to a response entry created only to carry a header.
+///
+/// A `Response` must have one, and the reason phrase RFC 9110 registers for the
+/// status is the most any caller has said about it.
+fn describe_status(status: StatusPattern) -> String {
+    let class = match status {
+        StatusPattern::Code(code) => {
+            return StatusCode::from_u16(code)
+                .ok()
+                .and_then(|code| code.canonical_reason())
+                .map_or_else(|| format!("a `{code}` response"), str::to_owned);
+        }
+        StatusPattern::Informational => "informational",
+        StatusPattern::Success => "successful",
+        StatusPattern::Redirection => "redirection",
+        StatusPattern::ClientError => "client error",
+        StatusPattern::ServerError => "server error",
+    };
+
+    format!("a {class} response")
 }
 
 /// A tag, as a type.
