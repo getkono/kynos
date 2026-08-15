@@ -690,31 +690,12 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
 
     /// Assembles the description, and everything found on the way that a
     /// `Describe` implementation had no way to return.
-    fn describe(&self) -> Result<Described>
-    where
-        C: 'static,
-    {
-        let mut registry = Registry::new();
-        let mut violations = self.violations.clone();
-
-        // Read before anything is described. Everything else an interceptor
-        // says is read from its types, so the compiler has already checked it;
-        // this is the one question about a *value*, and a configuration that
-        // cannot be honoured should not produce a document at all.
-        //
-        // Here rather than in `build` so that `validate`, `openapi`,
-        // `openapi_as` and `build` all report it — the same reason
-        // `Error::Contribution` is raised from this function.
-        for interceptor in self.interceptors.iter().chain(
-            self.mounted
-                .iter()
-                .flat_map(|mounted| &mounted.interceptors),
-        ) {
-            if let Some(conflict) = cors_conflict(interceptor) {
-                return Err(Error::Middleware(conflict));
-            }
-        }
-
+    /// Registers every declared security scheme under `components`.
+    ///
+    /// A name the specification cannot hold as a component key is a violation
+    /// rather than a failure: the rest of the description is still worth
+    /// emitting, and `validate` is what decides whether it is usable.
+    fn declare_security_schemes(&self, registry: &mut Registry, violations: &mut Vec<Violation>) {
         for (name, scheme) in &self.security_schemes {
             match kynos_openapi::ComponentName::new(*name) {
                 Ok(name) => registry.declare_security_scheme(name, scheme.clone()),
@@ -726,6 +707,47 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
                 )),
             }
         }
+    }
+
+    /// Refuses an interceptor configured with a combination it cannot honour.
+    ///
+    /// Everything else an interceptor says is read from its types, so the
+    /// compiler has already checked it. This is the one question about a
+    /// *value*, and the only interceptor that has one is `Cors` — see
+    /// [`cors_conflict`].
+    ///
+    /// Called from `describe` rather than `build` so that `validate`,
+    /// `openapi`, `openapi_as` and `build` all report it, which is the same
+    /// reason `Error::Contribution` is raised there.
+    fn refuse_unhonourable_interceptors(&self) -> Result<()>
+    where
+        C: 'static,
+    {
+        for interceptor in self.interceptors.iter().chain(
+            self.mounted
+                .iter()
+                .flat_map(|mounted| &mounted.interceptors),
+        ) {
+            if let Some(conflict) = cors_conflict(interceptor) {
+                return Err(Error::Middleware(conflict));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn describe(&self) -> Result<Described>
+    where
+        C: 'static,
+    {
+        let mut registry = Registry::new();
+        let mut violations = self.violations.clone();
+
+        // Read before anything is described: a configuration that cannot be
+        // honoured should not produce a document at all.
+        self.refuse_unhonourable_interceptors()?;
+
+        self.declare_security_schemes(&mut registry, &mut violations);
 
         let mut paths = Paths::new();
         for mounted in &self.mounted {
