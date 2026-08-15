@@ -34,9 +34,6 @@
 //!   the router covers every operation and appears in every description; one on
 //!   a group covers that group. There is no way to apply one and not document
 //!   it, and no way to document it at a different scope than it runs at.
-//!
-//! `RateLimit` is deliberately absent: it is not fully implemented, and an
-//! example of a partial thing is worse than none.
 
 use std::{convert::Infallible, net::Ipv4Addr, time::Duration};
 
@@ -47,6 +44,7 @@ use kynos::{
         compression::Compression,
         cors::Cors,
         limits::{BodySize, Concurrency, Timeout},
+        rate_limit::{Decision, RateLimit, RateLimitPolicy},
         request_id::{Counter, RequestId, RequestIdSource},
         trace::Trace,
     },
@@ -202,6 +200,42 @@ async fn reports() -> NoContent {
     NoContent
 }
 
+/// A rate-limit policy, which is the half Kynos does not prescribe.
+///
+/// Where counters live and how a client is identified are the application's:
+/// prescribing a store would mean prescribing a dependency. What Kynos supplies
+/// is the 429, the `Retry-After`, and the `X-RateLimit-*` headers — which it can
+/// only do because the decision below reports the numbers they carry.
+#[derive(Clone, Debug)]
+struct PerProcess {
+    /// Requests served so far. A real policy keys this by client and expires
+    /// it; one counter is enough to show the shape.
+    served: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    ceiling: u32,
+}
+
+impl RateLimitPolicy<()> for PerProcess {
+    async fn check(&self, _: &http::Request, (): &()) -> Decision {
+        let served = self
+            .served
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        if served >= self.ceiling {
+            return Decision::Deny {
+                retry_after: Duration::from_secs(60),
+            };
+        }
+
+        // Both numbers come from the policy because both are properties of the
+        // counter: the framework cannot know how many remain, and a window's
+        // *length* is not the time until it resets.
+        Decision::Allow {
+            remaining: self.ceiling - served - 1,
+            reset: Duration::from_secs(60),
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
     let router = Router::<()>::new()
@@ -252,6 +286,17 @@ async fn main() -> kynos::Result<()> {
         .intercept(BodySize::new(1_048_576))
         .intercept(Timeout::new(Duration::from_secs(30)))
         .intercept(Concurrency::new(256))
+        // Rate limiting. The ceiling is Kynos's to report and the counters are
+        // the policy's to keep, which is why `RateLimit::new` takes the first
+        // and not a window: a window's length is not the time until it resets,
+        // and reporting one as the other would be a number no service honours.
+        .intercept(RateLimit::new(
+            100,
+            PerProcess {
+                served: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                ceiling: 100,
+            },
+        ))
         // The hand-written ones, at group scope, so only these operations
         // declare the tenant header and only those the shared secret. Scope in
         // the router is scope in the description.
