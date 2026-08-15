@@ -240,7 +240,10 @@ trace = ["dep:tracing"]
 yaml = ["dep:serde_yaml_ng", "kynos-openapi/yaml"]
 
 # --- Testing ---------------------------------------------------------------
-test-util = []
+# The JSON Schema validator is pulled in here rather than unconditionally: a
+# normal build never checks a response against a schema, so it never carries
+# one.
+test-util = ["dep:jsonschema"]
 
 # --- Escape hatch ----------------------------------------------------------
 # Unlocks `layer_unchecked`, `route_unchecked` and `upgrade_unchecked`. What
@@ -297,6 +300,7 @@ hyper-util = { workspace = true, optional = true, features = [
   "tokio",
 ] }
 jiff = { workspace = true, optional = true }
+jsonschema = { workspace = true, optional = true }
 matchit = { workspace = true }
 multer = { workspace = true, optional = true }
 percent-encoding = { workspace = true }
