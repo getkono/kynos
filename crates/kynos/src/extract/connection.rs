@@ -16,6 +16,13 @@ use crate::{
 /// Exactly the `paths` key from the description, which makes it the correct
 /// label for a metric — unlike the concrete URI, it has bounded cardinality.
 /// Contributes nothing to the description.
+///
+/// # Where the value comes from
+///
+/// The router inserts the matched template into
+/// [`Parts::extensions`](crate::http::Parts) as a `MatchedPath`, before any
+/// argument is built. Extracting one is reading that back, which is why it
+/// cannot fail: the insertion happens on the same code path as the match.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MatchedPath(pub &'static str);
 
@@ -23,6 +30,12 @@ pub struct MatchedPath(pub &'static str);
 ///
 /// Contributes nothing to the description: it is a property of the connection,
 /// not of the API.
+///
+/// # Where the value comes from
+///
+/// The server inserts a `ConnectInfo` into
+/// [`Parts::extensions`](crate::http::Parts) when it hands a request to the
+/// service, so extracting one reads back what the accept loop already knew.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ConnectInfo(pub std::net::SocketAddr);
 
@@ -32,9 +45,12 @@ pub struct ConnectInfo(pub std::net::SocketAddr);
 impl<C: Sync> FromRequestParts<C> for MatchedPath {
     type Rejection = Infallible;
 
-    async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
-        let _ = (parts, context);
-        todo!()
+    async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
+        Ok(parts
+            .extensions
+            .get::<Self>()
+            .cloned()
+            .expect("the router records the matched path template before building an argument"))
     }
 }
 
@@ -50,9 +66,11 @@ impl Describe for MatchedPath {
 impl<C: Sync> FromRequestParts<C> for ConnectInfo {
     type Rejection = Infallible;
 
-    async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
-        let _ = (parts, context);
-        todo!()
+    async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
+        Ok(*parts
+            .extensions
+            .get::<Self>()
+            .expect("the server records the peer address before handing over a request"))
     }
 }
 
