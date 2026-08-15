@@ -23,6 +23,20 @@ const PATH_SEGMENT_ENCODE_SET: &percent_encoding::AsciiSet = &percent_encoding::
     .add(b'|')
     .add(b'}');
 
+/// Percent-decodes one captured value, the inverse of what this module writes
+/// into a rendered path.
+///
+/// Lives here because this file is where the dependency table puts
+/// `percent-encoding`: an extractor performs the decode, but naming the crate
+/// at the extractor would put it under a second path.
+///
+/// # Errors
+///
+/// Returns the error when the decoded bytes are not valid UTF-8.
+pub fn decode_path_value(value: &str) -> Result<std::borrow::Cow<'_, str>, std::str::Utf8Error> {
+    percent_encoding::percent_decode_str(value).decode_utf8()
+}
+
 /// Builds a URI for a generated endpoint without dynamic parameters.
 pub fn endpoint_uri(template: &str) -> Uri {
     template
