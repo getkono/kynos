@@ -67,6 +67,15 @@ pub enum Decision {
     Allow {
         /// Requests remaining in the current window.
         remaining: u32,
+        /// How long until the current window resets.
+        ///
+        /// The policy's to report, because the window's edge is where the
+        /// counters are. Computing it from a configured length here would give
+        /// the window's *duration* rather than the time to its end — a number
+        /// the service cannot honour, which is the same objection
+        /// [`limits`](crate::middleware::limits) raises against inventing a
+        /// `Retry-After`.
+        reset: std::time::Duration,
     },
     /// The request must receive 429 without calling the handler.
     Deny {
@@ -100,7 +109,10 @@ pub trait RateLimitPolicy<C>: Send + Sync + 'static {
 ///
 /// impl RateLimitPolicy<()> for PerClient {
 ///     async fn check(&self, _: &http::Request, _: &()) -> Decision {
-///         Decision::Allow { remaining: 99 }
+///         Decision::Allow {
+///             remaining: 99,
+///             reset: Duration::from_secs(30),
+///         }
 ///     }
 /// }
 ///
@@ -150,7 +162,10 @@ impl<C: Sync + 'static, P: RateLimitPolicy<C>> Interceptor<C> for RateLimit<P> {
         // decision: a denial already carries the delay it computed, which is
         // what the 429 reports and what its description promises.
         match self.policy.check(&request, context).await {
-            Decision::Allow { remaining: _ } => Ok(next.run(request).await),
+            Decision::Allow {
+                remaining: _,
+                reset: _,
+            } => Ok(next.run(request).await),
             Decision::Deny { retry_after } => Err(RateLimited { retry_after }),
         }
     }
