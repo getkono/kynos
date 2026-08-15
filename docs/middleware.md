@@ -80,6 +80,34 @@ on. Two interceptors rewriting one compose; two setting one header do not. An
 encoding a consumer must know about is a header, which is why `Compression`
 declares `Content-Encoding` rather than re-encoding silently.
 
+## The one interceptor the router recognises by identity
+
+Everything above is read from an interceptor's *types*. There is exactly one
+exception, and it is bounded rather than general: while the router is built, it
+downcasts each interceptor to `Cors` and asks the configuration two questions
+the type system cannot answer.
+
+Both are about a *value*. `allow_any_origin` and `allow_credentials` are
+`mut self -> Self` builders on purpose — an allow-list read from the environment
+at startup has to be applied conditionally — so whether they were both called is
+not a fact a `const` can see. The two questions are whether the pair was
+selected, which is refused (`Error::Middleware`), and what a preflight on the
+covered paths should answer.
+
+What stops this becoming a capability:
+
+- The match is a closed list of two concrete types. `CorsDocumentation` is
+  sealed, so there cannot be a third, and
+  `every_cors_documentation_state_is_one_of_the_two_the_router_recognises`
+  fails if one is added without teaching the probe about it.
+- A third-party interceptor is never asked. `ErasedInterceptor::as_any` is
+  `pub(crate)`, and there is no trait method an outside implementation could
+  supply to be read this way.
+- **Nothing read here reaches the description.** The refusal stops a document
+  being produced at all; the preflight is registered after `describe` has
+  finished. So the property this document opens with — that a declaration
+  cannot disagree with behaviour, because it is the same text — is untouched.
+
 ## Vary is declared apart from the names
 
 `Vary` is the one response header two interceptors may both contribute to, so it
