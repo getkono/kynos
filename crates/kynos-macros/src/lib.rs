@@ -91,8 +91,13 @@ pub fn head(attribute: TokenStream, item: TokenStream) -> TokenStream {
 
 /// Declares an `OPTIONS` operation. See [`macro@get`] for the syntax.
 ///
-/// CORS preflight is handled without one; declare this only for an `OPTIONS`
-/// that is part of the API's own contract.
+/// CORS preflight is handled without one: where a `Cors` interceptor covers a
+/// path, the router registers a preflight answer on it while the service is
+/// built. Declare this only for an `OPTIONS` that is part of the API's own
+/// contract.
+///
+/// Declaring one *suppresses* the synthesized preflight on that path — a
+/// hand-written operation wins, and it then owns answering preflights there too.
 #[proc_macro_attribute]
 pub fn options(attribute: TokenStream, item: TokenStream) -> TokenStream {
     route::expand("OPTIONS", attribute, item)
