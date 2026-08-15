@@ -2,12 +2,17 @@
 
 use std::marker::PhantomData;
 
-use std::convert::Infallible;
+use std::{
+    convert::Infallible,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use crate::{
+    error::rejection::HeaderRejection,
     extract::params::header::HeaderParams,
     http,
     middleware::{Continued, Interceptor, Next},
+    schema::registry::Registry,
 };
 
 /// Supplies identifiers for requests that arrive without one.
@@ -28,12 +33,19 @@ pub trait RequestIdSource: Send + Sync + 'static {
 /// identifier scheme when correlation has to cross a process boundary.
 #[derive(Debug, Default)]
 pub struct Counter {
-    _private: (),
+    next: AtomicU64,
 }
 
 impl RequestIdSource for Counter {
     fn next_id(&self) -> http::HeaderValue {
-        todo!()
+        // `Relaxed` is enough: what matters is that no two requests are handed
+        // the same number, and nothing else is ordered against this.
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+
+        // Decimal digits are always a valid field value, so this conversion is
+        // total -- which is why the identifier is a number rather than
+        // something that would need a dependency to render.
+        http::HeaderValue::from(id)
     }
 }
 
@@ -51,12 +63,56 @@ pub struct XRequestId(
 impl HeaderParams for XRequestId {
     const NAMES: &'static [&'static str] = &["x-request-id"];
 
+    fn decode(headers: &http::HeaderMap) -> Result<Self, HeaderRejection> {
+        headers
+            .get("x-request-id")
+            .cloned()
+            .map(Self)
+            .ok_or_else(|| HeaderRejection::Invalid {
+                name: "X-Request-Id".to_owned(),
+                detail: "the header is absent".to_owned(),
+            })
+    }
+
     fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
         vec![(
             http::HeaderName::from_static("x-request-id"),
             self.0.clone(),
         )]
     }
+
+    fn parameters(registry: &mut Registry) -> Vec<kynos_openapi::Parameter> {
+        let _ = registry;
+        vec![
+            kynos_openapi::Parameter::header("X-Request-Id", identifier_schema())
+                .required(true)
+                .with_description("The identifier this request is correlated by"),
+        ]
+    }
+
+    fn response_headers(
+        registry: &mut Registry,
+    ) -> kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>> {
+        let _ = registry;
+        let mut headers = kynos_openapi::Map::new();
+        headers.insert(
+            "X-Request-Id".to_owned(),
+            kynos_openapi::RefOr::Item(
+                kynos_openapi::Header::new(identifier_schema())
+                    .with_description("The identifier this request is correlated by"),
+            ),
+        );
+        headers
+    }
+}
+
+/// The schema of an identifier: a string, whatever minted it.
+///
+/// The format stays the application's, so nothing narrower than `string` can be
+/// claimed here without claiming something a replaced
+/// [`RequestIdSource`] would break.
+fn identifier_schema() -> kynos_openapi::Schema {
+    kynos_openapi::Schema::of_type(kynos_openapi::model::schema::types::SchemaType::String)
 }
 
 /// Assigns each request an identifier and echoes it back.
@@ -160,19 +216,45 @@ impl<C: Sync + 'static, S: RequestIdSource, H: HeaderParams + Send + Sync + 'sta
 
     async fn intercept(
         &self,
-        request: http::Request,
+        mut request: http::Request,
         reads: (),
         context: &C,
         next: Next<'_, C>,
     ) -> Result<Continued<H>, Infallible> {
-        let _ = (
-            request,
-            reads,
-            context,
-            next,
-            self.trust_client,
-            &self.source,
-        );
-        todo!()
+        let _ = (reads, context);
+
+        // An inbound identifier is attacker-controlled, so it is read only when
+        // the application asked for it. The first declared name wins: a group
+        // naming several carries one identifier under all of them.
+        let inbound = if self.trust_client {
+            H::NAMES
+                .iter()
+                .find_map(|name| request.headers().get(*name).cloned())
+        } else {
+            None
+        };
+
+        let id = inbound.unwrap_or_else(|| self.source.next_id());
+
+        // Set on the request as well as the response: a handler, an observer
+        // and the client all correlate on the same value, and there is one
+        // place the name is written.
+        let mut declared = http::HeaderMap::with_capacity(H::NAMES.len());
+        for name in H::NAMES {
+            let Ok(name) = http::HeaderName::from_bytes(name.as_bytes()) else {
+                continue;
+            };
+            request.headers_mut().insert(name.clone(), id.clone());
+            declared.insert(name, id.clone());
+        }
+
+        // The group is rebuilt from the names it declares, since `Adds` is a
+        // type rather than a map and `decode` is the one way to reach a value
+        // of it. A group that cannot read back what it names is one whose
+        // description and behaviour could not have agreed anyway.
+        let headers = H::decode(&declared)
+            .unwrap_or_else(|error| panic!("a header group must decode the names it declares, and `{error}` says this one does not"));
+
+        Ok(next.run(request).await.with_headers(headers))
     }
 }
