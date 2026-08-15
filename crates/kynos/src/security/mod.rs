@@ -32,7 +32,9 @@ use crate::{error::rejection::AuthRejection, http::Parts};
 /// # impl SecurityScheme for Bearer {
 /// #     const NAME: &'static str = "Bearer";
 /// #     type Credential = String;
-/// #     fn describe() -> kynos::openapi::SecurityScheme { todo!() }
+/// #     fn describe() -> kynos::openapi::SecurityScheme {
+/// #         kynos::openapi::SecurityScheme::bearer(None)
+/// #     }
 /// # }
 /// ```
 ///
@@ -78,8 +80,11 @@ pub trait SecurityScheme: Send + Sync + 'static {
 pub trait Authenticator<S: SecurityScheme, C: Sync>: Send + Sync + 'static {
     /// Checks the credential carried by this request.
     ///
-    /// Return [`AuthRejection::Unauthenticated`] when the credential is absent or
-    /// invalid, and [`AuthRejection::Forbidden`] when it is valid but insufficient.
+    /// Return [`AuthRejection::unauthenticated`] when the credential is absent
+    /// or invalid, and [`AuthRejection::Forbidden`] when it is valid but
+    /// insufficient. The challenge is left unset: [`Auth`](auth::Auth) attaches
+    /// [`challenge`](SecurityScheme::challenge) on the way out, so the wire and
+    /// the description cannot name different ones.
     fn authenticate(
         &self,
         parts: &Parts,

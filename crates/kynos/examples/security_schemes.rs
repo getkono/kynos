@@ -184,7 +184,7 @@ impl<C: Sync> Authenticator<AccessToken, C> for Tokens {
             .and_then(|value| value.strip_prefix("Bearer "))
             .and_then(|token| self.issued.get(token))
             .cloned()
-            .ok_or(AuthRejection::Unauthenticated)
+            .ok_or_else(AuthRejection::unauthenticated)
     }
 
     async fn authorize(
@@ -231,7 +231,7 @@ where
         context: &C,
     ) -> Result<S::Credential, AuthRejection> {
         let _ = (parts, context);
-        Err(AuthRejection::Unauthenticated)
+        Err(AuthRejection::unauthenticated())
     }
 
     async fn authorize(

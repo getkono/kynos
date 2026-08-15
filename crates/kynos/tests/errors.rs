@@ -140,7 +140,7 @@ struct Tokens;
 impl<C: Sync> Authenticator<Bearer<Claims>, C> for Tokens {
     async fn authenticate(&self, parts: &Parts, context: &C) -> Result<Claims, AuthRejection> {
         let _ = (parts, context);
-        Err(AuthRejection::Unauthenticated)
+        Err(AuthRejection::unauthenticated())
     }
 
     async fn authorize(

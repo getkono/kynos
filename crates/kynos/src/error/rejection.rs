@@ -37,7 +37,7 @@ use kynos_openapi::model::body::mime_names::APPLICATION_PROBLEM_JSON;
 
 use crate::{
     error::problem::{IntoProblem, Problem},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
 };
@@ -413,7 +413,19 @@ rejection_response!(NegotiationRejection);
 pub enum AuthRejection {
     /// Credentials were absent or invalid. Produces 401.
     #[error("authentication is required")]
-    Unauthenticated,
+    Unauthenticated {
+        /// The `WWW-Authenticate` challenge this 401 sends, if the scheme has
+        /// one.
+        ///
+        /// An [`Authenticator`](crate::security::Authenticator) leaves this
+        /// `None` — use [`AuthRejection::unauthenticated`] — because the
+        /// challenge belongs to the scheme rather than to the check.
+        /// [`Auth`](crate::security::auth::Auth) fills it in from
+        /// [`SecurityScheme::challenge`](crate::security::SecurityScheme::challenge)
+        /// on the way out, which is what makes the string on the wire and the
+        /// one the operation declares the same string.
+        challenge: Option<&'static str>,
+    },
 
     /// Credentials were valid but insufficient. Produces 403.
     #[error("access is not permitted")]
@@ -421,12 +433,50 @@ pub enum AuthRejection {
 }
 
 impl AuthRejection {
+    /// A 401 whose challenge has not been filled in yet.
+    ///
+    /// What an [`Authenticator`](crate::security::Authenticator) returns: a
+    /// verifier knows the credential was unacceptable, and the scheme knows
+    /// what to ask for instead.
+    #[must_use]
+    pub const fn unauthenticated() -> Self {
+        Self::Unauthenticated { challenge: None }
+    }
+
     /// The status this rejection produces.
     #[must_use]
     pub fn status(&self) -> StatusCode {
         match self {
-            Self::Unauthenticated => StatusCode::UNAUTHORIZED,
+            Self::Unauthenticated { .. } => StatusCode::UNAUTHORIZED,
             Self::Forbidden => StatusCode::FORBIDDEN,
+        }
+    }
+
+    /// The `WWW-Authenticate` challenge this rejection sends, if any.
+    ///
+    /// Always `None` for a 403: RFC 9110 section 15.5.2 asks for a challenge on
+    /// a 401, and repeating an already-valid credential would not change the
+    /// answer.
+    #[must_use]
+    pub fn challenge(&self) -> Option<&'static str> {
+        match self {
+            Self::Unauthenticated { challenge } => *challenge,
+            Self::Forbidden => None,
+        }
+    }
+
+    /// Sets the challenge a 401 carries, leaving a 403 alone.
+    ///
+    /// Replaces rather than fills a gap. [`Auth`](crate::security::auth::Auth)
+    /// calls this with the scheme's own challenge, and that is the one the
+    /// operation's description declares; an authenticator that supplied a
+    /// different one would make the document wrong about what a client
+    /// receives.
+    #[must_use]
+    pub fn with_challenge(self, challenge: Option<&'static str>) -> Self {
+        match self {
+            Self::Unauthenticated { .. } => Self::Unauthenticated { challenge },
+            Self::Forbidden => Self::Forbidden,
         }
     }
 }
@@ -445,7 +495,40 @@ impl IntoProblem for AuthRejection {
     }
 }
 
-rejection_response!(AuthRejection);
+/// The one rejection whose response is more than a problem document.
+///
+/// RFC 9110 section 15.5.2: a server generating a 401 MUST send a
+/// `WWW-Authenticate` header field. Only the scheme knows the challenge, so it
+/// rides on the rejection rather than being reconstructed here — which is also
+/// what keeps it identical to the one
+/// [`Auth`](crate::security::auth::Auth)'s description declares.
+impl IntoResponse for AuthRejection {
+    fn into_response(self) -> crate::http::Response {
+        let challenge = self.challenge();
+        let mut response = IntoProblem::into_problem(self).into_response();
+
+        // `from_str` rather than `from_static`: a challenge is an ordinary
+        // `&'static str` a `SecurityScheme` implementation supplies, and one
+        // carrying a newline would splice a header of its choosing into the
+        // response. An unrepresentable challenge is dropped, because a response
+        // path that panics is worse than a 401 missing an advisory header --
+        // and `Auth`'s description withholds the header on the same condition,
+        // so the two still agree.
+        if let Some(value) = challenge.and_then(|challenge| HeaderValue::from_str(challenge).ok()) {
+            response
+                .headers_mut()
+                .insert(header::WWW_AUTHENTICATE, value);
+        }
+
+        response
+    }
+}
+
+impl Responses for AuthRejection {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        problem_responses(registry, <AuthRejection as IntoProblem>::statuses())
+    }
+}
 
 #[cfg(test)]
 mod tests;

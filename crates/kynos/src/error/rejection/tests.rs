@@ -101,7 +101,7 @@ fn negotiation_separates_a_bad_header_from_an_unmatchable_one() {
 
 #[test]
 fn authentication_and_authorization_are_different_statuses() {
-    let observed = [AuthRejection::Unauthenticated, AuthRejection::Forbidden];
+    let observed = [AuthRejection::unauthenticated(), AuthRejection::Forbidden];
     let statuses: Vec<_> = observed.iter().map(AuthRejection::status).collect();
 
     assert_eq!(statuses, [StatusCode::UNAUTHORIZED, StatusCode::FORBIDDEN]);
