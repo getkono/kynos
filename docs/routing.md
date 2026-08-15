@@ -65,12 +65,14 @@ round-trip an externally authored description without rewriting it. Rejecting
 the name at parse time would make the model lossy in order to enforce a routing
 rule the model does not have.
 
-> **Not yet implemented.** The enforcement point above the model does not exist.
-> `Router::mount` and `Router::build` are `todo!()`-bodied, so nothing today
-> rejects a catch-all before `matchit` would be asked to insert it. The rule is
-> designed and its location is settled; the code is not written.
-> [`architecture.md`](architecture.md#what-does-not-move-and-why) records the
-> same boundary from the dependency's side.
+The enforcement point is `Router::mount` and the composition methods that feed
+it: a template whose variable name begins with `*` is refused there, before
+`matchit` is asked to insert it, and the router reports it rather than serving
+it. The same check refuses a segment carrying two variables — `/{a}-{b}` is a
+legal OpenAPI template that `matchit` cannot take apart, so it too is a path the
+router declines rather than one the model rejects.
+[`architecture.md`](architecture.md#what-does-not-move-and-why) records the same
+boundary from the dependency's side.
 
 The escape hatch is
 [`route_unchecked`](../crates/kynos/src/unchecked.rs), behind the `unchecked`
@@ -213,9 +215,8 @@ disagree with the document.
 
 ## The `matchit` contract
 
-`matchit` is the chosen router and is not yet declared by any manifest; see
-[`architecture.md`](architecture.md#the-graph) for why a `chosen` row exists.
-What routing depends on it for:
+`matchit` is the router, declared by `crates/kynos` and named only under
+[`router/`](../crates/kynos/src/router/). What routing depends on it for:
 
 - A `{param}` matches exactly one path segment and never crosses a `/`. That is
   the same rule OpenAPI's path templating has, which is why the two can share a
@@ -241,7 +242,7 @@ The normative home for four of the [anti-patterns](../README.md#anti-patterns).
 
 | # | Rule | Enforced by |
 | --- | --- | --- |
-| 3 | No wildcard or catch-all routes | designed, above `PathTemplate`; not built |
+| 3 | No wildcard or catch-all routes | `Router::mount`, above `PathTemplate` |
 | 9 | No header-based API versioning | nothing mechanical |
 | 10 | One application-level slash policy, or none | `TrailingSlashPolicy` has no per-route form |
 | 11 | The emitted document is never hand-patched | `Router::openapi` returns an owned `Document`; nothing exposes the built service's document mutably |
