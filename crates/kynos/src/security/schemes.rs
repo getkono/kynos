@@ -68,7 +68,7 @@ impl<T: Send + 'static> SecurityScheme for Basic<T> {
     type Credential = T;
 
     fn describe() -> kynos_openapi::SecurityScheme {
-        todo!()
+        kynos_openapi::SecurityScheme::basic()
     }
 
     fn challenge() -> Option<&'static str> {
@@ -76,11 +76,15 @@ impl<T: Send + 'static> SecurityScheme for Basic<T> {
     }
 }
 
+// No `challenge`: the certificate is presented during the TLS handshake, so a
+// 401 has no `WWW-Authenticate` scheme to name -- there is no HTTP
+// authentication scheme registered for it, and inventing one would advertise a
+// challenge no client could answer.
 impl<T: Send + 'static> SecurityScheme for MutualTls<T> {
     const NAME: &'static str = "MutualTls";
     type Credential = T;
 
     fn describe() -> kynos_openapi::SecurityScheme {
-        todo!()
+        kynos_openapi::SecurityScheme::mutual_tls()
     }
 }

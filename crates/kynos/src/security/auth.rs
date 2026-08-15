@@ -5,10 +5,16 @@
 //! `responses`. There is no way to do one without the others — which is the
 //! whole point.
 
+use kynos_openapi::{
+    ComponentName, Header, Schema, SecurityRequirement, StatusPattern,
+    model::schema::types::SchemaType,
+};
+
 use crate::{
     error::rejection::AuthRejection,
     extract::{FromRequestParts, describe::Describe},
-    http::Parts,
+    http::{HeaderValue, Parts, StatusCode},
+    response::Responses,
     router::operation::OperationCx,
     security::{Authenticates, Authenticator, SecurityScheme},
 };
@@ -29,7 +35,9 @@ use crate::{
 /// # impl kynos::security::SecurityScheme for Bearer {
 /// #     const NAME: &'static str = "Bearer";
 /// #     type Credential = Claims;
-/// #     fn describe() -> kynos::openapi::SecurityScheme { todo!() }
+/// #     fn describe() -> kynos::openapi::SecurityScheme {
+/// #         kynos::openapi::SecurityScheme::bearer(None)
+/// #     }
 /// # }
 /// ```
 pub struct Auth<S: SecurityScheme>(pub S::Credential);
@@ -79,8 +87,7 @@ impl<S: SecurityScheme> Auth<S> {
 
 impl<S: SecurityScheme> Describe for Auth<S> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let _ = operation;
-        todo!()
+        declare::<S>(operation, S::scopes().to_vec());
     }
 }
 
@@ -97,6 +104,9 @@ where
             .authenticate(parts, context)
             .await
             .map(Self)
+            // The challenge is the scheme's, not the authenticator's, and it is
+            // attached here so that it is the same string `describe` declared.
+            .map_err(|rejection| rejection.with_challenge(S::challenge()))
     }
 }
 
@@ -162,8 +172,17 @@ impl<S: SecurityScheme, R: Scopes> Scoped<S, R> {
 
 impl<S: SecurityScheme, R: Scopes> Describe for Scoped<S, R> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let _ = operation;
-        todo!()
+        // "An `Auth` additionally requiring a set of scopes": the scheme's own
+        // defaults still apply, and `R`'s are added to them rather than
+        // replacing them. Declaring a scope twice would name it twice in the
+        // requirement, so the union is taken by hand.
+        let mut scopes = S::scopes().to_vec();
+        for scope in R::SCOPES {
+            if !scopes.contains(scope) {
+                scopes.push(scope);
+            }
+        }
+        declare::<S>(operation, scopes);
     }
 }
 
@@ -176,11 +195,75 @@ where
     type Rejection = AuthRejection;
 
     async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
+        // Both halves, because a `authorize` that answers 401 rather than 403
+        // owes the client a challenge for the same reason `authenticate` does.
+        let challenged = |rejection: AuthRejection| rejection.with_challenge(S::challenge());
+
         let authenticator = context.authenticator();
-        let credential = authenticator.authenticate(parts, context).await?;
+        let credential = authenticator
+            .authenticate(parts, context)
+            .await
+            .map_err(challenged)?;
         authenticator
             .authorize(&credential, R::SCOPES, context)
-            .await?;
+            .await
+            .map_err(challenged)?;
         Ok(Self(credential, std::marker::PhantomData))
     }
+}
+
+/// Declares scheme `S` as required by this operation, and defines it.
+///
+/// The three halves are one act: the requirement names the scheme, the
+/// registration defines it under the same key, and the 401 carries the
+/// challenge the scheme itself supplies.
+fn declare<S: SecurityScheme>(operation: &mut OperationCx<'_>, scopes: Vec<&'static str>) {
+    // Before the header, not after: `add_response_header` invents a thinly
+    // described 401 when the operation declares none, and merging cannot
+    // replace a response that already exists.
+    let responses = AuthRejection::responses(operation.registry());
+    operation.add_responses(responses);
+
+    // RFC 9110 section 11.6.1: a 401 MUST carry at least one challenge. Only a
+    // scheme that has one declares it, so a credential carried outside the
+    // `Authorization` header -- an API key, a cookie, a client certificate --
+    // advertises nothing a client could not answer.
+    //
+    // The `HeaderValue` round trip is the same test `AuthRejection` applies
+    // before writing the header, so a challenge that cannot be a field value is
+    // absent from both the response and the description rather than one of
+    // them.
+    if let Some(challenge) = S::challenge().filter(|value| HeaderValue::from_str(value).is_ok()) {
+        operation.add_response_header(
+            StatusPattern::Code(StatusCode::UNAUTHORIZED.as_u16()),
+            "WWW-Authenticate",
+            Header::new(Schema::of_type(SchemaType::String))
+                .required(true)
+                .with_description(
+                    "The challenge the client must answer, per RFC 9110 section 11.6.1.",
+                )
+                .with_example(challenge),
+        );
+    }
+
+    // One name for both halves, so the scheme the requirement demands and the
+    // scheme the document defines cannot be different keys.
+    let name = component_name::<S>();
+    operation.add_security(SecurityRequirement::scoped(name.as_str(), scopes));
+    operation.add_security_scheme(name, S::describe());
+}
+
+/// The component key scheme `S` is both registered and required under.
+///
+/// [`SecurityScheme::NAME`] is an ordinary `&'static str`, so it need not be a
+/// legal component key, and [`Describe`] has no way to report that it was not.
+/// Sanitizing rather than refusing is what keeps the requirement and the
+/// registration naming one string, which is the disagreement
+/// [`OperationCx::add_security_scheme`] exists to prevent. Only an empty name
+/// fails to sanitize, and the scheme's own type name stands in for it.
+fn component_name<S: SecurityScheme>() -> ComponentName {
+    ComponentName::sanitized(S::NAME).unwrap_or_else(|_| {
+        ComponentName::sanitized(std::any::type_name::<S>())
+            .expect("a Rust type name is never empty")
+    })
 }
