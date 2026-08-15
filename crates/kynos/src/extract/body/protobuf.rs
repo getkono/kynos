@@ -29,12 +29,23 @@ use crate::{
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Protobuf<T>(pub T);
 
+/// One spelling, read by both halves: what is decoded and what is described.
+const MEDIA_TYPE: &str = "application/protobuf";
+
 impl<C: Sync, T: prost::Message + Default + Send> FromRequest<C> for Protobuf<T> {
     type Rejection = BodyRejection;
 
-    async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
-        let _ = (request, context);
-        todo!()
+    async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
+        let bytes = super::read_body(request, MEDIA_TYPE).await?;
+
+        // Protobuf has no layer between the wire format and the message, so a
+        // decode failure is always a malformed body rather than one that
+        // parsed and then disagreed with the message definition.
+        T::decode(bytes)
+            .map(Self)
+            .map_err(|error| BodyRejection::Syntax {
+                detail: error.to_string(),
+            })
     }
 }
 
@@ -47,11 +58,13 @@ impl<T: Schema> Describe for Protobuf<T> {
 
 impl<T: Schema> RequestContent for Protobuf<T> {
     fn media_types() -> Vec<&'static str> {
-        vec!["application/protobuf"]
+        vec![MEDIA_TYPE]
     }
 
     fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
-        let _ = registry;
-        todo!()
+        kynos_openapi::RequestBody::new(
+            MEDIA_TYPE,
+            kynos_openapi::MediaType::new(registry.resolve::<T>()),
+        )
     }
 }

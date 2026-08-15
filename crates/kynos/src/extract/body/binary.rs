@@ -58,9 +58,12 @@ impl<M> Binary<M> {
 impl<C: Sync, M: MediaType + Send> FromRequest<C> for Binary<M> {
     type Rejection = BodyRejection;
 
-    async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
-        let _ = (request, context);
-        todo!()
+    async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
+        // The bytes are the value, so there is nothing to decode once the
+        // marker's media type has been enforced.
+        super::read_body(request, M::MEDIA_TYPE)
+            .await
+            .map(Self::new)
     }
 }
 

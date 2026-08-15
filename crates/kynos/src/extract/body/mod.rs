@@ -24,6 +24,9 @@ pub mod multipart;
 #[cfg(feature = "protobuf")]
 pub mod protobuf;
 
+use bytes::Bytes;
+use http_body_util::{BodyExt, Collected};
+
 use crate::{
     error::rejection::BodyRejection,
     extract::{
@@ -31,10 +34,88 @@ use crate::{
         body::alternative::Alternative,
         describe::{Describe, RequestContent},
     },
-    http::Request,
+    http::{HeaderMap, Request, header},
     router::operation::OperationCx,
     schema::registry::Registry,
 };
+
+/// The media type a request declares, split from its parameters.
+///
+/// `None` when the header is absent or is not text a media type can be read out
+/// of, which every codec here treats the way it treats an unacceptable one.
+fn content_type(headers: &HeaderMap) -> Option<(&str, &str)> {
+    let value = headers.get(header::CONTENT_TYPE)?.to_str().ok()?;
+    let (media_type, parameters) = value.split_once(';').unwrap_or((value, ""));
+    Some((media_type.trim(), parameters))
+}
+
+/// Whether the parameters trailing a media type are ones a codec accepts.
+///
+/// A codec accepts none at all, or `charset=utf-8`: Kynos decodes every text
+/// format as UTF-8, so another charset names something it would misread rather
+/// than something it can decline to notice. Any other parameter is a media type
+/// no [`media_types`](RequestContent::media_types) claims.
+fn parameters_are_acceptable(parameters: &str) -> bool {
+    parameters
+        .split(';')
+        .filter(|parameter| !parameter.trim().is_empty())
+        .all(|parameter| {
+            parameter.split_once('=').is_some_and(|(name, value)| {
+                name.trim().eq_ignore_ascii_case("charset")
+                    && value.trim().trim_matches('"').eq_ignore_ascii_case("utf-8")
+            })
+        })
+}
+
+/// Whether the request offers exactly `media_type`.
+///
+/// The comparison is on the media type itself, never on a structured suffix: an
+/// operation accepts what its description claims, and `application/vnd.x+json`
+/// is not `application/json`.
+fn offers(headers: &HeaderMap, media_type: &str) -> bool {
+    content_type(headers).is_some_and(|(offered, parameters)| {
+        offered.eq_ignore_ascii_case(media_type) && parameters_are_acceptable(parameters)
+    })
+}
+
+/// Whether the request offers any of `media_types`.
+fn offers_any(headers: &HeaderMap, media_types: &[&str]) -> bool {
+    media_types
+        .iter()
+        .any(|media_type| offers(headers, media_type))
+}
+
+/// The 415 a body extractor raises, quoting what the client offered.
+fn unsupported_media_type(headers: &HeaderMap) -> BodyRejection {
+    BodyRejection::UnsupportedMediaType {
+        received: headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
+    }
+}
+
+/// Enforces `media_type`, then reads the whole body into memory.
+///
+/// This is the first half of every codec in this module. Enforcing the content
+/// type first is what keeps an operation from accepting one its description
+/// never claimed, and a transport failure part-way through is a 400: what
+/// arrived is not the body the client meant to send, and no codec can be asked
+/// about it.
+async fn read_body(request: Request, media_type: &str) -> Result<Bytes, BodyRejection> {
+    if !offers(request.headers(), media_type) {
+        return Err(unsupported_media_type(request.headers()));
+    }
+
+    request
+        .into_body()
+        .collect()
+        .await
+        .map(Collected::to_bytes)
+        .map_err(|error| BodyRejection::Syntax {
+            detail: error.to_string(),
+        })
+}
 
 /// One of two request body representations, selected by `Content-Type`.
 ///
@@ -92,6 +173,14 @@ pub enum OneOf<L, R> {
     Right(R),
 }
 
+/// An optional body is absent when the request declares no `Content-Type`.
+///
+/// That is the whole rule, and it is decided from the head alone. A request
+/// that names no media type is stating it sent no representation; one that
+/// names a media type is answered by `T` exactly as if the `Option` were not
+/// there, so an unsupported type is still 415 and an empty JSON body is still
+/// 400. Emptiness is deliberately not the test: an empty [`Text`](text::Text)
+/// body is the empty string, and `Option` must not swallow it.
 impl<C, T> FromRequest<C> for Option<T>
 where
     C: Sync,
@@ -100,8 +189,11 @@ where
     type Rejection = T::Rejection;
 
     async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
-        let _ = (request, context);
-        todo!()
+        if request.headers().contains_key(header::CONTENT_TYPE) {
+            T::from_request(request, context).await.map(Some)
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -121,8 +213,16 @@ where
     type Rejection = BodyRejection;
 
     async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
-        let _ = (request, context);
-        todo!()
+        // The alternative is chosen before either side reads a byte, so a
+        // malformed representation still fails as that representation rather
+        // than falling through to the other one.
+        if offers_any(request.headers(), &L::media_types()) {
+            L::from_request(request, context).await.map(Self::Left)
+        } else if offers_any(request.headers(), &R::media_types()) {
+            R::from_request(request, context).await.map(Self::Right)
+        } else {
+            Err(unsupported_media_type(request.headers()))
+        }
     }
 }
 
