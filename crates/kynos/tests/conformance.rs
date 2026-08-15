@@ -5,10 +5,12 @@
 //! that the responses a suite actually observed match what the emitted document
 //! promises.
 //!
-//! `#[ignore]`d, not deleted. `Router::build` and everything below it are
-//! `todo!()`, so this panics rather than fails — an ignored test that says why
-//! is a better record of the gap than a missing file, and removing the
-//! attribute is the whole change when the router lands.
+//! One of the two is still `#[ignore]`d, and no longer because the router is a
+//! skeleton — that landed. `every_declared_response_is_exercised` reports a gap
+//! this fixture cannot close from outside the framework, and the attribute
+//! names it. An ignored test that says why is a better record of the gap than a
+//! missing file, and removing the attribute is the whole change when the
+//! declaration is fixed.
 //!
 //! Run it deliberately with:
 //!
@@ -49,15 +51,23 @@ enum StoreError {
 /// Fetches one user.
 #[kynos::get("/users/{id}")]
 async fn get_user(Path(path): Path<UserPath>) -> Json<User> {
-    let _ = path;
-    todo!("the router is still a skeleton")
+    Json(User {
+        id: path.id,
+        name: "Ada Lovelace".to_owned(),
+    })
 }
 
 /// Creates a user.
 #[kynos::post("/users")]
 async fn create_user(Json(user): Json<User>) -> Result<Created<Json<User>>, StoreError> {
-    let _ = user;
-    todo!("the router is still a skeleton")
+    if user.name == "taken" {
+        return Err(StoreError::NameTaken);
+    }
+
+    Ok(Created::at(
+        get_user::relative_uri(UserPath { id: user.id }),
+        Json(user),
+    ))
 }
 
 fn service() -> kynos::Result<Service<()>> {
@@ -73,7 +83,6 @@ fn service() -> kynos::Result<Service<()>> {
 /// body validates against the declared schema, and that every declared required
 /// header was sent.
 #[tokio::test]
-#[ignore = "Router::build is still todo!(); remove when the router lands"]
 async fn observed_responses_match_the_description() {
     let client = TestClient::new(service().expect("a describable router"));
 
@@ -92,7 +101,8 @@ async fn observed_responses_match_the_description() {
 /// that finds the 409 a description promises and no test has ever exercised —
 /// a gap line coverage cannot see, because the promise lives in the document.
 #[tokio::test]
-#[ignore = "Router::build is still todo!(); remove when the router lands"]
+#[ignore = "BodyRejection declares 413 on every operation that reads a body, but only \
+            middleware::limits::BodySize produces one, so this fixture cannot exercise it"]
 async fn every_declared_response_is_exercised() {
     let client = TestClient::new(service().expect("a describable router"));
 
@@ -101,6 +111,12 @@ async fn every_declared_response_is_exercised() {
         .send()
         .await
         .assert_status(StatusCode::OK);
+
+    client
+        .get("/users/not-a-number")
+        .send()
+        .await
+        .assert_status(StatusCode::BAD_REQUEST);
 
     client
         .post("/users")
@@ -122,6 +138,29 @@ async fn every_declared_response_is_exercised() {
         .await
         .assert_status(StatusCode::CONFLICT)
         .assert_problem_type("https://errors.example.com/name-taken");
+
+    // An empty body ends before any value begins, which is a syntax error
+    // rather than a schema one.
+    client
+        .post("/users")
+        .header("content-type", "application/json")
+        .send()
+        .await
+        .assert_status(StatusCode::BAD_REQUEST);
+
+    client
+        .post("/users")
+        .header("content-type", "text/plain")
+        .send()
+        .await
+        .assert_status(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+    client
+        .post("/users")
+        .json(&serde_json::json!({ "id": "one", "name": 1 }))
+        .send()
+        .await
+        .assert_status(StatusCode::UNPROCESSABLE_ENTITY);
 
     client.assert_declared_responses_covered();
 }
