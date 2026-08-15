@@ -51,6 +51,51 @@ pub trait HeaderParams: Sized {
     /// fails to compile.
     const DESCRIBED: bool = true;
 
+    /// The request field names a response carrying this group depends on.
+    ///
+    /// Separate from [`NAMES`](HeaderParams::NAMES) because `Vary` is the one
+    /// response header two interceptors may both contribute to. RFC 9110
+    /// section 12.5.5 defines it as an unordered set of field names, so two
+    /// contributions *union* where two `Content-Encoding` values would
+    /// conflict — and naming it in `NAMES` would make the legitimate pairing of
+    /// `Compression` with `Cors` a compile error.
+    ///
+    /// Kynos merges what is declared here into whatever `Vary` the response
+    /// already carries, case-insensitively, and never describes it: a shared
+    /// cache reads `Vary`, a client generator has no use for it.
+    ///
+    /// ```
+    /// use kynos::extract::params::header::HeaderParams;
+    ///
+    /// struct Encoding;
+    ///
+    /// impl HeaderParams for Encoding {
+    ///     const NAMES: &'static [&'static str] = &["content-encoding"];
+    ///     const VARIES: &'static [&'static str] = &["accept-encoding"];
+    ///
+    ///     fn encode(&self) -> Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)> {
+    ///         Vec::new()
+    ///     }
+    /// }
+    ///
+    /// struct CrossOrigin;
+    ///
+    /// impl HeaderParams for CrossOrigin {
+    ///     const NAMES: &'static [&'static str] = &["access-control-allow-origin"];
+    ///     const VARIES: &'static [&'static str] = &["origin"];
+    ///
+    ///     fn encode(&self) -> Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)> {
+    ///         Vec::new()
+    ///     }
+    /// }
+    ///
+    /// // Neither names `vary` in `NAMES`, so an interceptor adding each is not
+    /// // a conflict — and both contributions reach the response.
+    /// assert_eq!(Encoding::VARIES, ["accept-encoding"]);
+    /// assert_eq!(CrossOrigin::VARIES, ["origin"]);
+    /// ```
+    const VARIES: &'static [&'static str] = &[];
+
     /// Decodes this group from request headers.
     ///
     /// # Panics
