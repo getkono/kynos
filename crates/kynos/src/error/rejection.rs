@@ -18,8 +18,22 @@
 //! [`Concurrency`](crate::middleware::limits::Concurrency) and
 //! [`Timeout`](crate::middleware::limits::Timeout) return a response directly
 //! and declare it through `OperationContribution`.
+//!
+//! # What a rejection says
+//!
+//! Everything a rejection carries reaches the client, so a variant holds only
+//! what the request itself already determined: which parameter, which media
+//! type, the limit it exceeded, where in the body a value went wrong. Nothing
+//! here names server state, and an authentication failure says only that it
+//! failed — RFC 9457 §5 is explicit that a problem is not a debugging channel,
+//! and which of several credential checks refused a request is the server's
+//! business.
 
 use std::collections::BTreeMap;
+
+use serde_json::json;
+
+use kynos_openapi::model::body::mime_names::APPLICATION_PROBLEM_JSON;
 
 use crate::{
     error::problem::{IntoProblem, Problem},
@@ -27,6 +41,30 @@ use crate::{
     response::{IntoResponse, Responses},
     schema::registry::Registry,
 };
+
+/// One response per declared status, each an `application/problem+json`
+/// document referring to the shared [`Problem`] component.
+fn problem_responses(registry: &mut Registry, statuses: &[StatusCode]) -> kynos_openapi::Responses {
+    let schema = registry.resolve::<Problem>();
+
+    statuses
+        .iter()
+        .fold(kynos_openapi::Responses::new(), |responses, status| {
+            let description = status.canonical_reason().map_or_else(
+                || format!("a `{}` response", status.as_u16()),
+                str::to_owned,
+            );
+
+            responses.with(
+                status.as_u16(),
+                kynos_openapi::Response::with_content(
+                    description,
+                    APPLICATION_PROBLEM_JSON,
+                    kynos_openapi::MediaType::new(schema.clone()),
+                ),
+            )
+        })
+}
 
 /// Emits the two implementations that are mechanical for every rejection: the
 /// bridge to a response, and the description built from `statuses()`.
@@ -37,14 +75,13 @@ macro_rules! rejection_response {
     ($rejection:ty) => {
         impl IntoResponse for $rejection {
             fn into_response(self) -> crate::http::Response {
-                todo!()
+                IntoProblem::into_problem(self).into_response()
             }
         }
 
         impl Responses for $rejection {
             fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-                let _ = registry;
-                todo!()
+                problem_responses(registry, <$rejection as IntoProblem>::statuses())
             }
         }
     };
@@ -76,7 +113,14 @@ impl PathRejection {
 
 impl IntoProblem for PathRejection {
     fn into_problem(self) -> Problem {
-        todo!()
+        let status = self.status();
+        let summary = self.to_string();
+
+        match self {
+            Self::Invalid { detail, .. } => {
+                Problem::new(status).with_detail(format!("{summary}: {detail}"))
+            }
+        }
     }
 
     fn statuses() -> &'static [StatusCode] {
@@ -112,7 +156,14 @@ impl QueryRejection {
 
 impl IntoProblem for QueryRejection {
     fn into_problem(self) -> Problem {
-        todo!()
+        let status = self.status();
+        let summary = self.to_string();
+
+        match self {
+            Self::Invalid { detail, .. } => {
+                Problem::new(status).with_detail(format!("{summary}: {detail}"))
+            }
+        }
     }
 
     fn statuses() -> &'static [StatusCode] {
@@ -148,7 +199,14 @@ impl HeaderRejection {
 
 impl IntoProblem for HeaderRejection {
     fn into_problem(self) -> Problem {
-        todo!()
+        let status = self.status();
+        let summary = self.to_string();
+
+        match self {
+            Self::Invalid { detail, .. } => {
+                Problem::new(status).with_detail(format!("{summary}: {detail}"))
+            }
+        }
     }
 
     fn statuses() -> &'static [StatusCode] {
@@ -190,7 +248,14 @@ impl CookieRejection {
 #[cfg(feature = "cookie")]
 impl IntoProblem for CookieRejection {
     fn into_problem(self) -> Problem {
-        todo!()
+        let status = self.status();
+        let summary = self.to_string();
+
+        match self {
+            Self::Invalid { detail, .. } => {
+                Problem::new(status).with_detail(format!("{summary}: {detail}"))
+            }
+        }
     }
 
     fn statuses() -> &'static [StatusCode] {
@@ -255,7 +320,31 @@ impl BodyRejection {
 
 impl IntoProblem for BodyRejection {
     fn into_problem(self) -> Problem {
-        todo!()
+        let problem = Problem::new(self.status());
+        let summary = self.to_string();
+
+        match self {
+            Self::Syntax { detail } => problem.with_detail(format!("{summary}: {detail}")),
+
+            // A set of failures cannot fit in one sentence, so it travels as
+            // RFC 9457's `errors` extension: one entry per pointer, which is
+            // the shape the specification's own validation example uses.
+            Self::Schema { failures } => {
+                let errors: Vec<_> = failures
+                    .into_iter()
+                    .map(|(pointer, detail)| json!({ "pointer": pointer, "detail": detail }))
+                    .collect();
+
+                problem
+                    .with_detail(summary)
+                    .with_extension("errors", errors)
+            }
+
+            Self::UnsupportedMediaType { received } => problem.with_detail(received.map_or_else(
+                || format!("{summary}: the request declared no `Content-Type`"),
+                |received| format!("{summary}: `{received}`"),
+            )),
+        }
     }
 
     fn statuses() -> &'static [StatusCode] {
@@ -298,7 +387,13 @@ impl NegotiationRejection {
 
 impl IntoProblem for NegotiationRejection {
     fn into_problem(self) -> Problem {
-        todo!()
+        let problem = Problem::new(self.status());
+        let summary = self.to_string();
+
+        match self {
+            Self::MalformedAccept { detail } => problem.with_detail(format!("{summary}: {detail}")),
+            Self::NotAcceptable => problem.with_detail(summary),
+        }
     }
 
     fn statuses() -> &'static [StatusCode] {
@@ -338,7 +433,11 @@ impl AuthRejection {
 
 impl IntoProblem for AuthRejection {
     fn into_problem(self) -> Problem {
-        todo!()
+        // Nothing beyond the sentence the variant already carries: which check
+        // refused the request is exactly what an attacker would like to learn,
+        // and a client can act on neither answer differently. The challenge is
+        // not part of it -- RFC 9110 puts that in a header, not in a body.
+        Problem::new(self.status()).with_detail(self.to_string())
     }
 
     fn statuses() -> &'static [StatusCode] {
