@@ -43,8 +43,40 @@ impl<C> Service<C> {
     /// omission is invisible to the consumer that trusts the description.
     #[cfg(feature = "unchecked")]
     pub(crate) fn mark_opaque(&mut self, reason: kynos_openapi::OpaqueReason) {
-        let _ = reason;
-        todo!()
+        let marker = kynos_openapi::Opaque::new(reason);
+
+        for item in self.document.paths.0.values_mut() {
+            let slots: Vec<&mut Option<Box<kynos_openapi::Operation>>> = vec![
+                &mut item.get,
+                &mut item.put,
+                &mut item.post,
+                &mut item.delete,
+                &mut item.options,
+                &mut item.head,
+                &mut item.patch,
+                &mut item.trace,
+                #[cfg(feature = "openapi32")]
+                &mut item.query,
+            ];
+
+            for slot in slots {
+                if let Some(operation) = slot.as_deref_mut() {
+                    // The only reachable failure is a marker already present in
+                    // a shape Kynos never emits, which a document Kynos just
+                    // built cannot carry.
+                    let _ = marker.apply_to(operation);
+                }
+            }
+
+            #[cfg(feature = "openapi32")]
+            for operation in item.additional_operations.values_mut() {
+                let _ = marker.apply_to(operation);
+            }
+        }
+
+        // Derived rather than set: the stamp is a summary of what the document
+        // now says, in both directions.
+        self.document.restamp_authority();
     }
 
     /// Handles one request.
