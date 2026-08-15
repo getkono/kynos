@@ -38,6 +38,26 @@ pub(crate) trait ErasedInterceptor<C>: Send + Sync + 'static {
         context: &'a C,
         next: Next<'a, C>,
     ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>>;
+
+    /// This interceptor as a concrete value.
+    ///
+    /// Everything a router reads about an interceptor is read from its *types*,
+    /// which is the property `docs/middleware.md` opens with: a declaration
+    /// cannot disagree with behaviour because it is the same text. This is the
+    /// one deliberate exception, and it is bounded on both sides.
+    ///
+    /// It exists because two questions are about a *configuration* rather than
+    /// a type: whether a [`Cors`](crate::middleware::cors::Cors) was built with
+    /// a combination it cannot honour, and what a preflight on the paths it
+    /// covers should answer. Neither is expressible as an associated type — a
+    /// builder decides both at run time — and neither reaches the description.
+    ///
+    /// What keeps this from becoming a general capability: nothing dispatches
+    /// on it. The router downcasts to the one type it knows about, that type's
+    /// state parameter is sealed so the set of instantiations is closed, and a
+    /// third-party interceptor is simply never asked. There is no trait method
+    /// an outside implementation could supply to be read this way.
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 impl<C, I> ErasedInterceptor<C> for I
@@ -98,6 +118,10 @@ where
                 Err(short) => IntoResponse::into_response(short),
             }
         })
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
