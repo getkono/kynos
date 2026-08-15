@@ -65,6 +65,15 @@ impl<C> Endpoints<C> {
     pub(crate) fn absorb(&mut self, other: Self) {
         self.endpoints.extend(other.endpoints);
     }
+
+    /// Hands the collected operations to whatever is mounting them.
+    ///
+    /// The counterpart of [`push`](Endpoints::push), and the only way out: a
+    /// router needs each operation individually so that it can apply a prefix,
+    /// a tag and an interceptor chain to it.
+    pub(crate) fn into_inner(self) -> Vec<Arc<dyn DynEndpoint<C>>> {
+        self.endpoints
+    }
 }
 
 /// A value that can contribute operations to a router or a group.

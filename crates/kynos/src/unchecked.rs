@@ -38,12 +38,29 @@
 use std::{
     convert::Infallible,
     future::Future,
+    marker::PhantomData,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
 
-use crate::router::{Router, service::Service};
+use kynos_openapi::{Document, Method, OpaqueReason, OpaqueRoute};
+
+use crate::{
+    error::problem::Problem,
+    http::{Request, Response, StatusCode},
+    middleware::{catch_panic::PanicPolicy, erased::ErasedTerminal},
+    response::IntoResponse,
+    router::{Router, dispatch::Dispatch, group::Group, operation::OperationCx, service::Service},
+};
+
+/// A boxed response future.
+///
+/// The one place in the framework where a boxed future is sanctioned, and it is
+/// confined to this module: `tower`'s `Service::Future` is an associated type,
+/// so a service composed out of layers this crate cannot name has no other
+/// shape to take.
+type BoxResponse = Pin<Box<dyn Future<Output = Response> + Send>>;
 
 /// A handler for a route Kynos does not describe.
 ///
@@ -75,12 +92,302 @@ where
     }
 }
 
+/// The rest of a request's path through Kynos, carried in its extensions.
+///
+/// A `tower::Layer` composes with a service *value*, and the only value Kynos
+/// can hand it is an [`UncheckedInner`] built long before any request exists —
+/// so the stand-in holds nothing and the continuation travels with the request
+/// instead. [`UncheckedInner::call`] takes it back out.
+#[derive(Clone)]
+pub(crate) struct Continuation(Arc<dyn Fn(Request) -> BoxResponse + Send + Sync>);
+
+impl Continuation {
+    /// The continuation that runs one already-routed operation.
+    fn operation<C>(dispatch: Arc<Dispatch<C>>, path: usize, position: usize) -> Self
+    where
+        C: Send + Sync + 'static,
+    {
+        Self(Arc::new(move |request| {
+            Arc::clone(&dispatch).resume(path, position, request)
+        }))
+    }
+
+    /// The continuation that runs `layer`, and then `inner`.
+    fn through(layer: Arc<dyn ErasedLayer>, inner: Self) -> Self {
+        Self(Arc::new(move |mut request| {
+            request.extensions_mut().insert(inner.clone());
+            layer.run(request)
+        }))
+    }
+
+    fn call(&self, request: Request) -> BoxResponse {
+        (self.0)(request)
+    }
+}
+
+/// A `tower` layer applied to [`UncheckedInner`], with its type erased.
+///
+/// A router holds these beside the interceptors it can name. Nothing in the
+/// description is derived from one — that is what the waiver waives — so the
+/// trait needs only the ability to run.
+pub(crate) trait ErasedLayer: Send + Sync + 'static {
+    /// Drives one request through the layered service.
+    ///
+    /// The continuation is already in the request's extensions.
+    fn run(&self, request: Request) -> BoxResponse;
+}
+
+/// One layered `tower` service, ready to be cloned per request.
+struct Layered<S>(S);
+
+impl<S> ErasedLayer for Layered<S>
+where
+    S: tower_service::Service<Request, Response = Response, Error = Infallible>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    S::Future: Send + 'static,
+{
+    fn run(&self, request: Request) -> BoxResponse {
+        // Cloned per request because `tower` drives a service through `&mut
+        // self`, while the router holds one shared instance of it.
+        let mut service = self.0.clone();
+
+        Box::pin(async move {
+            match std::future::poll_fn(|context| service.poll_ready(context)).await {
+                Ok(()) => {}
+                Err(never) => match never {},
+            }
+
+            match service.call(request).await {
+                Ok(response) => response,
+                Err(never) => match never {},
+            }
+        })
+    }
+}
+
+/// Applies `layer` to the stand-in service and erases what comes back.
+fn erase<C, L>(layer: &L) -> Arc<dyn ErasedLayer>
+where
+    C: Send + Sync + 'static,
+    L: tower::Layer<UncheckedInner<C>> + Send + Sync + 'static,
+    L::Service: tower_service::Service<Request, Response = Response, Error = Infallible>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    <L::Service as tower_service::Service<Request>>::Future: Send + 'static,
+{
+    Arc::new(Layered(layer.layer(UncheckedInner::new())))
+}
+
+/// An [`UncheckedHandler`] as the end of a chain.
+struct UncheckedTerminal<C, H> {
+    handler: H,
+    _context: PhantomData<fn() -> C>,
+}
+
+impl<C, H> ErasedTerminal<C> for UncheckedTerminal<C, H>
+where
+    C: Sync + 'static,
+    H: UncheckedHandler<C>,
+{
+    fn describe(&self, operation: &mut OperationCx<'_>) {
+        // Nothing to say. An unchecked handler declares neither its inputs nor
+        // its responses, which is exactly what put it behind this door.
+        let _ = operation;
+    }
+
+    fn call<'a>(
+        &'a self,
+        request: Request,
+        context: &'a C,
+    ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
+        Box::pin(self.handler.call(request, context))
+    }
+}
+
+/// One route the description cannot express, and what serves it.
+pub(crate) struct UncheckedRoute<C> {
+    /// The router's matching pattern, with every enclosing prefix applied.
+    pub(crate) pattern: String,
+    /// The methods served, in declaration order.
+    pub(crate) methods: Vec<Method>,
+    pub(crate) terminal: Arc<dyn ErasedTerminal<C>>,
+    /// Layers the enclosing scopes contributed, outermost first.
+    pub(crate) layers: Vec<Arc<dyn ErasedLayer>>,
+    /// What the document records in place of a `paths` entry.
+    pub(crate) record: OpaqueRoute,
+}
+
+impl<C> UncheckedRoute<C> {
+    /// Moves this route under `prefix`, keeping its record in step.
+    ///
+    /// A plain join, because the pattern is the router's matching syntax rather
+    /// than a path template — there is nothing here to normalize beyond the one
+    /// slash both halves would otherwise contribute.
+    fn reprefix(&mut self, prefix: &str) {
+        let prefix = prefix.strip_suffix('/').unwrap_or(prefix);
+        if prefix.is_empty() {
+            return;
+        }
+
+        self.pattern.insert_str(0, prefix);
+        self.record.pattern.clone_from(&self.pattern);
+        self.record.prefix = anchor(&self.pattern);
+    }
+}
+
+/// Everything one scope holds that Kynos does not describe.
+pub(crate) struct Unchecked<C> {
+    /// Routes with no expressible path template, in declaration order.
+    pub(crate) routes: Vec<UncheckedRoute<C>>,
+    /// Layers covering every operation in this scope, outermost first.
+    pub(crate) layers: Vec<Arc<dyn ErasedLayer>>,
+}
+
+// Hand-written for the reason `UncheckedInner`'s `Clone` is: a derive would
+// bound it on `C`, and neither field needs anything of it.
+impl<C> Default for Unchecked<C> {
+    fn default() -> Self {
+        Self {
+            routes: Vec::new(),
+            layers: Vec::new(),
+        }
+    }
+}
+
+impl<C> Unchecked<C> {
+    /// Whether any waiver was taken here.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.routes.is_empty() && self.layers.is_empty()
+    }
+
+    /// Takes over another scope's waivers, under `prefix`.
+    ///
+    /// The absorbed scope's layers covered exactly its own routes, so they
+    /// become part of what each route carries rather than of what this scope
+    /// applies to everything — the same rule interceptors follow.
+    pub(crate) fn absorb(&mut self, other: Self, prefix: &str) {
+        let Self { routes, layers } = other;
+
+        for mut route in routes {
+            route.reprefix(prefix);
+            let mut covering = layers.clone();
+            covering.append(&mut route.layers);
+            route.layers = covering;
+            self.routes.push(route);
+        }
+    }
+
+    /// Records every unexpressible route on the document, and restamps it.
+    pub(crate) fn annotate(&self, document: &mut Document) {
+        for route in &self.routes {
+            // The only reachable failure is a list already present in a shape
+            // Kynos never emits, which a document Kynos just built cannot carry.
+            let _ = route.record.append_to(document);
+        }
+
+        // Derived rather than set: the stamp summarizes what the document now
+        // says, in both directions.
+        document.restamp_authority();
+    }
+}
+
+/// The literal prefix a pattern is anchored at, when it has variables past it.
+///
+/// A pattern with no variable at all is its own prefix, and restating it would
+/// be noise rather than a second fact.
+fn anchor(pattern: &str) -> Option<String> {
+    let literal: Vec<&str> = pattern
+        .split('/')
+        .take_while(|segment| !segment.contains('{'))
+        .collect();
+
+    (literal.len() < pattern.split('/').count() && literal.len() > 1)
+        .then(|| literal.join("/"))
+        .filter(|prefix| !prefix.is_empty())
+}
+
+/// Whether a pattern could have been a path template after all.
+///
+/// A catch-all cannot, and neither can a segment carrying two variables — the
+/// two shapes `docs/routing.md` records the router as declining. Anything else
+/// reaching this module is undescribable because of its *handler*, which is a
+/// different reason and is recorded as one.
+fn expressible(pattern: &str) -> bool {
+    pattern
+        .split('/')
+        .all(|segment| !segment.contains("{*") && segment.matches('{').count() <= 1)
+}
+
+/// The methods a route serves, and the ones OpenAPI has no field for.
+///
+/// A method in the second list is neither served nor claimed: the description
+/// says only what the service honours, and the note on the record says the rest.
+fn wire_methods<I: IntoIterator<Item = crate::http::Method>>(
+    methods: I,
+) -> (Vec<Method>, Vec<String>) {
+    let mut served: Vec<Method> = Vec::new();
+    let mut unmodelled: Vec<String> = Vec::new();
+
+    for method in methods {
+        match Method::from_wire_str(method.as_str()) {
+            Some(method) if !served.contains(&method) => served.push(method),
+            Some(_) => {}
+            None => unmodelled.push(method.as_str().to_owned()),
+        }
+    }
+
+    (served, unmodelled)
+}
+
+/// Runs one operation's layers, outermost first, and then the operation.
+pub(crate) async fn through_layers<C>(
+    layers: &[Arc<dyn ErasedLayer>],
+    dispatch: Arc<Dispatch<C>>,
+    path: usize,
+    position: usize,
+    request: Request,
+) -> Response
+where
+    C: Send + Sync + 'static,
+{
+    // Built inside out, so that the outermost layer is the one called first and
+    // the innermost is the one holding the operation.
+    let mut next = Continuation::operation(dispatch, path, position);
+    for layer in layers.iter().rev() {
+        next = Continuation::through(Arc::clone(layer), next);
+    }
+
+    next.call(request).await
+}
+
+/// What a layer that discarded the request gets in place of a response.
+///
+/// Deliberately a 500: the layer is outside the description, so answering as
+/// though the handler had run would be inventing an outcome.
+fn lost_continuation() -> Response {
+    Problem::new(StatusCode::INTERNAL_SERVER_ERROR).into_response()
+}
+
 /// The service an unchecked `tower` layer wraps.
 ///
 /// Opaque on purpose: a layer may compose with it, but nothing in an
 /// application may name a field of it or construct one.
 pub struct UncheckedInner<C> {
     _private: std::marker::PhantomData<fn() -> C>,
+}
+
+impl<C> UncheckedInner<C> {
+    /// The stand-in every unchecked layer is built around.
+    fn new() -> Self {
+        Self {
+            _private: PhantomData,
+        }
+    }
 }
 
 // Hand-written: a derive would bound each on `C`, and `PhantomData<fn() -> C>`
@@ -114,9 +421,15 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, request: crate::http::Request) -> Self::Future {
-        let _ = request;
-        todo!()
+    fn call(&mut self, mut request: crate::http::Request) -> Self::Future {
+        // The continuation is put in place immediately before the layer is
+        // invoked, so its absence means the layer answered with a request of
+        // its own making and the rest of the chain is unreachable from here.
+        let Some(continuation) = request.extensions_mut().remove::<Continuation>() else {
+            return Box::pin(std::future::ready(Ok(lost_continuation())));
+        };
+
+        Box::pin(async move { Ok(continuation.call(request).await) })
     }
 }
 
@@ -142,7 +455,7 @@ impl<C> Service<C> {
     /// Converts this service into an explicitly unchecked Tower service.
     ///
     /// Every operation in the document is flagged
-    /// [`OpaqueReason::UntypedLayer`](kynos_openapi::OpaqueReason::UntypedLayer)
+    /// [`OpaqueReason::UntypedLayer`]
     /// at conversion time, because whatever ends up wrapping the returned
     /// service is outside the description and there is no way to know what it
     /// does.
@@ -181,7 +494,7 @@ where
     }
 }
 
-impl<C, P: crate::middleware::catch_panic::PanicPolicy> Router<C, P> {
+impl<C, P: PanicPolicy, I> Router<C, P, I> {
     /// Wraps the router in an arbitrary `tower` layer.
     ///
     /// A `Layer` may change the status, rewrite the body, add headers, or
@@ -194,10 +507,14 @@ impl<C, P: crate::middleware::catch_panic::PanicPolicy> Router<C, P> {
     /// return every covered operation documents it correctly and automatically
     /// — and two interceptors that would collide stop compiling.
     /// Every operation in this router's subtree is flagged
-    /// [`OpaqueReason::UntypedLayer`](kynos_openapi::OpaqueReason::UntypedLayer),
+    /// [`OpaqueReason::UntypedLayer`],
     /// and nothing outside it is.
+    ///
+    /// The layer runs per-operation, after routing, exactly as an interceptor
+    /// does — so a request that matched no route never reaches it, and there is
+    /// no described operation for it to have invalidated.
     #[must_use]
-    pub fn layer_unchecked<L>(self, layer: L) -> Self
+    pub fn layer_unchecked<L>(mut self, layer: L) -> Self
     where
         C: Send + Sync + 'static,
         L: tower::Layer<UncheckedInner<C>> + Send + Sync + 'static,
@@ -211,8 +528,8 @@ impl<C, P: crate::middleware::catch_panic::PanicPolicy> Router<C, P> {
             + 'static,
         <L::Service as tower_service::Service<crate::http::Request>>::Future: Send + 'static,
     {
-        let _ = layer;
-        todo!()
+        self.unchecked.layers.push(erase::<C, L>(&layer));
+        self
     }
 
     /// Adds a route whose path Kynos cannot express.
@@ -231,15 +548,51 @@ impl<C, P: crate::middleware::catch_panic::PanicPolicy> Router<C, P> {
     /// no path template is true of a catch-all, so every key that could be
     /// minted would be a claim about either the path or a parameter that the
     /// service does not honour.
+    ///
+    /// The pattern is the router's own matching syntax, and the route is served
+    /// from the same table as every described one — including the interceptors
+    /// mounted on this router, which run here as they do everywhere else. Only
+    /// a method OpenAPI has a field for can be served: one it does not is
+    /// neither routed nor claimed, and the record says which were dropped.
     #[must_use]
-    pub fn route_unchecked<I, H>(self, methods: I, pattern: &'static str, handler: H) -> Self
+    pub fn route_unchecked<M, H>(mut self, methods: M, pattern: &'static str, handler: H) -> Self
     where
         C: Sync + 'static,
-        I: IntoIterator<Item = crate::http::Method>,
+        M: IntoIterator<Item = crate::http::Method>,
         H: UncheckedHandler<C>,
     {
-        let _ = (methods.into_iter().collect::<Vec<_>>(), pattern, handler);
-        todo!()
+        let (methods, unmodelled) = wire_methods(methods);
+        let reason = if expressible(pattern) {
+            // The pattern is a legal template, so what is undescribable here is
+            // the handler rather than the path.
+            OpaqueReason::UntypedHandler
+        } else {
+            OpaqueReason::UntypedRoute
+        };
+
+        let mut record = OpaqueRoute::new(pattern, reason)
+            .with_methods(methods.iter().map(|method| method.as_wire_str()));
+        if let Some(prefix) = anchor(pattern) {
+            record = record.with_prefix(prefix);
+        }
+        if !unmodelled.is_empty() {
+            record = record.with_note(format!(
+                "not served: {} has no Path Item field, so Kynos will not route it",
+                unmodelled.join(", ")
+            ));
+        }
+
+        self.unchecked.routes.push(UncheckedRoute {
+            pattern: pattern.to_owned(),
+            methods,
+            terminal: Arc::new(UncheckedTerminal {
+                handler,
+                _context: PhantomData,
+            }),
+            layers: Vec::new(),
+            record,
+        });
+        self
     }
 
     /// Adds a route that upgrades the connection away from HTTP.
@@ -248,14 +601,37 @@ impl<C, P: crate::middleware::catch_panic::PanicPolicy> Router<C, P> {
     /// request/response semantics, and a socket that stops being either is
     /// outside what any version of the specification can express. `AsyncAPI`
     /// covers this ground, and Kynos would rather point at it than pretend.
+    ///
+    /// Served on `GET`, which is the only method [RFC 9110][] leaves an upgrade
+    /// handshake — and the only one RFC 6455 permits — and recorded with
+    /// [`OpaqueReason::ProtocolUpgrade`], which is a different reason from a
+    /// catch-all's and not one that will stop applying.
+    ///
+    /// [RFC 9110]: https://www.rfc-editor.org/rfc/rfc9110
     #[must_use]
-    pub fn upgrade_unchecked<H>(self, path: &'static str, handler: H) -> Self
+    pub fn upgrade_unchecked<H>(mut self, path: &'static str, handler: H) -> Self
     where
         C: Sync + 'static,
         H: UncheckedHandler<C>,
     {
-        let _ = (path, handler);
-        todo!()
+        let mut record = OpaqueRoute::new(path, OpaqueReason::ProtocolUpgrade)
+            .with_methods([Method::Get.as_wire_str()])
+            .with_note("the connection leaves HTTP, which no version of the specification models");
+        if let Some(prefix) = anchor(path) {
+            record = record.with_prefix(prefix);
+        }
+
+        self.unchecked.routes.push(UncheckedRoute {
+            pattern: path.to_owned(),
+            methods: vec![Method::Get],
+            terminal: Arc::new(UncheckedTerminal {
+                handler,
+                _context: PhantomData,
+            }),
+            layers: Vec::new(),
+            record,
+        });
+        self
     }
 
     /// Whether anything unchecked has been added.
@@ -264,18 +640,22 @@ impl<C, P: crate::middleware::catch_panic::PanicPolicy> Router<C, P> {
     /// `x-kynos-document-not-authoritative`.
     #[must_use]
     pub fn has_unchecked(&self) -> bool {
-        todo!()
+        !self.unchecked.is_empty()
+            || self
+                .mounted
+                .iter()
+                .any(|mounted| !mounted.unchecked_layers.is_empty())
     }
 }
 
-impl<C, P: crate::middleware::catch_panic::PanicPolicy> crate::router::group::Group<C, P> {
+impl<C, P: PanicPolicy, I> Group<C, P, I> {
     /// Wraps this group in an arbitrary `tower` layer.
     ///
     /// Flags exactly this group's operations, and nothing else. One unchecked
     /// layer on one subtree must not taint three hundred operations it never
     /// touches.
     #[must_use]
-    pub fn layer_unchecked<L>(self, layer: L) -> Self
+    pub fn layer_unchecked<L>(mut self, layer: L) -> Self
     where
         C: Send + Sync + 'static,
         L: tower::Layer<UncheckedInner<C>> + Send + Sync + 'static,
@@ -289,7 +669,7 @@ impl<C, P: crate::middleware::catch_panic::PanicPolicy> crate::router::group::Gr
             + 'static,
         <L::Service as tower_service::Service<crate::http::Request>>::Future: Send + 'static,
     {
-        let _ = layer;
-        todo!()
+        self.unchecked_layers.push(erase::<C, L>(&layer));
+        self
     }
 }

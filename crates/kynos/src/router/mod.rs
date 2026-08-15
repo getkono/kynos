@@ -11,32 +11,88 @@ pub mod operation;
 pub mod policy;
 pub mod service;
 
-use kynos_openapi::{Document, Info, SpecVersion, Violation};
+// The runtime match table and what one request does to it. Private because it
+// declares no item a user could name: everything in it is machinery `build`
+// assembles and `Service` drives.
+pub(crate) mod dispatch;
+
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
+
+use kynos_openapi::{
+    Document, Info, Paths, Severity, SpecError, SpecVersion, Violation,
+    model::paths::item::PathItem,
+};
 
 use crate::{
-    error::Result,
+    error::{Error, Result},
     middleware::{
         Interceptor, Observer,
         catch_panic::{Catch, PanicPolicy, Propagate},
+        erased::ErasedInterceptor,
         stack::{CompatibleStack, CompatibleWith, Cons},
     },
+    response::short_circuit_mismatch,
     router::{
-        endpoint::set::IntoEndpoints,
+        dispatch::{Dispatch, EndpointTerminal, PathEntry},
+        endpoint::{DynEndpoint, set::IntoEndpoints},
         group::Group,
-        operation::Tag,
+        operation::{OperationCx, Route, Tag},
         policy::{FallbackPolicy, TrailingSlashPolicy},
         service::Service,
     },
+    schema::registry::Registry,
     security::SecurityScheme,
 };
+
+/// A `ShortCircuit`'s two halves, compared once the registry exists.
+///
+/// A function pointer rather than a trait object: the comparison is a fact
+/// about a type, and the type is known where the interceptor is mounted but
+/// erased everywhere after.
+pub(crate) type ShortCircuitCheck = fn(&mut Registry) -> Option<SpecError>;
+
+/// One endpoint, plus what the scopes it passed through contributed to it.
+pub(crate) struct Mounted<C> {
+    endpoint: Arc<dyn DynEndpoint<C>>,
+    /// The `paths` key, with every enclosing prefix already applied.
+    path: kynos_openapi::PathTemplate,
+    /// Group- and nested-router interceptors, outermost first. The router's own
+    /// are held separately, because `intercept` may be called after `mount`.
+    interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
+    tags: Vec<&'static str>,
+    catch_panics: bool,
+    /// Undescribed layers an enclosing scope wrapped this operation in,
+    /// outermost first. `pub(crate)` because `unchecked` reads it back.
+    #[cfg(feature = "unchecked")]
+    pub(crate) unchecked_layers: Vec<Arc<dyn crate::unchecked::ErasedLayer>>,
+}
 
 /// The root of an API.
 ///
 /// `C` is the application context type — the dependency-injection container
 /// every handler resolves its state from. A handler asking for something the
 /// context does not provide is a compile error, not a runtime panic.
-#[derive(Debug)]
 pub struct Router<C, P = Propagate, I = ()> {
+    pub(crate) mounted: Vec<Mounted<C>>,
+    pub(crate) interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
+    pub(crate) short_circuit_checks: Vec<ShortCircuitCheck>,
+    pub(crate) observers: Vec<Arc<dyn Observer<C>>>,
+    pub(crate) info: Option<Info>,
+    pub(crate) servers: Vec<kynos_openapi::Server>,
+    pub(crate) tags: Vec<&'static str>,
+    pub(crate) tag_metadata: Vec<kynos_openapi::Tag>,
+    pub(crate) security_schemes: Vec<(&'static str, kynos_openapi::SecurityScheme)>,
+    /// Problems found while mounting, which the fluent methods cannot return.
+    pub(crate) violations: Vec<Violation>,
+    pub(crate) not_found: FallbackPolicy,
+    pub(crate) method_not_allowed: FallbackPolicy,
+    pub(crate) trailing_slashes: TrailingSlashPolicy,
+    pub(crate) deny_unchecked_schemas: bool,
+    /// The waivers taken here: routes no template expresses, and layers whose
+    /// effect nothing declares.
+    #[cfg(feature = "unchecked")]
+    pub(crate) unchecked: crate::unchecked::Unchecked<C>,
+
     // `fn() -> _` so that the parameters name a shape without deciding this
     // builder's auto traits: a router is `Send` because what it holds is, not
     // because `C` happens to be.
@@ -49,7 +105,18 @@ pub struct Router<C, P = Propagate, I = ()> {
     // has; factoring them into an alias would hide the shape rather
     // than simplify it.
     #[allow(clippy::type_complexity)]
-    _private: std::marker::PhantomData<fn() -> (C, P, I)>,
+    _private: PhantomData<fn() -> (C, P, I)>,
+}
+
+impl<C, P, I> std::fmt::Debug for Router<C, P, I> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Router")
+            .field("operations", &self.mounted.len())
+            .field("interceptors", &self.interceptors.len())
+            .field("observers", &self.observers.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<C> Default for Router<C, Propagate, ()> {
@@ -62,7 +129,168 @@ impl<C> Router<C, Propagate, ()> {
     /// Creates an empty router.
     #[must_use]
     pub fn new() -> Self {
-        todo!()
+        Self::empty()
+    }
+}
+
+impl<C, P, I> Router<C, P, I> {
+    /// The empty router at any parameterization.
+    fn empty() -> Self {
+        Self {
+            mounted: Vec::new(),
+            interceptors: Vec::new(),
+            short_circuit_checks: Vec::new(),
+            observers: Vec::new(),
+            info: None,
+            servers: Vec::new(),
+            tags: Vec::new(),
+            tag_metadata: Vec::new(),
+            security_schemes: Vec::new(),
+            violations: Vec::new(),
+            not_found: FallbackPolicy::default(),
+            method_not_allowed: FallbackPolicy::default(),
+            trailing_slashes: TrailingSlashPolicy::default(),
+            deny_unchecked_schemas: false,
+            #[cfg(feature = "unchecked")]
+            unchecked: crate::unchecked::Unchecked::default(),
+            _private: PhantomData,
+        }
+    }
+
+    /// Carries every field across a change of type parameter.
+    ///
+    /// `catch_panics` and `intercept` change what the type says without
+    /// changing what the value holds, so this is a field-by-field move rather
+    /// than a new router.
+    fn retype<Q, J>(self) -> Router<C, Q, J> {
+        Router {
+            mounted: self.mounted,
+            interceptors: self.interceptors,
+            short_circuit_checks: self.short_circuit_checks,
+            observers: self.observers,
+            info: self.info,
+            servers: self.servers,
+            tags: self.tags,
+            tag_metadata: self.tag_metadata,
+            security_schemes: self.security_schemes,
+            violations: self.violations,
+            not_found: self.not_found,
+            method_not_allowed: self.method_not_allowed,
+            trailing_slashes: self.trailing_slashes,
+            deny_unchecked_schemas: self.deny_unchecked_schemas,
+            #[cfg(feature = "unchecked")]
+            unchecked: self.unchecked,
+            _private: PhantomData,
+        }
+    }
+
+    /// Takes in a set of endpoints under `prefix`, recording what the enclosing
+    /// scope contributes to each.
+    fn absorb(
+        &mut self,
+        endpoints: Vec<Arc<dyn DynEndpoint<C>>>,
+        prefix: &str,
+        tags: &[&'static str],
+        interceptors: &[Arc<dyn ErasedInterceptor<C>>],
+        catch_panics: bool,
+    ) where
+        C: 'static,
+    {
+        for endpoint in endpoints {
+            let path = match endpoint.path().with_prefix(prefix) {
+                Ok(path) => path,
+                Err(reason) => {
+                    let template = endpoint.path().as_str().to_owned();
+                    self.violations.push(error_at(
+                        format!("#/paths/{}", pointer_token(&template)),
+                        SpecError::InvalidPathTemplate { template, reason },
+                    ));
+                    continue;
+                }
+            };
+
+            if let Some(error) = unroutable(&path) {
+                self.violations.push(error_at(
+                    format!("#/paths/{}", pointer_token(path.as_str())),
+                    error,
+                ));
+                continue;
+            }
+
+            self.mounted.push(Mounted {
+                endpoint,
+                path,
+                interceptors: interceptors.to_vec(),
+                tags: tags.to_vec(),
+                catch_panics,
+                #[cfg(feature = "unchecked")]
+                unchecked_layers: Vec::new(),
+            });
+        }
+    }
+
+    /// Takes in everything another router holds, under `prefix`.
+    fn absorb_router<Q, J>(&mut self, other: Router<C, Q, J>, prefix: &str, catch_panics: bool)
+    where
+        C: 'static,
+    {
+        for mut mounted in other.mounted {
+            match mounted.path.with_prefix(prefix) {
+                Ok(path) => mounted.path = path,
+                Err(reason) => {
+                    let template = mounted.path.as_str().to_owned();
+                    self.violations.push(error_at(
+                        format!("#/paths/{}", pointer_token(&template)),
+                        SpecError::InvalidPathTemplate { template, reason },
+                    ));
+                    continue;
+                }
+            }
+
+            if let Some(error) = unroutable(&mounted.path) {
+                self.violations.push(error_at(
+                    format!("#/paths/{}", pointer_token(mounted.path.as_str())),
+                    error,
+                ));
+                continue;
+            }
+
+            // The absorbed router's own interceptors and tags covered exactly
+            // these operations, so they become part of what each carries rather
+            // than of what this router applies to everything.
+            let mut interceptors = other.interceptors.clone();
+            interceptors.append(&mut mounted.interceptors);
+            mounted.interceptors = interceptors;
+
+            let mut tags = other.tags.clone();
+            tags.append(&mut mounted.tags);
+            mounted.tags = tags;
+
+            #[cfg(feature = "unchecked")]
+            {
+                let mut layers = other.unchecked.layers.clone();
+                layers.append(&mut mounted.unchecked_layers);
+                mounted.unchecked_layers = layers;
+            }
+
+            mounted.catch_panics |= catch_panics;
+            self.mounted.push(mounted);
+        }
+
+        // An observer sees whole requests rather than operations, so an
+        // absorbed one widens to this router rather than being dropped.
+        self.observers.extend(other.observers);
+        self.short_circuit_checks.extend(other.short_circuit_checks);
+        self.servers.extend(other.servers);
+        self.tag_metadata.extend(other.tag_metadata);
+        self.security_schemes.extend(other.security_schemes);
+        self.violations.extend(other.violations);
+        self.deny_unchecked_schemas |= other.deny_unchecked_schemas;
+        #[cfg(feature = "unchecked")]
+        self.unchecked.absorb(other.unchecked, prefix);
+        if self.info.is_none() {
+            self.info = other.info;
+        }
     }
 }
 
@@ -90,14 +318,14 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
                 "Kynos panic recovery requires `panic = \"unwind\"`; remove `catch_panics` or enable unwinding"
             );
         }
-        todo!()
+        self.retype()
     }
 
     /// Sets the description's `info` block.
     #[must_use]
-    pub fn info(self, info: Info) -> Self {
-        let _ = info;
-        todo!()
+    pub fn info(mut self, info: Info) -> Self {
+        self.info = Some(info);
+        self
     }
 
     /// Declares a server providing this API.
@@ -105,65 +333,104 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     /// Never inferred from the bind address: the description states the public
     /// URL clients use, which is usually not the socket the process listens on.
     #[must_use]
-    pub fn server(self, server: kynos_openapi::Server) -> Self {
-        let _ = server;
-        todo!()
+    pub fn server(mut self, server: kynos_openapi::Server) -> Self {
+        self.servers.push(server);
+        self
     }
 
     /// Mounts operations at the router's root.
     #[must_use]
-    pub fn mount<E: IntoEndpoints<C>>(self, endpoints: E) -> Self
+    pub fn mount<E: IntoEndpoints<C>>(mut self, endpoints: E) -> Self
     where
+        C: 'static,
         E::Stacks: CompatibleStack<I, C>,
     {
         let () = <E::Stacks as CompatibleStack<I, C>>::CHECK;
-        let _ = endpoints;
-        todo!()
+
+        let mut sink = endpoint::set::Endpoints::new();
+        endpoints.into_endpoints(&mut sink);
+        self.absorb(sink.into_inner(), "", &[], &[], false);
+        self
     }
 
     /// Mounts a group.
     #[must_use]
-    pub fn group<GP: PanicPolicy, GI>(self, group: Group<C, GP, GI>) -> Self
+    pub fn group<GP: PanicPolicy, GI>(mut self, group: Group<C, GP, GI>) -> Self
     where
+        C: 'static,
         GI: CompatibleStack<I, C>,
     {
         let () = <GI as CompatibleStack<I, C>>::CHECK;
-        let _ = group;
-        todo!()
+
+        let group = group.into_parts();
+        self.violations.extend(group.violations);
+        self.tag_metadata.extend(group.tag_metadata);
+        self.short_circuit_checks.extend(group.short_circuit_checks);
+
+        #[cfg(feature = "unchecked")]
+        let first = self.mounted.len();
+
+        self.absorb(
+            group.endpoints,
+            &group.prefix,
+            &group.tags,
+            &group.interceptors,
+            catches::<GP>(),
+        );
+
+        // A group's layers cover the group's operations and nothing else, which
+        // is why they land on each absorbed endpoint rather than on the router.
+        #[cfg(feature = "unchecked")]
+        for mounted in &mut self.mounted[first..] {
+            mounted.unchecked_layers.clone_from(&group.unchecked_layers);
+        }
+
+        self
     }
 
     /// Mounts another router beneath a path prefix.
     #[must_use]
-    pub fn nest<NP: PanicPolicy, NI>(self, prefix: &'static str, router: Router<C, NP, NI>) -> Self
+    pub fn nest<NP: PanicPolicy, NI>(
+        mut self,
+        prefix: &'static str,
+        router: Router<C, NP, NI>,
+    ) -> Self
     where
+        C: 'static,
         NI: CompatibleStack<I, C>,
     {
         let () = <NI as CompatibleStack<I, C>>::CHECK;
-        let _ = (prefix, router);
-        todo!()
+
+        self.absorb_router(router, prefix, catches::<NP>());
+        self
     }
 
     /// Merges another router at the same level.
     #[must_use]
-    pub fn merge<OP: PanicPolicy, OI>(self, router: Router<C, OP, OI>) -> Self
+    pub fn merge<OP: PanicPolicy, OI>(mut self, router: Router<C, OP, OI>) -> Self
     where
+        C: 'static,
         OI: CompatibleStack<I, C>,
     {
         let () = <OI as CompatibleStack<I, C>>::CHECK;
-        let _ = router;
-        todo!()
+
+        self.absorb_router(router, "", catches::<OP>());
+        self
     }
 
     /// Declares a security scheme the API can use.
     #[must_use]
-    pub fn security_scheme<S: SecurityScheme>(self) -> Self {
-        todo!()
+    pub fn security_scheme<S: SecurityScheme>(mut self) -> Self {
+        self.security_schemes.push((S::NAME, S::describe()));
+        self
     }
 
     /// Registers tag metadata.
     #[must_use]
-    pub fn tag<T: Tag>(self) -> Self {
-        todo!()
+    pub fn tag<T: Tag>(mut self) -> Self {
+        self.tags.push(T::NAME);
+        self.tag_metadata.push(T::metadata());
+        self
     }
 
     /// Applies an interceptor to every operation in the router.
@@ -177,8 +444,13 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
         // `middleware::stack`. Two interceptors adding one header, or
         // answering with one status, stop here.
         let () = <I as CompatibleWith<N, C>>::CHECK;
-        let _ = interceptor;
-        todo!()
+
+        let mut router: Router<C, P, Cons<N, I>> = self.retype();
+        router.interceptors.push(Arc::new(interceptor));
+        router
+            .short_circuit_checks
+            .push(short_circuit_mismatch::<N::Short>);
+        router
     }
 
     /// Installs an observer.
@@ -186,9 +458,9 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     /// Observers see everything and change nothing, so they contribute nothing
     /// to the description. This is where request logging belongs.
     #[must_use]
-    pub fn observe<O: Observer<C>>(self, observer: O) -> Self {
-        let _ = observer;
-        todo!()
+    pub fn observe<O: Observer<C>>(mut self, observer: O) -> Self {
+        self.observers.push(Arc::new(observer));
+        self
     }
 
     /// Sets what happens when no route matches.
@@ -196,9 +468,9 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     /// Not a route: an unmatched path is outside the description entirely, and
     /// contributes no `paths` entry.
     #[must_use]
-    pub fn not_found(self, policy: FallbackPolicy) -> Self {
-        let _ = policy;
-        todo!()
+    pub fn not_found(mut self, policy: FallbackPolicy) -> Self {
+        self.not_found = policy;
+        self
     }
 
     /// Sets what happens when a path matches but the method does not.
@@ -206,9 +478,9 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     /// The `Allow` header is derived from the operations actually declared on
     /// that path, so it cannot disagree with the description.
     #[must_use]
-    pub fn method_not_allowed(self, policy: FallbackPolicy) -> Self {
-        let _ = policy;
-        todo!()
+    pub fn method_not_allowed(mut self, policy: FallbackPolicy) -> Self {
+        self.method_not_allowed = policy;
+        self
     }
 
     /// Sets the application-wide trailing-slash policy.
@@ -217,9 +489,9 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     /// declared path. It never changes path casing or normalizes individual
     /// routes, and uses 308 so the request method and body are preserved.
     #[must_use]
-    pub fn trailing_slashes(self, policy: TrailingSlashPolicy) -> Self {
-        let _ = policy;
-        todo!()
+    pub fn trailing_slashes(mut self, policy: TrailingSlashPolicy) -> Self {
+        self.trailing_slashes = policy;
+        self
     }
 
     /// Turns unconstrained-schema warnings into build errors.
@@ -227,8 +499,9 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     /// [`Unchecked`](crate::schema::unchecked::Unchecked) is honest but weak. A team that
     /// wants no weak schemas at all can say so here.
     #[must_use]
-    pub fn deny_unchecked_schemas(self) -> Self {
-        todo!()
+    pub fn deny_unchecked_schemas(mut self) -> Self {
+        self.deny_unchecked_schemas = true;
+        self
     }
 
     /// Checks the router without building it.
@@ -240,9 +513,13 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Invalid`](crate::Error::Invalid) if the router cannot be described at all.
-    pub fn validate(&self) -> Result<Vec<Violation>> {
-        todo!()
+    /// Returns [`Error::Invalid`] if the router cannot be described at all.
+    pub fn validate(&self) -> Result<Vec<Violation>>
+    where
+        C: 'static,
+    {
+        let described = self.describe()?;
+        Ok(described.violations)
     }
 
     /// Produces the OpenAPI description, at the lowest version that expresses
@@ -261,10 +538,14 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Invalid`](crate::Error::Invalid) when validation finds an error-level
+    /// Returns [`Error::Invalid`] when validation finds an error-level
     /// violation, so a misleading description is never emitted.
-    pub fn openapi(&self) -> Result<Document> {
-        todo!()
+    pub fn openapi(&self) -> Result<Document>
+    where
+        C: 'static,
+    {
+        let described = self.describe()?;
+        described.into_document()
     }
 
     /// Produces the description targeting a specific specification version.
@@ -277,12 +558,16 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Invalid`](crate::Error::Invalid) on a validation error, or if the API uses a
+    /// Returns [`Error::Invalid`] on a validation error, or if the API uses a
     /// construct `version` cannot express — a Server-Sent Events response
     /// requested as 3.1, say.
-    pub fn openapi_as(&self, version: SpecVersion) -> Result<Document> {
-        let _ = version;
-        todo!()
+    pub fn openapi_as(&self, version: SpecVersion) -> Result<Document>
+    where
+        C: 'static,
+    {
+        let described = self.describe()?;
+        described.errors()?;
+        described.document.emit(version).map_err(invalid)
     }
 
     /// Finalizes the router into something servable.
@@ -292,12 +577,440 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Invalid`](crate::Error::Invalid) with every violation found.
+    /// Returns [`Error::Invalid`] with every violation found.
     pub fn build(self, context: C) -> Result<Service<C>>
     where
         C: Send + Sync + 'static,
     {
-        let _ = context;
-        todo!()
+        let described = self.describe()?;
+        let document = described.into_document()?;
+
+        let mut matcher = matchit::Router::new();
+        let mut paths: Vec<PathEntry<C>> = Vec::new();
+        let mut index_of: HashMap<String, usize> = HashMap::new();
+
+        for mounted in self.mounted {
+            let key = mounted.path.as_str().to_owned();
+            let index = if let Some(index) = index_of.get(&key) {
+                *index
+            } else {
+                let index = paths.len();
+                matcher.insert(key.clone(), index).map_err(|_| {
+                    invalid(SpecError::DuplicatePathTemplate {
+                        template: key.clone(),
+                        existing: key.clone(),
+                    })
+                })?;
+                paths.push(PathEntry {
+                    template: key.clone(),
+                    matched: crate::extract::connection::MatchedPath(dispatch::intern(&key)),
+                    variables: mounted
+                        .path
+                        .variables()
+                        .iter()
+                        .map(|name| dispatch::intern(name))
+                        .collect(),
+                    allow: dispatch::allow_header(&[]),
+                    operations: Vec::new(),
+                });
+                index_of.insert(key.clone(), index);
+                index
+            };
+
+            let method = mounted.endpoint.method();
+            let operation_id = document
+                .paths
+                .0
+                .get(&key)
+                .and_then(|item| item.operation(method))
+                .and_then(|operation| operation.operation_id.clone())
+                .unwrap_or_default();
+
+            let mut interceptors = self.interceptors.clone();
+            interceptors.extend(mounted.interceptors);
+
+            #[cfg(feature = "unchecked")]
+            let unchecked_layers = {
+                let mut layers = self.unchecked.layers.clone();
+                layers.extend(mounted.unchecked_layers);
+                layers
+            };
+
+            paths[index].operations.push(dispatch::Served {
+                method,
+                operation_id,
+                terminal: Arc::new(EndpointTerminal::new(mounted.endpoint)),
+                interceptors,
+                catch_panics: mounted.catch_panics || catches::<P>(),
+                #[cfg(feature = "unchecked")]
+                unchecked_layers,
+            });
+        }
+
+        #[cfg(feature = "unchecked")]
+        install_unchecked(
+            &self.unchecked,
+            &self.interceptors,
+            catches::<P>(),
+            &mut matcher,
+            &mut paths,
+            &mut index_of,
+        )?;
+
+        for entry in &mut paths {
+            let methods: Vec<_> = entry
+                .operations
+                .iter()
+                .map(|operation| operation.method)
+                .collect();
+            entry.allow = dispatch::allow_header(&methods);
+        }
+
+        let dispatch = Arc::new(Dispatch {
+            matcher,
+            paths,
+            context,
+            observers: self.observers,
+            not_found: self.not_found,
+            method_not_allowed: self.method_not_allowed,
+            trailing_slashes: self.trailing_slashes,
+        });
+
+        Ok(Service::new(document, move |request| {
+            let dispatch = Arc::clone(&dispatch);
+            async move { dispatch.serve(request).await }
+        }))
     }
+
+    /// Assembles the description, and everything found on the way that a
+    /// `Describe` implementation had no way to return.
+    fn describe(&self) -> Result<Described>
+    where
+        C: 'static,
+    {
+        let mut registry = Registry::new();
+        let mut violations = self.violations.clone();
+
+        for (name, scheme) in &self.security_schemes {
+            match kynos_openapi::ComponentName::new(*name) {
+                Ok(name) => registry.declare_security_scheme(name, scheme.clone()),
+                Err(_) => violations.push(error_at(
+                    "#/components/securitySchemes",
+                    SpecError::InvalidComponentName {
+                        name: (*name).to_owned(),
+                    },
+                )),
+            }
+        }
+
+        let mut paths = Paths::new();
+        for mounted in &self.mounted {
+            let key = mounted.path.as_str().to_owned();
+            let location = format!("#/paths/{}", pointer_token(&key));
+            let method = mounted.endpoint.method();
+
+            // The identifier is needed before the operation exists, because it
+            // is half of the `Route` an interceptor is described against. A
+            // throwaway registry keeps the probe from recording a conflict the
+            // real pass is about to record again.
+            let operation_id = {
+                let mut probe = Registry::new();
+                let mut cx = OperationCx::new(&mut probe);
+                mounted.endpoint.describe(&mut cx);
+                cx.finish().operation_id.unwrap_or_default()
+            };
+            let route = Route::new(&key, &operation_id, method);
+
+            let mut cx = OperationCx::new(&mut registry);
+            mounted.endpoint.describe(&mut cx);
+
+            // The router's own interceptors are outermost, then whatever the
+            // group or nested router contributed. The endpoint described itself
+            // first, so its own responses win where the two overlap.
+            for interceptor in self.interceptors.iter().chain(&mounted.interceptors) {
+                interceptor.describe(route, &mut cx);
+            }
+
+            for tag in self.tags.iter().chain(&mounted.tags) {
+                cx.add_tag(tag);
+            }
+
+            if mounted.catch_panics || catches::<P>() {
+                let responses = dispatch::panic_responses(cx.registry());
+                cx.add_responses(responses);
+            }
+
+            let operation = cx.finish();
+
+            // A layer of undeclared effect covers this operation, so it stays
+            // in `paths` and says it is no longer verified.
+            #[cfg(feature = "unchecked")]
+            let operation = {
+                let mut operation = operation;
+                if !self.unchecked.layers.is_empty() || !mounted.unchecked_layers.is_empty() {
+                    // The only reachable failure is a marker already present in
+                    // a shape Kynos never emits, which an operation Kynos just
+                    // described cannot carry.
+                    let _ = kynos_openapi::Opaque::new(kynos_openapi::OpaqueReason::UntypedLayer)
+                        .apply_to(&mut operation);
+                }
+                operation
+            };
+
+            let item: &mut PathItem = paths.0.entry(key.clone()).or_default();
+            if item.set_operation(method, operation).is_some() {
+                violations.push(error_at(
+                    format!("{location}/{}", method.as_wire_str().to_lowercase()),
+                    SpecError::DuplicatePathTemplate {
+                        template: format!("{method} {key}"),
+                        existing: key,
+                    },
+                ));
+            }
+        }
+
+        for check in &self.short_circuit_checks {
+            if let Some(error) = check(&mut registry) {
+                let violation = error_at("#", error);
+                if !violations.contains(&violation) {
+                    violations.push(violation);
+                }
+            }
+        }
+
+        if let Some(conflict) = registry.schema_conflicts().first() {
+            return Err(Error::Schema(conflict.clone()));
+        }
+        if let Some(conflict) = registry.scheme_conflicts().first() {
+            return Err(Error::Contribution(conflict.clone()));
+        }
+
+        let mut document = Document::new(
+            highest_version(),
+            self.info.clone().unwrap_or_else(placeholder_info),
+        );
+        document.servers.clone_from(&self.servers);
+        document.paths = paths;
+        document.tags = unique_tags(&self.tag_metadata);
+        document.components = registry.into_components();
+
+        // The version the description claims follows from what it uses, never
+        // from a cargo feature: Cargo unifies features across a dependency
+        // graph, so a flag some other crate turned on must not move it.
+        let document = lowest_expressing(&document)?;
+
+        // Before validation, because an opaque document that is not stamped is
+        // an error the validator is entitled to raise.
+        #[cfg(feature = "unchecked")]
+        let document = {
+            let mut document = document;
+            self.unchecked.annotate(&mut document);
+            document
+        };
+
+        let version = document.spec_version().unwrap_or_default();
+
+        violations.extend(kynos_openapi::validate::Validator::new(version).validate(&document));
+
+        if self.deny_unchecked_schemas {
+            for violation in &mut violations {
+                if violation.error == SpecError::UncheckedSchema {
+                    violation.severity = Severity::Error;
+                }
+            }
+        }
+
+        Ok(Described {
+            document,
+            violations,
+        })
+    }
+}
+
+/// Adds the routes no path template expresses to the match table.
+///
+/// They reach the same table as every described route — they have to, or they
+/// would not serve — and differ from one only in having no `paths` key to have
+/// been derived from, and no variables to capture: an unchecked handler takes
+/// the whole request and no extractor.
+///
+/// # Errors
+///
+/// Returns [`Error::Invalid`] when a pattern collides with one already in the
+/// table under a different key.
+#[cfg(feature = "unchecked")]
+fn install_unchecked<C>(
+    unchecked: &crate::unchecked::Unchecked<C>,
+    interceptors: &[Arc<dyn ErasedInterceptor<C>>],
+    catch_panics: bool,
+    matcher: &mut matchit::Router<usize>,
+    paths: &mut Vec<PathEntry<C>>,
+    index_of: &mut HashMap<String, usize>,
+) -> Result<()> {
+    for route in &unchecked.routes {
+        let key = route.pattern.clone();
+        let index = if let Some(index) = index_of.get(&key) {
+            *index
+        } else {
+            let index = paths.len();
+            matcher.insert(key.clone(), index).map_err(|_| {
+                invalid(SpecError::DuplicatePathTemplate {
+                    template: key.clone(),
+                    existing: key.clone(),
+                })
+            })?;
+            paths.push(PathEntry {
+                template: key.clone(),
+                matched: crate::extract::connection::MatchedPath(dispatch::intern(&key)),
+                variables: Vec::new(),
+                allow: dispatch::allow_header(&[]),
+                operations: Vec::new(),
+            });
+            index_of.insert(key, index);
+            index
+        };
+
+        let mut unchecked_layers = unchecked.layers.clone();
+        unchecked_layers.extend(route.layers.iter().cloned());
+
+        for method in &route.methods {
+            paths[index].operations.push(dispatch::Served {
+                method: *method,
+                operation_id: String::new(),
+                terminal: Arc::clone(&route.terminal),
+                interceptors: interceptors.to_vec(),
+                catch_panics,
+                unchecked_layers: unchecked_layers.clone(),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// A described router: the document it produces, and everything wrong with it.
+struct Described {
+    document: Document,
+    violations: Vec<Violation>,
+}
+
+impl Described {
+    /// Fails when any violation is error-level, so a misleading description is
+    /// never emitted.
+    fn errors(&self) -> Result<()> {
+        let errors: Vec<Violation> = self
+            .violations
+            .iter()
+            .filter(|violation| violation.severity == Severity::Error)
+            .cloned()
+            .collect();
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(Error::Invalid { violations: errors })
+        }
+    }
+
+    fn into_document(self) -> Result<Document> {
+        self.errors()?;
+        Ok(self.document)
+    }
+}
+
+/// Whether `P` selected recovery.
+///
+/// [`PanicPolicy`] is a marker with no members to read, so the policy is
+/// resolved by identity — which is exactly as static as the type it comes from.
+fn catches<P: PanicPolicy>() -> bool {
+    std::any::TypeId::of::<P>() == std::any::TypeId::of::<Catch>()
+}
+
+/// The highest version this build can express, which is what a description is
+/// assembled at before it is emitted downwards.
+fn highest_version() -> SpecVersion {
+    #[cfg(feature = "openapi32")]
+    {
+        SpecVersion::V3_2
+    }
+    #[cfg(not(feature = "openapi32"))]
+    {
+        SpecVersion::V3_1
+    }
+}
+
+/// The document at the lowest version expressing it without loss.
+///
+/// [`Document::emit`] already knows which constructs block a downgrade, so this
+/// asks it rather than repeating the analysis.
+fn lowest_expressing(document: &Document) -> Result<Document> {
+    match document.emit(SpecVersion::V3_1) {
+        Ok(emitted) => Ok(emitted),
+        #[cfg(feature = "openapi32")]
+        Err(_) => document.emit(SpecVersion::V3_2).map_err(invalid),
+        #[cfg(not(feature = "openapi32"))]
+        Err(blocked) => Err(invalid(blocked)),
+    }
+}
+
+/// The `info` block a router that declared none still has to emit.
+///
+/// OpenAPI requires a title and a version, so there is no honest way to omit
+/// them; a visible placeholder is better than a plausible invention.
+fn placeholder_info() -> Info {
+    Info::new("API", "0.0.0")
+}
+
+/// Tag metadata with the first claim on each name kept.
+fn unique_tags(declared: &[kynos_openapi::Tag]) -> Vec<kynos_openapi::Tag> {
+    let mut tags: Vec<kynos_openapi::Tag> = Vec::new();
+    for tag in declared {
+        if !tags.iter().any(|existing| existing.name == tag.name) {
+            tags.push(tag.clone());
+        }
+    }
+    tags
+}
+
+/// Why Kynos will not route a path its model can nonetheless hold.
+///
+/// The routing contract is narrower than the document model on purpose: a
+/// catch-all matches a set of paths no single template describes, and a segment
+/// carrying two variables is a shape the matcher cannot take apart. Both checks
+/// belong here rather than in `PathTemplate`, which has to round-trip a
+/// description it did not produce.
+fn unroutable(path: &kynos_openapi::PathTemplate) -> Option<SpecError> {
+    let catch_all = path.variables().iter().any(|name| name.starts_with('*'));
+    let crowded = path
+        .normalized()
+        .split('/')
+        .any(|segment| segment.matches("{}").count() > 1);
+
+    (catch_all || crowded).then(|| SpecError::OpaqueRoute {
+        pattern: path.as_str().to_owned(),
+    })
+}
+
+/// One error-level violation.
+fn error_at(location: impl Into<String>, error: SpecError) -> Violation {
+    Violation {
+        location: location.into(),
+        severity: Severity::Error,
+        error,
+    }
+}
+
+/// One error-level violation, as the framework error carrying it.
+fn invalid(error: SpecError) -> Error {
+    Error::Invalid {
+        violations: vec![error_at("#", error)],
+    }
+}
+
+/// Escapes one `paths` key for use as a JSON Pointer token, per RFC 6901.
+///
+/// Every key contains a `/`, so a location embedding one unescaped reads as
+/// several tokens and resolves against nothing.
+fn pointer_token(key: &str) -> String {
+    key.replace('~', "~0").replace('/', "~1")
 }
