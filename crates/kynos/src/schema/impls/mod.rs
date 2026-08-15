@@ -58,10 +58,10 @@ fn integer(format: &str, minimum: Option<f64>, maximum: Option<f64>) -> OpenApiS
 
 /// Reaching the helpers from the module's tests.
 ///
-/// The composite implementations route their members through
-/// [`Registry::resolve`](crate::schema::registry::Registry::resolve), which is
-/// still `todo!()`, so nothing would otherwise exercise the shapes these
-/// produce.
+/// A composite implementation reaches its members through
+/// [`Registry::resolve`](crate::schema::registry::Registry::resolve), so a test
+/// written against one asserts the registry's answer as much as the shape these
+/// produce. Exposing them keeps the two separable.
 #[cfg(test)]
 pub(crate) mod testing {
     pub(crate) use super::wrapper::nullable;

@@ -50,11 +50,10 @@ emits them; see [Binary content](#binary-content).
 
 ## The standard library
 
-Every row below is built. One caveat applies to this table and the next alike: a
-leaf implementation returns its schema directly and works today, while a
+Every row below is built. A leaf implementation returns its schema directly; a
 composite — `Vec<T>`, a map, a tuple, a derived struct — reaches its members
-through [`Registry::resolve`](../crates/kynos/src/schema/registry.rs), which is
-still `todo!()`. So the shapes are settled and the composition of them is not.
+through [`Registry::resolve`](../crates/kynos/src/schema/registry.rs), which
+registers a named type once and hands back a `$ref`.
 
 | Rust | `type` | `format` | Also emitted |
 | --- | --- | --- | --- |
