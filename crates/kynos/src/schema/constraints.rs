@@ -47,9 +47,56 @@ impl Constraints {
     }
 
     /// Applies these constraints to a schema.
+    ///
+    /// A set constraint replaces the keyword the type itself emitted, which is
+    /// what makes a field declaration the narrower statement it reads as. An
+    /// unset one leaves that keyword alone, so an empty set — and every field
+    /// of one — is a no-op.
+    ///
+    /// The keywords land beside a `$ref` rather than under an `allOf`: from
+    /// OpenAPI 3.1 onward a schema `$ref` applies its siblings, so a
+    /// constrained field of a named type is the intersection it looks like.
     #[must_use]
     pub fn apply(&self, schema: OpenApiSchema) -> OpenApiSchema {
-        let _ = schema;
-        todo!()
+        // Nothing to say, and nothing a schema that admits no instance could
+        // be narrowed by.
+        if self.is_empty() || matches!(schema, OpenApiSchema::Bool(false)) {
+            return schema;
+        }
+
+        // `true` and the empty keyword set are the same schema, so promoting
+        // one to the other loses nothing and gives the keywords somewhere to
+        // go.
+        let mut object = match schema {
+            OpenApiSchema::Object(object) => object,
+            OpenApiSchema::Bool(_) => Box::default(),
+        };
+
+        macro_rules! set {
+            ($($field:ident),+ $(,)?) => {
+                $(
+                    if self.$field.is_some() {
+                        object.$field.clone_from(&self.$field);
+                    }
+                )+
+            };
+        }
+
+        set!(
+            minimum,
+            maximum,
+            exclusive_minimum,
+            exclusive_maximum,
+            multiple_of,
+            min_length,
+            max_length,
+            pattern,
+            min_items,
+            max_items,
+            unique_items,
+            format,
+        );
+
+        OpenApiSchema::Object(object)
     }
 }
