@@ -102,7 +102,10 @@ where
 impl<T> sealed::Sealed for MultipartForm<T> {}
 
 #[cfg(feature = "multipart")]
-impl<T: crate::schema::Schema> Representation for MultipartForm<T> {
+impl<T> Representation for MultipartForm<T>
+where
+    T: crate::response::codec::multipart::IntoMultipart + crate::schema::Schema,
+{
     fn media_type() -> &'static str {
         "multipart/form-data"
     }

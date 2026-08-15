@@ -108,10 +108,11 @@ struct ProductForm {
 /// describe them, so a variable number of uploads is one `Vec<FilePart>` field.
 ///
 /// No serde derives: a multipart body is decoded part by part rather than
-/// through a `Deserializer`, so `MultipartForm<T>` asks only that `T` describe
-/// itself.
+/// through a `Deserializer`, so `MultipartForm` is what says how the parts
+/// travel — in both directions, from this one declaration — and `Schema` what
+/// puts them in the description.
 #[allow(dead_code)]
-#[derive(Schema)]
+#[derive(Schema, MultipartForm)]
 struct Upload {
     name: String,
     #[schema(max_items = 8)]

@@ -147,6 +147,8 @@ pub use kynos_macros::{
 // in the expansion points at code the user did not write.
 #[cfg(all(feature = "macros", feature = "cookie"))]
 pub use kynos_macros::CookieParams;
+#[cfg(all(feature = "macros", feature = "multipart"))]
+pub use kynos_macros::MultipartForm;
 #[cfg(all(feature = "macros", feature = "openapi32"))]
 pub use kynos_macros::query;
 
@@ -172,6 +174,9 @@ pub mod prelude {
 
     #[cfg(all(feature = "macros", feature = "cookie"))]
     pub use crate::CookieParams;
+
+    #[cfg(all(feature = "macros", feature = "multipart"))]
+    pub use crate::MultipartForm;
 
     #[cfg(feature = "server")]
     pub use crate::server::Server;

@@ -16,6 +16,7 @@ pub(crate) mod api_error;
 pub(crate) mod common;
 pub(crate) mod cookies;
 pub(crate) mod headers;
+pub(crate) mod multipart;
 pub(crate) mod params;
 pub(crate) mod path_params;
 pub(crate) mod provider;

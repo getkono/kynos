@@ -241,8 +241,9 @@ would break:
 
 - `protobuf.rs` derives `prost::Message` and `Schema` with no serde at all. A
   described type is not always a serde type.
-- `payloads.rs` derives `Schema` alone for a multipart body, because a multipart
-  payload is decoded part by part rather than through a `Deserializer`.
+- `payloads.rs` derives `Schema` and `MultipartForm` for a multipart body, and
+  no serde at all: a multipart payload is decoded part by part rather than
+  through a `Deserializer`, so what carries it is `FromPart`/`IntoPart`.
 - A response-only type would be forced to implement `Deserialize`, and a
   request-only type `Serialize`, each to satisfy a direction it never travels.
 

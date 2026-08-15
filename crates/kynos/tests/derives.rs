@@ -71,6 +71,17 @@ struct Session {
     session: String,
 }
 
+/// A multipart body travels in both directions from one declaration, and each
+/// arity a field's type can declare is exercised: one part, none or one, and
+/// one per element.
+#[cfg(feature = "multipart")]
+#[derive(Schema, kynos::MultipartForm)]
+struct Upload {
+    name: String,
+    caption: Option<String>,
+    images: Vec<kynos::extract::body::multipart::FilePart>,
+}
+
 #[derive(Tag)]
 #[tag(name = "users", description = "Managing user accounts")]
 struct Users;
@@ -129,6 +140,12 @@ fn implements_cookie_params<T: kynos::extract::params::cookie::CookieParams>() {
 fn implements_tag<T: TagTrait>() {}
 fn implements_security_scheme<T: SecuritySchemeTrait>() {}
 fn implements_responses<T: IntoResponse + Responses>() {}
+#[cfg(feature = "multipart")]
+fn implements_multipart<
+    T: kynos::extract::body::multipart::FromMultipart
+        + kynos::response::codec::multipart::IntoMultipart,
+>() {
+}
 
 #[test]
 fn every_derive_implements_its_trait() {
@@ -140,6 +157,8 @@ fn every_derive_implements_its_trait() {
     implements_header_params::<Conditional>();
     #[cfg(feature = "cookie")]
     implements_cookie_params::<Session>();
+    #[cfg(feature = "multipart")]
+    implements_multipart::<Upload>();
     implements_tag::<Users>();
     implements_tag::<Admin>();
     implements_security_scheme::<BearerAuth>();
@@ -241,12 +260,14 @@ fn every_derive_has_a_witness() {
 
     /// Every derive witnessed in this file. `Provider` is exercised by
     /// `the_provider_derive_supplies_every_field_it_was_not_told_to_skip`,
-    /// `ApiError` and `Reply` through `implements_responses`, and the rest by
+    /// `ApiError` and `Reply` through `implements_responses`,
+    /// `MultipartForm` through `implements_multipart`, and the rest by
     /// `every_derive_implements_its_trait`.
     const WITNESSED: &[&str] = &[
         "ApiError",
         "CookieParams",
         "HeaderParams",
+        "MultipartForm",
         "PathParams",
         "Provider",
         "QueryParams",

@@ -308,6 +308,39 @@ pub fn derive_cookies(item: TokenStream) -> TokenStream {
     derive::cookies::expand(item)
 }
 
+/// Declares the fields of a `multipart/form-data` body, in both directions.
+///
+/// ```ignore
+/// #[derive(Schema, MultipartForm)]
+/// struct Upload {
+///     name: String,
+///     caption: Option<String>,
+///     images: Vec<FilePart>,
+/// }
+/// ```
+///
+/// One declaration, two implementations: `FromMultipart` reads each field from
+/// the part carrying its name, and `IntoMultipart` writes it back under the
+/// same one — so a body `MultipartForm<T>` accepts is a body it can produce.
+///
+/// A field's type says how many parts carry it: `Vec<T>` is one part per
+/// element, `Option<T>` is a part that need not have been sent, and anything
+/// else is a part that must have been, whose second and later occurrences are
+/// ignored. The element type converts through `FromPart` and `IntoPart`, which
+/// Kynos implements for `FilePart`, `String` and `Bytes`.
+///
+/// A part naming no declared field is ignored, since a form may carry what the
+/// agent rendering it added.
+///
+/// There is no attribute of its own. Derive [`Schema`](macro@Schema) alongside:
+/// this derive says how the parts travel and `Schema` is what puts them in the
+/// description, and both read the part names from the same place — the field's
+/// identifier, or serde's `rename` and `rename_all` when the type carries them.
+#[proc_macro_derive(MultipartForm)]
+pub fn derive_multipart_form(item: TokenStream) -> TokenStream {
+    derive::multipart::expand(item)
+}
+
 /// Declares a tag.
 ///
 /// ```ignore
