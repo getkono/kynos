@@ -47,10 +47,62 @@ impl Body {
         }
     }
 
+    /// A body whose bytes arrive as a stream.
+    ///
+    /// The one place a stream becomes a body, which is what keeps
+    /// [`response::stream`](crate::response::stream) clear of the body trait:
+    /// each module there frames its items into `Bytes` and hands them over.
+    #[cfg(feature = "openapi32")]
+    pub(crate) fn from_stream<S, E>(stream: S) -> Self
+    where
+        S: futures_core::Stream<Item = Result<Bytes, E>> + Send + 'static,
+        E: Into<BoxError> + 'static,
+    {
+        Self {
+            inner: Mutex::new(
+                Streamed {
+                    chunks: Box::pin(stream),
+                }
+                .boxed_unsync(),
+            ),
+        }
+    }
+
     #[cfg(feature = "server")]
     pub(crate) fn from_incoming(body: hyper::body::Incoming) -> Self {
         Self {
             inner: Mutex::new(body.map_err(Into::into).boxed_unsync()),
+        }
+    }
+}
+
+/// A stream of chunks, seen as a body: one data frame per chunk.
+///
+/// Boxed so that it can be polled without a projection: `Pin<Box<S>>` is
+/// `Unpin` whatever `S` is, and `unsafe` is forbidden here.
+#[cfg(feature = "openapi32")]
+struct Streamed<S> {
+    chunks: Pin<Box<S>>,
+}
+
+#[cfg(feature = "openapi32")]
+impl<S, E> HttpBody for Streamed<S>
+where
+    S: futures_core::Stream<Item = Result<Bytes, E>>,
+    E: Into<BoxError>,
+{
+    type Data = Bytes;
+    type Error = BoxError;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        match self.get_mut().chunks.as_mut().poll_next(context) {
+            Poll::Ready(Some(Ok(chunk))) => Poll::Ready(Some(Ok(Frame::data(chunk)))),
+            Poll::Ready(Some(Err(error))) => Poll::Ready(Some(Err(error.into()))),
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
         }
     }
 }
