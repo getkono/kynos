@@ -74,7 +74,7 @@ impl PathCaptures {
     /// `None` rather than a panic when the range does not fit, so that a path
     /// rewritten between matching and extraction produces a rejection rather
     /// than taking the process down.
-    fn get<'p>(&self, path: &'p str, name: &str) -> Option<&'p str> {
+    pub(crate) fn get<'p>(&self, path: &'p str, name: &str) -> Option<&'p str> {
         self.0
             .iter()
             .find(|(captured, _)| *captured == name)

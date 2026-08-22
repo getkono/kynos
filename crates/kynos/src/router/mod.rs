@@ -910,7 +910,13 @@ fn install_unchecked<C>(
             paths.push(PathEntry {
                 template: key.clone(),
                 matched: crate::extract::connection::MatchedPath(dispatch::intern(&key)),
-                variables: Vec::new(),
+                // Read from the matching pattern rather than from a
+                // `PathTemplate`, which a catch-all is not one of. Leaving this
+                // empty made `Dispatch`'s capture branch unreachable, so an
+                // unchecked handler had to re-derive what the matcher had
+                // already taken apart — including the decoding and the `..`
+                // rejection `extract/params/path.rs` keeps private.
+                variables: matcher_variables(&key),
                 allow: dispatch::allow_header(&[]),
                 operations: Vec::new(),
             });
@@ -923,8 +929,13 @@ fn install_unchecked<C>(
 
         for method in &route.methods {
             paths[index].operations.push(dispatch::Served {
+                // Distinct per route and per method, because `Next::route` hands
+                // this to every interceptor: an empty string collided every
+                // unchecked route into one rate-limit bucket and one metric
+                // label. `unchecked:` marks it as synthesized rather than
+                // something a document declares, since no document declares it.
+                operation_id: format!("unchecked:{} {}", method.as_wire_str(), route.pattern),
                 method: *method,
-                operation_id: String::new(),
                 terminal: Arc::clone(&route.terminal),
                 interceptors: interceptors.to_vec(),
                 catch_panics,
@@ -934,6 +945,23 @@ fn install_unchecked<C>(
     }
 
     Ok(())
+}
+
+/// The variable names a matching pattern captures.
+///
+/// The router's own syntax rather than a path template: `{name}` captures
+/// `name` and `{*name}` captures `name` too, since matchit reports a catch-all
+/// under the bare name. A segment that is not a variable captures nothing.
+#[cfg(feature = "unchecked")]
+fn matcher_variables(pattern: &str) -> Vec<&'static str> {
+    pattern
+        .split('/')
+        .filter_map(|segment| {
+            let name = segment.strip_prefix('{')?.strip_suffix('}')?;
+            let name = name.strip_prefix('*').unwrap_or(name);
+            (!name.is_empty()).then(|| dispatch::intern(name))
+        })
+        .collect()
 }
 
 /// A described router: the document it produces, and everything wrong with it.

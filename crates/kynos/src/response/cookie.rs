@@ -66,8 +66,8 @@ impl SameSite {
 ///     .same_site(SameSite::Strict);
 ///
 /// assert_eq!(
-///     session.encode().expect("a representable cookie").to_str(),
-///     Ok("locale=en-GB; Path=/; Max-Age=86400; HttpOnly; SameSite=Strict"),
+///     session.encode().expect("a representable cookie").to_str().unwrap(),
+///     "locale=en-GB; Path=/; Max-Age=86400; HttpOnly; SameSite=Strict",
 /// );
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]

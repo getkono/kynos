@@ -54,6 +54,36 @@ use crate::{
     router::{Router, dispatch::Dispatch, group::Group, service::Service},
 };
 
+/// What the router captured for `name`, percent-decoded.
+///
+/// The one way an unchecked handler reads a wildcard. A described operation
+/// takes a [`Path<T>`](crate::extract::params::path::Path) and gets a typed
+/// value; there is no type here to decode into, because the whole point of the
+/// waiver is that the route has no template — so this hands back the text.
+///
+/// Decoded, and bounded to the matched path, which is what makes it safe to
+/// join onto anything: the value is a segment the matcher took apart rather
+/// than a substring a handler sliced out of the URL by eye. `None` when the
+/// pattern declares no such variable, or when the capture is not UTF-8.
+///
+/// ```no_run
+/// use kynos::http::{Request, Response};
+///
+/// async fn serve(request: Request) -> Response {
+///     let path = kynos::unchecked::captured(&request, "path");
+///     todo!("resolve {path:?} against a directory")
+/// }
+/// ```
+#[must_use]
+pub fn captured<'r>(request: &'r Request, name: &str) -> Option<std::borrow::Cow<'r, str>> {
+    let captures = request
+        .extensions()
+        .get::<crate::extract::params::path::PathCaptures>()?;
+
+    let raw = captures.get(request.uri().path(), name)?;
+    crate::__private::uri::decode_path_value(raw).ok()
+}
+
 /// A boxed response future.
 ///
 /// The one place in the framework where a boxed future is sanctioned, and it is
@@ -632,6 +662,14 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     ///
     /// When true, the emitted document carries
     /// `x-kynos-document-not-authoritative`.
+    ///
+    /// [`examples/unchecked.rs`] presents `assert!(!router.has_unchecked())` as
+    /// the line a CI job asserts on, and that is what it is for. Reach for
+    /// [`unchecked_reasons`](Self::unchecked_reasons) where a service takes one
+    /// waiver deliberately and wants the gate to keep holding for everything
+    /// else.
+    ///
+    /// [`examples/unchecked.rs`]: https://github.com/getkono/kynos/blob/master/crates/kynos/examples/unchecked.rs
     #[must_use]
     pub fn has_unchecked(&self) -> bool {
         !self.unchecked.is_empty()
@@ -639,6 +677,48 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
                 .mounted
                 .iter()
                 .any(|mounted| !mounted.unchecked_layers.is_empty())
+    }
+
+    /// Every reason a waiver has been taken in this router, deduplicated.
+    ///
+    /// The gate [`has_unchecked`](Self::has_unchecked) cannot be. A service
+    /// that serves a directory of static files has taken one waiver on purpose;
+    /// asserting `!has_unchecked()` there means deleting the assertion for
+    /// *everything*, which is how a check meant to catch an accidental
+    /// `layer_unchecked` stops catching one.
+    ///
+    /// ```no_run
+    /// # use kynos::{Router, openapi::OpaqueReason};
+    /// # fn router() -> Router<()> { todo!() }
+    /// // Anything waived except a file tree is a mistake.
+    /// assert_eq!(router().unchecked_reasons(), [OpaqueReason::StaticAssets]);
+    /// ```
+    ///
+    /// The order is the order the waivers were taken, which is stable for one
+    /// router and is not something to depend on across two.
+    #[must_use]
+    pub fn unchecked_reasons(&self) -> Vec<OpaqueReason> {
+        let mut reasons: Vec<OpaqueReason> = Vec::new();
+
+        let mut record = |reason: OpaqueReason| {
+            if !reasons.contains(&reason) {
+                reasons.push(reason);
+            }
+        };
+
+        for route in &self.unchecked.routes {
+            record(route.record.reason.clone());
+        }
+        if !self.unchecked.layers.is_empty()
+            || self
+                .mounted
+                .iter()
+                .any(|mounted| !mounted.unchecked_layers.is_empty())
+        {
+            record(OpaqueReason::UntypedLayer);
+        }
+
+        reasons
     }
 }
 
