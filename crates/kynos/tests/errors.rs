@@ -32,7 +32,7 @@ use kynos::{
         media::OctetStream,
         params::{header::Headers as HeaderExtractor, path::Path, query::Query},
     },
-    response::negotiate::Accept,
+    response::{negotiate::Accept, range::Range},
     security::{
         Authenticates, Authenticator,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
@@ -140,6 +140,18 @@ fn negotiation_rejects_with_the_negotiation_type() {
 fn the_connection_extractors_cannot_fail() {
     head_rejects_with::<Infallible, (), MatchedPath>();
     head_rejects_with::<Infallible, (), ConnectInfo>();
+}
+
+/// Reading a `Range` cannot fail, which is the surprising half of that design.
+///
+/// RFC 9110 section 14.2 answers every unusable `Range` -- an unknown unit, a
+/// malformed value, a method for which range handling is not defined -- by
+/// ignoring the field, so there is no request this extractor can refuse. The
+/// 416 belongs to `RangeRejection`, which `Range::apply` raises once the field
+/// meets a representation and which a handler names in its return type.
+#[test]
+fn a_range_extractor_cannot_reject() {
+    head_rejects_with::<Infallible, (), Range<Binary<OctetStream>>>();
 }
 
 /// Injection is synchronous and infallible by construction; a fallible provider

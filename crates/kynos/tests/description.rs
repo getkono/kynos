@@ -10,6 +10,11 @@
 //! the same associated types by construction, and the *behaviour* is already
 //! covered by `limits.rs` and `interceptors.rs`. This is about which operations
 //! the declaration reaches.
+//!
+//! The second half of the file is the same question one level down: which
+//! *statuses* within an operation a declaration reaches. A response field
+//! declared on a status that gives it no meaning is the same silent error as an
+//! interceptor declared on an operation it does not cover.
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
@@ -17,9 +22,14 @@ use std::collections::BTreeSet;
 
 use kynos::{
     Router,
+    error::rejection::RangeRejection,
+    extract::{body::binary::Binary, media::OctetStream},
     middleware::limits::{BodySize, Timeout},
     openapi::Document,
-    response::status::NoContent,
+    response::{
+        range::{Range, Ranged},
+        status::NoContent,
+    },
     router::group::Group,
 };
 
@@ -179,4 +189,133 @@ fn nothing_declares_a_limits_status_when_no_limit_is_mounted() {
 
     assert!(declaring(&document, "413").is_empty());
     assert!(declaring(&document, "504").is_empty());
+}
+
+// --- Scope in a status ------------------------------------------------------
+//
+// The same failure on a different axis. An interceptor's declaration can reach
+// operations it does not cover; a response field's can reach statuses it has no
+// meaning on. RFC 9110 section 14.4 says `Content-Range` "has no meaning for
+// status codes that do not explicitly describe its semantic", and only 206 and
+// 416 do — so a `WithHeaders` group, which joins every response the body
+// declares, is the wrong tool and these assertions are what say so.
+
+/// Serves a fixed recording, resumably.
+#[kynos::get("/recordings/current")]
+async fn recording(
+    range: Range<Binary<OctetStream>>,
+) -> Result<Ranged<Binary<OctetStream>>, RangeRejection> {
+    range.apply(Binary::new(&b"0123456789"[..]))
+}
+
+/// The control: the same body, without the range.
+#[kynos::get("/recordings/whole")]
+async fn whole_recording() -> Binary<OctetStream> {
+    Binary::new(&b"0123456789"[..])
+}
+
+/// The one operation under `path`.
+fn operation(document: &Document, path: &str) -> kynos::openapi::Operation {
+    let item = document.paths.0.get(path).expect("a described path");
+    let (_, operation) = item.operations().next().expect("one operation");
+    operation.clone()
+}
+
+/// The header names declared on `status`, or `None` when it is not declared.
+fn declared_headers(operation: &kynos::openapi::Operation, status: &str) -> Option<Vec<String>> {
+    let kynos::openapi::RefOr::Item(response) = operation.responses.responses.get(status)? else {
+        panic!("{status} is described as a `$ref`");
+    };
+    Some(response.headers.keys().cloned().collect())
+}
+
+/// The `Range` field is a parameter, which is the whole reason it is not
+/// `Accept`: a consumer that cannot see it does not know the operation resumes.
+#[test]
+fn a_ranged_operation_declares_the_field_it_reads() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![recording, whole_recording])
+        .openapi()
+        .expect("a describable router");
+
+    let ranged = operation(&document, "/recordings/current");
+    let declared = ranged.parameters.iter().find(
+        |parameter| matches!(parameter, kynos::openapi::RefOr::Item(item) if item.name == "Range"),
+    );
+    let Some(kynos::openapi::RefOr::Item(parameter)) = declared else {
+        panic!("the `Range` field is declared, and inline rather than as a `$ref`");
+    };
+
+    assert_eq!(parameter.location, kynos::openapi::ParameterIn::Header);
+    assert_ne!(parameter.required, Some(true));
+
+    let kynos::openapi::Schema::Object(schema) = parameter.schema().expect("a schema") else {
+        panic!("described by a boolean schema");
+    };
+    let pattern = schema.pattern.clone().expect("a pattern");
+    assert!(pattern.starts_with("^bytes="), "{pattern}");
+
+    // The control declares no such parameter.
+    let whole = operation(&document, "/recordings/whole");
+    assert!(whole.parameters.is_empty());
+}
+
+/// The three statuses, and each field on exactly the statuses that give it a
+/// meaning.
+#[test]
+fn a_ranged_operation_declares_each_field_on_the_statuses_that_carry_it() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![recording, whole_recording])
+        .openapi()
+        .expect("a describable router");
+
+    let ranged = operation(&document, "/recordings/current");
+
+    // A set: which statuses are declared is the contract, and the order the map
+    // holds them in is the order they were contributed.
+    let statuses: BTreeSet<&str> = ranged
+        .responses
+        .responses
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(statuses, BTreeSet::from(["200", "206", "416"]));
+
+    assert_eq!(
+        declared_headers(&ranged, "200"),
+        Some(vec!["Accept-Ranges".to_owned()])
+    );
+    assert_eq!(
+        declared_headers(&ranged, "206"),
+        Some(vec!["Accept-Ranges".to_owned(), "Content-Range".to_owned()])
+    );
+    assert_eq!(
+        declared_headers(&ranged, "416"),
+        Some(vec!["Content-Range".to_owned()])
+    );
+}
+
+/// The control: an operation that does not range advertises nothing.
+///
+/// Without it every assertion above would pass against a `describe` pass that
+/// put `Accept-Ranges` on every response in the service.
+#[test]
+fn an_operation_that_does_not_range_advertises_no_unit() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![recording, whole_recording])
+        .openapi()
+        .expect("a describable router");
+
+    let whole = operation(&document, "/recordings/whole");
+
+    assert_eq!(
+        whole
+            .responses
+            .responses
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["200"])
+    );
+    assert_eq!(declared_headers(&whole, "200"), Some(Vec::new()));
 }
