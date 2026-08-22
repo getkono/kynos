@@ -94,15 +94,24 @@ the graph.
   That is the shape of the escape hatch rather than an exception to the rule,
   and it is the only one.
 
-  The `Stream` clause has an exception, and it is enumerated for the reason the
-  runtime allowance is: a rule that is false is worth less than a list that is
-  checkable.
+  The clause is about the surface, so a hand-rolled `Stream` on a type nobody
+  can name is not an exception to it. Two exist and both are the same shape:
+  [`Framed<S>`](../crates/kynos/src/response/stream/json.rs) and
+  [`Records<S>`](../crates/kynos/src/response/stream/sse.rs) each take
+  `S: Stream` as a bound and stay private, which is only possible because the
+  caller brought the stream. What is left is the exception, and it is
+  enumerated for the reason the runtime allowance is: a rule that is false is
+  worth less than a list that is checkable.
 
   | Site | Hand-rolls | Why no bound can carry it |
   | --- | --- | --- |
-  | [`extract/body/json_lines.rs`](../crates/kynos/src/extract/body/json_lines.rs) | `Stream` for `Records<T>`, the streamed JSON request body | a *request* body's stream is produced by Kynos rather than supplied by the handler, so there is no caller type to bound. The response half is the contrast: it takes `S: Stream` as a bound and keeps its own `Framed<S>` private, which is only possible because the caller brought the stream |
+  | [`extract/body/json_lines/records.rs`](../crates/kynos/src/extract/body/json_lines/records.rs) | `Stream` for the public `Records<T>`, the streamed JSON request body | a *request* body's stream is produced by Kynos rather than supplied by the handler, so there is no caller type to bound |
 
-  **One row, and the count is the check.**
+  **One public row, three sites, and the count is the check** — the count runs
+  in [`nfr.md`](nfr.md#workspace). The two `Records` are unrelated types that
+  ended up sharing a name: the private one frames SSE events on the way out,
+  the public one decodes JSON records on the way in, and only the second is
+  ever written in a handler signature.
 - `Send`-ness is decided once, at the runtime boundary — never per-trait, and
   never as a bound on a handler.
 - No lifetimes in handler signatures. Generics that exist for performance stay
@@ -171,7 +180,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | Percent-encoding | `percent-encoding` | [`__private/uri.rs`](../crates/kynos/src/__private/uri.rs) | built |
 | Errors | `thiserror` | ambient | built |
 | Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | built |
-| Streaming bodies | `futures-core` | [`response/stream/`](../crates/kynos/src/response/stream/), [`extract/body/json_lines.rs`](../crates/kynos/src/extract/body/json_lines.rs), [`http/body.rs`](../crates/kynos/src/http/body.rs), gated on `openapi32` | built |
+| Streaming bodies | `futures-core` | [`response/stream/`](../crates/kynos/src/response/stream/), [`extract/body/json_lines/`](../crates/kynos/src/extract/body/json_lines/), [`http/body.rs`](../crates/kynos/src/http/body.rs), gated on `openapi32` | built |
 | JSON | `serde_json` | ambient with `serde` | built |
 | Form codec | `serde_urlencoded` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs) | built |
 | Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | built |
