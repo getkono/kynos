@@ -220,13 +220,23 @@ impl ContentDisposition {
 /// the second is the escape Appendix D says some recipients mishandle, so
 /// neither is worth spelling.
 ///
+/// `%` does not survive either, and for a reason that is about the *pair* of
+/// parameters rather than about the grammar. Appendix D: *avoid including the
+/// percent character followed by two hexadecimal characters (e.g., %A9) in the
+/// filename parameter, since some existing implementations consider it to be an
+/// escape character, while others will pass it through unchanged.* Leaving it
+/// intact makes the fallback equal to an otherwise-ASCII name, which suppresses
+/// `filename*` — so the two readings of `50%20off.pdf` have nothing to be
+/// settled by. Replacing it costs one substituted character and buys the
+/// starred parameter that says exactly which name was meant.
+///
 /// One `_` per `char` rather than per byte, so a name of non-ASCII characters
 /// keeps its length rather than tripling it.
 fn ascii_fallback(filename: &str) -> String {
     filename
         .chars()
         .map(|character| match character {
-            '"' | '\\' => '_',
+            '"' | '\\' | '%' => '_',
             ' ' => ' ',
             _ if character.is_ascii_graphic() => character,
             _ => '_',
