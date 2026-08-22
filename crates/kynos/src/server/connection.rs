@@ -107,8 +107,8 @@ where
             .header_read_timeout(config.http1.header_read_timeout)
             .max_buf_size(config.http1.max_buffer_size)
             .timer(TokioTimer::new());
-        if config.http1.max_headers != 100 {
-            http1.max_headers(config.http1.max_headers);
+        if let Some(max_headers) = crate::server::protocol::forwarded_max_headers(&config.http1) {
+            http1.max_headers(max_headers);
         }
     }
     #[cfg(feature = "http2")]

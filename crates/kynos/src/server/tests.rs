@@ -1069,3 +1069,26 @@ fn request_http1_from(address: std::net::SocketAddr) -> (std::net::SocketAddr, S
         .expect("response reads");
     (client_address, response)
 }
+
+/// The header cap the driver is told about is the one that was configured.
+///
+/// `Http1Config::default` documents 100 and the forwarding branch skipped
+/// exactly that value, so Kynos's own default was an alias for a hyper constant
+/// Kynos does not own. The two agree today; nothing makes them keep agreeing,
+/// and an explicit `max_headers(100)` pinned nothing at all.
+///
+/// A sweep rather than one case, because the defect was a value-dependent
+/// branch and a single row would have been the wrong one.
+#[cfg(feature = "http1")]
+#[test]
+fn the_configured_http1_header_cap_is_the_one_the_driver_is_told() {
+    for configured in [1, 8, 64, 99, 100, 101, 1024] {
+        let config = Http1Config::default().max_headers(configured);
+
+        assert_eq!(
+            crate::server::protocol::forwarded_max_headers(&config),
+            Some(configured),
+            "a cap of {configured} must reach the driver"
+        );
+    }
+}
