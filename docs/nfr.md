@@ -172,6 +172,7 @@ guarantee. It has already earned its keep twice — see
 | reliability | Graceful shutdown drains all in-flight requests with zero dropped responses | Integration tests in `crates/kynos/src/server/tests.rs` covering HTTP/1 drain, HTTP/2 stream drain, TLS handshake cancellation, and timeout exhaustion | `enforced` |
 | reliability | Backpressure is bounded by default via connection count, queue depth and timeouts | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting a request past the concurrency cap is shed with 503 rather than queued; a load test at 2× capacity for the memory bound | `enforced` for the shedding; `planned` for the load test |
 | reliability | HTTP/2 request-body flow control is released as the body is consumed, not as frames arrive | Load test streaming a large body to a slow consumer, asserting the receive window closes | `blocked-on-dependency` |
+| reliability | A streamed request body is decoded as it arrives rather than after it has been collected | [`extract/body/json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) reading a body delivered one frame per byte, and every frame boundary of a fixed body | `enforced` for a body declaring a `Content-Length`; `blocked-on-impl` under `BodySize` for a chunked one |
 | performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `kynos-bench` |
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `kynos-bench` |
 | compatibility | `Listener::Tokio` is the only public item naming a tokio type | `cargo-public-api` assertion over the framework surface | `needs-tooling` |
@@ -197,6 +198,19 @@ frame is polled rather than when the body is consumed, so the receive window
 never closes on a slow consumer. Driving `h2` directly is the only remedy, and
 [`architecture.md`](architecture.md#dependencies) records why that trade is not
 taken today.
+
+The streaming row above it is the same family of fact one layer up, and it is
+split because half of it holds. A request declaring a `Content-Length` is
+decided from the head and its body passes
+[`BodySize`](../crates/kynos/src/middleware/limits.rs) untouched, so
+`Records<T>` receives it a frame at a time. A chunked request declares no
+length, so a running count is the only bound there is and the interceptor
+materialises the whole body before the handler is entered — records still
+arrive one at a time, and nothing is saved. Closing it needs a body that can be
+rebuilt as a capped *stream* rather than only from bytes, which is the one
+thing the erased body does not offer today. The limit is documented where the
+decision is made rather than only here, because that is where someone mounting
+a cap will meet it.
 
 ## Dependencies
 
