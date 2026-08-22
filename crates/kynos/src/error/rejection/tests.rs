@@ -156,6 +156,49 @@ fn only_an_unsatisfiable_range_declares_a_complete_length() {
     }
 }
 
+/// The 416 it declares carries the field it sends.
+///
+/// The rejection describes its own header where `AuthRejection` does not,
+/// because the shape is fixed: there is one `unsatisfied-range` grammar and no
+/// per-operation string for a `Describe` to fill in. That is what lets the 416
+/// travel with the return type and be declared only where one can arise.
+#[test]
+fn the_declared_416_carries_the_field_it_sends() {
+    use crate::{response::Responses, schema::registry::Registry};
+
+    let declared = RangeRejection::responses(&mut Registry::default());
+    let kynos_openapi::RefOr::Item(response) =
+        declared.responses.get("416").expect("the only status")
+    else {
+        panic!("described as a `$ref`");
+    };
+
+    assert_eq!(
+        declared.responses.keys().collect::<Vec<_>>(),
+        ["416"],
+        "a range declares one status and no more"
+    );
+
+    let kynos_openapi::RefOr::Item(header) = response
+        .headers
+        .get("Content-Range")
+        .expect("RFC 9110 section 15.5.17 asks a 416 to state the complete length")
+    else {
+        panic!("the header is described as a `$ref`");
+    };
+    assert_eq!(header.required, Some(true));
+
+    // The 401 is the contrast: only the scheme knows the challenge, so `Auth`
+    // declares that header and the rejection cannot.
+    let challenged = AuthRejection::responses(&mut Registry::default());
+    let kynos_openapi::RefOr::Item(unauthorized) =
+        challenged.responses.get("401").expect("the 401")
+    else {
+        panic!("described as a `$ref`");
+    };
+    assert!(unauthorized.headers.is_empty());
+}
+
 #[test]
 fn authentication_and_authorization_are_different_statuses() {
     let observed = [AuthRejection::unauthenticated(), AuthRejection::Forbidden];

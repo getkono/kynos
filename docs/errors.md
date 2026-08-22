@@ -124,10 +124,22 @@ neither, but only one of them means its serializer is wrong.
 [`Range<T>`](../crates/kynos/src/response/range/mod.rs) is infallible — RFC 9110
 §14.2 answers every unusable `Range` field by ignoring it, so a bad field is a
 200 and not a 400 — and the 416 arises only once the field meets a
-representation it cannot be applied to. It is also the second rejection whose
-response is more than a problem document: §15.5.17 asks a 416 to state the
-representation's length in `Content-Range`, so the rejection carries that length
-and writes the field itself, as `AuthRejection` does for `WWW-Authenticate`.
+representation it cannot be applied to, in `Range::apply`.
+
+That is why the argument declares nothing but the parameter. A `Range<T>`
+contributes no rejection, so the 416 reaches the document through the handler's
+return type and is declared on exactly the operations that can produce one; a
+handler that reads the field and answers whole, which §14.2 allows outright,
+advertises no 416 at all. Declaring it from the argument instead would be the
+"413 no operation could produce" shape [`testing.md`](testing.md) records.
+
+It is also the second rejection whose response is more than a problem document:
+§15.5.17 asks a 416 to state the representation's length in `Content-Range`, so
+the rejection carries that length and writes the field itself, as
+`AuthRejection` does for `WWW-Authenticate`. Unlike `AuthRejection` it also
+*describes* that field, because the `unsatisfied-range` grammar is fixed and
+there is no per-operation string for a `Describe` to supply — which is what lets
+the header travel with the status wherever the status is declared from.
 
 An extractor that cannot fail says so with `Infallible`, whose `Responses`
 implementation contributes nothing:

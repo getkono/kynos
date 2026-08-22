@@ -71,7 +71,7 @@ pub mod spec;
 
 use core::convert::Infallible;
 
-use kynos_openapi::{Parameter, StatusPattern};
+use kynos_openapi::Parameter;
 
 use crate::{
     error::rejection::RangeRejection,
@@ -252,20 +252,19 @@ impl<C: Sync, T> FromRequestParts<C> for Range<T> {
     }
 }
 
-/// Declares the `Range` parameter, and the 416 the handler can answer with.
+/// Declares the `Range` parameter, and nothing else.
 ///
-/// The 416 is declared here rather than left to the return type because only a
-/// `Describe` can file a header under a status: a [`Responses`] implementation
-/// is handed a [`Registry`] and not the operation, so `Content-Range` would
-/// have nowhere to go. Its responses are added *before* its header, for the
-/// reason `security::auth` gives — `add_response_header` invents a thinly
-/// described response when the operation declares none, and merging cannot
-/// replace one that already exists.
+/// **No 416.** Reading the field cannot fail, so the argument contributes no
+/// rejection: the 416 originates in [`apply`](Range::apply) and reaches the
+/// document through the handler's return type, where
+/// `Responses for Result<Ranged<T>, RangeRejection>` unions the two sides. That
+/// is what makes it declared on exactly the operations that can produce one —
+/// a handler that reads the field and answers whole, which RFC 9110 section
+/// 14.2 allows outright, advertises no status it cannot reach.
 ///
-/// That does mean an argument declares a status its own `Rejection` cannot
-/// raise. It is reachable all the same: [`Ranged<T>`] has no constructor but
-/// [`apply`](Range::apply), whose error *is* the 416, so a handler that reads a
-/// `Range<T>` and answers with a `Ranged<T>` went through it.
+/// The `T: Rangeable` bound earns its place here even though nothing below
+/// reads it: it is what puts the refusal on the argument, where a reader is
+/// looking, rather than on the return type.
 impl<T: Rangeable> Describe for Range<T> {
     fn describe(operation: &mut OperationCx<'_>) {
         operation.add_parameter(
@@ -276,15 +275,6 @@ impl<T: Rangeable> Describe for Range<T> {
                      is sent.",
                 )
                 .with_example("bytes=0-1023"),
-        );
-
-        let responses = RangeRejection::responses(operation.registry());
-        operation.add_responses(responses);
-
-        operation.add_response_header(
-            StatusPattern::Code(StatusCode::RANGE_NOT_SATISFIABLE.as_u16()),
-            "Content-Range",
-            ContentRange::unsatisfied_header(),
         );
     }
 }

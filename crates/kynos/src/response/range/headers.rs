@@ -189,6 +189,10 @@ impl ContentRange {
     /// Separate from [`satisfied_header`](Self::satisfied_header) because the
     /// two statuses carry different grammars, so a single schema would have to
     /// admit both and constrain neither.
+    ///
+    /// Read by [`RangeRejection`](crate::error::rejection::RangeRejection)'s own
+    /// `Responses`, so the field is declared wherever the 416 is and nowhere
+    /// else.
     #[must_use]
     pub fn unsatisfied_header() -> Header {
         described(
@@ -215,8 +219,8 @@ impl HeaderParams for ContentRange {
     /// this field has two grammars keyed by one. The 206 is the shape a
     /// [`Ranged`](super::Ranged) response carries, so it is the one this
     /// answers with; the 416 shape reaches the description through
-    /// [`unsatisfied_header`](ContentRange::unsatisfied_header) and
-    /// `OperationCx::add_response_header`, which does know the status.
+    /// [`unsatisfied_header`](ContentRange::unsatisfied_header), on the
+    /// rejection that produces that status.
     fn response_headers(registry: &mut Registry) -> kynos_openapi::Map<RefOr<Header>> {
         let _ = registry;
 

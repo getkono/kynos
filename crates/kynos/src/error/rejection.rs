@@ -477,9 +477,38 @@ impl IntoResponse for RangeRejection {
     }
 }
 
+/// The 416, carrying the field it sends.
+///
+/// Declared here rather than by the argument that reads the `Range`, which is
+/// where [`AuthRejection`] and `Auth<S>` differ: reading a credential can fail,
+/// so a 401 belongs to the extractor, and only the scheme knows the challenge
+/// string, so only `Auth::describe` can supply it. Reading a `Range` cannot
+/// fail. The 416 originates in [`Range::apply`](crate::response::range::Range::apply),
+/// so it reaches the document through the handler's return type — declared
+/// exactly on the operations that can produce it, and never on one that reads
+/// the field and answers whole.
+///
+/// The header rides along because its shape is fixed. There is one
+/// `unsatisfied-range` grammar and no per-operation string to fill in, so the
+/// rejection can describe the response it sends without help.
 impl Responses for RangeRejection {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        problem_responses(registry, <RangeRejection as IntoProblem>::statuses())
+        let mut responses =
+            problem_responses(registry, <RangeRejection as IntoProblem>::statuses());
+
+        let unsatisfiable = StatusCode::RANGE_NOT_SATISFIABLE.as_u16().to_string();
+        if let Some(kynos_openapi::RefOr::Item(response)) =
+            responses.responses.get_mut(&unsatisfiable)
+        {
+            response.headers.insert(
+                "Content-Range".to_owned(),
+                kynos_openapi::RefOr::Item(
+                    crate::response::range::headers::ContentRange::unsatisfied_header(),
+                ),
+            );
+        }
+
+        responses
     }
 }
 
