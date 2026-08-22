@@ -25,6 +25,8 @@
 //! demonstrations live in `crates/kynos/tests/derives.rs` and the framework's
 //! examples; `AGENTS.md` records the carve-out.
 
+#[cfg(feature = "assets")]
+mod assets;
 mod derive;
 mod route;
 
@@ -160,6 +162,37 @@ pub fn routes(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn path(input: TokenStream) -> TokenStream {
     route::path::expand_path(input)
+}
+
+/// Compiles a directory into the binary as a described asset set.
+///
+/// ```ignore
+/// kynos::assets! {
+///     /// The built single-page app.
+///     pub struct Site;
+///     dir = "dist",
+///     exclude = [".map"],
+///     warn_over = "4MiB",
+/// }
+/// ```
+///
+/// `dir` resolves against `CARGO_MANIFEST_DIR`. Every file becomes an
+/// `include_bytes!`, so changing one rebuilds the crate; *adding* or *removing*
+/// one does not, which a `cargo::rerun-if-changed` line in `build.rs` closes.
+///
+/// A file whose name no path template can express is a compile error naming it,
+/// because a static asset Kynos cannot describe is one it will not serve.
+/// Dotfiles and symlinks are skipped: the first keeps `.git` out of a binary,
+/// the second keeps a set inside its own directory.
+///
+/// An embedded set past 2 MiB emits a compiler warning at the `dir` literal.
+/// Raise the threshold with `warn_over = "8MiB"`, or turn it off with
+/// `warn_over = "none"`. Under `-D warnings` it becomes an error, which is
+/// arguably right and is exactly why the override exists.
+#[cfg(feature = "assets")]
+#[proc_macro]
+pub fn assets(item: TokenStream) -> TokenStream {
+    assets::expand(item)
 }
 
 /// Describes a type as JSON Schema.

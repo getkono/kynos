@@ -255,6 +255,38 @@ become one; it reaches the tree only as a transitive dependency of `rcgen`,
 which is itself a dev-dependency of the TLS example. It used to arrive through
 `cookie` as well, which is gone.
 
+### Three dependencies static assets and caching would want, refused
+
+Each would be a *table* Kynos can write down and test as a closed enumeration,
+which is the form this project prefers to a database it cannot check.
+
+**No media-type guesser.** `mime_guess` bundles a generated database that only
+sampling can verify. The table in
+[`router/assets/media.rs`](../crates/kynos/src/router/assets/media.rs) is the
+whole set, so a test asserts it is closed, sorted and free of duplicates — and
+the emitted description prints whatever it resolved to, which makes a wrong row
+visible rather than silent.
+[`mime_names`](../crates/kynos-openapi/src/model/body/mime_names.rs) already
+records why a media type is a `&'static str` here rather than a parsed `Mime`.
+
+**No hasher.** An entity tag is a cache validator rather than a security
+primitive: RFC 9110 section 8.8.3 asks only that it change when the
+representation does, and nothing verifies it. `blake3` and `sha2` both arrive
+with the `unsafe` this workspace forbids, for a 64-bit token. FNV-1a with the
+length folded in is computed in `kynos-macros` at expansion time and never runs
+in a served request.
+
+**No HTTP-date crate.** Kynos sends no `Last-Modified` and reads no
+`If-Modified-Since`, so there is no date to render or parse. That is itself a
+decision: a strong entity tag is the stronger validator, and sending a date
+obliges honouring a request that carries one back. Sending neither half is
+consistent; sending one is not.
+
+`moka` and `jsonwebtoken` are a fourth kind. Both are named by one example and
+by nothing under `src/`, which is the standing `rcgen`, `listenfd` and
+`tracing-subscriber` already have: this table governs what Kynos depends on, not
+what an example demonstrates.
+
 ### Scope edges
 
 **HTTP/3 and QUIC are out.** The server contract is HTTP/1 and HTTP/2. If

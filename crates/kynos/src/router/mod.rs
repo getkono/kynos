@@ -5,6 +5,8 @@
 //! operations sharing a prefix, [`operation`] the description being assembled,
 //! [`policy`] the application-wide fallbacks, and [`service`] the built result.
 
+#[cfg(feature = "assets")]
+pub mod assets;
 pub mod endpoint;
 pub mod group;
 pub mod operation;

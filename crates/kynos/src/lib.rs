@@ -149,6 +149,8 @@ pub use kynos_macros::{
 pub use kynos_macros::CookieParams;
 #[cfg(all(feature = "macros", feature = "multipart"))]
 pub use kynos_macros::MultipartForm;
+#[cfg(all(feature = "macros", feature = "assets"))]
+pub use kynos_macros::assets;
 #[cfg(all(feature = "macros", feature = "openapi32"))]
 pub use kynos_macros::query;
 
