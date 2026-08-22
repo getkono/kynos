@@ -93,6 +93,16 @@ the graph.
   [`UncheckedService`](../crates/kynos/src/unchecked.rs) names a boxed future.
   That is the shape of the escape hatch rather than an exception to the rule,
   and it is the only one.
+
+  The `Stream` clause has an exception, and it is enumerated for the reason the
+  runtime allowance is: a rule that is false is worth less than a list that is
+  checkable.
+
+  | Site | Hand-rolls | Why no bound can carry it |
+  | --- | --- | --- |
+  | [`extract/body/json_lines.rs`](../crates/kynos/src/extract/body/json_lines.rs) | `Stream` for `Records<T>`, the streamed JSON request body | a *request* body's stream is produced by Kynos rather than supplied by the handler, so there is no caller type to bound. The response half is the contrast: it takes `S: Stream` as a bound and keeps its own `Framed<S>` private, which is only possible because the caller brought the stream |
+
+  **One row, and the count is the check.**
 - `Send`-ness is decided once, at the runtime boundary — never per-trait, and
   never as a bound on a handler.
 - No lifetimes in handler signatures. Generics that exist for performance stay
@@ -150,7 +160,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | Runtime, sockets, timers, signals | `tokio` | `server/` | built |
 | Request and response types | `http` | ambient | built |
 | Byte buffers | `bytes` | ambient | built |
-| Body trait and erasure | `http-body`, `http-body-util` | [`http/body.rs`](../crates/kynos/src/http/body.rs), [`extract/body/mod.rs`](../crates/kynos/src/extract/body/mod.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
+| Body trait and erasure | `http-body`, `http-body-util` | [`http/body.rs`](../crates/kynos/src/http/body.rs), [`extract/body/`](../crates/kynos/src/extract/body/), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
 | Protocol driver, HTTP/1 and HTTP/2 | `hyper` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs), [`http/body.rs`](../crates/kynos/src/http/body.rs) | built |
 | tokio adapters for the driver | `hyper-util` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs) | built |
 | HTTP/1 parsing | `httparse` | never — reached through `hyper` | built |
@@ -161,7 +171,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | Percent-encoding | `percent-encoding` | [`__private/uri.rs`](../crates/kynos/src/__private/uri.rs) | built |
 | Errors | `thiserror` | ambient | built |
 | Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | built |
-| Streaming bodies | `futures-core` | [`response/stream/`](../crates/kynos/src/response/stream/), [`http/body.rs`](../crates/kynos/src/http/body.rs), gated on `openapi32` | built |
+| Streaming bodies | `futures-core` | [`response/stream/`](../crates/kynos/src/response/stream/), [`extract/body/json_lines.rs`](../crates/kynos/src/extract/body/json_lines.rs), [`http/body.rs`](../crates/kynos/src/http/body.rs), gated on `openapi32` | built |
 | JSON | `serde_json` | ambient with `serde` | built |
 | Form codec | `serde_urlencoded` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs) | built |
 | Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | built |
