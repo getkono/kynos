@@ -39,7 +39,7 @@ use kynos::{
     middleware::{
         cors::Cors,
         limits::{BodySize, Concurrency, Timeout},
-        rate_limit::{Decision, RateLimit, RateLimitPolicy},
+        rate_limit::{Decision, QuotaPolicy, RateLimit, RateLimitPolicy, ServiceLimit},
         request_id::RequestId,
     },
     prelude::*,
@@ -47,6 +47,7 @@ use kynos::{
         headers::WithHeaders,
         status::{NoContent, Redirect},
     },
+    router::operation::Route,
     security::{
         Authenticates, Authenticator,
         auth::{Auth, MaybeAuth},
@@ -203,22 +204,47 @@ impl Authenticates<ServiceKey> for App {
 }
 
 /// A rate limit that allows the first request and denies afterwards.
-#[derive(Clone, Debug)]
-struct AllowsOnce(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+#[derive(Clone, Debug, Default)]
+struct AllowsOnce {
+    seen: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    policies: Vec<QuotaPolicy>,
+}
+
+impl AllowsOnce {
+    fn new() -> Self {
+        Self {
+            seen: std::sync::Arc::default(),
+            policies: vec![QuotaPolicy {
+                name: "fixture".into(),
+                quota: 1,
+                window: Some(Duration::from_secs(60)),
+                unit: kynos::middleware::rate_limit::QuotaUnit::Requests,
+            }],
+        }
+    }
+
+    fn limit(remaining: u64) -> ServiceLimit {
+        ServiceLimit {
+            name: "fixture".into(),
+            quota: 1,
+            remaining,
+            reset: Duration::from_secs(60),
+        }
+    }
+}
 
 impl RateLimitPolicy<App> for AllowsOnce {
-    async fn check(&self, _: &kynos::http::Request, _: &App) -> Decision {
-        let seen = self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    fn advertised(&self) -> &[QuotaPolicy] {
+        &self.policies
+    }
+
+    async fn check(&self, _: &kynos::http::Request, _: Route<'_>, _: &App) -> Decision {
+        let seen = self.seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         if seen == 0 {
-            Decision::Allow {
-                remaining: 0,
-                reset: Duration::from_secs(60),
-            }
+            Decision::allow(Self::limit(0))
         } else {
-            Decision::Deny {
-                retry_after: Duration::from_secs(60),
-            }
+            Decision::deny(Duration::from_secs(60), Self::limit(0))
         }
     }
 }
@@ -375,7 +401,7 @@ fn service() -> kynos::Result<kynos::router::service::Service<App>> {
         )
         .group(
             kynos::router::group::Group::<App>::new("/")
-                .intercept(RateLimit::new(1, AllowsOnce(std::sync::Arc::default())))
+                .intercept(RateLimit::new(AllowsOnce::new()))
                 .mount(kynos::routes![under_rate_limit]),
         )
         .build(App)
