@@ -1,16 +1,16 @@
 use kynos_openapi::Method;
 
-use super::{CorsConfig, Preflight};
+use super::{CorsConfig, Preflight, Scope};
 use crate::{
     http::{HeaderValue, Request, StatusCode, header},
     router::policy::FallbackPolicy,
 };
 
-/// A preflight over the methods a path actually declares.
+/// A preflight over the methods a path actually declares, all covered by one
+/// configuration.
 fn preflight(config: CorsConfig) -> Preflight {
     Preflight::new(
-        config,
-        &[Method::Get, Method::Delete],
+        vec![Scope::new(config, vec![Method::Get, Method::Delete])],
         HeaderValue::from_static("GET, DELETE"),
         FallbackPolicy::Problem,
     )

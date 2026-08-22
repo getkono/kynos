@@ -1037,6 +1037,16 @@ fn unique_tags(declared: &[kynos_openapi::Tag]) -> Vec<kynos_openapi::Tag> {
 /// the path — and `docs/middleware.md` says an interceptor covers the
 /// *operations* in its subtree, which a preflight is not. Observers still see
 /// it, because they sit outside the chain.
+/// One `Cors` mounted over a path, and the methods on that path it covers.
+///
+/// Borrowed rather than cloned: the identity of the `Arc` is what tells two
+/// mounted configurations apart, and a clone of the configuration cannot be
+/// compared once one of them can hold a predicate.
+type CoveringCors<'a, C> = (
+    &'a Arc<dyn ErasedInterceptor<C>>,
+    Vec<kynos_openapi::Method>,
+);
+
 fn install_preflight<C: Send + Sync + 'static>(
     paths: &mut [PathEntry<C>],
     method_not_allowed: &FallbackPolicy,
@@ -1050,30 +1060,51 @@ fn install_preflight<C: Send + Sync + 'static>(
             continue;
         }
 
-        // The configuration covering this path, and the methods it covers. An
-        // interceptor mounted on a group owning `GET /x` while the router owns
-        // `POST /x` advertises `GET` only, which is what keeps preflight and the
-        // description agreeing about what exists.
-        let mut config = None;
-        let mut covered = Vec::new();
+        // Every configuration covering this path, and the methods each one
+        // covers. An interceptor mounted on a group owning `GET /x` while the
+        // router owns `POST /x` advertises `GET` only, which is what keeps
+        // preflight and the description agreeing about what exists.
+        //
+        // More than one is reachable: a group's stack is checked against the
+        // router's and never against a sibling's, so two groups may cover one
+        // path with a `Cors` each. Grouped by the interceptor's identity, since
+        // that is what "the same `Cors`" means once a configuration can hold a
+        // predicate no comparison could see through.
+        let mut scopes: Vec<CoveringCors<'_, C>> = Vec::new();
 
         for operation in &entry.operations {
-            let found = operation
+            let Some(found) = operation
                 .interceptors
                 .iter()
-                .find_map(|interceptor| cors_config(interceptor));
+                .find(|interceptor| cors_config(interceptor).is_some())
+            else {
+                continue;
+            };
 
-            if let Some(found) = found {
-                config.get_or_insert_with(|| found.clone());
+            if let Some((_, covered)) = scopes
+                .iter_mut()
+                .find(|(mounted, _)| Arc::ptr_eq(mounted, found))
+            {
                 covered.push(operation.method);
+            } else {
+                scopes.push((found, vec![operation.method]));
             }
         }
 
-        let Some(config) = config else { continue };
+        if scopes.is_empty() {
+            continue;
+        }
+
+        let scopes = scopes
+            .into_iter()
+            .map(|(interceptor, covered)| {
+                let config = cors_config(interceptor).expect("a recognised CORS interceptor");
+                crate::middleware::cors::preflight::Scope::new(config.clone(), covered)
+            })
+            .collect();
 
         let preflight = crate::middleware::cors::preflight::Preflight::new(
-            config,
-            &covered,
+            scopes,
             entry.allow.clone(),
             method_not_allowed.clone(),
         );

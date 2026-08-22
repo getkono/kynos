@@ -28,13 +28,51 @@ const PREFLIGHT_VARIES: &[&str] = &[
     "access-control-request-headers",
 ];
 
+/// One `Cors` covering a path, and the methods on that path it covers.
+///
+/// A path can hold more than one: a `Group`'s stack is checked against the
+/// router's and never against a sibling's, so two groups may cover one path
+/// with a configuration each and still compile.
+pub(crate) struct Scope {
+    /// The configuration of the `Cors` covering these methods.
+    config: CorsConfig,
+    /// The methods on this path that this configuration actually covers, which
+    /// is what a proposed method is matched against.
+    covered: Vec<Method>,
+    /// The methods this scope advertises: the ones it covers, unless
+    /// `allow_methods` overrode them.
+    advertised: Vec<Method>,
+}
+
+impl Scope {
+    /// Records one configuration and the methods it covers.
+    pub(crate) fn new(config: CorsConfig, covered: Vec<Method>) -> Self {
+        // The override exists for a deployment fronting routes Kynos does not
+        // serve; without it the advertised set is what this scope declares, so
+        // preflight and the description cannot disagree.
+        let advertised = config.methods.clone().unwrap_or_else(|| covered.clone());
+
+        Self {
+            config,
+            covered,
+            advertised,
+        }
+    }
+
+    /// Whether this scope covers the method a preflight proposed.
+    fn covers(&self, proposed: &HeaderValue) -> bool {
+        self.covered.iter().any(|method| {
+            proposed
+                .as_bytes()
+                .eq_ignore_ascii_case(method.as_wire_str().as_bytes())
+        })
+    }
+}
+
 /// What a path answers an `OPTIONS` request with, once CORS covers it.
 pub(crate) struct Preflight {
-    /// The configuration of the `Cors` covering this path.
-    config: CorsConfig,
-    /// The methods this answer advertises: the ones actually declared on the
-    /// path, unless `allow_methods` overrode them.
-    methods: Vec<Method>,
+    /// Every `Cors` covering this path, in mount order.
+    scopes: Vec<Scope>,
     /// The `Allow` header a non-preflight `OPTIONS` carries, so that request
     /// keeps the answer it had before CORS was mounted.
     allow: HeaderValue,
@@ -45,31 +83,39 @@ pub(crate) struct Preflight {
 
 impl Preflight {
     /// Assembles the answer for one path.
-    pub(crate) fn new(
-        config: CorsConfig,
-        declared: &[Method],
-        allow: HeaderValue,
-        fallback: FallbackPolicy,
-    ) -> Self {
-        // The override exists for a deployment fronting routes Kynos does not
-        // serve; without it the advertised set is what the path declares, so
-        // preflight and the description cannot disagree.
-        let methods = config.methods.clone().unwrap_or_else(|| declared.to_vec());
+    ///
+    /// `scopes` is non-empty: a path with no CORS on it gets no `Preflight` at
+    /// all.
+    pub(crate) fn new(scopes: Vec<Scope>, allow: HeaderValue, fallback: FallbackPolicy) -> Self {
+        debug_assert!(!scopes.is_empty(), "a preflight with nothing covering it");
 
         Self {
-            config,
-            methods,
+            scopes,
             allow,
             fallback,
         }
+    }
+
+    /// The scope that answers a preflight proposing `method`.
+    ///
+    /// The one covering it, and otherwise the first — a proposed method no
+    /// scope covers is refused whichever configuration decides the origin,
+    /// since the advertised list will not name it either. Falling back rather
+    /// than answering nothing keeps the refusal legible in a browser console.
+    fn scope_for(&self, method: &HeaderValue) -> &Scope {
+        self.scopes
+            .iter()
+            .find(|scope| scope.covers(method))
+            .unwrap_or(&self.scopes[0])
     }
 
     /// Answers `request`.
     ///
     /// Implements the Fetch standard's preflight in order: a request that is not
     /// a preflight falls through to exactly the 405 the dispatcher would have
-    /// produced, an origin the configuration does not permit is answered with no
-    /// CORS header at all, and a permitted one gets the full set.
+    /// produced, an origin the covering configuration does not permit is
+    /// answered with no CORS header at all, and a permitted one gets the full
+    /// set.
     pub(crate) fn answer(&self, request: &Request) -> Response {
         let headers = request.headers();
 
@@ -84,6 +130,12 @@ impl Preflight {
             return self.not_a_preflight();
         };
 
+        // The proposed method picks the configuration, because that is the
+        // scope whose real response will carry — or withhold — the headers this
+        // answer is a promise about.
+        let scope = self.scope_for(requested_method);
+        let config = &scope.config;
+
         let mut response = Response::new(crate::http::body::Body::empty());
         *response.status_mut() = StatusCode::NO_CONTENT;
 
@@ -91,7 +143,7 @@ impl Preflight {
         // do is reuse a refusal for a different origin either.
         crate::middleware::vary_on(response.headers_mut(), PREFLIGHT_VARIES);
 
-        if !self.config.permits(origin) {
+        if !config.permits(origin) {
             // An absent header is how the protocol says no. Inventing a 403
             // would be a status no description declares, for a request that is
             // not an operation.
@@ -103,33 +155,33 @@ impl Preflight {
         // `*` only where credentials are off. The pair is refused while the
         // router is built, so this is a named-allow-list echo rather than a
         // fallback.
-        let allowed = if self.config.any_origin && !self.config.credentials {
+        let allowed = if config.any_origin && !config.credentials {
             HeaderValue::from_static("*")
         } else {
             origin.clone()
         };
         fields.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, allowed);
 
-        if self.config.credentials {
+        if config.credentials {
             fields.insert(
                 header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
                 HeaderValue::from_static("true"),
             );
         }
 
-        if let Some(methods) = self.advertised_methods() {
+        if let Some(methods) = advertised_methods(&scope.advertised) {
             fields.insert(header::ACCESS_CONTROL_ALLOW_METHODS, methods);
         }
 
-        if let Some(allowed) = self.advertised_headers(requested_method, headers) {
+        if let Some(allowed) = advertised_headers(config, headers) {
             fields.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, allowed);
         }
 
-        if let Some(max_age) = self.config.max_age.as_ref().and_then(seconds) {
+        if let Some(max_age) = config.max_age.as_ref().and_then(seconds) {
             fields.insert(header::ACCESS_CONTROL_MAX_AGE, max_age);
         }
 
-        if let Some(expose) = self.config.exposed() {
+        if let Some(expose) = config.exposed() {
             fields.insert(header::ACCESS_CONTROL_EXPOSE_HEADERS, expose);
         }
 
@@ -158,56 +210,50 @@ impl Preflight {
 
         response
     }
+}
 
-    /// `Access-Control-Allow-Methods`, as one field value.
-    fn advertised_methods(&self) -> Option<HeaderValue> {
-        if self.methods.is_empty() {
-            return None;
-        }
-
-        let joined = self
-            .methods
-            .iter()
-            .map(|method| method.as_wire_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        HeaderValue::from_str(&joined).ok()
+/// `Access-Control-Allow-Methods`, as one field value.
+fn advertised_methods(methods: &[Method]) -> Option<HeaderValue> {
+    if methods.is_empty() {
+        return None;
     }
 
-    /// `Access-Control-Allow-Headers`, as one field value.
-    ///
-    /// Under `allow_any_header` this is `*` when credentials are off, and the
-    /// verbatim echo of what was asked for when they are on — `*` is not a
-    /// wildcard on a credentialed response, so echoing is the only way to
-    /// answer one at all.
-    fn advertised_headers(
-        &self,
-        _requested_method: &HeaderValue,
-        request: &http::HeaderMap,
-    ) -> Option<HeaderValue> {
-        if self.config.any_header {
-            if self.config.credentials {
-                return request.get(header::ACCESS_CONTROL_REQUEST_HEADERS).cloned();
-            }
+    let joined = methods
+        .iter()
+        .map(|method| method.as_wire_str())
+        .collect::<Vec<_>>()
+        .join(", ");
 
-            return Some(HeaderValue::from_static("*"));
+    HeaderValue::from_str(&joined).ok()
+}
+
+/// `Access-Control-Allow-Headers`, as one field value.
+///
+/// Under `allow_any_header` this is `*` when credentials are off, and the
+/// verbatim echo of what was asked for when they are on — `*` is not a
+/// wildcard on a credentialed response, so echoing is the only way to
+/// answer one at all.
+fn advertised_headers(config: &CorsConfig, request: &http::HeaderMap) -> Option<HeaderValue> {
+    if config.any_header {
+        if config.credentials {
+            return request.get(header::ACCESS_CONTROL_REQUEST_HEADERS).cloned();
         }
 
-        if self.config.headers.is_empty() {
-            return None;
-        }
-
-        let joined = self
-            .config
-            .headers
-            .iter()
-            .map(std::borrow::Cow::as_ref)
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        HeaderValue::from_str(&joined).ok()
+        return Some(HeaderValue::from_static("*"));
     }
+
+    if config.headers.is_empty() {
+        return None;
+    }
+
+    let joined = config
+        .headers
+        .iter()
+        .map(std::borrow::Cow::as_ref)
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    HeaderValue::from_str(&joined).ok()
 }
 
 /// A cache lifetime as the whole seconds `Access-Control-Max-Age` carries.
