@@ -24,6 +24,8 @@ use crate::{
 /// exists: a value holding a newline stays one record.
 const RECORD_SEPARATOR: u8 = 0x1e;
 
+/// Which bytes separate one record from the next.
+///
 /// Carried as a field rather than as a type parameter, because the two framings
 /// differ in a delimiter and in where it sits — not in anything a caller of
 /// [`Records`] can observe.
