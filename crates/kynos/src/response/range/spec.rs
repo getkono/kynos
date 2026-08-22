@@ -129,8 +129,13 @@ pub enum Ignored {
 }
 
 /// One `range-spec`, as written.
+///
+/// Crate-internal: a `Range<T>` holds these and every function that reads or
+/// resolves one is private to the framework, so no public signature has ever
+/// mentioned the type. The module is public for [`Ignored`], [`MAX_RANGES`],
+/// [`UNIT`] and [`pattern`], which a caller does reach.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Spec {
+pub(crate) enum Spec {
     /// `int-range`: an offset from the start, optionally to a last offset.
     Offsets {
         /// `first-pos`.
