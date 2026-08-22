@@ -11,6 +11,9 @@
 
 pub mod records;
 
+#[cfg(test)]
+mod tests;
+
 use crate::{
     error::rejection::BodyRejection,
     extract::{
