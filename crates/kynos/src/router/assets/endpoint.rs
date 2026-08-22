@@ -5,7 +5,12 @@ use kynos_openapi::{Method, PathTemplate};
 use crate::{
     extract::params::header::HeaderParams,
     http::{HeaderValue, Request, Response, StatusCode, etag, header},
-    router::{assets::Asset, endpoint::Endpoint, operation::OperationCx},
+    response::range::spec,
+    router::{
+        assets::{Asset, range},
+        endpoint::Endpoint,
+        operation::OperationCx,
+    },
 };
 
 /// The `ETag` an asset response carries.
@@ -167,11 +172,23 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
             ),
         );
 
+        // A 206 carries what a 200 would have, which section 15.3.7 requires of
+        // it outright: *a sender MUST generate all of the representation header
+        // fields that would have been sent in a 200 (OK) response to the same
+        // request.*
+        range::describe(operation, self.asset.media_type());
+
         for (status, name, description) in [
             (200, "ETag", "The entity tag of this representation"),
+            (206, "ETag", "The entity tag of this representation"),
             (304, "ETag", "The entity tag of this representation"),
             (
                 200,
+                "Cache-Control",
+                "How long this representation may be reused",
+            ),
+            (
+                206,
                 "Cache-Control",
                 "How long this representation may be reused",
             ),
@@ -205,16 +222,22 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
             }
         }
 
-        let mut response = Response::new(crate::http::body::Body::from_bytes(
+        // Section 14.2: the `Range` field *is evaluated after evaluating the
+        // precondition header fields defined in Section 13.1, and only if the
+        // result in absence of the Range header field would be a 200* — so the
+        // 304 above wins, and this is reached only where a 200 was owed.
+        //
+        // The entity tag goes with it: `assets!` mints a strong one from the
+        // file's contents, which is what lets section 13.1.5's `If-Range`
+        // condition be evaluated rather than assumed false.
+        let requested = spec::read(request.method(), request.headers(), Some(self.asset.etag()));
+
+        range::respond(
             bytes::Bytes::from_static(self.asset.bytes()),
-        ));
-
-        if let Ok(value) = HeaderValue::from_str(self.asset.media_type()) {
-            response.headers_mut().insert(header::CONTENT_TYPE, value);
-        }
-        crate::extract::params::header::write(response.headers_mut(), &self.headers());
-
-        response
+            self.asset.media_type(),
+            &self.headers(),
+            &requested,
+        )
     }
 }
 

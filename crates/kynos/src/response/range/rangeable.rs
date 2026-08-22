@@ -98,16 +98,25 @@ pub trait Rangeable: IntoResponse + Responses + sealed::Sealed + Sized {
     /// a large representation allocates no octets at all.
     #[must_use]
     fn slice(&self, first: u64, last: u64) -> Self {
-        let length = self.octets().len();
-        let start = usize::try_from(first).unwrap_or(length).min(length);
-        let end = last
-            .checked_add(1)
-            .and_then(|end| usize::try_from(end).ok())
-            .unwrap_or(length)
-            .clamp(start, length);
-
-        self.with_octets(self.octets().slice(start..end))
+        self.with_octets(clamped(self.octets(), first, last))
     }
+}
+
+/// The octets from `first` to `last` inclusive, clamped to what is there.
+///
+/// Free rather than a method, because `router::assets` slices `Bytes` that are
+/// not a [`Rangeable`] body — a file's contents are octets before they are
+/// anything — and two clampings would be two chances to be off by one.
+pub(crate) fn clamped(octets: &Bytes, first: u64, last: u64) -> Bytes {
+    let length = octets.len();
+    let start = usize::try_from(first).unwrap_or(length).min(length);
+    let end = last
+        .checked_add(1)
+        .and_then(|end| usize::try_from(end).ok())
+        .unwrap_or(length)
+        .clamp(start, length);
+
+    octets.slice(start..end)
 }
 
 impl<M> sealed::Sealed for Binary<M> {}

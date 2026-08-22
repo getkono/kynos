@@ -43,7 +43,7 @@
 //!   names as a denial-of-service indicator. [`MAX_RANGES`] is where Kynos
 //!   draws that line.
 
-use crate::http::{HeaderMap, Method, header};
+use crate::http::{HeaderMap, HeaderValue, Method, etag, header};
 
 /// The largest `range-set` Kynos reads.
 ///
@@ -93,7 +93,15 @@ pub enum Ignored {
     /// defined. For this specification, GET is the only method for which range
     /// handling is defined.*
     MethodUndefined,
-    /// An `If-Range` field was sent.
+    /// An `If-Range` condition was sent and does not hold.
+    ///
+    /// Section 13.1.5: *a recipient of an If-Range header field MUST ignore
+    /// the Range header field if the If-Range condition evaluates to false.*
+    /// A sender with no validator to evaluate the condition against reaches
+    /// this too — that is every [`Ranged<T>`](super::Ranged) a handler builds,
+    /// whose octets arrive with no entity tag and no modification date.
+    /// `router::assets` does hold a validator, so there this variant means what
+    /// it says: the client's copy is not the one it would be splicing into.
     Conditional,
     /// The range unit is not `bytes`.
     ///
@@ -134,7 +142,16 @@ pub enum Spec {
 ///
 /// The method and the field are read together because two of the reasons to
 /// ignore a `Range` are properties of the request rather than of the value.
-pub(crate) fn read(method: &Method, headers: &HeaderMap) -> Result<Vec<Spec>, Ignored> {
+///
+/// `validator` is the entity tag of the selected representation, for the
+/// `If-Range` condition to be evaluated against. `None` where the sender has
+/// none, which is every representation a handler hands to
+/// [`Range::apply`](super::Range::apply).
+pub(crate) fn read(
+    method: &Method,
+    headers: &HeaderMap,
+    validator: Option<&str>,
+) -> Result<Vec<Spec>, Ignored> {
     let mut sent = headers.get_all(header::RANGE).iter();
     let Some(value) = sent.next() else {
         return Err(Ignored::Absent);
@@ -148,16 +165,45 @@ pub(crate) fn read(method: &Method, headers: &HeaderMap) -> Result<Vec<Spec>, Ig
         return Err(Ignored::Repeated);
     }
 
-    // Section 13.1.5 makes `If-Range` a precondition on applying the field, and
-    // a `Ranged<T>` carries no validator for one to be evaluated against. See
-    // the module documentation of `response::range` for why that is a narrow
-    // position rather than a permanent one.
-    if headers.contains_key(header::IF_RANGE) {
-        return Err(Ignored::Conditional);
+    // Section 13.1.5 makes `If-Range` a precondition on applying the field.
+    if let Some(condition) = headers.get(header::IF_RANGE) {
+        if !holds(condition, validator) {
+            return Err(Ignored::Conditional);
+        }
     }
 
     let value = value.to_str().map_err(|_| Ignored::Malformed)?;
     parse(value)
+}
+
+/// Whether an `If-Range` condition holds against the representation's own
+/// validator, per RFC 9110 section 13.1.5.
+///
+/// ```text
+/// If-Range = entity-tag / HTTP-date
+/// ```
+///
+/// Three sentences settle every case, and all three are answered by one
+/// comparison:
+///
+/// * *If the entity-tag validator provided exactly matches the `ETag` field value
+///   for the selected representation using the strong comparison function, the
+///   condition is true. Otherwise, the condition is false.* So a weak tag on
+///   either side satisfies nothing — which is not a corner case: the tag
+///   `router::assets` mints from a `stat` is weak by construction.
+/// * An `HTTP-date` is compared against `Last-Modified`, and Kynos sends none.
+///   *A valid entity-tag can be distinguished from a valid HTTP-date by
+///   examining the first three characters for a DQUOTE* — and a date carries no
+///   DQUOTE anywhere, so it can never equal an `opaque-tag` and the strong
+///   comparison answers `false` for it without a second branch.
+/// * A sender holding no validator can evaluate nothing, which is `false` for
+///   the same reason: there is nothing for the condition to match.
+fn holds(condition: &HeaderValue, validator: Option<&str>) -> bool {
+    let (Ok(condition), Some(validator)) = (condition.to_str(), validator) else {
+        return false;
+    };
+
+    etag::strong_match(condition.trim(), validator)
 }
 
 /// The `range-set` a `ranges-specifier` asks for.

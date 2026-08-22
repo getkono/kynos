@@ -20,11 +20,22 @@
 //!
 //! # What is described
 //!
-//! An embedded file is one `paths` key: a 200 with its media type, a 304, and
-//! an `ETag`. There is no `Last-Modified` and no `If-Modified-Since`, which is
-//! a decision rather than an omission — a strong entity tag is the stronger
-//! validator, and sending a date obliges honouring a request that carries one
-//! back. Sending neither half is consistent; sending one is not.
+//! An embedded file is one `paths` key: a 200 with its media type, a 304, a
+//! 206, a 416, and the `ETag`, `Cache-Control`, `Accept-Ranges` and
+//! `Content-Range` each of those carries. There is no `Last-Modified` and no
+//! `If-Modified-Since`, which is a decision rather than an omission — a strong
+//! entity tag is the stronger validator, and sending a date obliges honouring a
+//! request that carries one back. Sending neither half is consistent; sending
+//! one is not.
+//!
+//! # A file is where a byte range has everything it needs
+//!
+//! RFC 9110 section 14.1.2 defines a byte range over octets of a known length,
+//! and both modes have exactly that. So both serve one, through the reader and
+//! the satisfiability rule in
+//! [`response::range`](crate::response::range) rather than through anything of
+//! their own — `router::assets::range` holds what the two modes share and
+//! where they part.
 
 pub mod media;
 
@@ -33,6 +44,7 @@ use std::borrow::Cow;
 use crate::router::endpoint::set::{Endpoints, IntoEndpoints};
 
 mod endpoint;
+mod range;
 
 #[cfg(feature = "assets-fs")]
 pub mod fs;

@@ -111,8 +111,18 @@ fn every_range_spec_resolves_the_way_the_specification_says() {
 
 // --- The reasons a field is ignored ----------------------------------------
 
-/// A request head, as the extractor reads one.
+/// A request head, as the extractor reads one: with no validator, which is
+/// what a handler-supplied representation has.
 fn read(method: &Method, fields: &[(HeaderName, &str)]) -> Range<Binary<OctetStream>> {
+    validated(method, fields, None)
+}
+
+/// The same, against a representation whose entity tag is `validator`.
+fn validated(
+    method: &Method,
+    fields: &[(HeaderName, &str)],
+    validator: Option<&str>,
+) -> Range<Binary<OctetStream>> {
     let mut headers = HeaderMap::new();
     for (name, value) in fields {
         headers.append(
@@ -121,7 +131,7 @@ fn read(method: &Method, fields: &[(HeaderName, &str)]) -> Range<Binary<OctetStr
         );
     }
 
-    Range::read(spec::read(method, &headers))
+    Range::read(spec::read(method, &headers, validator))
 }
 
 /// The reason each fixture is ignored for, named by an exhaustive match.

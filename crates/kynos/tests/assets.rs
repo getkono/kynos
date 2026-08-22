@@ -206,6 +206,189 @@ async fn a_list_of_tags_matches_on_any_member() {
     );
 }
 
+// --- Byte ranges ----------------------------------------------------------
+
+/// The stylesheet, whole. Every range case below is an offset into this.
+const STYLESHEET: &str = "body { margin: 0 }\n";
+
+/// A whole representation advertises the unit and names no part.
+///
+/// Section 14.4 gives `Content-Range` no meaning on a 200, and section 14.3
+/// makes `Accept-Ranges` what tells a client the resumable download exists.
+#[tokio::test]
+async fn a_file_served_whole_advertises_that_it_ranges() {
+    let service = served().build(()).expect("a describable router");
+
+    let reply = get(&service, "/static/css/app.css").call().await;
+
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(
+        reply.field(header::ACCEPT_RANGES.as_str()).as_deref(),
+        Some("bytes")
+    );
+    assert_eq!(reply.field(header::CONTENT_RANGE.as_str()), None);
+    assert_eq!(reply.text(), STYLESHEET);
+}
+
+/// A 206 carries exactly the octets its `Content-Range` names.
+///
+/// Both are asserted together because the failure worth catching is the two
+/// disagreeing: section 14.4 forbids a client from recombining an invalid
+/// field, so a correct field naming the wrong octets corrupts the client's copy
+/// silently.
+#[tokio::test]
+async fn a_range_request_receives_the_bytes_it_named() {
+    let service = served().build(()).expect("a describable router");
+
+    for (field, first, last) in [
+        ("bytes=5-10", 5, 10),
+        // A suffix reaches the end, and an open-ended range the remainder.
+        ("bytes=-4", 15, 18),
+        ("bytes=12-", 12, 18),
+        // A last offset past the end clamps rather than failing.
+        ("bytes=17-99", 17, 18),
+    ] {
+        let reply = get(&service, "/static/css/app.css")
+            .header("range", field)
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::PARTIAL_CONTENT, "{field}");
+        assert_eq!(
+            reply.field(header::CONTENT_RANGE.as_str()).as_deref(),
+            Some(format!("bytes {first}-{last}/19").as_str()),
+            "{field}"
+        );
+        assert_eq!(reply.text(), &STYLESHEET[first..=last], "{field}");
+        // Section 15.3.7: a 206 carries the representation fields a 200 would.
+        assert!(reply.field(header::ETAG.as_str()).is_some(), "{field}");
+        assert_eq!(
+            reply.field(header::CONTENT_TYPE.as_str()).as_deref(),
+            Some("text/css; charset=utf-8"),
+            "{field}"
+        );
+    }
+}
+
+/// A field naming nothing satisfiable is section 15.5.17's 416, stating how
+/// long the representation actually is.
+#[tokio::test]
+async fn an_unsatisfiable_range_states_the_complete_length() {
+    let service = served().build(()).expect("a describable router");
+
+    let reply = get(&service, "/static/css/app.css")
+        .header("range", "bytes=100-200")
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(
+        reply.field(header::CONTENT_RANGE.as_str()).as_deref(),
+        Some("bytes */19")
+    );
+}
+
+/// A field Kynos cannot apply is ignored, which is the whole file and a 200.
+#[tokio::test]
+async fn an_unusable_range_field_is_ignored_rather_than_refused() {
+    let service = served().build(()).expect("a describable router");
+
+    for field in ["items=0-1", "bytes=nonsense", "bytes=5-1"] {
+        let reply = get(&service, "/static/css/app.css")
+            .header("range", field)
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK, "{field}");
+        assert_eq!(reply.text(), STYLESHEET, "{field}");
+    }
+}
+
+/// Section 14.2: `Range` is evaluated *only if the result in absence of the
+/// Range header field would be a 200*, so a matched precondition wins.
+#[tokio::test]
+async fn a_matched_precondition_beats_a_range() {
+    let service = served().build(()).expect("a describable router");
+
+    let etag = get(&service, "/static/css/app.css")
+        .call()
+        .await
+        .field(header::ETAG.as_str())
+        .expect("an entity tag");
+
+    let reply = get(&service, "/static/css/app.css")
+        .header("if-none-match", &etag)
+        .header("range", "bytes=0-3")
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::NOT_MODIFIED);
+    assert!(reply.body.is_empty());
+}
+
+/// Section 13.1.5: an `If-Range` naming this representation honours the range.
+#[tokio::test]
+async fn an_if_range_naming_this_representation_honours_the_range() {
+    let service = served().build(()).expect("a describable router");
+
+    let etag = get(&service, "/static/css/app.css")
+        .call()
+        .await
+        .field(header::ETAG.as_str())
+        .expect("an entity tag");
+    assert!(!etag.starts_with("W/"), "an embedded tag is strong: {etag}");
+
+    let reply = get(&service, "/static/css/app.css")
+        .header("if-range", &etag)
+        .header("range", "bytes=0-3")
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(reply.text(), &STYLESHEET[0..=3]);
+}
+
+/// A condition that does not hold ignores the `Range` and sends the whole
+/// representation, which is the point of `If-Range`: the client is replacing
+/// its copy rather than splicing a part into a stale one.
+///
+/// The weak spelling of the *current* tag is in the list deliberately. Section
+/// 13.1.5 takes the strong comparison, under which `W/"x"` matches nothing at
+/// all — which is exactly why the `assets-fs` mode, whose tag is weak by
+/// construction, can never honour an `If-Range`.
+#[tokio::test]
+async fn an_if_range_that_does_not_hold_sends_the_whole_file() {
+    let service = served().build(()).expect("a describable router");
+
+    let etag = get(&service, "/static/css/app.css")
+        .call()
+        .await
+        .field(header::ETAG.as_str())
+        .expect("an entity tag");
+
+    for condition in [
+        "\"something-else\"".to_owned(),
+        format!("W/{etag}"),
+        // An `HTTP-date` is compared against `Last-Modified`, which Kynos never
+        // sends, so it can never match either.
+        "Wed, 15 Nov 1995 04:58:08 GMT".to_owned(),
+    ] {
+        let reply = get(&service, "/static/css/app.css")
+            .header("if-range", &condition)
+            .header("range", "bytes=0-3")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK, "{condition}");
+        assert_eq!(reply.text(), STYLESHEET, "{condition}");
+        assert_eq!(
+            reply.field(header::CONTENT_RANGE.as_str()),
+            None,
+            "{condition}"
+        );
+    }
+}
+
 // --- What the document says -----------------------------------------------
 
 /// Every served path is a literal `paths` key, and the document is
@@ -234,9 +417,9 @@ fn every_file_is_a_described_operation() {
     );
 }
 
-/// Each operation declares the two statuses it can produce, and no more.
+/// Each operation declares the four statuses it can produce, and no more.
 #[test]
-fn each_operation_declares_a_success_and_a_not_modified() {
+fn each_operation_declares_every_status_a_file_can_answer_with() {
     let document = served().openapi().expect("a describable router");
     let operation = document.paths.0["/static/css/app.css"]
         .get
@@ -251,21 +434,62 @@ fn each_operation_declares_a_success_and_a_not_modified() {
         .collect();
     statuses.sort_unstable();
 
-    assert_eq!(statuses, ["200", "304"]);
+    assert_eq!(statuses, ["200", "206", "304", "416"]);
 
-    // The 200 says what the file is, and carries the validator that makes the
-    // 304 reachable.
+    // The 200 says what the file is, carries the validator that makes the 304
+    // reachable, and advertises the unit that makes the 206 askable for.
     let ok = operation.responses.responses["200"]
         .as_item()
         .expect("an inline 200");
     assert!(ok.content.contains_key("text/css; charset=utf-8"));
     assert!(ok.headers.contains_key("ETag"));
     assert!(ok.headers.contains_key("Cache-Control"));
+    assert!(ok.headers.contains_key("Accept-Ranges"));
+
+    // Section 15.3.7 requires a 206 to carry what the 200 would have, and
+    // section 15.3.7.1 to name the part it encloses.
+    let partial = operation.responses.responses["206"]
+        .as_item()
+        .expect("an inline 206");
+    assert!(partial.content.contains_key("text/css; charset=utf-8"));
+    assert!(partial.headers.contains_key("ETag"));
+    assert!(partial.headers.contains_key("Cache-Control"));
+    assert!(partial.headers.contains_key("Accept-Ranges"));
+    assert!(partial.headers.contains_key("Content-Range"));
 
     let not_modified = operation.responses.responses["304"]
         .as_item()
         .expect("an inline 304");
     assert!(not_modified.headers.contains_key("ETag"));
+    // Section 14.3 advertises a range of a representation, and a 304 carries
+    // none -- so the field is not declared where it is not sent.
+    assert!(!not_modified.headers.contains_key("Accept-Ranges"));
+
+    // Section 15.5.17's 416 states the complete length instead of a part.
+    let unsatisfiable = operation.responses.responses["416"]
+        .as_item()
+        .expect("an inline 416");
+    assert!(unsatisfiable.headers.contains_key("Content-Range"));
+}
+
+/// Every request field the file reads is declared, and nothing else is.
+#[test]
+fn each_operation_declares_the_fields_it_reads() {
+    let document = served().openapi().expect("a describable router");
+    let operation = document.paths.0["/static/css/app.css"]
+        .get
+        .as_ref()
+        .expect("a GET");
+
+    let mut names: Vec<&str> = operation
+        .parameters
+        .iter()
+        .filter_map(|parameter| parameter.as_item())
+        .map(|parameter| parameter.name.as_str())
+        .collect();
+    names.sort_unstable();
+
+    assert_eq!(names, ["If-None-Match", "If-Range", "Range"]);
 }
 
 /// Two files get two operation ids, and each is derived from its own path.

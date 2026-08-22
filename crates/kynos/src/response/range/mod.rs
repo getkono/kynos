@@ -196,27 +196,7 @@ impl<T> Range<T> {
     /// and no spec in it is satisfiable, which is section 14.1.2's definition of
     /// an unsatisfiable `ranges-specifier`.
     pub fn select(&self, complete_length: u64) -> Result<Selection, RangeRejection> {
-        let specs = match &self.requested {
-            Err(reason) => return Ok(Selection::Whole(*reason)),
-            Ok(specs) => specs,
-        };
-
-        // Section 14.2 permits ignoring the field when the selected
-        // representation has no content, and a zero-length part has no
-        // `incl-range` that could describe it.
-        if complete_length == 0 {
-            return Ok(Selection::Whole(Ignored::EmptyRepresentation));
-        }
-
-        let (first, last) = *spec::resolve(specs, complete_length)
-            .first()
-            .ok_or(RangeRejection::NotSatisfiable { complete_length })?;
-
-        Ok(Selection::Part {
-            first,
-            last,
-            complete_length,
-        })
+        select(&self.requested, complete_length)
     }
 
     /// Cuts `whole` down to what this request asked for.
@@ -248,7 +228,11 @@ impl<C: Sync, T> FromRequestParts<C> for Range<T> {
     type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Infallible> {
-        Ok(Self::read(spec::read(&parts.method, &parts.headers)))
+        // No validator: the octets a handler hands to `apply` arrive with no
+        // entity tag, so section 13.1.5's condition cannot hold. See the module
+        // documentation for why that is a narrow position rather than a
+        // permanent one.
+        Ok(Self::read(spec::read(&parts.method, &parts.headers, None)))
     }
 }
 
@@ -267,16 +251,83 @@ impl<C: Sync, T> FromRequestParts<C> for Range<T> {
 /// looking, rather than on the return type.
 impl<T: Rangeable> Describe for Range<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        operation.add_parameter(
-            Parameter::header("Range", headers::constrained(&spec::pattern()))
-                .with_description(
-                    "The part of the representation to transfer, per RFC 9110 section 14.2. A \
-                     field this operation cannot apply is ignored and the whole representation \
-                     is sent.",
-                )
-                .with_example("bytes=0-1023"),
-        );
+        operation.add_parameter(parameter());
     }
+}
+
+/// What a `range-set` selects from a representation of `complete_length`.
+///
+/// The rule rather than the extractor: `router::assets` reaches it holding a
+/// validator and a length from a `stat` rather than a `Range<T>`, and a second
+/// implementation of section 14.1.2's satisfiability is exactly what this
+/// module exists to prevent.
+///
+/// # Errors
+///
+/// Returns [`RangeRejection::NotSatisfiable`] when the field was understood and
+/// no spec in it is satisfiable.
+pub(crate) fn select(
+    requested: &Result<Vec<spec::Spec>, Ignored>,
+    complete_length: u64,
+) -> Result<Selection, RangeRejection> {
+    let specs = match requested {
+        Err(reason) => return Ok(Selection::Whole(*reason)),
+        Ok(specs) => specs,
+    };
+
+    // Section 14.2 permits ignoring the field when the selected representation
+    // has no content, and a zero-length part has no `incl-range` that could
+    // describe it.
+    if complete_length == 0 {
+        return Ok(Selection::Whole(Ignored::EmptyRepresentation));
+    }
+
+    let (first, last) = *spec::resolve(specs, complete_length)
+        .first()
+        .ok_or(RangeRejection::NotSatisfiable { complete_length })?;
+
+    Ok(Selection::Part {
+        first,
+        last,
+        complete_length,
+    })
+}
+
+/// The `Range` parameter an operation serving byte ranges declares.
+///
+/// Written once, because the extractor and the asset server share no type and
+/// must still declare one field with one grammar — and public for the reason
+/// [`spec::pattern`] and [`ContentRange::unsatisfied_header`] are: an endpoint
+/// that serves ranges without going through [`Ranged<T>`] still owes a consumer
+/// the same declaration.
+#[must_use]
+pub fn parameter() -> Parameter {
+    Parameter::header("Range", headers::constrained(&spec::pattern()))
+        .with_description(
+            "The part of the representation to transfer, per RFC 9110 section 14.2. A field \
+             this operation cannot apply is ignored and the whole representation is sent.",
+        )
+        .with_example("bytes=0-1023")
+}
+
+/// The `If-Range` precondition on applying that field.
+///
+/// Declared only where a validator exists to evaluate it against — which is
+/// `router::assets` and not [`Range<T>`], whose octets arrive with no entity
+/// tag. A parameter an operation always ignores is noise in the description,
+/// which is why this is a separate constructor rather than part of
+/// [`parameter`].
+#[must_use]
+pub fn conditional_parameter() -> Parameter {
+    Parameter::header(
+        "If-Range",
+        kynos_openapi::Schema::of_type(kynos_openapi::model::schema::types::SchemaType::String),
+    )
+    .with_description(
+        "The entity tag the client's partial copy came from, per RFC 9110 section 13.1.5. The \
+         `Range` is honoured only if it matches this representation under the strong \
+         comparison; otherwise the whole representation is sent.",
+    )
 }
 
 /// A representation, or the part of it a request asked for.
