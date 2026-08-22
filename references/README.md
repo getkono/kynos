@@ -107,3 +107,50 @@ RFC 9110 it carries no pre-RFC-5378-material notice.
 
 The same Revised BSD License treatment applies to Code Components extracted from
 it — which includes the JSON and schema fragments in its examples.
+
+## Content Disposition
+
+[`rfc6266.txt`](rfc6266.txt) is an unmodified, byte-for-byte copy of the RFC
+Editor's official plain-text publication of [RFC 6266, Use of the
+Content-Disposition Header Field in the Hypertext Transfer Protocol
+(HTTP)](https://www.rfc-editor.org/rfc/rfc6266.txt), retrieved on 2026-08-22.
+Its SHA-256 digest is
+`2887d464e7a2a15877aba5d54b2e8e0c06c32294c44c9d95eb8940069ab43d33`.
+Consult the [RFC Editor information page](https://www.rfc-editor.org/info/rfc6266)
+for the document's current status and reported errata.
+
+[`rfc8187.txt`](rfc8187.txt) is the same for [RFC 8187, Indicating Character
+Encoding and Language for HTTP Header Field
+Parameters](https://www.rfc-editor.org/rfc/rfc8187.txt), retrieved on the same
+date. Its SHA-256 digest is
+`af50e65257dc16a27fa85e25ef68d49c8fa2a4abc21094a00469462c8cb89b53`.
+Consult its [information page](https://www.rfc-editor.org/info/rfc8187) on the
+same terms.
+
+The pair is vendored together because neither is usable alone here: RFC 6266
+defines `filename` and defers the non-ASCII spelling to RFC 8187's `ext-value`,
+so a `filename*` parameter is written against §4.1 of the first and §3.2.1 of
+the second at once. They bind
+[`response::disposition`](../crates/kynos/src/response/disposition.rs), which is
+the only place Kynos writes the field.
+
+RFC 9110 does not define `Content-Disposition` and does not mention it; it
+names RFC 8187 as a normative reference and nothing more. Neither of these
+documents is reachable from [`rfc9110.txt`](rfc9110.txt), which is why both are
+here rather than left to it.
+
+RFC 8187 obsoletes RFC 5987, which is not vendored. Treat 5987 as historical:
+8187 narrows the charset to UTF-8 and is the reference.
+
+### Licensing
+
+Both were published under the IETF Trust's [Legal Provisions Relating to IETF
+Documents](https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/)
+(TLP 5.0), on the same terms as RFC 9110 and RFC 9457 above. The vendored files
+preserve the complete documents, including their copyright, authorship and
+license notices, and are distributed under those terms rather than the
+repository's MIT license. Both postdate RFC 5378, so neither carries the
+pre-RFC-5378-material notice RFC 9110's section records.
+
+The same Revised BSD License treatment applies to Code Components extracted
+from them — which includes the ABNF the encoder is written against.
