@@ -294,3 +294,37 @@ async fn a_timeout_mounted_outside_a_body_limit_bounds_the_read() {
     );
     assert!(operation.responses.responses.contains_key("413"));
 }
+
+// --- Concurrency scope ----------------------------------------------------
+
+/// Two endpoints, one `Concurrency` each: the caps are separate.
+///
+/// "Maximum concurrent requests per endpoint" needs no new API. An
+/// `EndpointBuilder` has its own interceptor list, and `Router::build`
+/// composes it with the router's, so one instance per endpoint *is* a
+/// per-endpoint cap. Recorded because the alternative — a `per_route()` mode
+/// keyed on the matched path — would cost a lock and a lookup on the request
+/// path to express what the mount site already says.
+#[tokio::test]
+async fn one_limit_per_endpoint_caps_each_endpoint_separately() {
+    let service = Router::<()>::new()
+        .mount((
+            kynos::routes![slow].0.intercept(Concurrency::new(1)),
+            kynos::routes![prompt].0.intercept(Concurrency::new(1)),
+        ))
+        .build(())
+        .expect("a describable router");
+
+    let (held, other) = tokio::join!(get(&service, "/slow").call(), async {
+        // Long enough for the first request to have taken `/slow`'s only slot.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        get(&service, "/prompt").call().await
+    });
+
+    assert_eq!(held.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        other.status,
+        StatusCode::NO_CONTENT,
+        "a cap on one endpoint refused a request to another"
+    );
+}
