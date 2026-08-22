@@ -145,8 +145,12 @@ impl<T> Range<T> {
 
     /// Cuts `whole` down to every part this request asked for.
     ///
-    /// Nothing is copied: each part is a refcounted `Bytes::slice` of the one
-    /// representation.
+    /// Selecting copies nothing: each part is a refcounted `Bytes::slice` of
+    /// the one representation. *Writing* the response does, and this is where
+    /// it differs from [`Range::apply`], which is zero-copy end to end — a
+    /// `multipart/byteranges` body interleaves per-part headers with the octets
+    /// they describe, so the selected octets are copied once into the single
+    /// buffer that framing renders.
     ///
     /// # Errors
     ///
