@@ -42,6 +42,20 @@
 //! * **An oversized set warns at the `dir` literal.** Two mebibytes by default.
 //!   Raise it with `warn_over = "8MiB"` or turn it off with `"none"` — and note
 //!   that under `-D warnings` it becomes an error, which is arguably right.
+//! * **Every file is a resumable download, and says so.** Each operation
+//!   declares a 206, a 416, and the `Range` and `If-Range` fields it reads:
+//!
+//!   ```text
+//!   curl -r 0-9 http://localhost:3000/static/css/app.css -D -
+//!   ```
+//!
+//!   Only the embedded half honours an `If-Range`. Its tag is a hash of the
+//!   file, which RFC 9110 section 13.1.5's strong comparison accepts; the
+//!   directory's is derived from a `stat` and is weak, so a conditional range
+//!   there is answered with the whole file. That is the tag it chose, not an
+//!   omission — and the directory still seeks to the part an unconditional
+//!   `Range` asked for rather than reading the file and throwing most of it
+//!   away.
 //!
 //! ```text
 //! // build.rs
@@ -79,7 +93,23 @@ async fn main() -> kynos::Result<()> {
             kynos::router::assets::fs::Directory::new("examples/assets"),
         );
 
-    println!("{}", router.openapi()?.to_json()?);
+    let document = router.openapi()?;
+    println!("{}", document.to_json()?);
+
+    // What a resumable download looks like in the description: four statuses on
+    // one `paths` key, none of them chosen at run time.
+    let stylesheet = document.paths.0["/static/css/app.css"]
+        .get
+        .as_ref()
+        .expect("a GET");
+    let mut statuses: Vec<&str> = stylesheet
+        .responses
+        .responses
+        .keys()
+        .map(String::as_str)
+        .collect();
+    statuses.sort_unstable();
+    assert_eq!(statuses, ["200", "206", "304", "416"]);
 
     // What a CI job asserts on. Not `!has_unchecked()`, which this service
     // cannot satisfy and which would therefore be deleted.
