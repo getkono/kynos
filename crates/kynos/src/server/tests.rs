@@ -1034,12 +1034,17 @@ fn peer_address_service() -> crate::router::service::Service<()> {
         kynos_openapi::Info::new("Test", "1"),
     );
     crate::router::service::Service::new(document, |request: crate::http::Request| async move {
-        let reported = request
-            .extensions()
-            .get::<crate::extract::connection::ConnectInfo>()
-            .map_or_else(|| "absent".to_owned(), |info| info.0.to_string());
+        // Through the extractor rather than through the extension it happens to
+        // read, so the test cannot pass while `ConnectInfo` is broken.
+        use crate::extract::FromRequestParts as _;
+
+        let (mut parts, _) = request.into_parts();
+        let crate::extract::connection::ConnectInfo(peer) =
+            crate::extract::connection::ConnectInfo::from_request_parts(&mut parts, &())
+                .await
+                .expect("extracting a peer address is infallible");
         crate::http::Response::new(crate::http::body::Body::from_bytes(bytes::Bytes::from(
-            reported,
+            peer.to_string(),
         )))
     })
 }

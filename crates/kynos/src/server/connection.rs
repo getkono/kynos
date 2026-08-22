@@ -17,6 +17,7 @@ use tokio::{
 };
 
 use crate::{
+    extract::connection::Connection,
     router::service::Service,
     server::{
         TransportConfig,
@@ -24,29 +25,10 @@ use crate::{
     },
 };
 
+#[cfg(feature = "tls")]
+use crate::extract::connection::TlsIdentity;
 #[cfg(feature = "http2")]
 use crate::server::protocol::Http2FlowControl;
-
-#[derive(Clone, Debug)]
-#[expect(
-    dead_code,
-    reason = "reserved for typed connection metadata extractors"
-)]
-struct ConnectionMetadata {
-    peer_addr: SocketAddr,
-    local_addr: SocketAddr,
-    #[cfg(feature = "tls")]
-    tls: Option<TlsMetadata>,
-}
-
-#[cfg(feature = "tls")]
-#[derive(Clone, Debug)]
-#[expect(dead_code, reason = "reserved for typed TLS metadata extractors")]
-struct TlsMetadata {
-    server_name: Option<String>,
-    alpn: Option<Vec<u8>>,
-    peer_certificates: Vec<Vec<u8>>,
-}
 
 pub(in crate::server) async fn serve_connection<C: 'static>(
     stream: tokio::net::TcpStream,
@@ -69,21 +51,25 @@ pub(in crate::server) async fn serve_connection<C: 'static>(
         match handshake {
             Ok(Ok(stream)) => {
                 let (_, session) = stream.get_ref();
-                let metadata = ConnectionMetadata {
+                // Built once, here, and reference-counted onto every request the
+                // connection carries: a chain copied per request would copy a
+                // client certificate on every call of a busy mutual-TLS session.
+                let connection = Connection::from_tls_peer(
                     peer_addr,
                     local_addr,
-                    tls: Some(TlsMetadata {
-                        server_name: session.server_name().map(str::to_owned),
-                        alpn: session.alpn_protocol().map(<[u8]>::to_vec),
-                        peer_certificates: session
+                    TlsIdentity::new(
+                        session.server_name().map(str::to_owned),
+                        session.alpn_protocol().map(<[u8]>::to_vec),
+                        session
                             .peer_certificates()
                             .unwrap_or_default()
                             .iter()
-                            .map(|certificate| certificate.as_ref().to_vec())
+                            .map(|certificate| bytes::Bytes::copy_from_slice(certificate.as_ref()))
                             .collect(),
-                    }),
-                };
-                if let Err(error) = serve_http(stream, service, config, metadata, lifecycle).await {
+                    ),
+                );
+                if let Err(error) = serve_http(stream, service, config, connection, lifecycle).await
+                {
                     tracing::debug!(%error, %local_addr, %peer_addr, "TLS connection failed");
                 }
             }
@@ -95,13 +81,8 @@ pub(in crate::server) async fn serve_connection<C: 'static>(
         return;
     }
 
-    let metadata = ConnectionMetadata {
-        peer_addr,
-        local_addr,
-        #[cfg(feature = "tls")]
-        tls: None,
-    };
-    if let Err(error) = serve_http(stream, service, config, metadata, lifecycle).await {
+    let connection = Connection::from_peer(peer_addr, local_addr);
+    if let Err(error) = serve_http(stream, service, config, connection, lifecycle).await {
         tracing::debug!(%error, %local_addr, %peer_addr, "HTTP connection failed");
     }
 }
@@ -110,7 +91,7 @@ async fn serve_http<C, I>(
     io: I,
     service: Arc<Service<C>>,
     config: TransportConfig,
-    metadata: ConnectionMetadata,
+    connection_info: Connection,
     mut lifecycle: watch::Receiver<Lifecycle>,
 ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>
 where
@@ -162,10 +143,11 @@ where
 
     let handler = service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
         let service = Arc::clone(&service);
-        let metadata = metadata.clone();
+        // A reference count, not a copy of what the handshake produced.
+        let connection_info = connection_info.clone();
         async move {
             let (mut parts, body) = request.into_parts();
-            parts.extensions.insert(metadata);
+            parts.extensions.insert(connection_info);
             let request = crate::http::Request::from_parts(
                 parts,
                 crate::http::body::Body::from_incoming(body),
