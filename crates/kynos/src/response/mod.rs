@@ -21,15 +21,17 @@
 //! # How this module is laid out
 //!
 //! [`status`] holds the responses whose status their type fixes, [`headers`]
-//! the header wrapper, [`negotiate`] content negotiation, [`codec`] the
-//! responding half of each body codec, and [`stream`] the responses delivered
-//! as a sequence.
+//! the header wrapper, [`disposition`] the header group that says whether a
+//! representation is saved or shown, [`negotiate`] content negotiation,
+//! [`codec`] the responding half of each body codec, and [`stream`] the
+//! responses delivered as a sequence.
 
 use core::convert::Infallible;
 
 pub mod codec;
 #[cfg(feature = "cookie")]
 pub mod cookie;
+pub mod disposition;
 pub mod headers;
 pub mod negotiate;
 pub mod status;
