@@ -242,7 +242,7 @@ The normative home for four of the [anti-patterns](../README.md#anti-patterns).
 
 | # | Rule | Enforced by |
 | --- | --- | --- |
-| 3 | No wildcard or catch-all routes | `Router::mount`, above `PathTemplate` |
+| 3 | No wildcard or catch-all routes | `Router::mount`, above `PathTemplate`. [`router::assets`](../crates/kynos/src/router/assets/) is how static files are served *without* one: a fixed set is enumerable, so every path is a literal |
 | 9 | No header-based API versioning | nothing mechanical |
 | 10 | One application-level slash policy, or none | `TrailingSlashPolicy` has no per-route form |
 | 11 | The emitted document is never hand-patched | `Router::openapi` returns an owned `Document`; nothing exposes the built service's document mutably |

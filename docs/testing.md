@@ -47,6 +47,7 @@ attribute outlived its reason and went with it.
 | [`rate_limit.rs`](../crates/kynos/tests/rate_limit.rs) | the shipped limiter over a store: one quota and several, burst, keying, exemption, and both failure policies — behaviour that is a property of a *sequence* of requests rather than of any one |
 | [`cookies.rs`](../crates/kynos/tests/cookies.rs) | that two `Set-Cookie` fields reach the wire as two, which no unit test of either end can see |
 | [`unchecked.rs`](../crates/kynos/tests/unchecked.rs) | that the escape hatches serve, that the router's own machinery still covers them, and what the waiver leaves on the document |
+| [`assets.rs`](../crates/kynos/tests/assets.rs) | both asset modes: what an embedded set describes, what a served directory records instead, and that traversal is refused end to end |
 | [`compile/panic_recovery.rs`](../crates/kynos/tests/compile/panic_recovery.rs) | `catch_panics` refuses to compile under `panic = "abort"` |
 
 `crates/kynos-openapi/tests/` holds four more: `properties.rs` and

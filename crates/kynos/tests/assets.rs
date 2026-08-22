@@ -299,3 +299,158 @@ fn every_operation_has_an_identifier_of_its_own() {
         ]
     );
 }
+
+// --- The filesystem mode --------------------------------------------------
+
+#[cfg(feature = "assets-fs")]
+mod directory {
+    use kynos::{
+        Router,
+        http::StatusCode,
+        openapi::{OpaqueReason, OpaqueRoute},
+        router::assets::fs::Directory,
+    };
+
+    use super::support::get;
+
+    /// A router serving the same fixture directory from disk.
+    fn served() -> Router<()> {
+        Router::<()>::new().assets_directory("/files", Directory::new("tests/assets"))
+    }
+
+    #[tokio::test]
+    async fn a_file_is_served_from_disk() {
+        let service = served().build(()).expect("a buildable router");
+
+        let reply = get(&service, "/files/css/app.css").call().await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(reply.text(), "body { margin: 0 }\n");
+        assert_eq!(
+            reply
+                .field(kynos::http::header::CONTENT_TYPE.as_str())
+                .as_deref(),
+            Some("text/css; charset=utf-8")
+        );
+    }
+
+    /// A file the embedded set excluded is served here, because membership is
+    /// the directory's rather than the macro's.
+    ///
+    /// The whole difference between the two modes, in one case.
+    #[tokio::test]
+    async fn a_file_the_embedded_set_excluded_is_still_on_disk() {
+        let service = served().build(()).expect("a buildable router");
+
+        assert_eq!(
+            get(&service, "/files/app.css.map").call().await.status,
+            StatusCode::OK
+        );
+    }
+
+    /// A directory serves its index.
+    #[tokio::test]
+    async fn a_directory_serves_its_index() {
+        let service = served().build(()).expect("a buildable router");
+
+        assert!(
+            get(&service, "/files/docs/")
+                .call()
+                .await
+                .text()
+                .contains("Docs")
+        );
+    }
+
+    /// Traversal is refused, end to end.
+    #[tokio::test]
+    async fn a_request_climbing_out_of_the_root_is_refused() {
+        let service = served().build(()).expect("a buildable router");
+
+        for path in [
+            "/files/../Cargo.toml",
+            "/files/css/../../Cargo.toml",
+            "/files/%2e%2e/Cargo.toml",
+        ] {
+            let reply = get(&service, path).call().await;
+            assert_eq!(reply.status, StatusCode::NOT_FOUND, "{path}");
+            assert!(reply.body.is_empty(), "{path}");
+        }
+    }
+
+    /// A file that is not there is a 404, and so is one that cannot be read.
+    #[tokio::test]
+    async fn a_file_that_is_not_there_is_not_found() {
+        let service = served().build(()).expect("a buildable router");
+
+        assert_eq!(
+            get(&service, "/files/nothing.css").call().await.status,
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    /// Conditional requests work the same way they do for an embedded set.
+    #[tokio::test]
+    async fn a_client_holding_the_current_tag_receives_no_body() {
+        let service = served().build(()).expect("a buildable router");
+
+        let etag = get(&service, "/files/css/app.css")
+            .call()
+            .await
+            .field(kynos::http::header::ETAG.as_str())
+            .expect("an entity tag");
+
+        // Weak, because it is derived from the length and mtime rather than
+        // from the contents -- reading every file to hash it would be the work
+        // a conditional request exists to avoid.
+        assert!(etag.starts_with("W/"), "{etag}");
+
+        let second = get(&service, "/files/css/app.css")
+            .header("if-none-match", &etag)
+            .call()
+            .await;
+
+        assert_eq!(second.status, StatusCode::NOT_MODIFIED);
+        assert!(second.body.is_empty());
+    }
+
+    // --- What the document says ------------------------------------------
+
+    /// No `paths` key, and a record at the root a generator cannot act on.
+    #[test]
+    fn a_served_directory_is_recorded_rather_than_described() {
+        let document = served().openapi().expect("a describable router");
+
+        assert!(
+            document.paths.0.is_empty(),
+            "a directory took a `paths` key, which is a claim about paths it does not honour"
+        );
+
+        let recorded = OpaqueRoute::all(&document).expect("a readable record");
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].pattern, "/files/{*path}");
+        assert_eq!(recorded[0].prefix.as_deref(), Some("/files"));
+        assert_eq!(recorded[0].reason, OpaqueReason::StaticAssets);
+        assert!(
+            recorded[0]
+                .note
+                .as_deref()
+                .is_some_and(|note| note.contains("membership is not fixed")),
+            "{:?}",
+            recorded[0].note
+        );
+
+        assert!(!document.is_authoritative());
+    }
+
+    /// The reason is its own, so a CI gate can tolerate this waiver and no
+    /// other.
+    ///
+    /// `UntypedRoute` would have been true of it and would read identically to
+    /// a business API someone wildcarded. The two deserve different amounts of
+    /// alarm.
+    #[test]
+    fn the_waiver_names_itself() {
+        assert_eq!(served().unchecked_reasons(), [OpaqueReason::StaticAssets]);
+    }
+}

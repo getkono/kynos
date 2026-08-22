@@ -135,6 +135,12 @@ name = "rate_limit"
 required-features = ["openapi31", "macros", "server", "http1", "json"]
 
 [[example]]
+name = "assets"
+# No `json`: nothing here has a JSON body. `assets-fs` implies `assets` and
+# `unchecked`, which is the point the example is making.
+required-features = ["openapi31", "macros", "server", "http1", "assets-fs"]
+
+[[example]]
 name = "cors"
 # No `server`: this example drives a built `Service` directly, because what it
 # demonstrates is the two exchanges a browser makes rather than a socket.

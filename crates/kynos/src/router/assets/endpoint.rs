@@ -225,7 +225,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
 /// `*` matches anything the server has. Otherwise the field is a list, and the
 /// *weak* comparison applies — `W/"x"` and `"x"` are the same representation
 /// for a cache validation, which is the whole point of `If-None-Match`.
-fn matches(field: &HeaderValue, etag: &str) -> bool {
+pub(super) fn matches(field: &HeaderValue, etag: &str) -> bool {
     let Ok(text) = field.to_str() else {
         return false;
     };

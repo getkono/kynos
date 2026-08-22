@@ -619,6 +619,37 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
         self
     }
 
+    /// Records one route with a reason of Kynos's own choosing.
+    ///
+    /// The seam `assets_directory` is built on. Not public: the reason has to
+    /// come from the closed set in [`OpaqueReason`], and a caller free to
+    /// invent one could describe a waiver the validator has no rule for.
+    /// `route_unchecked` is the public door, and it derives the reason from the
+    /// pattern.
+    #[must_use]
+    pub(crate) fn record_unchecked_route<H>(
+        mut self,
+        pattern: String,
+        record: OpaqueRoute,
+        handler: H,
+    ) -> Self
+    where
+        C: Sync + 'static,
+        H: UncheckedHandler<C>,
+    {
+        self.unchecked.routes.push(UncheckedRoute {
+            pattern,
+            methods: vec![Method::Get],
+            terminal: Arc::new(UncheckedTerminal {
+                handler,
+                _context: PhantomData,
+            }),
+            layers: Vec::new(),
+            record,
+        });
+        self
+    }
+
     /// Adds a route that upgrades the connection away from HTTP.
     ///
     /// WebSockets, chiefly. This is not a temporary gap: OpenAPI describes HTTP

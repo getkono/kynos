@@ -78,6 +78,7 @@ needs more than the defaults. Each file's own header explains why it needs them.
 | Example | Shows | Features |
 | --- | --- | --- |
 | [`testing.rs`](testing.rs) | Driving the service in-process, and proving the description is truthful | `test-util` |
+| [`assets.rs`](assets.rs) | Both ways to serve files: an embedded set that is fully described, and a directory that is recorded instead | `assets-fs` |
 | [`unchecked.rs`](unchecked.rs) | The escape hatches, and what using one costs the document | `unchecked` |
 
 ## Elsewhere

@@ -34,6 +34,9 @@ use crate::router::endpoint::set::{Endpoints, IntoEndpoints};
 
 mod endpoint;
 
+#[cfg(feature = "assets-fs")]
+pub mod fs;
+
 pub use endpoint::AssetEndpoint;
 
 /// One file an asset set serves.
@@ -121,7 +124,7 @@ pub struct AssetSet {
 /// An hour: long enough to be worth a cache, short enough that a deployment
 /// which forgot to fingerprint its files is not stuck for a year.
 /// [`immutable`](AssetSet::immutable) is the fingerprinted answer.
-const DEFAULT_CACHE_CONTROL: &str = "public, max-age=3600";
+pub(crate) const DEFAULT_CACHE_CONTROL: &str = "public, max-age=3600";
 
 impl AssetSet {
     /// A set over files compiled into the binary.
