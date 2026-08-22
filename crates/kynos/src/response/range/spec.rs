@@ -77,7 +77,14 @@ pub fn pattern() -> String {
 /// named rather than collapsed into an [`Option`] because a reason nobody can
 /// see is a reason nobody can test: [`crate::response::range`]'s suite counts
 /// these variants against its cases.
+///
+/// `#[non_exhaustive]`, because the set is Kynos's rather than the RFC's.
+/// Section 14.2 enumerates no reasons; [`TooManyRanges`](Ignored::TooManyRanges)
+/// is where this framework draws section 17.15's line and
+/// [`EmptyRepresentation`](Ignored::EmptyRepresentation) is a MAY it takes, so a
+/// further reason to ignore a field is a variant rather than a breaking change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum Ignored {
     /// No `Range` field was sent.
     Absent,

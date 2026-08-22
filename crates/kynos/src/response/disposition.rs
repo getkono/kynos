@@ -65,7 +65,12 @@ use crate::{
 ///
 /// RFC 6266 section 4.2. An unknown type is to be treated as `attachment`, so
 /// the two here are the whole of what a sender gains by choosing.
+///
+/// `#[non_exhaustive]`, because section 4.1 leaves the set open:
+/// `disp-ext-type = token` makes a third disposition type an extension the
+/// specification sanctions rather than one Kynos would be inventing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum Disposition {
     /// Prompt to save the representation rather than process it.
     Attachment,
@@ -134,7 +139,19 @@ impl Disposition {
 /// `RateLimitHeaders` does the same with. The consequence is worth stating
 /// plainly: `Headers<ContentDisposition>` as a *handler argument* panics. It is
 /// a response header; ask for it in a return type.
+///
+/// # This group can grow
+///
+/// `#[non_exhaustive]`, for the reason [`Disposition`] is: RFC 6266 section 4.1
+/// admits any `disp-ext-parm`, and Appendix B names four already written down
+/// elsewhere — `creation-date`, `modification-date`, `quoted-date-time` and
+/// `size`, omitted from this profile only because *the majority of user agents
+/// do not implement these*. A change of mind about one of them is then a field
+/// rather than a new type, and nothing is lost by reserving the room: the two
+/// constructors plus [`filename`](Self::filename) were already the way a value
+/// is built.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub struct ContentDisposition {
     /// How the recipient should present the representation.
     pub disposition: Disposition,
