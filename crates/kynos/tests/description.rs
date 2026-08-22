@@ -214,6 +214,17 @@ async fn whole_recording() -> Binary<OctetStream> {
     Binary::new(&b"0123456789"[..])
 }
 
+/// Reads the field and answers whole anyway, which RFC 9110 section 14.2 allows
+/// outright: *a server MAY ignore the Range header field*.
+///
+/// The return type cannot fail, so no request to this operation can produce a
+/// 416 — and the description must not claim one.
+#[kynos::get("/recordings/preview")]
+async fn preview_recording(range: Range<Binary<OctetStream>>) -> Binary<OctetStream> {
+    let _ = range;
+    Binary::new(&b"0123456789"[..])
+}
+
 /// The one operation under `path`.
 fn operation(document: &Document, path: &str) -> kynos::openapi::Operation {
     let item = document.paths.0.get(path).expect("a described path");
@@ -234,7 +245,11 @@ fn declared_headers(operation: &kynos::openapi::Operation, status: &str) -> Opti
 #[test]
 fn a_ranged_operation_declares_the_field_it_reads() {
     let document = Router::<()>::new()
-        .mount(kynos::routes![recording, whole_recording])
+        .mount(kynos::routes![
+            recording,
+            whole_recording,
+            preview_recording
+        ])
         .openapi()
         .expect("a describable router");
 
@@ -265,7 +280,11 @@ fn a_ranged_operation_declares_the_field_it_reads() {
 #[test]
 fn a_ranged_operation_declares_each_field_on_the_statuses_that_carry_it() {
     let document = Router::<()>::new()
-        .mount(kynos::routes![recording, whole_recording])
+        .mount(kynos::routes![
+            recording,
+            whole_recording,
+            preview_recording
+        ])
         .openapi()
         .expect("a describable router");
 
@@ -302,7 +321,11 @@ fn a_ranged_operation_declares_each_field_on_the_statuses_that_carry_it() {
 #[test]
 fn an_operation_that_does_not_range_advertises_no_unit() {
     let document = Router::<()>::new()
-        .mount(kynos::routes![recording, whole_recording])
+        .mount(kynos::routes![
+            recording,
+            whole_recording,
+            preview_recording
+        ])
         .openapi()
         .expect("a describable router");
 
@@ -318,4 +341,53 @@ fn an_operation_that_does_not_range_advertises_no_unit() {
         BTreeSet::from(["200"])
     );
     assert_eq!(declared_headers(&whole, "200"), Some(Vec::new()));
+}
+
+/// A handler that reads a `Range` but cannot fail declares no 416.
+///
+/// The 416 belongs to `RangeRejection`, which `Range::apply` raises — not to
+/// reading the field, which RFC 9110 section 14.2 makes infallible. An
+/// operation that declared it from the *argument* would advertise a status no
+/// request to it can reach, which is the shape `docs/testing.md` records the
+/// conformance harness finding on its first run: a 413 declared by every
+/// body-reading operation and produced by none.
+///
+/// The `Range` parameter is still declared, and `Accept-Ranges` still is not:
+/// this operation reads the field and answers whole, so it advertises no unit.
+#[test]
+fn an_operation_that_reads_a_range_but_cannot_fail_declares_no_416() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![
+            recording,
+            whole_recording,
+            preview_recording
+        ])
+        .openapi()
+        .expect("a describable router");
+
+    let preview = operation(&document, "/recordings/preview");
+
+    assert!(
+        preview
+            .parameters
+            .iter()
+            .any(|parameter| matches!(parameter, kynos::openapi::RefOr::Item(item) if item.name == "Range")),
+        "the field it reads is still declared"
+    );
+
+    assert_eq!(
+        preview
+            .responses
+            .responses
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["200"])
+    );
+    assert_eq!(declared_headers(&preview, "200"), Some(Vec::new()));
+
+    // And the operation that *can* fail still declares it, so this is not a
+    // pass against a description that stopped declaring the 416 anywhere.
+    let ranged = operation(&document, "/recordings/current");
+    assert!(ranged.responses.responses.contains_key("416"));
 }
