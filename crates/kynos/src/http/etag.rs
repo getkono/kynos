@@ -39,40 +39,53 @@
 /// `*`, which matches any current representation the server has.
 pub const ANY: &str = "*";
 
-/// Splits a `1#entity-tag` field value into its members, trimmed.
+/// The members of a `1#entity-tag` field value, trimmed.
 ///
 /// Quote-aware, per the grammar above. An empty element is dropped rather than
 /// refused: RFC 9110 section 5.6.1.2 asks a recipient of a `#` list to accept
 /// them.
-#[must_use]
-pub fn split(text: &str) -> Vec<&str> {
-    let mut tags = Vec::new();
-    let mut quoted = false;
-    let mut start = 0;
+///
+/// An iterator rather than a `Vec`, because every caller is deciding a
+/// precondition on one request and a list nobody keeps is a list nobody should
+/// have allocated. Each member borrows the field value, and the scan restarts
+/// at each unquoted comma — which costs nothing, since an element boundary is
+/// by construction a point at which no `opaque-tag` is open.
+pub fn split(text: &str) -> impl Iterator<Item = &str> {
+    let mut rest = Some(text);
 
-    for (index, character) in text.char_indices() {
-        match character {
-            // `etagc` excludes DQUOTE and `opaque-tag` has no escape, so every
-            // quote is a delimiter and toggling on it is the whole of the scan.
-            '"' => quoted = !quoted,
-            ',' if !quoted => {
-                push(&mut tags, &text[start..index]);
-                start = index + character.len_utf8();
+    core::iter::from_fn(move || {
+        loop {
+            let remaining = rest?;
+
+            let mut quoted = false;
+            let separator = remaining.char_indices().find(|&(_, character)| {
+                match character {
+                    // `etagc` excludes DQUOTE and `opaque-tag` has no escape, so
+                    // every quote is a delimiter and toggling on it is the whole
+                    // of the scan.
+                    '"' => {
+                        quoted = !quoted;
+                        false
+                    }
+                    ',' => !quoted,
+                    _ => false,
+                }
+            });
+
+            let candidate = if let Some((index, comma)) = separator {
+                rest = Some(&remaining[index + comma.len_utf8()..]);
+                &remaining[..index]
+            } else {
+                rest = None;
+                remaining
+            };
+
+            let trimmed = candidate.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
             }
-            _ => {}
         }
-    }
-    push(&mut tags, &text[start..]);
-
-    tags
-}
-
-/// Records `candidate` as a tag unless it is blank.
-fn push<'a>(tags: &mut Vec<&'a str>, candidate: &'a str) {
-    let trimmed = candidate.trim();
-    if !trimmed.is_empty() {
-        tags.push(trimmed);
-    }
+    })
 }
 
 /// Whether `tag` carries the weakness marker.
@@ -169,7 +182,7 @@ mod tests {
     fn every_list_recovers_the_tags_it_was_written_from() {
         for case in every_list() {
             assert_eq!(
-                split(&case.written),
+                split(&case.written).collect::<Vec<_>>(),
                 case.members,
                 "`{}` did not split into its members",
                 case.written
@@ -181,9 +194,12 @@ mod tests {
     /// recipient.
     #[test]
     fn a_blank_element_is_dropped_rather_than_refused() {
-        assert_eq!(split(r#", "a" ,, "b","#), [r#""a""#, r#""b""#]);
-        assert!(split("  ").is_empty());
-        assert!(split("").is_empty());
+        assert_eq!(
+            split(r#", "a" ,, "b","#).collect::<Vec<_>>(),
+            [r#""a""#, r#""b""#]
+        );
+        assert_eq!(split("  ").count(), 0);
+        assert_eq!(split("").count(), 0);
     }
 
     /// RFC 9110 section 8.8.3.2, Table 3, transcribed whole.

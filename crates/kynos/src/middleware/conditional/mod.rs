@@ -124,9 +124,7 @@ impl HeaderParams for Preconditions {
                     if text.trim() == etag::ANY {
                         IfNoneMatch::Any
                     } else {
-                        IfNoneMatch::Tags(
-                            etag::split(text).into_iter().map(str::to_owned).collect(),
-                        )
+                        IfNoneMatch::Tags(etag::split(text).map(str::to_owned).collect())
                     }
                 }),
         })

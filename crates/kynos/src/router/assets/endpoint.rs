@@ -259,7 +259,5 @@ pub(super) fn matches(field: &HeaderValue, current: &str) -> bool {
         return true;
     }
 
-    etag::split(text)
-        .into_iter()
-        .any(|candidate| etag::weak_match(candidate, current))
+    etag::split(text).any(|candidate| etag::weak_match(candidate, current))
 }
