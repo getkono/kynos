@@ -62,6 +62,7 @@ needs more than the defaults. Each file's own header explains why it needs them.
 | Example | Shows | Features |
 | --- | --- | --- |
 | [`security_schemes.rs`](security_schemes.rs) | Every kind of security scheme as a type, from `Auth<S>` to the emitted requirement | — |
+| [`jwt.rs`](jwt.rs) | A JWT verifier the framework does not ship: claims as a typed credential, `kid` rotation, scopes, optional auth, and a token endpoint | `json` |
 | [`tls.rs`](tls.rs) | Serving over TLS: client certificates, SNI, and the HTTP/1 and HTTP/2 configs ALPN chooses between | `tls` |
 
 ## Serving
