@@ -119,12 +119,18 @@ struct PartnerCertificate;
 ///
 /// The scopes are part of the scheme rather than of the handler, so an
 /// operation requiring them and a document advertising them cannot disagree.
+///
+/// A flow's `scopes` takes either spelling. `"users:read" = "..."` gives the
+/// scope the description an authorization server shows on its consent screen;
+/// a bare `"users:write"` names one with none. The scheme-level `scopes(..)`
+/// below is a different thing again — what this scheme demands by default
+/// rather than what the server publishes.
 #[derive(SecurityScheme)]
 #[security(oauth2(authorization_code(
     authorization_url = "https://auth.example.com/authorize",
     token_url = "https://auth.example.com/token",
     refresh_url = "https://auth.example.com/token",
-    scopes("users:read", "users:write"),
+    scopes("users:read" = "Read a user's profile", "users:write"),
 ),))]
 #[security(name = "DelegatedAccess", scopes("users:read"))]
 struct DelegatedAccess;
