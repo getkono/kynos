@@ -322,7 +322,7 @@ mod tests {
     /// RFC 8187 section 3.2.1 constrain.
     #[test]
     fn a_filename_is_written_as_the_two_rfcs_spell_it() {
-        let cases: [(Option<&str>, &str); 8] = [
+        let cases: [(Option<&str>, &str); 9] = [
             (None, "attachment"),
             (Some("report.pdf"), "attachment; filename=\"report.pdf\""),
             (
@@ -333,6 +333,17 @@ mod tests {
             (
                 Some("résumé.pdf"),
                 "attachment; filename=\"r_sum_.pdf\"; filename*=UTF-8''r%C3%A9sum%C3%A9.pdf",
+            ),
+            // Appendix D: *avoid including the percent character followed by
+            // two hexadecimal characters (e.g., %A9) in the filename parameter,
+            // since some existing implementations consider it to be an escape
+            // character, while others will pass it through unchanged.* Left
+            // intact the fallback would be the whole name, which suppresses
+            // `filename*` and leaves nothing to disambiguate `50 off.pdf` from
+            // `50%20off.pdf`.
+            (
+                Some("50%20off.pdf"),
+                "attachment; filename=\"50_20off.pdf\"; filename*=UTF-8''50%2520off.pdf",
             ),
             (
                 Some("a\"b.txt"),
