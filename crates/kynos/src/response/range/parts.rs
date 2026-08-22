@@ -20,13 +20,18 @@
 //!
 //! # What the parts are, and are not
 //!
-//! Every satisfiable range is resolved, sorted by first offset, and merged with
-//! any it overlaps **or touches** — see [`spec::coalesce`](super::spec). Three
-//! things follow, and section 15.3.7.2 sanctions each:
+//! Every satisfiable range is resolved and merged with any it overlaps **or
+//! touches** — see [`spec::coalesce`](super::spec). Three things follow, and
+//! section 15.3.7.2 sanctions each:
 //!
 //! * *A server MAY coalesce any of the ranges that overlap ... regardless of
-//!   the order in which the corresponding range-spec appeared*, so the reorder
-//!   is permitted as well as the merge.
+//!   the order in which the corresponding range-spec appeared*, so a spec may
+//!   merge with one written before it. The order the surviving parts *leave*
+//!   in is a different sentence, two paragraphs later: *a server that generates
+//!   a multipart response SHOULD send the parts in the same order that the
+//!   corresponding range-spec appeared in the received Range header field*. So
+//!   `bytes=8-9, 0-1` is answered `8-9` first, which is also what
+//!   [`Range::select`](super::Range::select) answers with.
 //! * *A server MAY generate a "multipart/byteranges" response with only a
 //!   single body part if ... only one range remained after coalescing* — Kynos
 //!   does not. One part is a single-part 206, because the same sentence
@@ -77,11 +82,13 @@ pub enum Selected {
     /// 206.
     Single(Selection),
 
-    /// Two or more disjoint parts in ascending order, which is a
-    /// `multipart/byteranges` 206.
+    /// Two or more disjoint parts, in the order the field named them, which is
+    /// a `multipart/byteranges` 206.
     Several {
-        /// The parts, each an inclusive `(first, last)` offset pair. Disjoint
-        /// and sorted, so the total never exceeds `complete_length`.
+        /// The parts, each an inclusive `(first, last)` offset pair. Disjoint,
+        /// so the total never exceeds `complete_length` — and in the order of
+        /// the earliest `range-spec` that fed each of them, which is what
+        /// section 15.3.7.2 asks a multipart response to send.
         ranges: Vec<(u64, u64)>,
         /// The length of the whole representation.
         complete_length: u64,
@@ -467,8 +474,8 @@ mod tests {
         }
     }
 
-    /// After the merge the parts are sorted, disjoint, non-adjacent, and total
-    /// no more than the representation.
+    /// The merged parts are disjoint, non-adjacent, and total no more than the
+    /// representation.
     ///
     /// The last of those is section 17.15's amplification attack answered by
     /// construction rather than by a limit: `bytes=0-0,0-0,0-0` cannot enclose

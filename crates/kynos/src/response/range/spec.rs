@@ -287,25 +287,55 @@ fn digits(written: &str) -> Option<u64> {
 /// `complete_length` is never zero here — a zero-length representation is
 /// [`Ignored::EmptyRepresentation`] before resolution is reached.
 pub(crate) fn resolve(specs: &[Spec], complete_length: u64) -> Vec<(u64, u64)> {
+    positioned(specs, complete_length)
+        .into_iter()
+        .map(|(range, _)| range)
+        .collect()
+}
+
+/// The same ranges, each carrying the position of the spec that produced it.
+///
+/// The position is what section 15.3.7.2's ordering sentence is written
+/// against, and it survives only if it is carried from here: an unsatisfiable
+/// spec drops out, so nothing downstream can recover it by counting.
+fn positioned(specs: &[Spec], complete_length: u64) -> Vec<((u64, u64), usize)> {
     if complete_length == 0 {
         return Vec::new();
     }
 
     specs
         .iter()
-        .filter_map(|spec| resolve_one(*spec, complete_length))
+        .enumerate()
+        .filter_map(|(position, spec)| {
+            resolve_one(*spec, complete_length).map(|range| (range, position))
+        })
         .collect()
 }
 
-/// The satisfiable ranges `specs` select, merged and in ascending order.
+/// The satisfiable ranges `specs` select, merged, in the order they were
+/// written.
 ///
-/// Sorted by `first-pos`, then any two that overlap **or touch** become one.
-/// RFC 9110 section 15.3.7.2 permits both halves outright: *a server MAY
+/// Any two that overlap **or touch** become one, whichever order they arrived
+/// in. RFC 9110 section 15.3.7.2 permits both halves outright: *a server MAY
 /// coalesce any of the ranges that overlap, or that are separated by a gap that
 /// is smaller than the overhead of sending multiple parts, regardless of the
 /// order in which the corresponding range-spec appeared* — and the overhead it
 /// puts at *around 80 bytes* per part is why adjacency counts, since `0-4` and
 /// `5-9` sent apart cost eighty bytes to say what one part says for nothing.
+///
+/// # Merging across the order is not reordering the output
+///
+/// That sentence licenses the merge and says the written order is no obstacle
+/// to it. It does not license emitting the parts sorted, and the paragraph two
+/// below it says so directly: *a server that generates a multipart response
+/// SHOULD send the parts in the same order that the corresponding range-spec
+/// appeared in the received Range header field, excluding those ranges that
+/// were deemed unsatisfiable or that were coalesced into other ranges.*
+///
+/// So the merge sorts because merging is easiest on a sorted run, and what
+/// survives it is put back into the order of the earliest spec that fed it —
+/// which is exactly the exclusion the SHOULD spells out, since a spec that was
+/// coalesced into another no longer has a part of its own to be ordered by.
 ///
 /// # This is what makes the amplification attack impossible
 ///
@@ -316,31 +346,37 @@ pub(crate) fn resolve(specs: &[Spec], complete_length: u64) -> Vec<(u64, u64)> {
 /// the complete length, whatever the field asked for. That is a property of the
 /// output rather than a limit somebody has to pick, which is the stronger of
 /// the two; [`MAX_RANGES`] still caps the *field*, and does so before any of
-/// this is reached.
+/// this is reached. Disjointness is a property of the set rather than of its
+/// order, so restoring the written order afterwards cannot spend it.
 ///
-/// Gated with the writer that needs it. Merging changes *which* part a
-/// single-part 206 carries — `bytes=8-9,0-1` would answer `0-1` rather than
-/// the `8-9` it names first — and [`super::Range::select`] promises the first
-/// satisfiable spec, so the merge belongs to the response shape that has
-/// somewhere to put every part.
+/// Gated with the writer that needs it. Merging changes *which* octets a
+/// single-part 206 would carry — `bytes=0-3,2-5` encloses `0-5` here and `0-3`
+/// through [`super::Range::select`], which promises the first satisfiable spec
+/// rather than the first surviving part — so the merge belongs to the response
+/// shape that has somewhere to put every part. Where nothing merges the two
+/// agree, and `bytes=8-9,0-1` is the case that pins it.
 #[cfg(feature = "openapi32")]
 pub(crate) fn coalesce(specs: &[Spec], complete_length: u64) -> Vec<(u64, u64)> {
-    let mut resolved = resolve(specs, complete_length);
+    let mut resolved = positioned(specs, complete_length);
     resolved.sort_unstable();
 
-    let mut merged: Vec<(u64, u64)> = Vec::with_capacity(resolved.len());
-    for (first, last) in resolved {
+    let mut merged: Vec<((u64, u64), usize)> = Vec::with_capacity(resolved.len());
+    for ((first, last), position) in resolved {
         match merged.last_mut() {
             // `saturating_add`, because a `last-pos` of `u64::MAX` is reachable
             // through a saturated decimal and `+ 1` would wrap to nothing.
-            Some(previous) if first <= previous.1.saturating_add(1) => {
-                previous.1 = previous.1.max(last);
+            Some(((_, previous_last), earliest)) if first <= previous_last.saturating_add(1) => {
+                *previous_last = (*previous_last).max(last);
+                *earliest = (*earliest).min(position);
             }
-            _ => merged.push((first, last)),
+            _ => merged.push(((first, last), position)),
         }
     }
 
-    merged
+    // Every spec feeds at most one surviving part, so no two parts share an
+    // earliest position and this order is total.
+    merged.sort_unstable_by_key(|&(_, earliest)| earliest);
+    merged.into_iter().map(|(range, _)| range).collect()
 }
 
 /// One spec, or `None` when it is unsatisfiable.
