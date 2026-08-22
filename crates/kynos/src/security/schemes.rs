@@ -118,7 +118,15 @@ mod tests {
             table,
             [
                 ("Bearer", Described::bearer(None), Some("Bearer")),
-                ("Basic", Described::basic(), Some("Basic")),
+                // RFC 7617 section 2: the `charset` parameter is what tells a
+                // client to send a non-ASCII password as UTF-8, and `UTF-8` is
+                // the only value the registry defines. A bare `Basic` leaves
+                // every client to guess, and they do not all guess the same.
+                (
+                    "Basic",
+                    Described::basic(),
+                    Some(r#"Basic charset="UTF-8""#)
+                ),
                 // No challenge: the certificate is presented during the TLS
                 // handshake, so a 401 has no `WWW-Authenticate` scheme to name
                 // -- there is none registered for it, and inventing one would
