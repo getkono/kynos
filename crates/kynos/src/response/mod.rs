@@ -28,6 +28,8 @@
 use core::convert::Infallible;
 
 pub mod codec;
+#[cfg(feature = "cookie")]
+pub mod cookie;
 pub mod headers;
 pub mod negotiate;
 pub mod status;

@@ -213,7 +213,11 @@ json = []
 form = ["dep:serde_urlencoded"]
 multipart = ["dep:multer"]
 protobuf = ["dep:prost"]
-cookie = ["dep:cookie"]
+# Kynos owns the RFC 6265 this needs. The `cookie` crate was declared here and
+# named by no source line: the derive hand-rolled the jar and the response side
+# did not exist. Using it now would put `cookie::Cookie` in a public signature,
+# which `docs/architecture.md`'s re-export rule forbids.
+cookie = []
 compression = ["dep:async-compression"]
 
 # --- Scalar formats --------------------------------------------------------
@@ -226,7 +230,7 @@ uuid = ["dep:uuid"]
 # onto, so `date-time-local` is defined once and cannot change with a flag. It
 # names no crate, and on its own it does not compile. Note it is unrelated to
 # the `time` crate, which is not a backend and reaches the tree only through
-# `cookie`.
+# `rcgen`, a dev-dependency of the TLS example.
 time = []
 time-chrono = ["time", "dep:chrono"]
 time-jiff = ["time", "dep:jiff"]
@@ -298,7 +302,6 @@ async-compression = { workspace = true, optional = true, features = [
 bigdecimal = { workspace = true, optional = true }
 bytes = { workspace = true }
 chrono = { workspace = true, optional = true }
-cookie = { workspace = true, optional = true }
 futures-core = { workspace = true, optional = true }
 http = { workspace = true }
 http-body = { workspace = true }

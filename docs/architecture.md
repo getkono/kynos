@@ -120,7 +120,17 @@ by naming the row X displaces rather than by arguing that X is good.
   mean Kynos had taken the protocol over, which is a decision this section
   closes rather than defers.
 - A new dependency arrives feature-gated and additive, never as a widening of
-  the default build.
+  the default build. A corollary that has already bitten: a capability in the
+  *default* build cannot be gated, so it cannot take a dependency at all —
+  which is why base64 decoding and the constant-time comparison
+  [`security/`](../crates/kynos/src/security/) needs are written here rather
+  than taken from `base64` and `subtle`.
+- **A row is removed when the module it names goes the other way.** `cookie`
+  had a row and was named by no source line: the derive hand-rolled RFC 6265
+  and the response side did not exist. Using it once the response side landed
+  would have put `cookie::Cookie` in a public signature, against the re-export
+  rule above. The row is gone rather than left as aspiration — the same
+  correction `mime` and `pin-project-lite` already received.
 - rustls is the only TLS backend that ships. The accept path keeps the socket
   and the rustls connection separable rather than fusing them into one opaque
   stream, so a second backend stays an additive change. No public trait
@@ -149,7 +159,6 @@ by naming the row X displaces rather than by arguing that X is good.
 | Form codec | `serde_urlencoded` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs) | built |
 | Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | built |
 | Protobuf codec | `prost` | [`extract/body/protobuf.rs`](../crates/kynos/src/extract/body/protobuf.rs), [`response/codec/protobuf.rs`](../crates/kynos/src/response/codec/protobuf.rs) | built |
-| Cookies | `cookie` | [`extract/params/cookie.rs`](../crates/kynos/src/extract/params/cookie.rs) | built |
 | Scalar formats, identifiers | `uuid` | [`schema/impls/identifier.rs`](../crates/kynos/src/schema/impls/identifier.rs) | built |
 | Scalar formats, dates and times | `chrono`, `jiff` | [`schema/impls/temporal/`](../crates/kynos/src/schema/impls/temporal/) | built |
 | Scalar formats, decimals | `rust_decimal`, `bigdecimal` | [`schema/impls/decimal/`](../crates/kynos/src/schema/impls/decimal/) | built |
@@ -242,7 +251,9 @@ different crates. Picking one would be choosing the user's problem for them,
 which invariant 3 forbids. An umbrella feature defines each concept's shape once
 so the backends cannot diverge in what they emit, and enabling an umbrella with
 no backend does not compile. The `time` crate is **not** a backend and will not
-become one; it reaches the tree only as a transitive dependency of `cookie`.
+become one; it reaches the tree only as a transitive dependency of `rcgen`,
+which is itself a dev-dependency of the TLS example. It used to arrive through
+`cookie` as well, which is gone.
 
 ### Scope edges
 

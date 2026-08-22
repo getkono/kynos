@@ -59,6 +59,8 @@ pub(crate) mod erased;
 
 #[cfg(feature = "compression")]
 pub mod compression;
+#[cfg(feature = "cookie")]
+pub mod cookies;
 #[cfg(feature = "trace")]
 pub mod trace;
 

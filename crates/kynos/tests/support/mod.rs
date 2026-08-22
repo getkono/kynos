@@ -156,6 +156,19 @@ impl Reply {
             .map(|value| value.to_str().expect("a printable field").to_owned())
     }
 
+    /// Every value filed under `name`, in order.
+    ///
+    /// `Set-Cookie` is the field this exists for: it may appear more than once
+    /// on one response, and `field` would report only the first.
+    #[must_use]
+    pub(crate) fn fields(&self, name: &str) -> Vec<String> {
+        self.headers
+            .get_all(name)
+            .iter()
+            .map(|value| value.to_str().expect("a printable field").to_owned())
+            .collect()
+    }
+
     /// The body as text.
     #[must_use]
     pub(crate) fn text(&self) -> String {
