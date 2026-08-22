@@ -38,6 +38,12 @@ pub mod negotiate;
 pub mod range;
 pub mod status;
 
+// RFC 2046 delimiters, factored out of `codec::multipart` so a second subtype
+// does not write its own. Gated with the only writer there is today; a second
+// one widens the gate rather than moving the module.
+#[cfg(feature = "multipart")]
+mod framing;
+
 #[cfg(feature = "openapi32")]
 pub mod stream;
 

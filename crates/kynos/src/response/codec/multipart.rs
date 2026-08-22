@@ -5,11 +5,13 @@
 //! describes the same parts it would accept.
 //!
 //! `multer` parses; nothing writes. So the body is rendered here, to RFC 7578
-//! over RFC 2046: a delimiter line per part, a `Content-Disposition` naming the
-//! field, the part's own `Content-Type` when it declared one, and a closing
-//! delimiter. A plain `Serialize` bound would not do — a [`FilePart`]'s bytes
-//! would reach the wire as an array of numbers — so the writing half has a
-//! trait of its own, mirroring the reading one.
+//! over RFC 2046: a `Content-Disposition` naming the field and the part's own
+//! `Content-Type` when it declared one. The delimiters around them belong to
+//! RFC 2046 rather than to this subtype and come from `response::framing`,
+//! which the two multipart subtypes share. A plain `Serialize` bound
+//! would not do — a [`FilePart`]'s bytes would reach the wire as an array of
+//! numbers — so the writing half has a trait of its own, mirroring the reading
+//! one.
 
 use bytes::Bytes;
 
@@ -19,9 +21,17 @@ use crate::{
         describe::RequestContent,
     },
     http::{HeaderValue, Response, body::Body, header},
-    response::{IntoResponse, Responses},
+    response::{IntoResponse, Responses, framing},
     schema::{Schema, registry::Registry},
 };
+
+// The framing is RFC 2046's rather than this subtype's, so the delimiter search
+// and the unfolding moved out with it and the byteranges writer under
+// `response::range` uses the same ones.
+use crate::response::framing::unfolded;
+// The search's own vocabulary, which only this file's tests still name.
+#[cfg(test)]
+use crate::response::framing::{BOUNDARY_PREFIX, contains};
 
 /// How a declared type becomes the parts of a `multipart/form-data` body.
 ///
@@ -105,15 +115,6 @@ impl IntoPart for String {
     }
 }
 
-/// The fixed part of every delimiter Kynos generates.
-///
-/// Long enough that a body containing it is a body that meant to.
-const BOUNDARY_PREFIX: &str = "kynos-boundary-";
-
-/// CRLF, which frames every line of a multipart body. RFC 2046 admits no other
-/// line ending here, whatever the parts themselves contain.
-const CRLF: &[u8] = b"\r\n";
-
 impl<T: IntoMultipart> IntoResponse for MultipartForm<T> {
     fn into_response(self) -> Response {
         let parts = self.0.into_parts();
@@ -130,79 +131,45 @@ impl<T: IntoMultipart> IntoResponse for MultipartForm<T> {
     }
 }
 
-/// A delimiter no part contains.
-///
-/// RFC 2046 requires exactly that, and Kynos has no source of randomness to
-/// make it overwhelmingly likely with — so the delimiter is chosen by looking:
-/// a fixed prefix and a counter, raised until nothing encapsulates it. The
-/// first candidate wins for every body that was not written to defeat it, so
-/// this is one pass over the parts.
+/// A delimiter no part contains, over the octets these parts carry.
 fn boundary(parts: &[Part]) -> String {
-    let mut counter: u64 = 0;
-    loop {
-        let candidate = format!("{BOUNDARY_PREFIX}{counter:016x}");
-        if !parts
-            .iter()
-            .any(|part| contains(&part.bytes, candidate.as_bytes()))
-        {
-            return candidate;
-        }
-        counter += 1;
-    }
+    framing::boundary(parts.iter().map(|part| part.bytes.as_ref()))
 }
 
-/// Whether `haystack` encapsulates `needle`.
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.len() >= needle.len()
-        && haystack
-            .windows(needle.len())
-            .any(|window| window == needle)
-}
-
-/// The body: one encapsulation per part, then the closing delimiter.
-///
-/// No preamble and no epilogue. Both are legal and both are ignored, so writing
-/// either would be bytes every recipient discards.
+/// The body: this subtype's header block per part, framed by RFC 2046.
 fn render(parts: Vec<Part>, boundary: &str) -> Bytes {
-    let capacity = parts
-        .iter()
-        .map(|part| part.bytes.len() + 128)
-        .sum::<usize>()
-        + boundary.len();
-    let mut body = Vec::with_capacity(capacity);
+    let encapsulations = parts
+        .into_iter()
+        .map(|part| (headers(&part), part.bytes))
+        .collect();
 
-    for part in parts {
-        body.extend_from_slice(b"--");
-        body.extend_from_slice(boundary.as_bytes());
-        body.extend_from_slice(CRLF);
+    framing::render(encapsulations, boundary)
+}
 
-        body.extend_from_slice(b"Content-Disposition: form-data; name=\"");
-        body.extend_from_slice(quoted(&part.name).as_bytes());
-        body.push(b'"');
-        if let Some(file_name) = &part.file_name {
-            body.extend_from_slice(b"; filename=\"");
-            body.extend_from_slice(quoted(file_name).as_bytes());
-            body.push(b'"');
-        }
-        body.extend_from_slice(CRLF);
+/// The header lines one form-data part declares, CRLF-terminated.
+///
+/// RFC 7578's whole contribution to the framing: which field this part is, the
+/// file name if it had one, and the media type if it declared one.
+fn headers(part: &Part) -> Vec<u8> {
+    let mut headers = Vec::with_capacity(128);
 
-        if let Some(content_type) = &part.content_type {
-            body.extend_from_slice(b"Content-Type: ");
-            body.extend_from_slice(unfolded(content_type).as_bytes());
-            body.extend_from_slice(CRLF);
-        }
+    headers.extend_from_slice(b"Content-Disposition: form-data; name=\"");
+    headers.extend_from_slice(quoted(&part.name).as_bytes());
+    headers.push(b'"');
+    if let Some(file_name) = &part.file_name {
+        headers.extend_from_slice(b"; filename=\"");
+        headers.extend_from_slice(quoted(file_name).as_bytes());
+        headers.push(b'"');
+    }
+    headers.extend_from_slice(framing::CRLF);
 
-        body.extend_from_slice(CRLF);
-        body.extend_from_slice(&part.bytes);
-        body.extend_from_slice(CRLF);
+    if let Some(content_type) = &part.content_type {
+        headers.extend_from_slice(b"Content-Type: ");
+        headers.extend_from_slice(unfolded(content_type).as_bytes());
+        headers.extend_from_slice(framing::CRLF);
     }
 
-    body.extend_from_slice(b"--");
-    body.extend_from_slice(boundary.as_bytes());
-    body.extend_from_slice(b"--");
-    body.extend_from_slice(CRLF);
-
-    Bytes::from(body)
+    headers
 }
 
 /// A `Content-Disposition` parameter, as the quoted-string it travels in.
@@ -239,11 +206,6 @@ fn quoted(value: &str) -> String {
         }
     }
     quoted
-}
-
-/// A header value with its line endings removed, for the same reason.
-fn unfolded(value: &str) -> String {
-    value.replace(['\r', '\n'], "")
 }
 
 impl<T: Schema> Responses for MultipartForm<T> {
