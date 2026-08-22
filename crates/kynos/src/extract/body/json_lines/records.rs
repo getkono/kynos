@@ -22,7 +22,11 @@ use crate::{
 ///
 /// It cannot occur inside a JSON text, which is the whole reason the framing
 /// exists: a value holding a newline stays one record.
-const RECORD_SEPARATOR: u8 = 0x1e;
+///
+/// One spelling, read by both halves: the byte this decoder scans for is the
+/// byte [`response::stream::json`](crate::response::stream::json) writes in
+/// front of every record it emits.
+pub(crate) const RECORD_SEPARATOR: u8 = 0x1e;
 
 /// Which bytes separate one record from the next.
 ///

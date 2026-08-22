@@ -6,6 +6,7 @@ use std::{
 };
 
 use crate::{
+    extract::body::json_lines::{LINES_MEDIA_TYPE, SEQUENCE_MEDIA_TYPE, records::RECORD_SEPARATOR},
     http::{HeaderValue, Response, body::Body, header},
     response::{IntoResponse, Responses},
     schema::{Schema, registry::Registry},
@@ -14,11 +15,15 @@ use crate::{
 /// The error any body reports, whatever the stream's own error type was.
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-/// The record separator RFC 7464 puts before each JSON text.
-///
-/// It cannot occur inside a JSON text, which is the whole reason the framing
-/// exists: a value holding a newline stays one record.
-const RECORD_SEPARATOR: &str = "\u{1e}";
+/// Nothing in front of an NDJSON record.
+const NO_PREFIX: &[u8] = b"";
+
+/// The newline that ends an NDJSON record, and that RFC 7464 admits after a
+/// JSON text in a sequence.
+const NEWLINE: &[u8] = b"\n";
+
+/// RFC 7464's separator, written from the one byte the decoder scans for.
+const SEQUENCE_PREFIX: &[u8] = &[RECORD_SEPARATOR];
 
 /// The two streamed JSON codecs, as responses.
 ///
@@ -37,10 +42,12 @@ where
     S::Item: serde::Serialize,
 {
     fn into_response(self) -> Response {
-        let mut response = Response::new(Body::from_stream(Framed::new(self.items, "", "\n")));
+        let mut response = Response::new(Body::from_stream(Framed::new(
+            self.items, NO_PREFIX, NEWLINE,
+        )));
         response.headers_mut().insert(
             header::CONTENT_TYPE,
-            HeaderValue::from_static("application/x-ndjson"),
+            HeaderValue::from_static(LINES_MEDIA_TYPE),
         );
         response
     }
@@ -58,7 +65,7 @@ where
             200,
             kynos_openapi::Response::with_content(
                 "OK",
-                "application/x-ndjson",
+                LINES_MEDIA_TYPE,
                 kynos_openapi::MediaType::sequential(registry.resolve::<S::Item>()),
             ),
         )
@@ -78,12 +85,12 @@ where
     fn into_response(self) -> Response {
         let mut response = Response::new(Body::from_stream(Framed::new(
             self.items,
-            RECORD_SEPARATOR,
-            "\n",
+            SEQUENCE_PREFIX,
+            NEWLINE,
         )));
         response.headers_mut().insert(
             header::CONTENT_TYPE,
-            HeaderValue::from_static("application/json-seq"),
+            HeaderValue::from_static(SEQUENCE_MEDIA_TYPE),
         );
         response
     }
@@ -101,7 +108,7 @@ where
             200,
             kynos_openapi::Response::with_content(
                 "OK",
-                "application/json-seq",
+                SEQUENCE_MEDIA_TYPE,
                 kynos_openapi::MediaType::sequential(registry.resolve::<S::Item>()),
             ),
         )
@@ -117,12 +124,12 @@ where
 /// `Pin<Box<S>>` is `Unpin` whatever `S` is, and `unsafe` is forbidden here.
 struct Framed<S> {
     items: Pin<Box<S>>,
-    prefix: &'static str,
-    suffix: &'static str,
+    prefix: &'static [u8],
+    suffix: &'static [u8],
 }
 
 impl<S> Framed<S> {
-    fn new(items: S, prefix: &'static str, suffix: &'static str) -> Self {
+    fn new(items: S, prefix: &'static [u8], suffix: &'static [u8]) -> Self {
         Self {
             items: Box::pin(items),
             prefix,
@@ -155,12 +162,12 @@ where
 /// Serializes one item into its framed record.
 fn encode<T: serde::Serialize>(
     item: &T,
-    prefix: &str,
-    suffix: &str,
+    prefix: &[u8],
+    suffix: &[u8],
 ) -> Result<bytes::Bytes, BoxError> {
-    let mut record = Vec::from(prefix.as_bytes());
+    let mut record = Vec::from(prefix);
     serde_json::to_writer(&mut record, item)?;
-    record.extend_from_slice(suffix.as_bytes());
+    record.extend_from_slice(suffix);
 
     Ok(bytes::Bytes::from(record))
 }

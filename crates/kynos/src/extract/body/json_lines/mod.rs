@@ -26,10 +26,11 @@ use crate::{
     schema::{Schema, registry::Registry},
 };
 
-/// One spelling, read by both halves: what is decoded and what is described.
+/// One spelling, read by every half: what is decoded, what is described, and
+/// what [`response::stream::json`](crate::response::stream::json) sends.
 pub(crate) const LINES_MEDIA_TYPE: &str = "application/x-ndjson";
 
-/// One spelling, read by both halves: what is decoded and what is described.
+/// One spelling, read by every half, as [`LINES_MEDIA_TYPE`] is.
 pub(crate) const SEQUENCE_MEDIA_TYPE: &str = "application/json-seq";
 
 /// A newline-delimited JSON body (`application/x-ndjson`).
