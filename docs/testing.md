@@ -297,6 +297,14 @@ UI suite into a source of failures that carry no information about the change
 that triggered them. Bumping the pin and re-recording the snapshots is one
 commit whose diff is reviewed as a diff.
 
+**So must its components.** A `const` assertion that fails — the interceptor
+collision checks in [`middleware/stack.rs`](../crates/kynos/src/middleware/stack.rs)
+are the ones in this tree — surfaces with its primary span in `core`'s own
+`panic.rs`. rustc prints that line when it can read it and degrades to a bare
+`note:` when it cannot, so whether `rust-src` is installed changes the recorded
+text. `mise.toml` therefore lists it: a snapshot suite that passes on the
+machine that recorded it and fails everywhere else is testing the environment.
+
 **`on_unimplemented` attributes must land before any snapshot is recorded.**
 Fourteen traits carry `#[diagnostic::on_unimplemented]` —
 `Provides`, `Handler`, `FromRequestParts`, `FromRequest`, `Describe`,

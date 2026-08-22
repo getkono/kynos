@@ -5,10 +5,17 @@ config_roots = ["."]
 lockfile = true
 
 [tools]
+# `rust-src` is not a convenience here. A `const` assertion that fails inside
+# `kynos` surfaces with its primary span in `core`'s own `panic.rs`; rustc
+# prints that line's source when it can read it and degrades to a bare `note:`
+# when it cannot. The `ui` snapshots record one of those two renderings, so a
+# machine without the component fails the suite on the diagnostic's shape
+# rather than on anything the code did.
 rust = { version = "1.97.1", profile = "minimal", components = [
   "clippy",
   "llvm-tools-preview",
   "rust-analyzer",
+  "rust-src",
   "rustfmt",
 ] }
 hk = "1.53.0"

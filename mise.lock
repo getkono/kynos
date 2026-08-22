@@ -182,5 +182,5 @@ version = "1.97.1"
 backend = "core:rust"
 
 [tools.rust.options]
-components = "clippy,llvm-tools-preview,rust-analyzer,rustfmt"
+components = "clippy,llvm-tools-preview,rust-analyzer,rust-src,rustfmt"
 profile = "minimal"
