@@ -80,6 +80,18 @@ impl Responses for BodySizeExceeded {
 /// Contributes 413 to every covered operation — which is the point.
 /// Configuring a limit and documenting that the limit exists are the same
 /// action, so an API cannot quietly reject payloads it claims to accept.
+///
+/// # What it costs a streaming read
+///
+/// A request declaring a `Content-Length` is decided from the head, and the
+/// body passes through untouched: a streaming extractor such as
+/// [`Records`](crate::extract::body::json_lines::records::Records) still receives it a
+/// frame at a time. A chunked request declares no length, so the running count
+/// is the only bound there is and the whole body is materialised here before
+/// the handler is entered. Records then still arrive one at a time, but the
+/// memory the streaming was for has already been spent. `docs/nfr.md` records
+/// the limit; closing it needs a body that can be rebuilt as a stream rather
+/// than only from bytes.
 #[derive(Clone, Copy, Debug)]
 pub struct BodySize {
     /// The maximum body size, in bytes.

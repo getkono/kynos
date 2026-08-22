@@ -104,6 +104,22 @@ fn a_body_extractor_rejects_with_the_body_type() {
 
         body_rejects_with::<BodyRejection, (), Json<User>>();
     }
+
+    // A streamed body rejects with the same type, which is what makes a
+    // mid-stream failure a status the operation already declares rather than a
+    // mechanism of its own.
+    #[cfg(all(feature = "json", feature = "openapi32"))]
+    {
+        use kynos::extract::body::json_lines::{JsonLines, JsonSeq, records::Records};
+
+        #[derive(serde::Deserialize)]
+        struct Reading {
+            value: f64,
+        }
+
+        body_rejects_with::<BodyRejection, (), JsonLines<Records<Reading>>>();
+        body_rejects_with::<BodyRejection, (), JsonSeq<Records<Reading>>>();
+    }
 }
 
 /// `Option<T>` delegates rather than widening, so making a body optional does

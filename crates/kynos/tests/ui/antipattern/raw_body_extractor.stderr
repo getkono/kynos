@@ -7,14 +7,15 @@ error[E0277]: `Body` cannot be extracted from a request body
   = help: the trait `FromRequest<()>` is not implemented for `Body`
   = note: only the last handler argument consumes the body; every earlier one reads the head
   = help: the following other types implement trait `FromRequest<C>`:
+            JsonLines<Records<T>>
+            JsonSeq<Records<T>>
             MultipartForm<T>
             OneOf<L, R>
             Option<T>
             Protobuf<T>
             Text
             kynos::extract::body::binary::Binary<M>
-            kynos::extract::body::form::Form<T>
-            kynos::prelude::Json<T>
+          and $N others
 note: required by a bound in `from_request`
  --> tests/ui/antipattern/raw_body_extractor.rs:3:23
   |

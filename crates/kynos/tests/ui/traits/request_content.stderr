@@ -9,9 +9,11 @@ help: the trait `RequestContent` is not implemented for `NotABody`
   |
 3 | struct NotABody;
   | ^^^^^^^^^^^^^^^
-  = note: a body is one of `Json<T>`, `Form<T>`, `MultipartForm<T>`, `Protobuf<T>`, `Text` or `Binary<M>`, optionally wrapped in `Option` or `OneOf`
+  = note: a body is one of `Json<T>`, `Form<T>`, `MultipartForm<T>`, `Protobuf<T>`, `JsonLines<Records<T>>`, `JsonSeq<Records<T>>`, `Text` or `Binary<M>`, optionally wrapped in `Option` or `OneOf`
   = note: only the last handler argument may consume the body
   = help: the following other types implement trait `RequestContent`:
+            JsonLines<Records<T>>
+            JsonSeq<Records<T>>
             MultipartForm<T>
             OneOf<L, R>
             Protobuf<T>
