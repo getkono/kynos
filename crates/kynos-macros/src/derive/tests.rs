@@ -427,6 +427,16 @@ mod security_scheme {
                 ),
                 "must not be declared as a parameter",
             ),
+        ]
+    }
+
+    /// The refusals the `oauth2` flow grammar adds.
+    ///
+    /// A second function rather than more rows in the first: the two are read
+    /// together everywhere below, and one list of every diagnostic this derive
+    /// raises had outgrown what a reader can hold — and what Clippy will accept.
+    fn oauth2_ledger() -> Vec<Case> {
+        vec![
             case(
                 "an OAuth 2.0 scheme declaring no flow at all",
                 quote::quote!(
@@ -452,6 +462,15 @@ mod security_scheme {
                     struct Delegated;
                 ),
                 "authorization_url",
+            ),
+            case(
+                "a carrier setting that is not the one word it takes",
+                quote::quote!(
+                    #[security(bearer)]
+                    #[security(carrier = automatic)]
+                    struct Bearer;
+                ),
+                "takes only `manual`",
             ),
             case(
                 "one flow declared twice",
@@ -515,6 +534,7 @@ mod security_scheme {
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(oauth2_ledger(), expand_inner);
         each_case_is_refused(version_gated_ledger(), expand_inner);
     }
 
@@ -523,7 +543,10 @@ mod security_scheme {
         every_diagnostic_has_a_case(
             "security_scheme.rs",
             include_str!("security_scheme.rs"),
-            ledger().len() + version_gated_ledger().len() + UNREACHABLE_HERE,
+            ledger().len()
+                + oauth2_ledger().len()
+                + version_gated_ledger().len()
+                + UNREACHABLE_HERE,
         );
     }
 

@@ -48,11 +48,11 @@ use std::{collections::HashMap, net::Ipv4Addr};
 
 use kynos::{
     error::rejection::AuthRejection,
-    http::Parts,
     prelude::*,
     security::{
-        Authenticates, Authenticator, SecurityScheme,
-        auth::{Auth, Scoped, Scopes},
+        Authenticates, Authenticator,
+        auth::{Auth, MaybeAuth, Scoped, Scopes},
+        carrier::{BearerToken, Carries},
         schemes::{Basic, Credentials, MutualTls},
     },
     server::Server,
@@ -177,18 +177,20 @@ impl Tokens {
 }
 
 impl<C: Sync> Authenticator<AccessToken, C> for Tokens {
-    async fn authenticate(&self, parts: &Parts, context: &C) -> Result<Claims, AuthRejection> {
+    async fn authenticate(
+        &self,
+        presented: BearerToken,
+        context: &C,
+    ) -> Result<Claims, AuthRejection> {
         let _ = context;
 
-        // `Unauthenticated` for all three failures -- absent, malformed, and
-        // unknown -- because telling a caller which one it was tells an
-        // attacker which tokens exist.
-        parts
-            .headers
-            .get(kynos::http::header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer "))
-            .and_then(|token| self.issued.get(token))
+        // What this does *not* do is find the token. `#[security(bearer)]`
+        // already said where it travels, so RFC 6750's framing -- the
+        // `Authorization` field, the case-insensitive scheme name, the space --
+        // is read by the carrier the same attribute wrote. All that is left
+        // here is what the token means.
+        self.issued
+            .get(presented.as_str())
             .cloned()
             .ok_or_else(AuthRejection::unauthenticated)
     }
@@ -224,7 +226,7 @@ impl<C: Sync> Authenticator<AccessToken, C> for Tokens {
 /// context that cannot verify `S` is a compile error rather than a 500.
 struct Rejects;
 
-impl<S: SecurityScheme, C: Sync> Authenticator<S, C> for Rejects
+impl<S: Carries, C: Sync> Authenticator<S, C> for Rejects
 where
     // `Sync` and not `Default`: nothing here builds a credential, but
     // `authorize` holds a reference to one across an await, and the trait
@@ -233,10 +235,10 @@ where
 {
     async fn authenticate(
         &self,
-        parts: &Parts,
+        presented: S::Presented,
         context: &C,
     ) -> Result<S::Credential, AuthRejection> {
-        let _ = (parts, context);
+        let _ = (presented, context);
         Err(AuthRejection::unauthenticated())
     }
 
@@ -304,6 +306,24 @@ verifies!(
 #[kynos::get("/me")]
 async fn get_me(auth: Auth<AccessToken>) -> NoContent {
     let _ = auth.into_inner().subject;
+    NoContent
+}
+
+/// Serves a feed, personalised when the caller identified themselves.
+///
+/// `MaybeAuth` declares `security: [{}, {Bearer: []}]` — the empty requirement
+/// first, which is OpenAPI's spelling for "anonymous access is also permitted".
+/// A reader learns that the credential is *honoured* rather than *demanded*,
+/// which no flag on a middleware can say.
+///
+/// A token that is present and wrong is still a 401. Only absence is anonymity:
+/// a client that sent a broken credential is not an anonymous client, and
+/// treating it as one would wave through the request most worth refusing.
+#[kynos::get("/feed")]
+async fn get_feed(caller: MaybeAuth<AccessToken>) -> NoContent {
+    if let Some(claims) = caller.into_inner() {
+        let _ = claims.subject;
+    }
     NoContent
 }
 
@@ -381,6 +401,7 @@ async fn main() -> kynos::Result<()> {
         .security_scheme::<PartnerCertificate>()
         .mount(kynos::routes![
             get_me,
+            get_feed,
             get_usage,
             get_preferences,
             admin_sign_in,

@@ -26,8 +26,14 @@
 //!
 //! option := name = "<ComponentName>" | credential = <Type>
 //!         | description = "<CommonMark>" | challenge = "<WWW-Authenticate>"
-//!         | scopes("a", "b") | deprecated
+//!         | scopes("a", "b") | deprecated | carrier = manual
 //! ```
+//!
+//! The kind writes two things, not one. It writes `describe`, which says where
+//! a client puts the credential, and it writes `Carries`, which is where Kynos
+//! reads it from -- one attribute, so the documented carrier and the enforced
+//! one cannot come apart. `carrier = manual` suppresses the second for a scheme
+//! whose credential arrives somewhere the grammar cannot describe.
 //!
 //! A flow's `scopes` takes either spelling: `scopes("a")` names a scope with no
 //! description, and `scopes("a" = "Read a")` gives it the one the document
@@ -140,6 +146,8 @@ struct SchemeArgs {
     challenge: Option<LitStr>,
     description: Option<LitStr>,
     deprecated: bool,
+    /// Whether the carrier is the application's to write.
+    manual_carrier: bool,
     scopes: Vec<LitStr>,
     nested: Nested,
 }
@@ -212,6 +220,26 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         |value| quote!(::core::option::Option::Some(#value)),
     );
 
+    let carrier = (!args.manual_carrier).then(|| {
+        let (presented, read) = carrier_of(&args.nested, kind);
+        quote! {
+            impl #impl_generics ::kynos::security::carrier::Carries
+                for #name #ty_generics #where_clause
+            {
+                type Presented = #presented;
+
+                fn present(
+                    parts: &::kynos::http::Parts,
+                ) -> ::core::result::Result<
+                    ::core::option::Option<Self::Presented>,
+                    ::kynos::error::rejection::AuthRejection,
+                > {
+                    #read
+                }
+            }
+        }
+    });
+
     Ok(quote! {
         impl #impl_generics ::kynos::security::SecurityScheme
             for #name #ty_generics #where_clause
@@ -230,7 +258,62 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 #challenge
             }
         }
+
+        #carrier
     })
+}
+
+/// Where this kind's credential travels, and the type it reads back as.
+///
+/// The same `Nested` that fed `of_kind`, so the field an API key is documented
+/// under and the field it is read from are one string literal in one expansion.
+fn carrier_of(
+    nested: &Nested,
+    kind: &Ident,
+) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
+    let carrier = quote!(::kynos::security::carrier);
+    let text = |value: Option<&LitStr>| value.map_or_else(String::new, LitStr::value);
+
+    match kind.to_string().as_str() {
+        "basic" => (
+            quote!(::kynos::security::schemes::Credentials),
+            quote!(#carrier::basic(parts)),
+        ),
+
+        "http" => {
+            let scheme = text(nested.scheme.as_ref());
+            (
+                quote!(#carrier::SchemeCredentials),
+                quote!(#carrier::http_scheme(parts, #scheme)),
+            )
+        }
+
+        "api_key" => {
+            let field = text(nested.field.as_ref());
+            let location = match nested.location.as_ref().map(LitStr::value).as_deref() {
+                Some("query") => quote!(#carrier::KeyLocation::Query),
+                Some("cookie") => quote!(#carrier::KeyLocation::Cookie),
+                _ => quote!(#carrier::KeyLocation::Header),
+            };
+            (
+                quote!(#carrier::ApiKey),
+                quote!(#carrier::api_key(parts, #location, #field)),
+            )
+        }
+
+        "mutual_tls" => (
+            quote!(#carrier::PeerCertificates),
+            quote!(#carrier::peer_certificates(parts)),
+        ),
+
+        // `bearer`, and the two kinds whose credential is a bearer token by
+        // definition: RFC 6750 is how an OAuth 2.0 access token reaches a
+        // resource server, and OpenID Connect is OAuth 2.0 with discovery.
+        _ => (
+            quote!(#carrier::BearerToken),
+            quote!(#carrier::bearer(parts)),
+        ),
+    }
 }
 
 /// The `describe` body: the kind, then the prose and the deprecation every kind
@@ -442,6 +525,17 @@ fn parse_args(input: &DeriveInput) -> syn::Result<SchemeArgs> {
                 "challenge" => args.challenge = Some(meta.value()?.parse()?),
                 "description" => args.description = Some(meta.value()?.parse()?),
                 "deprecated" => args.deprecated = true,
+                "carrier" => {
+                    let value: Ident = meta.value()?.parse()?;
+                    if value != "manual" {
+                        return Err(syn::Error::new(
+                            value.span(),
+                            "`carrier` takes only `manual`, which leaves the `Carries` \
+                             implementation to you; every other carrier follows from the kind",
+                        ));
+                    }
+                    args.manual_carrier = true;
+                }
                 "scopes" => {
                     let content;
                     syn::parenthesized!(content in meta.input);

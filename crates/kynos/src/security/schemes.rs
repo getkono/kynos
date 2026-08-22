@@ -16,7 +16,14 @@
 
 use std::marker::PhantomData;
 
-use crate::security::SecurityScheme;
+use crate::{
+    error::rejection::AuthRejection,
+    http::Parts,
+    security::{
+        SecurityScheme,
+        carrier::{self, BearerToken, Carries, PeerCertificates},
+    },
+};
 
 /// HTTP bearer authentication, per RFC 6750.
 ///
@@ -94,6 +101,33 @@ impl<T: Send + 'static> SecurityScheme for MutualTls<T> {
 
     fn describe() -> kynos_openapi::SecurityScheme {
         kynos_openapi::SecurityScheme::mutual_tls()
+    }
+}
+
+/// Each scheme's carrier is the one its own description implies: `bearer` and
+/// `basic` are `Authorization` schemes, and a client certificate is presented
+/// during the handshake rather than in any field.
+impl<T: Send + 'static> Carries for Bearer<T> {
+    type Presented = BearerToken;
+
+    fn present(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
+        carrier::bearer(parts)
+    }
+}
+
+impl<T: Send + 'static> Carries for Basic<T> {
+    type Presented = Credentials;
+
+    fn present(parts: &Parts) -> Result<Option<Credentials>, AuthRejection> {
+        carrier::basic(parts)
+    }
+}
+
+impl<T: Send + 'static> Carries for MutualTls<T> {
+    type Presented = PeerCertificates;
+
+    fn present(parts: &Parts) -> Result<Option<PeerCertificates>, AuthRejection> {
+        carrier::peer_certificates(parts)
     }
 }
 

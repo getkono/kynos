@@ -68,8 +68,9 @@ pub struct ConnectInfo(pub SocketAddr);
 ///
 /// Built by the listener and read back through [`Connection`]. No rustls type
 /// reaches this, which is what keeps the TLS backend contained to
-/// `server/tls/` as `docs/architecture.md` requires.
-#[cfg(feature = "tls")]
+/// `server/tls/` as `docs/architecture.md` requires — and what lets the type
+/// exist in a build with no TLS at all, where every connection simply carries
+/// none.
 #[derive(Clone, Debug, Default)]
 pub struct TlsIdentity {
     server_name: Option<String>,
@@ -77,12 +78,12 @@ pub struct TlsIdentity {
     peer_certificates: Vec<bytes::Bytes>,
 }
 
-#[cfg(feature = "tls")]
 impl TlsIdentity {
     /// Records what a completed handshake agreed on.
     ///
     /// `peer_certificates` is DER, leaf first, and empty unless the listener
     /// was configured to verify client certificates.
+    #[cfg(feature = "tls")]
     pub(crate) fn new(
         server_name: Option<String>,
         alpn: Option<Vec<u8>>,
@@ -111,7 +112,6 @@ struct Inner {
     peer_addr: SocketAddr,
     local_addr: SocketAddr,
     in_process: bool,
-    #[cfg(feature = "tls")]
     tls: Option<TlsIdentity>,
 }
 
@@ -125,7 +125,6 @@ static IN_PROCESS_CONNECTION: LazyLock<Connection> = LazyLock::new(|| {
         peer_addr: IN_PROCESS,
         local_addr: IN_PROCESS,
         in_process: true,
-        #[cfg(feature = "tls")]
         tls: None,
     }))
 });
@@ -143,7 +142,6 @@ impl Connection {
             peer_addr,
             local_addr,
             in_process: false,
-            #[cfg(feature = "tls")]
             tls: None,
         }))
     }
@@ -192,16 +190,18 @@ impl Connection {
 
     /// The server name the client asked for through SNI.
     ///
-    /// `None` when the connection is not TLS, or when the client sent no
+    /// `None` when the connection is not TLS — which includes every connection
+    /// in a build without the `tls` feature — or when the client sent no
     /// server-name indication.
-    #[cfg(feature = "tls")]
     #[must_use]
     pub fn server_name(&self) -> Option<&str> {
         self.0.tls.as_ref()?.server_name.as_deref()
     }
 
     /// The protocol ALPN settled on.
-    #[cfg(feature = "tls")]
+    ///
+    /// `None` without TLS, since ALPN is negotiated during a handshake there is
+    /// no other way to have.
     #[must_use]
     pub fn alpn_protocol(&self) -> Option<&[u8]> {
         self.0.tls.as_ref()?.alpn.as_deref()
@@ -210,8 +210,8 @@ impl Connection {
     /// The certificate chain the peer presented, DER, leaf first.
     ///
     /// Empty unless the listener was configured to verify client certificates
-    /// and the peer presented one.
-    #[cfg(feature = "tls")]
+    /// and the peer presented one — so also empty behind a TLS-terminating
+    /// proxy, and in a build without the `tls` feature.
     #[must_use]
     pub fn peer_certificates(&self) -> &[bytes::Bytes] {
         self.0

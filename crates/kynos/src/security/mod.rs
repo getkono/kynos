@@ -16,11 +16,12 @@
 //! without a derive.
 
 pub mod auth;
+pub mod carrier;
 pub mod schemes;
 
 use std::future::Future;
 
-use crate::{error::rejection::AuthRejection, http::Parts};
+use crate::error::rejection::AuthRejection;
 
 /// Compares two secrets without returning on the first byte that differs.
 ///
@@ -121,17 +122,33 @@ pub trait SecurityScheme: Send + Sync + 'static {
 /// is *checked*. Kynos deliberately does not ship a JWT verifier or a session
 /// store — that is application policy, and prescribing it would be exactly the
 /// kind of scope creep the project avoids.
-pub trait Authenticator<S: SecurityScheme, C: Sync>: Send + Sync + 'static {
-    /// Checks the credential carried by this request.
+///
+/// # Why this is not handed the request
+///
+/// [`authenticate`](Authenticator::authenticate) receives the credential the
+/// scheme's own carrier already extracted, not a `&Parts`. That is what makes
+/// the field a verifier reads and the field the description advertises one
+/// string: an authenticator *cannot* reach for a header the scheme did not
+/// declare, because it is never given anywhere to reach.
+///
+/// Every framework that configures a credential "finder" beside its
+/// documentation has two statements that agree until someone edits one. There
+/// is one here.
+pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
+    /// Checks the credential this request presented.
     ///
-    /// Return [`AuthRejection::unauthenticated`] when the credential is absent
-    /// or invalid, and [`AuthRejection::Forbidden`] when it is valid but
-    /// insufficient. The challenge is left unset: [`Auth`](auth::Auth) attaches
+    /// Return [`AuthRejection::unauthenticated`] when the credential is invalid
+    /// and [`AuthRejection::Forbidden`] when it is valid but insufficient. The
+    /// challenge is left unset: [`Auth`](auth::Auth) attaches
     /// [`challenge`](SecurityScheme::challenge) on the way out, so the wire and
     /// the description cannot name different ones.
+    ///
+    /// A credential that was *absent* never reaches here — that is
+    /// [`Auth`](auth::Auth)'s 401 and [`MaybeAuth`](auth::MaybeAuth)'s
+    /// anonymity, and neither is a question a verifier can answer.
     fn authenticate(
         &self,
-        parts: &Parts,
+        presented: S::Presented,
         context: &C,
     ) -> impl Future<Output = Result<S::Credential, AuthRejection>> + Send;
 
@@ -149,7 +166,7 @@ pub trait Authenticator<S: SecurityScheme, C: Sync>: Send + Sync + 'static {
 /// This typed association replaces an erased authentication extension map: a
 /// router using `Auth<S>` cannot be mounted with a context that does not prove
 /// it can authenticate `S`.
-pub trait Authenticates<S: SecurityScheme>: Sync + Sized {
+pub trait Authenticates<S: carrier::Carries>: Sync + Sized {
     /// The concrete authenticator owned by this context.
     type Authenticator: Authenticator<S, Self>;
 

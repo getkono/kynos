@@ -33,13 +33,13 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let params = Param::pair(fields, &names);
     let rejection = quote!(::kynos::error::rejection::CookieRejection);
 
-    // Splitting a jar is `extract::params::cookie`'s job, not an expansion's:
-    // the rules are RFC 6265's, they belong in one place, and a credential
-    // carried in a cookie reads them from there too.
+    // Splitting a jar is `http::cookie`'s job, not an expansion's: the rules
+    // are RFC 6265's, they belong in one place, and a credential carried in a
+    // cookie reads them from there in a build with no `cookie` feature at all.
     let reads = params.iter().map(|param| {
         let wire = param.name();
         let found = quote! {
-            ::kynos::extract::params::cookie::value_of(headers, #wire)
+            ::kynos::http::cookie::value_of(headers, #wire)
         };
         decode_field(param, &rejection, &found, "the cookie is required")
     });

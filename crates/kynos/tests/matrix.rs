@@ -35,7 +35,7 @@ use std::time::Duration;
 use kynos::{
     Router,
     error::rejection::AuthRejection,
-    http::{Parts, StatusCode, header},
+    http::StatusCode,
     middleware::{
         cors::Cors,
         limits::{BodySize, Concurrency, Timeout},
@@ -47,7 +47,7 @@ use kynos::{
         headers::WithHeaders,
         status::{NoContent, Redirect},
     },
-    security::{Authenticates, Authenticator, auth::Auth, schemes::Bearer},
+    security::{Authenticates, Authenticator, auth::Auth, carrier::BearerToken, schemes::Bearer},
     test::TestClient,
 };
 use serde::{Deserialize, Serialize};
@@ -108,17 +108,15 @@ struct Caller {
 struct Tokens;
 
 impl<C: Sync> Authenticator<Bearer<Caller>, C> for Tokens {
-    async fn authenticate(&self, parts: &Parts, _: &C) -> Result<Caller, AuthRejection> {
-        match parts
-            .headers
-            .get(header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer "))
-        {
-            Some("tok_ok") => Ok(Caller {
+    async fn authenticate(&self, presented: BearerToken, _: &C) -> Result<Caller, AuthRejection> {
+        // No `strip_prefix("Bearer ")` here, and that is the point: the scheme
+        // said where its credential travels, so this only says what the token
+        // means.
+        match presented.as_str() {
+            "tok_ok" => Ok(Caller {
                 subject: "user-1".to_owned(),
             }),
-            Some("tok_banned") => Err(AuthRejection::Forbidden),
+            "tok_banned" => Err(AuthRejection::Forbidden),
             _ => Err(AuthRejection::unauthenticated()),
         }
     }

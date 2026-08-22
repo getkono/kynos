@@ -32,11 +32,11 @@ use kynos::{
         media::OctetStream,
         params::{header::Headers as HeaderExtractor, path::Path, query::Query},
     },
-    http::Parts,
     response::negotiate::Accept,
     security::{
         Authenticates, Authenticator,
-        auth::{Auth, Scoped, Scopes},
+        auth::{Auth, MaybeAuth, Scoped, Scopes},
+        carrier::BearerToken,
         schemes::Bearer,
     },
 };
@@ -140,8 +140,12 @@ struct Claims;
 struct Tokens;
 
 impl<C: Sync> Authenticator<Bearer<Claims>, C> for Tokens {
-    async fn authenticate(&self, parts: &Parts, context: &C) -> Result<Claims, AuthRejection> {
-        let _ = (parts, context);
+    async fn authenticate(
+        &self,
+        presented: BearerToken,
+        context: &C,
+    ) -> Result<Claims, AuthRejection> {
+        let _ = (presented, context);
         Err(AuthRejection::unauthenticated())
     }
 
@@ -181,4 +185,7 @@ impl Scopes for ReadReports {
 fn an_authenticated_extractor_rejects_with_the_auth_type() {
     head_rejects_with::<AuthRejection, App, Auth<Bearer<Claims>>>();
     head_rejects_with::<AuthRejection, App, Scoped<Bearer<Claims>, ReadReports>>();
+    // `MaybeAuth` too: a credential that is present and wrong is a 401 there as
+    // much as here, so it raises the same rejection rather than a weaker one.
+    head_rejects_with::<AuthRejection, App, MaybeAuth<Bearer<Claims>>>();
 }
