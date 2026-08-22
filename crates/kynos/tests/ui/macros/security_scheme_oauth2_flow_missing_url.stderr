@@ -1,0 +1,5 @@
+error: the `authorization_code` flow needs `authorization_url`: RFC 6749 defines the grant in terms of it, so a description omitting it is one no client can follow
+ --> tests/ui/macros/security_scheme_oauth2_flow_missing_url.rs:2:19
+  |
+2 | #[security(oauth2(authorization_code(token_url = "https://auth.example.com/token")))]
+  |                   ^^^^^^^^^^^^^^^^^^

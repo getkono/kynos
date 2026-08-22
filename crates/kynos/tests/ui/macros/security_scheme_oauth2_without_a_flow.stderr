@@ -1,0 +1,5 @@
+error: an OAuth 2.0 scheme must declare at least one flow: a scheme with none describes an authorization server no client can reach. Add `authorization_code(...)`, `client_credentials(...)`, `password(...)` or `implicit(...)`
+ --> tests/ui/macros/security_scheme_oauth2_without_a_flow.rs:2:12
+  |
+2 | #[security(oauth2(metadata_url = "https://auth.example.com/meta"))]
+  |            ^^^^^^

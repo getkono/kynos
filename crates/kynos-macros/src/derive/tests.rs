@@ -430,9 +430,112 @@ mod security_scheme {
         ]
     }
 
+    /// The refusals the `oauth2` flow grammar adds.
+    ///
+    /// A second function rather than more rows in the first: the two are read
+    /// together everywhere below, and one list of every diagnostic this derive
+    /// raises had outgrown what a reader can hold — and what Clippy will accept.
+    fn oauth2_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "an OAuth 2.0 scheme declaring no flow at all",
+                quote::quote!(
+                    #[security(oauth2(metadata_url = "https://auth.example.com/meta"))]
+                    struct Delegated;
+                ),
+                "must declare at least one flow",
+            ),
+            case(
+                "a flow OAuth 2.0 does not define",
+                quote::quote!(
+                    #[security(oauth2(magic_link(token_url = "https://auth.example.com/token")))]
+                    struct Delegated;
+                ),
+                "is not an OAuth 2.0 flow",
+            ),
+            case(
+                "a flow missing a URL its own grant needs",
+                quote::quote!(
+                    #[security(oauth2(authorization_code(
+                        token_url = "https://auth.example.com/token"
+                    )))]
+                    struct Delegated;
+                ),
+                "authorization_url",
+            ),
+            case(
+                "a carrier setting that is not the one word it takes",
+                quote::quote!(
+                    #[security(bearer)]
+                    #[security(carrier = automatic)]
+                    struct Bearer;
+                ),
+                "takes only `manual`",
+            ),
+            case(
+                "one flow declared twice",
+                quote::quote!(
+                    #[security(oauth2(
+                        client_credentials(token_url = "https://auth.example.com/a"),
+                        client_credentials(token_url = "https://auth.example.com/b"),
+                    ))]
+                    struct Delegated;
+                ),
+                "already declared",
+            ),
+        ]
+    }
+
+    /// The two diagnostics that fire only where the document model has no field
+    /// to hold the answer.
+    ///
+    /// Under `openapi32` both constructs are legal, so neither can be provoked
+    /// and neither has a row. The count below adds them back, which is what
+    /// keeps the ledger honest in both builds rather than in the one that
+    /// happens to run first.
+    #[cfg(not(feature = "openapi32"))]
+    fn version_gated_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a device authorization flow, which only 3.2 defines",
+                quote::quote!(
+                    #[security(oauth2(device_authorization(
+                        device_authorization_url = "https://auth.example.com/device",
+                        token_url = "https://auth.example.com/token"
+                    )))]
+                    struct Delegated;
+                ),
+                "openapi32",
+            ),
+            case(
+                "an authorization server metadata URL, which only 3.2 carries",
+                quote::quote!(
+                    #[security(oauth2(
+                        client_credentials(token_url = "https://auth.example.com/token"),
+                        metadata_url = "https://auth.example.com/meta",
+                    ))]
+                    struct Delegated;
+                ),
+                "openapi32",
+            ),
+        ]
+    }
+
+    #[cfg(feature = "openapi32")]
+    fn version_gated_ledger() -> Vec<Case> {
+        Vec::new()
+    }
+
+    /// How many diagnostics this build cannot provoke.
+    ///
+    /// Two, under `openapi32`: the constructs they refuse are legal there.
+    const UNREACHABLE_HERE: usize = if cfg!(feature = "openapi32") { 2 } else { 0 };
+
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(oauth2_ledger(), expand_inner);
+        each_case_is_refused(version_gated_ledger(), expand_inner);
     }
 
     #[test]
@@ -440,8 +543,53 @@ mod security_scheme {
         every_diagnostic_has_a_case(
             "security_scheme.rs",
             include_str!("security_scheme.rs"),
-            ledger().len(),
+            ledger().len()
+                + oauth2_ledger().len()
+                + version_gated_ledger().len()
+                + UNREACHABLE_HERE,
         );
+    }
+
+    /// A declared flow reaches the expansion.
+    ///
+    /// The defect this closes: `of_kind` built `OAuthFlows::default()`
+    /// unconditionally and `check_kind` sent every flow to `skip_value`, so
+    /// `#[security(oauth2(authorization_code(..)))]` described a scheme with no
+    /// flows at all — and `examples/security_schemes.rs` shipped exactly that,
+    /// emitting `{"type":"oauth2","flows":{}}` while presenting itself as the
+    /// demonstration of delegated authorization.
+    ///
+    /// `kynos-macros` cannot depend on `kynos`, so the assertion is on the
+    /// tokens rather than on the description they build;
+    /// `crates/kynos/tests/derives.rs` is where the expansion is compiled.
+    #[test]
+    fn a_declared_flow_reaches_the_expansion() {
+        let input: syn::DeriveInput = syn::parse_quote!(
+            #[security(oauth2(authorization_code(
+                authorization_url = "https://auth.example.com/authorize",
+                token_url = "https://auth.example.com/token",
+                refresh_url = "https://auth.example.com/token",
+                scopes("users:read", "users:write"),
+            )))]
+            struct Delegated;
+        );
+
+        let expanded = expand_inner(&input)
+            .expect("a well-formed oauth2 scheme")
+            .to_string();
+
+        for expected in [
+            "with_authorization_code",
+            "https://auth.example.com/authorize",
+            "https://auth.example.com/token",
+            "users:read",
+            "users:write",
+        ] {
+            assert!(
+                expanded.contains(expected),
+                "the expansion never mentions {expected:?}: {expanded}"
+            );
+        }
     }
 }
 

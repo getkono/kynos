@@ -83,6 +83,16 @@ pub enum OpaqueReason {
     /// produce an entry no consumer could act on.
     ProtocolUpgrade,
 
+    /// The route serves a tree of files whose membership is not fixed.
+    ///
+    /// A catch-all like every other, so [`UntypedRoute`](Self::UntypedRoute)
+    /// would be true of it — but it reads identically to a business API someone
+    /// wildcarded, and the two deserve different amounts of alarm. A consumer
+    /// meeting this knows the undescribed part of the service is a directory of
+    /// files rather than an operation nobody wrote down, and a CI gate can
+    /// tolerate exactly this one.
+    StaticAssets,
+
     /// A reason recorded by a version of Kynos that knows more than this one.
     ///
     /// Preserved verbatim so the record round-trips. An older reader must not
@@ -102,6 +112,7 @@ impl OpaqueReason {
             Self::UntypedRoute => "untyped-route",
             Self::UntypedHandler => "untyped-handler",
             Self::ProtocolUpgrade => "protocol-upgrade",
+            Self::StaticAssets => "static-assets",
             Self::Unrecognized(reason) => reason,
         }
     }

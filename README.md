@@ -37,7 +37,7 @@ Each of these is something another Rust framework offers and Kynos does not, and
 
 **2. Raw request access.** There is no `Request`, `Body` or `HeaderMap` extractor. These are exactly the holes through which aide and utoipa emit documents with silent gaps. Declare what you read with `Headers<T>`; if a body genuinely is arbitrary, say `Unchecked<T>`.
 
-**3. Wildcard and catch-all routes.** A path parameter value must not contain an unescaped `/`, so `/assets/{*path}` has no OpenAPI equivalent. Serving a directory tree and SPA fallback follow from this. Use a reverse proxy or CDN. Escape hatch: `route_unchecked`, behind `unchecked`.
+**3. Wildcard and catch-all routes.** A path parameter value must not contain an unescaped `/`, so `/assets/{*path}` has no OpenAPI equivalent. SPA fallback follows from this. Use a reverse proxy or CDN. Escape hatch: `route_unchecked`, behind `unchecked`. *Static files are the case worth separating*: a set whose membership is fixed is enumerable, so `assets!` compiles it into the binary and every file becomes a literal `paths` key with nothing waived. Only a directory that anything may add to needs the hatch — `assets_directory`, which records itself at the document root where no generator can act on it.
 
 **4. Runtime-chosen status codes.** `HttpResponse::build(code)` and a bare `StatusCode` return have no equivalent here. A status the description does not list is a status it is wrong about. Status is part of the return type; use `#[derive(Reply)]` when an operation has several.
 
@@ -75,6 +75,9 @@ Each of these is something another Rust framework offers and Kynos does not, and
 | `compression` | no | Response compression |
 | `yaml` | no | YAML document emission |
 | `test-util` | no | In-process test client and contract-conformance assertions |
+| `assets` | no | Compile a directory into the binary as one described operation per file |
+| `cache` | no | A shared response cache over a store you supply, and the conditional-request half |
+| `assets-fs` | no | Serve a directory from disk. Implies `unchecked`: its membership is not fixed, so no path template is true of it |
 | `unchecked` | no | Escape hatches. What they reach is recorded and flagged rather than dropped, and the document is stamped non-authoritative |
 | `full` | no | Every feature above except `unchecked`. A convenience for testing the whole surface, not a recommended default |
 

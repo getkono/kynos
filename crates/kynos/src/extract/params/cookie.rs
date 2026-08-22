@@ -1,4 +1,9 @@
 //! Declared request cookies.
+//!
+//! Splitting a jar is [`http::cookie`](crate::http::cookie)'s, not this
+//! module's: a credential carried in a cookie is a
+//! [`SecurityScheme`](crate::security::SecurityScheme) rather than a parameter,
+//! and it reads a jar in a build where this module does not exist.
 
 use crate::{
     error::rejection::CookieRejection,

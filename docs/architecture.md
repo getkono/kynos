@@ -56,13 +56,20 @@ is now an enumeration:
 | Site | Names | Why it is not in `server/` |
 | --- | --- | --- |
 | `server/{accept,connection,mod}.rs`, `server/tls/` | the five coupling points | — |
-| `middleware/limits.rs` | `tokio::time::timeout` | the timer wraps the chain's future, which does not exist until after routing |
+| `middleware/limits.rs` | `tokio::{time::timeout, sync::Semaphore}` | the timer wraps the chain's future, which does not exist until after routing; the permit bounds requests already in it |
 | `middleware/compression.rs` | `tokio::io::{AsyncRead, ReadBuf}` | `async-compression`'s encoders are written against tokio's I/O traits; no byte here crosses a socket |
 | `response/stream/sse.rs` | `tokio::time::{Instant, Sleep, sleep}` | a keep-alive is a property of one body, and the connection driver cannot know a body is an event stream |
+| `router/assets/fs/` | `tokio::fs::{metadata, read}` | which file a request wants is not known until routing has chosen the operation, and the read is the operation |
 
-**Four rows, and the count is the check.** [`nfr.md`](nfr.md#runtime) states the
+**Five rows, and the count is the check.** [`nfr.md`](nfr.md#runtime) states the
 containment requirement against this table rather than against `server/` alone,
-so a fifth site is a failing build rather than a silently broken sentence.
+so a sixth site is a failing build rather than a silently broken sentence.
+
+The fifth was added deliberately, which is what the table is for. Serving a
+file from disk means reading one, and which file is not known until routing has
+chosen the operation — so there is nowhere in `server/` for it to live. That it
+required an entry here, argued for on its own terms, is the mechanism working
+rather than the mechanism being worked around.
 
 Moving the SSE timer into `server/` was considered and rejected. `TestClient`
 and `Service::call` drive a built service with no server at all — which is what
@@ -120,7 +127,17 @@ by naming the row X displaces rather than by arguing that X is good.
   mean Kynos had taken the protocol over, which is a decision this section
   closes rather than defers.
 - A new dependency arrives feature-gated and additive, never as a widening of
-  the default build.
+  the default build. A corollary that has already bitten: a capability in the
+  *default* build cannot be gated, so it cannot take a dependency at all —
+  which is why base64 decoding and the constant-time comparison
+  [`security/`](../crates/kynos/src/security/) needs are written here rather
+  than taken from `base64` and `subtle`.
+- **A row is removed when the module it names goes the other way.** `cookie`
+  had a row and was named by no source line: the derive hand-rolled RFC 6265
+  and the response side did not exist. Using it once the response side landed
+  would have put `cookie::Cookie` in a public signature, against the re-export
+  rule above. The row is gone rather than left as aspiration — the same
+  correction `mime` and `pin-project-lite` already received.
 - rustls is the only TLS backend that ships. The accept path keeps the socket
   and the rustls connection separable rather than fusing them into one opaque
   stream, so a second backend stays an additive change. No public trait
@@ -149,7 +166,6 @@ by naming the row X displaces rather than by arguing that X is good.
 | Form codec | `serde_urlencoded` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs) | built |
 | Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | built |
 | Protobuf codec | `prost` | [`extract/body/protobuf.rs`](../crates/kynos/src/extract/body/protobuf.rs), [`response/codec/protobuf.rs`](../crates/kynos/src/response/codec/protobuf.rs) | built |
-| Cookies | `cookie` | [`extract/params/cookie.rs`](../crates/kynos/src/extract/params/cookie.rs) | built |
 | Scalar formats, identifiers | `uuid` | [`schema/impls/identifier.rs`](../crates/kynos/src/schema/impls/identifier.rs) | built |
 | Scalar formats, dates and times | `chrono`, `jiff` | [`schema/impls/temporal/`](../crates/kynos/src/schema/impls/temporal/) | built |
 | Scalar formats, decimals | `rust_decimal`, `bigdecimal` | [`schema/impls/decimal/`](../crates/kynos/src/schema/impls/decimal/) | built |
@@ -242,7 +258,41 @@ different crates. Picking one would be choosing the user's problem for them,
 which invariant 3 forbids. An umbrella feature defines each concept's shape once
 so the backends cannot diverge in what they emit, and enabling an umbrella with
 no backend does not compile. The `time` crate is **not** a backend and will not
-become one; it reaches the tree only as a transitive dependency of `cookie`.
+become one; it reaches the tree only as a transitive dependency of `rcgen`,
+which is itself a dev-dependency of the TLS example. It used to arrive through
+`cookie` as well, which is gone.
+
+### Three dependencies static assets and caching would want, refused
+
+Each would be a *table* Kynos can write down and test as a closed enumeration,
+which is the form this project prefers to a database it cannot check.
+
+**No media-type guesser.** `mime_guess` bundles a generated database that only
+sampling can verify. The table in
+[`router/assets/media.rs`](../crates/kynos/src/router/assets/media.rs) is the
+whole set, so a test asserts it is closed, sorted and free of duplicates — and
+the emitted description prints whatever it resolved to, which makes a wrong row
+visible rather than silent.
+[`mime_names`](../crates/kynos-openapi/src/model/body/mime_names.rs) already
+records why a media type is a `&'static str` here rather than a parsed `Mime`.
+
+**No hasher.** An entity tag is a cache validator rather than a security
+primitive: RFC 9110 section 8.8.3 asks only that it change when the
+representation does, and nothing verifies it. `blake3` and `sha2` both arrive
+with the `unsafe` this workspace forbids, for a 64-bit token. FNV-1a with the
+length folded in is computed in `kynos-macros` at expansion time and never runs
+in a served request.
+
+**No HTTP-date crate.** Kynos sends no `Last-Modified` and reads no
+`If-Modified-Since`, so there is no date to render or parse. That is itself a
+decision: a strong entity tag is the stronger validator, and sending a date
+obliges honouring a request that carries one back. Sending neither half is
+consistent; sending one is not.
+
+`moka` and `jsonwebtoken` are a fourth kind. Both are named by one example and
+by nothing under `src/`, which is the standing `rcgen`, `listenfd` and
+`tracing-subscriber` already have: this table governs what Kynos depends on, not
+what an example demonstrates.
 
 ### Scope edges
 
@@ -441,6 +491,16 @@ per-connection TLS metadata per request copies the peer certificate chain each
 time; erasing every body through a boxed trait object behind a mutex allocates
 once per request for a body that is not shared. Those cost more per request
 than hyper's entire HTTP/1 codec, and none of them require replacing it.
+
+The second of the three is taken.
+[`Connection`](../crates/kynos/src/extract/connection.rs) is built once per
+accepted socket and reference-counted onto each request, so a certificate chain
+is copied once per connection rather than once per request. It landed as the fix
+for a defect rather than as an optimization — the metadata was private and
+`#[expect(dead_code)]`, and the extractor that was meant to read it panicked on
+every request — which is why the entry stays here rather than moving to a
+benchmark: the cost was real, and removing it was not what motivated the
+change.
 
 ### Why kernel TLS is deferred
 

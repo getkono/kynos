@@ -53,6 +53,8 @@ needs more than the defaults. Each file's own header explains why it needs them.
 | Example | Shows | Features |
 | --- | --- | --- |
 | [`middleware.rs`](middleware.rs) | Writing an interceptor, and the ones Kynos ships | `compression` |
+| [`cache.rs`](cache.rs) | A shared response cache over a store Kynos does not ship: what may be stored, what may not, and why `Conditional` goes outside | `cache` |
+| [`rate_limit.rs`](rate_limit.rs) | Named quotas over a counter store Kynos does not ship: a sliding window, several windows at once, and both header spellings | — |
 | [`cors.rs`](cors.rs) | The two exchanges a browser makes, the preflight nothing declares, and the configuration that is refused | — |
 | [`tracing.rs`](tracing.rs) | Spans reaching a real subscriber, and why an observer declares nothing | — |
 | [`print_request_response.rs`](print_request_response.rs) | An interceptor buffering both bodies, and what reading them costs the description | — |
@@ -62,6 +64,7 @@ needs more than the defaults. Each file's own header explains why it needs them.
 | Example | Shows | Features |
 | --- | --- | --- |
 | [`security_schemes.rs`](security_schemes.rs) | Every kind of security scheme as a type, from `Auth<S>` to the emitted requirement | — |
+| [`jwt.rs`](jwt.rs) | A JWT verifier the framework does not ship: claims as a typed credential, `kid` rotation, scopes, optional auth, and a token endpoint | `json` |
 | [`tls.rs`](tls.rs) | Serving over TLS: client certificates, SNI, and the HTTP/1 and HTTP/2 configs ALPN chooses between | `tls` |
 
 ## Serving
@@ -76,6 +79,7 @@ needs more than the defaults. Each file's own header explains why it needs them.
 | Example | Shows | Features |
 | --- | --- | --- |
 | [`testing.rs`](testing.rs) | Driving the service in-process, and proving the description is truthful | `test-util` |
+| [`assets.rs`](assets.rs) | Both ways to serve files: an embedded set that is fully described, and a directory that is recorded instead | `assets-fs` |
 | [`unchecked.rs`](unchecked.rs) | The escape hatches, and what using one costs the document | `unchecked` |
 
 ## Elsewhere

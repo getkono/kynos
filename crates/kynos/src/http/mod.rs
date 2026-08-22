@@ -11,9 +11,11 @@
 //! # How this module is laid out
 //!
 //! The request and response aliases live here; [`body`] holds the one type
-//! Kynos does define, and the erasure behind it.
+//! Kynos does define, and the erasure behind it, and [`cookie`] the one field
+//! whose grammar needs reading rather than looking up.
 
 pub mod body;
+pub mod cookie;
 
 use crate::http::body::Body;
 

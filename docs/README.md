@@ -17,6 +17,7 @@ framework, and the list of features it deliberately rejects, lives in the
 | [`handlers.md`](handlers.md) | Working on extraction, responses, or what a handler signature is allowed to say |
 | [`schema.md`](schema.md) | Working on how a Rust type becomes JSON Schema: which types are describable, what `format` each carries, and where a constraint may be declared |
 | [`errors.md`](errors.md) | Working on failure: what a handler returns when it cannot succeed, how an extractor rejects, and what reaches a client |
+| [`security.md`](security.md) | Working on authentication: where a credential travels, what a guard declares, and what Kynos deliberately does not verify |
 | [`routing.md`](routing.md) | Working on path templates, routers, groups, or how router scope becomes document scope |
 | [`middleware.md`](middleware.md) | Working on interceptors, contributions, escape hatches, or `tower` interoperability |
 | [`testing.md`](testing.md) | Deciding where a test belongs, or what kind of test a guarantee needs |

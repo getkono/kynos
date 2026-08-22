@@ -44,13 +44,14 @@ use kynos::{
         compression::Compression,
         cors::Cors,
         limits::{BodySize, Concurrency, Timeout},
-        rate_limit::{Decision, RateLimit, RateLimitPolicy},
+        rate_limit::{Decision, QuotaPolicy, QuotaUnit, RateLimit, RateLimitPolicy, ServiceLimit},
         request_id::{CorrelationHeaders, Counter, RequestId, RequestIdSource},
         trace::Trace,
     },
     openapi::Method,
     prelude::*,
     response::status::NoContent,
+    router::operation::Route,
     server::Server,
 };
 use serde::{Deserialize, Serialize};
@@ -226,27 +227,57 @@ struct PerProcess {
     /// it; one counter is enough to show the shape.
     served: std::sync::Arc<std::sync::atomic::AtomicU32>,
     ceiling: u32,
+    /// What the limiter advertises, which is configuration rather than state
+    /// and so is built once.
+    policies: Vec<QuotaPolicy>,
+}
+
+impl PerProcess {
+    fn new(ceiling: u32) -> Self {
+        Self {
+            served: std::sync::Arc::default(),
+            ceiling,
+            policies: vec![QuotaPolicy {
+                name: "per-process".into(),
+                quota: u64::from(ceiling),
+                window: Some(Duration::from_secs(60)),
+                unit: QuotaUnit::Requests,
+            }],
+        }
+    }
 }
 
 impl RateLimitPolicy<()> for PerProcess {
-    async fn check(&self, _: &http::Request, (): &()) -> Decision {
+    fn advertised(&self) -> &[QuotaPolicy] {
+        &self.policies
+    }
+
+    async fn check(&self, _: &http::Request, _: Route<'_>, (): &()) -> Decision {
         let served = self
             .served
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         if served >= self.ceiling {
-            return Decision::Deny {
-                retry_after: Duration::from_secs(60),
-            };
+            return Decision::deny(
+                Duration::from_secs(60),
+                ServiceLimit {
+                    name: "per-process".into(),
+                    quota: u64::from(self.ceiling),
+                    remaining: 0,
+                    reset: Duration::from_secs(60),
+                },
+            );
         }
 
-        // Both numbers come from the policy because both are properties of the
-        // counter: the framework cannot know how many remain, and a window's
-        // *length* is not the time until it resets.
-        Decision::Allow {
-            remaining: self.ceiling - served - 1,
+        // Every number comes from the policy because every one is a property of
+        // the counter: the framework cannot know how many remain, and a
+        // window's *length* is not the time until it resets.
+        Decision::allow(ServiceLimit {
+            name: "per-process".into(),
+            quota: u64::from(self.ceiling),
+            remaining: u64::from(self.ceiling - served - 1),
             reset: Duration::from_secs(60),
-        }
+        })
     }
 }
 
@@ -300,17 +331,10 @@ async fn main() -> kynos::Result<()> {
         .intercept(BodySize::new(1_048_576))
         .intercept(Timeout::new(Duration::from_secs(30)))
         .intercept(Concurrency::new(256))
-        // Rate limiting. The ceiling is Kynos's to report and the counters are
-        // the policy's to keep, which is why `RateLimit::new` takes the first
-        // and not a window: a window's length is not the time until it resets,
-        // and reporting one as the other would be a number no service honours.
-        .intercept(RateLimit::new(
-            100,
-            PerProcess {
-                served: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
-                ceiling: 100,
-            },
-        ))
+        // Rate limiting. Every number a response prints comes from the policy,
+        // because every one is a property of the counters the policy keeps:
+        // there is no ceiling argument here to drift from the one it enforces.
+        .intercept(RateLimit::new(PerProcess::new(100)))
         // The hand-written ones, at group scope, so only these operations
         // declare the tenant header and only those the shared secret. Scope in
         // the router is scope in the description.

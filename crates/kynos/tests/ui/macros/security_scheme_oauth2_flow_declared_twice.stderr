@@ -1,0 +1,5 @@
+error: the `client_credentials` flow is already declared, and a scheme declares each once
+ --> tests/ui/macros/security_scheme_oauth2_flow_declared_twice.rs:4:5
+  |
+4 |     client_credentials(token_url = "https://auth.example.com/b"),
+  |     ^^^^^^^^^^^^^^^^^^

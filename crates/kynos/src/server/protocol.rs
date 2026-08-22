@@ -82,6 +82,16 @@ impl Http1Config {
     }
 }
 
+/// The HTTP/1 header cap the driver is told about.
+///
+/// A function rather than a branch at the call site, so the decision can be
+/// asserted without a socket — which is what `AGENTS.md` means by refactoring
+/// adjacent code to expose the internals a bug fix needs.
+#[cfg(feature = "http1")]
+pub(in crate::server) const fn forwarded_max_headers(config: &Http1Config) -> usize {
+    config.max_headers
+}
+
 /// HTTP/2 flow-control policy.
 #[cfg(feature = "http2")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

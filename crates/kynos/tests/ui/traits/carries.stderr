@@ -1,0 +1,29 @@
+error[E0277]: `Undeclared` does not say where its credential is carried
+  --> tests/ui/traits/carries.rs:18:15
+   |
+18 |     carries::<Undeclared>();
+   |               ^^^^^^^^^^ no declared carrier
+   |
+help: the trait `Carries` is not implemented for `Undeclared`
+  --> tests/ui/traits/carries.rs:4:1
+   |
+ 4 | struct Undeclared;
+   | ^^^^^^^^^^^^^^^^^
+   = note: derive `SecurityScheme`: the same `#[security(...)]` attribute that writes the description also writes the carrier, so the two cannot disagree
+   = note: implement it by hand only for a carrier the attribute grammar cannot express, and build it from the readers in `kynos::security::carrier`
+help: the following other types implement trait `Carries`
+  --> src/security/schemes.rs
+   |
+   | impl<T: Send + 'static> Carries for Bearer<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Bearer<T>`
+...
+   | impl<T: Send + 'static> Carries for Basic<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Basic<T>`
+...
+   | impl<T: Send + 'static> Carries for MutualTls<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `kynos::security::schemes::MutualTls<T>`
+note: required by a bound in `carries`
+  --> tests/ui/traits/carries.rs:15:15
+   |
+15 | fn carries<S: Carries>() {}
+   |               ^^^^^^^ required by this bound in `carries`

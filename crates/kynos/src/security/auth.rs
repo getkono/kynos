@@ -16,7 +16,7 @@ use crate::{
     http::{HeaderValue, Parts, StatusCode},
     response::Responses,
     router::operation::OperationCx,
-    security::{Authenticates, Authenticator, SecurityScheme},
+    security::{Authenticates, Authenticator, SecurityScheme, carrier::Carries},
 };
 
 /// A credential proving the request satisfies scheme `S`.
@@ -94,19 +94,134 @@ impl<S: SecurityScheme> Describe for Auth<S> {
 impl<C, S> FromRequestParts<C> for Auth<S>
 where
     C: Authenticates<S> + Sync,
-    S: SecurityScheme,
+    S: Carries,
 {
     type Rejection = AuthRejection;
 
     async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
+        // The challenge is the scheme's, not the authenticator's, and it is
+        // attached here so that it is the same string `describe` declared.
+        let challenged = |rejection: AuthRejection| rejection.with_challenge(S::challenge());
+
+        // Absent is this operation's 401 rather than the verifier's: `Auth`
+        // demands a credential, so having none is exactly the failure it exists
+        // to produce, and there is nothing for an authenticator to check.
+        let presented = S::present(parts)
+            .map_err(challenged)?
+            .ok_or_else(AuthRejection::unauthenticated)
+            .map_err(challenged)?;
+
         context
             .authenticator()
-            .authenticate(parts, context)
+            .authenticate(presented, context)
             .await
             .map(Self)
-            // The challenge is the scheme's, not the authenticator's, and it is
-            // attached here so that it is the same string `describe` declared.
-            .map_err(|rejection| rejection.with_challenge(S::challenge()))
+            .map_err(challenged)
+    }
+}
+
+/// A credential proving scheme `S`, when the request presented one.
+///
+/// Declares `security: [{}, {S: []}]` — the empty requirement first, which is
+/// how OpenAPI spells "anonymous access is also permitted". A reader of the
+/// description learns that the credential is *honoured* rather than *demanded*,
+/// which is a different promise and one no flag on a middleware can make.
+///
+/// A credential that is present and wrong is still a 401. Only *absence* is
+/// anonymity: a client that sent a broken token is not an anonymous client, and
+/// treating it as one would wave through exactly the request worth refusing.
+///
+/// ```no_run
+/// # use kynos::security::auth::MaybeAuth;
+/// # struct Bearer; struct Claims;
+/// async fn feed(MaybeAuth(caller): MaybeAuth<Bearer>) {
+///     match caller {
+///         Some(claims) => todo!("the personalised feed"),
+///         None => todo!("the public one"),
+///     }
+/// }
+/// # impl kynos::security::SecurityScheme for Bearer {
+/// #     const NAME: &'static str = "Bearer";
+/// #     type Credential = Claims;
+/// #     fn describe() -> kynos::openapi::SecurityScheme {
+/// #         kynos::openapi::SecurityScheme::bearer(None)
+/// #     }
+/// # }
+/// ```
+pub struct MaybeAuth<S: SecurityScheme>(pub Option<S::Credential>);
+
+// See `Auth`: bounded on the credential rather than on the scheme, and without
+// `Default` or `Ord`.
+impl<S: SecurityScheme> Clone for MaybeAuth<S>
+where
+    S::Credential: Clone,
+{
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<S: SecurityScheme> Copy for MaybeAuth<S> where S::Credential: Copy {}
+
+impl<S: SecurityScheme> std::fmt::Debug for MaybeAuth<S>
+where
+    S::Credential: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("MaybeAuth").field(&self.0).finish()
+    }
+}
+
+impl<S: SecurityScheme> PartialEq for MaybeAuth<S>
+where
+    S::Credential: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<S: SecurityScheme> Eq for MaybeAuth<S> where S::Credential: Eq {}
+
+impl<S: SecurityScheme> MaybeAuth<S> {
+    /// Unwraps the verified credential, if the request carried one.
+    pub fn into_inner(self) -> Option<S::Credential> {
+        self.0
+    }
+}
+
+impl<S: SecurityScheme> Describe for MaybeAuth<S> {
+    fn describe(operation: &mut OperationCx<'_>) {
+        // Before `declare`, because `add_security` appends in call order and
+        // the empty requirement leading the list is how a reader sees that the
+        // scheme is one of two acceptable answers rather than the only one.
+        operation.add_security(SecurityRequirement::anonymous());
+        declare::<S>(operation, S::scopes().to_vec());
+    }
+}
+
+impl<C, S> FromRequestParts<C> for MaybeAuth<S>
+where
+    C: Authenticates<S> + Sync,
+    S: Carries,
+{
+    type Rejection = AuthRejection;
+
+    async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
+        let challenged = |rejection: AuthRejection| rejection.with_challenge(S::challenge());
+
+        // The one place the three states of `present` are all distinct: absent
+        // is anonymity, malformed is a 401, and present is a check.
+        let Some(presented) = S::present(parts).map_err(challenged)? else {
+            return Ok(Self(None));
+        };
+
+        context
+            .authenticator()
+            .authenticate(presented, context)
+            .await
+            .map(|credential| Self(Some(credential)))
+            .map_err(challenged)
     }
 }
 
@@ -189,7 +304,7 @@ impl<S: SecurityScheme, R: Scopes> Describe for Scoped<S, R> {
 impl<C, S, R> FromRequestParts<C> for Scoped<S, R>
 where
     C: Authenticates<S> + Sync,
-    S: SecurityScheme,
+    S: Carries,
     R: Scopes,
 {
     type Rejection = AuthRejection;
@@ -199,9 +314,14 @@ where
         // owes the client a challenge for the same reason `authenticate` does.
         let challenged = |rejection: AuthRejection| rejection.with_challenge(S::challenge());
 
+        let presented = S::present(parts)
+            .map_err(challenged)?
+            .ok_or_else(AuthRejection::unauthenticated)
+            .map_err(challenged)?;
+
         let authenticator = context.authenticator();
         let credential = authenticator
-            .authenticate(parts, context)
+            .authenticate(presented, context)
             .await
             .map_err(challenged)?;
         authenticator

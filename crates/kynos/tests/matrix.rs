@@ -35,11 +35,11 @@ use std::time::Duration;
 use kynos::{
     Router,
     error::rejection::AuthRejection,
-    http::{Parts, StatusCode, header},
+    http::StatusCode,
     middleware::{
         cors::Cors,
         limits::{BodySize, Concurrency, Timeout},
-        rate_limit::{Decision, RateLimit, RateLimitPolicy},
+        rate_limit::{Decision, QuotaPolicy, RateLimit, RateLimitPolicy, ServiceLimit},
         request_id::RequestId,
     },
     prelude::*,
@@ -47,7 +47,13 @@ use kynos::{
         headers::WithHeaders,
         status::{NoContent, Redirect},
     },
-    security::{Authenticates, Authenticator, auth::Auth, schemes::Bearer},
+    router::operation::Route,
+    security::{
+        Authenticates, Authenticator,
+        auth::{Auth, MaybeAuth},
+        carrier::{ApiKey, BearerToken},
+        schemes::Bearer,
+    },
     test::TestClient,
 };
 use serde::{Deserialize, Serialize};
@@ -108,17 +114,15 @@ struct Caller {
 struct Tokens;
 
 impl<C: Sync> Authenticator<Bearer<Caller>, C> for Tokens {
-    async fn authenticate(&self, parts: &Parts, _: &C) -> Result<Caller, AuthRejection> {
-        match parts
-            .headers
-            .get(header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer "))
-        {
-            Some("tok_ok") => Ok(Caller {
+    async fn authenticate(&self, presented: BearerToken, _: &C) -> Result<Caller, AuthRejection> {
+        // No `strip_prefix("Bearer ")` here, and that is the point: the scheme
+        // said where its credential travels, so this only says what the token
+        // means.
+        match presented.as_str() {
+            "tok_ok" => Ok(Caller {
                 subject: "user-1".to_owned(),
             }),
-            Some("tok_banned") => Err(AuthRejection::Forbidden),
+            "tok_banned" => Err(AuthRejection::Forbidden),
             _ => Err(AuthRejection::unauthenticated()),
         }
     }
@@ -144,23 +148,103 @@ impl Authenticates<Bearer<Caller>> for App {
     }
 }
 
+/// A machine key, carried in a field the *attribute* names.
+///
+/// `Bearer` above is a type Kynos ships, so its carrier is one Kynos wrote. This
+/// one's carrier is emitted by the derive from `in` and `name`, which is the
+/// half a hand-written finder could get wrong — and the half nothing else here
+/// exercises end to end.
+#[derive(kynos::SecurityScheme)]
+#[security(api_key(in = "header", name = "X-Api-Key"))]
+#[security(name = "ServiceKey", credential = Caller)]
+struct ServiceKey;
+
+/// Verifies an API key against one issued value.
+struct Keys;
+
+impl<C: Sync> Authenticator<ServiceKey, C> for Keys {
+    async fn authenticate(&self, presented: ApiKey, _: &C) -> Result<Caller, AuthRejection> {
+        // Constant time, because this is a shared secret compared against a
+        // stored one — the case `constant_time_eq` exists for.
+        let matches = |issued: &[u8]| {
+            kynos::security::constant_time_eq(presented.as_str().as_bytes(), issued)
+        };
+
+        if matches(b"k_ok") {
+            Ok(Caller {
+                subject: "integration-1".to_owned(),
+            })
+        } else if matches(b"k_revoked") {
+            // A key that is known and no longer permitted, which is how this
+            // operation reaches the 403 `Auth<S>` declares. Without it the
+            // status would be a promise this fixture could not keep — and
+            // `assert_declared_responses_covered` says so.
+            Err(AuthRejection::Forbidden)
+        } else {
+            Err(AuthRejection::unauthenticated())
+        }
+    }
+
+    async fn authorize(
+        &self,
+        _: &Caller,
+        _: &'static [&'static str],
+        _: &C,
+    ) -> Result<(), AuthRejection> {
+        Ok(())
+    }
+}
+
+impl Authenticates<ServiceKey> for App {
+    type Authenticator = Keys;
+
+    fn authenticator(&self) -> &Self::Authenticator {
+        &Keys
+    }
+}
+
 /// A rate limit that allows the first request and denies afterwards.
-#[derive(Clone, Debug)]
-struct AllowsOnce(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+#[derive(Clone, Debug, Default)]
+struct AllowsOnce {
+    seen: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    policies: Vec<QuotaPolicy>,
+}
+
+impl AllowsOnce {
+    fn new() -> Self {
+        Self {
+            seen: std::sync::Arc::default(),
+            policies: vec![QuotaPolicy {
+                name: "fixture".into(),
+                quota: 1,
+                window: Some(Duration::from_secs(60)),
+                unit: kynos::middleware::rate_limit::QuotaUnit::Requests,
+            }],
+        }
+    }
+
+    fn limit(remaining: u64) -> ServiceLimit {
+        ServiceLimit {
+            name: "fixture".into(),
+            quota: 1,
+            remaining,
+            reset: Duration::from_secs(60),
+        }
+    }
+}
 
 impl RateLimitPolicy<App> for AllowsOnce {
-    async fn check(&self, _: &kynos::http::Request, _: &App) -> Decision {
-        let seen = self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    fn advertised(&self) -> &[QuotaPolicy] {
+        &self.policies
+    }
+
+    async fn check(&self, _: &kynos::http::Request, _: Route<'_>, _: &App) -> Decision {
+        let seen = self.seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         if seen == 0 {
-            Decision::Allow {
-                remaining: 0,
-                reset: Duration::from_secs(60),
-            }
+            Decision::allow(Self::limit(0))
         } else {
-            Decision::Deny {
-                retry_after: Duration::from_secs(60),
-            }
+            Decision::deny(Duration::from_secs(60), Self::limit(0))
         }
     }
 }
@@ -224,6 +308,60 @@ async fn me(Auth(caller): Auth<Bearer<Caller>>) -> Json<User> {
     })
 }
 
+/// Guarded optionally, which declares a security shape `Auth` cannot.
+///
+/// `[{}, {Bearer: []}]` — the empty requirement first. Here because the
+/// conformance harness reads what the *document* says as well as what the
+/// service sends, and this is the one operation whose security list has two
+/// members.
+#[kynos::get("/feed")]
+async fn feed(caller: MaybeAuth<Bearer<Caller>>) -> Json<User> {
+    Json(User {
+        id: 2,
+        name: caller
+            .into_inner()
+            .map_or_else(|| "anonymous".to_owned(), |caller| caller.subject),
+    })
+}
+
+/// Guarded by a credential the derive wrote the carrier for.
+#[kynos::get("/usage")]
+async fn usage(Auth(caller): Auth<ServiceKey>) -> Json<User> {
+    Json(User {
+        id: 3,
+        name: caller.subject,
+    })
+}
+
+/// The one operation that sets a cookie.
+///
+/// On a group of its own like every other declaring interceptor, because
+/// `SetCookieHeaders` is `DESCRIBED` and lands on the successful responses the
+/// operation declares — at router scope it would ride on a handler-produced
+/// 4xx that never declared it.
+#[cfg(feature = "cookie")]
+#[kynos::get("/visit")]
+async fn visit() -> NoContent {
+    NoContent
+}
+
+/// The one operation behind a conditional guard.
+///
+/// On a group of its own like every other declaring interceptor: `Conditional`
+/// contributes a 304, and a status is a promise every covered operation has to
+/// keep.
+#[cfg(feature = "cache")]
+#[kynos::get("/revalidated")]
+async fn revalidated() -> WithHeaders<Json<User>, kynos::middleware::conditional::ETag> {
+    WithHeaders::new(
+        Json(User {
+            id: 9,
+            name: "stable".to_owned(),
+        }),
+        kynos::middleware::conditional::ETag::strong("v1"),
+    )
+}
+
 /// The one operation under a body limit.
 #[kynos::post("/limits/size")]
 async fn under_size_limit(Json(user): Json<User>) -> NoContent {
@@ -258,13 +396,21 @@ async fn under_rate_limit() -> NoContent {
 /// The whole matrix: every owned layer, mounted where its declaration lands on
 /// exactly the operations that can produce it.
 fn service() -> kynos::Result<kynos::router::service::Service<App>> {
-    Router::<App>::new()
+    let router = Router::<App>::new()
         // Router scope: two interceptors that add headers and declare no
         // status, so they cover every operation without adding a response any
         // of them would have to produce.
         .intercept(RequestId::new())
         .intercept(Cors::new().allow_origins(["https://app.example.com"]))
-        .mount(kynos::routes![get_user, list_users, create_user, moved, me])
+        .mount(kynos::routes![
+            get_user,
+            list_users,
+            create_user,
+            moved,
+            me,
+            feed,
+            usage
+        ])
         // Group scope: one operation each, because a declared status is a
         // promise every covered operation has to keep.
         .group(
@@ -284,10 +430,28 @@ fn service() -> kynos::Result<kynos::router::service::Service<App>> {
         )
         .group(
             kynos::router::group::Group::<App>::new("/")
-                .intercept(RateLimit::new(1, AllowsOnce(std::sync::Arc::default())))
+                .intercept(RateLimit::new(AllowsOnce::new()))
                 .mount(kynos::routes![under_rate_limit]),
-        )
-        .build(App)
+        );
+
+    #[cfg(feature = "cache")]
+    let router = router.group(
+        kynos::router::group::Group::<App>::new("/")
+            .intercept(kynos::middleware::conditional::Conditional::new())
+            .mount(kynos::routes![revalidated]),
+    );
+
+    #[cfg(feature = "cookie")]
+    let router = router.group(
+        kynos::router::group::Group::<App>::new("/")
+            .intercept(kynos::middleware::cookies::SetCookies::new(vec![
+                kynos::response::cookie::Cookie::new("kynos_locale", "en").path("/"),
+                kynos::response::cookie::Cookie::new("kynos_seen", "1").path("/"),
+            ]))
+            .mount(kynos::routes![visit]),
+    );
+
+    router.build(App)
 }
 
 // --- The two assertions ---------------------------------------------------
@@ -346,6 +510,56 @@ async fn exercise_the_operations(client: &TestClient<App>) {
         .send()
         .await
         .assert_status(StatusCode::OK);
+
+    // Both halves of the optional guard: anonymity is a success, and so is a
+    // credential. Without the first, `[{}, ...]` would be a declaration nothing
+    // produced.
+    client
+        .get("/feed")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+
+    client
+        .get("/feed")
+        .header("authorization", "Bearer tok_ok")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+
+    // The derived carrier, reading the field the attribute named.
+    client
+        .get("/usage")
+        .header("x-api-key", "k_ok")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+
+    #[cfg(feature = "cookie")]
+    client
+        .get("/visit")
+        .send()
+        .await
+        .assert_status(StatusCode::NO_CONTENT);
+
+    // Both statuses the conditional guard declares. Without the second the 304
+    // would be a promise this fixture could not keep, which is what
+    // `assert_declared_responses_covered` exists to find.
+    #[cfg(feature = "cache")]
+    {
+        client
+            .get("/revalidated")
+            .send()
+            .await
+            .assert_status(StatusCode::OK);
+
+        client
+            .get("/revalidated")
+            .header("if-none-match", "\"v1\"")
+            .send()
+            .await
+            .assert_status(StatusCode::NOT_MODIFIED);
+    }
 }
 
 /// Every declared way an operation says no.
@@ -410,6 +624,45 @@ async fn exercise_the_rejections(client: &TestClient<App>) {
     client
         .get("/me")
         .header("authorization", "Bearer tok_banned")
+        .send()
+        .await
+        .assert_status(StatusCode::FORBIDDEN);
+
+    // A credential that is present and wrong is a 401 even where the guard is
+    // optional: only *absence* is anonymity.
+    client
+        .get("/feed")
+        .header("authorization", "Bearer tok_unknown")
+        .send()
+        .await
+        .assert_status(StatusCode::UNAUTHORIZED);
+
+    client
+        .get("/feed")
+        .header("authorization", "Bearer tok_banned")
+        .send()
+        .await
+        .assert_status(StatusCode::FORBIDDEN);
+
+    // The derived carrier reads the declared field, so a key in the wrong one
+    // is absent rather than accepted.
+    client
+        .get("/usage")
+        .header("x-api-token", "k_ok")
+        .send()
+        .await
+        .assert_status(StatusCode::UNAUTHORIZED);
+
+    client
+        .get("/usage")
+        .header("x-api-key", "k_wrong")
+        .send()
+        .await
+        .assert_status(StatusCode::UNAUTHORIZED);
+
+    client
+        .get("/usage")
+        .header("x-api-key", "k_revoked")
         .send()
         .await
         .assert_status(StatusCode::FORBIDDEN);

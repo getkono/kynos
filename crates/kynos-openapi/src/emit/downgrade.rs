@@ -8,8 +8,11 @@ use crate::validate::violation::pointer_token;
 // blockers, which a build without `openapi32` cannot have any of.
 #[cfg(feature = "openapi32")]
 use crate::model::{
-    body::media_type::MediaType, parameter::ParameterIn, paths::operation::Operation,
+    body::media_type::MediaType,
+    parameter::ParameterIn,
+    paths::operation::Operation,
     reference::RefOr,
+    security::{SecurityScheme, oauth::OAuthFlows},
 };
 
 /// Lists the OpenAPI 3.2-only constructs a document uses.
@@ -52,6 +55,13 @@ pub fn three_two_only_constructs(document: &Document) -> Vec<String> {
             blockers.push("#/components/mediaTypes".to_owned());
         }
 
+        for (name, scheme) in &document.components.security_schemes {
+            let location = format!("#/components/securitySchemes/{}", pointer_token(name));
+            if let RefOr::Item(scheme) = scheme {
+                collect_security_scheme_blockers(&location, scheme, &mut blockers);
+            }
+        }
+
         for (raw, item) in &document.paths.0 {
             let location = format!("#/paths/{}", pointer_token(raw));
             if item.query.is_some() {
@@ -67,6 +77,67 @@ pub fn three_two_only_constructs(document: &Document) -> Vec<String> {
         }
 
         blockers
+    }
+}
+
+/// The 3.2-only fields one security scheme can carry.
+///
+/// `deprecated` is read through a match rather than through a shared accessor
+/// because [`SecurityScheme`] is an enum with the field repeated on every
+/// variant, and a match is what makes a sixth variant a compile error here
+/// rather than a construct this walk silently stops reporting.
+#[cfg(feature = "openapi32")]
+fn collect_security_scheme_blockers(
+    location: &str,
+    scheme: &SecurityScheme,
+    blockers: &mut Vec<String>,
+) {
+    let deprecated = match scheme {
+        SecurityScheme::ApiKey { deprecated, .. }
+        | SecurityScheme::Http { deprecated, .. }
+        | SecurityScheme::MutualTls { deprecated, .. }
+        | SecurityScheme::OpenIdConnect { deprecated, .. } => deprecated,
+        SecurityScheme::OAuth2 {
+            deprecated,
+            flows,
+            oauth2_metadata_url,
+            ..
+        } => {
+            if oauth2_metadata_url.is_some() {
+                blockers.push(format!("{location}/oauth2MetadataUrl"));
+            }
+            collect_oauth_flow_blockers(&format!("{location}/flows"), flows, blockers);
+            deprecated
+        }
+    };
+
+    if deprecated.is_some() {
+        blockers.push(format!("{location}/deprecated"));
+    }
+}
+
+/// The 3.2-only constructs an OAuth 2.0 flow set can carry.
+///
+/// The device authorization *flow* is 3.2's addition to the set; the device
+/// authorization *URL* is 3.2's addition to a flow, and can ride on one of the
+/// four flows 3.1 already had. Reporting only the first would let the second
+/// through wherever it does.
+#[cfg(feature = "openapi32")]
+fn collect_oauth_flow_blockers(location: &str, flows: &OAuthFlows, blockers: &mut Vec<String>) {
+    if flows.device_authorization.is_some() {
+        blockers.push(format!("{location}/deviceAuthorization"));
+    }
+
+    for (name, flow) in [
+        ("implicit", flows.implicit.as_ref()),
+        ("password", flows.password.as_ref()),
+        ("clientCredentials", flows.client_credentials.as_ref()),
+        ("authorizationCode", flows.authorization_code.as_ref()),
+        ("deviceAuthorization", flows.device_authorization.as_ref()),
+    ] {
+        if flow.is_some_and(|flow| flow.device_authorization_url.is_some()) {
+            blockers.push(format!("{location}/{name}/deviceAuthorizationUrl"));
+        }
     }
 }
 

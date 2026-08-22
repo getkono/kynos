@@ -93,25 +93,137 @@ declares `Content-Encoding` rather than re-encoding silently.
 ## Why the rate-limit headers keep a prefix
 
 `RateLimit` emits `X-RateLimit-Limit`, `X-RateLimit-Remaining` and
-`X-RateLimit-Reset`, and RFC 6648 has deprecated `X-` prefixes for new headers
-since 2012. The choice is deliberate.
+`X-RateLimit-Reset` by default, and RFC 6648 has deprecated `X-` prefixes for
+new headers since 2012. The choice is deliberate.
 
-The unprefixed triple belongs to `draft-ietf-httpapi-ratelimit-headers`, which
-has already *replaced* it with a single structured `RateLimit` field plus
-`RateLimit-Policy`. These names are `DESCRIBED`, so they reach generated
+The unprefixed names belong to `draft-ietf-httpapi-ratelimit-headers`, which has
+already *replaced* the old triple with a single structured `RateLimit` field
+plus `RateLimit-Policy`. These names are `DESCRIBED`, so they reach generated
 clients — which makes a wrong name expensive rather than cosmetic. Emitting the
-unprefixed triple would squat three names a working group is actively revising,
-and claiming settled ground that is not settled is the failure this project's
-architecture notes exist to catch.
+draft's spelling by default would claim settled ground that is not settled, and
+that is the failure this project's architecture notes exist to catch.
 
-The reversal is cheap and additive when the draft lands: a second `HeaderParams`
-group and a type-state transition on `RateLimit`, shaped exactly like
-`Cors::document_response_headers`.
+### The migration, and how to take it early
+
+`RateLimit::standard_fields` is the other spelling: `RateLimit` and
+`RateLimit-Policy`, rendered as the RFC 8941 structured-field Lists the draft
+defines. It is a type-state rather than a flag, shaped exactly like
+`Cors::document_response_headers`, because it changes what every covered
+operation declares and what every generated client reads.
+
+**The two are never emitted together.** A response carrying both spellings is
+two statements of one fact, which is the objection this document raises against
+a `contribution` method. `Legacy` and `Structured` are sealed, and their
+`Adds` groups name disjoint fields.
+
+The draft's spelling is not merely newer, it is *more expressive*, and that is
+the reason to offer it at all. The `X-` triple has room for one quota. A service
+enforcing a per-second burst and a per-day allowance can report only half of
+what it enforced, and a client cannot tell which half. `RateLimit-Policy` has a
+member per quota:
+
+```text
+RateLimit-Policy: "burst";q=15;w=1, "daily";q=10000;w=86400
+RateLimit:        "burst";r=13;t=1, "daily";r=9998;t=69158
+```
+
+A name that cannot be an `sf-string` drops its member rather than producing a
+field a parser will reject: one unnameable policy must not cost the client the
+others.
+
+### What the framework computes and what it does not
+
+`Quotas` is the algorithm Kynos ships — a sliding-window counter over named
+quotas. What it does *not* ship is a store, for the reason it ships no JWT
+verifier: a counter store is a dependency, and prescribing one would mean
+prescribing `moka`.
+
+Three properties of that algorithm are decisions rather than details:
+
+- **The window slides.** A fixed window lets a client spend a full quota at the
+  end of one and a full quota at the start of the next, which is twice the
+  advertised rate. Weighting the previous window by how much of it is still in
+  view removes that for one extra read and no request log. GCRA would be
+  stricter and needs a portable compare-and-swap no generic cache offers.
+- **A refusal spends nothing.** The counter is read before it is incremented, so
+  a throttled client that keeps retrying does not push its own window along
+  forever and can actually recover.
+- **`Retry-After` is solved, not guessed.** It is when the estimate falls below
+  the ceiling assuming the client sends nothing more — and rounded *up* to whole
+  seconds, because truncating a sub-second wait to zero tells a client to retry
+  straight into the refusal it just received. Reporting the window's *length*
+  instead would be a delay the service does not require, which is the same
+  objection `limits.rs` raises against inventing one for a concurrency cap.
+
+A store that cannot answer **allows** by default. A limiter exists to shed load,
+and one that sheds everything when its cache blinks has turned a degradation
+into an incident. `StoreFailure::Deny` is the other choice, and it answers with
+the 429 the limiter already declares rather than a 503 — a second status would
+collide with `Concurrency` on any route carrying both, and `statuses_disjoint`
+would refuse to compile it.
 
 One thing worth knowing about the two halves. The 429's headers ride on
 `Responses`; a success's ride on `Adds`. They never co-occur on one response,
 because a short-circuit never calls `with_headers` — so the conflict check,
 which compares `Adds` against `Adds`, is not weakened by the pair.
+
+## What bounds a request before an interceptor runs
+
+An interceptor covers the operations in its subtree, which means it runs after
+routing — and a request that never reaches routing is bounded by something else
+or by nothing. The table is here because "does Kynos have payload limits" has
+four different answers depending on which layer is asked.
+
+| Vector | HTTP/1 | HTTP/2 | Server | Interceptor | Bounded by default? |
+| --- | --- | --- | --- | --- | --- |
+| Request line and URI length | must fit `max_buffer_size` (≈417 KiB) | `max_header_list_size`, 16 KiB | — | — | yes, loosely |
+| Header count | `max_headers`, 100 → 431 | by list size rather than count | — | — | yes |
+| Header-list size | `max_buffer_size` | `max_header_list_size` | — | — | yes |
+| Query-string length | subsumed by the URI | subsumed by the list size | — | — | yes, loosely |
+| Body size | — | — | — | `BodySize`, when mounted | **no, deliberately** |
+| Request-head read time | `header_read_timeout`, 30 s | n/a | — | — | yes |
+| Slow body | — | — | — | `Timeout`, *outside* `BodySize` | **no** |
+| Keep-alive idle | `header_read_timeout` covers the wait for the next head | `Http2KeepAlive`, unset | — | — | HTTP/1 only |
+| Handler runtime | — | — | — | `Timeout`, when mounted | **no** |
+| Total connections | — | — | `max_connections`, 10 000 | — | yes |
+| Per-IP connections | — | — | — | — | **no**, and see below |
+| Concurrent in flight | — | `max_concurrent_streams`, 200 per connection | — | `Concurrency`, when mounted | partial |
+| Request rate | — | — | — | `RateLimit`, when mounted | no |
+| Request smuggling | hyper and `httparse` | n/a | — | — | yes, and not Kynos's |
+| Reset flood | — | `max_pending_accept_reset_streams`, `max_local_error_reset_streams` | — | — | yes |
+| TLS handshake stall | — | — | `handshake_timeout`, 10 s | — | yes, with `tls` |
+| Decompression bomb | — | — | — | — | n/a: Kynos never decompresses a request body |
+
+Three rows are worth reading twice.
+
+**A body cap is not default, and that is a decision.**
+[`nfr.md`](nfr.md#extraction) records the three reasons. The shortest is that a
+default limit would add 413 to every operation of every application that never
+asked for one — and this framework's whole position is that a declared response
+is a promise.
+
+**The slow-body row depends on mounting order.** `BodySize` reads a length-less
+body frame by frame, so a client sending one frame slowly holds that loop open.
+`Timeout` wraps whatever is beneath it, which means it bounds the read only when
+it is mounted *outside* the limit doing the reading. The types do not enforce
+the order; `a_timeout_mounted_outside_a_body_limit_bounds_the_read` in
+[`tests/limits.rs`](../crates/kynos/tests/limits.rs) pins it, and this paragraph
+is where a reader learns it.
+
+**A per-IP cap is absent rather than pending.** Behind a load balancer every
+connection arrives from one address, so a cap counted in-process is either
+meaningless or a self-inflicted outage. An honest one needs to know which
+forwarded-for headers to trust, which is a security policy rather than a limit.
+
+### A response no type predicts
+
+The soundness invariant is *emitted ⊇ observable responses* for the responses
+Kynos produces. A **431** from hyper's own header parsing is not one of them: it
+is written by the protocol driver before any route matched, so it reaches no
+operation and no `Responses` implementation ever saw it. It joins the panic, the
+unhandled 500 and the upstream proxy on the list of responses the invariant does
+not reach — named here rather than left to be discovered, because a consumer
+meeting one is entitled to know Kynos never claimed otherwise.
 
 ## Preflight
 
@@ -184,6 +296,56 @@ What stops this becoming a capability:
   finished. So the property this document opens with — that a declaration
   cannot disagree with behaviour, because it is the same text — is untouched.
 
+## Repeatable response fields
+
+`Set-Cookie` is the field HTTP forbids comma-joining, and it is the reason
+`HeaderParams` has a `REPEATABLE` const at all.
+
+A property of the *group* rather than a table of field names, because a
+per-name allow-list is a table that goes wrong and the group already knows
+whether its own fields comma-join. `false` — the default — inserts, which is
+right for almost everything: a response carrying two `Content-Encoding` values
+is one no client can decode.
+
+Both ways a group reaches the wire go through one writer,
+`extract::params::header::write`. They did not, and the comment on the second
+claimed they could not disagree while they were two functions that did:
+`Continued::with_headers` inserted and `WithHeaders::into_response` appended, so
+a group naming `Set-Cookie` twice reached the wire whole from a handler and
+truncated from an interceptor. No shipped interceptor named a repeatable field,
+so nothing noticed until one did.
+
+**OpenAPI cannot say a field repeats.** `Response.headers` is a map keyed by
+field name, so `SetCookies` declares one `Set-Cookie` entry and says the rest in
+its description. That is the honest half of what can be said, and understating a
+description beats claiming a shape the format has no way to express.
+
+## What the cookie interceptor is not
+
+`SetCookies` writes cookies. It does not sign them, encrypt them, or keep a
+session, and none of the three is a gap to close later.
+
+A cookie carrying a credential is a
+[`SecurityScheme`](../crates/kynos/src/security/mod.rs) rather than a parameter
+— `extract::params::cookie` has said so since it landed — and signing or
+encrypting one is how that credential is protected. That puts it on the
+authentication side of the line [`security.md`](security.md) draws, where Kynos
+ships the carrier and not the verifier. It would also arrive with a crypto stack
+(`hmac`, `sha2`, `aes-gcm`, a source of randomness) that the dependency table
+has no row for and that no feature gate could contain, since the jar would be in
+the default build.
+
+Sessions are named in [`architecture.md`](architecture.md#invariants)'s third
+invariant as the example of what a layer above Kynos owns.
+
+CSRF is the interesting exclusion, because it is the one the type system
+refuses rather than the policy. A CSRF interceptor's short circuit is 403.
+`statuses_disjoint` compares `Short::STATUSES` across the interceptors covering
+a route, and `Auth<S>` contributes 403 to every authenticated operation — so a
+CSRF interceptor and a credential guard would not compile together, on exactly
+the routes that need both. Whatever the right shape for CSRF here is, it is not
+an interceptor with a status.
+
 ## Vary is declared apart from the names
 
 `Vary` is the one response header two interceptors may both contribute to, so it
@@ -206,6 +368,66 @@ in both places a group reaches the wire — `Continued::with_headers` and
 no use for it. Getting this wrong is not a missing nicety: a CORS response that
 varies on `Origin` without saying so lets a cache hand one origin's
 `Access-Control-Allow-Origin` to another, which defeats the check entirely.
+
+## Where a cache sits
+
+Outermost but one. `Conditional` outside `Cache`, and `Cache` outside `Cors`
+and `Compression`.
+
+The first half is what makes the pair worth having: a hit turned into a 304 has
+produced only the *cached* body. The other way round, the handler runs and its
+work is thrown away — which `Conditional` costs anyway, and which a cache is
+there to avoid. The second half is so that what gets stored is a response whose
+negotiated headers have already landed.
+
+**The order is documented, not enforced.** Enforcing it needs a marker threaded
+through `CompatibleWith` for one interceptor, which generalizes the `Cors`
+downcast into exactly the capability this document bounds elsewhere.
+
+What *is* enforced is the case where getting it wrong is catastrophic. A
+response carrying `access-control-*` headers whose `Vary` does not name `origin`
+is refused outright, because storing one hands one origin's
+`Access-Control-Allow-Origin` to another and defeats the check entirely. The
+merely-suboptimal case — a `Cache` inside `Compression`, storing an unencoded
+body — is documented and not refused.
+
+### Why a hit is not a new response
+
+`Cache::Short` is `Infallible`. A hit replays a status the operation already
+declares, so a cache invents nothing and contributes no response of its own.
+What it adds is `Age`, and under `deriving_etags` an `ETag`.
+
+That does mean the cache is the one place outside `Next::run` that constructs a
+`Continued`. The constructor is `pub(crate)`, so a third-party interceptor still
+cannot mint one; and the invariant it protects is intact, because what is
+replayed is a response *the operation itself produced* and that passed the
+storability rules before it was stored.
+
+`Conditional::Short` is `NotModified`, and 304 *is* a new status, so it is
+declared. It is answered **after** the chain runs, because RFC 9110 section 13
+evaluates a precondition against the current representation and only the handler
+knows what that is — a `Continued` deliberately cannot change a status.
+
+### What is never stored
+
+`no-store` from either side, `no-cache`, `private`, `Vary: *`, any response
+setting a cookie, and a credentialed request whose response did not say it was
+shareable.
+
+The cookie rule has no opt-out. Replaying a response that mints a session to a
+second client is the worst bug a cache has, and `Vary` cannot protect against
+it: the cookie is in the *response*, and nothing in the request selects it.
+
+**There is no heuristic freshness.** RFC 9111 section 4.2.2 permits one, and
+every heuristic is a guess that turns a correct origin into an incorrect cache.
+A response that did not say how long it may be reused is not reused;
+`default_freshness` is opt-in and documented as the guess it is.
+
+`stale-while-revalidate` and `stale-if-error` are absent, and not as an
+oversight: the revalidation is a background task — a `tokio::spawn` outside
+`server/` — which would be a sixth row in the runtime allowance table for a
+nicety, and a stale response is one the operation's description has no way to
+mark.
 
 ## Opaque
 

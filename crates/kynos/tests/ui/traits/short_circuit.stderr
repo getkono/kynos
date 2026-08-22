@@ -15,7 +15,9 @@ help: the trait `ShortCircuit` is not implemented for `NotAResponse`
             AtCapacity
             BodySizeExceeded
             Infallible
+            NotModified
             RateLimited
+            RateLimitedFields
             kynos::middleware::limits::TimedOut
 note: required by a bound in `short_circuits`
  --> tests/ui/traits/short_circuit.rs:5:22

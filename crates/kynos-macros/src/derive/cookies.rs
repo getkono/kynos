@@ -33,39 +33,13 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let params = Param::pair(fields, &names);
     let rejection = quote!(::kynos::error::rejection::CookieRejection);
 
-    // A request may carry several `Cookie` fields and each may hold several
-    // pairs, so the jar is the concatenation of both. A value the client wrote
-    // in RFC 6265's quoted form is unwrapped, since the quotes delimit the
-    // value rather than belonging to it.
-    let jar = quote! {
-        let mut jar: ::std::vec::Vec<(&str, &str)> = ::std::vec::Vec::new();
-        for field in headers.get_all(::kynos::http::header::COOKIE) {
-            let ::core::result::Result::Ok(text) = field.to_str() else {
-                continue;
-            };
-            for entry in text.split(';') {
-                let entry = entry.trim();
-                if entry.is_empty() {
-                    continue;
-                }
-                let (name, value) = match entry.split_once('=') {
-                    ::core::option::Option::Some(split) => split,
-                    ::core::option::Option::None => (entry, ""),
-                };
-                let value = value.trim();
-                let value = value
-                    .strip_prefix('"')
-                    .and_then(|value| value.strip_suffix('"'))
-                    .unwrap_or(value);
-                jar.push((name.trim(), value));
-            }
-        }
-    };
-
+    // Splitting a jar is `http::cookie`'s job, not an expansion's: the rules
+    // are RFC 6265's, they belong in one place, and a credential carried in a
+    // cookie reads them from there in a build with no `cookie` feature at all.
     let reads = params.iter().map(|param| {
         let wire = param.name();
         let found = quote! {
-            jar.iter().find_map(|&(name, value)| (name == #wire).then_some(value))
+            ::kynos::http::cookie::value_of(headers, #wire)
         };
         decode_field(param, &rejection, &found, "the cookie is required")
     });
@@ -86,7 +60,6 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             fn decode(
                 headers: &::kynos::http::HeaderMap,
             ) -> ::core::result::Result<Self, ::kynos::error::rejection::CookieRejection> {
-                #jar
                 #(#reads)*
                 #value
             }

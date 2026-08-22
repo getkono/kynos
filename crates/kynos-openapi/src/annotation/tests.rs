@@ -303,3 +303,66 @@ fn a_reason_renders_as_it_is_spelled_on_the_wire() {
         "something-newer"
     );
 }
+
+/// Every reason, and the token it is spelled with.
+///
+/// An exhaustive match, so a reason added to the enum stops this file compiling
+/// until its wire spelling is written down — and a count beside it, so one
+/// added without a row fails rather than joining a silent majority.
+///
+/// `docs/testing.md` asks for this of every closed set. `OpaqueReason` had
+/// neither guard, which made it the set the obligation had missed.
+#[test]
+fn every_reason_carries_the_token_the_record_spells() {
+    const SOURCE: &str = include_str!("mod.rs");
+
+    /// The spelling, by an exhaustive match rather than by `as_str`.
+    ///
+    /// Written out a second time on purpose: reading `as_str` back would agree
+    /// with it by construction, including wherever it is wrong.
+    fn spelled(reason: &OpaqueReason) -> &str {
+        match reason {
+            OpaqueReason::UntypedLayer => "untyped-layer",
+            OpaqueReason::UntypedRoute => "untyped-route",
+            OpaqueReason::UntypedHandler => "untyped-handler",
+            OpaqueReason::ProtocolUpgrade => "protocol-upgrade",
+            OpaqueReason::StaticAssets => "static-assets",
+            OpaqueReason::Unrecognized(reason) => reason,
+        }
+    }
+
+    let every = [
+        OpaqueReason::UntypedLayer,
+        OpaqueReason::UntypedRoute,
+        OpaqueReason::UntypedHandler,
+        OpaqueReason::ProtocolUpgrade,
+        OpaqueReason::StaticAssets,
+    ];
+
+    for reason in &every {
+        assert_eq!(reason.as_str(), spelled(reason));
+
+        // And the token survives a round trip, which is what a document read
+        // back by another build depends on.
+        let json = serde_json::to_string(reason).expect("serializable");
+        assert_eq!(json, format!("\"{}\"", spelled(reason)));
+        assert_eq!(
+            serde_json::from_str::<OpaqueReason>(&json).expect("readable"),
+            *reason
+        );
+    }
+
+    // Counted against the source, so a sixth reason without a row fails the
+    // build. The needle is an `as_str` arm that yields a literal, which every
+    // named variant has and `Unrecognized` -- which yields its own text -- does
+    // not. Spelled in two pieces, since a contiguous literal would count itself.
+    let declared = SOURCE.matches(concat!(" => ", "\"")).count();
+
+    assert_eq!(
+        every.len(),
+        declared,
+        "`OpaqueReason` has {declared} named variant(s) and {} have a row; a reason added \
+         without one is a record a consumer cannot read back",
+        every.len()
+    );
+}

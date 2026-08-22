@@ -57,8 +57,14 @@ pub mod stack;
 // never `pub`, so `Pin<Box<dyn Future>>` reaches no user signature.
 pub(crate) mod erased;
 
+#[cfg(feature = "cache")]
+pub mod cache;
 #[cfg(feature = "compression")]
 pub mod compression;
+#[cfg(feature = "cache")]
+pub mod conditional;
+#[cfg(feature = "cookie")]
+pub mod cookies;
 #[cfg(feature = "trace")]
 pub mod trace;
 
@@ -266,11 +272,7 @@ impl<H: HeaderParams> Continued<H> {
     /// call this to return at all — and one whose `Adds` is `()` has nothing it
     /// could attach.
     pub fn with_headers<G: HeaderParams>(mut self, headers: G) -> Continued<G> {
-        for (name, value) in headers.encode() {
-            self.response.headers_mut().insert(name, value);
-        }
-
-        vary_on(self.response.headers_mut(), G::VARIES);
+        crate::extract::params::header::write(self.response.headers_mut(), &headers);
 
         Continued {
             response: self.response,
@@ -494,6 +496,81 @@ mod tests {
         let vary = vary_after(Some("*"), VariesOnOrigin).expect("a Vary");
 
         assert_eq!(vary, "*");
+    }
+
+    /// A repeatable field reaches the wire once per value.
+    ///
+    /// `WithHeaders::into_response` appends for exactly this reason and says so:
+    /// "a group naming `Set-Cookie` twice sends it twice instead of comma-joining
+    /// two values that may not be joined". `Continued::with_headers` inserts,
+    /// so the same group loses every value but the last — and
+    /// `response/headers.rs` claims the two paths "cannot disagree".
+    #[test]
+    fn a_repeatable_group_reaches_the_wire_once_per_value() {
+        struct TwoCookies;
+
+        impl HeaderParams for TwoCookies {
+            const NAMES: &'static [&'static str] = &["set-cookie"];
+            const REPEATABLE: bool = true;
+
+            fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+                vec![
+                    (
+                        header::SET_COOKIE,
+                        HeaderValue::from_static("first=1; Path=/"),
+                    ),
+                    (
+                        header::SET_COOKIE,
+                        HeaderValue::from_static("second=2; Path=/"),
+                    ),
+                ]
+            }
+        }
+
+        let sent: Vec<_> = Continued::new(Response::new(crate::http::body::Body::empty()))
+            .with_headers(TwoCookies)
+            .into_response()
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|value| value.to_str().expect("a printable field").to_owned())
+            .collect();
+
+        assert_eq!(sent, ["first=1; Path=/", "second=2; Path=/"]);
+    }
+
+    /// A group that is not repeatable replaces whatever was there.
+    ///
+    /// The control. Without it "repeatable appends" would read as "everything
+    /// appends", and a second `Content-Encoding` beside a first is a response
+    /// no client can decode.
+    #[test]
+    fn a_group_that_is_not_repeatable_replaces_the_value_already_set() {
+        struct OneEncoding;
+
+        impl HeaderParams for OneEncoding {
+            const NAMES: &'static [&'static str] = &["content-encoding"];
+
+            fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+                vec![(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"))]
+            }
+        }
+
+        let mut response = Response::new(crate::http::body::Body::empty());
+        response
+            .headers_mut()
+            .insert(header::CONTENT_ENCODING, HeaderValue::from_static("br"));
+
+        let sent: Vec<_> = Continued::new(response)
+            .with_headers(OneEncoding)
+            .into_response()
+            .headers()
+            .get_all(header::CONTENT_ENCODING)
+            .iter()
+            .map(|value| value.to_str().expect("a printable field").to_owned())
+            .collect();
+
+        assert_eq!(sent, ["gzip"]);
     }
 
     /// A group varying on nothing leaves the header absent rather than empty.

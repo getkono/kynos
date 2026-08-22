@@ -49,3 +49,13 @@ feature sets, only require them.
 | --- | --- |
 | `Group::layer_unchecked` absent | the escape hatch for README anti-pattern 1 is behind `unchecked` |
 | `#[kynos::operation(method = "PROPFIND")]` rejected | a method outside the eight OpenAPI 3.1 names needs `openapi32` for `additionalOperations` |
+| `#[security(oauth2(device_authorization(..)))]` rejected | the RFC 8628 flow was introduced in OpenAPI 3.2, so a 3.1 build has no field to hold it |
+| `#[security(oauth2(.., metadata_url = ".."))]` rejected | `oauth2MetadataUrl` was introduced in OpenAPI 3.2, and was silently dropped before |
+
+Neither security-scheme row is unchecked, only unsnapshotted. Both have a
+ledger case in
+[`derive/tests.rs`](../../../kynos-macros/src/derive/tests.rs), gated on
+`not(feature = "openapi32")` so it runs in the build that can provoke it, and
+`every_security_scheme_diagnostic_has_a_case` adds them back to its count under
+`openapi32` so the ledger keeps counting every site in both builds. What is
+missing here is the wording, which is what this suite is for.

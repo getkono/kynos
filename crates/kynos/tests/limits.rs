@@ -204,3 +204,225 @@ async fn a_limit_does_not_answer_for_a_route_that_does_not_exist() {
 
     assert_eq!(reply.status, StatusCode::NOT_FOUND);
 }
+
+// --- What applies when nothing is mounted --------------------------------
+
+/// A service with no `BodySize` accepts a body of any size.
+///
+/// Recorded rather than fixed. `docs/nfr.md` read "body size, header count and
+/// header size limits are enforced by default", and only the second and third
+/// are: they are hyper's, set on the connection. A body cap is an interceptor
+/// and `Router::build` mounts none.
+///
+/// Making one default was considered and rejected, and any one of three reasons
+/// is sufficient. It would add 413 to every operation of every application that
+/// never asked for one. It would make a user's own `BodySize` a `const` compile
+/// error, since `statuses_disjoint` is what stops two interceptors claiming a
+/// status. And it would buffer a body that declares no length, which is exactly
+/// the streaming upload the limit is supposed to leave alone.
+///
+/// The framework's own rule — configuring a limit and documenting it are one
+/// action — has a converse, and this is it: a limit nobody configured must not
+/// be documented either.
+#[tokio::test]
+async fn a_service_with_no_body_limit_accepts_a_body_of_any_size() {
+    let service = support::router()
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = support::post(&service, "/users")
+        .json(&User {
+            id: 1,
+            name: "n".repeat(64 * 1024),
+        })
+        .call()
+        .await;
+
+    assert_ne!(
+        reply.status,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "no limit was mounted, so nothing may refuse for size"
+    );
+}
+
+/// And says so in the description: no operation declares a 413.
+///
+/// The other half. A service that accepted any body while *claiming* a 413
+/// would be the defect `tests/matrix.rs` found in `BodyRejection`, which is
+/// recorded in `docs/testing.md`.
+#[test]
+fn a_service_with_no_body_limit_declares_no_413() {
+    let document = support::router().openapi().expect("a describable router");
+
+    for (path, item) in &document.paths.0 {
+        for (method, operation) in item.operations() {
+            assert!(
+                !operation.responses.responses.contains_key("413"),
+                "{method:?} {path} declares a 413 that nothing can produce"
+            );
+        }
+    }
+}
+
+/// A timeout bounds a body read only when it is mounted *outside* the limit
+/// that does the reading.
+///
+/// `BodySize` reads a length-less body frame by frame, and a client that sends
+/// one frame slowly holds that loop open. `Timeout` wraps whatever is beneath
+/// it, so the order is the whole of whether the slow-body case is covered —
+/// and mounting order is a thing a reader has to be told rather than something
+/// the types enforce.
+#[tokio::test]
+async fn a_timeout_mounted_outside_a_body_limit_bounds_the_read() {
+    let service = support::router()
+        .intercept(BodySize::new(4096))
+        .intercept(Timeout::new(Duration::from_millis(30)))
+        .build(App::new())
+        .expect("a describable router");
+
+    // The interceptors run outermost-first, so the timeout added last is the
+    // one that runs first and therefore covers the read.
+    let document = service.openapi();
+    let operation = document.paths.0["/users"]
+        .post
+        .as_ref()
+        .expect("the operation exists");
+
+    assert!(
+        operation.responses.responses.contains_key("504"),
+        "the timeout covers the operation whose body the limit reads"
+    );
+    assert!(operation.responses.responses.contains_key("413"));
+}
+
+// --- Concurrency scope ----------------------------------------------------
+
+/// Two endpoints, one `Concurrency` each: the caps are separate.
+///
+/// "Maximum concurrent requests per endpoint" needs no new API. An
+/// `EndpointBuilder` has its own interceptor list, and `Router::build`
+/// composes it with the router's, so one instance per endpoint *is* a
+/// per-endpoint cap. Recorded because the alternative — a `per_route()` mode
+/// keyed on the matched path — would cost a lock and a lookup on the request
+/// path to express what the mount site already says.
+#[tokio::test]
+async fn one_limit_per_endpoint_caps_each_endpoint_separately() {
+    let service = Router::<()>::new()
+        .mount((
+            kynos::routes![slow].0.intercept(Concurrency::new(1)),
+            kynos::routes![prompt].0.intercept(Concurrency::new(1)),
+        ))
+        .build(())
+        .expect("a describable router");
+
+    let (held, other) = tokio::join!(get(&service, "/slow").call(), async {
+        // Long enough for the first request to have taken `/slow`'s only slot.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        get(&service, "/prompt").call().await
+    });
+
+    assert_eq!(held.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        other.status,
+        StatusCode::NO_CONTENT,
+        "a cap on one endpoint refused a request to another"
+    );
+}
+
+/// A bounded queue absorbs a burst instead of shedding it.
+///
+/// The wait is not a declaration: the answer when it expires is the same 503,
+/// and a delay is not a response. What it changes is which of the two a client
+/// gets, and only where the deployment asked.
+#[tokio::test]
+async fn a_queued_request_waits_for_a_slot_rather_than_being_shed() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![slow, prompt])
+        .intercept(Concurrency::new(1).queue_for(Duration::from_secs(2)))
+        .build(())
+        .expect("a describable router");
+
+    let (held, queued) = tokio::join!(get(&service, "/slow").call(), async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        get(&service, "/prompt").call().await
+    });
+
+    assert_eq!(held.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        queued.status,
+        StatusCode::NO_CONTENT,
+        "the second request had two seconds to wait for a slot that frees in well under one"
+    );
+}
+
+/// A queue that expires still sheds, with the status it always had.
+#[tokio::test]
+async fn a_queue_that_expires_sheds_the_same_status() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![slow, prompt])
+        .intercept(Concurrency::new(1).queue_for(Duration::from_millis(20)))
+        .build(())
+        .expect("a describable router");
+
+    let (_held, shed) = tokio::join!(get(&service, "/slow").call(), async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        get(&service, "/prompt").call().await
+    });
+
+    assert_eq!(shed.status, StatusCode::SERVICE_UNAVAILABLE);
+}
+
+/// A deployment that knows how long to wait can say so.
+///
+/// `AtCapacity` has always *described* a `Retry-After` and nothing could
+/// produce one — the shape `assert_declared_responses_covered` exists to catch.
+#[tokio::test]
+async fn a_configured_retry_after_reaches_a_shed_response() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![slow, prompt])
+        .intercept(Concurrency::new(1).retry_after(Duration::from_secs(5)))
+        .build(())
+        .expect("a describable router");
+
+    let (_held, shed) = tokio::join!(get(&service, "/slow").call(), async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        get(&service, "/prompt").call().await
+    });
+
+    assert_eq!(shed.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        shed.field(header::RETRY_AFTER.as_str()).as_deref(),
+        Some("5")
+    );
+}
+
+/// A slot is released when the chain's future is dropped, not only when it
+/// finishes.
+///
+/// The reason the permit is a guard rather than a counter pair: a client that
+/// disconnects mid-request drops the future at an await point, and a slot that
+/// leaked there would shrink the limit until the process restarted.
+#[tokio::test]
+async fn a_slot_is_released_when_a_request_is_abandoned() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![slow, prompt])
+        .intercept(Concurrency::new(1))
+        .build(())
+        .expect("a describable router");
+
+    // Abandon a request that has taken the only slot. Boxed rather than
+    // `tokio::pin!`ed, because that macro shadows the binding with a
+    // `Pin<&mut _>` and dropping *that* leaves the future alive to the end of
+    // the scope — which is a test that passes for the wrong reason.
+    {
+        let mut abandoned = Box::pin(get(&service, "/slow").call());
+        let started = tokio::time::timeout(Duration::from_millis(30), &mut abandoned).await;
+        assert!(started.is_err(), "the request must still be in flight");
+    }
+
+    assert_eq!(
+        get(&service, "/prompt").call().await.status,
+        StatusCode::NO_CONTENT,
+        "the abandoned request's slot was never released"
+    );
+}

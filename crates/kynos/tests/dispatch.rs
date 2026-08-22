@@ -11,7 +11,11 @@
 
 use kynos::{
     Router,
-    extract::{body::text::Text, connection::MatchedPath, params::path::Path},
+    extract::{
+        body::text::Text,
+        connection::{ConnectInfo, MatchedPath},
+        params::path::Path,
+    },
     http::{Method, StatusCode, header},
     response::status::NoContent,
     router::policy::{FallbackPolicy, TrailingSlashPolicy},
@@ -190,4 +194,37 @@ async fn an_operation_returning_no_content_sends_no_body() {
 
     assert_eq!(reply.status, StatusCode::NO_CONTENT);
     assert!(reply.body.is_empty());
+}
+
+// --- A service with no socket under it ------------------------------------
+
+/// A directly-driven service still answers a handler that asks who connected.
+///
+/// [`Service::call`](kynos::router::service::Service::call) is public precisely
+/// so a test, or an embedding owning its own accept loop, can drive a built
+/// service — `examples/testing.rs` is built on it, and so is every target in
+/// this directory. There is no socket there, so `ConnectInfo` has to report the
+/// in-process case rather than panic on an extension nothing inserted.
+#[kynos::get("/who")]
+async fn who(peer: ConnectInfo) -> Text {
+    Text(peer.0.to_string())
+}
+
+#[tokio::test]
+async fn a_directly_driven_service_reports_an_in_process_connection() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![who])
+        .build(())
+        .expect("a describable router");
+
+    let reply = get(&service, "/who").call().await;
+
+    assert_eq!(reply.status, StatusCode::OK);
+    // Port zero is never a peer port, so the value reads as "no socket" rather
+    // than as an address a reader might try to connect back to.
+    assert!(
+        reply.text().ends_with(":0"),
+        "an in-process connection reported `{}`",
+        reply.text()
+    );
 }

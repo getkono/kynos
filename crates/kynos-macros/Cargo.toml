@@ -13,6 +13,10 @@ proc-macro = true
 
 [features]
 default = ["openapi31"]
+# The `assets!` macro walks a directory at expansion time. Gated because a crate
+# that never embeds files should not pay for the walk, and because `kynos` gates
+# the surface it expands into.
+assets = []
 openapi31 = ["kynos-openapi/openapi31"]
 openapi32 = ["openapi31", "kynos-openapi/openapi32"]
 

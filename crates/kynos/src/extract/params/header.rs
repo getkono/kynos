@@ -96,6 +96,24 @@ pub trait HeaderParams: Sized {
     /// ```
     const VARIES: &'static [&'static str] = &[];
 
+    /// Whether a field this group names may appear more than once on one
+    /// response.
+    ///
+    /// `false` — the default — *inserts*, replacing whatever value was there.
+    /// That is right for almost every field: a response carrying two
+    /// `Content-Encoding` values is one no client can decode.
+    ///
+    /// `true` *appends*, so a group naming `Set-Cookie` twice sends it twice
+    /// rather than comma-joining two values RFC 6265 forbids joining.
+    ///
+    /// A property of the group rather than a table of field names, because a
+    /// per-name allow-list is a table that goes wrong — and the group already
+    /// knows whether its own fields comma-join. Read by the one writer both
+    /// [`Continued::with_headers`](crate::middleware::Continued::with_headers)
+    /// and [`WithHeaders`](crate::response::headers::WithHeaders) go through,
+    /// which is what makes "the two cannot disagree" true rather than intended.
+    const REPEATABLE: bool = false;
+
     /// Decodes this group from request headers.
     ///
     /// # Panics
@@ -166,6 +184,27 @@ pub trait HeaderParams: Sized {
 /// The empty group: no headers read, none added, nothing declared.
 ///
 /// What an interceptor names when it reads no header, or adds none.
+/// Writes `group` onto `fields`, honouring [`REPEATABLE`](HeaderParams::REPEATABLE)
+/// and merging [`VARIES`](HeaderParams::VARIES).
+///
+/// The one writer. Both ways a group reaches the wire —
+/// [`Continued::with_headers`](crate::middleware::Continued::with_headers) on an
+/// interceptor's response and
+/// [`WithHeaders`](crate::response::headers::WithHeaders) on a handler's — go
+/// through here, because "the two cannot disagree" is only true when they are
+/// one function. They were two, and they did.
+pub(crate) fn write<G: HeaderParams>(fields: &mut crate::http::HeaderMap, group: &G) {
+    for (name, value) in group.encode() {
+        if G::REPEATABLE {
+            fields.append(name, value);
+        } else {
+            fields.insert(name, value);
+        }
+    }
+
+    crate::middleware::vary_on(fields, G::VARIES);
+}
+
 impl HeaderParams for () {
     const NAMES: &'static [&'static str] = &[];
 

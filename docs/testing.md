@@ -44,6 +44,11 @@ attribute outlived its reason and went with it.
 | [`matrix.rs`](../crates/kynos/tests/matrix.rs) | the same two assertions over every layer Kynos owns, which is the only place a wrong *document* fails a test |
 | [`dispatch.rs`](../crates/kynos/tests/dispatch.rs), [`routing.rs`](../crates/kynos/tests/routing.rs), [`panics.rs`](../crates/kynos/tests/panics.rs) | every outcome one request can reach, the routes the router declines, and that recovery happens only where it was asked for |
 | [`limits.rs`](../crates/kynos/tests/limits.rs), [`interceptors.rs`](../crates/kynos/tests/interceptors.rs), [`middleware.rs`](../crates/kynos/tests/middleware.rs), [`cors.rs`](../crates/kynos/tests/cors.rs), [`description.rs`](../crates/kynos/tests/description.rs), [`sse.rs`](../crates/kynos/tests/sse.rs) | each interceptor doing what it declares, setting only what it declared, and declaring it on exactly the operations it covers |
+| [`rate_limit.rs`](../crates/kynos/tests/rate_limit.rs) | the shipped limiter over a store: one quota and several, burst, keying, exemption, and both failure policies — behaviour that is a property of a *sequence* of requests rather than of any one |
+| [`cookies.rs`](../crates/kynos/tests/cookies.rs) | that two `Set-Cookie` fields reach the wire as two, which no unit test of either end can see |
+| [`unchecked.rs`](../crates/kynos/tests/unchecked.rs) | that the escape hatches serve, that the router's own machinery still covers them, and what the waiver leaves on the document |
+| [`assets.rs`](../crates/kynos/tests/assets.rs) | both asset modes: what an embedded set describes, what a served directory records instead, and that traversal is refused end to end |
+| [`cache.rs`](../crates/kynos/tests/cache.rs) | that a hit is served, that a response stating no lifetime is not, and that a `Conditional` over a `Cache` answers with no body — properties of a *sequence* of requests |
 | [`compile/panic_recovery.rs`](../crates/kynos/tests/compile/panic_recovery.rs) | `catch_panics` refuses to compile under `panic = "abort"` |
 
 `crates/kynos-openapi/tests/` holds four more: `properties.rs` and
@@ -306,18 +311,18 @@ text. `mise.toml` therefore lists it: a snapshot suite that passes on the
 machine that recorded it and fails everywhere else is testing the environment.
 
 **`on_unimplemented` attributes must land before any snapshot is recorded.**
-Fourteen traits carry `#[diagnostic::on_unimplemented]` —
+Fifteen traits carry `#[diagnostic::on_unimplemented]` —
 `Provides`, `Handler`, `FromRequestParts`, `FromRequest`, `Describe`,
 `RequestContent`, `IntoResponse`, `Responses`, `Schema`, `MapKey`,
-`Alternative`, `ShortCircuit`, `EndpointMeta` and `IntoEndpoints`. Each one
-replaces the compiler's generic "the trait bound is not satisfied" with a
-message naming the fix.
+`Alternative`, `ShortCircuit`, `EndpointMeta`, `IntoEndpoints` and `Carries`.
+Each one replaces the compiler's generic "the trait bound is not satisfied"
+with a message naming the fix.
 
 `every_guided_diagnostic_has_a_snapshot` in
 [`tests/ui.rs`](../crates/kynos/tests/ui.rs) maps each to the snapshot that
 records it and counts the pairs against the attributes in the source. Eight of
-the fourteen had none, so more than half of what this requirement names was
-unchecked. The mapping is written out rather than searched for, because half the
+the fourteen it then named had none, so more than half of what this requirement
+names was unchecked. The mapping is written out rather than searched for, because half the
 messages deliberately never spell the trait: `Handler`'s says "is not a Kynos
 handler", which is the improvement rather than something to grep for.
 

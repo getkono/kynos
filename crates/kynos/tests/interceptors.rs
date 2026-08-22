@@ -194,21 +194,32 @@ async fn two_interceptors_contributing_vary_both_appear_in_it() {
 /// Under `compression`, because `Compression` is gated there and the full set
 /// only exists in that build — which is the one `mise run test` uses. The same
 /// reason `pipeline.rs` gates its route-attribute counter on `openapi32`.
-#[cfg(feature = "compression")]
+#[cfg(all(feature = "compression", feature = "cookie", feature = "cache"))]
 #[test]
 fn every_interceptor_kynos_ships_has_a_case() {
     /// `BodySize`, `Timeout` and `Concurrency` in `limits.rs`; `Cors`,
-    /// `RequestId`, `RateLimit` and `Compression` in their own files. `Trace`
-    /// is an `Observer` rather than an `Interceptor` — it declares nothing, so
-    /// it is not in this set and is counted below instead.
-    const WITNESSED: usize = 7;
+    /// `RequestId`, `RateLimit`, `Compression` and `SetCookies` in their own
+    /// modules, and `Cache` and `Conditional` in theirs. `Trace` is an
+    /// `Observer` rather than an `Interceptor` — it declares nothing, so it is
+    /// not in this set and is counted below instead.
+    const WITNESSED: usize = 10;
 
     let declared: usize = [
         include_str!("../src/middleware/limits.rs"),
         include_str!("../src/middleware/cors/mod.rs"),
         include_str!("../src/middleware/request_id.rs"),
-        include_str!("../src/middleware/rate_limit.rs"),
+        include_str!("../src/middleware/rate_limit/mod.rs"),
+        include_str!("../src/middleware/rate_limit/decision.rs"),
+        include_str!("../src/middleware/rate_limit/headers.rs"),
+        include_str!("../src/middleware/rate_limit/key.rs"),
+        include_str!("../src/middleware/rate_limit/quota.rs"),
+        include_str!("../src/middleware/rate_limit/store.rs"),
         include_str!("../src/middleware/compression.rs"),
+        include_str!("../src/middleware/cookies.rs"),
+        include_str!("../src/middleware/cache/mod.rs"),
+        include_str!("../src/middleware/cache/freshness.rs"),
+        include_str!("../src/middleware/cache/store.rs"),
+        include_str!("../src/middleware/conditional/mod.rs"),
         include_str!("../src/middleware/catch_panic.rs"),
         include_str!("../src/middleware/contribution.rs"),
         include_str!("../src/middleware/stack.rs"),
@@ -242,7 +253,15 @@ fn every_observer_kynos_ships_is_accounted_for() {
         include_str!("../src/middleware/limits.rs"),
         include_str!("../src/middleware/cors/mod.rs"),
         include_str!("../src/middleware/request_id.rs"),
-        include_str!("../src/middleware/rate_limit.rs"),
+        include_str!("../src/middleware/rate_limit/mod.rs"),
+        include_str!("../src/middleware/rate_limit/decision.rs"),
+        include_str!("../src/middleware/rate_limit/headers.rs"),
+        include_str!("../src/middleware/rate_limit/key.rs"),
+        include_str!("../src/middleware/rate_limit/quota.rs"),
+        include_str!("../src/middleware/rate_limit/store.rs"),
+        include_str!("../src/middleware/cookies.rs"),
+        include_str!("../src/middleware/cache/mod.rs"),
+        include_str!("../src/middleware/conditional/mod.rs"),
         include_str!("../src/middleware/mod.rs"),
     ]
     .iter()
@@ -263,14 +282,19 @@ fn every_observer_kynos_ships_is_accounted_for() {
 ///
 /// Under `compression`, for the reason the interceptor counter gives: the full
 /// set of modules only exists in that build.
-#[cfg(all(feature = "compression", feature = "trace"))]
+#[cfg(all(
+    feature = "compression",
+    feature = "trace",
+    feature = "cookie",
+    feature = "cache"
+))]
 #[test]
 fn the_counters_above_read_every_module_middleware_declares() {
     const SOURCE: &str = include_str!("../src/middleware/mod.rs");
 
     /// Every module `middleware/mod.rs` declares, transcribed in declaration
     /// order. The counters above read each of these and `mod.rs` itself.
-    const READ: [&str; 10] = [
+    const READ: [&str; 13] = [
         "catch_panic",
         "contribution",
         "cors",
@@ -279,7 +303,10 @@ fn the_counters_above_read_every_module_middleware_declares() {
         "request_id",
         "stack",
         "erased",
+        "cache",
         "compression",
+        "conditional",
+        "cookies",
         "trace",
     ];
 

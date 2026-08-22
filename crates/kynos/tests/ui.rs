@@ -106,6 +106,7 @@ fn every_guided_diagnostic_has_a_snapshot() {
     /// One row per `#[diagnostic::on_unimplemented]` in `crates/kynos/src`.
     const RECORDED: &[(&str, &str)] = &[
         ("Alternative", "traits/alternative.stderr"),
+        ("Carries", "traits/carries.stderr"),
         ("Describe", "traits/describe.stderr"),
         ("EndpointMeta", "traits/endpoint_meta.stderr"),
         ("FromRequest", "antipattern/raw_request_extractor.stderr"),

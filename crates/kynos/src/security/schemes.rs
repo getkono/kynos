@@ -16,7 +16,14 @@
 
 use std::marker::PhantomData;
 
-use crate::security::SecurityScheme;
+use crate::{
+    error::rejection::AuthRejection,
+    http::Parts,
+    security::{
+        SecurityScheme,
+        carrier::{self, BearerToken, Carries, PeerCertificates},
+    },
+};
 
 /// HTTP bearer authentication, per RFC 6750.
 ///
@@ -71,8 +78,16 @@ impl<T: Send + 'static> SecurityScheme for Basic<T> {
         kynos_openapi::SecurityScheme::basic()
     }
 
+    /// RFC 7617 section 2: `charset` is what tells a client to send a non-ASCII
+    /// password as UTF-8, and `UTF-8` is the only value the registry defines.
+    ///
+    /// No `realm`. The parameter is required by the grammar and its value is a
+    /// string a *deployment* chooses -- one this type cannot know, and one no
+    /// default would be right about. A scheme needing it declares its own
+    /// challenge through `#[derive(SecurityScheme)]`, which is what
+    /// `examples/security_schemes.rs` shows.
     fn challenge() -> Option<&'static str> {
-        Some("Basic")
+        Some(r#"Basic charset="UTF-8""#)
     }
 }
 
@@ -86,6 +101,33 @@ impl<T: Send + 'static> SecurityScheme for MutualTls<T> {
 
     fn describe() -> kynos_openapi::SecurityScheme {
         kynos_openapi::SecurityScheme::mutual_tls()
+    }
+}
+
+/// Each scheme's carrier is the one its own description implies: `bearer` and
+/// `basic` are `Authorization` schemes, and a client certificate is presented
+/// during the handshake rather than in any field.
+impl<T: Send + 'static> Carries for Bearer<T> {
+    type Presented = BearerToken;
+
+    fn present(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
+        carrier::bearer(parts)
+    }
+}
+
+impl<T: Send + 'static> Carries for Basic<T> {
+    type Presented = Credentials;
+
+    fn present(parts: &Parts) -> Result<Option<Credentials>, AuthRejection> {
+        carrier::basic(parts)
+    }
+}
+
+impl<T: Send + 'static> Carries for MutualTls<T> {
+    type Presented = PeerCertificates;
+
+    fn present(parts: &Parts) -> Result<Option<PeerCertificates>, AuthRejection> {
+        carrier::peer_certificates(parts)
     }
 }
 
@@ -118,7 +160,15 @@ mod tests {
             table,
             [
                 ("Bearer", Described::bearer(None), Some("Bearer")),
-                ("Basic", Described::basic(), Some("Basic")),
+                // RFC 7617 section 2: the `charset` parameter is what tells a
+                // client to send a non-ASCII password as UTF-8, and `UTF-8` is
+                // the only value the registry defines. A bare `Basic` leaves
+                // every client to guess, and they do not all guess the same.
+                (
+                    "Basic",
+                    Described::basic(),
+                    Some(r#"Basic charset="UTF-8""#)
+                ),
                 // No challenge: the certificate is presented during the TLS
                 // handshake, so a 401 has no `WWW-Authenticate` scheme to name
                 // -- there is none registered for it, and inventing one would
