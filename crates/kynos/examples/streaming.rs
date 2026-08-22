@@ -34,7 +34,10 @@
 //! * **The same type reads.** `JsonLines<Records<Reading>>` is a request body
 //!   rather than a response, and the asymmetry is worth noticing: a request
 //!   record that fails still has a status to spend, because nothing reaches
-//!   the socket until the handler's future resolves.
+//!   the socket until the handler's future resolves. It is one type in both
+//!   directions, so it is imported once, from the module that defines it —
+//!   `response::stream::json` re-exports it so a return type reads as a
+//!   response, and here it is a return type *and* an argument.
 //!
 //! Server-Sent Events are the fourth sequential media type, and the only one
 //! with protocol rules of its own — event names, resumption, reconnection
@@ -54,7 +57,10 @@ use std::{
 use kynos::{
     error::rejection::{BodyRejection, RangeRejection},
     extract::{
-        body::{binary::Binary, json_lines::records::Records},
+        body::{
+            binary::Binary,
+            json_lines::{JsonLines, JsonSeq, records::Records},
+        },
         media::{MediaType, OctetStream},
         params::query::QueryString,
     },
@@ -62,10 +68,7 @@ use kynos::{
     response::{
         range::{Range, parts::RangedParts},
         status::NoContent,
-        stream::{
-            binary::BinaryStream,
-            json::{JsonLines, JsonSeq},
-        },
+        stream::binary::BinaryStream,
     },
     server::Server,
 };
