@@ -45,7 +45,7 @@ use kynos::{
         cors::Cors,
         limits::{BodySize, Concurrency, Timeout},
         rate_limit::{Decision, RateLimit, RateLimitPolicy},
-        request_id::{Counter, RequestId, RequestIdSource},
+        request_id::{CorrelationHeaders, Counter, RequestId, RequestIdSource},
         trace::Trace,
     },
     openapi::Method,
@@ -67,11 +67,25 @@ struct User {
 /// A group rather than a name, because `RequestId` is described while the
 /// router is built: the set of headers it adds has to be a `const`, and a name
 /// passed at run time is a name no document could have printed.
-#[allow(dead_code)]
 #[derive(HeaderParams)]
 struct CorrelationId {
     #[header(rename = "X-Correlation-Id")]
     correlation_id: String,
+}
+
+/// What carrying one identifier means for this group.
+///
+/// `#[derive(HeaderParams)]` cannot supply this: it knows the names and the
+/// schema, and not which of several fields an identifier belongs in. Requiring
+/// it is what makes `RequestId::header::<G>()` a compile-time question.
+impl CorrelationHeaders for CorrelationId {
+    fn from_id(id: http::HeaderValue) -> Self {
+        Self {
+            // A source that minted a value no field can carry gets an empty
+            // one rather than a panicking response path.
+            correlation_id: id.to_str().unwrap_or_default().to_owned(),
+        }
+    }
 }
 
 /// Identifiers minted from a monotonic clock rather than a counter.

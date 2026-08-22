@@ -49,6 +49,46 @@ impl RequestIdSource for Counter {
     }
 }
 
+/// A header group that can carry a correlation identifier.
+///
+/// [`RequestId`] has to produce a value of the group it declares, and a
+/// [`HeaderParams`] group is reached only through its own constructor.
+/// [`decode`](HeaderParams::decode) is not that constructor: the trait
+/// documents it as optional for a group that is only ever *added*, which is
+/// exactly what [`Adds`](crate::middleware::Interceptor::Adds) is.
+/// Requiring this instead is what keeps a group written to that rule from
+/// failing once per request rather than once at compile time.
+///
+/// ```
+/// use kynos::{
+///     extract::params::header::HeaderParams,
+///     http::{HeaderName, HeaderValue},
+///     middleware::request_id::CorrelationHeaders,
+/// };
+///
+/// struct TraceId(HeaderValue);
+///
+/// impl HeaderParams for TraceId {
+///     const NAMES: &'static [&'static str] = &["x-trace-id"];
+///
+///     fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+///         vec![(HeaderName::from_static("x-trace-id"), self.0.clone())]
+///     }
+/// }
+///
+/// impl CorrelationHeaders for TraceId {
+///     fn from_id(id: HeaderValue) -> Self {
+///         Self(id)
+///     }
+/// }
+/// ```
+pub trait CorrelationHeaders: HeaderParams {
+    /// Builds the group from the identifier this request is correlated by.
+    ///
+    /// One identifier, under every name the group declares.
+    fn from_id(id: http::HeaderValue) -> Self;
+}
+
 /// The header [`RequestId`] uses unless told otherwise.
 ///
 /// A [`HeaderParams`] group rather than a name in a field, because the
@@ -103,6 +143,12 @@ impl HeaderParams for XRequestId {
             ),
         );
         headers
+    }
+}
+
+impl CorrelationHeaders for XRequestId {
+    fn from_id(id: http::HeaderValue) -> Self {
+        Self(id)
     }
 }
 
@@ -174,8 +220,13 @@ impl<S: RequestIdSource, H: HeaderParams> RequestId<S, H> {
     /// Takes the group as a type parameter rather than a name, so that changing
     /// the header changes what every covered operation declares. A group
     /// naming more than one header sets and documents all of them.
+    ///
+    /// The group must be able to *be built from* an identifier, which is what
+    /// [`CorrelationHeaders`] says. `#[derive(HeaderParams)]` does not supply
+    /// it: a group is free to decide what carrying one identifier means for
+    /// the names it declares.
     #[must_use]
-    pub fn header<G: HeaderParams>(self) -> RequestId<S, G> {
+    pub fn header<G: CorrelationHeaders>(self) -> RequestId<S, G> {
         RequestId {
             source: self.source,
             trust_client: self.trust_client,
@@ -205,8 +256,11 @@ impl<S: RequestIdSource, H: HeaderParams> RequestId<S, H> {
     }
 }
 
-impl<C: Sync + 'static, S: RequestIdSource, H: HeaderParams + Send + Sync + 'static> Interceptor<C>
-    for RequestId<S, H>
+impl<C, S, H> Interceptor<C> for RequestId<S, H>
+where
+    C: Sync + 'static,
+    S: RequestIdSource,
+    H: CorrelationHeaders + Send + Sync + 'static,
 {
     type Reads = ();
     type Adds = H;
@@ -236,24 +290,17 @@ impl<C: Sync + 'static, S: RequestIdSource, H: HeaderParams + Send + Sync + 'sta
 
         let id = inbound.unwrap_or_else(|| self.source.next_id());
 
-        // Set on the request as well as the response: a handler, an observer
-        // and the client all correlate on the same value, and there is one
-        // place the name is written.
-        let mut declared = http::HeaderMap::with_capacity(H::NAMES.len());
-        for name in H::NAMES {
-            let Ok(name) = http::HeaderName::from_bytes(name.as_bytes()) else {
-                continue;
-            };
-            request.headers_mut().insert(name.clone(), id.clone());
-            declared.insert(name, id.clone());
-        }
+        // The group is built from the identifier rather than read back out of a
+        // header map: `Adds` is by definition a group an interceptor only adds,
+        // and `HeaderParams::decode` is optional for exactly those.
+        let headers = H::from_id(id);
 
-        // The group is rebuilt from the names it declares, since `Adds` is a
-        // type rather than a map and `decode` is the one way to reach a value
-        // of it. A group that cannot read back what it names is one whose
-        // description and behaviour could not have agreed anyway.
-        let headers = H::decode(&declared)
-            .unwrap_or_else(|error| panic!("a header group must decode the names it declares, and `{error}` says this one does not"));
+        // Set on the request as well as the response, from the group's own
+        // encoding: a handler, an observer and the client then correlate on the
+        // same value under the same names, with one place deciding both.
+        for (name, value) in headers.encode() {
+            request.headers_mut().insert(name, value);
+        }
 
         Ok(next.run(request).await.with_headers(headers))
     }
