@@ -15,6 +15,7 @@ help: the trait `ShortCircuit` is not implemented for `NotAResponse`
             AtCapacity
             BodySizeExceeded
             Infallible
+            NotModified
             RateLimited
             RateLimitedFields
             kynos::middleware::limits::TimedOut

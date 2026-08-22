@@ -369,6 +369,66 @@ no use for it. Getting this wrong is not a missing nicety: a CORS response that
 varies on `Origin` without saying so lets a cache hand one origin's
 `Access-Control-Allow-Origin` to another, which defeats the check entirely.
 
+## Where a cache sits
+
+Outermost but one. `Conditional` outside `Cache`, and `Cache` outside `Cors`
+and `Compression`.
+
+The first half is what makes the pair worth having: a hit turned into a 304 has
+produced only the *cached* body. The other way round, the handler runs and its
+work is thrown away — which `Conditional` costs anyway, and which a cache is
+there to avoid. The second half is so that what gets stored is a response whose
+negotiated headers have already landed.
+
+**The order is documented, not enforced.** Enforcing it needs a marker threaded
+through `CompatibleWith` for one interceptor, which generalizes the `Cors`
+downcast into exactly the capability this document bounds elsewhere.
+
+What *is* enforced is the case where getting it wrong is catastrophic. A
+response carrying `access-control-*` headers whose `Vary` does not name `origin`
+is refused outright, because storing one hands one origin's
+`Access-Control-Allow-Origin` to another and defeats the check entirely. The
+merely-suboptimal case — a `Cache` inside `Compression`, storing an unencoded
+body — is documented and not refused.
+
+### Why a hit is not a new response
+
+`Cache::Short` is `Infallible`. A hit replays a status the operation already
+declares, so a cache invents nothing and contributes no response of its own.
+What it adds is `Age`, and under `deriving_etags` an `ETag`.
+
+That does mean the cache is the one place outside `Next::run` that constructs a
+`Continued`. The constructor is `pub(crate)`, so a third-party interceptor still
+cannot mint one; and the invariant it protects is intact, because what is
+replayed is a response *the operation itself produced* and that passed the
+storability rules before it was stored.
+
+`Conditional::Short` is `NotModified`, and 304 *is* a new status, so it is
+declared. It is answered **after** the chain runs, because RFC 9110 section 13
+evaluates a precondition against the current representation and only the handler
+knows what that is — a `Continued` deliberately cannot change a status.
+
+### What is never stored
+
+`no-store` from either side, `no-cache`, `private`, `Vary: *`, any response
+setting a cookie, and a credentialed request whose response did not say it was
+shareable.
+
+The cookie rule has no opt-out. Replaying a response that mints a session to a
+second client is the worst bug a cache has, and `Vary` cannot protect against
+it: the cookie is in the *response*, and nothing in the request selects it.
+
+**There is no heuristic freshness.** RFC 9111 section 4.2.2 permits one, and
+every heuristic is a guess that turns a correct origin into an incorrect cache.
+A response that did not say how long it may be reused is not reused;
+`default_freshness` is opt-in and documented as the guess it is.
+
+`stale-while-revalidate` and `stale-if-error` are absent, and not as an
+oversight: the revalidation is a background task — a `tokio::spawn` outside
+`server/` — which would be a sixth row in the runtime allowance table for a
+nicety, and a stale response is one the operation's description has no way to
+mark.
+
 ## Opaque
 
 The vocabulary is

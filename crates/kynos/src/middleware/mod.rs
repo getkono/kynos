@@ -57,8 +57,12 @@ pub mod stack;
 // never `pub`, so `Pin<Box<dyn Future>>` reaches no user signature.
 pub(crate) mod erased;
 
+#[cfg(feature = "cache")]
+pub mod cache;
 #[cfg(feature = "compression")]
 pub mod compression;
+#[cfg(feature = "cache")]
+pub mod conditional;
 #[cfg(feature = "cookie")]
 pub mod cookies;
 #[cfg(feature = "trace")]

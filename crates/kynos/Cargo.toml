@@ -135,6 +135,10 @@ name = "rate_limit"
 required-features = ["openapi31", "macros", "server", "http1", "json"]
 
 [[example]]
+name = "cache"
+required-features = ["openapi31", "macros", "server", "http1", "json", "cache"]
+
+[[example]]
 name = "assets"
 # No `json`: nothing here has a JSON body. `assets-fs` implies `assets` and
 # `unchecked`, which is the point the example is making.
@@ -271,6 +275,12 @@ yaml = ["dep:serde_yaml_ng", "kynos-openapi/yaml"]
 # one.
 test-util = ["dep:jsonschema"]
 
+# --- Response cache --------------------------------------------------------
+# The store half (`Cache`) and the validator half (`Conditional`). The store
+# itself is the application's, which is the line `rate_limit` already draws:
+# prescribing one would mean prescribing a dependency.
+cache = []
+
 # --- Static assets ---------------------------------------------------------
 # `assets` compiles a directory into the binary as one described operation per
 # file: every path is a literal, so nothing is waived. `assets-fs` serves a
@@ -289,6 +299,7 @@ unchecked = ["dep:tower", "dep:tower-service"]
 
 full = [
   "assets",
+  "cache",
   "openapi32",
   "macros",
   "server",
