@@ -638,6 +638,94 @@ mod directory {
         assert!(second.body.is_empty());
     }
 
+    // --- Byte ranges -------------------------------------------------------
+
+    /// A served file ranges the same way an embedded one does.
+    ///
+    /// The read is seeked rather than sliced, which no response can show — what
+    /// this pins is that the octets and the field agree, which is the part a
+    /// client acts on.
+    #[tokio::test]
+    async fn a_served_file_answers_the_part_it_was_asked_for() {
+        let service = served().build(()).expect("a buildable router");
+
+        let reply = get(&service, "/files/css/app.css")
+            .header("range", "bytes=5-10")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            reply
+                .field(kynos::http::header::CONTENT_RANGE.as_str())
+                .as_deref(),
+            Some("bytes 5-10/19")
+        );
+        assert_eq!(reply.text(), &super::STYLESHEET[5..=10]);
+        assert_eq!(
+            reply
+                .field(kynos::http::header::ACCEPT_RANGES.as_str())
+                .as_deref(),
+            Some("bytes")
+        );
+    }
+
+    /// An unsatisfiable field is a 416 that never reads the file at all: the
+    /// `stat` already said how long it is.
+    #[tokio::test]
+    async fn an_unsatisfiable_range_is_refused_before_the_file_is_read() {
+        let service = served().build(()).expect("a buildable router");
+
+        let reply = get(&service, "/files/css/app.css")
+            .header("range", "bytes=100-200")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(
+            reply
+                .field(kynos::http::header::CONTENT_RANGE.as_str())
+                .as_deref(),
+            Some("bytes */19")
+        );
+    }
+
+    /// A weak validator can never satisfy an `If-Range`, so this mode always
+    /// answers a conditional range with the whole file.
+    ///
+    /// Recorded rather than endorsed: it is a consequence of deriving the tag
+    /// from a `stat` instead of from the contents, and RFC 9110 section 13.1.5
+    /// takes the strong comparison. The control beneath it is the same request
+    /// without the condition, which is served as a 206 — so this is the
+    /// precondition failing rather than the mode not ranging.
+    #[tokio::test]
+    async fn a_weak_validator_never_satisfies_an_if_range() {
+        let service = served().build(()).expect("a buildable router");
+
+        let etag = get(&service, "/files/css/app.css")
+            .call()
+            .await
+            .field(kynos::http::header::ETAG.as_str())
+            .expect("an entity tag");
+        assert!(etag.starts_with("W/"), "{etag}");
+
+        let conditional = get(&service, "/files/css/app.css")
+            .header("if-range", &etag)
+            .header("range", "bytes=0-3")
+            .call()
+            .await;
+
+        assert_eq!(conditional.status, StatusCode::OK);
+        assert_eq!(conditional.text(), super::STYLESHEET);
+
+        let unconditional = get(&service, "/files/css/app.css")
+            .header("range", "bytes=0-3")
+            .call()
+            .await;
+
+        assert_eq!(unconditional.status, StatusCode::PARTIAL_CONTENT);
+    }
+
     // --- What the document says ------------------------------------------
 
     /// No `paths` key, and a record at the root a generator cannot act on.

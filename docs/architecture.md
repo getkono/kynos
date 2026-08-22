@@ -59,7 +59,7 @@ is now an enumeration:
 | `middleware/limits.rs` | `tokio::{time::timeout, sync::Semaphore}` | the timer wraps the chain's future, which does not exist until after routing; the permit bounds requests already in it |
 | `middleware/compression.rs` | `tokio::io::{AsyncRead, ReadBuf}` | `async-compression`'s encoders are written against tokio's I/O traits; no byte here crosses a socket |
 | `response/stream/sse.rs` | `tokio::time::{Instant, Sleep, sleep}` | a keep-alive is a property of one body, and the connection driver cannot know a body is an event stream |
-| `router/assets/fs/` | `tokio::fs::{metadata, read}` | which file a request wants is not known until routing has chosen the operation, and the read is the operation |
+| `router/assets/fs/` | `tokio::fs::{metadata, read, File}`, `tokio::io::{AsyncReadExt, AsyncSeekExt}` | which file a request wants is not known until routing has chosen the operation, and the read is the operation; a byte range seeks to what it asked for rather than reading the file and discarding most of it |
 
 **Five rows, and the count is the check.** [`nfr.md`](nfr.md#runtime) states the
 containment requirement against this table rather than against `server/` alone,

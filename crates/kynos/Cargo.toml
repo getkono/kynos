@@ -287,7 +287,9 @@ cache = []
 # directory whose membership is not fixed, which no path template can express --
 # so it implies `unchecked` and is recorded at the document root.
 assets = ["kynos-macros?/assets"]
-assets-fs = ["assets", "unchecked", "tokio/fs"]
+# `io-util` is what lets a range be read rather than sliced: a seek and one
+# sized read cost the part, where reading the file and slicing costs the whole.
+assets-fs = ["assets", "unchecked", "tokio/fs", "tokio/io-util"]
 
 # --- Escape hatch ----------------------------------------------------------
 # Unlocks `layer_unchecked`, `route_unchecked` and `upgrade_unchecked`. What

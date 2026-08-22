@@ -25,13 +25,18 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use bytes::Bytes;
 use kynos_openapi::{OpaqueReason, OpaqueRoute};
 
 use crate::{
     extract::params::header::HeaderParams,
     http::{HeaderValue, Request, Response, StatusCode, header},
     middleware::catch_panic::PanicPolicy,
-    router::{Router, assets::media},
+    response::range::{Selection, spec},
+    router::{
+        Router,
+        assets::{media, range},
+    },
 };
 
 /// A directory served from disk.
@@ -129,6 +134,19 @@ impl Directory {
 /// written in the same nanosecond with the same length would share it. Reading
 /// every file to hash it would turn a conditional request into the work it
 /// exists to avoid.
+///
+/// # So an `If-Range` is never honoured here
+///
+/// RFC 9110 section 13.1.5 evaluates that condition with the *strong*
+/// comparison, under which a weak tag is equivalent to nothing — not even to
+/// itself. A directory therefore answers every `If-Range` request with the
+/// whole file and a 200, which is the correct answer rather than a missing
+/// feature: a client splicing a part into a copy it holds needs to know the
+/// representation has not changed, and a tag this one cannot promise that.
+/// A plain `Range` with no condition is served as a 206 exactly as an embedded
+/// file's is; it is only the precondition that a weak validator cannot pass.
+/// [`assets!`](crate::assets) hashes the contents and gets a strong tag, which
+/// is the mode to reach for when resumption matters.
 fn etag(metadata: &std::fs::Metadata) -> Option<String> {
     let modified = metadata
         .modified()
@@ -221,20 +239,57 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
         }
     }
 
-    let Ok(bytes) = tokio::fs::read(&path).await else {
+    // Section 14.2: the `Range` field is evaluated *only if the result in
+    // absence of the Range header field would be a 200*, which the 304 above
+    // has already settled. The validator goes with it and is weak, so section
+    // 13.1.5's condition never holds -- see `etag` for why that is the answer
+    // rather than a gap.
+    let range_set = spec::read(request.method(), request.headers(), headers.etag.as_deref());
+
+    // `stat` already reported the length, so satisfiability is decided before a
+    // byte is read -- and an unsatisfiable field costs no read at all.
+    let selection = match crate::response::range::select(&range_set, metadata.len()) {
+        Ok(selection) => selection,
+        Err(rejection) => return range::unsatisfiable(rejection),
+    };
+
+    let read = match selection {
+        Selection::Whole(_) => tokio::fs::read(&path).await.map(Bytes::from),
+        Selection::Part { first, last, .. } => span(&path, first, last).await,
+    };
+    let Ok(body) = read else {
         return refused(StatusCode::NOT_FOUND);
     };
 
     let media_type = media::for_path(&requested).unwrap_or(media::FALLBACK);
-    let mut response = Response::new(crate::http::body::Body::from_bytes(bytes::Bytes::from(
-        bytes,
-    )));
-    if let Ok(value) = HeaderValue::from_str(media_type) {
-        response.headers_mut().insert(header::CONTENT_TYPE, value);
-    }
-    crate::extract::params::header::write(response.headers_mut(), &headers);
+    range::assembled(body, selection, media_type, &headers)
+}
 
-    response
+/// The bytes from `first` to `last` inclusive, without reading the rest.
+///
+/// A seek and one sized read rather than `tokio::fs::read` and a slice. Serving
+/// a kilobyte out of a gigabyte should cost a kilobyte, and that difference is
+/// most of the reason a range request exists at all — slicing after the read
+/// would be honest about the octets and wrong about the work.
+///
+/// `read_exact` rather than a read that settles for less: the file may have
+/// changed since the `stat` that fixed the length, and sending fewer octets
+/// than the `Content-Range` names produces a field RFC 9110 section 14.4 tells
+/// a recipient never to recombine. A file that shrank underneath the request is
+/// a failed read, which the caller answers the way it answers every other one.
+async fn span(path: &Path, first: u64, last: u64) -> std::io::Result<Bytes> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+    let mut file = tokio::fs::File::open(path).await?;
+    file.seek(std::io::SeekFrom::Start(first)).await?;
+
+    // `last` came from the resolver, so it is at most one less than the length
+    // `stat` reported and neither the subtraction nor the addition can wrap.
+    let length = usize::try_from(last - first + 1).unwrap_or(usize::MAX);
+    let mut buffer = vec![0_u8; length];
+    file.read_exact(&mut buffer).await?;
+
+    Ok(Bytes::from(buffer))
 }
 
 /// An empty response with `status`.
