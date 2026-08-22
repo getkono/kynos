@@ -70,6 +70,11 @@ async fn main() -> kynos::Result<()> {
         .intercept(
             Cors::new()
                 .allow_origins(permitted)
+                // Widens the same allow-list with a rule no list could hold.
+                // The response echoes the origin that asked rather than `*`,
+                // which is why this composes with `allow_credentials` where
+                // `allow_any_origin` does not.
+                .allow_origins_matching(|origin| origin.ends_with(".internal.example.com"))
                 .allow_headers(["x-trace-id"])
                 .expose_headers(["x-request-id"])
                 .max_age(std::time::Duration::from_secs(600)),
@@ -78,6 +83,7 @@ async fn main() -> kynos::Result<()> {
 
     preflight(&service).await;
     real_request(&service).await;
+    a_predicate_origin(&service).await;
     refused_origin(&service).await;
     a_configuration_that_cannot_be_honoured();
 
@@ -128,6 +134,22 @@ async fn real_request(service: &Service<()>) {
     // hand one origin's `Access-Control-Allow-Origin` to another, which is the
     // whole of the CORS check defeated.
     show(&response, header::VARY);
+}
+
+/// An origin no list names, permitted by the rule instead.
+async fn a_predicate_origin(service: &Service<()>) {
+    let response = send(
+        service,
+        Method::GET,
+        &[("origin", "https://team-b.internal.example.com")],
+    )
+    .await;
+
+    println!("\npredicate origin -> {}", response.status());
+
+    // Echoed rather than `*`: a predicate cannot be summarized as a wildcard,
+    // which is exactly why it stays compatible with credentials.
+    show(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN);
 }
 
 /// An origin the allow-list does not name.
