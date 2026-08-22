@@ -333,6 +333,18 @@ async fn usage(Auth(caller): Auth<ServiceKey>) -> Json<User> {
     })
 }
 
+/// The one operation that sets a cookie.
+///
+/// On a group of its own like every other declaring interceptor, because
+/// `SetCookieHeaders` is `DESCRIBED` and lands on the successful responses the
+/// operation declares — at router scope it would ride on a handler-produced
+/// 4xx that never declared it.
+#[cfg(feature = "cookie")]
+#[kynos::get("/visit")]
+async fn visit() -> NoContent {
+    NoContent
+}
+
 /// The one operation under a body limit.
 #[kynos::post("/limits/size")]
 async fn under_size_limit(Json(user): Json<User>) -> NoContent {
@@ -367,7 +379,7 @@ async fn under_rate_limit() -> NoContent {
 /// The whole matrix: every owned layer, mounted where its declaration lands on
 /// exactly the operations that can produce it.
 fn service() -> kynos::Result<kynos::router::service::Service<App>> {
-    Router::<App>::new()
+    let router = Router::<App>::new()
         // Router scope: two interceptors that add headers and declare no
         // status, so they cover every operation without adding a response any
         // of them would have to produce.
@@ -403,8 +415,19 @@ fn service() -> kynos::Result<kynos::router::service::Service<App>> {
             kynos::router::group::Group::<App>::new("/")
                 .intercept(RateLimit::new(AllowsOnce::new()))
                 .mount(kynos::routes![under_rate_limit]),
-        )
-        .build(App)
+        );
+
+    #[cfg(feature = "cookie")]
+    let router = router.group(
+        kynos::router::group::Group::<App>::new("/")
+            .intercept(kynos::middleware::cookies::SetCookies::new(vec![
+                kynos::response::cookie::Cookie::new("kynos_locale", "en").path("/"),
+                kynos::response::cookie::Cookie::new("kynos_seen", "1").path("/"),
+            ]))
+            .mount(kynos::routes![visit]),
+    );
+
+    router.build(App)
 }
 
 // --- The two assertions ---------------------------------------------------
@@ -487,6 +510,13 @@ async fn exercise_the_operations(client: &TestClient<App>) {
         .send()
         .await
         .assert_status(StatusCode::OK);
+
+    #[cfg(feature = "cookie")]
+    client
+        .get("/visit")
+        .send()
+        .await
+        .assert_status(StatusCode::NO_CONTENT);
 }
 
 /// Every declared way an operation says no.

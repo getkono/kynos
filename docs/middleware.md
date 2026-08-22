@@ -296,6 +296,56 @@ What stops this becoming a capability:
   finished. So the property this document opens with — that a declaration
   cannot disagree with behaviour, because it is the same text — is untouched.
 
+## Repeatable response fields
+
+`Set-Cookie` is the field HTTP forbids comma-joining, and it is the reason
+`HeaderParams` has a `REPEATABLE` const at all.
+
+A property of the *group* rather than a table of field names, because a
+per-name allow-list is a table that goes wrong and the group already knows
+whether its own fields comma-join. `false` — the default — inserts, which is
+right for almost everything: a response carrying two `Content-Encoding` values
+is one no client can decode.
+
+Both ways a group reaches the wire go through one writer,
+`extract::params::header::write`. They did not, and the comment on the second
+claimed they could not disagree while they were two functions that did:
+`Continued::with_headers` inserted and `WithHeaders::into_response` appended, so
+a group naming `Set-Cookie` twice reached the wire whole from a handler and
+truncated from an interceptor. No shipped interceptor named a repeatable field,
+so nothing noticed until one did.
+
+**OpenAPI cannot say a field repeats.** `Response.headers` is a map keyed by
+field name, so `SetCookies` declares one `Set-Cookie` entry and says the rest in
+its description. That is the honest half of what can be said, and understating a
+description beats claiming a shape the format has no way to express.
+
+## What the cookie interceptor is not
+
+`SetCookies` writes cookies. It does not sign them, encrypt them, or keep a
+session, and none of the three is a gap to close later.
+
+A cookie carrying a credential is a
+[`SecurityScheme`](../crates/kynos/src/security/mod.rs) rather than a parameter
+— `extract::params::cookie` has said so since it landed — and signing or
+encrypting one is how that credential is protected. That puts it on the
+authentication side of the line [`security.md`](security.md) draws, where Kynos
+ships the carrier and not the verifier. It would also arrive with a crypto stack
+(`hmac`, `sha2`, `aes-gcm`, a source of randomness) that the dependency table
+has no row for and that no feature gate could contain, since the jar would be in
+the default build.
+
+Sessions are named in [`architecture.md`](architecture.md#invariants)'s third
+invariant as the example of what a layer above Kynos owns.
+
+CSRF is the interesting exclusion, because it is the one the type system
+refuses rather than the policy. A CSRF interceptor's short circuit is 403.
+`statuses_disjoint` compares `Short::STATUSES` across the interceptors covering
+a route, and `Auth<S>` contributes 403 to every authenticated operation — so a
+CSRF interceptor and a credential guard would not compile together, on exactly
+the routes that need both. Whatever the right shape for CSRF here is, it is not
+an interceptor with a status.
+
 ## Vary is declared apart from the names
 
 `Vary` is the one response header two interceptors may both contribute to, so it
