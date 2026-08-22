@@ -372,6 +372,10 @@ mod tests {
     /// runs. It never consults [`spec::coalesce`], and it reaches sortedness and
     /// disjointness by construction rather than by the same sort and the same
     /// comparison the merge uses.
+    ///
+    /// Ascending, because it is an oracle for *which octets* survive the merge.
+    /// Which order they leave in is a separate property, asserted separately by
+    /// [`the_parts_leave_in_the_order_their_earliest_spec_arrived`].
     fn covered(specs: &[Spec], complete_length: u64) -> Vec<(u64, u64)> {
         let length = usize::try_from(complete_length).expect("a small fixture");
         let mut marked = vec![false; length];
@@ -443,12 +447,19 @@ mod tests {
     ///
     /// A sweep rather than a draw, for the reason the resolver's is: the space
     /// closes, so enumerating it is the stronger statement.
+    ///
+    /// Sorted before it is compared, because this is the assertion about *what*
+    /// the merge produces. The order it produces them in is its own test below,
+    /// so a regression in either one names which of the two it broke.
     #[test]
     fn coalescing_recovers_the_octets_the_field_named_and_no_others() {
         for complete_length in 1..=6_u64 {
             for specs in every_set() {
+                let mut merged = spec::coalesce(&specs, complete_length);
+                merged.sort_unstable();
+
                 assert_eq!(
-                    spec::coalesce(&specs, complete_length),
+                    merged,
                     covered(&specs, complete_length),
                     "{specs:?} against a representation of {complete_length} bytes"
                 );
@@ -466,7 +477,12 @@ mod tests {
     fn no_field_can_ask_for_more_octets_than_the_representation_holds() {
         for complete_length in 1..=6_u64 {
             for specs in every_set() {
-                let merged = spec::coalesce(&specs, complete_length);
+                // Sorted here for the same reason the oracle above is: these are
+                // properties of the *set* of parts, and reading them off an
+                // ascending copy keeps them separable from the order the parts
+                // are actually sent in.
+                let mut merged = spec::coalesce(&specs, complete_length);
+                merged.sort_unstable();
 
                 let mut total = 0_u64;
                 for (index, &(first, last)) in merged.iter().enumerate() {
@@ -502,8 +518,11 @@ mod tests {
             ("bytes=0-4, 5-9", vec![(0, 9)]),
             // Enclosed entirely.
             ("bytes=0-9, 4-5", vec![(0, 9)]),
-            // Out of order, which the same section permits reordering.
-            ("bytes=8-9, 0-1", vec![(0, 1), (8, 9)]),
+            // Out of order, and it stays that way: the permission to merge
+            // "regardless of the order in which the corresponding range-spec
+            // appeared" is a permission to merge across the order, not to
+            // rewrite it. What leaves is what the field wrote.
+            ("bytes=8-9, 0-1", vec![(8, 9), (0, 1)]),
             // A gap of exactly one octet is a gap.
             ("bytes=0-3, 5-6", vec![(0, 3), (5, 6)]),
         ] {
@@ -511,6 +530,42 @@ mod tests {
                 panic!("`{field}` is a legal field");
             };
             assert_eq!(spec::coalesce(&specs, 10), expected, "{field}");
+        }
+    }
+
+    /// The parts leave in the order of the earliest spec that fed each of them.
+    ///
+    /// RFC 9110 section 15.3.7.2: *a server that generates a multipart response
+    /// SHOULD send the parts in the same order that the corresponding range-spec
+    /// appeared in the received Range header field, excluding those ranges that
+    /// were deemed unsatisfiable or that were coalesced into other ranges.*
+    ///
+    /// The oracle is the resolver's own output, which is written order with the
+    /// unsatisfiable specs dropped: every satisfiable range falls inside exactly
+    /// one merged part, so the position of the first that does is the position
+    /// the RFC's sentence is about, and those positions must climb.
+    #[test]
+    fn the_parts_leave_in_the_order_their_earliest_spec_arrived() {
+        for complete_length in 1..=6_u64 {
+            for specs in every_set() {
+                let merged = spec::coalesce(&specs, complete_length);
+                let resolved = spec::resolve(&specs, complete_length);
+
+                let earliest: Vec<usize> = merged
+                    .iter()
+                    .map(|&(first, last)| {
+                        resolved
+                            .iter()
+                            .position(|&(from, to)| first <= from && to <= last)
+                            .expect("every part encloses the spec that produced it")
+                    })
+                    .collect();
+
+                assert!(
+                    earliest.windows(2).all(|pair| pair[0] < pair[1]),
+                    "{specs:?} against {complete_length} bytes left the parts in {earliest:?}"
+                );
+            }
         }
     }
 
@@ -545,6 +600,28 @@ mod tests {
             field(&response, &header::CONTENT_TYPE).as_deref(),
             Some("application/octet-stream")
         );
+    }
+
+    /// The leading part is the one a single-part 206 would have carried.
+    ///
+    /// The two shapes read the same field and must not disagree about which
+    /// range it named first. `bytes=8-9, 0-1` is the case that tells them apart:
+    /// nothing merges, so [`Range::select`] answering `8-9` and the multipart
+    /// body opening with anything else would be the same request answered two
+    /// ways by one framework.
+    #[test]
+    fn the_first_part_is_the_one_a_single_part_answer_would_carry() {
+        let range = Range::<Binary<OctetStream>>::parse("bytes=8-9, 0-1");
+
+        let Ok(Selection::Part { first, last, .. }) = range.select(10) else {
+            panic!("a satisfiable field selects a part");
+        };
+        let Ok(Selected::Several { ranges, .. }) = range.select_parts(10) else {
+            panic!("two disjoint specs select two parts");
+        };
+
+        assert_eq!(ranges, [(8, 9), (0, 1)]);
+        assert_eq!(ranges.first(), Some(&(first, last)));
     }
 
     /// A field that cannot be applied is still the whole representation and a
@@ -736,16 +813,16 @@ mod tests {
             reparse(body, &boundary).await,
             [
                 (
+                    Some("bytes 8-9/10".to_owned()),
+                    bytes::Bytes::from_static(b"89")
+                ),
+                (
                     Some("bytes 0-1/10".to_owned()),
                     bytes::Bytes::from_static(b"01")
                 ),
                 (
                     Some("bytes 3-4/10".to_owned()),
                     bytes::Bytes::from_static(b"34")
-                ),
-                (
-                    Some("bytes 8-9/10".to_owned()),
-                    bytes::Bytes::from_static(b"89")
                 ),
             ]
         );
