@@ -6,9 +6,12 @@ use crate::http::{HeaderMap, StatusCode, header};
 
 /// Statuses a response may be stored under.
 ///
-/// RFC 9110 section 15.1's heuristically-cacheable set, minus 206: Kynos
-/// supports no `Range`, so a partial response cannot arise. A closed
-/// enumeration, checked by a table test.
+/// RFC 9110 section 15.1's heuristically-cacheable set, minus 206. A partial
+/// response *can* arise — [`response::range`](crate::response::range) serves
+/// one — and 206 stays out because this cache stores and replays whole
+/// responses: it has no way to recombine a stored part with the range a later
+/// request asks for, and section 14.4 forbids recombining what a recipient
+/// cannot verify. A closed enumeration, checked by a table test.
 pub(super) const CACHEABLE: &[u16] = &[200, 203, 204, 300, 301, 308, 404, 405, 410, 414, 501];
 
 /// Fields a stored response must not keep.

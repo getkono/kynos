@@ -1,0 +1,19 @@
+error[E0277]: `BinaryStream<Chunks, OctetStream>` cannot be served as a byte range
+  --> tests/ui/traits/rangeable.rs:14:20
+   |
+14 |     is_rangeable::<BinaryStream<Chunks, OctetStream>>();
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not rangeable
+   |
+   = help: the trait `Rangeable` is not implemented for `BinaryStream<Chunks, OctetStream>`
+   = note: `Range<T>` and `Ranged<T>` take a body that is already octets of a known length, which is `Binary<M>`
+   = note: `Text` holds a `String` and `Json<T>` a document, and a byte range of either is neither; a stream has no complete length to state and no way to seek within it
+help: the trait `Rangeable` is implemented for `kynos::extract::body::binary::Binary<M>`
+  --> src/response/range/rangeable.rs
+   |
+   | impl<M: MediaType> Rangeable for Binary<M> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `is_rangeable`
+  --> tests/ui/traits/rangeable.rs:11:20
+   |
+11 | fn is_rangeable<T: Rangeable>() {}
+   |                    ^^^^^^^^^ required by this bound in `is_rangeable`

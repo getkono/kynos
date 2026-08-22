@@ -211,8 +211,9 @@ fn the_cacheable_set_is_the_one_the_specification_names() {
         [200, 203, 204, 300, 301, 308, 404, 405, 410, 414, 501]
     );
 
-    // Kynos supports no `Range`, so a 206 cannot arise -- and storing one
-    // without the range machinery would serve a partial body as a whole one.
+    // A 206 does arise -- `response::range` serves one -- and it stays out
+    // anyway: this cache replays a stored response whole, so storing a part
+    // would serve a partial body as a complete representation.
     assert!(!CACHEABLE.contains(&206));
 }
 

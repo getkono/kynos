@@ -1,6 +1,6 @@
 use super::{
     AuthRejection, BodyRejection, HeaderRejection, NegotiationRejection, PathRejection,
-    QueryRejection,
+    QueryRejection, RangeRejection,
 };
 use crate::{error::problem::IntoProblem, http::StatusCode};
 
@@ -99,6 +99,63 @@ fn negotiation_separates_a_bad_header_from_an_unmatchable_one() {
     declares(&statuses, NegotiationRejection::statuses());
 }
 
+/// The one rejection a range can raise, and the length it names.
+///
+/// RFC 9110 section 15.5.17 asks a 416 to state the current length of the
+/// selected representation, and `Problem::into_response` sets no header — so
+/// this is the sibling of `only_authentication_declares_a_challenge`: the
+/// second rejection whose response is more than a problem document.
+#[test]
+fn an_unsatisfiable_range_is_the_only_status_a_range_can_raise() {
+    let rejection = RangeRejection::NotSatisfiable {
+        complete_length: 47_022,
+    };
+
+    assert_eq!(rejection.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    declares(&[rejection.status()], RangeRejection::statuses());
+    assert_eq!(
+        RangeRejection::statuses(),
+        [StatusCode::RANGE_NOT_SATISFIABLE]
+    );
+}
+
+/// The 416 names the representation's length in `Content-Range`.
+#[test]
+fn only_an_unsatisfiable_range_declares_a_complete_length() {
+    use crate::{http::header, response::IntoResponse};
+
+    let response = RangeRejection::NotSatisfiable {
+        complete_length: 47_022,
+    }
+    .into_response();
+
+    assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_RANGE)
+            .expect("a 416 states the complete length")
+            .to_str()
+            .expect("a printable field"),
+        // Section 15.5.17's own worked example.
+        "bytes */47022"
+    );
+
+    // No other rejection sets it: a `Content-Range` has no meaning on a status
+    // that does not describe its semantics, which is every other one here.
+    for other in [
+        PathRejection::Invalid {
+            name: "id".into(),
+            detail: "not a number".into(),
+        }
+        .into_response(),
+        NegotiationRejection::NotAcceptable.into_response(),
+        AuthRejection::Forbidden.into_response(),
+    ] {
+        assert!(!other.headers().contains_key(header::CONTENT_RANGE));
+    }
+}
+
 #[test]
 fn authentication_and_authorization_are_different_statuses() {
     let observed = [AuthRejection::unauthenticated(), AuthRejection::Forbidden];
@@ -131,6 +188,7 @@ fn only_authentication_declares_a_challenge() {
         HeaderRejection::statuses(),
         BodyRejection::statuses(),
         NegotiationRejection::statuses(),
+        RangeRejection::statuses(),
     ] {
         assert!(!declared.contains(&StatusCode::UNAUTHORIZED));
         assert!(!declared.contains(&StatusCode::FORBIDDEN));
@@ -168,13 +226,14 @@ fn every_rejection_a_caller_can_receive_has_a_case() {
     const SOURCE: &str = include_str!("../rejection.rs");
 
     /// Every rejection witnessed above, transcribed in declaration order.
-    const WITNESSED: [&str; 7] = [
+    const WITNESSED: [&str; 8] = [
         "PathRejection",
         "QueryRejection",
         "HeaderRejection",
         "CookieRejection",
         "BodyRejection",
         "NegotiationRejection",
+        "RangeRejection",
         "AuthRejection",
     ];
 
@@ -238,6 +297,13 @@ fn ledger() -> Vec<(&'static str, StatusCode, &'static [StatusCode])> {
         (name, rejection.status(), NegotiationRejection::statuses())
     }
 
+    fn range(rejection: RangeRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
+        let name = match rejection {
+            RangeRejection::NotSatisfiable { .. } => "RangeRejection::NotSatisfiable",
+        };
+        (name, rejection.status(), RangeRejection::statuses())
+    }
+
     fn auth(rejection: AuthRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
         let name = match rejection {
             AuthRejection::Unauthenticated { .. } => "AuthRejection::Unauthenticated",
@@ -276,6 +342,9 @@ fn ledger() -> Vec<(&'static str, StatusCode, &'static [StatusCode])> {
             detail: text("a bare comma"),
         }),
         negotiation(NegotiationRejection::NotAcceptable),
+        range(RangeRejection::NotSatisfiable {
+            complete_length: 1234,
+        }),
         auth(AuthRejection::unauthenticated()),
         auth(AuthRejection::Forbidden),
     ]
@@ -289,7 +358,7 @@ fn ledger() -> Vec<(&'static str, StatusCode, &'static [StatusCode])> {
 /// each row is checked against the set its type advertises.
 #[test]
 fn every_variant_produces_a_status_its_type_declares() {
-    const WITNESSED: [&str; 10] = [
+    const WITNESSED: [&str; 11] = [
         "PathRejection::Invalid",
         "QueryRejection::Invalid",
         "HeaderRejection::Invalid",
@@ -298,6 +367,7 @@ fn every_variant_produces_a_status_its_type_declares() {
         "BodyRejection::UnsupportedMediaType",
         "NegotiationRejection::MalformedAccept",
         "NegotiationRejection::NotAcceptable",
+        "RangeRejection::NotSatisfiable",
         "AuthRejection::Unauthenticated",
         "AuthRejection::Forbidden",
     ];

@@ -311,10 +311,11 @@ text. `mise.toml` therefore lists it: a snapshot suite that passes on the
 machine that recorded it and fails everywhere else is testing the environment.
 
 **`on_unimplemented` attributes must land before any snapshot is recorded.**
-Fifteen traits carry `#[diagnostic::on_unimplemented]` —
+Sixteen traits carry `#[diagnostic::on_unimplemented]` —
 `Provides`, `Handler`, `FromRequestParts`, `FromRequest`, `Describe`,
 `RequestContent`, `IntoResponse`, `Responses`, `Schema`, `MapKey`,
-`Alternative`, `ShortCircuit`, `EndpointMeta`, `IntoEndpoints` and `Carries`.
+`Alternative`, `ShortCircuit`, `EndpointMeta`, `IntoEndpoints`, `Carries` and
+`Rangeable`.
 Each one replaces the compiler's generic "the trait bound is not satisfied"
 with a message naming the fix.
 

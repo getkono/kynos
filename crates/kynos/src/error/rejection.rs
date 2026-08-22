@@ -403,6 +403,86 @@ impl IntoProblem for NegotiationRejection {
 
 rejection_response!(NegotiationRejection);
 
+/// No requested byte range is satisfiable.
+///
+/// The only status a `Range` field can produce that is not a success. Every
+/// *other* way a `Range` can be unusable — an unknown unit, a malformed value,
+/// a method for which range handling is not defined — is one RFC 9110 section
+/// 14.2 answers by ignoring the field, so
+/// [`Range<T>`](crate::response::range::Range) is an infallible extractor and
+/// this is raised by [`Range::apply`](crate::response::range::Range::apply)
+/// rather than while the request head is read.
+#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RangeRejection {
+    /// The field was understood and no spec in it is satisfiable. Produces 416.
+    #[error("no requested range is satisfiable")]
+    NotSatisfiable {
+        /// The length of the selected representation.
+        ///
+        /// Carried on the variant because a rejection holds what the request
+        /// already determined, and because this is the number that tells a
+        /// client which range to ask for instead. RFC 9110 section 15.5.17 asks
+        /// a 416 to state it.
+        complete_length: u64,
+    },
+}
+
+impl RangeRejection {
+    /// The status this rejection produces.
+    #[must_use]
+    pub fn status(&self) -> StatusCode {
+        match self {
+            Self::NotSatisfiable { .. } => StatusCode::RANGE_NOT_SATISFIABLE,
+        }
+    }
+
+    /// The `Content-Range` this rejection sends.
+    #[must_use]
+    pub fn content_range(&self) -> crate::response::range::headers::ContentRange {
+        match *self {
+            Self::NotSatisfiable { complete_length } => {
+                crate::response::range::headers::ContentRange::Unsatisfied { complete_length }
+            }
+        }
+    }
+}
+
+impl IntoProblem for RangeRejection {
+    fn into_problem(self) -> Problem {
+        // The complete length is not repeated in the document: RFC 9110 puts it
+        // in `Content-Range`, and a second spelling in the body would be a
+        // number a client could find disagreeing with the field it is told to
+        // read.
+        Problem::new(self.status()).with_detail(self.to_string())
+    }
+
+    fn statuses() -> &'static [StatusCode] {
+        &[StatusCode::RANGE_NOT_SATISFIABLE]
+    }
+}
+
+/// One of the two rejections whose response is more than a problem document.
+///
+/// RFC 9110 section 15.5.17: *a server that generates a 416 response to a
+/// byte-range request SHOULD generate a Content-Range header field specifying
+/// the current length of the selected representation.* `Problem::into_response`
+/// sets no header, so `rejection_response!` cannot produce this one.
+impl IntoResponse for RangeRejection {
+    fn into_response(self) -> crate::http::Response {
+        let field = self.content_range();
+        let mut response = IntoProblem::into_problem(self).into_response();
+        crate::extract::params::header::write(response.headers_mut(), &field);
+        response
+    }
+}
+
+impl Responses for RangeRejection {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        problem_responses(registry, <RangeRejection as IntoProblem>::statuses())
+    }
+}
+
 /// A credential was absent, invalid, or insufficient.
 ///
 /// The only rejection carrying 401 or 403, which is what keeps an endpoint with
@@ -495,7 +575,7 @@ impl IntoProblem for AuthRejection {
     }
 }
 
-/// The one rejection whose response is more than a problem document.
+/// The other rejection whose response is more than a problem document.
 ///
 /// RFC 9110 section 15.5.2: a server generating a 401 MUST send a
 /// `WWW-Authenticate` header field. Only the scheme knows the challenge, so it

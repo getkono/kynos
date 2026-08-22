@@ -23,8 +23,9 @@
 //! [`status`] holds the responses whose status their type fixes, [`headers`]
 //! the header wrapper, [`disposition`] the header group that says whether a
 //! representation is saved or shown, [`negotiate`] content negotiation,
-//! [`codec`] the responding half of each body codec, and [`stream`] the
-//! responses delivered as a sequence.
+//! [`range`] the one part of a representation a request asked for, [`codec`]
+//! the responding half of each body codec, and [`stream`] the responses
+//! delivered as a sequence.
 
 use core::convert::Infallible;
 
@@ -34,6 +35,7 @@ pub mod cookie;
 pub mod disposition;
 pub mod headers;
 pub mod negotiate;
+pub mod range;
 pub mod status;
 
 #[cfg(feature = "openapi32")]

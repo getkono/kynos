@@ -119,6 +119,7 @@ fn every_guided_diagnostic_has_a_snapshot() {
         ("IntoResponse", "antipattern/bare_status_code.stderr"),
         ("MapKey", "traits/map_key.stderr"),
         ("Provides", "antipattern/inject_without_provider.stderr"),
+        ("Rangeable", "traits/rangeable.stderr"),
         ("RequestContent", "traits/request_content.stderr"),
         ("Responses", "antipattern/problem_as_return_type.stderr"),
         ("Schema", "schema/serde_json_value.stderr"),

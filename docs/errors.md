@@ -107,6 +107,7 @@ All live in [`error::rejection`](../crates/kynos/src/error/rejection.rs).
 | `CookieRejection` | 400 | `Cookies<T>` |
 | `BodyRejection` | 400, 415, 422 | every body extractor, and `OneOf<L, R>` |
 | `NegotiationRejection` | 400, 406 | `Accept<T>` |
+| `RangeRejection` | 416 | `Range<T>::apply` |
 | `AuthRejection` | 401, 403 | `Auth<S>`, `Scoped<S, R>` |
 
 The split is the whole point. A single shared rejection type would be *sound* —
@@ -118,6 +119,15 @@ it is the kind of claim a client generator turns into dead retry logic.
 
 `BodyRejection` keeps 400 and 422 apart deliberately. A client can retry
 neither, but only one of them means its serializer is wrong.
+
+`RangeRejection` is the one raised by a *method* rather than by extraction.
+[`Range<T>`](../crates/kynos/src/response/range/mod.rs) is infallible — RFC 9110
+§14.2 answers every unusable `Range` field by ignoring it, so a bad field is a
+200 and not a 400 — and the 416 arises only once the field meets a
+representation it cannot be applied to. It is also the second rejection whose
+response is more than a problem document: §15.5.17 asks a 416 to state the
+representation's length in `Content-Range`, so the rejection carries that length
+and writes the field itself, as `AuthRejection` does for `WWW-Authenticate`.
 
 An extractor that cannot fail says so with `Infallible`, whose `Responses`
 implementation contributes nothing:
