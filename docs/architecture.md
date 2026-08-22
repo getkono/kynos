@@ -442,6 +442,16 @@ time; erasing every body through a boxed trait object behind a mutex allocates
 once per request for a body that is not shared. Those cost more per request
 than hyper's entire HTTP/1 codec, and none of them require replacing it.
 
+The second of the three is taken.
+[`Connection`](../crates/kynos/src/extract/connection.rs) is built once per
+accepted socket and reference-counted onto each request, so a certificate chain
+is copied once per connection rather than once per request. It landed as the fix
+for a defect rather than as an optimization — the metadata was private and
+`#[expect(dead_code)]`, and the extractor that was meant to read it panicked on
+every request — which is why the entry stays here rather than moving to a
+benchmark: the cost was real, and removing it was not what motivated the
+change.
+
 ### Why kernel TLS is deferred
 
 Kernel TLS moves record encryption into the kernel once rustls has finished the
