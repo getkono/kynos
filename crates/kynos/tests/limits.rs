@@ -328,3 +328,101 @@ async fn one_limit_per_endpoint_caps_each_endpoint_separately() {
         "a cap on one endpoint refused a request to another"
     );
 }
+
+/// A bounded queue absorbs a burst instead of shedding it.
+///
+/// The wait is not a declaration: the answer when it expires is the same 503,
+/// and a delay is not a response. What it changes is which of the two a client
+/// gets, and only where the deployment asked.
+#[tokio::test]
+async fn a_queued_request_waits_for_a_slot_rather_than_being_shed() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![slow, prompt])
+        .intercept(Concurrency::new(1).queue_for(Duration::from_secs(2)))
+        .build(())
+        .expect("a describable router");
+
+    let (held, queued) = tokio::join!(get(&service, "/slow").call(), async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        get(&service, "/prompt").call().await
+    });
+
+    assert_eq!(held.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        queued.status,
+        StatusCode::NO_CONTENT,
+        "the second request had two seconds to wait for a slot that frees in well under one"
+    );
+}
+
+/// A queue that expires still sheds, with the status it always had.
+#[tokio::test]
+async fn a_queue_that_expires_sheds_the_same_status() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![slow, prompt])
+        .intercept(Concurrency::new(1).queue_for(Duration::from_millis(20)))
+        .build(())
+        .expect("a describable router");
+
+    let (_held, shed) = tokio::join!(get(&service, "/slow").call(), async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        get(&service, "/prompt").call().await
+    });
+
+    assert_eq!(shed.status, StatusCode::SERVICE_UNAVAILABLE);
+}
+
+/// A deployment that knows how long to wait can say so.
+///
+/// `AtCapacity` has always *described* a `Retry-After` and nothing could
+/// produce one — the shape `assert_declared_responses_covered` exists to catch.
+#[tokio::test]
+async fn a_configured_retry_after_reaches_a_shed_response() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![slow, prompt])
+        .intercept(Concurrency::new(1).retry_after(Duration::from_secs(5)))
+        .build(())
+        .expect("a describable router");
+
+    let (_held, shed) = tokio::join!(get(&service, "/slow").call(), async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        get(&service, "/prompt").call().await
+    });
+
+    assert_eq!(shed.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        shed.field(header::RETRY_AFTER.as_str()).as_deref(),
+        Some("5")
+    );
+}
+
+/// A slot is released when the chain's future is dropped, not only when it
+/// finishes.
+///
+/// The reason the permit is a guard rather than a counter pair: a client that
+/// disconnects mid-request drops the future at an await point, and a slot that
+/// leaked there would shrink the limit until the process restarted.
+#[tokio::test]
+async fn a_slot_is_released_when_a_request_is_abandoned() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![slow, prompt])
+        .intercept(Concurrency::new(1))
+        .build(())
+        .expect("a describable router");
+
+    // Abandon a request that has taken the only slot. Boxed rather than
+    // `tokio::pin!`ed, because that macro shadows the binding with a
+    // `Pin<&mut _>` and dropping *that* leaves the future alive to the end of
+    // the scope — which is a test that passes for the wrong reason.
+    {
+        let mut abandoned = Box::pin(get(&service, "/slow").call());
+        let started = tokio::time::timeout(Duration::from_millis(30), &mut abandoned).await;
+        assert!(started.is_err(), "the request must still be in flight");
+    }
+
+    assert_eq!(
+        get(&service, "/prompt").call().await.status,
+        StatusCode::NO_CONTENT,
+        "the abandoned request's slot was never released"
+    );
+}

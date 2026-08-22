@@ -6,17 +6,12 @@
 //! that rides that status — `Retry-After` on a 503 — is described by the same
 //! type that sets it, rather than by a separate entry keyed on the status.
 
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 use bytes::{Bytes, BytesMut};
 use http_body_util::BodyExt;
 use kynos_openapi::model::schema::types::SchemaType;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::{
     error::problem::Problem,
@@ -293,47 +288,75 @@ impl Responses for AtCapacity {
 ///
 /// Contributes 503 and a `Retry-After` response header.
 ///
-/// Requests are refused rather than queued: a queue is a delay a client cannot
-/// see, and 503 is the answer [`AtCapacity`] describes. Cloning shares the
-/// count, so one limit stays one limit however many copies the router holds.
+/// Requests are shed rather than queued by default: a queue is a delay a client
+/// cannot see, and 503 is the answer [`AtCapacity`] describes.
+/// [`queue_for`](Concurrency::queue_for) makes the wait bounded and explicit for
+/// a deployment that would rather absorb a burst than refuse it.
+///
+/// Cloning shares the permits, so one limit stays one limit however many copies
+/// the router holds — and mounting a *separate* instance on each endpoint is
+/// how one cap per endpoint is spelled.
 #[derive(Clone, Debug)]
 pub struct Concurrency {
     /// The maximum number of requests in flight at once.
     pub limit: usize,
-    in_flight: Arc<AtomicUsize>,
+    slots: Arc<Semaphore>,
+    queue_for: Duration,
+    retry_after: Option<Duration>,
 }
 
 impl Concurrency {
     /// Limits in-flight requests to `limit`.
+    #[must_use]
     pub fn new(limit: usize) -> Self {
         Self {
             limit,
-            in_flight: Arc::new(AtomicUsize::new(0)),
+            slots: Arc::new(Semaphore::new(limit)),
+            queue_for: Duration::ZERO,
+            retry_after: None,
         }
     }
 
-    /// Takes a slot, or `None` when every one is held.
-    fn acquire(&self) -> Option<Slot> {
-        self.in_flight
-            .fetch_update(Ordering::Acquire, Ordering::Relaxed, |in_flight| {
-                (in_flight < self.limit).then(|| in_flight + 1)
-            })
-            .ok()
-            .map(|_| Slot(Arc::clone(&self.in_flight)))
+    /// Waits up to `wait` for a slot before shedding.
+    ///
+    /// Declares nothing new. The answer when the wait expires is the same 503,
+    /// and a delay is not a response — `Timeout` already changes how long an
+    /// exchange takes without contributing a status for the change.
+    ///
+    /// Zero, the default, sheds immediately.
+    #[must_use]
+    pub fn queue_for(mut self, wait: Duration) -> Self {
+        self.queue_for = wait;
+        self
     }
-}
 
-/// One in-flight slot, released when it is dropped.
-///
-/// A guard rather than a pair of counter updates: the chain's future can be
-/// dropped at any await point, and a slot that leaked on cancellation would
-/// shrink the limit until the process restarted.
-#[derive(Debug)]
-struct Slot(Arc<AtomicUsize>);
+    /// The `Retry-After` a shed response carries.
+    ///
+    /// Absent by default, because how long a slot takes to free is a property
+    /// of the requests already running and a number invented here is one the
+    /// service cannot honour. A deployment behind an autoscaler *does* know,
+    /// which is why this is a value it supplies rather than a guess Kynos makes
+    /// — and why [`AtCapacity`] describes the header either way.
+    #[must_use]
+    pub fn retry_after(mut self, delay: Duration) -> Self {
+        self.retry_after = Some(delay);
+        self
+    }
 
-impl Drop for Slot {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Release);
+    /// Takes a slot, waiting no longer than the configured queue.
+    ///
+    /// An owned permit rather than a counter pair: the chain's future can be
+    /// dropped at any await point, and a slot that leaked on cancellation would
+    /// shrink the limit until the process restarted.
+    async fn acquire(&self) -> Option<OwnedSemaphorePermit> {
+        if self.queue_for.is_zero() {
+            return Arc::clone(&self.slots).try_acquire_owned().ok();
+        }
+
+        tokio::time::timeout(self.queue_for, Arc::clone(&self.slots).acquire_owned())
+            .await
+            .ok()?
+            .ok()
     }
 }
 
@@ -351,11 +374,10 @@ impl<C: Sync + 'static> Interceptor<C> for Concurrency {
     ) -> Result<Continued<()>, AtCapacity> {
         let _ = (reads, context);
 
-        // No `Retry-After`: how long a slot takes to free is a property of the
-        // requests already running, and a number invented here would be one the
-        // service cannot honour.
-        let Some(_slot) = self.acquire() else {
-            return Err(AtCapacity { retry_after: None });
+        let Some(_slot) = self.acquire().await else {
+            return Err(AtCapacity {
+                retry_after: self.retry_after,
+            });
         };
 
         Ok(next.run(request).await)

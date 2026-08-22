@@ -56,7 +56,7 @@ is now an enumeration:
 | Site | Names | Why it is not in `server/` |
 | --- | --- | --- |
 | `server/{accept,connection,mod}.rs`, `server/tls/` | the five coupling points | — |
-| `middleware/limits.rs` | `tokio::time::timeout` | the timer wraps the chain's future, which does not exist until after routing |
+| `middleware/limits.rs` | `tokio::{time::timeout, sync::Semaphore}` | the timer wraps the chain's future, which does not exist until after routing; the permit bounds requests already in it |
 | `middleware/compression.rs` | `tokio::io::{AsyncRead, ReadBuf}` | `async-compression`'s encoders are written against tokio's I/O traits; no byte here crosses a socket |
 | `response/stream/sse.rs` | `tokio::time::{Instant, Sleep, sleep}` | a keep-alive is a property of one body, and the connection driver cannot know a body is an event stream |
 
