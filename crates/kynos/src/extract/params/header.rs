@@ -184,6 +184,27 @@ pub trait HeaderParams: Sized {
 /// The empty group: no headers read, none added, nothing declared.
 ///
 /// What an interceptor names when it reads no header, or adds none.
+/// Writes `group` onto `fields`, honouring [`REPEATABLE`](HeaderParams::REPEATABLE)
+/// and merging [`VARIES`](HeaderParams::VARIES).
+///
+/// The one writer. Both ways a group reaches the wire —
+/// [`Continued::with_headers`](crate::middleware::Continued::with_headers) on an
+/// interceptor's response and
+/// [`WithHeaders`](crate::response::headers::WithHeaders) on a handler's — go
+/// through here, because "the two cannot disagree" is only true when they are
+/// one function. They were two, and they did.
+pub(crate) fn write<G: HeaderParams>(fields: &mut crate::http::HeaderMap, group: &G) {
+    for (name, value) in group.encode() {
+        if G::REPEATABLE {
+            fields.append(name, value);
+        } else {
+            fields.insert(name, value);
+        }
+    }
+
+    crate::middleware::vary_on(fields, G::VARIES);
+}
+
 impl HeaderParams for () {
     const NAMES: &'static [&'static str] = &[];
 

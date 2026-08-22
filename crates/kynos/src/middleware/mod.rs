@@ -266,11 +266,7 @@ impl<H: HeaderParams> Continued<H> {
     /// call this to return at all — and one whose `Adds` is `()` has nothing it
     /// could attach.
     pub fn with_headers<G: HeaderParams>(mut self, headers: G) -> Continued<G> {
-        for (name, value) in headers.encode() {
-            self.response.headers_mut().insert(name, value);
-        }
-
-        vary_on(self.response.headers_mut(), G::VARIES);
+        crate::extract::params::header::write(self.response.headers_mut(), &headers);
 
         Continued {
             response: self.response,
