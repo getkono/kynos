@@ -190,8 +190,8 @@ pub(crate) struct CorsConfig {
     pub(crate) origins: Vec<Cow<'static, str>>,
     /// Predicates that permit an origin no list could name.
     pub(crate) predicates: Vec<OriginPredicate>,
-    /// Whether every origin is permitted.
-    pub(crate) any_origin: bool,
+    /// The three places this configuration says "any".
+    pub(crate) any: Wildcards,
     /// Whether credentialed requests are permitted.
     pub(crate) credentials: bool,
     /// The response headers a client may read.
@@ -203,10 +203,24 @@ pub(crate) struct CorsConfig {
     pub(crate) methods: Option<Vec<kynos_openapi::Method>>,
     /// The request headers preflight permits.
     pub(crate) headers: Vec<Cow<'static, str>>,
-    /// Whether preflight permits every request header.
-    pub(crate) any_header: bool,
     /// How long a preflight result may be cached.
     pub(crate) max_age: Option<Duration>,
+}
+
+/// The three places a CORS configuration can say "any".
+///
+/// One struct rather than three `bool` fields on [`CorsConfig`]: each is the
+/// same decision about a different list, and each stands in the same relation
+/// to [`allow_credentials`](Cors::allow_credentials) — the protocol reads `*`
+/// as a literal field value on a credentialed response.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Wildcards {
+    /// Whether every origin is permitted.
+    pub(crate) origin: bool,
+    /// Whether preflight permits every request header.
+    pub(crate) header: bool,
+    /// Whether every response header is readable.
+    pub(crate) expose: bool,
 }
 
 /// A test an origin passes to be permitted.
@@ -225,12 +239,11 @@ impl std::fmt::Debug for CorsConfig {
             .debug_struct("CorsConfig")
             .field("origins", &self.origins)
             .field("predicates", &self.predicates.len())
-            .field("any_origin", &self.any_origin)
+            .field("any", &self.any)
             .field("credentials", &self.credentials)
             .field("expose", &self.expose)
             .field("methods", &self.methods)
             .field("headers", &self.headers)
-            .field("any_header", &self.any_header)
             .field("max_age", &self.max_age)
             .finish()
     }
@@ -308,7 +321,7 @@ impl<D> Cors<D> {
     /// header browsers will refuse.
     #[must_use]
     pub fn allow_any_origin(mut self) -> Self {
-        self.config.any_origin = true;
+        self.config.any.origin = true;
         self
     }
 
@@ -343,7 +356,7 @@ impl<D> Cors<D> {
     /// Permits any request header.
     #[must_use]
     pub fn allow_any_header(mut self) -> Self {
-        self.config.any_header = true;
+        self.config.any.header = true;
         self
     }
 
@@ -355,6 +368,23 @@ impl<D> Cors<D> {
         S: Into<Cow<'static, str>>,
     {
         self.config.expose.extend(names.into_iter().map(Into::into));
+        self
+    }
+
+    /// Makes every response header readable by the client.
+    ///
+    /// Sends `Access-Control-Expose-Headers: *`, which subsumes anything
+    /// [`expose_headers`](Cors::expose_headers) named.
+    ///
+    /// Incompatible with [`allow_credentials`](Cors::allow_credentials): on a
+    /// credentialed response the CORS protocol reads `*` as the literal field
+    /// name rather than as a wildcard, so the pair exposes nothing at all. It
+    /// is refused while the router is built —
+    /// [`Error::Middleware`](crate::Error::Middleware) — rather than shipped as
+    /// a header that silently does the opposite of what it says.
+    #[must_use]
+    pub fn expose_any_header(mut self) -> Self {
+        self.config.any.expose = true;
         self
     }
 
@@ -382,13 +412,20 @@ impl CorsConfig {
     /// conditionally — and a value a builder decides is not one a `const` can
     /// see.
     pub(crate) fn conflict(&self) -> Option<crate::middleware::MiddlewareError> {
-        (self.any_origin && self.credentials)
-            .then_some(crate::middleware::MiddlewareError::CredentialedWildcardOrigin)
+        if self.any.origin && self.credentials {
+            return Some(crate::middleware::MiddlewareError::CredentialedWildcardOrigin);
+        }
+
+        if self.any.expose && self.credentials {
+            return Some(crate::middleware::MiddlewareError::CredentialedWildcardExposure);
+        }
+
+        None
     }
 
     /// Whether this origin is one of the permitted ones.
     pub(crate) fn permits(&self, origin: &http::HeaderValue) -> bool {
-        if self.any_origin {
+        if self.any.origin {
             return true;
         }
 
@@ -419,7 +456,7 @@ impl CorsConfig {
         // `*` is refused by every browser on a credentialed response. The pair
         // cannot reach here -- `conflict` refuses it while the router is built --
         // so the second arm is what a named allow-list produces, not a fallback.
-        let allowed = if self.any_origin && !self.credentials {
+        let allowed = if self.any.origin && !self.credentials {
             http::HeaderValue::from_static("*")
         } else {
             origin.clone()
@@ -434,6 +471,13 @@ impl CorsConfig {
 
     /// The exposed response headers, as one field value.
     pub(crate) fn exposed(&self) -> Option<http::HeaderValue> {
+        // A wildcard subsumes any name that could be listed beside it. The
+        // pair with credentials cannot reach here -- `conflict` refuses it
+        // while the router is built -- so this is never the literal name.
+        if self.any.expose {
+            return Some(http::HeaderValue::from_static("*"));
+        }
+
         if self.expose.is_empty() {
             return None;
         }

@@ -1,4 +1,4 @@
-use super::{Cors, CorsConfig, CorsDocumentation, Documented, Undocumented};
+use super::{Cors, CorsConfig, CorsDocumentation, Documented, Undocumented, Wildcards};
 use crate::{extract::params::header::HeaderParams, http::HeaderValue};
 
 /// The router reads a `Cors` back out of a type-erased chain by downcasting
@@ -27,7 +27,10 @@ fn every_cors_documentation_state_is_one_of_the_two_the_router_recognises() {
 #[test]
 fn permitting_any_origin_alongside_credentials_is_a_conflict() {
     let config = CorsConfig {
-        any_origin: true,
+        any: Wildcards {
+            origin: true,
+            ..Wildcards::default()
+        },
         credentials: true,
         ..CorsConfig::default()
     };
@@ -40,7 +43,10 @@ fn permitting_any_origin_alongside_credentials_is_a_conflict() {
 #[test]
 fn permitting_any_origin_alone_is_not_a_conflict() {
     let any_origin = CorsConfig {
-        any_origin: true,
+        any: Wildcards {
+            origin: true,
+            ..Wildcards::default()
+        },
         ..CorsConfig::default()
     };
     let credentialed = CorsConfig {
@@ -104,4 +110,33 @@ fn a_configuration_holding_a_predicate_still_prints() {
     let cors = Cors::new().allow_origins_matching(|_| true);
 
     assert!(format!("{:?}", cors.config()).contains("predicates: 1"));
+}
+
+/// `*` is the literal field name on a credentialed response, so the pair
+/// exposes nothing — a silent failure, and the reason it is refused rather
+/// than shipped.
+#[test]
+fn exposing_every_header_alongside_credentials_is_a_conflict() {
+    let cors = Cors::new().expose_any_header().allow_credentials();
+
+    assert!(matches!(
+        cors.config().conflict(),
+        Some(crate::middleware::MiddlewareError::CredentialedWildcardExposure)
+    ));
+}
+
+/// Exposing every header on an uncredentialed response is an ordinary
+/// deployment, and the wildcard subsumes anything named beside it.
+#[test]
+fn exposing_every_header_alone_sends_a_wildcard() {
+    let cors = Cors::new()
+        .expose_headers(["x-request-id"])
+        .expose_any_header();
+
+    assert!(cors.config().conflict().is_none());
+    assert_eq!(
+        cors.config().exposed(),
+        Some(HeaderValue::from_static("*")),
+        "a named list narrowed a wildcard that already covers it"
+    );
 }

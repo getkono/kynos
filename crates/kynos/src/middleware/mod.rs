@@ -159,6 +159,20 @@ pub enum MiddlewareError {
          `allow_origins` should name"
     )]
     CredentialedWildcardOrigin,
+
+    /// A [`Cors`](cors::Cors) exposed every response header and also permitted
+    /// credentials.
+    ///
+    /// On a credentialed response the CORS protocol reads
+    /// `Access-Control-Expose-Headers: *` as the literal field name `*` rather
+    /// than as a wildcard, so the pair exposes nothing. Unlike the origin case
+    /// the failure is silent — no browser reports it, and the headers are
+    /// simply unreadable — which is what makes refusing it worth more than
+    /// shipping it.
+    #[error(
+        "a CORS configuration exposes every response header and also permits credentials, which          the protocol reads as exposing a header literally named `*`; name the headers          `expose_headers` should expose, or drop `allow_credentials`"
+    )]
+    CredentialedWildcardExposure,
 }
 
 /// Merges `names` into whatever `Vary` a response already carries.

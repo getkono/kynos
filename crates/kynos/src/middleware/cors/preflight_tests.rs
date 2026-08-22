@@ -1,6 +1,6 @@
 use kynos_openapi::Method;
 
-use super::{CorsConfig, Preflight, Scope};
+use super::{super::Wildcards, CorsConfig, Preflight, Scope};
 use crate::{
     http::{HeaderValue, Request, StatusCode, header},
     router::policy::FallbackPolicy,
@@ -137,7 +137,10 @@ fn an_overridden_method_list_replaces_the_declared_one() {
 #[test]
 fn permitting_any_header_echoes_the_request_headers_on_a_credentialed_preflight() {
     let config = CorsConfig {
-        any_header: true,
+        any: Wildcards {
+            header: true,
+            ..Wildcards::default()
+        },
         credentials: true,
         ..named()
     };
@@ -162,7 +165,10 @@ fn permitting_any_header_echoes_the_request_headers_on_a_credentialed_preflight(
 #[test]
 fn permitting_any_header_answers_a_wildcard_without_credentials() {
     let config = CorsConfig {
-        any_header: true,
+        any: Wildcards {
+            header: true,
+            ..Wildcards::default()
+        },
         ..named()
     };
 

@@ -155,7 +155,7 @@ impl Preflight {
         // `*` only where credentials are off. The pair is refused while the
         // router is built, so this is a named-allow-list echo rather than a
         // fallback.
-        let allowed = if config.any_origin && !config.credentials {
+        let allowed = if config.any.origin && !config.credentials {
             HeaderValue::from_static("*")
         } else {
             origin.clone()
@@ -234,7 +234,7 @@ fn advertised_methods(methods: &[Method]) -> Option<HeaderValue> {
 /// wildcard on a credentialed response, so echoing is the only way to
 /// answer one at all.
 fn advertised_headers(config: &CorsConfig, request: &http::HeaderMap) -> Option<HeaderValue> {
-    if config.any_header {
+    if config.any.header {
         if config.credentials {
             return request.get(header::ACCESS_CONTROL_REQUEST_HEADERS).cloned();
         }
