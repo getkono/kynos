@@ -1,0 +1,5 @@
+error: `magic_link` is not an OAuth 2.0 flow; the flows are `implicit`, `password`, `client_credentials`, `authorization_code`, `device_authorization`
+ --> tests/ui/macros/security_scheme_oauth2_unknown_flow.rs:2:19
+  |
+2 | #[security(oauth2(magic_link(token_url = "https://auth.example.com/token")))]
+  |                   ^^^^^^^^^^

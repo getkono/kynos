@@ -656,7 +656,9 @@ fn check_oauth2(kind: &Ident, nested: &Nested) -> syn::Result<()> {
     if nested.flows.is_empty() {
         return Err(syn::Error::new(
             kind.span(),
-            "an OAuth 2.0 scheme must declare at least one flow: a scheme with none describes an              authorization server no client can reach. Add `authorization_code(...)`,              `client_credentials(...)`, `password(...)` or `implicit(...)`",
+            "an OAuth 2.0 scheme must declare at least one flow: a scheme with none describes an \
+             authorization server no client can reach. Add `authorization_code(...)`, \
+             `client_credentials(...)`, `password(...)` or `implicit(...)`",
         ));
     }
 
