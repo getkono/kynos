@@ -124,6 +124,10 @@ name = "jwt"
 required-features = ["openapi31", "macros", "server", "http1", "json"]
 
 [[example]]
+name = "rate_limit"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
+[[example]]
 name = "cors"
 # No `server`: this example drives a built `Service` directly, because what it
 # demonstrates is the two exchanges a browser makes rather than a socket.
@@ -325,6 +329,7 @@ uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
 jsonwebtoken = { workspace = true }
+moka = { workspace = true }
 # An integration target drives `Service::call` and then has to read the
 # response, which means naming the body's own crates. Both are already
 # dependencies of the library, so this adds nothing to the graph -- and unlike

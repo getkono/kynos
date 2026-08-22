@@ -93,20 +93,74 @@ declares `Content-Encoding` rather than re-encoding silently.
 ## Why the rate-limit headers keep a prefix
 
 `RateLimit` emits `X-RateLimit-Limit`, `X-RateLimit-Remaining` and
-`X-RateLimit-Reset`, and RFC 6648 has deprecated `X-` prefixes for new headers
-since 2012. The choice is deliberate.
+`X-RateLimit-Reset` by default, and RFC 6648 has deprecated `X-` prefixes for
+new headers since 2012. The choice is deliberate.
 
-The unprefixed triple belongs to `draft-ietf-httpapi-ratelimit-headers`, which
-has already *replaced* it with a single structured `RateLimit` field plus
-`RateLimit-Policy`. These names are `DESCRIBED`, so they reach generated
+The unprefixed names belong to `draft-ietf-httpapi-ratelimit-headers`, which has
+already *replaced* the old triple with a single structured `RateLimit` field
+plus `RateLimit-Policy`. These names are `DESCRIBED`, so they reach generated
 clients — which makes a wrong name expensive rather than cosmetic. Emitting the
-unprefixed triple would squat three names a working group is actively revising,
-and claiming settled ground that is not settled is the failure this project's
-architecture notes exist to catch.
+draft's spelling by default would claim settled ground that is not settled, and
+that is the failure this project's architecture notes exist to catch.
 
-The reversal is cheap and additive when the draft lands: a second `HeaderParams`
-group and a type-state transition on `RateLimit`, shaped exactly like
-`Cors::document_response_headers`.
+### The migration, and how to take it early
+
+`RateLimit::standard_fields` is the other spelling: `RateLimit` and
+`RateLimit-Policy`, rendered as the RFC 8941 structured-field Lists the draft
+defines. It is a type-state rather than a flag, shaped exactly like
+`Cors::document_response_headers`, because it changes what every covered
+operation declares and what every generated client reads.
+
+**The two are never emitted together.** A response carrying both spellings is
+two statements of one fact, which is the objection this document raises against
+a `contribution` method. `Legacy` and `Structured` are sealed, and their
+`Adds` groups name disjoint fields.
+
+The draft's spelling is not merely newer, it is *more expressive*, and that is
+the reason to offer it at all. The `X-` triple has room for one quota. A service
+enforcing a per-second burst and a per-day allowance can report only half of
+what it enforced, and a client cannot tell which half. `RateLimit-Policy` has a
+member per quota:
+
+```text
+RateLimit-Policy: "burst";q=15;w=1, "daily";q=10000;w=86400
+RateLimit:        "burst";r=13;t=1, "daily";r=9998;t=69158
+```
+
+A name that cannot be an `sf-string` drops its member rather than producing a
+field a parser will reject: one unnameable policy must not cost the client the
+others.
+
+### What the framework computes and what it does not
+
+`Quotas` is the algorithm Kynos ships — a sliding-window counter over named
+quotas. What it does *not* ship is a store, for the reason it ships no JWT
+verifier: a counter store is a dependency, and prescribing one would mean
+prescribing `moka`.
+
+Three properties of that algorithm are decisions rather than details:
+
+- **The window slides.** A fixed window lets a client spend a full quota at the
+  end of one and a full quota at the start of the next, which is twice the
+  advertised rate. Weighting the previous window by how much of it is still in
+  view removes that for one extra read and no request log. GCRA would be
+  stricter and needs a portable compare-and-swap no generic cache offers.
+- **A refusal spends nothing.** The counter is read before it is incremented, so
+  a throttled client that keeps retrying does not push its own window along
+  forever and can actually recover.
+- **`Retry-After` is solved, not guessed.** It is when the estimate falls below
+  the ceiling assuming the client sends nothing more — and rounded *up* to whole
+  seconds, because truncating a sub-second wait to zero tells a client to retry
+  straight into the refusal it just received. Reporting the window's *length*
+  instead would be a delay the service does not require, which is the same
+  objection `limits.rs` raises against inventing one for a concurrency cap.
+
+A store that cannot answer **allows** by default. A limiter exists to shed load,
+and one that sheds everything when its cache blinks has turned a degradation
+into an incident. `StoreFailure::Deny` is the other choice, and it answers with
+the 429 the limiter already declares rather than a 503 — a second status would
+collide with `Concurrency` on any route carrying both, and `statuses_disjoint`
+would refuse to compile it.
 
 One thing worth knowing about the two halves. The 429's headers ride on
 `Responses`; a success's ride on `Adds`. They never co-occur on one response,

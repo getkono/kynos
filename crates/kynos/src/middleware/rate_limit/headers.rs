@@ -13,6 +13,17 @@ use crate::{
     schema::registry::Registry,
 };
 
+/// A delay in whole seconds, rounded *up*.
+///
+/// `Retry-After` and the draft's `t` parameter are both delta-seconds, and
+/// truncating a sub-second wait to zero tells a client to retry immediately
+/// into the refusal it just received. Rounding up overstates the wait by under
+/// a second and is a number the service can actually honour, which is the rule
+/// the rest of this module follows.
+fn whole_seconds(delay: Duration) -> u64 {
+    delay.as_secs() + u64::from(delay.subsec_nanos() > 0)
+}
+
 /// Describes one integer count.
 fn count(description: &str) -> kynos_openapi::RefOr<kynos_openapi::Header> {
     kynos_openapi::RefOr::Item(
@@ -91,7 +102,7 @@ impl HeaderParams for RateLimitHeaders {
         [
             ("x-ratelimit-limit", self.limit),
             ("x-ratelimit-remaining", self.remaining),
-            ("x-ratelimit-reset", self.reset.as_secs()),
+            ("x-ratelimit-reset", whole_seconds(self.reset)),
         ]
         .into_iter()
         .filter_map(|(name, value)| {
@@ -191,7 +202,7 @@ fn render_limits(limits: &[ServiceLimit]) -> Option<http::HeaderValue> {
                 "{};r={};t={}",
                 sf_string(&limit.name)?,
                 limit.remaining,
-                limit.reset.as_secs()
+                whole_seconds(limit.reset)
             ))
         })
         .collect();
@@ -343,7 +354,7 @@ fn described_refusal(
 }
 
 fn set_retry_after(response: &mut http::Response, retry_after: Duration) {
-    if let Ok(value) = http::HeaderValue::from_str(&retry_after.as_secs().to_string()) {
+    if let Ok(value) = http::HeaderValue::from_str(&whole_seconds(retry_after).to_string()) {
         response
             .headers_mut()
             .insert(http::header::RETRY_AFTER, value);

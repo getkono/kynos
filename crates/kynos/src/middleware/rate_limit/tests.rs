@@ -252,3 +252,44 @@ fn the_two_spellings_name_disjoint_fields() {
         );
     }
 }
+
+/// A sub-second delay is reported as one second, not none.
+///
+/// `Retry-After` and the draft's `t` are delta-seconds, so truncating tells a
+/// client to retry immediately into the refusal it just received — which the
+/// example produced on its first run, at the tail of a one-second window.
+#[test]
+fn a_delay_shorter_than_a_second_is_still_a_delay() {
+    let fields = RateLimitFields {
+        limits: vec![ServiceLimit {
+            name: "burst".into(),
+            quota: 5,
+            remaining: 0,
+            reset: Duration::from_millis(400),
+        }],
+        policies: Vec::new(),
+    };
+
+    assert_eq!(rendered(&fields)[0].1, r#""burst";r=0;t=1"#);
+
+    assert_eq!(
+        rendered(&RateLimitHeaders {
+            limit: 5,
+            remaining: 0,
+            reset: Duration::from_millis(400),
+        })[2]
+            .1,
+        "1"
+    );
+
+    // A delay that really is zero stays zero: the window has closed.
+    assert_eq!(
+        rendered(&RateLimitHeaders {
+            limit: 5,
+            remaining: 5,
+            reset: Duration::ZERO,
+        })[2]
+            .1,
+        "0"
+    );
+}

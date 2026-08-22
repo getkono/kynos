@@ -58,13 +58,21 @@ struct UserPath {
 /// The same derive `Headers<T>` uses while extracting. One declaration, both
 /// directions — so a header this service sends is a header its description
 /// lists, and `Response.headers` is complete by construction.
+///
+/// The names carry an `X-` prefix for the reason `docs/middleware.md` gives:
+/// `RateLimit` and `RateLimit-Policy` belong to
+/// `draft-ietf-httpapi-ratelimit-headers`, and this example is a hand-written
+/// group rather than that draft. A derived group's names reach generated
+/// clients, so squatting a spelling a working group is still revising is
+/// expensive rather than cosmetic — and `middleware::rate_limit` refuses to do
+/// it in exactly the same way.
 #[allow(dead_code)]
 #[derive(HeaderParams)]
-struct RateLimit {
-    #[header(rename = "RateLimit-Remaining")]
+struct Quota {
+    #[header(rename = "X-Quota-Remaining")]
     remaining: u32,
 
-    #[header(rename = "RateLimit-Reset")]
+    #[header(rename = "X-Quota-Reset")]
     reset: u32,
 }
 
@@ -131,12 +139,12 @@ async fn queue_import(Json(user): Json<User>) -> Accepted<Json<User>> {
     Accepted::new(Json(user))
 }
 
-/// Lists users, with rate-limit headers.
+/// Lists users, with quota headers.
 ///
 /// `WithHeaders` keeps the body's status — the headers are additional, not a
 /// different response — and `H`'s derive is what puts them in `Response.headers`.
 #[kynos::get("/users")]
-async fn list_users() -> WithHeaders<Json<Vec<User>>, RateLimit> {
+async fn list_users() -> WithHeaders<Json<Vec<User>>, Quota> {
     let users = vec![User {
         id: 1,
         name: "Ada Lovelace".to_owned(),
@@ -144,7 +152,7 @@ async fn list_users() -> WithHeaders<Json<Vec<User>>, RateLimit> {
 
     WithHeaders::new(
         Json(users),
-        RateLimit {
+        Quota {
             remaining: 99,
             reset: 60,
         },
