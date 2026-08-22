@@ -167,6 +167,17 @@ async fn read_body(request: Request, media_type: &str) -> Result<Bytes, BodyReje
 /// fn body<T: kynos::extract::FromRequest<()>>() {}
 /// body::<OneOf<Binary<Pdf>, Binary<Png>>>();
 /// ```
+///
+/// Two streamed JSON bodies are the same overlap seen once more: the item type
+/// differs and the media type does not, so nothing but dispatch order could
+/// choose between them.
+///
+/// ```compile_fail
+/// use kynos::extract::body::{OneOf, json_lines::{JsonLines, records::Records}};
+///
+/// fn body<T: kynos::extract::FromRequest<()>>() {}
+/// body::<OneOf<JsonLines<Records<u64>>, JsonLines<Records<String>>>>();
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OneOf<L, R> {
     /// The left representation was selected.

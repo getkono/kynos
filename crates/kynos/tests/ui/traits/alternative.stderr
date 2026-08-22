@@ -7,6 +7,8 @@ error[E0277]: `Text` and `Text` cannot be alternatives
    = help: the trait `Alternative<Text>` is not implemented for `Text`
    = note: two alternatives must be distinguishable by content type, so `OneOf` cannot hold two bodies that share one — dispatch order would decide which won, and no description can express that
    = help: `Text` implements trait `Alternative<Rhs>`:
+             Alternative<JsonLines<Records<T>>>
+             Alternative<JsonSeq<Records<T>>>
              Alternative<MultipartForm<T>>
              Alternative<Protobuf<T>>
              Alternative<kynos::extract::body::binary::Binary<M>>

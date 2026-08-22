@@ -24,6 +24,8 @@ use crate::schema::Schema;
 use crate::extract::body::form::Form;
 #[cfg(feature = "json")]
 use crate::extract::body::json::Json;
+#[cfg(all(feature = "json", feature = "openapi32"))]
+use crate::extract::body::json_lines::{JsonLines, JsonSeq, records::Records};
 #[cfg(feature = "multipart")]
 use crate::extract::body::multipart::MultipartForm;
 #[cfg(feature = "protobuf")]
@@ -123,3 +125,64 @@ impl<T: Schema, U: Schema> Alternative<Form<U>> for Protobuf<T> {}
 impl<T: Schema, U: Schema> Alternative<Protobuf<U>> for MultipartForm<T> {}
 #[cfg(all(feature = "multipart", feature = "protobuf"))]
 impl<T: Schema, U: Schema> Alternative<MultipartForm<U>> for Protobuf<T> {}
+
+// The streamed JSON bodies. Each carries one media type fixed by its own type,
+// exactly as `Json<T>` does, so every pair below is provably disjoint -- and
+// the pair of them is disjoint too, because NDJSON and RFC 7464 are two
+// spellings a client chooses between rather than two names for one framing.
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema> Alternative<Text> for JsonLines<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema> Alternative<JsonLines<Records<T>>> for Text {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, M: MediaType> Alternative<Binary<M>> for JsonLines<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, M: MediaType> Alternative<JsonLines<Records<T>>> for Binary<M> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema> Alternative<Text> for JsonSeq<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema> Alternative<JsonSeq<Records<T>>> for Text {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, M: MediaType> Alternative<Binary<M>> for JsonSeq<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, M: MediaType> Alternative<JsonSeq<Records<T>>> for Binary<M> {}
+
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, U: Schema> Alternative<Json<U>> for JsonLines<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, U: Schema> Alternative<JsonLines<Records<U>>> for Json<T> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, U: Schema> Alternative<Json<U>> for JsonSeq<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, U: Schema> Alternative<JsonSeq<Records<U>>> for Json<T> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, U: Schema> Alternative<JsonSeq<Records<U>>> for JsonLines<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, U: Schema> Alternative<JsonLines<Records<U>>> for JsonSeq<Records<T>> {}
+
+#[cfg(all(feature = "json", feature = "openapi32", feature = "form"))]
+impl<T: Schema, U: Schema> Alternative<Form<U>> for JsonLines<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32", feature = "form"))]
+impl<T: Schema, U: Schema> Alternative<JsonLines<Records<U>>> for Form<T> {}
+#[cfg(all(feature = "json", feature = "openapi32", feature = "form"))]
+impl<T: Schema, U: Schema> Alternative<Form<U>> for JsonSeq<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32", feature = "form"))]
+impl<T: Schema, U: Schema> Alternative<JsonSeq<Records<U>>> for Form<T> {}
+
+#[cfg(all(feature = "json", feature = "openapi32", feature = "multipart"))]
+impl<T: Schema, U: Schema> Alternative<MultipartForm<U>> for JsonLines<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32", feature = "multipart"))]
+impl<T: Schema, U: Schema> Alternative<JsonLines<Records<U>>> for MultipartForm<T> {}
+#[cfg(all(feature = "json", feature = "openapi32", feature = "multipart"))]
+impl<T: Schema, U: Schema> Alternative<MultipartForm<U>> for JsonSeq<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32", feature = "multipart"))]
+impl<T: Schema, U: Schema> Alternative<JsonSeq<Records<U>>> for MultipartForm<T> {}
+
+#[cfg(all(feature = "json", feature = "openapi32", feature = "protobuf"))]
+impl<T: Schema, U: Schema> Alternative<Protobuf<U>> for JsonLines<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32", feature = "protobuf"))]
+impl<T: Schema, U: Schema> Alternative<JsonLines<Records<U>>> for Protobuf<T> {}
+#[cfg(all(feature = "json", feature = "openapi32", feature = "protobuf"))]
+impl<T: Schema, U: Schema> Alternative<Protobuf<U>> for JsonSeq<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32", feature = "protobuf"))]
+impl<T: Schema, U: Schema> Alternative<JsonSeq<Records<U>>> for Protobuf<T> {}
