@@ -1,12 +1,10 @@
 //! One described operation per file.
 
-use std::borrow::Cow;
-
 use kynos_openapi::{Method, PathTemplate};
 
 use crate::{
     extract::params::header::HeaderParams,
-    http::{HeaderValue, Request, Response, StatusCode, header},
+    http::{HeaderValue, Request, Response, StatusCode, etag, header},
     router::{assets::Asset, endpoint::Endpoint, operation::OperationCx},
 };
 
@@ -220,27 +218,25 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
     }
 }
 
-/// Whether `field` names `etag`, per RFC 9110 section 13.1.2.
+/// Whether `field` names `current`, per RFC 9110 section 13.1.2.
 ///
-/// `*` matches anything the server has. Otherwise the field is a list, and the
-/// *weak* comparison applies — `W/"x"` and `"x"` are the same representation
-/// for a cache validation, which is the whole point of `If-None-Match`.
-pub(super) fn matches(field: &HeaderValue, etag: &str) -> bool {
+/// `*` matches anything the server has. Otherwise the field is a
+/// `1#entity-tag` and the *weak* comparison applies — `W/"x"` and `"x"` are the
+/// same representation for a cache validation, which is the whole point of
+/// `If-None-Match`.
+///
+/// Both halves come from [`http::etag`](crate::http::etag), which is the one
+/// place in the crate that knows a comma can sit inside an `opaque-tag`.
+pub(super) fn matches(field: &HeaderValue, current: &str) -> bool {
     let Ok(text) = field.to_str() else {
         return false;
     };
 
-    if text.trim() == "*" {
+    if text.trim() == etag::ANY {
         return true;
     }
 
-    text.split(',')
-        .map(str::trim)
-        .any(|candidate| weak(candidate) == weak(etag))
-}
-
-/// An entity tag with its weakness marker removed.
-fn weak(tag: &str) -> Cow<'_, str> {
-    tag.strip_prefix("W/")
-        .map_or(Cow::Borrowed(tag), Cow::Borrowed)
+    etag::split(text)
+        .into_iter()
+        .any(|candidate| etag::weak_match(candidate, current))
 }

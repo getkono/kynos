@@ -5,7 +5,7 @@ use kynos_openapi::model::schema::types::SchemaType;
 use crate::{
     error::rejection::HeaderRejection,
     extract::params::header::HeaderParams,
-    http::{self, HeaderMap, HeaderValue, header},
+    http::{self, HeaderMap, HeaderValue, etag, header},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
     schema::registry::Registry,
@@ -121,10 +121,12 @@ impl HeaderParams for Preconditions {
                 .get(header::IF_NONE_MATCH)
                 .and_then(|value| value.to_str().ok())
                 .map(|text| {
-                    if text.trim() == "*" {
+                    if text.trim() == etag::ANY {
                         IfNoneMatch::Any
                     } else {
-                        IfNoneMatch::Tags(split_tags(text))
+                        IfNoneMatch::Tags(
+                            etag::split(text).into_iter().map(str::to_owned).collect(),
+                        )
                     }
                 }),
         })
@@ -148,44 +150,6 @@ impl HeaderParams for Preconditions {
             ),
         ]
     }
-}
-
-/// Splits `1#entity-tag` into its members.
-///
-/// Quote-aware, because RFC 9110 section 8.8.3 lets `etagc` hold a comma — the
-/// quotes are what delimit a tag, not the separator. A naive `split(',')` reads
-/// `"a,b"` as two tags and matches neither, which is a 200 where a 304 was
-/// owed. Obscure, and the kind of thing a parser is either right about or
-/// silently wrong about forever.
-fn split_tags(text: &str) -> Vec<String> {
-    let mut tags = Vec::new();
-    let mut current = String::new();
-    let mut quoted = false;
-
-    for character in text.chars() {
-        match character {
-            '"' => {
-                quoted = !quoted;
-                current.push(character);
-            }
-            ',' if !quoted => {
-                push_tag(&mut tags, &mut current);
-            }
-            _ => current.push(character),
-        }
-    }
-    push_tag(&mut tags, &mut current);
-
-    tags
-}
-
-/// Moves `current` into `tags`, trimmed, unless it is empty.
-fn push_tag(tags: &mut Vec<String>, current: &mut String) {
-    let trimmed = current.trim();
-    if !trimmed.is_empty() {
-        tags.push(trimmed.to_owned());
-    }
-    current.clear();
 }
 
 /// The 304 a matched precondition produces.
@@ -338,13 +302,8 @@ fn matched(condition: &IfNoneMatch, headers: &HeaderMap) -> bool {
 
     match condition {
         IfNoneMatch::Any => true,
-        IfNoneMatch::Tags(tags) => tags.iter().any(|tag| weak(tag) == weak(current)),
+        IfNoneMatch::Tags(tags) => tags.iter().any(|tag| etag::weak_match(tag, current)),
     }
-}
-
-/// An entity tag with its weakness marker removed.
-fn weak(tag: &str) -> &str {
-    tag.strip_prefix("W/").unwrap_or(tag)
 }
 
 #[cfg(test)]

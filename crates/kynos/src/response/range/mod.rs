@@ -50,11 +50,11 @@
 //! never spliced with a part it did not ask for.
 //!
 //! It is a narrow position, not a permanent one. Kynos does issue validators
-//! elsewhere — `router::assets` mints entity tags, and
-//! `middleware::conditional::ETag` is the reusable type with the
-//! quote-aware comparator — so the asset-server integration is where a real
-//! `If-Range` evaluation belongs, because that is where a validator exists.
-//! Nothing here writes a second entity-tag comparator.
+//! elsewhere — `router::assets` mints entity tags, and `http::etag` holds the
+//! quote-aware comparison every caller goes through — so the asset-server
+//! integration is where a real `If-Range` evaluation belongs, because that is
+//! where a validator exists. Nothing here writes a second entity-tag
+//! comparator.
 //!
 //! # One range, and only the first
 //!
