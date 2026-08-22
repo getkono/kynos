@@ -83,6 +83,24 @@
 //! dependency, so it still cannot panic and the compile-time guarantee still
 //! comes from the bound on the context.
 //!
+//! # Why a provider hands out a value rather than lending one
+//!
+//! [`Provides::provide`] returns `T` and cannot return `&T`:
+//! [`FromRequestParts::from_request_parts`](crate::extract::FromRequestParts::from_request_parts)
+//! returns `Self` with no lifetime tying it to the context, so nothing a
+//! handler receives can borrow from application state.
+//!
+//! That is a decision rather than an oversight, and it is the one part of this
+//! design that could not be changed later — lending would put a lifetime
+//! parameter on `FromRequestParts`, on `FromRequest`, and so on every extractor
+//! and every [`Handler`](crate::handler::Handler) implementation. What it costs
+//! is one clone of a handle per injected argument per request, which for the
+//! `Arc` this module tells you to inject is one atomic increment. See
+//! [`docs/state.md`] for what that increment has to do with cache locality, and
+//! for the per-core shape the rest of the surface is kept compatible with.
+//!
+//! [`docs/state.md`]: https://github.com/getkono/kynos/blob/master/docs/state.md
+//!
 //! # How this module is laid out
 //!
 //! The trait lives here; [`inject`] holds the wrapper a handler receives a

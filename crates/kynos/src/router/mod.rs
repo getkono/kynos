@@ -69,9 +69,11 @@ pub(crate) struct Mounted<C> {
 
 /// The root of an API.
 ///
-/// `C` is the application context type — the dependency-injection container
-/// every handler resolves its state from. A handler asking for something the
-/// context does not provide is a compile error, not a runtime panic.
+/// `C` is the application context type: the application's own struct, which
+/// every handler resolves its state from. It is a type rather than a
+/// container — nothing is registered into it and nothing is looked up — so a
+/// handler asking for something the context does not provide is a compile
+/// error rather than a runtime panic.
 pub struct Router<C, P = Propagate, I = ()> {
     pub(crate) mounted: Vec<Mounted<C>>,
     pub(crate) interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,

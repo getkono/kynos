@@ -91,6 +91,66 @@ extractor mutably. A miss in that memo is a cold cache rather than a missing
 dependency, so it still cannot panic, and the compile-time guarantee still comes
 from the bound on the context.
 
+## Locality
+
+*Normative about what the signatures commit to, not about anything the runtime
+does today. Kynos serves every request from one context on the runtime's own
+worker pool; nothing is pinned, and no core owns anything.*
+
+The reason to settle this with the surface rather than after it is that one of
+the three properties below cannot be added later.
+
+**1. The context is borrowed, never cloned.** `Handler::call` takes `&C`, and so
+does every `FromRequestParts` and `FromRequest`. Nothing in the request path
+asks for `C: Clone`, and nothing holds the context at an address it assumes is
+the only one. A `&C` is a `&C` whether it points at one context or at one of
+sixty-four.
+
+**2. An injected value is owned, and that is where the borrow stops.**
+`Provides<T>::provide(&self) -> T` hands out a value and cannot hand out a
+`&T`, because `FromRequestParts::from_request_parts` returns `Self` with no
+lifetime tying it to `context`. This is the one thing the freeze forecloses:
+lending state to a handler means a lifetime parameter on `FromRequestParts` and
+`FromRequest`, and therefore on every extractor and all thirty-three `Handler`
+implementations.
+
+It is closed deliberately. What it costs is one clone of a handle per injected
+argument per request — for the shape this document already prescribes, an `Arc`,
+one atomic increment. What lending would buy back is that increment, and the
+increment is only worth anything because the refcount sits on a line shared
+between cores. A per-core context removes it by construction: each core's `C`
+owns its own handles, the increment becomes core-local, and the win that
+borrowing was for arrives without borrowing.
+
+**3. Nothing in a built service is a singleton by type.** `Router::build`
+takes the context by value and returns a `Service<C>` that owns it. Two
+services built from two contexts are two independent values: there is no
+registry, no `static` and no `OnceLock` anywhere in the request path. "One
+context per process" describes how a `Server` is assembled today, not something
+the types impose.
+
+### What a per-core design would add
+
+Recorded so the decision is not re-litigated. All of it is additive:
+
+- `build` consumes the `Router`, so a router cannot be built twice. A per-core
+  server needs either `Router: Clone` or a second constructor —
+  `build_per_core(self, impl Fn(usize) -> C)` — returning one service per core.
+- `Server` holds one `Arc<Service<C>>` and spawns every connection onto the
+  ambient runtime. Per-core serving means one runtime per core, each with its
+  own listener and its own service.
+
+Neither touches `Handler`, `Provides`, `Inject`, or any handler signature. That
+is the property worth having: a handler written today compiles unchanged
+against a per-core server, and an application that never wants one pays nothing
+for the possibility.
+
+What it would not add is a way for two cores to share mutable state without
+saying so. `Provides<T>` takes `&self` and the context is reached through a
+shared reference, so anything mutable in it is already something the
+application chose to make interior-mutable — and whether that is sharded is the
+application's decision rather than the framework's.
+
 ## Rationale
 
 *Non-normative. This section explains the reasoning behind the rules above so
