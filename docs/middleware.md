@@ -113,6 +113,64 @@ One thing worth knowing about the two halves. The 429's headers ride on
 because a short-circuit never calls `with_headers` — so the conflict check,
 which compares `Adds` against `Adds`, is not weakened by the pair.
 
+## What bounds a request before an interceptor runs
+
+An interceptor covers the operations in its subtree, which means it runs after
+routing — and a request that never reaches routing is bounded by something else
+or by nothing. The table is here because "does Kynos have payload limits" has
+four different answers depending on which layer is asked.
+
+| Vector | HTTP/1 | HTTP/2 | Server | Interceptor | Bounded by default? |
+| --- | --- | --- | --- | --- | --- |
+| Request line and URI length | must fit `max_buffer_size` (≈417 KiB) | `max_header_list_size`, 16 KiB | — | — | yes, loosely |
+| Header count | `max_headers`, 100 → 431 | by list size rather than count | — | — | yes |
+| Header-list size | `max_buffer_size` | `max_header_list_size` | — | — | yes |
+| Query-string length | subsumed by the URI | subsumed by the list size | — | — | yes, loosely |
+| Body size | — | — | — | `BodySize`, when mounted | **no, deliberately** |
+| Request-head read time | `header_read_timeout`, 30 s | n/a | — | — | yes |
+| Slow body | — | — | — | `Timeout`, *outside* `BodySize` | **no** |
+| Keep-alive idle | `header_read_timeout` covers the wait for the next head | `Http2KeepAlive`, unset | — | — | HTTP/1 only |
+| Handler runtime | — | — | — | `Timeout`, when mounted | **no** |
+| Total connections | — | — | `max_connections`, 10 000 | — | yes |
+| Per-IP connections | — | — | — | — | **no**, and see below |
+| Concurrent in flight | — | `max_concurrent_streams`, 200 per connection | — | `Concurrency`, when mounted | partial |
+| Request rate | — | — | — | `RateLimit`, when mounted | no |
+| Request smuggling | hyper and `httparse` | n/a | — | — | yes, and not Kynos's |
+| Reset flood | — | `max_pending_accept_reset_streams`, `max_local_error_reset_streams` | — | — | yes |
+| TLS handshake stall | — | — | `handshake_timeout`, 10 s | — | yes, with `tls` |
+| Decompression bomb | — | — | — | — | n/a: Kynos never decompresses a request body |
+
+Three rows are worth reading twice.
+
+**A body cap is not default, and that is a decision.**
+[`nfr.md`](nfr.md#extraction) records the three reasons. The shortest is that a
+default limit would add 413 to every operation of every application that never
+asked for one — and this framework's whole position is that a declared response
+is a promise.
+
+**The slow-body row depends on mounting order.** `BodySize` reads a length-less
+body frame by frame, so a client sending one frame slowly holds that loop open.
+`Timeout` wraps whatever is beneath it, which means it bounds the read only when
+it is mounted *outside* the limit doing the reading. The types do not enforce
+the order; `a_timeout_mounted_outside_a_body_limit_bounds_the_read` in
+[`tests/limits.rs`](../crates/kynos/tests/limits.rs) pins it, and this paragraph
+is where a reader learns it.
+
+**A per-IP cap is absent rather than pending.** Behind a load balancer every
+connection arrives from one address, so a cap counted in-process is either
+meaningless or a self-inflicted outage. An honest one needs to know which
+forwarded-for headers to trust, which is a security policy rather than a limit.
+
+### A response no type predicts
+
+The soundness invariant is *emitted ⊇ observable responses* for the responses
+Kynos produces. A **431** from hyper's own header parsing is not one of them: it
+is written by the protocol driver before any route matched, so it reaches no
+operation and no `Responses` implementation ever saw it. It joins the panic, the
+unhandled 500 and the upstream proxy on the list of responses the invariant does
+not reach — named here rather than left to be discovered, because a consumer
+meeting one is entitled to know Kynos never claimed otherwise.
+
 ## Preflight
 
 A CORS preflight is answered by the router, not by a chain.

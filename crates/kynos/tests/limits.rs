@@ -204,3 +204,93 @@ async fn a_limit_does_not_answer_for_a_route_that_does_not_exist() {
 
     assert_eq!(reply.status, StatusCode::NOT_FOUND);
 }
+
+// --- What applies when nothing is mounted --------------------------------
+
+/// A service with no `BodySize` accepts a body of any size.
+///
+/// Recorded rather than fixed. `docs/nfr.md` read "body size, header count and
+/// header size limits are enforced by default", and only the second and third
+/// are: they are hyper's, set on the connection. A body cap is an interceptor
+/// and `Router::build` mounts none.
+///
+/// Making one default was considered and rejected, and any one of three reasons
+/// is sufficient. It would add 413 to every operation of every application that
+/// never asked for one. It would make a user's own `BodySize` a `const` compile
+/// error, since `statuses_disjoint` is what stops two interceptors claiming a
+/// status. And it would buffer a body that declares no length, which is exactly
+/// the streaming upload the limit is supposed to leave alone.
+///
+/// The framework's own rule — configuring a limit and documenting it are one
+/// action — has a converse, and this is it: a limit nobody configured must not
+/// be documented either.
+#[tokio::test]
+async fn a_service_with_no_body_limit_accepts_a_body_of_any_size() {
+    let service = support::router()
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = support::post(&service, "/users")
+        .json(&User {
+            id: 1,
+            name: "n".repeat(64 * 1024),
+        })
+        .call()
+        .await;
+
+    assert_ne!(
+        reply.status,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "no limit was mounted, so nothing may refuse for size"
+    );
+}
+
+/// And says so in the description: no operation declares a 413.
+///
+/// The other half. A service that accepted any body while *claiming* a 413
+/// would be the defect `tests/matrix.rs` found in `BodyRejection`, which is
+/// recorded in `docs/testing.md`.
+#[test]
+fn a_service_with_no_body_limit_declares_no_413() {
+    let document = support::router().openapi().expect("a describable router");
+
+    for (path, item) in &document.paths.0 {
+        for (method, operation) in item.operations() {
+            assert!(
+                !operation.responses.responses.contains_key("413"),
+                "{method:?} {path} declares a 413 that nothing can produce"
+            );
+        }
+    }
+}
+
+/// A timeout bounds a body read only when it is mounted *outside* the limit
+/// that does the reading.
+///
+/// `BodySize` reads a length-less body frame by frame, and a client that sends
+/// one frame slowly holds that loop open. `Timeout` wraps whatever is beneath
+/// it, so the order is the whole of whether the slow-body case is covered —
+/// and mounting order is a thing a reader has to be told rather than something
+/// the types enforce.
+#[tokio::test]
+async fn a_timeout_mounted_outside_a_body_limit_bounds_the_read() {
+    let service = support::router()
+        .intercept(BodySize::new(4096))
+        .intercept(Timeout::new(Duration::from_millis(30)))
+        .build(App::new())
+        .expect("a describable router");
+
+    // The interceptors run outermost-first, so the timeout added last is the
+    // one that runs first and therefore covers the read.
+    let document = service.openapi();
+    let operation = document.paths.0["/users"]
+        .post
+        .as_ref()
+        .expect("the operation exists");
+
+    assert!(
+        operation.responses.responses.contains_key("504"),
+        "the timeout covers the operation whose body the limit reads"
+    );
+    assert!(operation.responses.responses.contains_key("413"));
+}

@@ -119,11 +119,31 @@ later is a measurement, not a rewrite.
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | reliability | No extractor panics on any input | `cargo-fuzz` target per extractor, run nightly, corpus committed | `needs-tooling` |
-| security | Body size, header count and header size limits are enforced by default | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting rejection at limit+1, and that a declared length past the limit is refused before the body is read | `enforced` for the rejection; `planned` for the allocation bound |
+| security | Header count and header-list size are bounded by default | The driver is configured from [`Http1Config`](../crates/kynos/src/server/protocol.rs) and `Http2Config` on every connection; [`server/tests.rs`](../crates/kynos/src/server/tests.rs) asserts the configured cap is the one forwarded | `enforced` |
+| security | A body-size limit is available, and once mounted is enforced *and* declared | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting rejection at limit+1, that a declared length past the limit is refused before the body is read, and that a service mounting none neither refuses nor declares a 413 | `enforced`; no default, deliberately, and `planned` for the allocation bound |
+| security | Per-IP connection caps | none yet — see below | `planned` |
 | correctness | Every Rust type expressible as a handler input has a valid JSON Schema projection | Property test over a macro fixture set, validated against 3.1 and 3.2 validators | `planned` |
 | dx | Every rejection produces an error naming the field and the fix | `trybuild` UI tests, plus [`error/rejection/tests.rs`](../crates/kynos/src/error/rejection/tests.rs) counting every variant and asserting each renders a sentence rather than a debug dump | `enforced` for the counting; `planned` for the snapshots |
 | security | A credential is read from the field its scheme declared, and from no other | `Carries` is emitted by the same derive as `describe`, so the two are one text; [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) drives a derived API-key carrier to 200, 401 and 403 over a live service | `enforced` |
 | security | An authenticator cannot read a request field the scheme did not declare | Structural: `Authenticator::authenticate` receives `S::Presented` and is never given the request | `enforced` |
+
+**There is deliberately no default body cap**, and the row above says so rather
+than claiming one. This document previously read "body size, header count and
+header size limits are enforced by default"; only the second and third were,
+because those are the driver's and a body cap is an interceptor `Router::build`
+does not mount. Making one default was rejected for three reasons, any one
+sufficient: it would add 413 to every operation of every application that never
+asked for one, it would make a user's own `BodySize` a `const` compile error
+against `statuses_disjoint`, and it would buffer a length-less body — which is
+the streaming upload the limit exists to leave alone. The framework's rule that
+configuring a limit and documenting it are one action has a converse, and this
+is it.
+
+**The per-IP row has no method, and that is the requirement.** In the common
+deployment every connection arrives from the load balancer's address, so a cap
+counted in-process is either meaningless or a self-inflicted outage. An honest
+one needs a trusted-proxy-header policy — which is authentication-adjacent and
+belongs with [`security.md`](security.md) rather than here.
 
 ## Middleware
 
