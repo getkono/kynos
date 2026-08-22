@@ -90,7 +90,7 @@ There is no way to choose a status at run time.
 | [`Created<T>`](../crates/kynos/src/response/status.rs) | 201 | `location` is a required field, not an option |
 | [`Accepted<T>`](../crates/kynos/src/response/status.rs) | 202 | |
 | [`Redirect<CODE>`](../crates/kynos/src/response/status.rs) | `CODE` | 301, 302, 303, 307 or 308 only |
-| [`WithHeaders<T, H>`](../crates/kynos/src/response/headers.rs) | `T`'s | `H` derives `HeaderParams`, so `Response.headers` is complete |
+| [`WithHeaders<T, H>`](../crates/kynos/src/response/headers.rs) | `T`'s | `H` implements `HeaderParams`, usually by deriving it, so `Response.headers` is complete |
 
 `Created` and `Redirect` both carry a
 [`Location`](../crates/kynos/src/response/status.rs), which exists because a
