@@ -59,10 +59,17 @@ is now an enumeration:
 | `middleware/limits.rs` | `tokio::{time::timeout, sync::Semaphore}` | the timer wraps the chain's future, which does not exist until after routing; the permit bounds requests already in it |
 | `middleware/compression.rs` | `tokio::io::{AsyncRead, ReadBuf}` | `async-compression`'s encoders are written against tokio's I/O traits; no byte here crosses a socket |
 | `response/stream/sse.rs` | `tokio::time::{Instant, Sleep, sleep}` | a keep-alive is a property of one body, and the connection driver cannot know a body is an event stream |
+| `router/assets/fs/` | `tokio::fs::{metadata, read}` | which file a request wants is not known until routing has chosen the operation, and the read is the operation |
 
-**Four rows, and the count is the check.** [`nfr.md`](nfr.md#runtime) states the
+**Five rows, and the count is the check.** [`nfr.md`](nfr.md#runtime) states the
 containment requirement against this table rather than against `server/` alone,
-so a fifth site is a failing build rather than a silently broken sentence.
+so a sixth site is a failing build rather than a silently broken sentence.
+
+The fifth was added deliberately, which is what the table is for. Serving a
+file from disk means reading one, and which file is not known until routing has
+chosen the operation — so there is nowhere in `server/` for it to live. That it
+required an entry here, argued for on its own terms, is the mechanism working
+rather than the mechanism being worked around.
 
 Moving the SSE timer into `server/` was considered and rejected. `TestClient`
 and `Service::call` drive a built service with no server at all — which is what

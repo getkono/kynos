@@ -345,6 +345,23 @@ async fn visit() -> NoContent {
     NoContent
 }
 
+/// The one operation behind a conditional guard.
+///
+/// On a group of its own like every other declaring interceptor: `Conditional`
+/// contributes a 304, and a status is a promise every covered operation has to
+/// keep.
+#[cfg(feature = "cache")]
+#[kynos::get("/revalidated")]
+async fn revalidated() -> WithHeaders<Json<User>, kynos::middleware::conditional::ETag> {
+    WithHeaders::new(
+        Json(User {
+            id: 9,
+            name: "stable".to_owned(),
+        }),
+        kynos::middleware::conditional::ETag::strong("v1"),
+    )
+}
+
 /// The one operation under a body limit.
 #[kynos::post("/limits/size")]
 async fn under_size_limit(Json(user): Json<User>) -> NoContent {
@@ -416,6 +433,13 @@ fn service() -> kynos::Result<kynos::router::service::Service<App>> {
                 .intercept(RateLimit::new(AllowsOnce::new()))
                 .mount(kynos::routes![under_rate_limit]),
         );
+
+    #[cfg(feature = "cache")]
+    let router = router.group(
+        kynos::router::group::Group::<App>::new("/")
+            .intercept(kynos::middleware::conditional::Conditional::new())
+            .mount(kynos::routes![revalidated]),
+    );
 
     #[cfg(feature = "cookie")]
     let router = router.group(
@@ -517,6 +541,25 @@ async fn exercise_the_operations(client: &TestClient<App>) {
         .send()
         .await
         .assert_status(StatusCode::NO_CONTENT);
+
+    // Both statuses the conditional guard declares. Without the second the 304
+    // would be a promise this fixture could not keep, which is what
+    // `assert_declared_responses_covered` exists to find.
+    #[cfg(feature = "cache")]
+    {
+        client
+            .get("/revalidated")
+            .send()
+            .await
+            .assert_status(StatusCode::OK);
+
+        client
+            .get("/revalidated")
+            .header("if-none-match", "\"v1\"")
+            .send()
+            .await
+            .assert_status(StatusCode::NOT_MODIFIED);
+    }
 }
 
 /// Every declared way an operation says no.

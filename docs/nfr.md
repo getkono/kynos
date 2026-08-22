@@ -107,6 +107,8 @@ the requirement above is that it be *verified*, not merely intended.
 | performance | Zero heap allocations on the routing path | Counting allocator asserting `alloc_count == 0` across a 10k-request replay, over routes of at most three parameters and no static/dynamic sibling overlap | `planned` |
 | performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `kynos-bench` |
 | reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; [`tests/routing.rs`](../crates/kynos/tests/routing.rs) over `Router::validate` for those only visible once the tree is assembled, each refusal with its pass control | `enforced` |
+| security | A served asset path is enumerated, never joined from request input | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) asserting an embedded set registers only literal `paths` keys, and [`router/assets/fs/tests.rs`](../crates/kynos/src/router/assets/fs/tests.rs) sweeping every escape a resolver must refuse against a control that must not be | `enforced` |
+| correctness | A route with no expressible template is recorded rather than described | [`tests/unchecked.rs`](../crates/kynos/tests/unchecked.rs) asserting a catch-all takes no `paths` key and reaches `x-kynos-opaque-routes` | `enforced` |
 | operability | Metric labels derive from operation IDs, never request paths | [`tests/dispatch.rs`](../crates/kynos/tests/dispatch.rs) asserting `MatchedPath` is the template rather than the request target, so two concrete paths under one template produce one label | `enforced` |
 
 The allocation row is scoped rather than absolute because of what the pinned
@@ -153,6 +155,10 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | Contribution composition is order-sensitive and deterministic | Permuted stacks produce differing, stable documents | `planned` |
 | reliability | `Opaque` propagates to every affected operation and omits none | Unit test over a synthetic router tree | `planned` |
 | performance | Per-layer added p99 ≤ TBD | `criterion` at stack depth 0/4/8 with a regression gate | `kynos-bench` |
+| correctness | A stored response is never served to a request its stored `Vary` does not select | [`middleware/cache/tests.rs`](../crates/kynos/src/middleware/cache/tests.rs) over the selection rules, plus [`tests/cache.rs`](../crates/kynos/tests/cache.rs) over a live sequence | `enforced` |
+| correctness | A response that stated no freshness is never reused | [`tests/cache.rs`](../crates/kynos/tests/cache.rs) counting handler calls across three requests | `enforced` |
+| security | A response setting a cookie is never stored | `every_refusal_has_a_case` over the whole `Unstorable` set, counted against its variants | `enforced` |
+| correctness | Both ways a header group reaches the wire write the same fields | [`response/headers.rs`](../crates/kynos/src/response/headers.rs) asserting the two paths *agree*, rather than asserting each | `enforced` |
 
 The first row is the enforcement of [`middleware.md`](middleware.md), and it
 runs: without it the soundness invariant would be an intention rather than a
@@ -169,7 +175,7 @@ guarantee. It has already earned its keep twice — see
 | performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `kynos-bench` |
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `kynos-bench` |
 | compatibility | `Listener::Tokio` is the only public item naming a tokio type | `cargo-public-api` assertion over the framework surface | `needs-tooling` |
-| compatibility | Every `tokio` mention outside `crates/kynos/src/server/` appears in the allowance table in [`architecture.md`](architecture.md#runtime-policy), and the table has exactly four rows | CI grep for `tokio` outside that module tree, counted against the table | `planned` |
+| compatibility | Every `tokio` mention outside `crates/kynos/src/server/` appears in the allowance table in [`architecture.md`](architecture.md#runtime-policy), and the table has exactly five rows | CI grep for `tokio` outside that module tree, counted against the table | `planned` |
 
 The last two rows are the enforcement of the tokio-only policy in
 [`architecture.md`](architecture.md#runtime-policy). There is no runtime
