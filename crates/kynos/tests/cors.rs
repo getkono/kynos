@@ -303,6 +303,101 @@ async fn a_group_scoped_cors_advertises_only_the_methods_it_covers() {
     );
 }
 
+/// Two groups covering one path each get their own answer.
+///
+/// `Group`'s stack is checked against the *router's*, and never against a
+/// sibling's — the premise being that no request reaches two operations. A
+/// preflight is the one request that does: it is answered per path, while the
+/// configuration that permits an origin is mounted per operation. So the two
+/// `Cors` values below compile, and the answer to a `DELETE` preflight has to
+/// come from the one covering `DELETE` rather than from whichever was mounted
+/// first.
+#[tokio::test]
+async fn a_preflight_answers_from_the_cors_covering_the_method_it_proposes() {
+    use kynos::router::group::Group;
+
+    let service = Router::<()>::new()
+        .group(
+            Group::new("/")
+                .mount(kynos::routes![list_widgets])
+                .intercept(Cors::new().allow_origins(["https://reader.example.com"])),
+        )
+        .group(
+            Group::new("/")
+                .mount(kynos::routes![delete_widget])
+                .intercept(Cors::new().allow_origins(["https://admin.example.com"])),
+        )
+        .build(())
+        .expect("a describable router");
+
+    let (status, fields) = send(
+        &service,
+        Method::OPTIONS,
+        "/widgets",
+        &[
+            ("origin", "https://admin.example.com"),
+            ("access-control-request-method", "DELETE"),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_ORIGIN).as_deref(),
+        Some("https://admin.example.com"),
+        "answered a DELETE preflight from the configuration covering GET"
+    );
+
+    let methods = field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS).expect("the method list");
+
+    assert!(methods.contains("DELETE"), "{methods}");
+    assert!(
+        !methods.contains("GET"),
+        "advertised a method the covering scope does not hold: {methods}"
+    );
+}
+
+/// The mirror of the case above: the origin the *other* scope permits is not
+/// permitted for this method, and a preflight that said otherwise would send
+/// the browser on to a request whose real response carries no CORS header.
+#[tokio::test]
+async fn a_preflight_refuses_an_origin_the_covering_cors_does_not_permit() {
+    use kynos::router::group::Group;
+
+    let service = Router::<()>::new()
+        .group(
+            Group::new("/")
+                .mount(kynos::routes![list_widgets])
+                .intercept(Cors::new().allow_origins(["https://reader.example.com"])),
+        )
+        .group(
+            Group::new("/")
+                .mount(kynos::routes![delete_widget])
+                .intercept(Cors::new().allow_origins(["https://admin.example.com"])),
+        )
+        .build(())
+        .expect("a describable router");
+
+    let (status, fields) = send(
+        &service,
+        Method::OPTIONS,
+        "/widgets",
+        &[
+            ("origin", "https://reader.example.com"),
+            ("access-control-request-method", "DELETE"),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        None,
+        "permitted an origin only the GET scope names"
+    );
+}
+
 /// A known limit, characterized rather than left to be discovered.
 ///
 /// An endpoint-scoped interceptor stays inside the endpoint — that is what runs
