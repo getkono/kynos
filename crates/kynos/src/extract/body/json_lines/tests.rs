@@ -25,11 +25,12 @@ use kynos_openapi::RefOr;
 
 use super::{JsonLines, JsonSeq, records::Records};
 use crate::{
+    error::rejection::BodyRejection,
     extract::{
         FromRequest,
         describe::{Describe, RequestContent},
     },
-    http::{Request, body::Body, header},
+    http::{Request, StatusCode, body::Body, header},
     router::operation::OperationCx,
     schema::registry::Registry,
 };
@@ -104,6 +105,19 @@ async fn json_seq(frames: Vec<Frame>) -> Records<Reading> {
         .await
         .expect("`application/json-seq` is the media type this body extracts")
         .items
+}
+
+/// The next record, or a panic naming what came instead.
+///
+/// `BodyRejection` is not `PartialEq` — nothing a client receives needs to
+/// be — so an expected record is compared after unwrapping rather than as a
+/// `Result`.
+async fn expect_record(records: &mut Records<Reading>) -> Reading {
+    records
+        .next()
+        .await
+        .expect("a record")
+        .expect("a record that decodes")
 }
 
 /// Three records, with the values recorded as the bytes are assembled.
@@ -274,6 +288,25 @@ async fn every_arrangement_of_a_sequence_carries_the_same_records() {
     }
 }
 
+/// RFC 7464 puts the separator in front, so a body without one is not a
+/// sequence and no boundary in it can be trusted.
+#[tokio::test]
+async fn a_sequence_not_opening_with_a_separator_is_a_bad_request() {
+    let mut records = json_seq(one_frame(b"{\"at\":1}\n")).await;
+
+    let rejection = records
+        .next()
+        .await
+        .expect("a body that is not a sequence is reported rather than ignored")
+        .expect_err("a missing separator is a rejection");
+
+    assert_eq!(rejection.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        records.next().await.is_none(),
+        "the framing failed, so the stream ends rather than guessing at the next boundary"
+    );
+}
+
 /// The lag the separator's position forces, and that `JsonLines` does not
 /// have.
 ///
@@ -350,6 +383,169 @@ async fn an_empty_body_carries_no_records() {
     );
 }
 
+/// Bytes that are not JSON are a framing failure: after one, where the next
+/// record starts is a guess.
+#[tokio::test]
+async fn a_record_that_is_not_json_ends_the_stream() {
+    let mut records = ndjson(one_frame(b"{\"at\":1}\n{\"at\":\n{\"at\":3}\n")).await;
+
+    assert_eq!(expect_record(&mut records).await, Reading { at: 1 });
+
+    let rejection = records
+        .next()
+        .await
+        .expect("the malformed record is reported")
+        .expect_err("bytes that are not JSON are a rejection");
+
+    assert_eq!(rejection.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        rejection.to_string().contains("could not be parsed"),
+        "the sentence a 400 body rejection carries: {rejection}"
+    );
+    let BodyRejection::Syntax { detail } = &rejection else {
+        panic!("a malformed record is a syntax rejection, not {rejection:?}");
+    };
+    assert!(
+        detail.contains("record 1"),
+        "the detail names which record failed: {detail}"
+    );
+
+    assert!(
+        records.next().await.is_none(),
+        "after a framing failure the record boundaries are no longer trustworthy"
+    );
+}
+
+/// A record that is JSON and does not fit `T` leaves the boundaries intact,
+/// so a bulk ingest can report every bad record rather than the first.
+#[tokio::test]
+async fn a_record_that_does_not_fit_the_type_does_not_end_the_stream() {
+    let mut records = ndjson(one_frame(b"{\"at\":1}\n{\"at\":\"later\"}\n{\"at\":3}\n")).await;
+
+    assert_eq!(expect_record(&mut records).await, Reading { at: 1 });
+
+    let rejection = records
+        .next()
+        .await
+        .expect("the ill-fitting record is reported")
+        .expect_err("a value of the wrong type is a rejection");
+
+    assert_eq!(rejection.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let BodyRejection::Schema { failures } = &rejection else {
+        panic!("an ill-fitting record is a schema rejection, not {rejection:?}");
+    };
+    assert_eq!(
+        failures.keys().collect::<Vec<_>>(),
+        vec!["/1"],
+        "the pointer is the record's index, which 3.2 makes well defined by reading a \
+         sequential media type as an array in order"
+    );
+
+    assert_eq!(
+        expect_record(&mut records).await,
+        Reading { at: 3 },
+        "the boundaries held, so reading continues"
+    );
+    assert!(records.next().await.is_none());
+}
+
+/// What arrived is not the body the client meant to send, which is the same
+/// 400 a whole-body read answers with.
+#[tokio::test]
+async fn a_transport_failure_mid_body_is_a_bad_request() {
+    let frames = vec![
+        Ok(Bytes::from_static(b"{\"at\":1}\n{\"at")),
+        Err(io::Error::other("the connection went away")),
+    ];
+    let mut records = ndjson(frames).await;
+
+    assert_eq!(expect_record(&mut records).await, Reading { at: 1 });
+
+    let rejection = records
+        .next()
+        .await
+        .expect("the failure is reported rather than read as an end")
+        .expect_err("a transport failure is a rejection");
+
+    assert_eq!(rejection.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        records.next().await.is_none(),
+        "nothing after the break is a record"
+    );
+}
+
+/// `read_all` is the whole-body convenience, and it stops at the first
+/// rejection of either kind.
+#[tokio::test]
+async fn read_all_returns_the_first_rejection() {
+    let rejection = ndjson(one_frame(b"{\"at\":1}\n{\"at\":\"later\"}\n{\"at\":3}\n"))
+        .await
+        .read_all()
+        .await
+        .expect_err("the second record does not fit");
+
+    assert_eq!(rejection.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// The content type is enforced before a byte is read, so an operation
+/// never accepts a media type its description did not claim.
+///
+/// `application/jsonl` is deliberately refused: neither spelling is
+/// registered with the IANA, `kynos-openapi` chose `application/x-ndjson`,
+/// and nothing makes two unregistered names synonyms. A `+json-seq`
+/// structured suffix is refused for the reason every other codec refuses
+/// one — `application/vnd.x+json` is not `application/json`.
+#[tokio::test]
+async fn a_body_of_another_media_type_is_refused() {
+    let lines_refusals = [
+        None,
+        Some("application/json"),
+        Some("application/jsonl"),
+        Some("application/json-seq"),
+        Some("application/x-ndjson; charset=utf-16"),
+    ];
+
+    for content_type in lines_refusals {
+        let rejection = JsonLines::<Records<Reading>>::from_request(
+            request(content_type, one_frame(b"{\"at\":1}\n"), false),
+            &(),
+        )
+        .await
+        .err()
+        .unwrap_or_else(|| panic!("{content_type:?} is not `application/x-ndjson`"));
+
+        assert_eq!(
+            rejection.status(),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "{content_type:?}"
+        );
+    }
+
+    let sequence_refusals = [
+        None,
+        Some("application/json"),
+        Some("application/x-ndjson"),
+        Some("application/vnd.logs+json-seq"),
+        Some("application/json-seq; charset=utf-16"),
+    ];
+
+    for content_type in sequence_refusals {
+        let rejection = JsonSeq::<Records<Reading>>::from_request(
+            request(content_type, one_frame(b"\x1e{\"at\":1}\n"), false),
+            &(),
+        )
+        .await
+        .err()
+        .unwrap_or_else(|| panic!("{content_type:?} is not `application/json-seq`"));
+
+        assert_eq!(
+            rejection.status(),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "{content_type:?}"
+        );
+    }
+}
+
 /// The one parameter a codec accepts, because it names the encoding Kynos
 /// already assumes.
 #[tokio::test]
@@ -369,6 +565,34 @@ async fn a_utf_8_charset_is_accepted() {
     assert_eq!(
         records.read_all().await.expect("one record"),
         vec![Reading { at: 1 }]
+    );
+}
+
+/// One case per way `records.rs` builds a rejection, counted against the
+/// source.
+///
+/// The 415 is not among them: it is raised through the
+/// `unsupported_media_type` every codec in this module shares, and
+/// `a_body_of_another_media_type_is_refused` sweeps it. What is counted
+/// here is what a *streamed* body reaches on its own, so a fifth added
+/// without a case fails the build.
+#[test]
+fn every_streamed_rejection_has_a_case() {
+    const SOURCE: &str = include_str!("records.rs");
+    const CASES: &[&str] = &[
+        "a_sequence_not_opening_with_a_separator_is_a_bad_request",
+        "a_transport_failure_mid_body_is_a_bad_request",
+        "a_record_that_does_not_fit_the_type_does_not_end_the_stream",
+        "a_record_that_is_not_json_ends_the_stream",
+    ];
+
+    let sites = SOURCE.matches("BodyRejection::").count();
+    assert_eq!(
+        sites,
+        CASES.len(),
+        "`records.rs` builds {sites} rejection(s) and {} have a case; a way to fail that \
+         nobody wrote a case for is a status nobody checked",
+        CASES.len()
     );
 }
 
