@@ -1087,7 +1087,7 @@ fn the_configured_http1_header_cap_is_the_one_the_driver_is_told() {
 
         assert_eq!(
             crate::server::protocol::forwarded_max_headers(&config),
-            Some(configured),
+            configured,
             "a cap of {configured} must reach the driver"
         );
     }
