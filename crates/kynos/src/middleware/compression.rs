@@ -236,11 +236,27 @@ impl<C: Sync + 'static> Interceptor<C> for Compression {
 
         // A response that is already encoded stays as it is: `Content-Encoding`
         // is one header, and something beneath has already spoken for it.
-        let encoded_already = continued
+        //
+        // So does a partial one. RFC 9110 section 14.1.2 calculates a byte range
+        // with respect to the *encoded* sequence of bytes when a coding is
+        // applied, so encoding a 206 after its `Content-Range` was written makes
+        // the field describe octets the body no longer carries -- and section
+        // 14.4 tells the recipient of an invalid `Content-Range` not to
+        // recombine, which is the corruption a client that does recombine gets.
+        // The status is checked *and* the field, so a partial response reaching
+        // this from a `layer_unchecked` beneath is caught too.
+        let leave_alone = continued
             .headers()
-            .contains_key(http::header::CONTENT_ENCODING);
+            .contains_key(http::header::CONTENT_ENCODING)
+            || matches!(
+                continued.status(),
+                http::StatusCode::PARTIAL_CONTENT | http::StatusCode::RANGE_NOT_SATISFIABLE
+            )
+            || continued
+                .headers()
+                .contains_key(http::header::CONTENT_RANGE);
 
-        let Some(coding) = negotiated.filter(|_| !encoded_already) else {
+        let Some(coding) = negotiated.filter(|_| !leave_alone) else {
             return Ok(continued.with_headers(ContentEncoding::default()));
         };
 

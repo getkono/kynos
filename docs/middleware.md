@@ -90,6 +90,16 @@ on. Two interceptors rewriting one compose; two setting one header do not. An
 encoding a consumer must know about is a header, which is why `Compression`
 declares `Content-Encoding` rather than re-encoding silently.
 
+**A partial response is left alone.** `Compression` refuses a 206, a 416, and
+anything carrying a `Content-Range`, whatever the client accepted. RFC 9110
+§14.1.2 calculates a byte range *with respect to the encoded sequence of bytes*
+when a coding is applied, so encoding a 206 after its `Content-Range` has been
+written leaves a field describing octets the body no longer carries — and §14.4
+tells the recipient of an invalid `Content-Range` not to recombine it with a
+stored representation, which is exactly the silent corruption a client that does
+recombine gets. The status is checked and so is the field, so a partial response
+arriving from a `layer_unchecked` beneath is caught the same way.
+
 ## Why the rate-limit headers keep a prefix
 
 `RateLimit` emits `X-RateLimit-Limit`, `X-RateLimit-Remaining` and
