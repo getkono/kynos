@@ -22,6 +22,50 @@ use std::future::Future;
 
 use crate::{error::rejection::AuthRejection, http::Parts};
 
+/// Compares two secrets without returning on the first byte that differs.
+///
+/// An ordinary `==` on a shared secret returns as soon as it finds a
+/// difference, so how long it took says how much of the secret was right. That
+/// turns guessing a key into guessing it one byte at a time. Reach for this
+/// wherever an [`Authenticator`] compares a credential against a value it holds
+/// -- an API key against a table, a password against a stored one.
+///
+/// # What this does not promise
+///
+/// **The lengths are compared first, and a difference returns immediately.** A
+/// secret's length is not secret in any of the cases here: it is fixed by the
+/// scheme that issued it, and padding to hide it would compare a secret against
+/// something that is not one.
+///
+/// **The guarantee is best-effort.** A hard one needs a barrier the compiler
+/// cannot see through, and `unsafe_code = "forbid"` puts inline assembly out of
+/// reach. What is here folds every byte into one accumulator and hides the
+/// result behind [`black_box`](core::hint::black_box), which is what stops the
+/// loop being rewritten into an early return. That is the strongest statement
+/// safe Rust supports, and it is stated rather than implied because the
+/// difference matters to anyone deciding whether it is enough.
+///
+/// ```
+/// use kynos::security::constant_time_eq;
+///
+/// assert!(constant_time_eq(b"a-shared-secret", b"a-shared-secret"));
+/// assert!(!constant_time_eq(b"a-shared-secret", b"a-shared-secre!"));
+/// assert!(!constant_time_eq(b"short", b"longer"));
+/// ```
+#[must_use]
+pub fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+
+    let difference = left
+        .iter()
+        .zip(right)
+        .fold(0u8, |difference, (left, right)| difference | (left ^ right));
+
+    core::hint::black_box(difference) == 0
+}
+
 /// A security scheme, as a type.
 ///
 /// Derived with `#[derive(SecurityScheme)]` on a unit struct:
@@ -111,4 +155,67 @@ pub trait Authenticates<S: SecurityScheme>: Sync + Sized {
 
     /// Borrows the authenticator used for this scheme.
     fn authenticator(&self) -> &Self::Authenticator;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::constant_time_eq;
+
+    /// Agreement with `==`, swept over every way two short strings can differ.
+    ///
+    /// The property is that this is `==` and nothing else: a comparison that
+    /// were merely *slow* would satisfy any single case. What cannot be
+    /// asserted here is the timing itself — a wall-clock assertion is a flake
+    /// on a shared runner, and `docs/testing.md` would rather have no test than
+    /// a retried one — so the constant-time half is documented as best-effort
+    /// on the item instead.
+    #[test]
+    fn the_comparison_agrees_with_equality_everywhere() {
+        let inputs: &[&[u8]] = &[
+            b"",
+            b"a",
+            b"b",
+            b"ab",
+            b"ba",
+            b"aa",
+            b"abc",
+            b"abd",
+            b"dbc",
+            b"abcd",
+            &[0x00],
+            &[0xff],
+            &[0x00, 0x00],
+        ];
+
+        for left in inputs {
+            for right in inputs {
+                assert_eq!(
+                    constant_time_eq(left, right),
+                    left == right,
+                    "comparing {left:?} against {right:?}"
+                );
+            }
+        }
+    }
+
+    /// A difference in the last byte is found as surely as one in the first.
+    ///
+    /// The failure this rules out is a fold that stops early: with `&&` in
+    /// place of `|`, a secret differing only at the end would compare equal for
+    /// every prefix that matched.
+    #[test]
+    fn a_difference_anywhere_is_a_difference() {
+        let secret = b"0123456789abcdef";
+
+        for index in 0..secret.len() {
+            let mut guess = *secret;
+            guess[index] ^= 0x01;
+            assert!(
+                !constant_time_eq(secret, &guess),
+                "a difference at byte {index} went unnoticed"
+            );
+        }
+
+        assert!(constant_time_eq(secret, secret));
+    }
 }
