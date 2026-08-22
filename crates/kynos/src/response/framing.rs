@@ -1,18 +1,17 @@
 //! RFC 2046 multipart framing, which every multipart body Kynos writes shares.
 //!
-//! A multipart subtype decides what each part's header block says and nothing
-//! else: `multipart/form-data` names each part with a `Content-Disposition`,
-//! and `multipart/byteranges` — RFC 9110 section 14.6, which Kynos does not
-//! write yet — names each with a `Content-Range`. What every subtype shares is
-//! the part a reader's parser depends on: the delimiter line, the CRLF that
-//! ends every header line, the blank line before the content and the closing
-//! delimiter. So that is what lives here, and a part is handed over as *its
-//! header block and its octets*.
+//! Two subtypes are written in this crate and they agree on nothing above the
+//! framing: `multipart/form-data` names each part with a
+//! `Content-Disposition`, and `multipart/byteranges` names each with a
+//! `Content-Range`. What they do share is the part a reader's parser depends
+//! on — the delimiter line, the CRLF that ends every header line, the blank
+//! line before the content and the closing delimiter — so that is what lives
+//! here, and a part is handed over as *its header block and its octets*.
 //!
-//! Private to [`response`](crate::response) rather than public, and beside the
-//! writers rather than inside one of them, because each writer is behind its
-//! own feature: a home under `codec::multipart` would leave the next subtype
-//! writing its own delimiters.
+//! Private to [`response`](crate::response) rather than public, and gated on
+//! the *disjunction* of its two callers rather than on either: the form-data
+//! writer is behind `multipart` and the byteranges writer behind `openapi32`,
+//! so a home under either would leave the other writing its own delimiters.
 
 use bytes::Bytes;
 

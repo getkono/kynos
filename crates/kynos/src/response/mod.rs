@@ -38,10 +38,11 @@ pub mod negotiate;
 pub mod range;
 pub mod status;
 
-// RFC 2046 delimiters, factored out of `codec::multipart` so a second subtype
-// does not write its own. Gated with the only writer there is today; a second
-// one widens the gate rather than moving the module.
-#[cfg(feature = "multipart")]
+// RFC 2046 delimiters, shared by the two multipart subtypes Kynos writes. The
+// gate is the disjunction of theirs rather than either one, for the reason its
+// own documentation gives: a home under either writer would leave the other
+// writing its own delimiters.
+#[cfg(any(feature = "multipart", feature = "openapi32"))]
 mod framing;
 
 #[cfg(feature = "openapi32")]

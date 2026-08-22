@@ -61,11 +61,17 @@
 //! A `range-set` of up to [`spec::MAX_RANGES`] parses, and the first satisfiable
 //! spec in it is the one served. Section 14.2 says outright that *the above does
 //! not imply that a server will send all requested ranges*, and section 15.3.7
-//! that a 206 is self-descriptive, so a client can tell what it received. What
-//! is missing is `multipart/byteranges`, and nothing here forecloses it:
-//! [`Selection`] grows a variant, and [`Range::select`] returns it.
+//! that a 206 is self-descriptive, so a client can tell what it received.
+//!
+//! Several parts at once is `multipart/byteranges`, which lives in
+//! [`parts`] behind `openapi32` — 3.1 has no vocabulary for a
+//! request-determined number of parts each carrying a required header. It is
+//! reached by returning `RangedParts<T>` rather than by turning the flag on,
+//! so what an existing handler puts on the wire does not depend on a feature.
 
 pub mod headers;
+#[cfg(feature = "openapi32")]
+pub mod parts;
 pub mod rangeable;
 pub mod spec;
 

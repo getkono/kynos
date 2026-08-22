@@ -297,6 +297,52 @@ pub(crate) fn resolve(specs: &[Spec], complete_length: u64) -> Vec<(u64, u64)> {
         .collect()
 }
 
+/// The satisfiable ranges `specs` select, merged and in ascending order.
+///
+/// Sorted by `first-pos`, then any two that overlap **or touch** become one.
+/// RFC 9110 section 15.3.7.2 permits both halves outright: *a server MAY
+/// coalesce any of the ranges that overlap, or that are separated by a gap that
+/// is smaller than the overhead of sending multiple parts, regardless of the
+/// order in which the corresponding range-spec appeared* — and the overhead it
+/// puts at *around 80 bytes* per part is why adjacency counts, since `0-4` and
+/// `5-9` sent apart cost eighty bytes to say what one part says for nothing.
+///
+/// # This is what makes the amplification attack impossible
+///
+/// Section 17.15 names *a set of many small ranges* as a denial-of-service
+/// indicator, because `bytes=0-0,0-0,0-0,...` asks a server to send the same
+/// octet many times over with per-part framing on each. After merging, the
+/// parts are disjoint by construction — so the octets enclosed sum to at most
+/// the complete length, whatever the field asked for. That is a property of the
+/// output rather than a limit somebody has to pick, which is the stronger of
+/// the two; [`MAX_RANGES`] still caps the *field*, and does so before any of
+/// this is reached.
+///
+/// Gated with the writer that needs it. Merging changes *which* part a
+/// single-part 206 carries — `bytes=8-9,0-1` would answer `0-1` rather than
+/// the `8-9` it names first — and [`super::Range::select`] promises the first
+/// satisfiable spec, so the merge belongs to the response shape that has
+/// somewhere to put every part.
+#[cfg(feature = "openapi32")]
+pub(crate) fn coalesce(specs: &[Spec], complete_length: u64) -> Vec<(u64, u64)> {
+    let mut resolved = resolve(specs, complete_length);
+    resolved.sort_unstable();
+
+    let mut merged: Vec<(u64, u64)> = Vec::with_capacity(resolved.len());
+    for (first, last) in resolved {
+        match merged.last_mut() {
+            // `saturating_add`, because a `last-pos` of `u64::MAX` is reachable
+            // through a saturated decimal and `+ 1` would wrap to nothing.
+            Some(previous) if first <= previous.1.saturating_add(1) => {
+                previous.1 = previous.1.max(last);
+            }
+            _ => merged.push((first, last)),
+        }
+    }
+
+    merged
+}
+
 /// One spec, or `None` when it is unsatisfiable.
 fn resolve_one(spec: Spec, complete_length: u64) -> Option<(u64, u64)> {
     let end = complete_length.saturating_sub(1);
