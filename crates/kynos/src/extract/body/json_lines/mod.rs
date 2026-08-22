@@ -117,8 +117,6 @@ pub struct JsonSeq<S> {
     pub items: S,
 }
 
-/// Which bytes separate one record from the next.
-
 impl<C: Sync, T: serde::de::DeserializeOwned> FromRequest<C> for JsonLines<Records<T>> {
     type Rejection = BodyRejection;
 
