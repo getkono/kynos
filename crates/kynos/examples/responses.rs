@@ -4,7 +4,7 @@
 //! cargo run -p kynos --example responses
 //! ```
 //!
-//! Four things are worth noticing:
+//! Five things are worth noticing:
 //!
 //! * **Status is part of the return type.** There is no `StatusCode` to return
 //!   and no builder to hand one to. `NoContent` is 204 because it is
@@ -19,6 +19,14 @@
 //!   `()` are foreign to an application — so the set cannot be widened from
 //!   outside and `Redirect::<304>` does not compile. That rules out writing 302
 //!   where 307 was meant and silently changing the method on replay.
+//! * **A download is a body type plus a header group.** Other frameworks hand
+//!   you an `Attachment` type with a content-type setter on it. Here the media
+//!   type is already the body's own type — `Binary<Pdf>` *is*
+//!   `application/pdf` — so what is left to say is the disposition, and that is
+//!   a header group like any other. Which is why it shows up in
+//!   `Response.headers` without anyone writing it there, and why an interceptor
+//!   that also set `Content-Disposition` would be a compile error rather than a
+//!   response with two of them.
 //! * **A location is a typed URI, not a format string.** Every route attribute
 //!   emits `relative_uri`, taking exactly the path and query types that route
 //!   extracts. A link that no longer matches its target is a compile error
@@ -30,8 +38,10 @@
 use std::net::Ipv4Addr;
 
 use kynos::{
+    extract::{body::binary::Binary, media::Pdf},
     prelude::*,
     response::{
+        disposition::ContentDisposition,
         headers::WithHeaders,
         status::{Accepted, Redirect},
     },
@@ -159,6 +169,21 @@ async fn list_users() -> WithHeaders<Json<Vec<User>>, Quota> {
     )
 }
 
+/// Serves the current invoice as a download.
+///
+/// The same `WithHeaders` the quota group uses, over a hand-written group
+/// rather than a derived one: a `Content-Disposition` value is a grammar, not a
+/// field per parameter. The accent is deliberate: the ASCII fallback cannot
+/// hold it, so the field carries `filename` *and* `filename*`, which is what
+/// RFC 6266 Appendix D asks a sender to do.
+#[kynos::get("/invoices/current")]
+async fn download_invoice() -> WithHeaders<Binary<Pdf>, ContentDisposition> {
+    WithHeaders::new(
+        Binary::new(&b"%PDF-1.7\n"[..]),
+        ContentDisposition::attachment().filename("relevé.pdf"),
+    )
+}
+
 /// Redirects the legacy path to the current one.
 ///
 /// 303 rather than 302: it says "see this other thing with GET", which is what
@@ -184,6 +209,7 @@ async fn main() -> kynos::Result<()> {
         upsert_user,
         queue_import,
         list_users,
+        download_invoice,
         legacy_accounts,
         delete_user,
     ]);
