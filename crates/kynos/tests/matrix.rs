@@ -434,6 +434,16 @@ fn service() -> kynos::Result<kynos::router::service::Service<App>> {
                 .mount(kynos::routes![under_rate_limit]),
         );
 
+    // A ranged file, which is the one layer whose success has three statuses.
+    // Mounted here rather than tested only in `tests/assets.rs`, because the
+    // 206 and the 416 are a *document* claim about a response nothing else in
+    // this workspace checks against a live exchange.
+    #[cfg(feature = "assets")]
+    let router = router.group(
+        kynos::router::group::Group::<App>::new("/files")
+            .mount(kynos::router::assets::AssetSet::embedded(DOWNLOAD).no_index()),
+    );
+
     #[cfg(feature = "cache")]
     let router = router.group(
         kynos::router::group::Group::<App>::new("/")
@@ -454,6 +464,15 @@ fn service() -> kynos::Result<kynos::router::service::Service<App>> {
     router.build(App)
 }
 
+/// One file, embedded by hand rather than by `assets!`, so this target needs
+/// no fixture directory of its own.
+#[cfg(feature = "assets")]
+const DOWNLOAD: &[kynos::router::assets::Asset] = &[kynos::router::assets::Asset::embedded(
+    "report.bin",
+    b"0123456789",
+    "\"report-v1\"",
+)];
+
 // --- The two assertions ---------------------------------------------------
 
 /// Every response this fixture produced is one the description declares, and
@@ -469,6 +488,8 @@ async fn the_owned_layer_matrix_matches_the_description_it_emits() {
     exercise_the_operations(&client).await;
     exercise_the_rejections(&client).await;
     exercise_the_limits(&client).await;
+    #[cfg(feature = "assets")]
+    exercise_the_ranges(&client).await;
 
     client.assert_conformance();
     client.assert_declared_responses_covered();
@@ -822,4 +843,36 @@ fn an_interceptors_response_header_is_declared_where_a_consumer_resolves_it() {
          interceptor sets is filed under a key nothing resolves to",
         success.headers.keys().collect::<Vec<_>>()
     );
+}
+
+/// Every status a ranged file can answer with, so the document's 200, 206, 304
+/// and 416 are each checked against a response that actually happened.
+#[cfg(feature = "assets")]
+async fn exercise_the_ranges(client: &TestClient<App>) {
+    client
+        .get("/files/report.bin")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+
+    client
+        .get("/files/report.bin")
+        .header("range", "bytes=2-5")
+        .send()
+        .await
+        .assert_status(StatusCode::PARTIAL_CONTENT);
+
+    client
+        .get("/files/report.bin")
+        .header("range", "bytes=99-")
+        .send()
+        .await
+        .assert_status(StatusCode::RANGE_NOT_SATISFIABLE);
+
+    client
+        .get("/files/report.bin")
+        .header("if-none-match", "\"report-v1\"")
+        .send()
+        .await
+        .assert_status(StatusCode::NOT_MODIFIED);
 }
