@@ -47,7 +47,12 @@ use kynos::{
         headers::WithHeaders,
         status::{NoContent, Redirect},
     },
-    security::{Authenticates, Authenticator, auth::Auth, carrier::BearerToken, schemes::Bearer},
+    security::{
+        Authenticates, Authenticator,
+        auth::{Auth, MaybeAuth},
+        carrier::{ApiKey, BearerToken},
+        schemes::Bearer,
+    },
     test::TestClient,
 };
 use serde::{Deserialize, Serialize};
@@ -142,6 +147,61 @@ impl Authenticates<Bearer<Caller>> for App {
     }
 }
 
+/// A machine key, carried in a field the *attribute* names.
+///
+/// `Bearer` above is a type Kynos ships, so its carrier is one Kynos wrote. This
+/// one's carrier is emitted by the derive from `in` and `name`, which is the
+/// half a hand-written finder could get wrong — and the half nothing else here
+/// exercises end to end.
+#[derive(kynos::SecurityScheme)]
+#[security(api_key(in = "header", name = "X-Api-Key"))]
+#[security(name = "ServiceKey", credential = Caller)]
+struct ServiceKey;
+
+/// Verifies an API key against one issued value.
+struct Keys;
+
+impl<C: Sync> Authenticator<ServiceKey, C> for Keys {
+    async fn authenticate(&self, presented: ApiKey, _: &C) -> Result<Caller, AuthRejection> {
+        // Constant time, because this is a shared secret compared against a
+        // stored one — the case `constant_time_eq` exists for.
+        let matches = |issued: &[u8]| {
+            kynos::security::constant_time_eq(presented.as_str().as_bytes(), issued)
+        };
+
+        if matches(b"k_ok") {
+            Ok(Caller {
+                subject: "integration-1".to_owned(),
+            })
+        } else if matches(b"k_revoked") {
+            // A key that is known and no longer permitted, which is how this
+            // operation reaches the 403 `Auth<S>` declares. Without it the
+            // status would be a promise this fixture could not keep — and
+            // `assert_declared_responses_covered` says so.
+            Err(AuthRejection::Forbidden)
+        } else {
+            Err(AuthRejection::unauthenticated())
+        }
+    }
+
+    async fn authorize(
+        &self,
+        _: &Caller,
+        _: &'static [&'static str],
+        _: &C,
+    ) -> Result<(), AuthRejection> {
+        Ok(())
+    }
+}
+
+impl Authenticates<ServiceKey> for App {
+    type Authenticator = Keys;
+
+    fn authenticator(&self) -> &Self::Authenticator {
+        &Keys
+    }
+}
+
 /// A rate limit that allows the first request and denies afterwards.
 #[derive(Clone, Debug)]
 struct AllowsOnce(std::sync::Arc<std::sync::atomic::AtomicUsize>);
@@ -222,6 +282,31 @@ async fn me(Auth(caller): Auth<Bearer<Caller>>) -> Json<User> {
     })
 }
 
+/// Guarded optionally, which declares a security shape `Auth` cannot.
+///
+/// `[{}, {Bearer: []}]` — the empty requirement first. Here because the
+/// conformance harness reads what the *document* says as well as what the
+/// service sends, and this is the one operation whose security list has two
+/// members.
+#[kynos::get("/feed")]
+async fn feed(caller: MaybeAuth<Bearer<Caller>>) -> Json<User> {
+    Json(User {
+        id: 2,
+        name: caller
+            .into_inner()
+            .map_or_else(|| "anonymous".to_owned(), |caller| caller.subject),
+    })
+}
+
+/// Guarded by a credential the derive wrote the carrier for.
+#[kynos::get("/usage")]
+async fn usage(Auth(caller): Auth<ServiceKey>) -> Json<User> {
+    Json(User {
+        id: 3,
+        name: caller.subject,
+    })
+}
+
 /// The one operation under a body limit.
 #[kynos::post("/limits/size")]
 async fn under_size_limit(Json(user): Json<User>) -> NoContent {
@@ -262,7 +347,15 @@ fn service() -> kynos::Result<kynos::router::service::Service<App>> {
         // of them would have to produce.
         .intercept(RequestId::new())
         .intercept(Cors::new().allow_origins(["https://app.example.com"]))
-        .mount(kynos::routes![get_user, list_users, create_user, moved, me])
+        .mount(kynos::routes![
+            get_user,
+            list_users,
+            create_user,
+            moved,
+            me,
+            feed,
+            usage
+        ])
         // Group scope: one operation each, because a declared status is a
         // promise every covered operation has to keep.
         .group(
@@ -344,6 +437,30 @@ async fn exercise_the_operations(client: &TestClient<App>) {
         .send()
         .await
         .assert_status(StatusCode::OK);
+
+    // Both halves of the optional guard: anonymity is a success, and so is a
+    // credential. Without the first, `[{}, ...]` would be a declaration nothing
+    // produced.
+    client
+        .get("/feed")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+
+    client
+        .get("/feed")
+        .header("authorization", "Bearer tok_ok")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+
+    // The derived carrier, reading the field the attribute named.
+    client
+        .get("/usage")
+        .header("x-api-key", "k_ok")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
 }
 
 /// Every declared way an operation says no.
@@ -408,6 +525,45 @@ async fn exercise_the_rejections(client: &TestClient<App>) {
     client
         .get("/me")
         .header("authorization", "Bearer tok_banned")
+        .send()
+        .await
+        .assert_status(StatusCode::FORBIDDEN);
+
+    // A credential that is present and wrong is a 401 even where the guard is
+    // optional: only *absence* is anonymity.
+    client
+        .get("/feed")
+        .header("authorization", "Bearer tok_unknown")
+        .send()
+        .await
+        .assert_status(StatusCode::UNAUTHORIZED);
+
+    client
+        .get("/feed")
+        .header("authorization", "Bearer tok_banned")
+        .send()
+        .await
+        .assert_status(StatusCode::FORBIDDEN);
+
+    // The derived carrier reads the declared field, so a key in the wrong one
+    // is absent rather than accepted.
+    client
+        .get("/usage")
+        .header("x-api-token", "k_ok")
+        .send()
+        .await
+        .assert_status(StatusCode::UNAUTHORIZED);
+
+    client
+        .get("/usage")
+        .header("x-api-key", "k_wrong")
+        .send()
+        .await
+        .assert_status(StatusCode::UNAUTHORIZED);
+
+    client
+        .get("/usage")
+        .header("x-api-key", "k_revoked")
         .send()
         .await
         .assert_status(StatusCode::FORBIDDEN);
