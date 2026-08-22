@@ -4,7 +4,7 @@
 //! cargo run -p kynos --example responses
 //! ```
 //!
-//! Five things are worth noticing:
+//! Six things are worth noticing:
 //!
 //! * **Status is part of the return type.** There is no `StatusCode` to return
 //!   and no builder to hand one to. `NoContent` is 204 because it is
@@ -27,6 +27,14 @@
 //!   `Response.headers` without anyone writing it there, and why an interceptor
 //!   that also set `Content-Disposition` would be a compile error rather than a
 //!   response with two of them.
+//! * **A resumable download is a `Range<T>` and a `Ranged<T>`.** The extractor
+//!   is infallible, because RFC 9110 section 14.2 answers every unusable
+//!   `Range` field by ignoring it — a malformed value or an unknown unit sends
+//!   the whole representation and a 200, never a 400. What varies is the
+//!   status, and none of it is chosen at run time: `Ranged<T>` declares the 200
+//!   and the 206, and `RangeRejection` is the 416. Unlike `Accept`, the field
+//!   *is* declared as a parameter, because a consumer that cannot see it does
+//!   not know the operation resumes.
 //! * **A location is a typed URI, not a format string.** Every route attribute
 //!   emits `relative_uri`, taking exactly the path and query types that route
 //!   extracts. A link that no longer matches its target is a compile error
@@ -38,11 +46,16 @@
 use std::net::Ipv4Addr;
 
 use kynos::{
-    extract::{body::binary::Binary, media::Pdf},
+    error::rejection::RangeRejection,
+    extract::{
+        body::binary::Binary,
+        media::{OctetStream, Pdf},
+    },
     prelude::*,
     response::{
         disposition::ContentDisposition,
         headers::WithHeaders,
+        range::{Range, Ranged},
         status::{Accepted, Redirect},
     },
     server::Server,
@@ -184,6 +197,21 @@ async fn download_invoice() -> WithHeaders<Binary<Pdf>, ContentDisposition> {
     )
 }
 
+/// Serves a recording, one part at a time if that is what was asked for.
+///
+/// `apply` is the whole of it: it resolves the field against the octets in
+/// hand, slices them — refcounted, so nothing is copied — and returns the
+/// response already knowing whether it is a 200 or a 206. A `Range` this
+/// service cannot apply is not an error; it is the whole recording.
+#[kynos::get("/recordings/current")]
+async fn download_recording(
+    range: Range<Binary<OctetStream>>,
+) -> Result<Ranged<Binary<OctetStream>>, RangeRejection> {
+    range.apply(Binary::new(
+        &b"the first forty bytes of a recording ..."[..],
+    ))
+}
+
 /// Redirects the legacy path to the current one.
 ///
 /// 303 rather than 302: it says "see this other thing with GET", which is what
@@ -210,6 +238,7 @@ async fn main() -> kynos::Result<()> {
         queue_import,
         list_users,
         download_invoice,
+        download_recording,
         legacy_accounts,
         delete_user,
     ]);
