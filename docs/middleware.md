@@ -142,6 +142,14 @@ a `Cors` on a group owning `GET /x` advertises `GET` even where the router also
 owns `POST /x`. `Cors::allow_methods` overrides that, for a deployment fronting
 routes Kynos does not serve.
 
+**A path can be covered by more than one `Cors`.** A group's interceptor stack
+is checked against the router's and never against a sibling's, on the premise
+that no request reaches two operations — and a preflight is the request that
+does, since it is answered once per path. So the answer is assembled per scope:
+`Access-Control-Request-Method` picks the configuration whose real response will
+honour it, and a proposed method no scope covers falls back to the first, which
+refuses it in the advertised list either way.
+
 **One limit.** An endpoint-scoped `Cors` answers no preflight: an endpoint's own
 interceptors stay inside the endpoint, which is what runs them, so preflight
 registration cannot see them. Mount CORS at a router or group scope.
@@ -352,6 +360,55 @@ Four behaviours account for essentially all of it:
 
 The first three are visible in a response. The fourth is not, which is why
 declaration rather than observation is the only mechanism that catches it.
+
+### Why CORS is written here rather than borrowed
+
+`tower-http::cors` is the obvious thing to depend on, and it does not fit. Its
+configuration types — `AllowOrigin`, `AllowMethods`, `AllowHeaders`,
+`ExposeHeaders`, `MaxAge` — are opaque: the inner enums are private and the
+readers (`to_header`, `is_wildcard`) are `pub(crate)`. Kynos has to *read a
+configuration back*, twice: to refuse a combination the protocol cannot honour
+while the router is built, and to synthesize a preflight from the operations a
+path declares. Neither is possible through those types, so depending on them
+would buy the constructors and none of the behaviour. No other crate in the
+hyper or tower stack carries CORS types on their own.
+
+What is here therefore matches `tower-http`'s surface where the difference
+would be a missing capability, and departs from it where the difference is the
+point:
+
+| `tower-http` | Kynos |
+| --- | --- |
+| `allow_origin(Any / exact / list / predicate)` | `allow_any_origin`, `allow_origins`, `allow_origins_matching` |
+| `allow_origin(mirror_request)` | any permitted origin is echoed already, except under `allow_any_origin` alone |
+| `allow_headers(Any / list / mirror_request)` | `allow_any_header`, `allow_headers`; the wildcard echoes what was asked under credentials |
+| `expose_headers(Any / list)` | `expose_any_header`, `expose_headers` |
+| `max_age(Duration)` | `max_age` |
+| `allow_credentials(bool)` | `allow_credentials` |
+| `allow_methods(Any / list / mirror_request)` | derived from the operations the covering scope declares; `allow_methods` overrides |
+| `vary(list)` | derived; a declared header name is a `const`, so it is not a builder's to set |
+| `allow_credentials(predicate)`, `max_age(dynamic)` | absent |
+| `allow_private_network` | absent |
+| `CorsLayer::permissive()`, `very_permissive()` | absent |
+
+The last four rows are decisions rather than gaps.
+
+`allow_methods` is derived because the alternative is a second place to state
+what the path already declares, and two statements of one fact drift. `vary`
+is derived because `HeaderParams::VARIES` is a `const` the collision check
+reads while the program is compiled; a value a builder set at run time is not
+one the compiler can check two interceptors against.
+
+A credentials predicate and a dynamic `max-age` are per-request decisions that
+change what a *shared cache* may reuse, and neither varies on a field a cache
+keys on. `allow_private_network` sends
+`Access-Control-Allow-Private-Network`, a header from a draft that has since
+been renamed; adding it is the same squatting the rate-limit headers above
+refuse, and it stays out for the same reason.
+
+`permissive()` is a one-line constructor for the configuration a service should
+arrive at deliberately. `Cors::new()` permits nothing and every widening is a
+call a reviewer can see.
 
 ### The cost of owning the common layers
 
