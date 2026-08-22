@@ -971,3 +971,96 @@ mod protocol_configuration {
         );
     }
 }
+
+/// A served request carries the address it arrived from.
+///
+/// [`ConnectInfo`](crate::extract::connection::ConnectInfo) documents that the
+/// server inserts one before handing a request over, and its extractor
+/// `expect`s exactly that. Nothing did: `serve_http` inserted a private
+/// `ConnectionMetadata` instead, so every handler taking a `ConnectInfo`
+/// panicked on every request under the real server —
+/// [`examples/parameters.rs`](../../examples/parameters.rs) among them, where
+/// it is presented as working code.
+///
+/// The assertion is on the *value* rather than on mere presence, because an
+/// address the server invented would satisfy presence and still be wrong.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_served_request_carries_the_address_it_arrived_from() {
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(peer_address_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let address = bound.local_addrs()[0];
+    let server = tokio::spawn(bound.serve());
+
+    let (client_address, response) =
+        tokio::task::spawn_blocking(move || request_http1_from(address))
+            .await
+            .expect("blocking client joins");
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    let reported = response
+        .rsplit("\r\n\r\n")
+        .next()
+        .expect("a response has a body")
+        .to_owned();
+    assert_eq!(
+        reported,
+        client_address.to_string(),
+        "the handler was told `{reported}` and the client connected from `{client_address}`"
+    );
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// A service whose entire response is the peer address it was handed.
+///
+/// Reports `absent` rather than panicking, so a failure reads as a comparison
+/// against the address the client actually used instead of as a dropped
+/// connection.
+fn peer_address_service() -> crate::router::service::Service<()> {
+    let document = kynos_openapi::Document::new(
+        kynos_openapi::SpecVersion::V3_1,
+        kynos_openapi::Info::new("Test", "1"),
+    );
+    crate::router::service::Service::new(document, |request: crate::http::Request| async move {
+        let reported = request
+            .extensions()
+            .get::<crate::extract::connection::ConnectInfo>()
+            .map_or_else(|| "absent".to_owned(), |info| info.0.to_string());
+        crate::http::Response::new(crate::http::body::Body::from_bytes(bytes::Bytes::from(
+            reported,
+        )))
+    })
+}
+
+/// Requests over HTTP/1, reporting the address the client connected from.
+///
+/// The peer address the server sees is this socket's local address, which is
+/// what makes the comparison in the caller a real one rather than a round trip
+/// through a value the server chose.
+#[cfg(feature = "http1")]
+fn request_http1_from(address: std::net::SocketAddr) -> (std::net::SocketAddr, String) {
+    use std::io::{Read as _, Write as _};
+
+    let mut stream = std::net::TcpStream::connect(address).expect("server accepts");
+    let client_address = stream.local_addr().expect("a connected socket has one");
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .expect("request writes");
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .expect("response reads");
+    (client_address, response)
+}
