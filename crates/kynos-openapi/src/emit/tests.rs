@@ -52,12 +52,17 @@ mod blockers {
         emit::downgrade::three_two_only_constructs,
         model::{
             body::{encoding::Encoding, media_type::MediaType},
+            components::ComponentName,
             document::{Document, SpecVersion},
             parameter::{Parameter, ParameterIn, style::Style},
             paths::{item::PathItem, method::Method, operation::Operation, template::PathTemplate},
             reference::RefOr,
             response::{Response, Responses},
             schema::Schema,
+            security::{
+                SecurityScheme,
+                oauth::{OAuthFlow, OAuthFlows},
+            },
             server::Server,
             tag::Tag,
         },
@@ -88,6 +93,32 @@ mod blockers {
     /// The location a media-type construct is reported at.
     fn in_request_body(field: &str) -> String {
         format!("#/paths/~1orders/get/requestBody/content/application~1json/{field}")
+    }
+
+    /// A document defining one security scheme under `Guard`.
+    fn with_security_scheme(scheme: SecurityScheme) -> Document {
+        let mut document = document();
+        document.components.insert_security_scheme(
+            &ComponentName::new("Guard").expect("a legal component key"),
+            scheme,
+        );
+        document
+    }
+
+    /// The location a security-scheme construct is reported at.
+    fn in_security_scheme(field: &str) -> String {
+        format!("#/components/securitySchemes/Guard/{field}")
+    }
+
+    /// An OAuth 2.0 scheme carrying exactly `flows`.
+    fn oauth2(flows: OAuthFlows) -> SecurityScheme {
+        SecurityScheme::OAuth2 {
+            flows: Box::new(flows),
+            oauth2_metadata_url: None,
+            description: None,
+            deprecated: None,
+            extensions: crate::model::extensions::Extensions::new(),
+        }
     }
 
     /// One group per `blockers.push` site in `downgrade.rs`, each holding a row
@@ -232,6 +263,98 @@ mod blockers {
                     in_request_body("itemEncoding"),
                 ),
             ],
+            // A security scheme's own 3.2 fields. `deprecated` is on all five
+            // variants, so one row apiece: a walk that visited only the variant
+            // it was written against would pass a single row and still let the
+            // other four through.
+            vec![
+                (
+                    with_security_scheme(SecurityScheme::ApiKey {
+                        name: "X-Api-Key".to_owned(),
+                        location: ParameterIn::Header,
+                        description: None,
+                        deprecated: Some(true),
+                        extensions: crate::model::extensions::Extensions::new(),
+                    }),
+                    in_security_scheme("deprecated"),
+                ),
+                (
+                    with_security_scheme(SecurityScheme::Http {
+                        scheme: "bearer".to_owned(),
+                        bearer_format: None,
+                        description: None,
+                        deprecated: Some(true),
+                        extensions: crate::model::extensions::Extensions::new(),
+                    }),
+                    in_security_scheme("deprecated"),
+                ),
+                (
+                    with_security_scheme(SecurityScheme::MutualTls {
+                        description: None,
+                        deprecated: Some(true),
+                        extensions: crate::model::extensions::Extensions::new(),
+                    }),
+                    in_security_scheme("deprecated"),
+                ),
+                (
+                    with_security_scheme(SecurityScheme::OpenIdConnect {
+                        open_id_connect_url: "https://auth.example.com/.well-known".to_owned(),
+                        description: None,
+                        deprecated: Some(true),
+                        extensions: crate::model::extensions::Extensions::new(),
+                    }),
+                    in_security_scheme("deprecated"),
+                ),
+                (
+                    with_security_scheme(SecurityScheme::OAuth2 {
+                        flows: Box::new(OAuthFlows::default()),
+                        oauth2_metadata_url: None,
+                        description: None,
+                        deprecated: Some(true),
+                        extensions: crate::model::extensions::Extensions::new(),
+                    }),
+                    in_security_scheme("deprecated"),
+                ),
+            ],
+            vec![(
+                with_security_scheme(SecurityScheme::OAuth2 {
+                    flows: Box::new(OAuthFlows::default()),
+                    oauth2_metadata_url: Some(
+                        "https://auth.example.com/.well-known/oauth-authorization-server"
+                            .to_owned(),
+                    ),
+                    description: None,
+                    deprecated: None,
+                    extensions: crate::model::extensions::Extensions::new(),
+                }),
+                in_security_scheme("oauth2MetadataUrl"),
+            )],
+            vec![(
+                with_security_scheme(oauth2(OAuthFlows {
+                    device_authorization: Some(OAuthFlow::new([(
+                        "orders:read".to_owned(),
+                        "Read orders".to_owned(),
+                    )])),
+                    ..OAuthFlows::default()
+                })),
+                in_security_scheme("flows/deviceAuthorization"),
+            )],
+            // The URL on a flow 3.1 *can* express, so the flow is not the
+            // blocker and the field is. Without this row a walk could report
+            // the whole `deviceAuthorization` flow and miss the field wherever
+            // it rides on one of the four older flows.
+            vec![(
+                with_security_scheme(oauth2(OAuthFlows {
+                    authorization_code: Some(OAuthFlow {
+                        device_authorization_url: Some(
+                            "https://auth.example.com/device".to_owned(),
+                        ),
+                        ..OAuthFlow::new([("orders:read".to_owned(), "Read orders".to_owned())])
+                    }),
+                    ..OAuthFlows::default()
+                })),
+                in_security_scheme("flows/authorizationCode/deviceAuthorizationUrl"),
+            )],
         ]
     }
 
