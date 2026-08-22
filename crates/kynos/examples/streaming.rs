@@ -23,6 +23,14 @@
 //!   halfway cannot retract a 200 it already sent, so it terminates. That is a
 //!   property of streaming rather than of Kynos, and it is why a streamed
 //!   operation should validate everything it can before returning.
+//! * **A 206 can hold several parts, and only 3.2 can say so.**
+//!   `multipart/byteranges` is a sequential media type whose item *count* the
+//!   request decides, so there is no array a `schema` could describe — which is
+//!   what `itemSchema` and `itemEncoding` are for, and what the specification's
+//!   own *Streaming Byte Ranges* example writes. `RangedParts<T>` is opt-in
+//!   rather than something enabling `openapi32` switches on, because a feature
+//!   flag that changed what an existing handler put on the wire would not be
+//!   the additive thing this one claims to be.
 //! * **The same type reads.** `JsonLines<Records<Reading>>` is a request body
 //!   rather than a response, and the asymmetry is worth noticing: a request
 //!   record that fails still has a status to spend, because nothing reaches
@@ -44,10 +52,15 @@ use std::{
 };
 
 use kynos::{
-    error::rejection::BodyRejection,
-    extract::{body::json_lines::records::Records, media::MediaType, params::query::QueryString},
+    error::rejection::{BodyRejection, RangeRejection},
+    extract::{
+        body::{binary::Binary, json_lines::records::Records},
+        media::{MediaType, OctetStream},
+        params::query::QueryString,
+    },
     prelude::*,
     response::{
+        range::{Range, parts::RangedParts},
         status::NoContent,
         stream::{
             binary::BinaryStream,
@@ -168,6 +181,28 @@ async fn search(filter: QueryString<String, RsqlFilter>) -> JsonLines<Countdown>
     }
 }
 
+/// Serves a recording, whole or in as many parts as were asked for.
+///
+/// ```text
+/// curl -r 0-3,8-11 http://localhost:3000/recording -D -
+/// ```
+///
+/// Three statuses, none chosen at run time: a 200 for a field Kynos cannot
+/// apply, a 206 for one it can, and a 416 for one nothing satisfies. The 206
+/// declares two shapes, because the request decides which arrives — one part
+/// after coalescing is the recording's own media type, and several is
+/// `multipart/byteranges` with a `Content-Range` inside each part rather than
+/// on the response.
+///
+/// Overlapping and adjacent parts are merged before anything is written, which
+/// is what makes `bytes=0-0,0-0,0-0,...` cost one octet rather than three.
+#[kynos::get("/recording")]
+async fn recording(
+    range: Range<Binary<OctetStream>>,
+) -> Result<RangedParts<Binary<OctetStream>>, RangeRejection> {
+    range.apply_parts(Binary::new(&b"0123456789abcdef"[..]))
+}
+
 /// Ingests readings as newline-delimited JSON, one record at a time.
 ///
 /// The reading half of what `/readings.jsonl` writes, and the request body
@@ -197,6 +232,7 @@ async fn main() -> kynos::Result<()> {
         stream_export,
         search,
         ingest,
+        recording,
     ]);
 
     let document = router.openapi()?;
