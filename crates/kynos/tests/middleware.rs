@@ -206,3 +206,110 @@ fn the_description_carries_whichever_spelling_was_selected() {
     assert!(emitted.contains("RateLimit-Policy"), "{emitted}");
     assert!(!emitted.contains("X-RateLimit-Limit"), "{emitted}");
 }
+
+/// Compression must not re-encode a partial representation.
+///
+/// RFC 9110 section 14.1.2: when a content coding is applied, *each byte range
+/// is calculated with respect to the encoded sequence of bytes*. A 206 whose
+/// `Content-Range` names offsets into the identity octets and whose body is
+/// gzip is therefore a response whose field is wrong about its own content —
+/// and section 14.4 says the recipient of an invalid `Content-Range` MUST NOT
+/// recombine it with a stored representation, which is exactly the corruption
+/// that follows when a client does.
+#[cfg(feature = "compression")]
+mod partial {
+    use kynos::{
+        Router,
+        error::rejection::RangeRejection,
+        extract::{body::binary::Binary, media::OctetStream},
+        http::{StatusCode, header},
+        middleware::compression::Compression,
+        response::range::{Range, Ranged},
+        router::service::Service,
+    };
+
+    use super::support::{App, get};
+
+    /// Long enough and repetitive enough that gzip is worth applying, so the
+    /// control below fails if compression is simply not running.
+    fn octets() -> Vec<u8> {
+        b"0123456789".repeat(64)
+    }
+
+    #[kynos::get("/recordings/current")]
+    async fn recording(
+        range: Range<Binary<OctetStream>>,
+    ) -> Result<Ranged<Binary<OctetStream>>, RangeRejection> {
+        range.apply(Binary::new(octets()))
+    }
+
+    fn service() -> Service<App> {
+        Router::<App>::new()
+            .mount(kynos::routes![recording])
+            .intercept(Compression::new())
+            .build(App::new())
+            .expect("a describable router")
+    }
+
+    /// The 206 reaches the wire as the octets its `Content-Range` names.
+    #[tokio::test]
+    async fn a_partial_representation_is_never_compressed() {
+        let service = service();
+        let reply = get(&service, "/recordings/current")
+            .header("accept-encoding", "gzip")
+            .header("range", "bytes=0-99")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            reply.field(header::CONTENT_RANGE.as_str()).as_deref(),
+            Some("bytes 0-99/640")
+        );
+        assert_eq!(reply.field(header::CONTENT_ENCODING.as_str()), None);
+        assert_eq!(reply.body.len(), 100);
+        assert_eq!(reply.body, octets()[..100]);
+    }
+
+    /// The 416 is not compressed either: its `Content-Range` describes the
+    /// representation, and a coding applied here would say the same untruth
+    /// about a body that is a problem document rather than a part.
+    #[tokio::test]
+    async fn an_unsatisfiable_range_is_never_compressed() {
+        let service = service();
+        let reply = get(&service, "/recordings/current")
+            .header("accept-encoding", "gzip")
+            .header("range", "bytes=99999-")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(
+            reply.field(header::CONTENT_RANGE.as_str()).as_deref(),
+            Some("bytes */640")
+        );
+        assert_eq!(reply.field(header::CONTENT_ENCODING.as_str()), None);
+    }
+
+    /// The pass control. Without it the two above hold just as well against a
+    /// compression interceptor that has stopped encoding anything at all.
+    #[tokio::test]
+    async fn a_whole_representation_is_still_compressed() {
+        let service = service();
+        let reply = get(&service, "/recordings/current")
+            .header("accept-encoding", "gzip")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(
+            reply.field(header::ACCEPT_RANGES.as_str()).as_deref(),
+            Some("bytes")
+        );
+        assert_eq!(
+            reply.field(header::CONTENT_ENCODING.as_str()).as_deref(),
+            Some("gzip")
+        );
+        assert!(reply.body.len() < octets().len());
+    }
+}
