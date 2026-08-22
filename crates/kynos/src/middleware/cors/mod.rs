@@ -184,10 +184,12 @@ pub struct Cors<D = Undocumented> {
 /// [`document_response_headers`](Cors::document_response_headers) a two-field
 /// move rather than a ten-field reconstruction that a new option could silently
 /// be left out of.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub(crate) struct CorsConfig {
     /// The permitted origins, matched case-insensitively.
     pub(crate) origins: Vec<Cow<'static, str>>,
+    /// Predicates that permit an origin no list could name.
+    pub(crate) predicates: Vec<OriginPredicate>,
     /// Whether every origin is permitted.
     pub(crate) any_origin: bool,
     /// Whether credentialed requests are permitted.
@@ -205,6 +207,33 @@ pub(crate) struct CorsConfig {
     pub(crate) any_header: bool,
     /// How long a preflight result may be cached.
     pub(crate) max_age: Option<Duration>,
+}
+
+/// A test an origin passes to be permitted.
+///
+/// Shared rather than owned because a `Cors` is cloned onto every route it
+/// covers, and a predicate is configuration rather than per-request state.
+pub(crate) type OriginPredicate = std::sync::Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
+/// Hand-written because a predicate has nothing to print.
+///
+/// The count is printed instead of the closures: what a reader needs from a
+/// `{:?}` of a CORS configuration is whether one is there at all.
+impl std::fmt::Debug for CorsConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CorsConfig")
+            .field("origins", &self.origins)
+            .field("predicates", &self.predicates.len())
+            .field("any_origin", &self.any_origin)
+            .field("credentials", &self.credentials)
+            .field("expose", &self.expose)
+            .field("methods", &self.methods)
+            .field("headers", &self.headers)
+            .field("any_header", &self.any_header)
+            .field("max_age", &self.max_age)
+            .finish()
+    }
 }
 
 impl Cors<Undocumented> {
@@ -235,6 +264,38 @@ impl<D> Cors<D> {
         self.config
             .origins
             .extend(origins.into_iter().map(Into::into));
+        self
+    }
+
+    /// Permits every origin `predicate` accepts.
+    ///
+    /// For an allow-list a `Vec` cannot hold — every subdomain of one host, or
+    /// a tenant registry consulted at startup. The response echoes the origin
+    /// that asked, never `*`, so this composes with
+    /// [`allow_credentials`](Cors::allow_credentials) where
+    /// [`allow_any_origin`](Cors::allow_any_origin) does not.
+    ///
+    /// The predicate sees the `Origin` field as a string; a value that is not
+    /// one is refused before it is called. It runs once per cross-origin
+    /// request and once per preflight, so it belongs on the cheap side —
+    /// resolve what it needs while the router is being assembled and capture
+    /// the result.
+    ///
+    /// ```no_run
+    /// # use kynos::middleware::cors::Cors;
+    /// let cors = Cors::new()
+    ///     .allow_origins_matching(|origin| origin.ends_with(".example.com"))
+    ///     .allow_credentials();
+    /// ```
+    ///
+    /// Additive with [`allow_origins`](Cors::allow_origins): an origin is
+    /// permitted if the list names it or any predicate accepts it.
+    #[must_use]
+    pub fn allow_origins_matching<F>(mut self, predicate: F) -> Self
+    where
+        F: Fn(&str) -> bool + Send + Sync + 'static,
+    {
+        self.config.predicates.push(std::sync::Arc::new(predicate));
         self
     }
 
@@ -332,11 +393,13 @@ impl CorsConfig {
         }
 
         // An origin is ASCII, and the scheme and host it is built from are
-        // compared case-insensitively.
+        // compared case-insensitively. A value that is not a string is not an
+        // origin, so no predicate is asked about it either.
         origin.to_str().is_ok_and(|origin| {
             self.origins
                 .iter()
                 .any(|permitted| permitted.eq_ignore_ascii_case(origin))
+                || self.predicates.iter().any(|permits| permits(origin))
         })
     }
 

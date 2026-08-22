@@ -303,6 +303,64 @@ async fn a_group_scoped_cors_advertises_only_the_methods_it_covers() {
     );
 }
 
+/// A predicate reaches both answers a browser sees: the preflight, and the
+/// real response. Two places read the allow-list, so a widening that only one
+/// of them honoured would let a preflight pass and the request that followed
+/// it fail.
+#[tokio::test]
+async fn a_predicate_permits_an_origin_on_the_preflight_and_the_response_alike() {
+    let service = router()
+        .intercept(Cors::new().allow_origins_matching(|origin| origin.ends_with(".example.com")))
+        .build(())
+        .expect("a describable router");
+
+    let (status, fields) = send(
+        &service,
+        Method::OPTIONS,
+        "/widgets",
+        &[
+            ("origin", "https://app.example.com"),
+            ("access-control-request-method", "GET"),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_ORIGIN).as_deref(),
+        Some("https://app.example.com"),
+        "the preflight refused an origin the predicate accepts"
+    );
+
+    let (_, fields) = send(
+        &service,
+        Method::GET,
+        "/widgets",
+        &[("origin", "https://app.example.com")],
+    )
+    .await;
+
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_ORIGIN).as_deref(),
+        Some("https://app.example.com"),
+        "the response refused an origin the preflight had already promised"
+    );
+
+    let (_, fields) = send(
+        &service,
+        Method::GET,
+        "/widgets",
+        &[("origin", "https://app.example.net")],
+    )
+    .await;
+
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        None,
+        "permitted an origin the predicate rejects"
+    );
+}
+
 /// Two groups covering one path each get their own answer.
 ///
 /// `Group`'s stack is checked against the *router's*, and never against a
