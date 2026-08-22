@@ -411,10 +411,15 @@ fn build_flow(flow: &FlowArgs) -> proc_macro2::TokenStream {
 }
 
 /// The challenge an HTTP authentication scheme sends without being told.
+///
+/// `basic` carries `charset="UTF-8"`, per RFC 7617 section 2: it is what tells
+/// a client to send a non-ASCII password as UTF-8, and `UTF-8` is the only
+/// value the registry defines. No `realm` in either, since its value is a
+/// deployment's to choose and `challenge = "..."` is how a scheme says so.
 fn default_challenge(kind: &Ident) -> proc_macro2::TokenStream {
     match kind.to_string().as_str() {
         "bearer" => quote!(::core::option::Option::Some("Bearer")),
-        "basic" => quote!(::core::option::Option::Some("Basic")),
+        "basic" => quote!(::core::option::Option::Some(r#"Basic charset="UTF-8""#)),
         _ => quote!(::core::option::Option::None),
     }
 }

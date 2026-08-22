@@ -71,8 +71,16 @@ impl<T: Send + 'static> SecurityScheme for Basic<T> {
         kynos_openapi::SecurityScheme::basic()
     }
 
+    /// RFC 7617 section 2: `charset` is what tells a client to send a non-ASCII
+    /// password as UTF-8, and `UTF-8` is the only value the registry defines.
+    ///
+    /// No `realm`. The parameter is required by the grammar and its value is a
+    /// string a *deployment* chooses -- one this type cannot know, and one no
+    /// default would be right about. A scheme needing it declares its own
+    /// challenge through `#[derive(SecurityScheme)]`, which is what
+    /// `examples/security_schemes.rs` shows.
     fn challenge() -> Option<&'static str> {
-        Some("Basic")
+        Some(r#"Basic charset="UTF-8""#)
     }
 }
 
