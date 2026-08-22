@@ -8,7 +8,7 @@
 //!   --features openapi32,macros,server,http1,json
 //! ```
 //!
-//! Three things are worth noticing:
+//! Four things are worth noticing:
 //!
 //! * **3.1 cannot describe a stream, so the whole subtree is 3.2-only.** What
 //!   3.2 adds is `itemSchema`: a way to say what one *item* of a sequential
@@ -23,6 +23,10 @@
 //!   halfway cannot retract a 200 it already sent, so it terminates. That is a
 //!   property of streaming rather than of Kynos, and it is why a streamed
 //!   operation should validate everything it can before returning.
+//! * **The same type reads.** `JsonLines<Records<Reading>>` is a request body
+//!   rather than a response, and the asymmetry is worth noticing: a request
+//!   record that fails still has a status to spend, because nothing reaches
+//!   the socket until the handler's future resolves.
 //!
 //! Server-Sent Events are the fourth sequential media type, and the only one
 //! with protocol rules of its own — event names, resumption, reconnection
@@ -40,11 +44,15 @@ use std::{
 };
 
 use kynos::{
-    extract::{media::MediaType, params::query::QueryString},
+    error::rejection::BodyRejection,
+    extract::{body::json_lines::records::Records, media::MediaType, params::query::QueryString},
     prelude::*,
-    response::stream::{
-        binary::BinaryStream,
-        json::{JsonLines, JsonSeq},
+    response::{
+        status::NoContent,
+        stream::{
+            binary::BinaryStream,
+            json::{JsonLines, JsonSeq},
+        },
     },
     server::Server,
 };
@@ -160,6 +168,27 @@ async fn search(filter: QueryString<String, RsqlFilter>) -> JsonLines<Countdown>
     }
 }
 
+/// Ingests readings as newline-delimited JSON, one record at a time.
+///
+/// The reading half of what `/readings.jsonl` writes, and the request body
+/// never exists in memory as a whole. A record that is not JSON ends the
+/// stream with a 400; one that is JSON and does not fit `Reading` is a 422
+/// naming which record it was, and the record after it still arrives. Both
+/// statuses are already on the operation, because they are the ones
+/// `BodyRejection` declares.
+#[kynos::post("/readings")]
+async fn ingest(
+    JsonLines { mut items }: JsonLines<Records<Reading>>,
+) -> Result<NoContent, BodyRejection> {
+    let mut total = 0.0;
+    while let Some(reading) = items.next().await {
+        total += reading?.value;
+    }
+
+    println!("ingested readings totalling {total}");
+    Ok(NoContent)
+}
+
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
     let router = Router::<()>::new().mount(kynos::routes![
@@ -167,6 +196,7 @@ async fn main() -> kynos::Result<()> {
         stream_sequence,
         stream_export,
         search,
+        ingest,
     ]);
 
     let document = router.openapi()?;
