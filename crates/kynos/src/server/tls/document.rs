@@ -13,6 +13,16 @@ pub(in crate::server) fn apply_mutual_tls(
 ) -> std::result::Result<(), ServerError> {
     use kynos_openapi::{ComponentName, RefOr, SecurityRequirement, SecurityScheme};
 
+    fn require_mutual_tls(requirements: &mut Vec<SecurityRequirement>) {
+        if requirements.is_empty() {
+            requirements.push(SecurityRequirement::scheme(MUTUAL_TLS_NAME));
+        } else {
+            for requirement in requirements {
+                requirement.0.entry(MUTUAL_TLS_NAME.to_owned()).or_default();
+            }
+        }
+    }
+
     let scheme = SecurityScheme::mutual_tls();
     match document.components.security_schemes.get(MUTUAL_TLS_NAME) {
         Some(RefOr::Item(existing)) if existing == &scheme => {}
@@ -35,11 +45,12 @@ pub(in crate::server) fn apply_mutual_tls(
             &mut path.head,
             &mut path.patch,
             &mut path.trace,
-        ] {
-            if let Some(operation) = operation {
-                if let Some(requirements) = &mut operation.security {
-                    require_mutual_tls(requirements);
-                }
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Some(requirements) = &mut operation.security {
+                require_mutual_tls(requirements);
             }
         }
         #[cfg(feature = "openapi32")]
@@ -53,16 +64,6 @@ pub(in crate::server) fn apply_mutual_tls(
                 if let Some(requirements) = &mut operation.security {
                     require_mutual_tls(requirements);
                 }
-            }
-        }
-    }
-
-    fn require_mutual_tls(requirements: &mut Vec<SecurityRequirement>) {
-        if requirements.is_empty() {
-            requirements.push(SecurityRequirement::scheme(MUTUAL_TLS_NAME));
-        } else {
-            for requirement in requirements {
-                requirement.0.entry(MUTUAL_TLS_NAME.to_owned()).or_default();
             }
         }
     }
