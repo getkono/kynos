@@ -211,12 +211,8 @@ async fn an_unsafe_method_is_not_cached() {
     }
 }
 
-// --- What the cache adds --------------------------------------------------
+// --- What a precondition may answer ----------------------------------------
 
-/// `Age` is declared and set, and it is not described.
-///
-/// A cache-to-cache field: a generated client has no use for it, which is the
-/// same judgement `Vary` and the CORS set already get.
 /// RFC 9110 section 15.4.5: 304 indicates a request that "would have resulted
 /// in a 200 (OK) response if it were not for the fact that the condition
 /// evaluated to false".
@@ -246,6 +242,12 @@ async fn a_204_carrying_a_matching_validator_is_not_turned_into_a_304() {
     );
 }
 
+// --- What the cache adds --------------------------------------------------
+
+/// `Age` is declared and set, and it is not described.
+///
+/// A cache-to-cache field: a generated client has no use for it, which is the
+/// same judgement `Vary` and the CORS set already get.
 #[test]
 fn the_age_field_is_declared_and_not_described() {
     let document = Router::<()>::new()

@@ -541,6 +541,38 @@ declared. It is answered **after** the chain runs, because RFC 9110 section 13
 evaluates a precondition against the current representation and only the handler
 knows what that is — a `Continued` deliberately cannot change a status.
 
+### And only from a 200
+
+RFC 9110 section 15.4.5 defines 304 as the answer to a request that "would have
+resulted in a 200 (OK) response if it were not for the fact that the condition
+evaluated to false". The status is therefore part of the precondition rather
+than a filter for failures, and the guard is an equality against 200 rather
+than `is_success()`.
+
+The difference is five statuses — 201, 202, 203, 204 and 206 — and 206 is the
+one that bites. A 304 replays `ETag` and `Vary` and never `Content-Range`, so a
+client resuming a download would be told its copy is current with no way to
+tell whether that meant its *range* or the whole representation.
+
+### What an unsafe method's precondition does not get
+
+`If-None-Match` on a `POST` or `PUT` is read and then dropped: the request
+proceeds as though it carried no precondition.
+
+Section 13.2.2 step 3 says an `If-None-Match` that evaluates false answers 304
+for `GET` and `HEAD` and **412** for anything else, and 412 is the create-only
+idiom — `If-None-Match: *` on a `PUT`, meaning *only if it does not exist yet*.
+Under Kynos that precondition is ignored and the write lands, which is the lost
+update the mechanism exists to prevent.
+
+It is a gap rather than a decision, and it is a gap for a structural reason:
+412 is a status `NotModified` does not declare, and widening `Short` to carry it
+would add 412 to every operation the interceptor covers — including every safe
+one, which can never produce it. Closing it properly needs a precondition guard
+whose declaration varies with the method, which the contribution model states
+once per interceptor rather than once per operation. Until then, a service
+relying on create-only semantics must enforce them in the handler.
+
 ### What is never stored
 
 `no-store` from either side, `no-cache`, `private`, `Vary: *`, any response
