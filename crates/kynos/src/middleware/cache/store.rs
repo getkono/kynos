@@ -47,7 +47,7 @@ struct Stored {
     vary: Vec<String>,
     /// The request's values for those names, in the same order.
     selecting: Vec<Option<HeaderValue>>,
-    stored_at: std::time::SystemTime,
+    recorded_at: std::time::SystemTime,
     /// How long it may be reused without revalidation.
     freshness: Duration,
 }
@@ -68,7 +68,7 @@ impl StoredResponse {
             body,
             vary,
             selecting,
-            stored_at: std::time::SystemTime::now(),
+            recorded_at: std::time::SystemTime::now(),
             freshness,
         }))
     }
@@ -100,7 +100,7 @@ impl StoredResponse {
     /// How long ago it was stored.
     #[must_use]
     pub fn age(&self) -> Duration {
-        self.0.stored_at.elapsed().unwrap_or_default()
+        self.0.recorded_at.elapsed().unwrap_or_default()
     }
 
     /// Whether it may still be reused without revalidation.
