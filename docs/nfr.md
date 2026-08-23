@@ -159,6 +159,16 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | A response that stated no freshness is never reused | [`tests/cache.rs`](../crates/kynos/tests/cache.rs) counting handler calls across three requests | `enforced` |
 | security | A response setting a cookie is never stored | `every_refusal_has_a_case` over the whole `Unstorable` set, counted against its variants | `enforced` |
 | correctness | Both ways a header group reaches the wire write the same fields | [`response/headers.rs`](../crates/kynos/src/response/headers.rs) asserting the two paths *agree*, rather than asserting each | `enforced` |
+| correctness | A response that advertises `Accept-Ranges` is never content-coded | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs)'s `partial` for the rule and its control, and `ranged_assets` resuming an asset download against the tag it was served with | `enforced` |
+
+**The last row is a known limit as much as a guarantee.** It says a static
+asset under `Compression` ships uncompressed, which is a bandwidth cost on
+exactly the files worth encoding. It is recorded here rather than left to the
+interceptor's documentation because it is a deliberate trade against RFC 9110
+§8.8.1 — one strong validator cannot name both the identity file and an encoded
+one, and the encoder is downstream of where both the range and the tag are
+decided. [`middleware.md`](middleware.md) carries the reasoning and the two
+deployments that get the compression back.
 
 The first row is the enforcement of [`middleware.md`](middleware.md), and it
 runs: without it the soundness invariant would be an intention rather than a

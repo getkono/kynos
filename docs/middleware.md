@@ -90,15 +90,48 @@ on. Two interceptors rewriting one compose; two setting one header do not. An
 encoding a consumer must know about is a header, which is why `Compression`
 declares `Content-Encoding` rather than re-encoding silently.
 
-**A partial response is left alone.** `Compression` refuses a 206, a 416, and
-anything carrying a `Content-Range`, whatever the client accepted. RFC 9110
-§14.1.2 calculates a byte range *with respect to the encoded sequence of bytes*
-when a coding is applied, so encoding a 206 after its `Content-Range` has been
-written leaves a field describing octets the body no longer carries — and §14.4
-tells the recipient of an invalid `Content-Range` not to recombine it with a
-stored representation, which is exactly the silent corruption a client that does
-recombine gets. The status is checked and so is the field, so a partial response
-arriving from a `layer_unchecked` beneath is caught the same way.
+**A response that ranges is left alone.** `Compression` refuses a 206, a 416,
+anything carrying a `Content-Range`, and anything carrying `Accept-Ranges`,
+whatever the client accepted. RFC 9110 §14.1.2 calculates a byte range *with
+respect to the encoded sequence of bytes* when a coding is applied, and Kynos
+calculates one over the identity octets — so a resource cannot be both encoded
+here and ranged beneath.
+
+The first three are the range already taken. Encoding a 206 after its
+`Content-Range` has been written leaves a field describing octets the body no
+longer carries, and §14.4 tells the recipient of an invalid `Content-Range` not
+to recombine it with a stored representation, which is exactly the silent
+corruption a client that does recombine gets. The status is checked and so is
+the field, so a partial response arriving from a `layer_unchecked` beneath is
+caught the same way.
+
+`Accept-Ranges` is the range still to come, and it is the one that bites. An
+asset set mints a strong `ETag` over the file's contents and slices every range
+from those same octets. Encode the 200 and that one tag names two
+representations — which §8.8.1 forbids in as many words, since a strong
+validator must change *whenever a change occurs to the representation data that
+would be observable in the content of a 200 response*, and a server whose
+representations differ only in metadata "needs to incorporate additional
+information in the validator to distinguish those representations". Without it,
+§13.1.5's `If-Range` matches on a resume it exists to refuse, §15.3.7.3
+licenses the client to combine, and identity octets land on the end of an
+encoded prefix. Nothing errors; the file is just wrong.
+
+**The cost is real, and it lands on the content most worth compressing.** A
+stylesheet or a JS bundle served by an `AssetSet` under `Compression` ships
+uncompressed, because every file the asset server answers advertises ranges.
+Kynos takes that over a corruption a client cannot detect, and the encoder is
+not where the trade can be reopened: re-deriving the validator over the encoded
+octets would be sound, and the range and the `ETag` are both settled by the
+handler or the asset server before the interceptor is handed the response.
+
+Two ways round it, both outside the encoder:
+
+* mount `Compression` on a group that does not cover the asset set, so the API
+  is encoded and the files stay resumable — router scope is the only reason the
+  two meet at all;
+* let a reverse proxy or CDN encode the files, which is sound there only
+  because it owns the validator it sends as well as the coding.
 
 ## Why the rate-limit headers keep a prefix
 
