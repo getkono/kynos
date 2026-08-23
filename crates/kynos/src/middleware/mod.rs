@@ -64,6 +64,7 @@ pub mod cors;
 pub mod limits;
 pub mod rate_limit;
 pub mod request_id;
+pub mod security_headers;
 pub mod stack;
 
 // Object-safe forms of the two RPITIT traits, so a heterogeneous chain fits in

@@ -39,6 +39,7 @@ use std::{convert::Infallible, net::Ipv4Addr, time::Duration};
 
 use kynos::{
     http,
+    middleware::security_headers::SecurityHeaders,
     middleware::{
         Continued, Interceptor, Next,
         compression::Compression,
@@ -326,6 +327,21 @@ async fn main() -> kynos::Result<()> {
         )
         // Compression negotiates on `Accept-Encoding`. `min_size` exists
         // because compressing a 40-byte body costs more than it saves.
+        // Browser-directed fields. Declared so a second interceptor cannot
+        // also set one, and described nowhere -- a generated REST client does
+        // nothing with `X-Frame-Options`.
+        //
+        // `Strict-Transport-Security` is asked for here and is sent only over a
+        // connection known to be secure, per RFC 6797 section 7.2. Behind a
+        // TLS-terminating proxy that means `trusted_proxies` has to be set, or
+        // Kynos cannot tell a proxied HTTPS request from a plaintext one and
+        // says nothing rather than guessing.
+        .intercept(
+            SecurityHeaders::new()
+                .content_security_policy("default-src 'none'; frame-ancestors 'none'")
+                .strict_transport_security(Duration::from_secs(31_536_000))
+                .include_subdomains(),
+        )
         .intercept(Compression::new().min_size(1_024))
         // Limits, each contributing the response it can produce: 504, 413 and
         // 503 respectively. Nothing below lists those statuses, and every

@@ -188,6 +188,19 @@ impl Connection {
         self.0.in_process
     }
 
+    /// Whether Kynos itself terminated TLS for this connection.
+    ///
+    /// The transport as *this* process saw it, and nothing about the hop before
+    /// it: a request that reached a TLS-terminating proxy over HTTPS and this
+    /// server over plaintext answers `false` here. What the client used is
+    /// [`Forwarded::client_is_secure`](crate::http::forwarded::Forwarded::client_is_secure),
+    /// which is a claim rather than an observation and so needs a trust policy
+    /// before it means anything.
+    #[must_use]
+    pub fn is_secure(&self) -> bool {
+        self.0.tls.is_some()
+    }
+
     /// The server name the client asked for through SNI.
     ///
     /// `None` when the connection is not TLS — which includes every connection

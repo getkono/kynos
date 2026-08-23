@@ -387,6 +387,12 @@ async fn under_capacity(Query(query): Query<UserQuery>) -> NoContent {
     NoContent
 }
 
+/// The one operation under the security-header set.
+#[kynos::get("/secure/headers")]
+async fn under_security_headers() -> NoContent {
+    NoContent
+}
+
 /// The one operation under a rate limit.
 #[kynos::get("/limits/rate")]
 async fn under_rate_limit() -> NoContent {
@@ -432,6 +438,14 @@ fn service() -> kynos::Result<kynos::router::service::Service<App>> {
             kynos::router::group::Group::<App>::new("/")
                 .intercept(RateLimit::new(AllowsOnce::new()))
                 .mount(kynos::routes![under_rate_limit]),
+        )
+        .group(
+            kynos::router::group::Group::<App>::new("/")
+                .intercept(
+                    kynos::middleware::security_headers::SecurityHeaders::new()
+                        .strict_transport_security(Duration::from_secs(31_536_000)),
+                )
+                .mount(kynos::routes![under_security_headers]),
         );
 
     // A ranged file, which is the one layer whose success has three statuses.
@@ -738,6 +752,9 @@ async fn exercise_the_limits(client: &TestClient<App>) {
     });
     held.assert_status(StatusCode::NO_CONTENT);
     refused.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+
+    let secured = client.get("/secure/headers").send().await;
+    secured.assert_status(StatusCode::NO_CONTENT);
 
     client
         .get("/limits/rate")

@@ -214,6 +214,7 @@ fn every_interceptor_kynos_ships_is_accounted_for() {
         "Cors",
         "RateLimit",
         "RequestId",
+        "SecurityHeaders",
         "SetCookies",
         "Timeout",
     ];

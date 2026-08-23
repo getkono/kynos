@@ -420,6 +420,45 @@ What stops this becoming a capability:
   finished. So the property this document opens with — that a declaration
   cannot disagree with behaviour, because it is the same text — is untouched.
 
+## Fields a browser reads and a client does not
+
+`SecurityHeaders` sends `X-Content-Type-Options`, `X-Frame-Options`,
+`Referrer-Policy`, and on request `Permissions-Policy`, `Content-Security-Policy`
+and `Strict-Transport-Security`.
+
+Every one is defined by a browser specification and read by browsers alone, so
+the group sets `DESCRIBED` to `false` and stays out of the emitted document —
+the same call `Compression` makes for `Content-Encoding` and `Cors` for the
+`Access-Control-*` set. They are still *declared*, so two interceptors setting
+`Referrer-Policy` remain a compile error. The two questions are "can this
+collide" and "does a consumer need to hear about it", and only the first is
+about correctness.
+
+**`Strict-Transport-Security` is conditional, and has to be.** RFC 6797 section
+7.2 says an HSTS host "MUST NOT include the STS header field in HTTP responses
+conveyed over non-secure transport". So it rides only where the client's own
+connection is known to have been secure: `Connection::is_secure` when Kynos
+terminated TLS, or a trusted hop's `proto` when it did not.
+
+Behind a TLS-terminating proxy that means `Router::trusted_proxies` has to be
+set or the field is never sent. That is the honest failure rather than an
+awkward one. Unset, Kynos cannot tell a proxied HTTPS request from a plaintext
+one, and a guess would send the field over exactly the transport the
+specification forbids.
+
+**There is no permissive constructor.** `SecurityHeaders::new()` sends the three
+fields that are safe for an API under any configuration — an API serves no
+framed document and has no referrer worth leaking. CSP and HSTS are deployment
+decisions, so each is a call a reviewer can see, which is the position
+`Cors::new()` takes for the same reason.
+
+**Two names here are defined by nothing vendored.** `X-Content-Type-Options` is
+WHATWG's, spread across Fetch and HTML, and `X-Frame-Options` is RFC 7034, which
+is Informational and largely superseded by CSP's `frame-ancestors`. Both are
+`X-` prefixed names predating RFC 6648 and kept by every browser regardless.
+They are sent because browsers read them, not because a specification here
+requires them.
+
 ## Repeatable response fields
 
 `Set-Cookie` is the field HTTP forbids comma-joining, and it is the reason
