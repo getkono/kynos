@@ -232,8 +232,11 @@ mod partial {
         error::rejection::RangeRejection,
         extract::{body::binary::Binary, media::OctetStream},
         http::{StatusCode, header},
-        middleware::compression::Compression,
-        response::range::{Range, Ranged},
+        middleware::{compression::Compression, conditional::ETag},
+        response::{
+            headers::WithHeaders,
+            range::{Range, Ranged},
+        },
         router::service::Service,
     };
 
@@ -259,9 +262,21 @@ mod partial {
         Binary::new(octets())
     }
 
+    /// The same octets under a *strong* validator.
+    #[kynos::get("/recordings/tagged")]
+    async fn tagged() -> WithHeaders<Binary<OctetStream>, ETag> {
+        WithHeaders::new(Binary::new(octets()), ETag::strong("rev-42"))
+    }
+
+    /// The same octets under a *weak* one, which is the control.
+    #[kynos::get("/recordings/weakly-tagged")]
+    async fn weakly_tagged() -> WithHeaders<Binary<OctetStream>, ETag> {
+        WithHeaders::new(Binary::new(octets()), ETag::weak("rev-42"))
+    }
+
     fn service() -> Service<App> {
         Router::<App>::new()
-            .mount(kynos::routes![recording, transcript])
+            .mount(kynos::routes![recording, transcript, tagged, weakly_tagged])
             .intercept(Compression::new())
             .build(App::new())
             .expect("a describable router")
@@ -344,6 +359,51 @@ mod partial {
 
         assert_eq!(reply.status, StatusCode::OK);
         assert_eq!(reply.field(header::ACCEPT_RANGES.as_str()), None);
+        assert_eq!(
+            reply.field(header::CONTENT_ENCODING.as_str()).as_deref(),
+            Some("gzip")
+        );
+        assert!(reply.body.len() < octets().len());
+    }
+
+    /// A strong validator stops the encoder.
+    ///
+    /// RFC 9110 section 8.8.1: "if the origin server sends the same validator
+    /// for a representation with a gzip content coding applied as it does for a
+    /// representation with no content coding, then that validator is weak."
+    /// Encoding beneath a strong tag makes the tag name two representations,
+    /// which is exactly what section 8.8.1 says it may not.
+    #[tokio::test]
+    async fn a_strongly_tagged_representation_is_never_compressed() {
+        let service = service();
+        let reply = get(&service, "/recordings/tagged")
+            .header("accept-encoding", "gzip")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(
+            reply.field(header::CONTENT_ENCODING.as_str()),
+            None,
+            "a strong tag was left naming both the identity and the encoded form"
+        );
+        assert_eq!(reply.body.len(), octets().len());
+    }
+
+    /// A weak validator does not, which is the control.
+    ///
+    /// A weak validator is *defined* as one that may be shared by two
+    /// representations, so a response that already says `W/` is telling the
+    /// truth after encoding. The pair differs in exactly that prefix.
+    #[tokio::test]
+    async fn a_weakly_tagged_representation_is_still_compressed() {
+        let service = service();
+        let reply = get(&service, "/recordings/weakly-tagged")
+            .header("accept-encoding", "gzip")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
         assert_eq!(
             reply.field(header::CONTENT_ENCODING.as_str()).as_deref(),
             Some("gzip")
