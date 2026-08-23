@@ -77,6 +77,29 @@ impl HeaderParams for ContentEncoding {
     }
 }
 
+/// Whether the response carries a *strong* validator.
+///
+/// RFC 9110 section 8.8.1 says outright that "if the origin server sends the
+/// same validator for a representation with a gzip content coding applied as it
+/// does for a representation with no content coding, then that validator is
+/// weak". So encoding a strongly tagged response makes the tag a lie: one
+/// strong tag naming two representations.
+///
+/// The encoder cannot correct it from here. The only sanctioned way to write a
+/// response header is the `Adds` group, and declaring `etag` there would make
+/// `Compression` and
+/// [`Cache::deriving_etags`](crate::middleware::cache::Cache::deriving_etags)
+/// a compile error on a stack that is otherwise right.
+///
+/// A *weak* validator may be shared across representations -- that is what weak
+/// means -- so it is left alone and the response still compresses.
+fn strongly_tagged(headers: &http::HeaderMap) -> bool {
+    headers
+        .get(http::header::ETAG)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|tag| !crate::http::etag::is_weak(tag.trim()))
+}
+
 /// The deprecated spellings a recipient must treat as `token`.
 ///
 /// RFC 9110 sections 8.4.1.1 and 8.4.1.3: "A recipient SHOULD consider
@@ -416,6 +439,7 @@ impl<C: Sync + 'static> Interceptor<C> for Compression {
         let leave_alone = continued
             .headers()
             .contains_key(http::header::CONTENT_ENCODING)
+            || strongly_tagged(continued.headers())
             || continued
                 .headers()
                 .contains_key(http::header::ACCEPT_RANGES)
@@ -589,5 +613,48 @@ mod tests {
     #[test]
     fn an_unparsable_weight_is_a_refusal() {
         assert_eq!(quality("gzip;q=abc", "gzip"), Some(0.0));
+    }
+}
+
+#[cfg(test)]
+mod etag_tests {
+    use super::strongly_tagged;
+    use crate::http::{HeaderMap, HeaderValue, header};
+
+    fn tagged(value: Option<&str>) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        if let Some(value) = value {
+            headers.insert(
+                header::ETAG,
+                HeaderValue::from_str(value).expect("a printable field"),
+            );
+        }
+        headers
+    }
+
+    /// A strong tag stops the encoder; a weak one does not.
+    ///
+    /// RFC 9110 section 8.8.1: a validator shared by a coded and an uncoded
+    /// representation *is* weak, so a response that already says `W/` is
+    /// telling the truth after encoding and one that does not is not.
+    #[test]
+    fn only_a_strong_validator_stops_the_encoder() {
+        let cases: &[(&str, Option<&str>, bool)] = &[
+            ("no validator at all", None, false),
+            ("a strong tag", Some("\"rev-42\""), true),
+            ("a weak tag", Some("W/\"rev-42\""), false),
+            // Lowercase `w/` is not the weakness prefix: RFC 9110 section 8.8.3
+            // writes it `W/`, case-sensitively.
+            ("a lowercase weakness prefix", Some("w/\"rev-42\""), true),
+            (
+                "a strong tag with surrounding space",
+                Some("  \"rev-42\"  "),
+                true,
+            ),
+        ];
+
+        for (description, tag, expected) in cases {
+            assert_eq!(strongly_tagged(&tagged(*tag)), *expected, "{description}");
+        }
     }
 }

@@ -111,6 +111,28 @@ entry — checking only the first is a live bug against the second. And an *empt
 field value excludes nothing: it "implies that the user agent does not want any
 content coding in response", which is identity, not nothing.
 
+**A strongly tagged response is left alone.** RFC 9110 section 8.8.1 says it in
+as many words: "if the origin server sends the same validator for a
+representation with a gzip content coding applied as it does for a
+representation with no content coding, then that validator is weak". Encoding
+beneath a strong tag therefore makes the tag name two representations, which is
+the one thing section 8.8.1 forbids.
+
+A **weak** validator is left alone in the other sense — it still compresses.
+Weak is *defined* as shareable across representations, so a response that
+already says `W/` is telling the truth after encoding. That is also the way out
+for a service that wants both: send `W/"..."`, which is the right validator for
+cache revalidation anyway, since `If-None-Match` takes the weak comparison.
+
+Why the encoder does not simply re-tag per coding — `"rev-42-gzip"` beside
+`"rev-42"` — which would be sound and would keep strong validators: the only
+sanctioned way to write a response header is the `Adds` group, and declaring
+`etag` there would make `Compression` and `Cache::deriving_etags` a compile
+error on a stack that is otherwise correct. Re-tagging is what
+[#30](https://github.com/getkono/kynos/issues/30) needs before a ranged
+representation can be encoded at all, and it wants the validator minted where
+the range and the coding are both known rather than bolted on at the encoder.
+
 **A response that ranges is left alone.** `Compression` refuses a 206, a 416,
 anything carrying a `Content-Range`, and anything carrying `Accept-Ranges`,
 whatever the client accepted. RFC 9110 §14.1.2 calculates a byte range *with
@@ -582,10 +604,11 @@ validate the encoded body with `If-None-Match`, be answered 304 — which replay
 identity representation.
 
 The mis-ordering is not what causes it. `Compression` encoding *any* strongly
-tagged response has the same defect, with no cache in the stack at all, because
-the encoder does not look at `ETag`. It predates the partial-response work and
-is filed as [#29](https://github.com/getkono/kynos/issues/29), which carries the
-reproduction and what each candidate fix costs.
+tagged response had the same defect, with no cache in the stack at all, because
+the encoder did not look at `ETag`. That is [#29](https://github.com/getkono/kynos/issues/29),
+and it is closed: the encoder now leaves a strongly tagged response alone, so
+the stored-and-then-encoded case has nothing left to go wrong in. A weak
+validator still compresses, and is the right validator for revalidation anyway.
 
 ### Why a hit is not a new response
 
