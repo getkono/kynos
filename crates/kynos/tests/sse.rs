@@ -87,9 +87,9 @@ fn read_for(path: &str, address: std::net::SocketAddr, deadline: Duration) -> Ve
     while started.elapsed() < deadline {
         let mut line = String::new();
         match reader.read_line(&mut line) {
-            Ok(0) => break,
+            // A clean end of stream and a read failure both stop the read.
+            Ok(0) | Err(_) => break,
             Ok(_) => lines.push(line.trim_end().to_owned()),
-            Err(_) => break,
         }
     }
 

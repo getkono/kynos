@@ -267,9 +267,7 @@ async fn every_arrangement_of_a_sequence_carries_the_same_records() {
                         expected.push(Reading { at });
                     }
 
-                    for _ in 0..trailing {
-                        bytes.push(RECORD_SEPARATOR);
-                    }
+                    bytes.extend(std::iter::repeat_n(RECORD_SEPARATOR, trailing));
 
                     let arrangement = format!(
                         "leading {leading_blank}, interior {interior_blank}, pretty {pretty}, \

@@ -9,7 +9,7 @@
 use kynos::{
     Router,
     http::{Method, StatusCode, header},
-    router::group::Group,
+    router::{assets::Asset, group::Group},
 };
 
 #[path = "support/mod.rs"]
@@ -34,7 +34,7 @@ fn served() -> Router<()> {
 /// The excluded file is not in the binary, and the rest are.
 #[test]
 fn the_set_holds_what_the_directory_held_minus_what_was_excluded() {
-    let paths: Vec<&str> = Fixture::ASSETS.iter().map(|asset| asset.path()).collect();
+    let paths: Vec<&str> = Fixture::ASSETS.iter().map(Asset::path).collect();
 
     assert_eq!(paths, ["css/app.css", "docs/index.html", "index.html"]);
     assert_eq!(Fixture::COUNT, 3);
@@ -57,7 +57,7 @@ fn the_set_holds_what_the_directory_held_minus_what_was_excluded() {
 /// could not use, which is the whole reason the walk sorts.
 #[test]
 fn the_set_is_in_a_stable_order() {
-    let mut sorted: Vec<&str> = Fixture::ASSETS.iter().map(|asset| asset.path()).collect();
+    let mut sorted: Vec<&str> = Fixture::ASSETS.iter().map(Asset::path).collect();
     let listed = sorted.clone();
     sorted.sort_unstable();
 

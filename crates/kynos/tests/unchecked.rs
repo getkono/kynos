@@ -101,7 +101,7 @@ async fn a_catch_all_matches_neither_its_own_prefix_nor_a_bare_trailing_slash() 
 async fn a_catch_all_hands_its_handler_what_it_captured() {
     async fn echo_capture(request: Request) -> Response {
         let captured = kynos::unchecked::captured(&request, "path")
-            .map_or_else(|| "absent".to_owned(), |value| value.into_owned());
+            .map_or_else(|| "absent".to_owned(), std::borrow::Cow::into_owned);
 
         Response::new(Body::from_bytes(bytes::Bytes::from(captured)))
     }
@@ -122,7 +122,7 @@ async fn a_catch_all_hands_its_handler_what_it_captured() {
 async fn a_capture_is_decoded_the_way_a_described_one_is() {
     async fn echo_capture(request: Request) -> Response {
         let captured = kynos::unchecked::captured(&request, "path")
-            .map_or_else(|| "absent".to_owned(), |value| value.into_owned());
+            .map_or_else(|| "absent".to_owned(), std::borrow::Cow::into_owned);
 
         Response::new(Body::from_bytes(bytes::Bytes::from(captured)))
     }
