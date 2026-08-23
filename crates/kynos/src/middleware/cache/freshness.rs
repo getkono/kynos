@@ -62,8 +62,12 @@ pub(super) enum Unstorable {
     /// The response said nothing about how long it may be reused, and no
     /// default was configured.
     NoFreshness,
-    /// The body's length is unknown, or past the configured maximum.
-    Body,
+    // There is deliberately no `Body` variant. Capping a stored body is the
+    // interceptor's job: `bounded` refuses one whose length is unknown or past
+    // `max_body_bytes`, and returns before any reason is named. A variant here
+    // could not be produced by `storable`, so it would owe a case that no test
+    // could write -- and `every_refusal_has_a_case` would have to exempt it
+    // from the count that makes the set closed.
 }
 
 /// Whether a response may be stored, and for how long.

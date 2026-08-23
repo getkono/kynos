@@ -110,8 +110,7 @@ fn every_refusal_has_a_case() {
     }
 
     // Counted against the enum, so a refusal added without a case fails the
-    // build. `Body` is decided by the interceptor rather than here, so it is
-    // the one variant with no row -- named, so the count says why.
+    // build.
     let variants = [
         Unstorable::Method,
         Unstorable::Status,
@@ -123,10 +122,9 @@ fn every_refusal_has_a_case() {
         Unstorable::SetCookie,
         Unstorable::Authorized,
         Unstorable::NoFreshness,
-        Unstorable::Body,
     ];
 
-    // An exhaustive match, so a twelfth variant stops this compiling.
+    // An exhaustive match, so an eleventh variant stops this compiling.
     for variant in variants {
         let _: &str = match variant {
             Unstorable::Method => "method",
@@ -139,11 +137,10 @@ fn every_refusal_has_a_case() {
             Unstorable::SetCookie => "set-cookie",
             Unstorable::Authorized => "authorized",
             Unstorable::NoFreshness => "no freshness",
-            Unstorable::Body => "decided by the interceptor, not here",
         };
     }
 
-    assert_eq!(cases.len() + 1, variants.len(), "a refusal has no case");
+    assert_eq!(cases.len(), variants.len(), "a refusal has no case");
 }
 
 /// A narrowed directive is read as the whole one.
