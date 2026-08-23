@@ -118,6 +118,7 @@ The core is what every operation passes through, so it freezes with the release:
 | CORS | — | settling |
 | Limits: body size, timeout, concurrency | — | settling |
 | Correlation identifiers | — | settling |
+| Cross-site request forgery | — | open |
 | Panic policy | — | settling |
 | Request tracing | `trace` | settling |
 | YAML emission | `yaml` | settling |
