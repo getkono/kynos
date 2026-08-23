@@ -11,7 +11,7 @@
 //! [`print_request_response.rs`](print_request_response.rs) is the counterpart
 //! to this file — the exchange an observer is not permitted to touch.
 //!
-//! Four things are worth noticing:
+//! Five things are worth noticing:
 //!
 //! * **An observer declares nothing, which is why it may see everything.** It
 //!   cannot change a request or a response, so no operation's description gains
@@ -20,11 +20,16 @@
 //!   interceptor doing the same work would have to declare an empty
 //!   contribution forever, which says nothing and costs a chain link.
 //! * **Kynos depends on the facade and never on a subscriber.** The `trace`
-//!   feature pulls in `tracing` and stops. Where spans go, how they are
+//!   feature pulls in `tracing` and stops. Where the records go, how they are
 //!   formatted and what is filtered stays with the application — which is why
 //!   the first statement in `main` is the one line here another deployment would
 //!   certainly write differently.
-//! * **A span is keyed by the operation, not by the request path.**
+//! * **Two events per request, not a span.** An observer is told when a request
+//!   arrives and when a response leaves and holds nothing in between, so there
+//!   is no suspension point to keep a span entered across. Nothing is lost: the
+//!   pair carries what a span would have, and the closing event adds `status`
+//!   and `latency`.
+//! * **The records are keyed by the operation, not by the request path.**
 //!   [`Route::path`] is the same string that appears as the `paths` key, so a
 //!   field's cardinality is bounded by the number of operations rather than by
 //!   the number of distinct URLs a client can invent — and it cannot disagree
@@ -129,9 +134,13 @@ impl<C> Observer<C> for Slo {
 
 /// Lists users.
 ///
-/// The body logs with a plain `tracing::info!` and inherits the span `Trace`
-/// opened, so the operation, the matched path and the request id are already on
-/// the line. There is no per-endpoint logging to attach and nothing to forget.
+/// The body logs with a plain `tracing::info!`, which inherits whatever span
+/// the application established rather than anything `Trace` opened -- an
+/// observer opens none. So this line carries `count` and nothing else: the
+/// operation, the matched path and the status are on `Trace`'s own two events,
+/// which bracket it. Tying them together is the subscriber's job, and an
+/// application-opened span is where that would come from. There is still no
+/// per-endpoint logging to attach and nothing to forget.
 #[kynos::get("/users")]
 async fn list_users() -> NoContent {
     tracing::info!(count = 0, "listed users");
@@ -163,12 +172,16 @@ async fn main() -> kynos::Result<()> {
         .init();
 
     let router = Router::<()>::new()
-        // Mounted first so the identifier exists before the span that records
-        // it. `Trace` puts `request_id` on every span, and without a source
-        // there is nothing to put there.
+        // Mounted first so a response carries an identifier at all. Where it
+        // lands is worth seeing: `trust_client(false)` means an inbound header
+        // is not believed, so `request_id` is empty on the arrival event and
+        // carries the minted value on the departure one. It rides on whichever
+        // end the header is present at, and with this setting that is the end
+        // Kynos wrote it to.
         .intercept(RequestId::new().trust_client(false))
-        // What Kynos ships: one span per operation, carrying `method`,
-        // `matched_path`, `operation_id`, `status`, `latency` and `request_id`.
+        // What Kynos ships: two events per request -- one on arrival and one
+        // on departure -- carrying `method`, `matched_path`, `operation_id` and
+        // `request_id`, with `status` and `latency` on the closing one.
         // `record_headers` is an allow-list rather than a deny-list, so a header
         // carrying a credential cannot reach a log by being forgotten -- which
         // is why only the correlation identifier this file mounts appears here,

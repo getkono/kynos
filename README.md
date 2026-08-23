@@ -69,7 +69,7 @@ Each of these is something another Rust framework offers and Kynos does not, and
 | `server` | yes | The `tokio`/`hyper` server. tokio is the only supported runtime |
 | `http1`, `http2` | yes | Protocol versions |
 | `json` | yes | Application JSON request and response codecs |
-| `trace` | yes | Per-operation `tracing` spans. Facade only; the subscriber stays yours |
+| `trace` | yes | Two `tracing` events per request, keyed by operation. Facade only; the subscriber stays yours |
 | `tls` | no | `rustls`, including client-certificate verification |
 | `form`, `multipart`, `protobuf`, `cookie` | no | Additional codecs |
 | `compression` | no | Response compression |

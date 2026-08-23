@@ -316,7 +316,9 @@ async fn main() -> kynos::Result<()> {
         // response, so it contributes nothing to any description -- which is
         // exactly why tracing is one: a log line is not part of the contract.
         // Kynos depends on the `tracing` facade and never on a subscriber, so
-        // choosing where the spans go stays the application's.
+        // choosing where the records go stays the application's. `Trace` emits
+        // two events per request rather than one span: an observer holds
+        // nothing between the two ends it is told about.
         .observe(
             Trace::new()
                 .level(tracing::Level::INFO)
