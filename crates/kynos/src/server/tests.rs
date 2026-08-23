@@ -618,6 +618,10 @@ fn mutual_tls_rejects_an_existing_incompatible_component() {
 
 #[cfg(all(feature = "tls", feature = "http1"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+// Long because it is one scenario end to end: a CA, a server identity, a client
+// identity, a real socket and a verified round trip. Splitting it would put the
+// setup out of sight of the assertion that depends on it.
+#[expect(clippy::too_many_lines)]
 async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
     use http_body_util::{BodyExt as _, Empty};
     use hyper_util::rt::TokioIo;

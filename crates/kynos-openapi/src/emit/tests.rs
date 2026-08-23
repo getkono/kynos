@@ -127,6 +127,10 @@ mod blockers {
     /// Grouped rather than flat so the count below means something: two sites
     /// report three fields apiece from a loop, and a flat list could not be
     /// compared against the sites.
+    // Long because it is a table, not a procedure: one row per construct the
+    // downgrade reports, and the count below is only meaningful if every one is
+    // written out here.
+    #[expect(clippy::too_many_lines)]
     fn ledger() -> Vec<Vec<(Document, String)>> {
         vec![
             vec![(
