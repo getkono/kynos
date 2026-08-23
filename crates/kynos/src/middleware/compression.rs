@@ -192,6 +192,29 @@ async fn encode(coding: Coding, bytes: Bytes) -> io::Result<Bytes> {
 /// Only a response whose length is already known is encoded. A body that cannot
 /// state its length is a stream, and buffering one to compress it would defeat
 /// the reason it is a stream.
+///
+/// # A response that ranges is never encoded
+///
+/// Anything carrying `Accept-Ranges` is left as it is, as are a 206, a 416 and
+/// anything carrying `Content-Range`. RFC 9110 section 14.1.2 calculates a byte
+/// range over the *encoded* octets while Kynos calculates one over the identity
+/// octets, and section 8.8.1 will not let one strong validator name both forms
+/// — so a client resuming a download it began encoded would splice identity
+/// bytes onto an encoded prefix and corrupt the file with no error anywhere.
+///
+/// **This costs real bandwidth**, on exactly the content most worth
+/// compressing: an [`AssetSet`](crate::router::assets::AssetSet) advertises
+/// ranges on every file it serves, so a stylesheet or a bundle under this
+/// interceptor ships uncompressed. Two ways out, both outside the encoder:
+///
+/// * mount `Compression` on a [`Group`](crate::router::group::Group) that does
+///   not cover the asset set, so the API is encoded and the files are ranged;
+/// * let a reverse proxy or CDN encode them, which is sound only because it
+///   owns the validator it sends as well as the coding.
+///
+/// Encoding here and re-deriving the validator afterwards is not the third
+/// option it looks like: the range and its `ETag` are settled by the handler or
+/// the asset server before this interceptor is handed the response.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Compression {
     /// The smallest response worth encoding, in bytes.
@@ -237,17 +260,43 @@ impl<C: Sync + 'static> Interceptor<C> for Compression {
         // A response that is already encoded stays as it is: `Content-Encoding`
         // is one header, and something beneath has already spoken for it.
         //
-        // So does a partial one. RFC 9110 section 14.1.2 calculates a byte range
-        // with respect to the *encoded* sequence of bytes when a coding is
-        // applied, so encoding a 206 after its `Content-Range` was written makes
-        // the field describe octets the body no longer carries -- and section
-        // 14.4 tells the recipient of an invalid `Content-Range` not to
-        // recombine, which is the corruption a client that does recombine gets.
-        // The status is checked *and* the field, so a partial response reaching
-        // this from a `layer_unchecked` beneath is caught too.
+        // So does anything a byte range is calculated against. RFC 9110 section
+        // 14.1.2 calculates a range with respect to the *encoded* sequence of
+        // bytes when a coding is applied, and Kynos calculates one against the
+        // identity octets -- so the two cannot both be true of one resource.
+        //
+        // A range already taken is the visible half. Encoding a 206 after its
+        // `Content-Range` was written makes the field describe octets the body
+        // no longer carries, and section 14.4 tells the recipient of an invalid
+        // `Content-Range` not to recombine -- which is the corruption a client
+        // that does recombine gets. The status is checked *and* the field, so a
+        // partial response reaching this from a `layer_unchecked` beneath is
+        // caught too.
+        //
+        // A range still to come is the quiet half, and `Accept-Ranges` is what
+        // announces it. Encoding that 200 leaves the sender's validator naming
+        // the identity octets while the body is encoded, and section 8.8.1
+        // requires a strong validator to change *whenever a change occurs to
+        // the representation data that would be observable in the content of a
+        // 200 response* -- a server whose representations differ only in
+        // metadata "needs to incorporate additional information in the
+        // validator to distinguish those representations". One tag over both
+        // forms does not, so section 13.1.5's `If-Range` passes where it exists
+        // to refuse, section 15.3.7.3 licenses the client to combine, and the
+        // 206 it is handed is sliced from the identity file.
+        //
+        // The alternative is to encode and re-derive the validator over what
+        // was sent, and that is not a capability this has: the range and its
+        // validator are decided by the handler or the asset server, before this
+        // interceptor is ever handed the response. Refusing to encode a
+        // range-advertising resource is what makes the two representations
+        // never both exist.
         let leave_alone = continued
             .headers()
             .contains_key(http::header::CONTENT_ENCODING)
+            || continued
+                .headers()
+                .contains_key(http::header::ACCEPT_RANGES)
             || matches!(
                 continued.status(),
                 http::StatusCode::PARTIAL_CONTENT | http::StatusCode::RANGE_NOT_SATISFIABLE
