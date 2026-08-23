@@ -99,6 +99,22 @@ fn every_refusal_has_a_case() {
             "a domain carrying a semicolon",
             Cookie::new("a", "1").domain("x;y"),
         ),
+        (
+            "a domain carrying a space",
+            Cookie::new("a", "1").domain("example .com"),
+        ),
+        (
+            "a __Host- cookie with a Domain",
+            Cookie::new("__Host-a", "1").domain("example.com"),
+        ),
+        (
+            "a __Host- cookie scoped to a path other than /",
+            Cookie::new("__Host-a", "1").path("/admin"),
+        ),
+        (
+            "a name and value over 4096 octets",
+            Cookie::new("a", "x".repeat(4096)),
+        ),
     ];
 
     for (description, cookie) in cases {
@@ -115,6 +131,11 @@ fn every_refusal_has_a_case() {
         Cookie::new("a", "abc-123_%"),
         Cookie::new("a", "1").path("/x/y"),
         Cookie::new("a", "1").domain("sub.example.com"),
+        Cookie::new("__Host-a", "1"),
+        Cookie::new("__Host-a", "1").path("/"),
+        Cookie::new("__Secure-a", "1"),
+        // Name and value together at the 4096-octet limit, which is legal.
+        Cookie::new("a", "x".repeat(4095)),
     ] {
         assert!(
             rendered(&legal).is_some(),
@@ -127,4 +148,47 @@ fn every_refusal_has_a_case() {
 #[test]
 fn an_empty_value_is_a_value() {
     assert_eq!(rendered(&Cookie::new("a", "")).as_deref(), Some("a="));
+}
+
+/// `draft-ietf-httpbis-rfc6265bis-22` section 4.1.3.1: a `__Secure-` cookie
+/// "will have been set with a Secure attribute".
+///
+/// The requirement is on the user agent, which discards the whole `Set-Cookie`
+/// otherwise — so a server that omits `Secure` here believes it set a cookie
+/// the client never stored. The same failure `SameSite=None` is already
+/// upgraded to avoid, and the same remedy.
+#[test]
+fn a_secure_prefixed_cookie_carries_secure_without_being_asked() {
+    let rendered = rendered(&Cookie::new("__Secure-session", "abc")).expect("a legal cookie");
+    assert!(rendered.contains("; Secure"), "{rendered}");
+}
+
+/// Section 4.1.3.2: a `__Host-` cookie "will have been set with a Secure
+/// attribute, a Path attribute with a value of /, and no Domain attribute".
+///
+/// `Secure` and `Path=/` are supplied when absent, because neither narrows what
+/// the caller asked for. A `Domain`, or a `Path` naming something other than
+/// `/`, is refused instead: dropping the first would widen the cookie beyond
+/// one host and rewriting the second would widen it beyond one subtree, and
+/// silently widening a cookie's scope is worse than not setting it.
+#[test]
+fn a_host_prefixed_cookie_is_completed_rather_than_left_to_be_discarded() {
+    let rendered = rendered(&Cookie::new("__Host-session", "abc")).expect("a legal cookie");
+
+    assert!(rendered.contains("; Secure"), "{rendered}");
+    assert!(rendered.contains("; Path=/"), "{rendered}");
+    assert!(!rendered.contains("Domain="), "{rendered}");
+}
+
+/// The prefixes are matched case-sensitively, per "a case-sensitive match for
+/// the string".
+///
+/// `__host-` is an ordinary name and carries no requirement, so completing it
+/// would be inventing an attribute the caller did not ask for.
+#[test]
+fn a_prefix_in_the_wrong_case_is_an_ordinary_name() {
+    let rendered = rendered(&Cookie::new("__host-session", "abc")).expect("a legal cookie");
+
+    assert!(!rendered.contains("Secure"), "{rendered}");
+    assert!(!rendered.contains("Path="), "{rendered}");
 }
