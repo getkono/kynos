@@ -648,13 +648,25 @@ and which every interceptor Kynos ships was already doing: all seven ignored the
 
 ## Conformance
 
-The invariant is a claim about a running service, so it needs to be tested like
-one: a conformance harness property-testing live responses against the emitted
-document across the full matrix of owned layers, in CI.
+The invariant is a claim about a running service, so it has to be tested like
+one: a harness checking live responses against the emitted document across the
+matrix of owned layers, in CI.
 
-That harness does not exist. Until it does, the soundness invariant above is an
-intention rather than a guarantee, and this section is a requirement rather
-than a description. It is recorded in [`nfr.md`](nfr.md#middleware).
+That harness is [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs), and it
+runs. It asserts in both directions, which is what makes it a conformance check
+rather than a smoke test: `assert_conformance` says nothing happened the
+document did not predict, and `assert_declared_responses_covered` says nothing
+the document predicts went unexercised. The second is coverage over the
+*contract*, and it is why every interceptor there sits on a group holding
+exactly one operation — a limit mounted at the router would declare its status
+on all of them, and every one would then have to be made to produce it.
+[`nfr.md`](nfr.md#middleware) carries it as `enforced`, and what it caught on
+its first run is in
+[`testing.md`](testing.md#what-the-harness-found-on-its-first-run).
+
+What it is not is a property test. The matrix is enumerated, so it covers the
+layers Kynos owns in the arrangements that file names — not every stack a
+reader can assemble. Adding an owned layer means adding it there.
 
 ## Rationale
 
