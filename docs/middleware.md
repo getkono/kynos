@@ -111,6 +111,22 @@ entry — checking only the first is a live bug against the second. And an *empt
 field value excludes nothing: it "implies that the user agent does not want any
 content coding in response", which is identity, not nothing.
 
+**The length is restated with the body.** RFC 9110 section 8.6 counts the octets
+actually transferred, and section 8.4 defines the representation "in terms of the
+coded form" — so a `Content-Length` written before encoding names a body that no
+longer exists. The same section is blunt about it: "a sender MUST NOT forward a
+message with a Content-Length header field value that is known to be incorrect."
+
+`content-length` is therefore in `ContentEncoding::NAMES`, and the group states
+the encoded length whenever it states a coding. Restated rather than removed:
+removing it would leave hyper to derive one from the body's size hint, which is
+right only while the body is buffered, and stating it is right whatever the body
+becomes.
+
+Reaching the defect took a handler that set its own length, because hyper
+derives one when the field is absent and honours it when it is present. That is
+also why it went unnoticed.
+
 **A strongly tagged response is left alone.** RFC 9110 section 8.8.1 says it in
 as many words: "if the origin server sends the same validator for a
 representation with a gzip content coding applied as it does for a

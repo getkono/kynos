@@ -51,10 +51,12 @@ impl Coding {
 pub struct ContentEncoding {
     /// The coding applied, or `None` when the response was left as it was.
     coding: Option<Coding>,
+    /// The encoded length, where a coding was applied.
+    length: Option<usize>,
 }
 
 impl HeaderParams for ContentEncoding {
-    const NAMES: &'static [&'static str] = &["content-encoding"];
+    const NAMES: &'static [&'static str] = &["content-encoding", "content-length"];
     const DESCRIBED: bool = false;
 
     // `Vary` rides on every response, encoded or not: what the cache has to know
@@ -70,10 +72,28 @@ impl HeaderParams for ContentEncoding {
             return Vec::new();
         };
 
-        vec![(
+        let mut fields = vec![(
             http::header::CONTENT_ENCODING,
             http::HeaderValue::from_static(coding.token()),
-        )]
+        )];
+
+        // RFC 9110 section 8.6 counts the octets actually transferred, and
+        // section 8.4 defines the representation "in terms of the coded form" --
+        // so a length written before encoding describes a body that no longer
+        // exists. Section 8.6 is blunt about the consequence: "a sender MUST NOT
+        // forward a message with a Content-Length header field value that is
+        // known to be incorrect."
+        //
+        // Restated rather than removed. Removing it would leave hyper to derive
+        // one from the body's size hint, which is right today and depends on the
+        // body being buffered; stating it is right whatever the body becomes.
+        if let Some(length) = self.length {
+            if let Ok(value) = http::HeaderValue::from_str(&length.to_string()) {
+                fields.push((http::header::CONTENT_LENGTH, value));
+            }
+        }
+
+        fields
     }
 }
 
@@ -474,12 +494,13 @@ impl<C: Sync + 'static> Interceptor<C> for Compression {
 
         // Failing to read or to encode leaves the response as the handler
         // produced it, since neither is something this may answer with.
-        let coding = match body.collect().await {
+        let encoded = match body.collect().await {
             Ok(collected) => {
                 let bytes = collected.to_bytes();
                 if let Ok(encoded) = encode(coding, bytes.clone()).await {
+                    let length = encoded.len();
                     continued.set_body(crate::http::body::Body::from_bytes(encoded));
-                    Some(coding)
+                    Some((coding, length))
                 } else {
                     continued.set_body(crate::http::body::Body::from_bytes(bytes));
                     None
@@ -488,7 +509,10 @@ impl<C: Sync + 'static> Interceptor<C> for Compression {
             Err(_) => None,
         };
 
-        Ok(continued.with_headers(ContentEncoding { coding }))
+        Ok(continued.with_headers(ContentEncoding {
+            coding: encoded.map(|(coding, _)| coding),
+            length: encoded.map(|(_, length)| length),
+        }))
     }
 }
 

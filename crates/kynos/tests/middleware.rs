@@ -268,6 +268,32 @@ mod partial {
         WithHeaders::new(Binary::new(octets()), ETag::strong("rev-42"))
     }
 
+    /// The same octets under a handler-stated `Content-Length`.
+    ///
+    /// The length is what makes the re-encode defect reachable: hyper derives
+    /// one from the body when the field is absent, and honours the field when
+    /// it is present.
+    #[kynos::get("/recordings/measured")]
+    async fn measured() -> WithHeaders<Binary<OctetStream>, StatedLength> {
+        WithHeaders::new(Binary::new(octets()), StatedLength(octets().len()))
+    }
+
+    /// A `Content-Length` a handler attaches to its own response.
+    #[derive(Clone, Copy, Debug)]
+    struct StatedLength(usize);
+
+    impl kynos::extract::params::header::HeaderParams for StatedLength {
+        const NAMES: &'static [&'static str] = &["content-length"];
+        const DESCRIBED: bool = false;
+
+        fn encode(&self) -> Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)> {
+            vec![(
+                header::CONTENT_LENGTH,
+                kynos::http::HeaderValue::from_str(&self.0.to_string()).expect("a decimal length"),
+            )]
+        }
+    }
+
     /// The same octets under a *weak* one, which is the control.
     #[kynos::get("/recordings/weakly-tagged")]
     async fn weakly_tagged() -> WithHeaders<Binary<OctetStream>, ETag> {
@@ -276,7 +302,13 @@ mod partial {
 
     fn service() -> Service<App> {
         Router::<App>::new()
-            .mount(kynos::routes![recording, transcript, tagged, weakly_tagged])
+            .mount(kynos::routes![
+                recording,
+                transcript,
+                tagged,
+                weakly_tagged,
+                measured
+            ])
             .intercept(Compression::new())
             .build(App::new())
             .expect("a describable router")
@@ -388,6 +420,44 @@ mod partial {
             "a strong tag was left naming both the identity and the encoded form"
         );
         assert_eq!(reply.body.len(), octets().len());
+    }
+
+    /// The length a re-encoded response states is the length it sends.
+    ///
+    /// RFC 9110 section 8.6: "a sender MUST NOT forward a message with a
+    /// Content-Length header field value that is known to be incorrect", and
+    /// section 8.4 defines the representation "in terms of the coded form" — so
+    /// a length written before encoding names a body that no longer exists.
+    ///
+    /// The handler here states its own length, which is what makes the case
+    /// reachable: without one, hyper derives it from the encoded body and the
+    /// defect is invisible.
+    #[tokio::test]
+    async fn a_re_encoded_response_states_the_length_it_actually_sends() {
+        let service = service();
+        let reply = get(&service, "/recordings/measured")
+            .header("accept-encoding", "gzip")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(
+            reply.field(header::CONTENT_ENCODING.as_str()).as_deref(),
+            Some("gzip")
+        );
+
+        let stated = reply
+            .field(header::CONTENT_LENGTH.as_str())
+            .expect("a stated length")
+            .parse::<usize>()
+            .expect("a decimal length");
+
+        assert_eq!(
+            stated,
+            reply.body.len(),
+            "the stated length names the identity octets, not the ones sent"
+        );
+        assert!(stated < octets().len());
     }
 
     /// A weak validator does not, which is the control.
