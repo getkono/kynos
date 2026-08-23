@@ -643,8 +643,8 @@ cardinality is bounded and the label cannot disagree with the description.
 It is *not* handed one while declaring, because there is no declaring step left
 to hand it to. Declaring differently per operation is expressed by mounting
 different instances at different scopes — which is the same principle as above,
-and which every interceptor Kynos ships was already doing: all seven ignored the
-`Route` argument the old `contribution` method gave them.
+and which every interceptor Kynos ships was already doing: not one of them
+consulted the `Route` argument the old `contribution` method gave it.
 
 ## Conformance
 
