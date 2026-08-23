@@ -1,0 +1,127 @@
+name: Dependency change
+description: A pinned crate is behind or vulnerable, or the dependency graph should change.
+title: "chore(deps): "
+labels: ["chore"]
+type: Task
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Dependabot already opens pull requests for semver-compatible updates.**
+        Do not file an issue saying a crate has a newer version; it will be
+        closed as already handled.
+
+        The table in [`docs/architecture.md#dependencies`](https://github.com/getkono/kynos/blob/master/docs/architecture.md#dependencies)
+        is the maximal scope of what Kynos intends to depend on. A crate absent
+        from it is not a candidate, and *"can we add X?" is answered by naming
+        the row X displaces* rather than by arguing that X is good. Four crates
+        are ambient and may be named anywhere — `http`, `bytes`, `serde`,
+        `thiserror`; every other crate may be named only under the path the
+        table gives it. `httparse` and `h2` are never named directly, and
+        rustls is the only TLS backend that ships.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: This is not a semver-compatible bump that Dependabot already handles.
+          required: true
+        - label: I read `docs/architecture.md#dependencies`.
+          required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - A pinned crate is behind and the gap matters
+        - Security advisory (RUSTSEC or CVE)
+        - Add a new dependency
+        - Remove or replace a dependency
+    validations:
+      required: true
+
+  - type: input
+    id: crate
+    attributes:
+      label: Crate
+      description: As it appears — or would appear — in `[workspace.dependencies]`.
+      placeholder: tokio-rustls
+    validations:
+      required: true
+
+  - type: input
+    id: current
+    attributes:
+      label: Pinned today
+      description: The version in `[workspace.dependencies]`. Write `none` for a new dependency.
+      placeholder: 0.26.4
+    validations:
+      required: true
+
+  - type: input
+    id: proposed
+    attributes:
+      label: Proposed
+      description: The version or replacement you propose. Write `none` for a removal.
+      placeholder: 0.27.0
+    validations:
+      required: true
+
+  - type: input
+    id: advisory
+    attributes:
+      label: Advisory or changelog
+      description: >
+        A link that justifies the change — the RUSTSEC advisory, the upstream
+        release notes, or the changelog entry. Without one there is nothing to
+        evaluate.
+      placeholder: https://rustsec.org/advisories/RUSTSEC-0000-0000
+    validations:
+      required: true
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - Semver-compatible; no code change
+        - Breaking upstream, but contained under the path the table gives it
+        - Breaking upstream and it reaches Kynos's public API
+        - Raises the MSRV above 1.85
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: named-in
+    attributes:
+      label: Named in
+      description: >
+        The module path that names this crate — the "Named in" column of the
+        containment table. `ambient` is valid only for `http`, `bytes`, `serde`
+        and `thiserror`.
+      placeholder: crates/kynos/src/server/tls/
+    validations:
+      required: true
+
+  - type: textarea
+    id: justification
+    attributes:
+      label: Justification
+      description: >
+        What this unlocks or fixes. For a new dependency, name the row it
+        displaces and the feature gate it arrives behind. For a removal, say
+        what covers the gap it leaves.
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: >
+        If you tried it, what `mise run check`, `mise run features:check` and
+        `mise run msrv:check` reported against the proposed version.
+      render: text
