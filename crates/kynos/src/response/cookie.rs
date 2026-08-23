@@ -106,6 +106,15 @@ impl Cookie {
     /// to a browser, and the second would need a date to render — which means a
     /// temporal crate, every one of which is optional and off by default here.
     ///
+    /// `0` is outside the ABNF, and deliberately. RFC 6265bis section 4.1.1
+    /// writes `max-age-av = "Max-Age" BWS "=" BWS non-zero-digit *DIGIT`, so no
+    /// spelling of "expire now" is inside it — a leading `-` is no better, since
+    /// the rule admits neither. What every user agent implements is the parsing
+    /// algorithm in section 5.2.2, whose step 7 reads any `delta-seconds` "less
+    /// than or equal to zero" as the earliest representable date. Emitting the
+    /// value the algorithm defines beats emitting one the grammar also rejects
+    /// and no algorithm mentions.
+    ///
     /// The `path` and `domain` have to match the cookie being deleted, because
     /// a browser keys on all three.
     #[must_use]
@@ -189,9 +198,42 @@ impl Cookie {
             return None;
         }
 
+        // RFC 6265bis section 5.6 step 5: a user agent ignores a
+        // `set-cookie-string` whose name and value together exceed 4096 octets.
+        // The field as a whole is not what is measured, so the attributes do
+        // not count towards it.
+        if self.name.len().saturating_add(self.value.len()) > MAX_NAME_AND_VALUE {
+            return None;
+        }
+
+        // Sections 4.1.3.1 and 4.1.3.2. Both prefixes are enforced by the user
+        // agent, which discards the whole field when its requirements are
+        // unmet -- so ignoring them here means believing a cookie was set that
+        // the client never stored.
+        let host_prefixed = self.name.starts_with(HOST_PREFIX);
+        if host_prefixed {
+            // A `Domain` contradicts the prefix outright, and a `Path` naming
+            // anything but `/` contradicts it too. Neither is completed:
+            // dropping the first would widen the cookie past one host and
+            // rewriting the second would widen it past one subtree, and
+            // silently widening a cookie's scope is worse than not setting it.
+            if self.domain.is_some() {
+                return None;
+            }
+            if self.path.as_deref().is_some_and(|path| path != "/") {
+                return None;
+            }
+        }
+
         let mut rendered = format!("{}={}", self.name, self.value);
 
-        if let Some(path) = &self.path {
+        if host_prefixed {
+            // Supplied rather than required, because `/` is what the prefix
+            // means and it narrows nothing the caller asked for. Without it the
+            // user agent derives a default path from the request URI, which is
+            // not `/` and would fail the check.
+            rendered.push_str("; Path=/");
+        } else if let Some(path) = &self.path {
             if !is_attribute_value(path) {
                 return None;
             }
@@ -199,7 +241,7 @@ impl Cookie {
             rendered.push_str(path);
         }
         if let Some(domain) = &self.domain {
-            if !is_attribute_value(domain) {
+            if !is_domain_value(domain) {
                 return None;
             }
             rendered.push_str("; Domain=");
@@ -211,8 +253,13 @@ impl Cookie {
         }
         // `SameSite=None` without `Secure` is rejected by every current browser,
         // and silently. Sending it anyway would be a cookie the service believes
-        // it set and the client never stored.
-        if self.secure || self.same_site == Some(SameSite::None) {
+        // it set and the client never stored. Both name prefixes require
+        // `Secure` for the same reason and get the same treatment.
+        if self.secure
+            || self.same_site == Some(SameSite::None)
+            || host_prefixed
+            || self.name.starts_with(SECURE_PREFIX)
+        {
             rendered.push_str("; Secure");
         }
         if self.http_only {
@@ -228,6 +275,37 @@ impl Cookie {
 
         HeaderValue::from_str(&rendered).ok()
     }
+}
+
+/// The most a cookie's name and value may total, per RFC 6265bis section 5.6.
+const MAX_NAME_AND_VALUE: usize = 4096;
+
+/// RFC 6265bis section 4.1.3.2's prefix, matched case-sensitively.
+const HOST_PREFIX: &str = "__Host-";
+
+/// RFC 6265bis section 4.1.3.1's prefix, matched case-sensitively.
+const SECURE_PREFIX: &str = "__Secure-";
+
+/// RFC 6265 section 4.1.1 `domain-value`, which is a `<subdomain>` per RFC 1034
+/// section 3.5 as updated by RFC 1123 section 2.1.
+///
+/// Narrower than [`is_attribute_value`], which is right for `Path` — a path may
+/// carry a space — and wrong here: a host may not. A leading `.` is tolerated
+/// because RFC 6265 section 5.2.3 strips one rather than refusing it, and
+/// refusing what every user agent accepts would be stricter than the protocol.
+fn is_domain_value(text: &str) -> bool {
+    let text = text.strip_prefix('.').unwrap_or(text);
+
+    !text.is_empty()
+        && text.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
 }
 
 /// RFC 9110 section 5.6.2 `token`.
