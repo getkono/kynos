@@ -41,9 +41,10 @@ use std::{net::Ipv4Addr, time::Duration};
 
 use kynos::{
     Router,
+    http::forwarded::TrustedProxies,
     middleware::rate_limit::{
         Quota, Quotas, RateLimit, RateLimitStore, StoreFailure,
-        key::{And, ByPeerAddress, ByRoute},
+        key::{And, ByClientAddress, ByRoute},
     },
     prelude::*,
     response::status::NoContent,
@@ -119,12 +120,21 @@ async fn render() -> NoContent {
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
     let router = Router::<()>::new()
+        // Which hops may say who the client is. Without this, `ByClientAddress`
+        // reads the socket peer and every client behind the load balancer
+        // shares one bucket -- a per-IP limit that is silently a global one.
+        //
+        // One hop, because this deployment is assumed to sit behind exactly one
+        // proxy. Trusting more than are really there is how a client gets to
+        // choose the bucket it counts against: it writes its own `Forwarded`,
+        // and the extra hop of trust reaches the element it wrote.
+        .trusted_proxies(TrustedProxies::hops(1))
         // Per caller, per operation, with two windows. The key is what makes
         // "per endpoint" mean the `paths` key rather than the request path, so
         // a client cannot mint buckets by inventing URLs.
         .intercept(
             RateLimit::new(
-                Quotas::new(And(ByPeerAddress, ByRoute), MokaCounters::new())
+                Quotas::new(And(ByClientAddress, ByRoute), MokaCounters::new())
                     // A short window with headroom for a burst, and a long one
                     // that bounds the day. Both are enforced; both are
                     // reported.

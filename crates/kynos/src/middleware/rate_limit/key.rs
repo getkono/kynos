@@ -47,6 +47,49 @@ impl<C> RateLimitKey<C> for ByPeerAddress {
     }
 }
 
+/// The client address, resolved through the router's trusted-proxy policy.
+///
+/// What [`ByPeerAddress`] should be for any service behind a load balancer.
+/// The peer of a proxied request is the proxy, so keying on it counts every
+/// client of that proxy against one bucket — a per-IP limit that is silently a
+/// global one.
+///
+/// Resolution is the router's, not this key's:
+/// [`Router::trusted_proxies`](crate::Router::trusted_proxies) states which
+/// hops may be believed, and until it is called this behaves exactly like
+/// [`ByPeerAddress`]. That is deliberate rather than convenient — RFC 7239
+/// section 8.1 says the field "cannot be relied upon to be correct", so a
+/// limiter that read it unasked would let a client choose the bucket it counts
+/// against, which is worse than no limit at all because it looks like one.
+///
+/// A request that resolves to no address — a `TestClient`, a directly driven
+/// `Service::call` — counts against one shared bucket rather than being
+/// exempted, for the reason [`ByPeerAddress`] gives.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ByClientAddress;
+
+impl<C> RateLimitKey<C> for ByClientAddress {
+    fn partition(
+        &self,
+        request: &http::Request,
+        route: Route<'_>,
+        context: &C,
+    ) -> Option<Cow<'static, str>> {
+        let _ = (route, context);
+
+        Some(Cow::Owned(
+            request
+                .extensions()
+                .get::<crate::http::forwarded::Forwarded>()
+                .and_then(crate::http::forwarded::Forwarded::client)
+                .map_or_else(
+                    || "client:none".to_owned(),
+                    |address| format!("client:{address}"),
+                ),
+        ))
+    }
+}
+
 /// A request field's value.
 ///
 /// The field is read directly rather than through

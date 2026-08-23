@@ -267,6 +267,7 @@ four different answers depending on which layer is asked.
 | Handler runtime | — | — | — | `Timeout`, when mounted | **no** |
 | Total connections | — | — | `max_connections`, 10 000 | — | yes |
 | Per-IP connections | — | — | — | — | **no**, and see below |
+| Per-IP request rate | — | — | — | `RateLimit` keyed `ByClientAddress`, with a trust policy set | no |
 | Concurrent in flight | — | `max_concurrent_streams`, 200 per connection | — | `Concurrency`, when mounted | partial |
 | Request rate | — | — | — | `RateLimit`, when mounted | no |
 | Request smuggling | hyper and `httparse` | n/a | — | — | yes, and not Kynos's |
@@ -308,8 +309,22 @@ which is an ordinary pairing.
 
 **A per-IP cap is absent rather than pending.** Behind a load balancer every
 connection arrives from one address, so a cap counted in-process is either
-meaningless or a self-inflicted outage. An honest one needs to know which
-forwarded-for headers to trust, which is a security policy rather than a limit.
+meaningless or a self-inflicted outage.
+
+The security policy that half of it needed now exists.
+`Router::trusted_proxies` names the hops whose forwarding fields may be
+believed, and `ByClientAddress` keys a rate limit on what they resolve to — so a
+per-IP *rate* limit is honest behind a proxy where `ByPeerAddress` was silently
+a global one. A per-IP *connection* cap is still absent, because a connection is
+counted before any header is read and the policy lives after routing.
+
+Unset, nothing is believed and `ByClientAddress` behaves exactly like
+`ByPeerAddress`. RFC 7239 section 8.1 is why: the field "cannot be relied upon
+to be correct, as it may be modified, whether mistakenly or for malicious
+reasons, by every node on the way to the server, including the client making the
+request." A limiter reading it unasked would let a client choose the bucket it
+counts against — a limit that looks like one and is not, which is worse than
+none.
 
 ### A response no type predicts
 

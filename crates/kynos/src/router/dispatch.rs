@@ -186,6 +186,7 @@ pub(crate) struct Dispatch<C> {
     pub(crate) not_found: FallbackPolicy,
     pub(crate) method_not_allowed: FallbackPolicy,
     pub(crate) trailing_slashes: TrailingSlashPolicy,
+    pub(crate) trusted_proxies: crate::http::forwarded::TrustedProxies,
 }
 
 impl<C: Send + Sync + 'static> Dispatch<C> {
@@ -242,6 +243,21 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         // documented as the `paths` key, which is what keeps a metric label or
         // a log field from having unbounded cardinality.
         request.extensions_mut().insert(entry.matched.clone());
+
+        // Resolved once, here, rather than by each reader. Two interceptors
+        // parsing `Forwarded` for themselves would be two answers to one
+        // security question, and the policy that governs it is the router's.
+        let peer = request
+            .extensions()
+            .get::<crate::extract::connection::Connection>()
+            .filter(|connection| !connection.is_in_process())
+            .map(crate::extract::connection::Connection::peer_addr);
+        let forwarded = crate::http::forwarded::Forwarded::resolve(
+            request.headers(),
+            peer,
+            &self.trusted_proxies,
+        );
+        request.extensions_mut().insert(forwarded);
 
         for observer in &self.observers {
             observer.on_request(&request, Some(route), &self.context);
