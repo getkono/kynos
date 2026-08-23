@@ -12,15 +12,15 @@ The emitted document is therefore not documentation that drifts from the code. I
 
 - [x] OpenAPI 3.1 document model, with 3.2 as an opt-in strict superset
 - [x] Structural validation: `operationId` uniqueness, path-template correspondence, parameter uniqueness, closed style/location table
-- [ ] Typed extraction for path, query, header, cookie, JSON, form and multipart
-- [ ] Extractor rejections documented automatically
-- [ ] Type-level status codes and response headers
-- [ ] RFC 9457 problem details for both framework and application errors
-- [ ] Compile-time-resolved dependency injection
-- [ ] `Interceptor` and `Observer` middleware with declared contributions
-- [ ] Security schemes that cannot be enforced without being documented
-- [ ] Server-Sent Events and streaming bodies, under `openapi32`
-- [ ] In-process test client with contract-conformance assertions
+- [x] Typed extraction for path, query, header, cookie, JSON, form and multipart
+- [x] Extractor rejections documented automatically
+- [x] Type-level status codes and response headers
+- [x] RFC 9457 problem details for both framework and application errors
+- [x] Compile-time-resolved dependency injection
+- [x] `Interceptor` and `Observer` middleware with declared contributions
+- [x] Security schemes that cannot be enforced without being documented
+- [x] Server-Sent Events and streaming bodies, under `openapi32`
+- [x] In-process test client with contract-conformance assertions
 
 Permanently out-of-scope
 
