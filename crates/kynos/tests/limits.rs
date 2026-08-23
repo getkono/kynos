@@ -108,7 +108,7 @@ fn a_body_limit_declares_its_status_on_every_operation_it_covers() {
     }
 }
 
-// --- Timeout: 504 --------------------------------------------------------
+// --- Timeout: 408 --------------------------------------------------------
 
 /// A handler that outlives the limit.
 #[kynos::get("/slow")]
@@ -132,7 +132,7 @@ async fn a_handler_past_the_limit_is_answered_with_the_status_its_type_declares(
         .expect("a describable router");
 
     let timed_out = get(&service, "/slow").call().await;
-    assert_eq!(timed_out.status, StatusCode::GATEWAY_TIMEOUT);
+    assert_eq!(timed_out.status, StatusCode::REQUEST_TIMEOUT);
 
     let in_time = get(&service, "/prompt").call().await;
     assert_eq!(in_time.status, StatusCode::NO_CONTENT);
@@ -292,7 +292,7 @@ async fn a_timeout_over_a_body_limit_declares_both_statuses() {
         .expect("the operation exists");
 
     assert!(
-        operation.responses.responses.contains_key("504"),
+        operation.responses.responses.contains_key("408"),
         "the timeout contributes its status to the operation it covers"
     );
     assert!(operation.responses.responses.contains_key("413"));
