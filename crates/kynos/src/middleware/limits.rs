@@ -223,6 +223,17 @@ impl Responses for TimedOut {
 /// Caps how long a handler may run.
 ///
 /// Contributes 504.
+///
+/// # Mount it outside a [`BodySize`]
+///
+/// A timeout wraps whatever is beneath it, so it bounds a body read only when
+/// it is the *earlier* `intercept` call, per
+/// [the module's ordering rule](super#the-order-a-chain-runs-in). [`BodySize`]
+/// walks a length-less body frame by frame, and a client that sends one frame
+/// slowly holds that loop open with nothing above it to end the exchange.
+///
+/// Nothing enforces this. `CompatibleWith` compares sets, and a set has no
+/// positions, so the wrong order compiles and describes itself identically.
 #[derive(Clone, Copy, Debug)]
 pub struct Timeout {
     /// The maximum handler duration.

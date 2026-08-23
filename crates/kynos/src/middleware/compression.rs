@@ -215,6 +215,22 @@ async fn encode(coding: Coding, bytes: Bytes) -> io::Result<Bytes> {
 /// Encoding here and re-deriving the validator afterwards is not the third
 /// option it looks like: the range and its `ETag` are settled by the handler or
 /// the asset server before this interceptor is handed the response.
+///
+/// # A strong validator survives encoding, and should not
+///
+/// The guard above reads `Content-Encoding`, `Accept-Ranges`, `Content-Range`
+/// and the 206/416 statuses. It does not read `ETag`. So a strongly tagged 200
+/// that advertises no ranges *is* encoded, and keeps the validator minted over
+/// its identity octets — one strong validator naming two representations,
+/// against RFC 9110 section 8.8.1. A client can then validate the encoded body
+/// with `If-None-Match`, be answered 304 — which replays `ETag` and `Vary` and
+/// not `Content-Encoding` — and reuse those octets as the identity form.
+///
+/// A [`Cache`](crate::middleware::cache::Cache) mounted inside this is the
+/// arrangement that makes it easy to hit, but no cache is needed: a handler
+/// setting its own `ETag` reaches it identically. Filed as
+/// [#29](https://github.com/getkono/kynos/issues/29), which carries both
+/// reproductions and what each candidate fix costs.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Compression {
     /// The smallest response worth encoding, in bytes.

@@ -231,7 +231,12 @@ impl Responses for NotModified {
 /// The handler's work is therefore done and discarded. That is the cost, and it
 /// is why mounting this *outside* a [`Cache`](crate::middleware::cache::Cache)
 /// matters: a cache hit is cheap, and turning a cheap hit into a 304 is the
-/// arrangement worth having.
+/// arrangement worth having. Outside is the *earlier* `intercept` call, per
+/// [the module's ordering rule](crate::middleware#the-order-a-chain-runs-in),
+/// and getting it backwards is not cosmetic -- a hit is served by constructing
+/// a `Continued` rather than by calling `next.run`, so it never reaches a
+/// `Conditional` mounted inside the cache and the 304 becomes unreachable on
+/// exactly the request that should get it.
 ///
 /// Safe methods only. `If-None-Match` on an unsafe method means something else
 /// entirely — "only if it does not already exist" — and answering that with a
