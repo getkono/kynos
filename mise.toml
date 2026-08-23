@@ -80,10 +80,18 @@ description = "Run doc tests, which carry the compile-fail guarantees"
 run = "cargo test --workspace --all-features --doc"
 
 [tasks."features:check"]
-description = "Check every reachable feature combination"
+description = "Lint every reachable feature combination"
 # Kynos gates the OpenAPI 3.2 object model, every optional codec and the escape
 # hatches behind features. Without a powerset check a combination nobody builds
 # locally breaks silently.
+# Clippy with warnings denied rather than `cargo check`, which denied none: this
+# is the only gate that compiles a *partial* combination, so it is the only one
+# that can see a warning which needs one feature on and another off. `lint`
+# structurally cannot -- `assets-fs` implies `unchecked`, so `--all-features`
+# always carries the caller that kept `record_unchecked_route` from being dead.
+# Cargo passes trailing arguments to the selected package only, so the denial
+# reaches the three crates and no dependency; cargo-hack makes each member the
+# selected package in turn.
 # `--at-least-one-of` encodes the baseline: a build with neither spec version
 # is rejected by a `compile_error!`, and that rejection is correct rather than
 # a failure the matrix should report.
@@ -92,17 +100,19 @@ description = "Check every reachable feature combination"
 # them costs no coverage -- every combination that can reach the shapes still
 # does.
 run = '''
-cargo hack check --workspace --feature-powerset --depth 2 --no-dev-deps \
+cargo hack clippy --workspace --feature-powerset --depth 2 --no-dev-deps \
   --exclude-no-default-features --exclude-all-features \
   --exclude-features default,server,tls,time,decimal \
-  --at-least-one-of openapi31,openapi32
+  --at-least-one-of openapi31,openapi32 \
+  -- -D warnings
 
-cargo hack check -p kynos --feature-powerset --depth 2 --no-dev-deps \
+cargo hack clippy -p kynos --feature-powerset --depth 2 --no-dev-deps \
   --features server \
   --exclude-no-default-features --exclude-all-features \
   --exclude-features default,time,decimal \
   --at-least-one-of openapi31,openapi32 \
-  --at-least-one-of http1,http2
+  --at-least-one-of http1,http2 \
+  -- -D warnings
 
 invalid_server_output="$(mktemp)"
 trap 'rm -f "$invalid_server_output"' EXIT
