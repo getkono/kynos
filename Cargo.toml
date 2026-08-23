@@ -68,6 +68,14 @@ tower = "0.5.2"
 tower-service = "0.3.3"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.20"
+# OpenTelemetry reaches Kynos only through the `Observer`/`Interceptor` seams,
+# so none of these is a dependency of the framework -- they exist for the
+# example that shows the wiring. See `crates/kynos/examples/opentelemetry.rs`.
+opentelemetry = "0.32.0"
+opentelemetry_sdk = "0.32.1"
+opentelemetry-otlp = "0.32.0"
+opentelemetry-semantic-conventions = "0.32.1"
+tracing-opentelemetry = "0.33.0"
 trybuild = "1.0.111"
 # A scalar-format crate is reached only from `schema/impls/`, and is declared
 # without default features because only the type is wanted -- an application
