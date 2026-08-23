@@ -37,6 +37,20 @@
 //!
 //! [`HeaderParams::DESCRIBED`]: crate::extract::params::header::HeaderParams::DESCRIBED
 //!
+//! # The order a chain runs in
+//!
+//! **The first `intercept` call is the outermost interceptor.** A chain is a
+//! slice run head-first, and each scope's own interceptors come before the ones
+//! a group or a nested router contributed -- so a router's are outside a
+//! group's, and an endpoint's are innermost of all.
+//!
+//! Order is not part of the type. [`CompatibleWith`](stack::CompatibleWith)
+//! checks that two interceptors do not add one header or answer with one
+//! status, and a set has no positions. Where an arrangement is wrong rather
+//! than merely different -- `Conditional` outside `Cache`, `Timeout` outside
+//! the limit whose read it bounds -- documentation is what says so, and
+//! `docs/middleware.md` carries the list.
+//!
 //! # How this module is laid out
 //!
 //! The two traits and [`Continued`] live here; every interceptor Kynos

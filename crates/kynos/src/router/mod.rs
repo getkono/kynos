@@ -438,6 +438,9 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     }
 
     /// Applies an interceptor to every operation in the router.
+    ///
+    /// The first call is the outermost interceptor; see
+    /// [the module's ordering rule](crate::middleware#the-order-a-chain-runs-in).
     #[must_use]
     pub fn intercept<N: Interceptor<C>>(self, interceptor: N) -> Router<C, P, Cons<N, I>>
     where

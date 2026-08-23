@@ -10,7 +10,11 @@
 //! Outermost but one. Mount [`Conditional`](super::conditional::Conditional)
 //! *outside* this, so a hit is turned into a 304 having produced only the
 //! cached body; mount this outside `Cors` and `Compression`, so what is stored
-//! is a response whose negotiated headers have already landed.
+//! is a response whose negotiated headers have already landed. Outside is the
+//! *earlier* `intercept` call, per
+//! [the module's ordering rule](super#the-order-a-chain-runs-in) -- and getting
+//! it backwards here is not cosmetic, since a hit never reaches an interceptor
+//! mounted inside the cache.
 //!
 //! The order is documented rather than enforced. Enforcing it needs a marker
 //! threaded through `CompatibleWith` for one interceptor, which generalizes the

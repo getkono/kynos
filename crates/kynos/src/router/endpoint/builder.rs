@@ -205,6 +205,10 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
     /// builder's type, so that a router, a group and an endpoint compose them
     /// the same way — and so that `routes![a, b]` still typechecks when only
     /// one of them carries an interceptor.
+    ///
+    /// The first call is the outermost of this endpoint's own, and every one of
+    /// them is innermost of all: a router's and a group's both wrap them. See
+    /// [the module's ordering rule](crate::middleware#the-order-a-chain-runs-in).
     #[must_use]
     pub fn intercept<N: Interceptor<C>>(
         self,

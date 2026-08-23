@@ -181,6 +181,10 @@ impl<C, P: PanicPolicy, I> Group<C, P, I> {
     }
 
     /// Applies an interceptor to every operation in this group.
+    ///
+    /// The first call is the outermost of the group's own, and every one of
+    /// them sits inside whatever the enclosing router applied; see
+    /// [the module's ordering rule](crate::middleware#the-order-a-chain-runs-in).
     #[must_use]
     pub fn intercept<N: Interceptor<C>>(self, interceptor: N) -> Group<C, P, Cons<N, I>>
     where

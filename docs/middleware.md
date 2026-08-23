@@ -210,6 +210,27 @@ One thing worth knowing about the two halves. The 429's headers ride on
 because a short-circuit never calls `with_headers` — so the conflict check,
 which compares `Adds` against `Adds`, is not weakened by the pair.
 
+## The order a chain runs in
+
+**The first `intercept` call is the outermost interceptor.** A chain is a slice
+run head-first, and each scope's own interceptors come before whatever a group
+or a nested router contributed — so a router's wrap a group's, and an endpoint's
+are innermost of all. Written top to bottom, a stack reads outside in:
+
+```rust,ignore
+Router::<()>::new()
+    .mount(kynos::routes![report])
+    .intercept(Conditional::new())  // outermost
+    .intercept(Cache::new(store))   // inside it
+    .intercept(Compression::new()); // closest to the handler
+```
+
+Order is not part of the type. `CompatibleWith` checks that two interceptors do
+not add one header or answer with one status, and a set has no positions. So
+every ordering rule this document states is one a reader has to follow, and the
+two places it matters are the slow-body row below and
+[where a cache sits](#where-a-cache-sits).
+
 ## What bounds a request before an interceptor runs
 
 An interceptor covers the operations in its subtree, which means it runs after
@@ -248,10 +269,14 @@ is a promise.
 **The slow-body row depends on mounting order.** `BodySize` reads a length-less
 body frame by frame, so a client sending one frame slowly holds that loop open.
 `Timeout` wraps whatever is beneath it, which means it bounds the read only when
-it is mounted *outside* the limit doing the reading. The types do not enforce
-the order; `a_timeout_mounted_outside_a_body_limit_bounds_the_read` in
-[`tests/limits.rs`](../crates/kynos/tests/limits.rs) pins it, and this paragraph
-is where a reader learns it.
+it is mounted *outside* the limit doing the reading — the earlier `intercept`
+call, per [the ordering rule](#the-order-a-chain-runs-in). The types do not
+enforce it, and neither does a test:
+`a_timeout_mounted_outside_a_body_limit_bounds_the_read` in
+[`tests/limits.rs`](../crates/kynos/tests/limits.rs) mounts the arrangement it
+names but asserts only on the emitted document, which is order-insensitive and
+passes either way. This paragraph is where a reader learns the rule, and nothing
+below it is checked.
 
 **A per-IP cap is absent rather than pending.** Behind a load balancer every
 connection arrives from one address, so a cap counted in-process is either
@@ -415,7 +440,8 @@ varies on `Origin` without saying so lets a cache hand one origin's
 ## Where a cache sits
 
 Outermost but one. `Conditional` outside `Cache`, and `Cache` outside `Cors`
-and `Compression`.
+and `Compression` — outside being the *earlier* `intercept` call, per
+[the ordering rule](#the-order-a-chain-runs-in).
 
 The first half is what makes the pair worth having: a hit turned into a 304 has
 produced only the *cached* body. The other way round, the handler runs and its
@@ -426,6 +452,17 @@ negotiated headers have already landed.
 **The order is documented, not enforced.** Enforcing it needs a marker threaded
 through `CompatibleWith` for one interceptor, which generalizes the `Cors`
 downcast into exactly the capability this document bounds elsewhere.
+
+Getting the first half backwards is not cosmetic. `Cache::Short` is `Infallible`
+and a hit is served by constructing a `Continued` rather than by calling
+`next.run`, so a hit never reaches an interceptor mounted *inside* the cache: a
+`Conditional` there answers a miss and nothing else, and the 304 the pairing
+exists for is unreachable on exactly the request that should get it.
+`a_conditional_over_a_cache_answers_a_hit_with_no_body` in
+[`tests/cache.rs`](../crates/kynos/tests/cache.rs) is what holds it, and it
+holds only because the route it mounts states a lifetime — over one the store
+never keeps, `Conditional` alone answers identically and the test asserts
+nothing about the pair.
 
 What *is* enforced is the case where getting it wrong is catastrophic. A
 response carrying `access-control-*` headers whose `Vary` does not name `origin`
