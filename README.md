@@ -71,7 +71,11 @@ Each of these is something another Rust framework offers and Kynos does not, and
 | `json` | yes | Application JSON request and response codecs |
 | `trace` | yes | Two `tracing` events per request, keyed by operation. Facade only; the subscriber stays yours |
 | `tls` | no | `rustls`, including client-certificate verification |
-| `form`, `multipart`, `protobuf`, `cookie` | no | Additional codecs |
+| `form`, `multipart`, `protobuf` | no | Additional request and response codecs |
+| `cookie` | no | Cookie parameters, response cookies and the `SetCookies` interceptor. Kynos owns the RFC 6265 this needs, so it pulls in no dependency |
+| `uuid` | no | `Uuid` as `format: uuid` |
+| `time-chrono`, `time-jiff` | no | Dates and times from one backend or the other, both mapping onto shapes `time` defines once |
+| `decimal-rust`, `decimal-big` | no | Decimals, written as JSON strings so the precision they exist for survives |
 | `compression` | no | Response compression |
 | `yaml` | no | YAML document emission |
 | `test-util` | no | In-process test client and contract-conformance assertions |
@@ -79,7 +83,9 @@ Each of these is something another Rust framework offers and Kynos does not, and
 | `cache` | no | A shared response cache over a store you supply, and the conditional-request half |
 | `assets-fs` | no | Serve a directory from disk. Implies `unchecked`: its membership is not fixed, so no path template is true of it |
 | `unchecked` | no | Escape hatches. What they reach is recorded and flagged rather than dropped, and the document is stamped non-authoritative |
-| `full` | no | Every feature above except `unchecked`. A convenience for testing the whole surface, not a recommended default |
+| `full` | no | Every feature above except `unchecked` and `assets-fs`, which implies it. A convenience for testing the whole surface, not a recommended default |
+
+`time` and `decimal` are umbrellas rather than flags to enable: each defines the shape both of its backends map onto, so `date-time-local` is settled in one place and cannot change with a flag. Enabling one on its own is a `compile_error!` naming the backends, because an umbrella with no backend describes nothing.
 
 Disabling `json` removes application JSON payload types and helpers, including
 the OpenAPI 3.2 JSON stream responses. OpenAPI document serialization and the
