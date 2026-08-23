@@ -95,6 +95,48 @@ HTTP/3 is not implemented and there is currently no `http3` feature. QUIC and
 HTTP/3 support are on the roadmap, with prioritization based on demonstrated
 user demand.
 
+## What this release freezes
+
+The core is what every operation passes through, so it freezes with the release: a change there is a breaking change. Everything else is additive — it composes onto the core, and the core names none of it. That is what makes each row separable, and it is why the rows furthest out settle last: a part that only ever sits at the edge of a stack is the one you will have exercised least, so it gets the most time to be argued with before it is fixed.
+
+`frozen` commits to the surface. `settling` means the shape is right and the details may still move. `open` means expect the surface to move — use it, and say where it is wrong.
+
+| Part | Flag | Freezes |
+| --- | --- | --- |
+| Document model and validation | `openapi31`, `openapi32` | frozen |
+| Schema, and the scalar formats | `uuid`, `time-*`, `decimal-*` | frozen |
+| Route attributes and derives | `macros` | frozen |
+| Handlers, extraction, responses | `json` | frozen |
+| Routing, groups, path templates | — | frozen |
+| Errors and RFC 9457 problems | — | frozen |
+| Dependency injection | — | frozen |
+| Security schemes | — | frozen |
+| `Interceptor`, `Observer`, and the contribution check | — | frozen |
+| Server, graceful shutdown, TLS | `server`, `http1`, `http2`, `tls` | frozen |
+| Codecs beyond JSON | `form`, `multipart`, `protobuf` | settling |
+| Cookies, request and response | `cookie` | settling |
+| CORS | — | settling |
+| Limits: body size, timeout, concurrency | — | settling |
+| Correlation identifiers | — | settling |
+| Panic policy | — | settling |
+| Request tracing | `trace` | settling |
+| YAML emission | `yaml` | settling |
+| Server-Sent Events and streaming bodies | `openapi32` | settling |
+| Rate limiting | — | open |
+| Compression | `compression` | open |
+| Response cache and conditional requests | `cache` | open |
+| Static assets, embedded and from disk | `assets`, `assets-fs` | open |
+| In-process test client | `test-util` | open |
+| Escape hatches | `unchecked` | open |
+
+Note what the middle column does *not* say: most of what settles last is not behind a flag at all. Rate limiting, CORS and the limits ship with the default build, so `settling` and `open` are statements about the API rather than about what you are compiling.
+
+Five `open` rows carry a filed defect rather than merely a young surface, and each is worth reading before depending on it. Compression re-encodes a strongly tagged response without minting a new validator ([#29](https://github.com/getkono/kynos/issues/29)) and declines to encode a ranged one at all ([#30](https://github.com/getkono/kynos/issues/30)); rate limiting is not yet behind a flag of its own ([#26](https://github.com/getkono/kynos/issues/26)); and the test client does not yet reach methods, cookies, bodies or ranged responses ([#27](https://github.com/getkono/kynos/issues/27), [#28](https://github.com/getkono/kynos/issues/28)).
+
+The cache and rate-limit rows ship a *seam* rather than a store. Prescribing one would mean prescribing a dependency, which is the line this project draws elsewhere too; both name a working implementation in [`crates/kynos/examples/`](crates/kynos/examples/).
+
+This table is about the API. Whether a guarantee is *enforced* is a different question with a different answer, kept in [`docs/nfr.md`](docs/nfr.md) — a row can be `frozen` here and still owe a test there.
+
 ## Development
 
 - Prerequisites: rustup, [mise](https://mise.jdx.dev/)
