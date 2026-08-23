@@ -155,6 +155,17 @@ pre-RFC-5378-material notice RFC 9110's section records.
 The same Revised BSD License treatment applies to Code Components extracted
 from them — which includes the ABNF the encoder is written against.
 
+## Verifying this directory
+
+[`SHA256SUMS`](SHA256SUMS) lists every vendored file. `mise run references:verify`
+checks it three ways: that no file was edited in place, that no file was added
+without being listed, and that every digest quoted in this README still names
+something. The prose below is what a reader consults and `SHA256SUMS` is what CI
+checks, so the third check is what stops the two from becoming two statements of
+one fact that drift apart.
+
+Do not reformat a vendored file. Retrieve it again and update its digest instead.
+
 ## HTTP Caching
 
 [`rfc9111.txt`](rfc9111.txt) is an unmodified, byte-for-byte copy of the RFC
