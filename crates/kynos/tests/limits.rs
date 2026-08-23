@@ -275,13 +275,13 @@ fn a_service_with_no_body_limit_declares_no_413() {
 #[tokio::test]
 async fn a_timeout_mounted_outside_a_body_limit_bounds_the_read() {
     let service = support::router()
-        .intercept(BodySize::new(4096))
         .intercept(Timeout::new(Duration::from_millis(30)))
+        .intercept(BodySize::new(4096))
         .build(App::new())
         .expect("a describable router");
 
-    // The interceptors run outermost-first, so the timeout added last is the
-    // one that runs first and therefore covers the read.
+    // The chain runs outermost-first, so the timeout is written first and is
+    // the one that covers the read the limit performs.
     let document = service.openapi();
     let operation = document.paths.0["/users"]
         .post

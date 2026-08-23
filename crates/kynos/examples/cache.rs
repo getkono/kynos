@@ -143,7 +143,10 @@ struct ReportPath {
 async fn main() -> kynos::Result<()> {
     let router = Router::<()>::new()
         .mount(kynos::routes![report])
-        // Innermost of the two: the cache produces the body.
+        // Outermost, so written first: turns a hit into a 304 having produced
+        // only the cached body.
+        .intercept(Conditional::new())
+        // Innermost of the two: the cache produces the body the 304 discards.
         .intercept(
             Cache::new(MokaCache::new())
                 // Bump this on a deploy that changes what an operation returns.
@@ -151,12 +154,9 @@ async fn main() -> kynos::Result<()> {
                 // the new binary no longer declares.
                 .namespace("v1")
                 // A handler that declares no validator still gets one, which is
-                // what makes the `Conditional` below useful.
+                // what makes the `Conditional` above useful.
                 .deriving_etags(),
-        )
-        // Outermost: turns a hit into a 304 having produced only the cached
-        // body.
-        .intercept(Conditional::new());
+        );
 
     println!("{}", router.openapi()?.to_json()?);
 

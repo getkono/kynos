@@ -265,12 +265,12 @@ async fn a_derived_tag_is_the_same_on_a_hit_as_on_a_miss() {
 async fn a_conditional_over_a_cache_answers_a_hit_with_no_body() {
     let service = Router::<()>::new()
         .mount(kynos::routes![reports])
+        .intercept(Conditional::new())
         .intercept(
             Cache::new(Stored::default())
                 .namespace("test")
                 .deriving_etags(),
         )
-        .intercept(Conditional::new())
         .build(())
         .expect("a describable router");
 
@@ -297,8 +297,8 @@ async fn a_conditional_over_a_cache_answers_a_hit_with_no_body() {
 fn a_cache_and_a_conditional_declare_disjoint_fields() {
     let document = Router::<()>::new()
         .mount(kynos::routes![tagged])
-        .intercept(Cache::new(Stored::default()))
         .intercept(Conditional::new())
+        .intercept(Cache::new(Stored::default()))
         .openapi()
         .expect("a describable router");
 
