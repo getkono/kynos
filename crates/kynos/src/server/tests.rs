@@ -750,13 +750,14 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
 #[cfg(feature = "tls")]
 #[test]
 fn tls_rejects_empty_pem_and_zero_handshake_timeouts() {
+    const SERVER_CERTIFICATE: &[u8] = include_bytes!("../../tests/fixtures/tls/server.pem");
+    const SERVER_KEY: &[u8] = include_bytes!("../../tests/fixtures/tls/server.key");
+
     assert!(matches!(
         crate::server::tls::TlsConfig::from_pem(b"", b""),
         Err(crate::server::tls::error::TlsError::EmptyPem { .. })
     ));
 
-    const SERVER_CERTIFICATE: &[u8] = include_bytes!("../../tests/fixtures/tls/server.pem");
-    const SERVER_KEY: &[u8] = include_bytes!("../../tests/fixtures/tls/server.key");
     let config = crate::server::tls::TlsConfig::from_pem(SERVER_CERTIFICATE, SERVER_KEY)
         .expect("server identity parses");
     assert!(matches!(
