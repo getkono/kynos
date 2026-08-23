@@ -200,11 +200,12 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
         return refused(StatusCode::NOT_FOUND);
     };
 
-    let mut metadata = match tokio::fs::metadata(&path).await {
-        Ok(metadata) => metadata,
-        // Every read failure is a 404, including `PermissionDenied`. A file the
-        // process cannot read is, to a client, not there — and 404 leaks least.
-        Err(_) => return refused(StatusCode::NOT_FOUND),
+    // Every read failure is a 404, including `PermissionDenied`. A file the
+    // process cannot read is, to a client, not there — and 404 leaks least.
+    // The same holds for the index read below, which stays a `match` only
+    // because it reassigns rather than binds.
+    let Ok(mut metadata) = tokio::fs::metadata(&path).await else {
+        return refused(StatusCode::NOT_FOUND);
     };
 
     if metadata.is_dir() {
