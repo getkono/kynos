@@ -242,12 +242,8 @@ async fn a_204_carrying_a_matching_validator_is_not_turned_into_a_304() {
     );
 }
 
-// --- What the cache adds --------------------------------------------------
+// --- What a write drops -----------------------------------------------------
 
-/// `Age` is declared and set, and it is not described.
-///
-/// A cache-to-cache field: a generated client has no use for it, which is the
-/// same judgement `Vary` and the CORS set already get.
 /// RFC 9111 section 4.4: a cache **MUST** invalidate the target URI when it
 /// receives a non-error status code in response to an unsafe request method.
 ///
@@ -318,6 +314,12 @@ async fn a_failed_unsafe_method_leaves_the_stored_response_alone() {
     );
 }
 
+// --- What the cache adds --------------------------------------------------
+
+/// `Age` is declared and set, and it is not described.
+///
+/// A cache-to-cache field: a generated client has no use for it, which is the
+/// same judgement `Vary` and the CORS set already get.
 #[test]
 fn the_age_field_is_declared_and_not_described() {
     let document = Router::<()>::new()

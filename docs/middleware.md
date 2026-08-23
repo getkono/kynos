@@ -594,6 +594,34 @@ oversight: the revalidation is a background task — a `tokio::spawn` outside
 nicety, and a stale response is one the operation's description has no way to
 mark.
 
+### What a write drops
+
+RFC 9111 section 4.4 requires a cache to invalidate the target URI on a
+non-error status to an unsafe method, and a non-error status is a 2xx or a 3xx.
+So a `POST`, `PUT`, `PATCH`, `DELETE` or an extension method the `http` crate
+does not recognise drops what was stored for that target, and a 4xx or 5xx
+answer to the same request drops nothing — a refused write changed nothing worth
+paying a handler call to rediscover.
+
+Two details are decisions rather than mechanics.
+
+**Both stored methods are dropped, not the one that arrived.** The requirement
+invalidates a *URI*; `PrimaryKey` carries the method; and only `GET` and `HEAD`
+are ever stored. So the key a `POST` would build names nothing at all, and
+dropping that key would satisfy a reading of the rule while leaving in place the
+exact copy the client is about to read back.
+
+**An unknown method counts as unsafe.** Section 4.4 says "including methods
+whose safety is unknown", and `Method::is_safe` is false for an extension method
+the crate does not know — so the two agree without a table of method names to
+keep in step.
+
+The `Location` and `Content-Location` invalidations in the same section are a
+MAY and are absent. Honouring them means comparing origins, since the section
+forbids invalidating across one, and a URI parsed out of a response header is
+not something the router can map back to a `paths` key — so the entry to drop
+could not be named even after the check passed.
+
 ## Opaque
 
 The vocabulary is
