@@ -181,9 +181,11 @@ impl Preflight {
             fields.insert(header::ACCESS_CONTROL_MAX_AGE, max_age);
         }
 
-        if let Some(expose) = config.exposed() {
-            fields.insert(header::ACCESS_CONTROL_EXPOSE_HEADERS, expose);
-        }
+        // No `Access-Control-Expose-Headers`. It is read from the *actual*
+        // response; the CORS-preflight fetch reads the allowed methods, the
+        // allowed headers and the cache lifetime, and nothing else. Sending one
+        // here is a field no user agent consults, suggesting a coverage the
+        // preflight cannot grant.
 
         response
     }
@@ -229,17 +231,25 @@ fn advertised_methods(methods: &[Method]) -> Option<HeaderValue> {
 
 /// `Access-Control-Allow-Headers`, as one field value.
 ///
-/// Under `allow_any_header` this is `*` when credentials are off, and the
-/// verbatim echo of what was asked for when they are on — `*` is not a
-/// wildcard on a credentialed response, so echoing is the only way to
-/// answer one at all.
+/// Under `allow_any_header` this is the verbatim echo of what was asked for
+/// when credentials are on — `*` is not a wildcard on a credentialed response,
+/// so echoing is the only way to answer one at all — and `*, authorization`
+/// when they are off.
+///
+/// The second name is not redundant. The Fetch Standard calls `Authorization` a
+/// *CORS non-wildcard request-header name* and checks it unconditionally: "If
+/// one of request's header list's names is a CORS non-wildcard request-header
+/// name and is not a byte-case-insensitive match for an item in headerNames,
+/// then return a network error." The wildcard covers every *other* unsafe
+/// header, and only while credentials are off; this one it never covers, so `*`
+/// alone fails every request carrying a bearer token.
 fn advertised_headers(config: &CorsConfig, request: &http::HeaderMap) -> Option<HeaderValue> {
     if config.any.header {
         if config.credentials {
             return request.get(header::ACCESS_CONTROL_REQUEST_HEADERS).cloned();
         }
 
-        return Some(HeaderValue::from_static("*"));
+        return Some(HeaderValue::from_static("*, authorization"));
     }
 
     if config.headers.is_empty() {
@@ -257,8 +267,23 @@ fn advertised_headers(config: &CorsConfig, request: &http::HeaderMap) -> Option<
 }
 
 /// A cache lifetime as the whole seconds `Access-Control-Max-Age` carries.
+///
+/// Rounded *up*, because the field has no sub-second form and truncating one
+/// renders `0` — which tells the browser not to cache the preflight at all,
+/// which is the opposite of what a lifetime was configured for. `rate_limit`
+/// rounds `Retry-After` up for the same reason: between two answers neither of
+/// which is exact, the misleading one is the one to avoid.
+///
+/// An explicit zero stays zero. It is the one value that already says what it
+/// means.
 fn seconds(age: &Duration) -> Option<HeaderValue> {
-    HeaderValue::from_str(&age.as_secs().to_string()).ok()
+    let whole = if age.subsec_nanos() > 0 {
+        age.as_secs().saturating_add(1)
+    } else {
+        age.as_secs()
+    };
+
+    HeaderValue::from_str(&whole.to_string()).ok()
 }
 
 #[cfg(test)]
