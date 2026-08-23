@@ -33,9 +33,9 @@ pub(super) const HOP_BY_HOP: &[&str] = &[
 
 /// Why a response was not stored.
 ///
-/// Not public: an application does not act on it, and `tracing` is where it
-/// belongs. Named rather than a `bool` so a reader of the code can see the
-/// whole list at once.
+/// Not public: an application does not act on it. Named rather than a `bool`
+/// so a reader of the code can see the whole list at once, and so the table
+/// test can count its cases against the set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Unstorable {
     /// The method is neither `GET` nor `HEAD`.
