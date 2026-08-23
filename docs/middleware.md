@@ -467,9 +467,21 @@ nothing about the pair.
 What *is* enforced is the case where getting it wrong is catastrophic. A
 response carrying `access-control-*` headers whose `Vary` does not name `origin`
 is refused outright, because storing one hands one origin's
-`Access-Control-Allow-Origin` to another and defeats the check entirely. The
-merely-suboptimal case — a `Cache` inside `Compression`, storing an unencoded
-body — is documented and not refused.
+`Access-Control-Allow-Origin` to another and defeats the check entirely.
+
+The other half — a `Cache` *inside* `Compression` — is not refused either, and
+this document used to call it merely suboptimal. It is not. The body is stored
+and tagged over identity octets and then encoded on the way out, so one strong
+validator names two representations, against RFC 9110 §8.8.1. A client can
+validate the encoded body with `If-None-Match`, be answered 304 — which replays
+`ETag` and `Vary` and not `Content-Encoding` — and reuse those octets as the
+identity representation.
+
+The mis-ordering is not what causes it. `Compression` encoding *any* strongly
+tagged response has the same defect, with no cache in the stack at all, because
+the encoder does not look at `ETag`. It predates the partial-response work and
+is filed as [#29](https://github.com/getkono/kynos/issues/29), which carries the
+reproduction and what each candidate fix costs.
 
 ### Why a hit is not a new response
 
