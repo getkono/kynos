@@ -1,0 +1,47 @@
+# Routine version drift should arrive as a pull request that CI can judge, not
+# as an issue a human has to read first. The dependency issue form says as much
+# and closes reports of semver-compatible bumps, which is only fair if something
+# else is actually opening them.
+version: 2
+updates:
+  # `versioning-strategy: increase` rewrites the requirement in
+  # `[workspace.dependencies]` rather than moving `Cargo.lock` alone. The
+  # manifest already pins the exact minor of everything it declares, and a
+  # requirement that names the version CI last built is worth more than a caret
+  # range that quietly covers a dozen it never saw.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    versioning-strategy: increase
+    open-pull-requests-limit: 5
+    labels:
+      - chore
+    # `prefix` plus `include: scope` yields `chore(deps): bump ...`, which convco
+    # accepts and `.versionrc` files under Other. Majors leave the group and
+    # arrive alone, because that is where the containment table gets consulted.
+    commit-message:
+      prefix: chore
+      prefix-development: chore
+      include: scope
+    groups:
+      cargo:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    labels:
+      - chore
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions:
+        patterns:
+          - "*"
