@@ -150,7 +150,7 @@ the time a handler argument is built.
 
 ## What is not an error type
 
-**Interceptor statuses.** 429, 503 and 504 belong to
+**Interceptor statuses.** 429, 503 and 408 belong to
 [`RateLimit`, `Concurrency` and `Timeout`](../crates/kynos/src/middleware/limits.rs),
 which return a response directly and declare it through
 an interceptor's `Short`. They are not extractor rejections and have no rejection

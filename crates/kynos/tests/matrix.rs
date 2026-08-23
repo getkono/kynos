@@ -722,7 +722,7 @@ async fn exercise_the_limits(client: &TestClient<App>) {
         .get("/limits/time?limit=1")
         .send()
         .await
-        .assert_status(StatusCode::GATEWAY_TIMEOUT);
+        .assert_status(StatusCode::REQUEST_TIMEOUT);
 
     client
         .get("/limits/slots")

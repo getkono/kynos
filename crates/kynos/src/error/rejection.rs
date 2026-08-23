@@ -14,7 +14,7 @@
 //! authentication is a claim a client generator turns into dead retry logic.
 //!
 //! Statuses raised by an interceptor rather than an extractor — 429, 503 and
-//! 504 — are not here. [`RateLimit`](crate::middleware::rate_limit::RateLimit),
+//! 408 — are not here. [`RateLimit`](crate::middleware::rate_limit::RateLimit),
 //! [`Concurrency`](crate::middleware::limits::Concurrency) and
 //! [`Timeout`](crate::middleware::limits::Timeout) return a response directly
 //! and declare it through `OperationContribution`.

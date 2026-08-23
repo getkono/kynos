@@ -279,6 +279,17 @@ either way. Pinning the read needs a client that dribbles a chunked body over a
 real socket, which the harness cannot express today. This paragraph is where a
 reader learns the rule, and nothing below it is checked.
 
+**A timeout answers 408, and neither status is exact.** RFC 9110 §15.6.5 scopes
+504 to a server "acting as a gateway or proxy" awaiting an upstream — which an
+origin wrapping its own chain is not, and which a load balancer in front of the
+service genuinely *is*, so an origin's own 504 was indistinguishable from that
+hop's. §15.5.9's 408 describes the slow-body row above exactly and the
+handler-runtime row only by extension; it is the closest the specification
+defines and the one `tower-http` sends. 503 would read better for handler
+runtime and is unavailable: `Concurrency` declares it, and `statuses_disjoint`
+would then refuse a router bounding handler time *and* capping concurrency,
+which is an ordinary pairing.
+
 **A per-IP cap is absent rather than pending.** Behind a load balancer every
 connection arrives from one address, so a cap counted in-process is either
 meaningless or a self-inflicted outage. An honest one needs to know which
