@@ -201,6 +201,23 @@ company. `every_rejected_schema_type_has_a_case` in
 shapes and `SpecError`'s variants are counted the same way. A reviewer cannot
 see the case that was not written.
 
+**Name the set where the set has names.** Counting is the weaker form of the
+same check, and `every_interceptor_kynos_ships_is_accounted_for` in
+[`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) is where the
+difference showed. A count reports that two numbers differ; a set of type names
+reports *which* interceptor nothing accounts for. It also stops two branches
+each adding one from colliding, since an alphabetical insertion puts them on
+different lines where a shared count puts them on the same one.
+
+The declared side of that pair is read off disk — every `.rs` file under
+`src/middleware/`, walked rather than transcribed. A transcribed list is a third
+place the set is written down, and it went wrong exactly as that predicts: the
+observer counter opened ten files, `compression.rs` was not among them, and an
+`Observer` implemented there would have been counted by nothing while both
+counters kept passing. Walking the directory removes the list rather than
+maintaining it, and lets the check hold at baseline features too, since source
+text exists on disk whether or not the feature that compiles it is on.
+
 ## The pass-control rule
 
 **Every compile-fail case gets a sibling passing case that differs in exactly

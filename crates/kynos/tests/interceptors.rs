@@ -185,143 +185,131 @@ async fn two_interceptors_contributing_vary_both_appear_in_it() {
 
 // --- The two closed sets --------------------------------------------------
 
-/// Every interceptor Kynos ships, counted against the cases that exercise one.
+/// Every interceptor Kynos ships, named against the set this suite accounts
+/// for.
 ///
 /// Witnessing a set someone chose says nothing about whether the set is the
-/// whole set. This reads the count out of the source, so an interceptor added
-/// without a case fails the build rather than joining a silent majority.
+/// whole set. The declared side is therefore read off disk — every `.rs` file
+/// under `src/middleware/`, walked rather than transcribed — so an interceptor
+/// added in a module no list mentions still fails the build.
 ///
-/// Under `compression`, because `Compression` is gated there and the full set
-/// only exists in that build — which is the one `mise run test` uses. The same
-/// reason `pipeline.rs` gates its route-attribute counter on `openapi32`.
-#[cfg(all(feature = "compression", feature = "cookie", feature = "cache"))]
+/// Naming the types rather than counting them is what makes the failure
+/// readable: a count says two numbers differ, a set says which interceptor
+/// nothing accounts for. It is also what lets two branches each add one and
+/// merge, since alphabetical insertion puts them on different lines.
+///
+/// Neither side is `#[cfg]`-gated any more. Both are source text, and a file
+/// exists on disk whether or not the feature that compiles it is on, so this
+/// now holds at baseline features as well as under `--all-features`.
 #[test]
-fn every_interceptor_kynos_ships_has_a_case() {
-    /// `BodySize`, `Timeout` and `Concurrency` in `limits.rs`; `Cors`,
-    /// `RequestId`, `RateLimit`, `Compression` and `SetCookies` in their own
-    /// modules, and `Cache` and `Conditional` in theirs. `Trace` is an
-    /// `Observer` rather than an `Interceptor` — it declares nothing, so it is
-    /// not in this set and is counted below instead.
-    const WITNESSED: usize = 10;
+fn every_interceptor_kynos_ships_is_accounted_for() {
+    /// Sorted. `Trace` is an `Observer` rather than an `Interceptor` — it
+    /// declares nothing, so it is not in this set and is named below instead.
+    const WITNESSED: &[&str] = &[
+        "BodySize",
+        "Cache",
+        "Compression",
+        "Concurrency",
+        "Conditional",
+        "Cors",
+        "RateLimit",
+        "RequestId",
+        "SetCookies",
+        "Timeout",
+    ];
 
-    let declared: usize = [
-        include_str!("../src/middleware/limits.rs"),
-        include_str!("../src/middleware/cors/mod.rs"),
-        include_str!("../src/middleware/request_id.rs"),
-        include_str!("../src/middleware/rate_limit/mod.rs"),
-        include_str!("../src/middleware/rate_limit/decision.rs"),
-        include_str!("../src/middleware/rate_limit/headers.rs"),
-        include_str!("../src/middleware/rate_limit/key.rs"),
-        include_str!("../src/middleware/rate_limit/quota.rs"),
-        include_str!("../src/middleware/rate_limit/store.rs"),
-        include_str!("../src/middleware/compression.rs"),
-        include_str!("../src/middleware/cookies.rs"),
-        include_str!("../src/middleware/cache/mod.rs"),
-        include_str!("../src/middleware/cache/freshness.rs"),
-        include_str!("../src/middleware/cache/store.rs"),
-        include_str!("../src/middleware/conditional/mod.rs"),
-        include_str!("../src/middleware/catch_panic.rs"),
-        include_str!("../src/middleware/contribution.rs"),
-        include_str!("../src/middleware/stack.rs"),
-        include_str!("../src/middleware/erased.rs"),
-        include_str!("../src/middleware/trace.rs"),
-        include_str!("../src/middleware/mod.rs"),
-    ]
-    .iter()
-    .map(|source| source.matches("> Interceptor<C>").count())
-    .sum();
+    let declared = implementors_of("> Interceptor<C> for ");
 
     assert_eq!(
-        declared, WITNESSED,
-        "`middleware/` implements `Interceptor` {declared} time(s) and {WITNESSED} are \
-         witnessed; an interceptor added without a case is one whose declaration nothing reads"
+        declared,
+        WITNESSED
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect::<BTreeSet<_>>(),
+        "`middleware/` implements `Interceptor` for a different set than this suite accounts \
+         for; an interceptor added without a case is one whose declaration nothing reads"
     );
 }
 
-/// Every observer Kynos ships, counted the same way.
+/// Every observer Kynos ships, named the same way.
 ///
 /// A separate set because an observer declares *nothing*: it cannot add a
 /// header or short-circuit, which is exactly why `Trace` needs no
 /// header-versus-declaration case and does need to be accounted for somewhere.
+///
+/// The list this replaced opened ten files and `compression.rs` was not among
+/// them, so an `Observer` implemented there would have been counted by nothing.
+/// Walking the directory is what closes that.
 #[test]
 fn every_observer_kynos_ships_is_accounted_for() {
-    /// `Trace`, and only `Trace`.
-    const WITNESSED: usize = 1;
+    /// Sorted.
+    const WITNESSED: &[&str] = &["Trace"];
 
-    let declared: usize = [
-        include_str!("../src/middleware/trace.rs"),
-        include_str!("../src/middleware/limits.rs"),
-        include_str!("../src/middleware/cors/mod.rs"),
-        include_str!("../src/middleware/request_id.rs"),
-        include_str!("../src/middleware/rate_limit/mod.rs"),
-        include_str!("../src/middleware/rate_limit/decision.rs"),
-        include_str!("../src/middleware/rate_limit/headers.rs"),
-        include_str!("../src/middleware/rate_limit/key.rs"),
-        include_str!("../src/middleware/rate_limit/quota.rs"),
-        include_str!("../src/middleware/rate_limit/store.rs"),
-        include_str!("../src/middleware/cookies.rs"),
-        include_str!("../src/middleware/cache/mod.rs"),
-        include_str!("../src/middleware/conditional/mod.rs"),
-        include_str!("../src/middleware/mod.rs"),
-    ]
-    .iter()
-    .map(|source| source.matches("> Observer<C> for").count())
-    .sum();
+    let declared = implementors_of("> Observer<C> for ");
 
     assert_eq!(
-        declared, WITNESSED,
-        "`middleware/` implements `Observer` {declared} time(s) and {WITNESSED} are witnessed"
+        declared,
+        WITNESSED
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect::<BTreeSet<_>>(),
+        "`middleware/` implements `Observer` for a different set than this suite accounts for"
     );
 }
 
-/// The two counters above read a fixed list of files, so this counts the list.
+/// The type names `middleware/` implements `marker` for, read off disk.
 ///
-/// Without it, `middleware/` could grow a module holding an interceptor that
-/// neither counter above ever opened — and both would keep passing, which is
-/// the failure mode an exhaustiveness check exists to rule out.
-///
-/// Under `compression`, for the reason the interceptor counter gives: the full
-/// set of modules only exists in that build.
-#[cfg(all(
-    feature = "compression",
-    feature = "trace",
-    feature = "cookie",
-    feature = "cache"
-))]
-#[test]
-fn the_counters_above_read_every_module_middleware_declares() {
-    const SOURCE: &str = include_str!("../src/middleware/mod.rs");
-
-    /// Every module `middleware/mod.rs` declares, transcribed in declaration
-    /// order. The counters above read each of these and `mod.rs` itself.
-    const READ: [&str; 13] = [
-        "catch_panic",
-        "contribution",
-        "cors",
-        "limits",
-        "rate_limit",
-        "request_id",
-        "stack",
-        "erased",
-        "cache",
-        "compression",
-        "conditional",
-        "cookies",
-        "trace",
-    ];
-
-    let declared: Vec<&str> = SOURCE
-        .lines()
-        .map(str::trim)
-        .filter_map(|line| {
-            line.strip_prefix("pub mod ")
-                .or_else(|| line.strip_prefix("pub(crate) mod "))
-        })
-        .filter_map(|rest| rest.strip_suffix(';'))
-        .collect();
-
-    assert_eq!(
-        declared, READ,
-        "a module was added to `middleware/` that the counters above never open"
+/// `marker` carries the `> ` that closes the impl's generic list, which is what
+/// keeps `Interceptor<C>` from also matching `ErasedInterceptor<C>`.
+fn implementors_of(marker: &str) -> BTreeSet<String> {
+    let mut sources = Vec::new();
+    collect_sources(
+        std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src/middleware")),
+        &mut sources,
     );
+    assert!(
+        !sources.is_empty(),
+        "no sources found under `src/middleware/`"
+    );
+
+    sources
+        .iter()
+        .flat_map(|source| {
+            source
+                .match_indices(marker)
+                .map(|(at, _)| {
+                    source[at + marker.len()..]
+                        .chars()
+                        .take_while(|character| character.is_alphanumeric() || *character == '_')
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Every `.rs` file under `directory`, read, except a sibling `tests.rs`.
+///
+/// Test modules are excluded because a fixture implementing `Interceptor` is
+/// not something Kynos ships, and the transcribed list this replaced named no
+/// `tests.rs` either.
+fn collect_sources(directory: &std::path::Path, into: &mut Vec<String>) {
+    let mut entries: Vec<_> = std::fs::read_dir(directory)
+        .unwrap_or_else(|error| panic!("read `{}`: {error}", directory.display()))
+        .map(|entry| entry.expect("read a directory entry").path())
+        .collect();
+    entries.sort();
+
+    for path in entries {
+        if path.is_dir() {
+            collect_sources(&path, into);
+        } else if path.extension().is_some_and(|extension| extension == "rs")
+            && path.file_name().is_some_and(|name| name != "tests.rs")
+        {
+            into.push(
+                std::fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("read `{}`: {error}", path.display())),
+            );
+        }
+    }
 }
