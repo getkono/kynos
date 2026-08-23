@@ -168,8 +168,10 @@ fn the_standard_fields_render_every_quota() {
             (
                 "ratelimit-policy".to_owned(),
                 // `qu` is omitted for `requests`, which is the draft's default,
-                // and stated for anything else.
-                r#""burst";q=15;w=1, "daily";q=10000;w=86400;qu=content-bytes"#.to_owned()
+                // and stated for anything else -- as a String, per section
+                // 3.1.2: "The value MUST be a String." A bare token parses and
+                // then mis-types against a client that checks.
+                r#""burst";q=15;w=1, "daily";q=10000;w=86400;qu="content-bytes""#.to_owned()
             ),
         ]
     );
@@ -292,4 +294,49 @@ fn a_delay_shorter_than_a_second_is_still_a_delay() {
             .1,
         "0"
     );
+}
+
+/// Every quota unit renders as a structured-field String.
+///
+/// The match is exhaustive, so adding a variant to `QuotaUnit` fails to compile
+/// here rather than shipping a unit that renders as a bare token — which is
+/// exactly how the `content-bytes` defect reached a release.
+#[test]
+fn every_quota_unit_renders_as_a_string() {
+    for unit in [QuotaUnit::Requests, QuotaUnit::ContentBytes] {
+        // Exhaustive: a new variant makes this arm non-exhaustive.
+        let expected = match unit {
+            QuotaUnit::Requests => "requests",
+            QuotaUnit::ContentBytes => "content-bytes",
+        };
+        assert_eq!(unit.as_str(), expected);
+
+        let fields = RateLimitFields {
+            limits: Vec::new(),
+            policies: vec![QuotaPolicy {
+                name: "p".into(),
+                quota: 1,
+                window: None,
+                unit,
+            }],
+        };
+
+        let policy = rendered(&fields)
+            .into_iter()
+            .find(|(name, _)| name == "ratelimit-policy")
+            .map(|(_, value)| value)
+            .expect("a policy field");
+
+        if unit == QuotaUnit::Requests {
+            assert!(
+                !policy.contains("qu="),
+                "the default unit was stated: {policy}"
+            );
+        } else {
+            assert!(
+                policy.contains(&format!(r#"qu="{expected}""#)),
+                "the unit is not a structured String: {policy}"
+            );
+        }
+    }
 }
