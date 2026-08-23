@@ -146,6 +146,22 @@ clients — which makes a wrong name expensive rather than cosmetic. Emitting th
 draft's spelling by default would claim settled ground that is not settled, and
 that is the failure this project's architecture notes exist to catch.
 
+### What the `X-` triple does not settle
+
+There is no specification for the prefixed names — that is the whole reason the
+draft exists — so nothing defines what `X-RateLimit-Reset` counts. The two
+dominant implementations disagree: GitHub sends a Unix timestamp, and most
+others send delta-seconds.
+
+Kynos sends **delta-seconds**, matching the draft's `t` so that the two
+spellings mean the same thing and a client migrating between them reads the same
+number. It is stated here because a generated client cannot tell `30` from an
+epoch second by looking, and the field is `DESCRIBED`, so the guess reaches
+generated code.
+
+That ambiguity is inherited along with the prefix rather than caused by it, and
+it is a second reason the structured spelling is worth taking early.
+
 ### The migration, and how to take it early
 
 `RateLimit::standard_fields` is the other spelling: `RateLimit` and

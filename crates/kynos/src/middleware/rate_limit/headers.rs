@@ -226,8 +226,16 @@ fn render_policies(policies: &[QuotaPolicy]) -> Option<http::HeaderValue> {
                 let _ = write!(member, ";w={}", window.as_secs());
             }
             // `requests` is the draft's default, so stating it says nothing.
+            //
+            // Rendered through `sf_string` like the two names beside it, because
+            // section 3.1.2 says "The value MUST be a String" and every unit
+            // Kynos ships happens to be a valid token as well -- which is what
+            // made a bare one parse, and then mis-type against any client that
+            // checks the member's type.
             if policy.unit != crate::middleware::rate_limit::decision::QuotaUnit::Requests {
-                let _ = write!(member, ";qu={}", policy.unit.as_str());
+                if let Some(unit) = sf_string(policy.unit.as_str()) {
+                    let _ = write!(member, ";qu={unit}");
+                }
             }
             Some(member)
         })
