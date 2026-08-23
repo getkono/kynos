@@ -13,6 +13,7 @@ only if it never claims a guarantee CI does not actually enforce.
 | `needs-tooling` | Settled, and blocked on installing something. The tool is named |
 | `blocked-on-impl` | The surface the method would assert against does not exist yet |
 | `blocked-on-dependency` | A pinned dependency does not expose what the requirement needs. The dependency and the remedy are named |
+| `by-design` | The requirement is not met and will not be. The alternative was weighed and refused, and the trade is recorded |
 | `kynos-bench` | Owned by [`getkono/kynos-bench`](https://github.com/getkono/kynos-bench), not by this repository |
 
 `planned` and `needs-tooling` were one status, which made six rows look
@@ -182,7 +183,7 @@ guarantee. It has already earned its keep twice — see
 | reliability | Graceful shutdown drains all in-flight requests with zero dropped responses | Integration tests in `crates/kynos/src/server/tests.rs` covering HTTP/1 drain, HTTP/2 stream drain, TLS handshake cancellation, and timeout exhaustion | `enforced` |
 | reliability | Backpressure is bounded by default via connection count, queue depth and timeouts | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting a request past the concurrency cap is shed with 503 rather than queued; a load test at 2× capacity for the memory bound | `enforced` for the shedding; `planned` for the load test |
 | reliability | HTTP/2 request-body flow control is released as the body is consumed, not as frames arrive | Load test streaming a large body to a slow consumer, asserting the receive window closes | `blocked-on-dependency` |
-| reliability | A streamed request body is decoded as it arrives rather than after it has been collected | [`extract/body/json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) reading a body delivered one frame per byte, and every frame boundary of a fixed body | `enforced` for a body declaring a `Content-Length`; `blocked-on-impl` under `BodySize` for a chunked one |
+| reliability | A streamed request body is decoded as it arrives rather than after it has been collected | [`extract/body/json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) reading a body delivered one frame per byte, and every frame boundary of a fixed body | `enforced` for a body declaring a `Content-Length`; `by-design` under `BodySize` for a chunked one |
 | performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `kynos-bench` |
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `kynos-bench` |
 | compatibility | `Listener::Tokio` is the only public item naming a tokio type | `cargo-public-api` assertion over the framework surface | `needs-tooling` |
@@ -216,11 +217,18 @@ decided from the head and its body passes
 `Records<T>` receives it a frame at a time. A chunked request declares no
 length, so a running count is the only bound there is and the interceptor
 materialises the whole body before the handler is entered — records still
-arrive one at a time, and nothing is saved. Closing it needs a body that can be
-rebuilt as a capped *stream* rather than only from bytes, which is the one
-thing the erased body does not offer today. The limit is documented where the
-decision is made rather than only here, because that is where someone mounting
-a cap will meet it.
+arrive one at a time, and nothing is saved.
+
+What blocks it is the declared 413, not the erased body. A count that runs
+while the handler reads only reaches its verdict once the handler has acted on
+the bytes it was given, so streaming the body does not buy the cap back — it
+moves the refusal behind whatever the handler already did with an oversized
+payload. The two honest alternatives are worse than the buffer: a 413 sent
+after those side effects, or a 411 refusing every length-less body and with it
+every chunked upload. That is why the row reads `by-design` and not
+`blocked-on-impl`; there is no missing constructor to write. The limit is
+documented where the decision is made rather than only here, because that is
+where someone mounting a cap will meet it.
 
 ## Dependencies
 
