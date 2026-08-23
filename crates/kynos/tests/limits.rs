@@ -264,24 +264,27 @@ fn a_service_with_no_body_limit_declares_no_413() {
     }
 }
 
-/// A timeout bounds a body read only when it is mounted *outside* the limit
-/// that does the reading.
+/// A timeout and a body limit stacked together each declare their own status.
 ///
-/// `BodySize` reads a length-less body frame by frame, and a client that sends
-/// one frame slowly holds that loop open. `Timeout` wraps whatever is beneath
-/// it, so the order is the whole of whether the slow-body case is covered —
-/// and mounting order is a thing a reader has to be told rather than something
-/// the types enforce.
+/// The router below mounts the arrangement the slow-body rule asks for —
+/// `Timeout` outside `BodySize`, because `BodySize` reads a length-less body
+/// frame by frame and only a timeout wrapping it ends the exchange. **This
+/// test does not check that.** It sends no request, and what it asserts is
+/// true in either mounting order.
+///
+/// The name used to say otherwise. Pinning the read needs a client that dribbles
+/// a chunked body over a real socket, which this harness cannot express;
+/// `docs/middleware.md` is where the rule is stated and says nothing checks it.
 #[tokio::test]
-async fn a_timeout_mounted_outside_a_body_limit_bounds_the_read() {
+async fn a_timeout_over_a_body_limit_declares_both_statuses() {
     let service = support::router()
         .intercept(Timeout::new(Duration::from_millis(30)))
         .intercept(BodySize::new(4096))
         .build(App::new())
         .expect("a describable router");
 
-    // The chain runs outermost-first, so the timeout is written first and is
-    // the one that covers the read the limit performs.
+    // The chain runs outermost-first, so the timeout is written first. What
+    // follows reads the description, not the exchange.
     let document = service.openapi();
     let operation = document.paths.0["/users"]
         .post
@@ -290,7 +293,7 @@ async fn a_timeout_mounted_outside_a_body_limit_bounds_the_read() {
 
     assert!(
         operation.responses.responses.contains_key("504"),
-        "the timeout covers the operation whose body the limit reads"
+        "the timeout contributes its status to the operation it covers"
     );
     assert!(operation.responses.responses.contains_key("413"));
 }

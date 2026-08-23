@@ -272,11 +272,12 @@ body frame by frame, so a client sending one frame slowly holds that loop open.
 it is mounted *outside* the limit doing the reading — the earlier `intercept`
 call, per [the ordering rule](#the-order-a-chain-runs-in). The types do not
 enforce it, and neither does a test:
-`a_timeout_mounted_outside_a_body_limit_bounds_the_read` in
-[`tests/limits.rs`](../crates/kynos/tests/limits.rs) mounts the arrangement it
-names but asserts only on the emitted document, which is order-insensitive and
-passes either way. This paragraph is where a reader learns the rule, and nothing
-below it is checked.
+`a_timeout_over_a_body_limit_declares_both_statuses` in
+[`tests/limits.rs`](../crates/kynos/tests/limits.rs) mounts the arrangement but
+asserts only on the emitted document, which is order-insensitive and passes
+either way. Pinning the read needs a client that dribbles a chunked body over a
+real socket, which the harness cannot express today. This paragraph is where a
+reader learns the rule, and nothing below it is checked.
 
 **A per-IP cap is absent rather than pending.** Behind a load balancer every
 connection arrives from one address, so a cap counted in-process is either
