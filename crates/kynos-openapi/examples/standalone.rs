@@ -36,19 +36,20 @@ use kynos_openapi::{
 /// spelled out is the point: the model is an ordinary data structure, so a tool
 /// that has no handlers can still produce a description.
 fn list_orders() -> Operation {
-    let mut operation = Operation::default();
-    operation.operation_id = Some("listOrders".to_owned());
-    operation.summary = Some("Lists orders".to_owned());
-    operation.tags = vec!["orders".to_owned()];
-    operation.responses = Responses::new().with(
-        200,
-        Response::with_content(
-            "Every order the caller may see",
-            "application/json",
-            order_list(),
+    Operation {
+        operation_id: Some("listOrders".to_owned()),
+        summary: Some("Lists orders".to_owned()),
+        tags: vec!["orders".to_owned()],
+        responses: Responses::new().with(
+            200,
+            Response::with_content(
+                "Every order the caller may see",
+                "application/json",
+                order_list(),
+            ),
         ),
-    );
-    operation
+        ..Operation::default()
+    }
 }
 
 /// An array of order identifiers.
@@ -72,10 +73,11 @@ fn order_list() -> kynos_openapi::MediaType {
 /// The construct that makes `emit(V3_1)` refuse further down. 3.1 has no Path
 /// Item field for `QUERY`, so there is nowhere honest to put this.
 fn search_orders() -> Operation {
-    let mut operation = Operation::default();
-    operation.operation_id = Some("searchOrders".to_owned());
-    operation.responses = Responses::new().with(200, Response::new("Orders matching the filter"));
-    operation
+    Operation {
+        operation_id: Some("searchOrders".to_owned()),
+        responses: Responses::new().with(200, Response::new("Orders matching the filter")),
+        ..Operation::default()
+    }
 }
 
 fn main() {
