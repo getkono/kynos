@@ -152,7 +152,7 @@ fn collect(
         // Refused at compile time rather than waived. A static asset Kynos
         // cannot describe is one it will not serve, and the alternative is a
         // document that quietly omits a file the service answers for.
-        if PathTemplate::parse(&format!("/{relative}")).is_err() {
+        if PathTemplate::parse(format!("/{relative}")).is_err() {
             return Err(syn::Error::new(
                 args.dir.span(),
                 format!(
