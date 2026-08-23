@@ -347,3 +347,97 @@ RFC 9110's section above records. The same Revised BSD License treatment applies
 to Code Components extracted from any of them, which includes every ABNF rule an
 implementation is written against.
 
+## Living standards
+
+The six documents below are not RFCs and are not immutable. Each is vendored as
+a **dated snapshot** chosen because its publisher offers one: WHATWG cuts
+periodic review drafts, and every W3C technical report has a dated version URL
+beside its undated "latest version" pointer. The undated URL is what a reader
+should follow to see what changed; the vendored file is what an implementation
+was written against, and it is the only form worth checksumming.
+
+They are HTML because neither publisher issues a plain-text form. That is the one
+respect in which they differ from every other file here.
+
+### CORS
+
+[`whatwg-fetch-2026-06.html`](whatwg-fetch-2026-06.html) is an unmodified,
+byte-for-byte copy of the [Fetch Standard Review Draft, June
+2026](https://fetch.spec.whatwg.org/review-drafts/2026-06/), retrieved on
+2026-08-23. Its SHA-256 digest is
+`9353f1399c2191979c44b43fd2753b69135229130c8f3f2bbbb57c01737a5033`.
+
+Fetch, not RFC 9110, is what defines CORS: the preflight, the
+`Access-Control-*` fields, and the rule that a wildcard never satisfies a
+credentialed request. It binds
+[`middleware::cors`](../crates/kynos/src/middleware/cors/mod.rs). Worth knowing
+before reading that module: `*` in `Access-Control-Allow-Headers` is a literal
+field name for a credentialed request, and even without credentials it does not
+cover `Authorization`, which always has to be named.
+
+### Fetch Metadata
+
+[`w3c-fetch-metadata-20250401.html`](w3c-fetch-metadata-20250401.html) is an
+unmodified, byte-for-byte copy of the W3C Working Draft of [Fetch Metadata
+Request Headers, 1 April
+2025](https://www.w3.org/TR/2025/WD-fetch-metadata-20250401/), retrieved on
+2026-08-23. Its SHA-256 digest is
+`a16ceda347ab6421c450a3c9c402446204073fc395cf8dc36c7c2425f5ff4b77`.
+
+It defines `Sec-Fetch-Site` and the rest of the `Sec-Fetch-*` family as headers
+the browser sets and script cannot forge. That property is what makes a
+tokenless, sessionless CSRF defence possible at all, which is why this is here
+rather than a CSRF token scheme.
+
+### Trace Context
+
+[`w3c-trace-context-20211123.html`](w3c-trace-context-20211123.html) is an
+unmodified, byte-for-byte copy of the W3C Recommendation [Trace Context, 23
+November 2021](https://www.w3.org/TR/2021/REC-trace-context-1-20211123/),
+retrieved on 2026-08-23. Its SHA-256 digest is
+`9e7228d2a91c5aa4bef6e7f610366a2000274ee51699053e10c8ac3f0b8965be`.
+
+It defines `traceparent` and `tracestate`. Kynos ships no tracing backend, so
+this binds nothing today; it is vendored because the correlation-identifier
+surface is deliberately generic over its header group and this is the
+standardised group a reader is most likely to reach for.
+
+Unlike the other three this is a Recommendation rather than a draft, so the
+dated snapshot and the latest version are the same document.
+
+### Security response headers
+
+Three snapshots, vendored together because they are configured together and
+separately from anything else here:
+
+| File | Document | SHA-256 |
+| --- | --- | --- |
+| [`w3c-csp3-20260813.html`](w3c-csp3-20260813.html) | [Content Security Policy Level 3, 13 August 2026](https://www.w3.org/TR/2026/WD-CSP3-20260813/) | `a28120328f5265dbf2028d8a7272bece363016915b3d6e53641643c270ac65b2` |
+| [`w3c-referrer-policy-20170126.html`](w3c-referrer-policy-20170126.html) | [Referrer Policy, 26 January 2017](https://www.w3.org/TR/2017/CR-referrer-policy-20170126/) | `4e60be213bbe74353fd4be29e519c9dd046f3dc6f012cc1149a7d50234a81e81` |
+| [`w3c-permissions-policy-20260618.html`](w3c-permissions-policy-20260618.html) | [Permissions Policy, 18 June 2026](https://www.w3.org/TR/2026/WD-permissions-policy-1-20260618/) | `6b3c9df3a8d6fb06214569ab5548a3cd48906a99b04c14af57f54506ce01436e` |
+
+All three were retrieved on 2026-08-23.
+
+`X-Content-Type-Options` and `X-Frame-Options` are in none of them: the first is
+defined by WHATWG's Fetch and HTML standards, and the second by RFC 7034, which
+is Informational and largely superseded by CSP's `frame-ancestors`. Both are
+`X-` prefixed names that predate the deprecation in
+[`rfc6648.txt`](rfc6648.txt) and are kept by every browser regardless, which is
+the reason they are emitted and the reason no specification here defines them.
+
+### Licensing
+
+The Fetch Standard is © WHATWG (Apple, Google, Mozilla, Microsoft) and licensed
+under [Creative Commons Attribution 4.0
+International](https://creativecommons.org/licenses/by/4.0/), which permits
+redistribution with attribution. The vendored file preserves the complete
+document including its attribution and license notice.
+
+The four W3C documents are © W3C and distributed under the [W3C Software and
+Document License](https://www.w3.org/copyright/software-license/), except
+Referrer Policy, which predates it and carries the older [W3C Document
+License](https://www.w3.org/copyright/document-license/). Both permit
+redistribution of an unmodified copy that keeps its notices, which each vendored
+file does.
+
+None of these five is distributed under the repository's MIT license.
