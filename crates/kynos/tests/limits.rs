@@ -195,8 +195,8 @@ async fn a_released_slot_is_available_to_the_next_request() {
 #[tokio::test]
 async fn a_limit_does_not_answer_for_a_route_that_does_not_exist() {
     let service = support::router()
-        .intercept(BodySize::new(4096))
         .intercept(Timeout::new(Duration::from_secs(30)))
+        .intercept(BodySize::new(4096))
         .build(App::new())
         .expect("a describable router");
 

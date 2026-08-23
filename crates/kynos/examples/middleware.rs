@@ -325,11 +325,17 @@ async fn main() -> kynos::Result<()> {
         // Compression negotiates on `Accept-Encoding`. `min_size` exists
         // because compressing a 40-byte body costs more than it saves.
         .intercept(Compression::new().min_size(1_024))
-        // Limits, each contributing the response it can produce: 413, 504 and
+        // Limits, each contributing the response it can produce: 504, 413 and
         // 503 respectively. Nothing below lists those statuses, and every
         // operation's description carries them.
-        .intercept(BodySize::new(1_048_576))
+        //
+        // `Timeout` comes first, so it sits *outside* `BodySize` -- which is
+        // what makes it bound the read. `BodySize` walks a length-less body
+        // frame by frame, so a client sending one frame slowly holds that loop
+        // open, and only a timeout wrapping it ends the exchange. The types do
+        // not enforce the order; `docs/middleware.md` is where it is stated.
         .intercept(Timeout::new(Duration::from_secs(30)))
+        .intercept(BodySize::new(1_048_576))
         .intercept(Concurrency::new(256))
         // Rate limiting. Every number a response prints comes from the policy,
         // because every one is a property of the counters the policy keeps:
