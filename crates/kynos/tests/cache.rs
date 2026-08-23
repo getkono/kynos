@@ -255,26 +255,41 @@ async fn a_derived_tag_is_the_same_on_a_hit_as_on_a_miss() {
 /// The arrangement worth having: a hit turned into a 304.
 ///
 /// `Conditional` outside `Cache`, so the body it discards is the cached one
-/// rather than the handler's.
+/// rather than the handler's. The hit has to be real for that to be what is
+/// asserted: over a route the store never keeps, the handler runs again and
+/// `Conditional` alone answers identically, so the arrangement is untested and
+/// the name is a claim about nothing. `/reports` states a lifetime and the
+/// cache derives the validator, which is what makes the second request a hit
+/// carrying a tag.
 #[tokio::test]
 async fn a_conditional_over_a_cache_answers_a_hit_with_no_body() {
     let service = Router::<()>::new()
-        .mount(kynos::routes![tagged])
-        .intercept(Cache::new(Stored::default()).namespace("test"))
+        .mount(kynos::routes![reports])
+        .intercept(
+            Cache::new(Stored::default())
+                .namespace("test")
+                .deriving_etags(),
+        )
         .intercept(Conditional::new())
         .build(())
         .expect("a describable router");
 
-    let first = get(&service, "/tagged").call().await;
-    let etag = first.field(header::ETAG.as_str()).expect("a tag");
+    let first = get(&service, "/reports").call().await;
+    let etag = first.field(header::ETAG.as_str()).expect("a derived tag");
+    let before = CALLS.load(Ordering::SeqCst);
 
-    let second = get(&service, "/tagged")
+    let second = get(&service, "/reports")
         .header("if-none-match", &etag)
         .call()
         .await;
 
     assert_eq!(second.status, StatusCode::NOT_MODIFIED);
     assert!(second.body.is_empty());
+    assert_eq!(
+        calls_during(before),
+        0,
+        "the handler ran, so the body the 304 discarded was not the cached one"
+    );
 }
 
 /// The two compose, which is the property their `Adds` sets were chosen for.
