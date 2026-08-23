@@ -76,7 +76,7 @@ Each of these is something another Rust framework offers and Kynos does not, and
 | `uuid` | no | `Uuid` as `format: uuid` |
 | `time-chrono`, `time-jiff` | no | Dates and times from one backend or the other, both mapping onto shapes `time` defines once |
 | `decimal-rust`, `decimal-big` | no | Decimals, written as JSON strings so the precision they exist for survives |
-| `compression` | no | Response compression |
+| `compression` | no | Response compression, and decompressing a request body the client compressed |
 | `yaml` | no | YAML document emission |
 | `test-util` | no | In-process test client and contract-conformance assertions |
 | `assets` | no | Compile a directory into the binary as one described operation per file |
@@ -124,7 +124,7 @@ The core is what every operation passes through, so it freezes with the release:
 | YAML emission | `yaml` | settling |
 | Server-Sent Events and streaming bodies | `openapi32` | settling |
 | Rate limiting | — | open |
-| Compression | `compression` | open |
+| Compression, and request decompression | `compression` | open |
 | Response cache and conditional requests | `cache` | open |
 | Static assets, embedded and from disk | `assets`, `assets-fs` | open |
 | In-process test client | `test-util` | open |

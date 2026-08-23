@@ -174,8 +174,19 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | A response carrying a strong validator is never content-coded | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs)'s `partial` module, with the weakly tagged control differing in exactly the `W/` prefix | `enforced` |
 | correctness | An encoded stream decodes to exactly what the handler produced | [`compression/streaming.rs`](../crates/kynos/src/middleware/compression/streaming.rs) round-tripping a multi-frame body through both latency modes, and asserting the two modes differ in frame count and in size | `enforced` |
 | correctness | A response that advertises `Accept-Ranges` is never content-coded | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs)'s `partial` for the rule and its control, and `ranged_assets` resuming an asset download against the tag it was served with | `enforced` |
+| security | A compressed request body cannot cost more memory than the route's declared limit | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs)'s `decompression`, refusing a body that passes a limit on its encoded size and expands past the decoded one, with a control inside both bounds | `enforced` |
+| correctness | Metadata describing a coded form does not outlive the decode | The same module, asserting `Content-Encoding`, `Content-Length` and `Content-Digest` as the handler receives them, with a control that carried no coding | `enforced` |
 
-**The last row is a known limit as much as a guarantee.** It says a static
+**The two decompression rows are one requirement seen twice.** RFC 9110 §8.4
+makes the representation *the coded form*, so undoing the coding invalidates
+every other statement about it — and a `Content-Length` that survived the decode
+is both a lie and, since it is the number a naive cap would read, the mechanism
+by which the first row would fail. That is also why
+[`BodySize`](../crates/kynos/src/middleware/limits.rs) cannot be the guard here:
+it measures the size an attacker sets freely. `Decompression` declares 413 for
+that reason, which makes mounting the two together a compile error.
+
+**The `Accept-Ranges` row is a known limit as much as a guarantee.** It says a static
 asset under `Compression` ships uncompressed, which is a bandwidth cost on
 exactly the files worth encoding. It is recorded here rather than left to the
 interceptor's documentation because it is a deliberate trade against RFC 9110
