@@ -38,7 +38,16 @@ fn the_set_holds_what_the_directory_held_minus_what_was_excluded() {
 
     assert_eq!(paths, ["css/app.css", "docs/index.html", "index.html"]);
     assert_eq!(Fixture::COUNT, 3);
-    assert!(Fixture::TOTAL_BYTES > 0);
+    // Summed rather than compared against a literal: what is worth asserting is
+    // that the constant counts the bytes that were actually embedded, and a
+    // literal would only restate the fixture's current size.
+    assert_eq!(
+        Fixture::TOTAL_BYTES,
+        Fixture::ASSETS
+            .iter()
+            .map(|asset| asset.bytes().len())
+            .sum::<usize>()
+    );
 }
 
 /// The order is sorted, so the emitted document is byte-identical across
