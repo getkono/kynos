@@ -90,6 +90,27 @@ on. Two interceptors rewriting one compose; two setting one header do not. An
 encoding a consumer must know about is a header, which is why `Compression`
 declares `Content-Encoding` rather than re-encoding silently.
 
+**Negotiation can refuse.** `Compression::Short` is `NotAcceptable`, and 406 is
+the answer to a request that refused *every* representation this build can
+produce — every coding and identity too. RFC 9110 section 12.4.1 gives two
+lawful answers there, honouring the field with a 406 or disregarding it, and
+Kynos honours it: disregarding a `q=0` means sending octets the client said in
+as many words it cannot decode.
+
+It is answered before the chain runs, because the representation the handler
+would produce is one no acceptable coding exists for, so producing it is work
+whose result could not be sent.
+
+Reaching it takes `*;q=0`, or naming every coding and identity with `q=0`. No
+ordinary client does either, which is why 406 appearing on every covered
+operation is a description of something real rather than noise.
+
+Two details of the same section are easy to get wrong and are checked. Identity
+is excluded by `identity;q=0` **or** by `*;q=0` with no more specific identity
+entry — checking only the first is a live bug against the second. And an *empty*
+field value excludes nothing: it "implies that the user agent does not want any
+content coding in response", which is identity, not nothing.
+
 **A response that ranges is left alone.** `Compression` refuses a 206, a 416,
 anything carrying a `Content-Range`, and anything carrying `Accept-Ranges`,
 whatever the client accepted. RFC 9110 §14.1.2 calculates a byte range *with
