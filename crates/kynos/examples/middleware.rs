@@ -41,7 +41,7 @@ use kynos::{
     http,
     middleware::{
         Continued, Interceptor, Next,
-        compression::Compression,
+        compression::{Compression, levels::GzipLevel},
         cors::Cors,
         limits::{BodySize, Concurrency, Timeout},
         rate_limit::{Decision, QuotaPolicy, QuotaUnit, RateLimit, RateLimitPolicy, ServiceLimit},
@@ -326,7 +326,22 @@ async fn main() -> kynos::Result<()> {
         )
         // Compression negotiates on `Accept-Encoding`. `min_size` exists
         // because compressing a 40-byte body costs more than it saves.
-        .intercept(Compression::new().min_size(1_024))
+        //
+        // Levels are per algorithm and do not share a scale: the three formats
+        // number them differently and put the knee of the curve in a different
+        // place. Nothing here is set, so each takes its own default -- gzip 6,
+        // brotli 4, zstd 3. Brotli's is deliberately not its reference
+        // encoder's 11, which is for content with a build step rather than a
+        // response generated per request.
+        //
+        // `GzipLevel::new` and its siblings refuse a number their own format
+        // does not define, so a typo is `None` here rather than a runtime
+        // surprise in the encoder.
+        .intercept(
+            Compression::new()
+                .min_size(1_024)
+                .gzip_level(GzipLevel::new(5).expect("DEFLATE defines level 5")),
+        )
         // Limits, each contributing the response it can produce: 504, 413 and
         // 503 respectively. Nothing below lists those statuses, and every
         // operation's description carries them.

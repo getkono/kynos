@@ -4,7 +4,10 @@
 
 use std::{io, pin::Pin, task::Poll};
 
-use async_compression::tokio::bufread::{BrotliEncoder, GzipEncoder, ZstdEncoder};
+use async_compression::{
+    Level,
+    tokio::bufread::{BrotliEncoder, GzipEncoder, ZstdEncoder},
+};
 use bytes::{Bytes, BytesMut};
 use http_body::Body as _;
 use http_body_util::BodyExt;
@@ -13,7 +16,10 @@ use tokio::io::{AsyncRead, ReadBuf};
 use crate::{
     extract::params::header::HeaderParams,
     http,
-    middleware::{Continued, Interceptor, Next},
+    middleware::{
+        Continued, Interceptor, Next,
+        compression::levels::{BrotliLevel, GzipLevel, ZstdLevel},
+    },
 };
 
 /// A content coding this crate can produce.
@@ -310,18 +316,96 @@ async fn drain<R: AsyncRead + Unpin>(mut source: R) -> io::Result<Bytes> {
     }
 }
 
-/// Applies `coding` to `bytes`.
-async fn encode(coding: Coding, bytes: Bytes) -> io::Result<Bytes> {
+/// Applies `coding` to `bytes` at the level `levels` sets for it.
+async fn encode(coding: Coding, bytes: Bytes, levels: Levels) -> io::Result<Bytes> {
     match coding {
-        Coding::Zstd => drain(ZstdEncoder::new(io::Cursor::new(bytes))).await,
+        Coding::Zstd => {
+            drain(ZstdEncoder::with_quality(
+                io::Cursor::new(bytes),
+                Level::Precise(levels.zstd.get()),
+            ))
+            .await
+        }
         // Boxed because brotli's encoder state is measured in kilobytes, and an
         // interceptor's future is held for the whole exchange.
-        Coding::Brotli => Box::pin(drain(BrotliEncoder::new(io::Cursor::new(bytes)))).await,
-        Coding::Gzip => drain(GzipEncoder::new(io::Cursor::new(bytes))).await,
+        Coding::Brotli => {
+            Box::pin(drain(BrotliEncoder::with_quality(
+                io::Cursor::new(bytes),
+                Level::Precise(as_level(levels.brotli.get())),
+            )))
+            .await
+        }
+        Coding::Gzip => {
+            drain(GzipEncoder::with_quality(
+                io::Cursor::new(bytes),
+                Level::Precise(as_level(levels.gzip.get())),
+            ))
+            .await
+        }
     }
 }
 
+/// The level as `async-compression` spells one.
+///
+/// Infallible in practice and written to be infallible in fact: both levels
+/// that reach here are bounded at 11 by their own constructors, so the fallback
+/// is unreachable rather than a silent clamp.
+fn as_level(level: u32) -> i32 {
+    i32::try_from(level).unwrap_or(i32::MAX)
+}
+
+/// What each algorithm is asked for.
+///
+/// One value rather than three arguments, so a level cannot be passed to the
+/// wrong encoder: the types already make that impossible, and this keeps the
+/// call sites from having to say so.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Levels {
+    /// What gzip is asked for.
+    pub gzip: GzipLevel,
+    /// What brotli is asked for.
+    pub brotli: BrotliLevel,
+    /// What zstd is asked for.
+    pub zstd: ZstdLevel,
+}
+
 /// Compresses responses when the client accepts it.
+///
+/// ```no_run
+/// # #[cfg(feature = "compression")]
+/// # {
+/// use kynos::middleware::compression::{Compression, levels::GzipLevel};
+///
+/// // Everything at its default level, except gzip, which this service serves
+/// // enough of to care about the CPU.
+/// let compression = Compression::new()
+///     .min_size(1_024)
+///     .gzip_level(GzipLevel::FASTEST);
+/// # }
+/// ```
+///
+/// # Levels, and the scope they are set at
+///
+/// Each algorithm keeps its own type — [`GzipLevel`], [`BrotliLevel`],
+/// [`ZstdLevel`] — rather than sharing one `Fastest`/`Best` scale. The three
+/// number their levels differently and put the knee of the curve in a different
+/// place, so a shared scale would hide the one fact an operator is choosing
+/// between. Each refuses a number its own format does not define, and none
+/// converts into another.
+///
+/// The defaults are gzip 6, brotli **4** and zstd 3. Brotli's is the one worth
+/// knowing: its reference encoder defaults to 11, which is meant for content
+/// compressed once and served a million times, and applied per request costs
+/// roughly a fifth of a second of CPU on a 200 KB document.
+/// [`BrotliLevel::DEFAULT`] records why 4 is right for an API.
+///
+/// Levels are set per mount, and a mount is a scope: a `Compression` on the
+/// router covers everything, one on a [`Group`](crate::router::group::Group)
+/// covers that group, one on an endpoint covers that endpoint. What is *not*
+/// available is a global one plus a per-endpoint override — both would add
+/// `Content-Encoding` to the same operation, which
+/// [`header_names_disjoint`](crate::middleware::stack) refuses at the mount
+/// site. Mount the one that varies and leave the rest uncovered.
 ///
 /// Only a response whose length is already known is encoded. A body that cannot
 /// state its length is a stream, and buffering one to compress it would defeat
@@ -369,19 +453,52 @@ async fn encode(coding: Coding, bytes: Bytes) -> io::Result<Bytes> {
 pub struct Compression {
     /// The smallest response worth encoding, in bytes.
     min_size: u64,
+    /// What each algorithm is asked for.
+    levels: Levels,
 }
 
 impl Compression {
-    /// Enables every compiled-in algorithm.
+    /// Enables every compiled-in algorithm, at each one's default level.
     #[must_use]
     pub fn new() -> Self {
-        Self { min_size: 0 }
+        Self {
+            min_size: 0,
+            levels: Levels::default(),
+        }
     }
 
     /// Skips responses smaller than `bytes`.
     #[must_use]
     pub fn min_size(mut self, bytes: u64) -> Self {
         self.min_size = bytes;
+        self
+    }
+
+    /// Sets what gzip is asked for.
+    #[must_use]
+    pub fn gzip_level(mut self, level: GzipLevel) -> Self {
+        self.levels.gzip = level;
+        self
+    }
+
+    /// Sets what brotli is asked for.
+    #[must_use]
+    pub fn brotli_level(mut self, level: BrotliLevel) -> Self {
+        self.levels.brotli = level;
+        self
+    }
+
+    /// Sets what zstd is asked for.
+    #[must_use]
+    pub fn zstd_level(mut self, level: ZstdLevel) -> Self {
+        self.levels.zstd = level;
+        self
+    }
+
+    /// Sets all three at once.
+    #[must_use]
+    pub fn levels(mut self, levels: Levels) -> Self {
+        self.levels = levels;
         self
     }
 }
@@ -497,7 +614,7 @@ impl<C: Sync + 'static> Interceptor<C> for Compression {
         let encoded = match body.collect().await {
             Ok(collected) => {
                 let bytes = collected.to_bytes();
-                if let Ok(encoded) = encode(coding, bytes.clone()).await {
+                if let Ok(encoded) = encode(coding, bytes.clone(), self.levels).await {
                     let length = encoded.len();
                     continued.set_body(crate::http::body::Body::from_bytes(encoded));
                     Some((coding, length))
@@ -516,169 +633,7 @@ impl<C: Sync + 'static> Interceptor<C> for Compression {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{Coding, Negotiated, negotiate, quality};
-    use crate::http::{HeaderMap, HeaderValue, header};
-
-    /// A request accepting `value`, or accepting nothing at all.
-    fn accepting(value: Option<&str>) -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        if let Some(value) = value {
-            headers.insert(
-                header::ACCEPT_ENCODING,
-                HeaderValue::from_str(value).expect("a printable field"),
-            );
-        }
-        headers
-    }
-
-    /// Every rule RFC 9110 section 12.5.3 states, and what each resolves to.
-    ///
-    /// One table, because the rules interact: identity's default acceptability
-    /// is what decides two of the rows, and the wildcard's reach decides two
-    /// more.
-    #[test]
-    fn every_negotiation_rule_the_specification_states_is_applied() {
-        let cases: &[(&str, Option<&str>, Negotiated)] = &[
-            // Rule 1: absent means everything is acceptable.
-            ("no field at all", None, Negotiated::Identity),
-            // An empty value "implies that the user agent does not want any
-            // content coding in response" -- it excludes nothing, so identity.
-            ("an empty field value", Some(""), Negotiated::Identity),
-            (
-                "a plain coding",
-                Some("gzip"),
-                Negotiated::Encode(Coding::Gzip),
-            ),
-            (
-                "the deprecated spelling of one",
-                Some("x-gzip"),
-                Negotiated::Encode(Coding::Gzip),
-            ),
-            (
-                "a coding in another case",
-                Some("GZIP"),
-                Negotiated::Encode(Coding::Gzip),
-            ),
-            // Server preference breaks a tie: zstd is preferred over gzip.
-            (
-                "two codings weighted equally",
-                Some("gzip, zstd"),
-                Negotiated::Encode(Coding::Zstd),
-            ),
-            // The client's weighting overrides the server's preference.
-            (
-                "a client preferring the server's second choice",
-                Some("gzip;q=1.0, zstd;q=0.5"),
-                Negotiated::Encode(Coding::Gzip),
-            ),
-            // Rule 2, explicit form.
-            (
-                "identity refused by name",
-                Some("gzip, identity;q=0"),
-                Negotiated::Encode(Coding::Gzip),
-            ),
-            // Rule 2, wildcard form -- the one an implementation misses.
-            (
-                "identity refused through the wildcard",
-                Some("gzip, *;q=0"),
-                Negotiated::Encode(Coding::Gzip),
-            ),
-            // A more specific identity entry beats the wildcard.
-            (
-                "a wildcard refusal with identity readmitted",
-                Some("*;q=0, identity"),
-                Negotiated::Identity,
-            ),
-            (
-                "every coding refused",
-                Some("gzip;q=0, br;q=0, zstd;q=0"),
-                Negotiated::Identity,
-            ),
-            // Nothing left at all: this is the 406.
-            ("everything refused", Some("*;q=0"), Negotiated::Nothing),
-            (
-                "every coding and identity refused by name",
-                Some("gzip;q=0, br;q=0, zstd;q=0, identity;q=0"),
-                Negotiated::Nothing,
-            ),
-            // A client preferring identity gets it.
-            (
-                "identity preferred over a coding",
-                Some("gzip;q=0.5, identity;q=1.0"),
-                Negotiated::Identity,
-            ),
-        ];
-
-        for (description, accept, expected) in cases {
-            assert_eq!(negotiate(&accepting(*accept)), *expected, "{description}");
-        }
-    }
-
-    /// A weight above 1 is not a qvalue and must not outrank one.
-    ///
-    /// RFC 9110 section 12.4.2 bounds it at 1. Read literally, `q=1.5` beats a
-    /// legitimate `q=1.0` -- a preference inversion no client can have meant.
-    #[test]
-    fn a_weight_outside_the_range_cannot_outrank_one_inside_it() {
-        assert_eq!(quality("gzip;q=1.5", "gzip"), Some(1.0));
-        assert_eq!(quality("gzip;q=-1", "gzip"), Some(0.0));
-
-        // The inversion itself: with clamping, the server's preference decides.
-        assert_eq!(
-            negotiate(&accepting(Some("gzip;q=1.5, zstd;q=1.0"))),
-            Negotiated::Encode(Coding::Zstd)
-        );
-    }
-
-    /// An unparsable weight is a refusal, which the module already argued for:
-    /// a client that wrote something meaningless did not ask for this coding.
-    #[test]
-    fn an_unparsable_weight_is_a_refusal() {
-        assert_eq!(quality("gzip;q=abc", "gzip"), Some(0.0));
-    }
-}
+pub mod levels;
 
 #[cfg(test)]
-mod etag_tests {
-    use super::strongly_tagged;
-    use crate::http::{HeaderMap, HeaderValue, header};
-
-    fn tagged(value: Option<&str>) -> HeaderMap {
-        let mut headers = HeaderMap::new();
-        if let Some(value) = value {
-            headers.insert(
-                header::ETAG,
-                HeaderValue::from_str(value).expect("a printable field"),
-            );
-        }
-        headers
-    }
-
-    /// A strong tag stops the encoder; a weak one does not.
-    ///
-    /// RFC 9110 section 8.8.1: a validator shared by a coded and an uncoded
-    /// representation *is* weak, so a response that already says `W/` is
-    /// telling the truth after encoding and one that does not is not.
-    #[test]
-    fn only_a_strong_validator_stops_the_encoder() {
-        let cases: &[(&str, Option<&str>, bool)] = &[
-            ("no validator at all", None, false),
-            ("a strong tag", Some("\"rev-42\""), true),
-            ("a weak tag", Some("W/\"rev-42\""), false),
-            // Lowercase `w/` is not the weakness prefix: RFC 9110 section 8.8.3
-            // writes it `W/`, case-sensitively.
-            ("a lowercase weakness prefix", Some("w/\"rev-42\""), true),
-            (
-                "a strong tag with surrounding space",
-                Some("  \"rev-42\"  "),
-                true,
-            ),
-        ];
-
-        for (description, tag, expected) in cases {
-            assert_eq!(strongly_tagged(&tagged(*tag)), *expected, "{description}");
-        }
-    }
-}
+mod tests;

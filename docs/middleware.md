@@ -149,6 +149,24 @@ error on a stack that is otherwise correct. Re-tagging is what
 representation can be encoded at all, and it wants the validator minted where
 the range and the coding are both known rather than bolted on at the encoder.
 
+**Compression levels are per algorithm, and one of the defaults departs.**
+gzip 6, brotli 4 and zstd 3. The three formats number their levels differently
+and put the knee of the curve in a different place, so `GzipLevel`,
+`BrotliLevel` and `ZstdLevel` are separate types that do not convert into one
+another — a shared `Fastest`/`Best` scale would hide the fact being chosen.
+
+Brotli's default is not its reference encoder's. That is 11, which is meant for
+content compressed once and served a million times; applied to a response
+generated per request it encodes at around a megabyte a second. Quality 4 is
+what edge networks serve dynamic content at, and it still beats gzip 6 on size
+while costing less CPU — which is the whole reason to offer brotli to a client
+that has not cached anything.
+
+Levels are set per mount, so scope is how they vary. There is no global setting
+with a per-endpoint override: two `Compression`s covering one operation both add
+`Content-Encoding`, and `header_names_disjoint` refuses that pair where it is
+mounted.
+
 **A response that ranges is left alone.** `Compression` refuses a 206, a 416,
 anything carrying a `Content-Range`, and anything carrying `Accept-Ranges`,
 whatever the client accepted. RFC 9110 §14.1.2 calculates a byte range *with
