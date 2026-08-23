@@ -18,7 +18,11 @@ use kynos_openapi::{Method, model::body::mime_names::APPLICATION_PROBLEM_JSON};
 use crate::{
     error::problem::Problem,
     extract::params::path::PathCaptures,
-    http::{HeaderValue, Request, Response, StatusCode, body::Body, header},
+    http::{
+        HeaderValue, Request, Response, StatusCode,
+        body::{Body, Delivery},
+        header,
+    },
     middleware::{
         Next, Observer,
         erased::{ErasedInterceptor, ErasedTerminal},
@@ -189,6 +193,17 @@ pub(crate) struct Dispatch<C> {
     pub(crate) trusted_proxies: crate::http::forwarded::TrustedProxies,
 }
 
+/// Where in the table an operation sits.
+///
+/// Indices rather than a [`Route`], because a route borrows the table and the
+/// response body outlives every such borrow: the driver holds it after
+/// [`serve`](Dispatch::serve) has returned.
+#[derive(Clone, Copy, Debug)]
+struct Location {
+    path: usize,
+    position: usize,
+}
+
 impl<C: Send + Sync + 'static> Dispatch<C> {
     /// Serves one request.
     ///
@@ -233,6 +248,10 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         };
 
         let operation = &entry.operations[position];
+        let at = Location {
+            path: index,
+            position,
+        };
         let route = Route::new(&entry.template, &operation.operation_id, operation.method);
 
         if let Some(captures) = captures {
@@ -275,11 +294,11 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
                 request,
             )
             .await;
-            return self.finish(response, Some(route), started);
+            return self.finish(response, Some(at), started);
         }
 
         let response = self.run(operation, route, request).await;
-        self.finish(response, Some(route), started)
+        self.finish(response, Some(at), started)
     }
 
     /// Runs one already-routed operation's chain, with recovery if it asked for
@@ -328,13 +347,56 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         })
     }
 
+    /// Names the operation at `at`, borrowing the table's own strings.
+    fn route_at(&self, at: Location) -> Route<'_> {
+        let entry = &self.paths[at.path];
+        let operation = &entry.operations[at.position];
+
+        Route::new(&entry.template, &operation.operation_id, operation.method)
+    }
+
     /// Notifies every observer and hands the response on.
-    fn finish(&self, response: Response, route: Option<Route<'_>>, started: Instant) -> Response {
+    ///
+    /// The response leaves here wearing a watch on its body, so that a peer
+    /// that goes away mid-response is reported rather than silently counted as
+    /// served. Only when there is an observer to tell: a router with none pays
+    /// nothing, which keeps the watch off the path of every service that never
+    /// asked to observe anything.
+    fn finish(
+        self: &Arc<Self>,
+        response: Response,
+        at: Option<Location>,
+        started: Instant,
+    ) -> Response {
+        if self.observers.is_empty() {
+            return response;
+        }
+
         let elapsed = started.elapsed();
+        let route = at.map(|at| self.route_at(at));
         for observer in &self.observers {
             observer.on_response(&response, route, elapsed);
         }
-        response
+
+        // The route is rebuilt inside the watch rather than captured: it
+        // borrows the table, and the body outlives every borrow taken here --
+        // it is handed to the protocol driver and dropped whenever that driver
+        // is done with it.
+        let watcher = Arc::clone(self);
+        let (parts, body) = response.into_parts();
+        let body = body.watching(move |delivery| {
+            if delivery == Delivery::Complete {
+                return;
+            }
+
+            let elapsed = started.elapsed();
+            let route = at.map(|at| watcher.route_at(at));
+            for observer in &watcher.observers {
+                observer.on_disconnect(route, elapsed);
+            }
+        });
+
+        Response::from_parts(parts, body)
     }
 
     /// What a request that matched no route gets.

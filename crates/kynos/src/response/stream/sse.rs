@@ -41,6 +41,25 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 /// }
 /// # }
 /// ```
+///
+/// # Disconnect and backpressure
+///
+/// Both are the stream's own, and neither needs a callback.
+///
+/// A client that goes away drops the response body, and the body owns the
+/// stream — so `S` is dropped, and whatever it holds is released. Put the
+/// cleanup in `S`'s [`Drop`] and it runs when the reader leaves. An
+/// [`Observer`](crate::middleware::Observer) hears the same event as
+/// [`on_disconnect`](crate::middleware::Observer::on_disconnect), which is where
+/// a metric for abandoned streams belongs.
+///
+/// Backpressure is the absence of a poll. Events are pulled from `S` as the
+/// connection takes them, one at a time and never ahead, so a slow reader
+/// simply leaves `S` unpolled rather than filling a queue behind it. Nothing
+/// here buffers on the stream's behalf.
+///
+/// [`tests/sse.rs`](https://github.com/getkono/kynos/blob/master/crates/kynos/tests/sse.rs)
+/// holds both as assertions over a real socket.
 #[derive(Debug)]
 pub struct Sse<S> {
     /// The stream of events.
