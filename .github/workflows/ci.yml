@@ -43,6 +43,10 @@ jobs:
         run: mise run format:check
       - name: Lint
         run: mise run lint
+      # A second Clippy pass rather than a second job: `--all-features` and the
+      # default set share every dependency build, so they belong on one cache.
+      - name: Lint at baseline features
+        run: mise run lint:baseline
 
   test:
     name: Tests

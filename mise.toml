@@ -36,12 +36,24 @@ description = "Check Rust formatting"
 run = "cargo fmt --all -- --check"
 
 [tasks.lint]
-description = "Lint all workspace targets"
+description = "Lint all workspace targets with every feature enabled"
+# `--all-features` because without it Clippy never compiles an optional
+# feature's module, so it never reports one either. That is not theoretical: a
+# `cache` variant dead since 040a0af reached freeze review, and five `tls`
+# warnings stood the whole time the crate was linted on every push.
+run = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
+
+[tasks."lint:baseline"]
+description = "Lint all workspace targets at baseline features"
+# The command `lint` used to be, kept for the reason `test:baseline` exists:
+# `--all-features` compiles every `#[cfg(feature = ...)]` arm and no
+# `#[cfg(not(feature = ...))]` one. Widening `lint` without this would have
+# traded one blind spot for another.
 run = "cargo clippy --workspace --all-targets -- -D warnings"
 
 [tasks."lint:fix"]
 description = "Apply Clippy fixes across the workspace"
-run = "cargo clippy --fix --workspace --all-targets --allow-dirty --allow-staged -- -D warnings"
+run = "cargo clippy --fix --workspace --all-targets --all-features --allow-dirty --allow-staged -- -D warnings"
 
 [tasks.test]
 description = "Test all workspace targets"
@@ -177,6 +189,7 @@ description = "Run formatting, linting, and tests"
 run = [
   { task = "format:check" },
   { task = "lint" },
+  { task = "lint:baseline" },
   { task = "test" },
   { task = "test:baseline" },
   { task = "test:doc" },
@@ -210,6 +223,7 @@ description = "Run all pre-push checks"
 run = [
   { task = "format:check" },
   { task = "lint" },
+  { task = "lint:baseline" },
   { task = "coverage" },
   { task = "commits:check" },
 ]
