@@ -207,15 +207,24 @@ fn the_description_carries_whichever_spelling_was_selected() {
     assert!(!emitted.contains("X-RateLimit-Limit"), "{emitted}");
 }
 
-/// Compression must not re-encode a partial representation.
+/// Compression must not re-encode anything a byte range is calculated against.
 ///
-/// RFC 9110 section 14.1.2: when a content coding is applied, *each byte range
-/// is calculated with respect to the encoded sequence of bytes*. A 206 whose
-/// `Content-Range` names offsets into the identity octets and whose body is
-/// gzip is therefore a response whose field is wrong about its own content —
-/// and section 14.4 says the recipient of an invalid `Content-Range` MUST NOT
-/// recombine it with a stored representation, which is exactly the corruption
-/// that follows when a client does.
+/// Two rules, one reason. RFC 9110 section 14.1.2: when a content coding is
+/// applied, *each byte range is calculated with respect to the encoded sequence
+/// of bytes*.
+///
+/// The first rule is about a range already taken. A 206 whose `Content-Range`
+/// names offsets into the identity octets and whose body is gzip is a response
+/// whose field is wrong about its own content — and section 14.4 says the
+/// recipient of an invalid `Content-Range` MUST NOT recombine it with a stored
+/// representation, which is exactly the corruption that follows when a client
+/// does.
+///
+/// The second is about a range still to come. A 200 that advertises
+/// `Accept-Ranges` invites a later range request, and the offsets that request
+/// is answered against are the identity ones — so encoding the 200 while
+/// leaving one strong `ETag` over both forms is section 8.8.1's violation, and
+/// section 15.3.7.3 then licenses the client to splice the two together.
 #[cfg(feature = "compression")]
 mod partial {
     use kynos::{
@@ -243,9 +252,16 @@ mod partial {
         range.apply(Binary::new(octets()))
     }
 
+    /// The same octets with no range surface over them, which is the one
+    /// property the control differs in.
+    #[kynos::get("/recordings/transcript")]
+    async fn transcript() -> Binary<OctetStream> {
+        Binary::new(octets())
+    }
+
     fn service() -> Service<App> {
         Router::<App>::new()
-            .mount(kynos::routes![recording])
+            .mount(kynos::routes![recording, transcript])
             .intercept(Compression::new())
             .build(App::new())
             .expect("a describable router")
@@ -291,10 +307,13 @@ mod partial {
         assert_eq!(reply.field(header::CONTENT_ENCODING.as_str()), None);
     }
 
-    /// The pass control. Without it the two above hold just as well against a
-    /// compression interceptor that has stopped encoding anything at all.
+    /// A whole representation that says it ranges is left alone as well.
+    ///
+    /// The 206 the client asks for next is sliced from the identity octets, so
+    /// a 200 encoded here is the other half of the same representation under
+    /// the same validator.
     #[tokio::test]
-    async fn a_whole_representation_is_still_compressed() {
+    async fn a_representation_that_advertises_ranges_is_never_compressed() {
         let service = service();
         let reply = get(&service, "/recordings/current")
             .header("accept-encoding", "gzip")
@@ -306,10 +325,112 @@ mod partial {
             reply.field(header::ACCEPT_RANGES.as_str()).as_deref(),
             Some("bytes")
         );
+        assert_eq!(reply.field(header::CONTENT_ENCODING.as_str()), None);
+        assert_eq!(reply.body, octets());
+    }
+
+    /// The pass control. Without it the three above hold just as well against a
+    /// compression interceptor that has stopped encoding anything at all.
+    ///
+    /// Same octets, same media type, same interceptor: the only difference is
+    /// that nothing here advertises a range.
+    #[tokio::test]
+    async fn a_representation_that_advertises_no_range_is_still_compressed() {
+        let service = service();
+        let reply = get(&service, "/recordings/transcript")
+            .header("accept-encoding", "gzip")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(reply.field(header::ACCEPT_RANGES.as_str()), None);
         assert_eq!(
             reply.field(header::CONTENT_ENCODING.as_str()).as_deref(),
             Some("gzip")
         );
         assert!(reply.body.len() < octets().len());
+    }
+}
+
+/// A served asset is where the unsound splice was reachable end to end.
+///
+/// [`assets!`](kynos::assets) mints a strong entity tag from the file's
+/// contents, and `If-Range` takes the strong comparison — so an encoded 200
+/// carrying the identity file's tag is a validator the client is entitled to
+/// resume against, and RFC 9110 section 15.3.7.3 then has it append identity
+/// octets to an encoded prefix. Nothing reports an error; the file is simply
+/// wrong.
+///
+/// The control for these lives in [`partial`], which drives the same
+/// interceptor over a representation that advertises no range.
+#[cfg(all(feature = "compression", feature = "assets"))]
+mod ranged_assets {
+    use kynos::{
+        Router,
+        http::{StatusCode, header},
+        middleware::compression::Compression,
+        router::{group::Group, service::Service},
+    };
+
+    use super::support::get;
+
+    kynos::assets! {
+        /// The same fixture set `tests/assets.rs` serves.
+        struct Fixture;
+        dir = "tests/assets",
+        exclude = [".map"],
+    }
+
+    /// The stylesheet, whole.
+    const STYLESHEET: &str = "body { margin: 0 }\n";
+
+    fn service() -> Service<()> {
+        Router::<()>::new()
+            .group(Group::new("/static").mount(Fixture::assets()))
+            .intercept(Compression::new())
+            .build(())
+            .expect("a describable router")
+    }
+
+    /// The tag a client stores names the octets a later range is cut from.
+    ///
+    /// Asserted as one exchange pair rather than two tests, because the defect
+    /// is the two disagreeing: either half alone is correct on its own terms.
+    #[tokio::test]
+    async fn a_resumed_asset_download_is_spliced_from_the_representation_its_tag_named() {
+        let service = service();
+
+        let whole = get(&service, "/static/css/app.css")
+            .header("accept-encoding", "gzip")
+            .call()
+            .await;
+
+        assert_eq!(whole.status, StatusCode::OK);
+        assert_eq!(whole.field(header::CONTENT_ENCODING.as_str()), None);
+        assert_eq!(whole.text(), STYLESHEET);
+
+        let etag = whole
+            .field(header::ETAG.as_str())
+            .expect("an entity tag over the octets that were sent");
+
+        // What a client that lost the connection after six bytes sends next.
+        let resumed = get(&service, "/static/css/app.css")
+            .header("accept-encoding", "gzip")
+            .header("if-range", &etag)
+            .header("range", "bytes=6-")
+            .call()
+            .await;
+
+        assert_eq!(resumed.status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            resumed.field(header::CONTENT_RANGE.as_str()).as_deref(),
+            Some("bytes 6-18/19")
+        );
+        assert_eq!(resumed.field(header::CONTENT_ENCODING.as_str()), None);
+
+        // The splice the client performs, which must reproduce the file.
+        let mut spliced = whole.text()[..6].to_owned();
+        spliced.push_str(&resumed.text());
+        assert_eq!(spliced, STYLESHEET);
     }
 }
