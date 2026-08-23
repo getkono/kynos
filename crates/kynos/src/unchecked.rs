@@ -626,6 +626,10 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     /// invent one could describe a waiver the validator has no rule for.
     /// `route_unchecked` is the public door, and it derives the reason from the
     /// pattern.
+    // Gated to the caller rather than to `unchecked`, which is the wider door:
+    // `assets-fs` implies `unchecked`, so a build that takes the escape hatch
+    // without the directory server carries this for nothing.
+    #[cfg(feature = "assets-fs")]
     #[must_use]
     pub(crate) fn record_unchecked_route<H>(
         mut self,
