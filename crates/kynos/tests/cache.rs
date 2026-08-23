@@ -99,6 +99,16 @@ async fn create() -> NoContent {
     NoContent
 }
 
+/// A 204 that carries a validator.
+///
+/// Legal, and the case RFC 9110 section 15.4.5 excludes from 304: the status
+/// says a 200 is *not* what the request would otherwise have produced.
+#[kynos::get("/empty")]
+async fn empty() -> WithHeaders<NoContent, ETag> {
+    CALLS.fetch_add(1, Ordering::SeqCst);
+    WithHeaders::new(NoContent, ETag::strong("e1"))
+}
+
 /// A `Cache-Control` a handler attaches to its own response.
 #[derive(Clone, Copy, Debug)]
 struct CacheControl;
@@ -118,7 +128,7 @@ impl kynos::extract::params::header::HeaderParams for CacheControl {
 /// A service caching through `store`.
 fn cached(store: Stored) -> kynos::router::service::Service<()> {
     Router::<()>::new()
-        .mount(kynos::routes![reports, uncacheable, tagged, create])
+        .mount(kynos::routes![reports, uncacheable, tagged, create, empty])
         .intercept(Cache::new(store).namespace("test"))
         .build(())
         .expect("a describable router")
@@ -207,6 +217,35 @@ async fn an_unsafe_method_is_not_cached() {
 ///
 /// A cache-to-cache field: a generated client has no use for it, which is the
 /// same judgement `Vary` and the CORS set already get.
+/// RFC 9110 section 15.4.5: 304 indicates a request that "would have resulted
+/// in a 200 (OK) response if it were not for the fact that the condition
+/// evaluated to false".
+///
+/// The guard was `is_success()`, which also admits 201, 202, 203, 204 and 206.
+/// A 204 carrying a validator is the readable case; the one with teeth is 206,
+/// where the client asked for a range and a 304 replays `ETag` and `Vary` but
+/// no `Content-Range`, leaving it unable to tell "your range is current" from
+/// "the whole representation is current".
+#[tokio::test]
+async fn a_204_carrying_a_matching_validator_is_not_turned_into_a_304() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![reports, uncacheable, tagged, create, empty])
+        .intercept(Conditional::new())
+        .build(())
+        .expect("a describable router");
+
+    let response = get(&service, "/empty")
+        .header(header::IF_NONE_MATCH.as_str(), "\"e1\"")
+        .call()
+        .await;
+
+    assert_eq!(
+        response.status,
+        StatusCode::NO_CONTENT,
+        "a 204 was rewritten as a 304, which claims a 200 was what the handler would have sent"
+    );
+}
+
 #[test]
 fn the_age_field_is_declared_and_not_described() {
     let document = Router::<()>::new()
