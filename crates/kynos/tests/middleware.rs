@@ -685,3 +685,132 @@ mod levels {
         );
     }
 }
+
+/// A handler overruling negotiation for one response.
+///
+/// Negotiation decides *which* coding. This decides whether the question is
+/// asked at all, and it is a property of the response rather than of the route
+/// because both reasons for setting it are: a body that reflects a secret, and
+/// a body too large to be worth sending as it is.
+#[cfg(feature = "compression")]
+mod encoding_policy {
+    use kynos::{
+        Router,
+        extract::{body::binary::Binary, media::OctetStream},
+        http::{StatusCode, header},
+        middleware::compression::{
+            Compression,
+            policy::{Encoding, WithEncoding},
+        },
+        router::service::Service,
+    };
+
+    use super::support::{App, get};
+
+    fn octets() -> Vec<u8> {
+        b"0123456789".repeat(256)
+    }
+
+    /// Reflects attacker-chosen input beside something secret, which is the
+    /// shape BREACH needs. Never encoded, whatever the client accepts.
+    #[kynos::get("/confirm")]
+    async fn confirm() -> WithEncoding<Binary<OctetStream>> {
+        WithEncoding::new(Binary::new(octets()), Encoding::Disabled)
+    }
+
+    /// Too large to be worth sending as it is, so identity stops being an
+    /// answer.
+    #[kynos::get("/export")]
+    async fn export() -> WithEncoding<Binary<OctetStream>> {
+        WithEncoding::new(Binary::new(octets()), Encoding::Required)
+    }
+
+    /// The control: the same octets, saying nothing.
+    #[kynos::get("/report")]
+    async fn report() -> Binary<OctetStream> {
+        Binary::new(octets())
+    }
+
+    fn service() -> Service<App> {
+        Router::<App>::new()
+            .mount(kynos::routes![confirm, export, report])
+            .intercept(Compression::new())
+            .build(App::new())
+            .expect("a describable router")
+    }
+
+    #[tokio::test]
+    async fn a_response_that_refuses_encoding_is_not_encoded() {
+        let service = service();
+        let reply = get(&service, "/confirm")
+            .header("accept-encoding", "gzip, br, zstd")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(reply.field(header::CONTENT_ENCODING.as_str()), None);
+        assert_eq!(reply.body, octets());
+    }
+
+    /// The control for the case above, differing in exactly the policy: the
+    /// same octets, the same request, no refusal. Without it that case passes
+    /// for a service where compression is simply not running.
+    #[tokio::test]
+    async fn a_response_that_says_nothing_is_encoded_as_usual() {
+        let service = service();
+        let reply = get(&service, "/report")
+            .header("accept-encoding", "gzip")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(
+            reply.field(header::CONTENT_ENCODING.as_str()).as_deref(),
+            Some("gzip")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_response_that_requires_encoding_is_encoded() {
+        let service = service();
+        let reply = get(&service, "/export")
+            .header("accept-encoding", "gzip")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(
+            reply.field(header::CONTENT_ENCODING.as_str()).as_deref(),
+            Some("gzip")
+        );
+    }
+
+    /// The point of `Required`. A client that will take only identity is told
+    /// no, rather than handed the whole representation uncompressed.
+    #[tokio::test]
+    async fn a_client_that_will_take_only_identity_is_refused_what_requires_encoding() {
+        let service = service();
+        let reply = get(&service, "/export")
+            .header("accept-encoding", "identity")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::NOT_ACCEPTABLE);
+    }
+
+    /// The control for it, and the one that shows `Required` is a per-response
+    /// decision rather than something the interceptor does to every route: the
+    /// same client, the same service, a response that did not ask.
+    #[tokio::test]
+    async fn the_same_client_is_served_a_response_that_did_not_require_encoding() {
+        let service = service();
+        let reply = get(&service, "/report")
+            .header("accept-encoding", "identity")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(reply.field(header::CONTENT_ENCODING.as_str()), None);
+        assert_eq!(reply.body, octets());
+    }
+}

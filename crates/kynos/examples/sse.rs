@@ -46,6 +46,7 @@ use std::{
 
 use kynos::{
     extract::params::header::Headers,
+    middleware::compression::{Compression, streaming::LatencyMode},
     prelude::*,
     response::stream::sse::{Event, KeepAlive, Sse},
     server::Server,
@@ -217,7 +218,19 @@ async fn burst() -> Sse<Feed> {
 
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
-    let router = Router::<()>::new().mount(kynos::routes![updates, burst]);
+    let router = Router::<()>::new()
+        .mount(kynos::routes![updates, burst])
+        // An event stream states no length, so compression encodes it frame by
+        // frame rather than leaving it alone. `LatencyMode::Interactive` is why
+        // that is safe and is the default: it closes a compression block after
+        // every event, so a reader sees each one when it was sent.
+        //
+        // Set `Throughput` here and the example stops working -- the codec
+        // holds events until it has a window's worth, and an idle stream can go
+        // minutes without the client seeing anything. That is the trade, and it
+        // is why the mode that compresses better is the one you have to ask
+        // for.
+        .intercept(Compression::new().latency_mode(LatencyMode::Interactive));
 
     // `itemSchema` is what this prints that a 3.1 document could not: the shape
     // of one event, rather than a claim that the body is one JSON value.

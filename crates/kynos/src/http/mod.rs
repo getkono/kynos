@@ -22,7 +22,9 @@ pub mod forwarded;
 use crate::http::body::Body;
 
 #[doc(no_inline)]
-pub use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Version, header};
+pub use http::{
+    Extensions, HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Version, header,
+};
 
 /// An incoming request.
 pub type Request = http::Request<Body>;
