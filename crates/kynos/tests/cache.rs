@@ -242,6 +242,78 @@ async fn a_204_carrying_a_matching_validator_is_not_turned_into_a_304() {
     );
 }
 
+// --- What a write drops -----------------------------------------------------
+
+/// RFC 9111 section 4.4: a cache **MUST** invalidate the target URI when it
+/// receives a non-error status code in response to an unsafe request method.
+///
+/// Without it a `PUT` succeeds and the next `GET` is answered from the copy
+/// taken before it, until the freshness window lapses — which is the one
+/// failure a cache must not have, since the client that made the change is
+/// usually the one that reads it back.
+#[tokio::test]
+async fn an_unsafe_method_invalidates_what_was_stored_for_the_same_target() {
+    let service = cached(Stored::default());
+    let before = CALLS.load(Ordering::SeqCst);
+
+    // Store a copy.
+    assert_eq!(
+        get(&service, "/reports").call().await.status,
+        StatusCode::OK
+    );
+
+    // Change the resource. `NoContent` is 204, a non-error status.
+    assert_eq!(
+        send(&service, Method::POST, "/reports").call().await.status,
+        StatusCode::NO_CONTENT
+    );
+
+    // The stored copy must be gone, so the handler runs again.
+    assert_eq!(
+        get(&service, "/reports").call().await.status,
+        StatusCode::OK
+    );
+
+    assert_eq!(
+        calls_during(before),
+        2,
+        "the POST left the stored GET in place, so a stale body was served after a change"
+    );
+}
+
+/// Only a *non-error* status invalidates, per the same section: "A non-error
+/// response is one with a 2xx (Successful) or 3xx (Redirection) status code."
+///
+/// A refused write changed nothing, so dropping the stored copy would cost a
+/// handler call to learn what the cache already knew.
+#[tokio::test]
+async fn a_failed_unsafe_method_leaves_the_stored_response_alone() {
+    let service = cached(Stored::default());
+    let before = CALLS.load(Ordering::SeqCst);
+
+    assert_eq!(
+        get(&service, "/reports").call().await.status,
+        StatusCode::OK
+    );
+
+    // No handler answers PUT here, so this is a 405 — an error status.
+    assert_eq!(
+        send(&service, Method::PUT, "/reports").call().await.status,
+        StatusCode::METHOD_NOT_ALLOWED
+    );
+
+    assert_eq!(
+        get(&service, "/reports").call().await.status,
+        StatusCode::OK
+    );
+
+    assert_eq!(
+        calls_during(before),
+        1,
+        "a refused write invalidated a copy it had no reason to touch"
+    );
+}
+
 // --- What the cache adds --------------------------------------------------
 
 /// `Age` is declared and set, and it is not described.

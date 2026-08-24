@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use super::{
     freshness::{self, CACHEABLE, HOP_BY_HOP, Unstorable},
-    refuses_cross_origin,
+    is_non_error, refuses_cross_origin,
 };
 use crate::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 
@@ -268,4 +268,37 @@ fn a_cross_origin_response_that_does_not_vary_on_origin_is_refused() {
 
     // And a response with no CORS headers at all is not refused for this.
     assert!(!refuses_cross_origin(&map(&[("etag", "\"abc\"")])));
+}
+
+/// RFC 9111 section 4.4: "A non-error response is one with a 2xx (Successful)
+/// or 3xx (Redirection) status code."
+///
+/// One case per class rather than per status, because the sentence is about
+/// classes. The two that matter are the boundaries: a 3xx invalidates — a
+/// `POST` answered with a redirect changed the resource just as much as one
+/// answered 204 — and a 4xx does not, because a refused write changed nothing.
+#[test]
+fn every_status_class_is_classified_the_way_section_4_4_defines() {
+    for status in [
+        StatusCode::OK,
+        StatusCode::CREATED,
+        StatusCode::NO_CONTENT,
+        StatusCode::MOVED_PERMANENTLY,
+        StatusCode::SEE_OTHER,
+        StatusCode::TEMPORARY_REDIRECT,
+    ] {
+        assert!(is_non_error(status), "{status} is 2xx or 3xx");
+    }
+
+    for status in [
+        StatusCode::CONTINUE,
+        StatusCode::BAD_REQUEST,
+        StatusCode::NOT_FOUND,
+        StatusCode::METHOD_NOT_ALLOWED,
+        StatusCode::CONFLICT,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        StatusCode::SERVICE_UNAVAILABLE,
+    ] {
+        assert!(!is_non_error(status), "{status} is neither 2xx nor 3xx");
+    }
 }

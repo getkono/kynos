@@ -309,6 +309,34 @@ where
 
         let mut continued = next.run(request).await;
 
+        // RFC 9111 section 4.4: a cache **MUST** invalidate the target URI when
+        // it receives a non-error status code in response to an unsafe request
+        // method, where a non-error status is 2xx or 3xx.
+        //
+        // `is_safe` is false for an extension method the crate does not know,
+        // which is what section 4.4 asks for in as many words -- "including
+        // methods whose safety is unknown". Treating an unknown method as safe
+        // would serve a stale body after a change nobody could rule out.
+        //
+        // Both stored methods are dropped, not the one that arrived. The
+        // requirement invalidates a *URI*, `PrimaryKey` carries the method, and
+        // only `GET` and `HEAD` are ever stored -- so the key an unsafe request
+        // would build names nothing, and dropping it would satisfy the letter
+        // of the check while leaving the copy the client is about to read.
+        if !method.is_safe() && is_non_error(continued.status()) {
+            for stored in [kynos_openapi::Method::Get, kynos_openapi::Method::Head] {
+                self.store
+                    .invalidate(
+                        &PrimaryKey {
+                            method: stored,
+                            ..key.clone()
+                        },
+                        context,
+                    )
+                    .await;
+            }
+        }
+
         let Ok(freshness) = freshness::storable(
             &method,
             continued.status(),
@@ -369,6 +397,15 @@ where
         continued.set_body(crate::http::body::Body::from_bytes(bytes));
         Ok(continued.with_headers(D::headers(Duration::ZERO, etag)))
     }
+}
+
+/// Whether `status` is a non-error status, per RFC 9111 section 4.4.
+///
+/// "A non-error response is one with a 2xx (Successful) or 3xx (Redirection)
+/// status code." Named rather than inlined because the sentence it encodes is
+/// the whole of why a refused write leaves a stored copy alone.
+fn is_non_error(status: http::StatusCode) -> bool {
+    status.is_success() || status.is_redirection()
 }
 
 /// A strong entity tag over a body.
