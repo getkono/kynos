@@ -358,6 +358,19 @@ does, since it is answered once per path. So the answer is assembled per scope:
 honour it, and a proposed method no scope covers falls back to the first, which
 refuses it in the advertised list either way.
 
+**Mount `Cors` outermost.** A short-circuiting interceptor mounted *outside* it
+answers without the `Access-Control-*` fields, and the browser then reports an
+opaque CORS failure in place of the status the service actually sent. A 429 from
+`RateLimit`, a 413 from `BodySize`, a 503 from `Concurrency` and a 504 from
+`Timeout` are all worth a client being able to read.
+
+The converse composes already: `erased.rs` turns an inner `Err(Short)` into a
+response that the outer `Next::run` hands back as a `Continued`, so a `Cors`
+outside any of them decorates their refusals. Only the outside-in direction goes
+wrong, and like [the cache ordering](#where-a-cache-sits) it is a rule a reader
+has to follow rather than one the types keep — `CompatibleWith` compares a set,
+and a set has no positions.
+
 **One limit.** An endpoint-scoped `Cors` answers no preflight: an endpoint's own
 interceptors stay inside the endpoint, which is what runs them, so preflight
 registration cannot see them. Mount CORS at a router or group scope.
@@ -735,7 +748,7 @@ point:
 | --- | --- |
 | `allow_origin(Any / exact / list / predicate)` | `allow_any_origin`, `allow_origins`, `allow_origins_matching` |
 | `allow_origin(mirror_request)` | any permitted origin is echoed already, except under `allow_any_origin` alone |
-| `allow_headers(Any / list / mirror_request)` | `allow_any_header`, `allow_headers`; the wildcard echoes what was asked under credentials |
+| `allow_headers(Any / list / mirror_request)` | `allow_any_header`, `allow_headers`; the wildcard echoes what was asked under credentials, and names `authorization` beside `*` without them |
 | `expose_headers(Any / list)` | `expose_any_header`, `expose_headers` |
 | `max_age(Duration)` | `max_age` |
 | `allow_credentials(bool)` | `allow_credentials` |

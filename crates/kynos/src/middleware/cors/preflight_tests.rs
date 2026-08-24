@@ -161,7 +161,15 @@ fn permitting_any_header_echoes_the_request_headers_on_a_credentialed_preflight(
     );
 }
 
-/// Without credentials there is nothing to echo, and `*` says it in one field.
+/// Without credentials `*` covers every unsafe header but one.
+///
+/// The Fetch Standard defines a *CORS non-wildcard request-header name* as a
+/// byte-case-insensitive match for `Authorization`, and the preflight check
+/// that reads it is unconditional: "If one of request's header list's names is
+/// a CORS non-wildcard request-header name and is not a byte-case-insensitive
+/// match for an item in headerNames, then return a network error." So `*` alone
+/// fails every request carrying a bearer token, credentialed or not, and the
+/// field has to name `authorization` outright beside it.
 #[test]
 fn permitting_any_header_answers_a_wildcard_without_credentials() {
     let config = CorsConfig {
@@ -180,7 +188,8 @@ fn permitting_any_header_answers_a_wildcard_without_credentials() {
 
     assert_eq!(
         field(&response, header::ACCESS_CONTROL_ALLOW_HEADERS).as_deref(),
-        Some("*")
+        Some("*, authorization"),
+        "`*` does not cover `Authorization`, so a bearer-token preflight fails"
     );
 }
 
@@ -221,5 +230,71 @@ fn a_configured_max_age_is_advertised_in_whole_seconds() {
     assert_eq!(
         field(&response, header::ACCESS_CONTROL_MAX_AGE).as_deref(),
         Some("600")
+    );
+}
+
+/// A sub-second lifetime is a lifetime.
+///
+/// `Duration::as_secs` truncates, so 500ms rendered as `0` — which tells the
+/// browser not to cache the preflight at all, the opposite of what was asked
+/// for. Rounding up is the same direction `rate_limit` takes for `Retry-After`
+/// and for the same reason: the truncating answer is the one that misleads.
+#[test]
+fn a_sub_second_max_age_is_not_truncated_to_no_caching() {
+    let config = CorsConfig {
+        max_age: Some(std::time::Duration::from_millis(500)),
+        ..named()
+    };
+
+    let response =
+        preflight(config).answer(&asking(Some("https://app.example.com"), Some("GET"), None));
+
+    assert_eq!(
+        field(&response, header::ACCESS_CONTROL_MAX_AGE).as_deref(),
+        Some("1"),
+        "a configured lifetime was rendered as `0`, which disables preflight caching"
+    );
+}
+
+/// Zero means zero.
+///
+/// The control for the case above: rounding *up* must not turn an explicit
+/// "do not cache this preflight" into a second of caching.
+#[test]
+fn an_explicitly_zero_max_age_stays_zero() {
+    let config = CorsConfig {
+        max_age: Some(std::time::Duration::ZERO),
+        ..named()
+    };
+
+    let response =
+        preflight(config).answer(&asking(Some("https://app.example.com"), Some("GET"), None));
+
+    assert_eq!(
+        field(&response, header::ACCESS_CONTROL_MAX_AGE).as_deref(),
+        Some("0")
+    );
+}
+
+/// `Access-Control-Expose-Headers` is read from the *actual* response.
+///
+/// A preflight's answer supplies the allowed methods, the allowed headers and
+/// the cache lifetime; nothing in the CORS-preflight fetch reads an exposure
+/// list. Emitting one here is a field no user agent consults, and it suggests a
+/// coverage the preflight cannot grant.
+#[test]
+fn a_preflight_advertises_no_exposure_list() {
+    let config = CorsConfig {
+        expose: vec![std::borrow::Cow::Borrowed("x-total-count")],
+        ..named()
+    };
+
+    let response =
+        preflight(config).answer(&asking(Some("https://app.example.com"), Some("GET"), None));
+
+    assert_eq!(
+        field(&response, header::ACCESS_CONTROL_EXPOSE_HEADERS),
+        None,
+        "a preflight answered with an exposure list nothing reads"
     );
 }
