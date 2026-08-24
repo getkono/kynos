@@ -318,6 +318,16 @@ rather than sending one. `on_disconnect` reports the body dropped before its
 last frame, which is the difference. It does not report a client that leaves
 while the handler is still working: there is no body to drop until the handler
 has produced one.
+The module is not merely unwritten, though. Shipping one would put this
+framework's release schedule in front of the OpenTelemetry project's, and would
+fix by fiat what a span is called, which attributes it carries, which
+semantic-convention version it targets and what a `traceparent` from an
+untrusted caller is allowed to do — each an operator's decision.
+[`examples/opentelemetry.rs`](../crates/kynos/examples/opentelemetry.rs) is the
+answer instead: an interceptor whose `Reads` group is both the declaration and
+the W3C propagation carrier, entered across `next.run` so the span covers the
+handler. It carries no dependency into the library, and both rows above stay
+open against a `kynos-otel` that may never be written.
 
 ## Workspace
 

@@ -58,6 +58,7 @@ needs more than the defaults. Each file's own header explains why it needs them.
 | [`rate_limit.rs`](rate_limit.rs) | Named quotas over a counter store Kynos does not ship: a sliding window, several windows at once, and both header spellings | — |
 | [`cors.rs`](cors.rs) | The two exchanges a browser makes, the preflight nothing declares, and the configuration that is refused | — |
 | [`tracing.rs`](tracing.rs) | Spans reaching a real subscriber, and why an observer declares nothing | — |
+| [`opentelemetry.rs`](opentelemetry.rs) | Distributed tracing that leaves the process: a W3C Trace Context group that is also the propagation carrier, and why this is an example rather than middleware | `trace` |
 | [`print_request_response.rs`](print_request_response.rs) | An interceptor buffering both bodies, and what reading them costs the description | — |
 
 ## Security

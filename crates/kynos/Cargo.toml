@@ -162,6 +162,10 @@ required-features = [
 ]
 
 [[example]]
+name = "opentelemetry"
+required-features = ["openapi31", "macros", "server", "http1", "json", "trace"]
+
+[[example]]
 name = "middleware"
 required-features = [
   "openapi31",
@@ -424,6 +428,14 @@ rust_decimal = { workspace = true, features = ["serde"] }
 # so the tracing example has to install one itself -- otherwise the feature's
 # whole output would be invisible to the reader it exists for.
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+# The same argument one layer further out: the OpenTelemetry example wires a
+# real exporter, and the crates that speak OTLP stay here rather than becoming
+# something the framework binds every application to.
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true, features = ["rt-tokio"] }
+opentelemetry-otlp = { workspace = true, features = ["grpc-tonic", "trace"] }
+opentelemetry-semantic-conventions = { workspace = true }
+tracing-opentelemetry = { workspace = true }
 uuid = { workspace = true, features = ["serde"] }
 
 [lints]
