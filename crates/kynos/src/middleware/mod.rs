@@ -443,12 +443,47 @@ pub trait Observer<C>: Send + Sync + 'static {
     fn on_request(&self, request: &Request, route: Option<Route<'_>>, context: &C);
 
     /// Called when a response is about to be written.
+    ///
+    /// `elapsed` measures producing the response head, not delivering the body
+    /// beneath it. A streaming response is reported here once its first frame
+    /// is ready and long before its last, so reading this as request latency
+    /// overstates how fast a long-lived response was — and says nothing about
+    /// whether the peer received it.
+    /// [`on_disconnect`](Observer::on_disconnect) is what reports the body that
+    /// never finished.
     fn on_response(
         &self,
         response: &Response,
         route: Option<Route<'_>>,
         elapsed: std::time::Duration,
     );
+
+    /// Called when a response body was dropped before its end.
+    ///
+    /// The peer did not receive the response
+    /// [`on_response`](Observer::on_response) already reported: a download
+    /// cancelled, a long poll abandoned, an event stream whose reader went
+    /// away. A response body that failed part-way ends the same way and cannot
+    /// be told apart here, which is the honest reading — in both cases what was
+    /// announced was not delivered.
+    ///
+    /// `elapsed` runs from the request arriving to the body being dropped, so
+    /// it measures how long the peer stayed rather than how long the head took.
+    ///
+    /// Not every departure is one of these. A client that leaves while the
+    /// handler is still working has no response body to drop yet, and so is not
+    /// reported: what is watched here is the delivery, and there is nothing to
+    /// deliver until the handler has produced something.
+    ///
+    /// Called from the drop, which is whatever task last held the body. Do the
+    /// same little work here that belongs in any destructor: record it and
+    /// return, never block and never await.
+    ///
+    /// Defaulted to nothing, so an observer written before this existed keeps
+    /// compiling.
+    fn on_disconnect(&self, route: Option<Route<'_>>, elapsed: std::time::Duration) {
+        let _ = (route, elapsed);
+    }
 
     /// Called when a handler panicked.
     fn on_panic(&self, payload: &(dyn std::any::Any + Send), route: Option<Route<'_>>) {

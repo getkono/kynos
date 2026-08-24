@@ -39,6 +39,13 @@
 //!   the first two is silently blind to exactly the traffic worth investigating.
 //!   `route` is an `Option` for the same reason: a request that matched no
 //!   operation is still worth a line.
+//! * **`on_response` is not the end of the request, and `on_disconnect` is why
+//!   the difference matters.** The closing event fires when the head is ready,
+//!   so its `latency` measures producing a response rather than delivering one
+//!   -- for a download or an event stream the two are worlds apart. A body
+//!   dropped before its last frame means the client never received what was
+//!   already logged as sent, and only `on_disconnect` says so. It is defaulted
+//!   like `on_panic`, and left out just as easily.
 //!
 //! [`Route::path`]: kynos::router::operation::Route::path
 
@@ -112,6 +119,20 @@ impl<C> Observer<C> for Slo {
                 "over budget",
             );
         }
+    }
+
+    fn on_disconnect(&self, route: Option<Route<'_>>, elapsed: Duration) {
+        // Not a budget overrun: the operation may have been well inside its
+        // budget and the client simply left. Recorded at `info` rather than
+        // `warn` for that reason -- a cancelled download is ordinary traffic,
+        // and a rate of them that suddenly changes is the signal.
+        tracing::info!(
+            target: "slo",
+            operation_id = route.map_or("<unmatched>", |route| route.operation_id()),
+            matched_path = route.map_or("<unmatched>", |route| route.path()),
+            elapsed_ms = elapsed.as_millis(),
+            "client left before the response finished",
+        );
     }
 
     fn on_panic(&self, payload: &(dyn Any + Send), route: Option<Route<'_>>) {
