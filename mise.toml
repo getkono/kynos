@@ -145,6 +145,43 @@ grep -F 'the `decimal` feature carries no types of its own' \
   "$invalid_decimal_output"
 '''
 
+[tasks."references:verify"]
+description = "Verify the vendored specification texts are unmodified"
+# Three checks rather than one. `sha256sum -c` catches a file edited in place,
+# but not a file added and left out of the manifest, and not a digest quoted in
+# the README that no longer names anything. The prose is what a reader consults
+# and `SHA256SUMS` is what CI checks, so the third check is what stops the two
+# becoming two statements of one fact that drift.
+run = '''
+set -eu
+cd references
+
+sha256sum -c SHA256SUMS --quiet
+
+listed="$(mktemp)"
+present="$(mktemp)"
+trap 'rm -f "$listed" "$present"' EXIT
+
+awk '{ print $2 }' SHA256SUMS | sort >"$listed"
+ls | grep -vx -e README.md -e SHA256SUMS | sort >"$present"
+
+if ! diff -u "$listed" "$present"; then
+  echo "references/SHA256SUMS does not list every vendored file" >&2
+  exit 1
+fi
+
+quoted="$(mktemp)"
+trap 'rm -f "$listed" "$present" "$quoted"' EXIT
+grep -oE '\b[0-9a-f]{64}\b' README.md | sort -u >"$quoted"
+
+while read -r digest; do
+  if ! grep -qF "$digest" SHA256SUMS; then
+    echo "README.md quotes digest $digest, which names no vendored file" >&2
+    exit 1
+  fi
+done <"$quoted"
+'''
+
 [tasks."docs:check"]
 description = "Build documentation with warnings denied"
 # `missing_docs` is denied at the workspace level, so this also enforces that
@@ -204,6 +241,7 @@ run = [
   { task = "test:baseline" },
   { task = "test:doc" },
   { task = "ui:check" },
+  { task = "references:verify" },
   { task = "docs:check" },
   { task = "panic:check" },
 ]
