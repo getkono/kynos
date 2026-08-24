@@ -16,9 +16,10 @@ use std::{
 use kynos::{
     Router,
     http::StatusCode,
+    http::forwarded::TrustedProxies,
     middleware::rate_limit::{
         Quota, Quotas, RateLimit, RateLimitStore, StoreFailure,
-        key::{And, ByHeader, ByRoute, Shared},
+        key::{And, ByClientAddress, ByHeader, ByPeerAddress, ByRoute, Shared},
     },
     response::status::NoContent,
 };
@@ -426,5 +427,128 @@ async fn a_store_that_cannot_answer_refuses_where_that_was_selected() {
     assert_eq!(
         get(&service, "/counted").call().await.status,
         StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
+/// Behind a proxy, every client shares the peer address — so a per-IP quota
+/// keyed on it is silently a global one.
+///
+/// The defect `ByClientAddress` exists for. Both requests arrive on the same
+/// (absent) socket and carry different `Forwarded` clients; with the key that
+/// reads the socket they share a bucket.
+#[tokio::test]
+async fn keying_by_peer_address_puts_every_proxied_client_in_one_bucket() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![counted, other])
+        .trusted_proxies(TrustedProxies::hops(1))
+        .intercept(RateLimit::new(
+            Quotas::new(ByPeerAddress, Counters::default()).quota(Quota::new(
+                "fixed",
+                1,
+                Duration::from_secs(600),
+            )),
+        ))
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(
+        get(&service, "/counted")
+            .header("forwarded", "for=203.0.113.7")
+            .call()
+            .await
+            .status,
+        StatusCode::NO_CONTENT
+    );
+
+    assert_eq!(
+        get(&service, "/counted")
+            .header("forwarded", "for=198.51.100.9")
+            .call()
+            .await
+            .status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "a different client was refused by the first client's quota, which is what \
+         keying on the peer address does behind a proxy"
+    );
+}
+
+/// The same two requests, keyed by the resolved client address.
+#[tokio::test]
+async fn keying_by_client_address_separates_two_clients_behind_one_proxy() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![counted, other])
+        .trusted_proxies(TrustedProxies::hops(1))
+        .intercept(RateLimit::new(
+            Quotas::new(ByClientAddress, Counters::default()).quota(Quota::new(
+                "fixed",
+                1,
+                Duration::from_secs(600),
+            )),
+        ))
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(
+        get(&service, "/counted")
+            .header("forwarded", "for=203.0.113.7")
+            .call()
+            .await
+            .status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        get(&service, "/counted")
+            .header("forwarded", "for=203.0.113.7")
+            .call()
+            .await
+            .status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "the same client was not counted twice"
+    );
+    assert_eq!(
+        get(&service, "/counted")
+            .header("forwarded", "for=198.51.100.9")
+            .call()
+            .await
+            .status,
+        StatusCode::NO_CONTENT,
+        "one client's quota refused another's request"
+    );
+}
+
+/// Without a trust policy, `ByClientAddress` believes nothing.
+///
+/// The safe default made visible: an unconfigured service must not let a client
+/// pick the bucket it counts against by writing its own `Forwarded`.
+#[tokio::test]
+async fn an_unconfigured_service_ignores_the_client_address_a_request_claims() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![counted, other])
+        .intercept(RateLimit::new(
+            Quotas::new(ByClientAddress, Counters::default()).quota(Quota::new(
+                "fixed",
+                1,
+                Duration::from_secs(600),
+            )),
+        ))
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(
+        get(&service, "/counted")
+            .header("forwarded", "for=203.0.113.7")
+            .call()
+            .await
+            .status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        get(&service, "/counted")
+            .header("forwarded", "for=198.51.100.9")
+            .call()
+            .await
+            .status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "a client chose its own bucket by writing a header nobody was trusted to send"
     );
 }

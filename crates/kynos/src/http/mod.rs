@@ -17,6 +17,7 @@
 pub mod body;
 pub mod cookie;
 pub mod etag;
+pub mod forwarded;
 
 use crate::http::body::Body;
 

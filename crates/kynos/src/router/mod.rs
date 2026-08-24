@@ -91,6 +91,7 @@ pub struct Router<C, P = Propagate, I = ()> {
     pub(crate) not_found: FallbackPolicy,
     pub(crate) method_not_allowed: FallbackPolicy,
     pub(crate) trailing_slashes: TrailingSlashPolicy,
+    pub(crate) trusted_proxies: crate::http::forwarded::TrustedProxies,
     pub(crate) deny_unchecked_schemas: bool,
     /// The waivers taken here: routes no template expresses, and layers whose
     /// effect nothing declares.
@@ -154,6 +155,7 @@ impl<C, P, I> Router<C, P, I> {
             not_found: FallbackPolicy::default(),
             method_not_allowed: FallbackPolicy::default(),
             trailing_slashes: TrailingSlashPolicy::default(),
+            trusted_proxies: crate::http::forwarded::TrustedProxies::none(),
             deny_unchecked_schemas: false,
             #[cfg(feature = "unchecked")]
             unchecked: crate::unchecked::Unchecked::default(),
@@ -181,6 +183,7 @@ impl<C, P, I> Router<C, P, I> {
             not_found: self.not_found,
             method_not_allowed: self.method_not_allowed,
             trailing_slashes: self.trailing_slashes,
+            trusted_proxies: self.trusted_proxies,
             deny_unchecked_schemas: self.deny_unchecked_schemas,
             #[cfg(feature = "unchecked")]
             unchecked: self.unchecked,
@@ -501,6 +504,31 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
         self
     }
 
+    /// Names the proxies whose forwarding fields may be believed.
+    ///
+    /// One application-level policy, or none — the rule
+    /// [`trailing_slashes`](Self::trailing_slashes) follows, and for a sharper
+    /// reason: two limiters disagreeing about which hop to trust would be two
+    /// answers to one security question.
+    ///
+    /// Unset, nothing is believed. RFC 7239 section 8.1 says the field "cannot
+    /// be relied upon to be correct, as it may be modified, whether mistakenly
+    /// or for malicious reasons, by every node on the way to the server,
+    /// including the client making the request" — so a default that read it
+    /// would let any client choose the address its rate limit counts against.
+    ///
+    /// ```no_run
+    /// use kynos::{Router, http::forwarded::TrustedProxies};
+    ///
+    /// let router = Router::<()>::new().trusted_proxies(TrustedProxies::hops(1));
+    /// # let _ = router;
+    /// ```
+    #[must_use]
+    pub fn trusted_proxies(mut self, trusted: crate::http::forwarded::TrustedProxies) -> Self {
+        self.trusted_proxies = trusted;
+        self
+    }
+
     /// Turns unconstrained-schema warnings into build errors.
     ///
     /// [`Unchecked`](crate::schema::unchecked::Unchecked) is honest but weak. A team that
@@ -687,6 +715,7 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
             not_found: self.not_found,
             method_not_allowed: self.method_not_allowed,
             trailing_slashes: self.trailing_slashes,
+            trusted_proxies: self.trusted_proxies.clone(),
         });
 
         Ok(Service::new(document, move |request| {
