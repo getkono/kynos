@@ -51,6 +51,11 @@ jobs:
       # default set share every dependency build, so they belong on one cache.
       - name: Lint at baseline features
         run: mise run lint:baseline
+      # Here because it compiles nothing, so it wants no Cargo cache of its
+      # own. It belongs in some job: `check` runs it, and the comment above
+      # says these jobs run every task `check` does.
+      - name: Verify the vendored specifications
+        run: mise run references:verify
 
   test:
     name: Tests
