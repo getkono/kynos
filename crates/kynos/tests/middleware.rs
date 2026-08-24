@@ -564,3 +564,124 @@ mod ranged_assets {
         assert_eq!(spliced, STYLESHEET);
     }
 }
+
+/// A configured compression level reaching the encoder.
+///
+/// The failure this rules out is silent and total: a builder that stores a
+/// level and an encoder constructed without it compile perfectly, serve
+/// perfectly, and differ from a correct implementation only in a number nobody
+/// looks at. `Compression::min_size` had that shape once. So these compare two
+/// services that differ in exactly the level, and assert the bytes differ.
+#[cfg(feature = "compression")]
+mod levels {
+    use kynos::{
+        Router,
+        extract::{body::binary::Binary, media::OctetStream},
+        http::{StatusCode, header},
+        middleware::compression::{
+            Compression,
+            levels::{BrotliLevel, GzipLevel, ZstdLevel},
+        },
+        router::service::Service,
+    };
+
+    use super::support::{App, get};
+
+    /// Long enough that the level makes a measurable difference, and structured
+    /// enough that a stronger search finds more than a weaker one.
+    ///
+    /// A constant repeat would compress to nearly nothing at every level and
+    /// the sizes would coincide, which would make the assertions below pass for
+    /// a level that was never applied.
+    fn octets() -> Vec<u8> {
+        (0..8_192_u32).fold(Vec::new(), |mut octets, index| {
+            octets.extend_from_slice(
+                format!("{index:x} the quick brown fox {}\n", index % 97).as_bytes(),
+            );
+            octets
+        })
+    }
+
+    #[kynos::get("/report")]
+    async fn report() -> Binary<OctetStream> {
+        Binary::new(octets())
+    }
+
+    fn service(compression: Compression) -> Service<App> {
+        Router::<App>::new()
+            .mount(kynos::routes![report])
+            .intercept(compression)
+            .build(App::new())
+            .expect("a describable router")
+    }
+
+    /// The encoded length under `compression`, for the coding `accept` asks for.
+    async fn encoded_length(compression: Compression, accept: &str) -> usize {
+        let service = service(compression);
+        let reply = get(&service, "/report")
+            .header("accept-encoding", accept)
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(
+            reply.field(header::CONTENT_ENCODING.as_str()).as_deref(),
+            Some(accept),
+            "the fixture was not encoded, so nothing here says anything about levels"
+        );
+
+        reply.body.len()
+    }
+
+    #[tokio::test]
+    async fn a_stronger_gzip_level_sends_fewer_bytes_than_a_weaker_one() {
+        let fastest =
+            encoded_length(Compression::new().gzip_level(GzipLevel::FASTEST), "gzip").await;
+        let best = encoded_length(Compression::new().gzip_level(GzipLevel::BEST), "gzip").await;
+
+        assert!(
+            best < fastest,
+            "gzip 9 produced {best} bytes and gzip 1 produced {fastest}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stronger_brotli_quality_sends_fewer_bytes_than_a_weaker_one() {
+        let fastest =
+            encoded_length(Compression::new().brotli_level(BrotliLevel::FASTEST), "br").await;
+        let best = encoded_length(Compression::new().brotli_level(BrotliLevel::BEST), "br").await;
+
+        assert!(
+            best < fastest,
+            "brotli 11 produced {best} bytes and brotli 1 produced {fastest}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stronger_zstd_level_sends_fewer_bytes_than_a_weaker_one() {
+        let fastest =
+            encoded_length(Compression::new().zstd_level(ZstdLevel::FASTEST), "zstd").await;
+        let best = encoded_length(Compression::new().zstd_level(ZstdLevel::BEST), "zstd").await;
+
+        assert!(
+            best < fastest,
+            "zstd 22 produced {best} bytes and zstd 1 produced {fastest}"
+        );
+    }
+
+    /// The control the three above need: an unconfigured `Compression` still
+    /// encodes, and encodes to something between the extremes. Without it they
+    /// pass for a builder whose levels are the only thing that ever worked.
+    #[tokio::test]
+    async fn the_default_level_sits_between_the_two_extremes() {
+        let fastest =
+            encoded_length(Compression::new().gzip_level(GzipLevel::FASTEST), "gzip").await;
+        let default = encoded_length(Compression::new(), "gzip").await;
+        let best = encoded_length(Compression::new().gzip_level(GzipLevel::BEST), "gzip").await;
+
+        assert!(
+            best <= default && default < fastest,
+            "gzip 1 produced {fastest}, the default {default}, and gzip 9 {best}"
+        );
+    }
+}
