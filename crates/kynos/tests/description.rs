@@ -137,7 +137,7 @@ fn an_operation_under_two_scopes_declares_what_each_contributes() {
         paths(&["/alpha", "/inner/beta", "/gamma"])
     );
     // The group's reaches one, and the one it reaches has both.
-    assert_eq!(declaring(&document, "504"), paths(&["/inner/beta"]));
+    assert_eq!(declaring(&document, "408"), paths(&["/inner/beta"]));
 }
 
 /// A nested router carries its own interceptors to exactly what it held.
@@ -188,7 +188,7 @@ fn nothing_declares_a_limits_status_when_no_limit_is_mounted() {
         .expect("a describable router");
 
     assert!(declaring(&document, "413").is_empty());
-    assert!(declaring(&document, "504").is_empty());
+    assert!(declaring(&document, "408").is_empty());
 }
 
 // --- Scope in a status ------------------------------------------------------

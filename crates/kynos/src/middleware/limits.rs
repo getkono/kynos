@@ -205,7 +205,7 @@ pub struct TimedOut {
 
 impl IntoResponse for TimedOut {
     fn into_response(self) -> http::Response {
-        Problem::new(http::StatusCode::GATEWAY_TIMEOUT)
+        Problem::new(http::StatusCode::REQUEST_TIMEOUT)
             .with_detail(format!(
                 "the handler did not finish within {} seconds",
                 self.after.as_secs()
@@ -215,14 +215,14 @@ impl IntoResponse for TimedOut {
 }
 
 impl ShortCircuit for TimedOut {
-    const STATUSES: &'static [u16] = &[504];
+    const STATUSES: &'static [u16] = &[408];
 }
 
 impl Responses for TimedOut {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let _ = registry;
         kynos_openapi::Responses::new().with(
-            504,
+            408,
             kynos_openapi::Response::new("the handler did not finish within the configured limit"),
         )
     }
@@ -230,7 +230,29 @@ impl Responses for TimedOut {
 
 /// Caps how long a handler may run.
 ///
-/// Contributes 504.
+/// Contributes 408.
+///
+/// # Why 408 and not 504
+///
+/// RFC 9110 section 15.6.5 scopes 504 to a server "while acting as a gateway or
+/// proxy" awaiting "an upstream server it needed to access". Kynos is an origin
+/// and this interceptor wraps its own chain, so every clause of that definition
+/// is false — and 504 is a status a load balancer or CDN in front of the service
+/// genuinely sends, which made an origin's own indistinguishable from that hop's
+/// in logs and in client retry logic.
+///
+/// 408 is not exact either. Section 15.5.9 defines it as the server not having
+/// received "a complete request message within the time that it was prepared to
+/// wait", which describes the slow-body arrangement below precisely and the
+/// handler-runtime case only by extension. It is the closest status the
+/// specification defines, it carries a retry semantic clients already implement,
+/// and it is what `tower-http` sends for the same situation.
+///
+/// 503 would have read better for handler runtime — "temporary overload" — and
+/// is not available: [`Concurrency`] declares it, so `statuses_disjoint` would
+/// refuse a router carrying both. Bounding handler time *and* capping
+/// concurrency is an ordinary pairing, and a status choice that made it
+/// uncompilable would be a worse answer than an inexact one.
 ///
 /// # Mount it outside a [`BodySize`]
 ///
