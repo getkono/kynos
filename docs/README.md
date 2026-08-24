@@ -4,8 +4,10 @@ This directory records the decisions that shape Kynos, and is normative for
 them. Where a document here states a rule, that rule binds implementation work.
 
 It does not restate the specifications themselves. Standards texts and their
-precedence live in [`references/`](../references/README.md); the case for the
-framework, and the list of features it deliberately rejects, lives in the
+precedence live in [`references/`](../references/README.md), and
+[`standards.md`](standards.md) is the mapping between the two — which document
+governs which module, and where each departure from one is argued. The case for
+the framework, and the list of features it deliberately rejects, lives in the
 [README](../README.md).
 
 ## Documents
@@ -20,6 +22,7 @@ framework, and the list of features it deliberately rejects, lives in the
 | [`security.md`](security.md) | Working on authentication: where a credential travels, what a guard declares, and what Kynos deliberately does not verify |
 | [`routing.md`](routing.md) | Working on path templates, routers, groups, or how router scope becomes document scope |
 | [`middleware.md`](middleware.md) | Working on interceptors, contributions, escape hatches, or `tower` interoperability |
+| [`standards.md`](standards.md) | Working on anything a specification governs: which document and section binds a middleware, where a departure is argued, and what is known not to conform |
 | [`testing.md`](testing.md) | Deciding where a test belongs, or what kind of test a guarantee needs |
 | [`nfr.md`](nfr.md) | Adding a module-level guarantee, or deciding what a change must prove before it lands |
 

@@ -67,9 +67,9 @@ RFC 9110 was published under the IETF Trust's [Legal Provisions Relating to
 IETF Documents](https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/)
 (TLP 5.0). Section 3.c.i grants permission to copy and distribute an IETF
 document in full and without modification. The vendored file preserves the
-complete document, including its copyright, authorship, license, and
-pre-RFC-5378-material notices, and is distributed under those terms rather than
-the repository's MIT license.
+complete document, including its copyright, authorship and license notices, and
+is distributed under those terms rather than the repository's MIT license. It
+postdates RFC 5378, so it carries no pre-RFC-5378-material notice.
 
 The document's embedded notice requires separate Revised BSD License treatment
 for Code Components extracted from it. Consult the TLP before copying RFC text
@@ -102,8 +102,8 @@ RFC 9457 was published under the IETF Trust's [Legal Provisions Relating to
 IETF Documents](https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/)
 (TLP 5.0), on the same terms as RFC 9110 above. The vendored file preserves the
 complete document, including its copyright, authorship and license notices, and
-is distributed under those terms rather than the repository's MIT license. Unlike
-RFC 9110 it carries no pre-RFC-5378-material notice.
+is distributed under those terms rather than the repository's MIT license. Like RFC 9110
+it postdates RFC 5378 and so carries no pre-RFC-5378-material notice.
 
 The same Revised BSD License treatment applies to Code Components extracted from
 it — which includes the JSON and schema fragments in its examples.
@@ -149,8 +149,8 @@ Documents](https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/)
 (TLP 5.0), on the same terms as RFC 9110 and RFC 9457 above. The vendored files
 preserve the complete documents, including their copyright, authorship and
 license notices, and are distributed under those terms rather than the
-repository's MIT license. Both postdate RFC 5378, so neither carries the
-pre-RFC-5378-material notice RFC 9110's section records.
+repository's MIT license. Both postdate RFC 5378, so neither carries a
+pre-RFC-5378-material notice.
 
 The same Revised BSD License treatment applies to Code Components extracted
 from them — which includes the ABNF the encoder is written against.
@@ -353,8 +353,8 @@ Documents](https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/)
 complete document, including its copyright, authorship and license notices, and
 is distributed under those terms rather than the repository's MIT license.
 
-All of them postdate RFC 5378, so none carries the pre-RFC-5378-material notice
-RFC 9110's section above records. The same Revised BSD License treatment applies
+All of them postdate RFC 5378, so none carries a pre-RFC-5378-material notice —
+which is true of every text in this directory. The same Revised BSD License treatment applies
 to Code Components extracted from any of them, which includes every ABNF rule an
 implementation is written against.
 

@@ -342,7 +342,7 @@ async fn main() -> kynos::Result<()> {
                 .min_size(1_024)
                 .gzip_level(GzipLevel::new(5).expect("DEFLATE defines level 5")),
         )
-        // Limits, each contributing the response it can produce: 504, 413 and
+        // Limits, each contributing the response it can produce: 408, 413 and
         // 503 respectively. Nothing below lists those statuses, and every
         // operation's description carries them.
         //
