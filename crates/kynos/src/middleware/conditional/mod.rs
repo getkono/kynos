@@ -273,9 +273,17 @@ impl<C: Sync + 'static> Interceptor<C> for Conditional {
             return Ok(continued);
         };
 
-        // Only a success can be revalidated. A 404 that matched a stale tag is
-        // still a 404.
-        if !continued.status().is_success() {
+        // Only a 200 can be revalidated. RFC 9110 section 15.4.5 defines 304 as
+        // the answer to a request that "would have resulted in a 200 (OK)
+        // response if it were not for the fact that the condition evaluated to
+        // false" -- so the status is part of the precondition, not merely a
+        // filter for failures.
+        //
+        // `is_success()` was too wide by five: 201, 202, 203, 204 and 206. The
+        // last is the one that bites, since a 304 replays `ETag` and `Vary` but
+        // never `Content-Range`, leaving a resuming client unable to tell
+        // "your range is current" from "the whole representation is current".
+        if continued.status() != http::StatusCode::OK {
             return Ok(continued);
         }
 
