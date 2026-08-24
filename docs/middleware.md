@@ -462,13 +462,40 @@ the default build.
 Sessions are named in [`architecture.md`](architecture.md#invariants)'s third
 invariant as the example of what a layer above Kynos owns.
 
-CSRF is the interesting exclusion, because it is the one the type system
-refuses rather than the policy. A CSRF interceptor's short circuit is 403.
-`statuses_disjoint` compares `Short::STATUSES` across the interceptors covering
-a route, and `Auth<S>` contributes 403 to every authenticated operation — so a
-CSRF interceptor and a credential guard would not compile together, on exactly
-the routes that need both. Whatever the right shape for CSRF here is, it is not
-an interceptor with a status.
+CSRF *was* listed here as the exclusion the type system refuses rather than the
+policy, on the grounds that `statuses_disjoint` compares `Short::STATUSES`
+across the interceptors covering a route and `Auth<S>` contributes 403 to every
+authenticated operation. **That was wrong, and the error is worth naming rather
+than quietly deleting.**
+
+`Auth<S>` is not an interceptor. It is an extractor — `FromRequestParts` in
+[`security/auth.rs`](../crates/kynos/src/security/auth.rs) — and its 403 reaches
+the document through `OperationCx::add_responses`, never through a `const`.
+`CompatibleWith` is instantiated only over pairs of `Interceptor::Short`, and no
+shipped interceptor declares 403 at all. A CSRF interceptor declaring one
+compiles beside a credential guard, and always would have.
+
+The residual is real but much smaller, and it is about *description* rather than
+compilation: `Responses::merge_from` keeps the first entry on a key collision,
+so a CSRF 403 and an `Auth` 403 on one operation produce one entry with
+whichever description landed first. Understating a description by one sentence
+is the failure mode this project accepts elsewhere for the same reason.
+
+What made the exclusion look structural was that the crypto objection above is
+real for *token-based* CSRF: a synchroniser token needs randomness, an HMAC and
+somewhere to keep the token, which is a session. [`Csrf`](../crates/kynos/src/middleware/csrf.rs)
+avoids all three by not having a token — `Sec-Fetch-Site` is set by the browser
+and script cannot forge it, so an unsafe request that says it came from another
+site can be refused on that alone. Four header comparisons, no dependency.
+
+The fallback for a browser too old to send it compares `Origin` against the
+request's own authority, and that authority is read from `Host` *or* from the
+request target. RFC 9113 §8.3.1 replaces `Host` with the `:authority`
+pseudo-header, which `http` puts on the URI rather than in the map, so reading
+`Host` alone found no authority on any HTTP/2 request — and refused every
+same-origin unsafe request from exactly the browsers the fallback exists for.
+`Host` wins where both are present: §8.3.1 requires them to agree, so the
+choice is a tie-break rather than a policy.
 
 ## Vary is declared apart from the names
 

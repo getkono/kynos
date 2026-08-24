@@ -387,6 +387,12 @@ async fn under_capacity(Query(query): Query<UserQuery>) -> NoContent {
     NoContent
 }
 
+/// The one operation behind the cross-site guard.
+#[kynos::post("/guarded/write")]
+async fn under_csrf() -> NoContent {
+    NoContent
+}
+
 /// The one operation under a rate limit.
 #[kynos::get("/limits/rate")]
 async fn under_rate_limit() -> NoContent {
@@ -432,6 +438,11 @@ fn service() -> kynos::Result<kynos::router::service::Service<App>> {
             kynos::router::group::Group::<App>::new("/")
                 .intercept(RateLimit::new(AllowsOnce::new()))
                 .mount(kynos::routes![under_rate_limit]),
+        )
+        .group(
+            kynos::router::group::Group::<App>::new("/")
+                .intercept(kynos::middleware::csrf::Csrf::new())
+                .mount(kynos::routes![under_csrf]),
         );
 
     // A ranged file, which is the one layer whose success has three statuses.
@@ -738,6 +749,22 @@ async fn exercise_the_limits(client: &TestClient<App>) {
     });
     held.assert_status(StatusCode::NO_CONTENT);
     refused.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+
+    // The 403 this declares has to be produced, or `assert_declared_responses_covered`
+    // reports a response the document predicts and nothing exercises.
+    client
+        .post("/guarded/write")
+        .header("sec-fetch-site", "cross-site")
+        .send()
+        .await
+        .assert_status(StatusCode::FORBIDDEN);
+
+    client
+        .post("/guarded/write")
+        .header("sec-fetch-site", "same-origin")
+        .send()
+        .await
+        .assert_status(StatusCode::NO_CONTENT);
 
     client
         .get("/limits/rate")
