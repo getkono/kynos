@@ -27,6 +27,7 @@ use crate::{http, middleware::Observer, router::operation::Route};
 pub struct Trace {
     level: tracing::Level,
     recorded: &'static [&'static str],
+    correlation: &'static str,
 }
 
 /// Emits an event at a level chosen at run time.
@@ -52,6 +53,28 @@ macro_rules! emit {
 /// the same shape as every other one.
 const UNMATCHED: &str = "<unmatched>";
 
+/// The correlation field name [`Trace`] reads unless told another.
+///
+/// The same name [`XRequestId`](super::request_id::XRequestId) declares, and
+/// the reason [`Trace::correlating`] exists is so that agreement is checked
+/// rather than assumed.
+const DEFAULT_CORRELATION: &str = "x-request-id";
+
+/// Header names recorded as present and never by value.
+///
+/// Not a policy an application can widen or narrow. A denylist that can be
+/// switched off is one that will be, and the cost of being wrong here is a
+/// credential in a log file that outlives the request by months.
+///
+/// Compared case-insensitively, per RFC 9110 section 5.1.
+pub const REDACTED: &[&str] = &[
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "set-cookie",
+    "x-api-key",
+];
+
 impl Trace {
     /// Traces every operation at `INFO`.
     #[must_use]
@@ -59,7 +82,35 @@ impl Trace {
         Self {
             level: tracing::Level::INFO,
             recorded: &[],
+            correlation: DEFAULT_CORRELATION,
         }
+    }
+
+    /// Reads the correlation identifier from the group `G` declares.
+    ///
+    /// [`RequestId`](super::request_id::RequestId) is generic over its
+    /// correlation group precisely so the field name can be something other
+    /// than `x-request-id`, and this observer had that name written into it a
+    /// second time. Swapping the group then left every event logging an empty
+    /// `request_id`, which is the one field the observer exists to correlate
+    /// on.
+    ///
+    /// The name is read from `G::NAMES` rather than passed as a string, so the
+    /// two sides cannot disagree: it is the same `const` the interceptor
+    /// declares and the conflict check compares.
+    ///
+    /// ```
+    /// use kynos::middleware::{request_id::XRequestId, trace::Trace};
+    ///
+    /// let trace = Trace::new()
+    ///     .level(tracing::Level::DEBUG)
+    ///     .correlating::<XRequestId>();
+    /// # let _ = trace;
+    /// ```
+    #[must_use]
+    pub fn correlating<G: super::request_id::CorrelationHeaders>(mut self) -> Self {
+        self.correlation = G::NAMES.first().copied().unwrap_or(DEFAULT_CORRELATION);
+        self
     }
 
     /// Sets the level events are emitted at.
@@ -73,8 +124,10 @@ impl Trace {
 
     /// Records request headers matching these names on the emitted events.
     ///
-    /// Anything not listed is omitted, so a header carrying a credential
-    /// cannot end up in a log by accident.
+    /// Anything not listed is omitted, so a header carrying a credential cannot
+    /// end up in a log by accident. A header on [`REDACTED`] is recorded as
+    /// present and never by value, so listing one on purpose does not put a
+    /// secret in a log either.
     #[must_use]
     pub fn record_headers(mut self, names: &'static [&'static str]) -> Self {
         self.recorded = names;
@@ -98,7 +151,19 @@ impl Trace {
             }
             recorded.push_str(name);
             recorded.push('=');
-            recorded.push_str(value);
+            if REDACTED
+                .iter()
+                .any(|secret| secret.eq_ignore_ascii_case(name))
+            {
+                // Present, and never by value. Whether the field arrived is
+                // usually why it was listed; what it carried is never worth a
+                // log line, and `security.md` already reaches for a
+                // constant-time compare one module away rather than let a
+                // secret leak through a comparison.
+                recorded.push_str("<redacted>");
+            } else {
+                recorded.push_str(value);
+            }
         }
 
         recorded
@@ -112,9 +177,9 @@ impl Default for Trace {
 }
 
 /// The correlation identifier a request or response carries, if any.
-fn request_id(headers: &http::HeaderMap) -> &str {
+fn request_id<'a>(headers: &'a http::HeaderMap, name: &str) -> &'a str {
     headers
-        .get("x-request-id")
+        .get(name)
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
 }
@@ -128,7 +193,7 @@ impl<C> Observer<C> for Trace {
             method = %request.method(),
             matched_path = route.map_or(UNMATCHED, |route| route.path()),
             operation_id = route.map_or(UNMATCHED, |route| route.operation_id()),
-            request_id = request_id(request.headers()),
+            request_id = request_id(request.headers(), self.correlation),
             headers = self.recorded(request.headers()),
             "request received",
         );
@@ -146,7 +211,7 @@ impl<C> Observer<C> for Trace {
             operation_id = route.map_or(UNMATCHED, |route| route.operation_id()),
             status = response.status().as_u16(),
             latency = ?elapsed,
-            request_id = request_id(response.headers()),
+            request_id = request_id(response.headers(), self.correlation),
             "response sent",
         );
     }
@@ -176,5 +241,81 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
         message
     } else {
         "<non-string panic payload>"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DEFAULT_CORRELATION, REDACTED, Trace};
+    use crate::{
+        extract::params::header::HeaderParams,
+        http::{HeaderMap, HeaderValue},
+        middleware::request_id::XRequestId,
+    };
+
+    /// A header map from pairs.
+    fn map(fields: &[(&str, &str)]) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        for (name, value) in fields {
+            headers.append(
+                crate::http::HeaderName::from_bytes(name.as_bytes()).expect("a legal field name"),
+                HeaderValue::from_str(value).expect("a printable field"),
+            );
+        }
+        headers
+    }
+
+    /// Every name on the denylist is recorded as present and never by value.
+    ///
+    /// A sweep of the whole list rather than a case for `authorization`: the
+    /// list is the guarantee, and a name added to it without being covered here
+    /// would be a name nothing checks.
+    #[test]
+    fn every_redacted_header_is_recorded_without_its_value() {
+        for name in REDACTED {
+            let trace = Trace::new().record_headers(std::slice::from_ref(name));
+            let recorded = trace.recorded(&map(&[(name, "s3cret-value")]));
+
+            assert!(
+                recorded.contains("<redacted>"),
+                "`{name}` was recorded verbatim: {recorded}"
+            );
+            assert!(
+                !recorded.contains("s3cret-value"),
+                "`{name}` leaked its value: {recorded}"
+            );
+        }
+    }
+
+    /// The case a denylist must not break: an ordinary header still records.
+    ///
+    /// Without this the test above passes for a `recorded` that redacts
+    /// everything, which would make the feature useless rather than safe.
+    #[test]
+    fn an_ordinary_header_is_recorded_with_its_value() {
+        let trace = Trace::new().record_headers(&["x-tenant"]);
+        let recorded = trace.recorded(&map(&[("x-tenant", "acme")]));
+
+        assert_eq!(recorded, "x-tenant=acme");
+    }
+
+    /// The denylist is matched case-insensitively, per RFC 9110 section 5.1.
+    #[test]
+    fn a_redacted_name_in_another_case_is_still_redacted() {
+        let trace = Trace::new().record_headers(&["Authorization"]);
+        let recorded = trace.recorded(&map(&[("authorization", "Bearer eyJ")]));
+
+        assert!(recorded.contains("<redacted>"), "{recorded}");
+        assert!(!recorded.contains("eyJ"), "{recorded}");
+    }
+
+    /// The correlation name comes from the group, not from a second copy of it.
+    #[test]
+    fn the_correlation_name_is_read_from_the_group() {
+        assert_eq!(XRequestId::NAMES, [DEFAULT_CORRELATION]);
+        assert_eq!(
+            Trace::new().correlating::<XRequestId>().correlation,
+            DEFAULT_CORRELATION
+        );
     }
 }
