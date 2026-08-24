@@ -488,6 +488,15 @@ avoids all three by not having a token — `Sec-Fetch-Site` is set by the browse
 and script cannot forge it, so an unsafe request that says it came from another
 site can be refused on that alone. Four header comparisons, no dependency.
 
+The fallback for a browser too old to send it compares `Origin` against the
+request's own authority, and that authority is read from `Host` *or* from the
+request target. RFC 9113 §8.3.1 replaces `Host` with the `:authority`
+pseudo-header, which `http` puts on the URI rather than in the map, so reading
+`Host` alone found no authority on any HTTP/2 request — and refused every
+same-origin unsafe request from exactly the browsers the fallback exists for.
+`Host` wins where both are present: §8.3.1 requires them to agree, so the
+choice is a tie-break rather than a policy.
+
 ## Vary is declared apart from the names
 
 `Vary` is the one response header two interceptors may both contribute to, so it

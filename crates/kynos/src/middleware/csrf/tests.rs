@@ -21,6 +21,11 @@ type Case = (
     bool,
 );
 
+/// `permits` over a request that states its authority in `Host` alone.
+fn permits(csrf: &Csrf, method: &Method, fields: &[(&str, &str)]) -> bool {
+    csrf.permits(method, &map(fields), None)
+}
+
 /// The cases where `Sec-Fetch-Site` decides, or the method does.
 fn browser_cases() -> Vec<Case> {
     vec![
@@ -120,7 +125,7 @@ fn legacy_cases() -> Vec<Case> {
             true,
         ),
         (
-            "an origin with no matching host field",
+            "an origin with no authority to match it against",
             Method::POST,
             &[("origin", "https://api.example.com")],
             false,
@@ -147,11 +152,7 @@ fn every_rule_the_scheme_states_is_applied_in_order() {
 
     for (description, method, fields, expected) in browser_cases().into_iter().chain(legacy_cases())
     {
-        assert_eq!(
-            csrf.permits(&method, &map(fields)),
-            expected,
-            "{description}"
-        );
+        assert_eq!(permits(&csrf, &method, fields), expected, "{description}");
     }
 }
 
@@ -163,12 +164,67 @@ fn every_rule_the_scheme_states_is_applied_in_order() {
 fn a_trusted_origin_does_not_trust_anything_beneath_it() {
     let csrf = Csrf::new().trusting_origin("https://example.com");
 
-    assert!(!csrf.permits(
+    assert!(!permits(
+        &csrf,
         &Method::POST,
-        &map(&[
+        &[
             ("origin", "https://evil.example.com"),
             ("host", "api.example.com")
-        ])
+        ]
+    ));
+}
+
+/// A version-2 request states its authority on the target, not in a field.
+///
+/// RFC 9113 section 8.3.1 replaces `Host` with the `:authority` pseudo-header,
+/// which `http` puts on the request URI. Reading `Host` alone therefore found
+/// no authority on any HTTP/2 request, so a same-origin `POST` from a browser
+/// old enough to send `Origin` without `Sec-Fetch-Site` -- Safari before 16.4,
+/// which speaks HTTP/2 -- was refused outright.
+#[test]
+fn a_request_stating_its_authority_on_the_target_matches_its_own_origin() {
+    let csrf = Csrf::new();
+
+    assert!(
+        csrf.permits(
+            &Method::POST,
+            &map(&[("origin", "https://api.example.com")]),
+            Some("api.example.com"),
+        ),
+        "a same-origin request was refused because its authority was not in `Host`"
+    );
+}
+
+/// The control: the target's authority does not admit another origin.
+///
+/// Without it the case above passes for a `permits` that stopped comparing.
+#[test]
+fn a_target_authority_does_not_admit_another_origin() {
+    let csrf = Csrf::new();
+
+    assert!(!csrf.permits(
+        &Method::POST,
+        &map(&[("origin", "https://evil.example.com")]),
+        Some("api.example.com"),
+    ));
+}
+
+/// `Host` decides where both are present.
+///
+/// Section 8.3.1 requires the two to agree when a version-2 client sends both,
+/// so preferring one is a tie-break rather than a policy -- and `Host` is what
+/// an HTTP/1.1 client actually sent.
+#[test]
+fn the_host_field_decides_where_a_request_states_both() {
+    let csrf = Csrf::new();
+
+    assert!(csrf.permits(
+        &Method::POST,
+        &map(&[
+            ("origin", "https://api.example.com"),
+            ("host", "api.example.com"),
+        ]),
+        Some("other.example.com"),
     ));
 }
 
