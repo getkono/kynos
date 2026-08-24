@@ -51,10 +51,12 @@ impl Coding {
 pub struct ContentEncoding {
     /// The coding applied, or `None` when the response was left as it was.
     coding: Option<Coding>,
+    /// The encoded length, where a coding was applied.
+    length: Option<usize>,
 }
 
 impl HeaderParams for ContentEncoding {
-    const NAMES: &'static [&'static str] = &["content-encoding"];
+    const NAMES: &'static [&'static str] = &["content-encoding", "content-length"];
     const DESCRIBED: bool = false;
 
     // `Vary` rides on every response, encoded or not: what the cache has to know
@@ -70,11 +72,52 @@ impl HeaderParams for ContentEncoding {
             return Vec::new();
         };
 
-        vec![(
+        let mut fields = vec![(
             http::header::CONTENT_ENCODING,
             http::HeaderValue::from_static(coding.token()),
-        )]
+        )];
+
+        // RFC 9110 section 8.6 counts the octets actually transferred, and
+        // section 8.4 defines the representation "in terms of the coded form" --
+        // so a length written before encoding describes a body that no longer
+        // exists. Section 8.6 is blunt about the consequence: "a sender MUST NOT
+        // forward a message with a Content-Length header field value that is
+        // known to be incorrect."
+        //
+        // Restated rather than removed. Removing it would leave hyper to derive
+        // one from the body's size hint, which is right today and depends on the
+        // body being buffered; stating it is right whatever the body becomes.
+        if let Some(length) = self.length {
+            if let Ok(value) = http::HeaderValue::from_str(&length.to_string()) {
+                fields.push((http::header::CONTENT_LENGTH, value));
+            }
+        }
+
+        fields
     }
+}
+
+/// Whether the response carries a *strong* validator.
+///
+/// RFC 9110 section 8.8.1 says outright that "if the origin server sends the
+/// same validator for a representation with a gzip content coding applied as it
+/// does for a representation with no content coding, then that validator is
+/// weak". So encoding a strongly tagged response makes the tag a lie: one
+/// strong tag naming two representations.
+///
+/// The encoder cannot correct it from here. The only sanctioned way to write a
+/// response header is the `Adds` group, and declaring `etag` there would make
+/// `Compression` and
+/// [`Cache::deriving_etags`](crate::middleware::cache::Cache::deriving_etags)
+/// a compile error on a stack that is otherwise right.
+///
+/// A *weak* validator may be shared across representations -- that is what weak
+/// means -- so it is left alone and the response still compresses.
+fn strongly_tagged(headers: &http::HeaderMap) -> bool {
+    headers
+        .get(http::header::ETAG)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|tag| !crate::http::etag::is_weak(tag.trim()))
 }
 
 /// The deprecated spellings a recipient must treat as `token`.
@@ -416,6 +459,7 @@ impl<C: Sync + 'static> Interceptor<C> for Compression {
         let leave_alone = continued
             .headers()
             .contains_key(http::header::CONTENT_ENCODING)
+            || strongly_tagged(continued.headers())
             || continued
                 .headers()
                 .contains_key(http::header::ACCEPT_RANGES)
@@ -450,12 +494,13 @@ impl<C: Sync + 'static> Interceptor<C> for Compression {
 
         // Failing to read or to encode leaves the response as the handler
         // produced it, since neither is something this may answer with.
-        let coding = match body.collect().await {
+        let encoded = match body.collect().await {
             Ok(collected) => {
                 let bytes = collected.to_bytes();
                 if let Ok(encoded) = encode(coding, bytes.clone()).await {
+                    let length = encoded.len();
                     continued.set_body(crate::http::body::Body::from_bytes(encoded));
-                    Some(coding)
+                    Some((coding, length))
                 } else {
                     continued.set_body(crate::http::body::Body::from_bytes(bytes));
                     None
@@ -464,7 +509,10 @@ impl<C: Sync + 'static> Interceptor<C> for Compression {
             Err(_) => None,
         };
 
-        Ok(continued.with_headers(ContentEncoding { coding }))
+        Ok(continued.with_headers(ContentEncoding {
+            coding: encoded.map(|(coding, _)| coding),
+            length: encoded.map(|(_, length)| length),
+        }))
     }
 }
 
@@ -589,5 +637,48 @@ mod tests {
     #[test]
     fn an_unparsable_weight_is_a_refusal() {
         assert_eq!(quality("gzip;q=abc", "gzip"), Some(0.0));
+    }
+}
+
+#[cfg(test)]
+mod etag_tests {
+    use super::strongly_tagged;
+    use crate::http::{HeaderMap, HeaderValue, header};
+
+    fn tagged(value: Option<&str>) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        if let Some(value) = value {
+            headers.insert(
+                header::ETAG,
+                HeaderValue::from_str(value).expect("a printable field"),
+            );
+        }
+        headers
+    }
+
+    /// A strong tag stops the encoder; a weak one does not.
+    ///
+    /// RFC 9110 section 8.8.1: a validator shared by a coded and an uncoded
+    /// representation *is* weak, so a response that already says `W/` is
+    /// telling the truth after encoding and one that does not is not.
+    #[test]
+    fn only_a_strong_validator_stops_the_encoder() {
+        let cases: &[(&str, Option<&str>, bool)] = &[
+            ("no validator at all", None, false),
+            ("a strong tag", Some("\"rev-42\""), true),
+            ("a weak tag", Some("W/\"rev-42\""), false),
+            // Lowercase `w/` is not the weakness prefix: RFC 9110 section 8.8.3
+            // writes it `W/`, case-sensitively.
+            ("a lowercase weakness prefix", Some("w/\"rev-42\""), true),
+            (
+                "a strong tag with surrounding space",
+                Some("  \"rev-42\"  "),
+                true,
+            ),
+        ];
+
+        for (description, tag, expected) in cases {
+            assert_eq!(strongly_tagged(&tagged(*tag)), *expected, "{description}");
+        }
     }
 }
