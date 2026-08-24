@@ -97,7 +97,7 @@ required-features = ["openapi32", "macros", "server", "http1", "json"]
 
 [[example]]
 name = "sse"
-required-features = ["openapi32", "macros", "server", "http1"]
+required-features = ["openapi32", "macros", "server", "http1", "compression"]
 
 [[example]]
 name = "tracing"

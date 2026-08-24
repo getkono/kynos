@@ -167,6 +167,32 @@ with a per-endpoint override: two `Compression`s covering one operation both add
 `Content-Encoding`, and `header_names_disjoint` refuses that pair where it is
 mounted.
 
+**A body still being produced is encoded as it arrives.** A response whose
+length is known is collected and encoded once. One whose length is not — an
+event stream, a log tail, an export written as it is read — is encoded frame by
+frame rather than skipped. `min_size` does not apply there: it is a statement
+about a length nobody has. No `Content-Length` rides on the result, because the
+encoded length is not known until after the head has gone and RFC 9110 §8.6
+forbids forwarding one known to be incorrect.
+
+`LatencyMode` is the trade that opens, and its default is `Interactive` rather
+than the mode that compresses best. A body the server produces incrementally has
+a reader consuming it incrementally, and withholding bytes to fill a compression
+window does not slow such a response down so much as break it — an idle event
+stream can go minutes without the client seeing an event it was sent
+immediately. `Throughput` is for a body that is a stream only because it is
+large, and it is the one you have to ask for.
+
+**A handler may overrule negotiation for one response.** `Encoding::Disabled`
+for a body that reflects a secret back beside attacker-chosen input — RFC 9110
+§17.6 describes that attack and is deliberately not normative about it, so it is
+a policy the application owns. `Encoding::Required` for one too large to be
+worth sending as it is: identity stops being an acceptable answer, so a client
+that will take only identity is answered 406 rather than handed the whole
+representation. It travels in the response's extensions, so no interceptor has
+to declare a header for it, and the one status it can produce is the 406
+`Compression` already contributes.
+
 **A response that ranges is left alone.** `Compression` refuses a 206, a 416,
 anything carrying a `Content-Range`, and anything carrying `Accept-Ranges`,
 whatever the client accepted. RFC 9110 §14.1.2 calculates a byte range *with

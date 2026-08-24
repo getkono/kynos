@@ -18,7 +18,11 @@ use crate::{
     http,
     middleware::{
         Continued, Interceptor, Next,
-        compression::levels::{BrotliLevel, GzipLevel, ZstdLevel},
+        compression::{
+            levels::{BrotliLevel, GzipLevel, ZstdLevel},
+            policy::Encoding,
+            streaming::{LatencyMode, Streamed},
+        },
     },
 };
 
@@ -27,7 +31,7 @@ use crate::{
 /// Ordered by server preference, which is what breaks a tie between two codings
 /// the client weighted equally.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Coding {
+pub(crate) enum Coding {
     Zstd,
     Brotli,
     Gzip,
@@ -399,6 +403,40 @@ pub struct Levels {
 /// roughly a fifth of a second of CPU on a 200 KB document.
 /// [`BrotliLevel::DEFAULT`] records why 4 is right for an API.
 ///
+/// # A body still being produced is encoded as it arrives
+///
+/// A response whose length is already known is collected and encoded in one
+/// pass. One whose length is not — an event stream, a log tail, an export the
+/// handler is writing as it reads — is encoded frame by frame instead of being
+/// left alone, which is what makes it compressible at all. `min_size` does not
+/// apply there: it is a statement about a length nobody has.
+///
+/// [`LatencyMode`] is the trade that opens, and its default is
+/// [`Interactive`](LatencyMode::Interactive) rather than the mode that
+/// compresses best. A body the server is producing incrementally is one whose
+/// reader is consuming it incrementally, and holding those bytes back to fill a
+/// compression window does not slow such a response down so much as break it —
+/// an idle event stream can go minutes without the client seeing an event it
+/// was sent immediately. Choose
+/// [`Throughput`](LatencyMode::Throughput) for a body that is a stream only
+/// because it is large.
+///
+/// No `Content-Length` rides on a streamed encode: the encoded length is not
+/// known until the encoding finishes, which is after the head has gone, and RFC
+/// 9110 section 8.6 forbids forwarding one known to be incorrect.
+///
+/// # What a handler may say about its own response
+///
+/// [`policy::Encoding`], attached with
+/// [`WithEncoding`](policy::WithEncoding), overrules negotiation in both
+/// directions for one response:
+/// [`Disabled`](policy::Encoding::Disabled) for a body that reflects a secret
+/// back beside attacker-chosen input, and
+/// [`Required`](policy::Encoding::Required) for one too large to be worth
+/// sending as it is — which makes identity unacceptable, so a client that will
+/// take only identity is answered 406 rather than handed the whole
+/// representation.
+///
 /// Levels are set per mount, and a mount is a scope: a `Compression` on the
 /// router covers everything, one on a [`Group`](crate::router::group::Group)
 /// covers that group, one on an endpoint covers that endpoint. What is *not*
@@ -455,6 +493,8 @@ pub struct Compression {
     min_size: u64,
     /// What each algorithm is asked for.
     levels: Levels,
+    /// How eagerly a streamed body's encoded bytes are handed on.
+    latency: LatencyMode,
 }
 
 impl Compression {
@@ -464,6 +504,7 @@ impl Compression {
         Self {
             min_size: 0,
             levels: Levels::default(),
+            latency: LatencyMode::default(),
         }
     }
 
@@ -499,6 +540,16 @@ impl Compression {
     #[must_use]
     pub fn levels(mut self, levels: Levels) -> Self {
         self.levels = levels;
+        self
+    }
+
+    /// Sets how eagerly a streamed body's encoded bytes are handed on.
+    ///
+    /// Affects only a body whose length is not known in advance. One already
+    /// collected is encoded in a single pass, and there is nothing to trade.
+    #[must_use]
+    pub fn latency_mode(mut self, latency: LatencyMode) -> Self {
+        self.latency = latency;
         self
     }
 }
@@ -588,25 +639,68 @@ impl<C: Sync + 'static> Interceptor<C> for Compression {
                 .headers()
                 .contains_key(http::header::CONTENT_RANGE);
 
-        let Negotiated::Encode(coding) = negotiated else {
-            return Ok(continued.with_headers(ContentEncoding::default()));
+        // What the handler said about its own response, which outranks
+        // negotiation in both directions.
+        let policy = Encoding::of_extensions(continued.extensions());
+
+        let refused = policy == Encoding::Disabled || leave_alone;
+        let coding = match negotiated {
+            Negotiated::Encode(coding) if !refused => coding,
+            // Nothing to encode to, or nothing that may be encoded. `Required`
+            // said identity is not an answer, so there is none left.
+            //
+            // `leave_alone` reaches here too, and deliberately: a handler
+            // demanding compression of a response that also advertises ranges
+            // has asked for two things that cannot both hold, and 406 is a
+            // better answer than quietly granting the one this file happens to
+            // check first.
+            _ if policy == Encoding::Required => return Err(NotAcceptable),
+            _ => return Ok(continued.with_headers(ContentEncoding::default())),
         };
-        if leave_alone {
-            return Ok(continued.with_headers(ContentEncoding::default()));
-        }
 
         let body = continued.take_body();
 
-        // A length this body cannot state is one it is producing as it goes;
-        // zero bytes compress to a frame header and nothing else.
-        let worth_encoding = body
-            .size_hint()
-            .exact()
-            .is_some_and(|length| length > 0 && length >= self.min_size);
+        // Zero bytes compress to a frame header and nothing else, and a body
+        // under `min_size` costs more to encode than it saves.
+        //
+        // A body that cannot state its length is neither: it is one being
+        // produced as it goes, and `min_size` is a statement about a length
+        // nobody has. It takes the streaming path below instead of being
+        // skipped, which is what makes an event stream or a long export
+        // compressible at all.
+        let worth_encoding = match body.size_hint().exact() {
+            Some(length) => length > 0 && length >= self.min_size,
+            None => true,
+        };
 
         if !worth_encoding {
             continued.set_body(body);
+
+            if policy == Encoding::Required {
+                // Small, but the handler said identity is not an answer.
+                // Honouring `min_size` over that would be reading the
+                // service's own configuration as outranking the response's.
+                return Err(NotAcceptable);
+            }
+
             return Ok(continued.with_headers(ContentEncoding::default()));
+        }
+
+        // A length nobody knows yet is encoded as it arrives.
+        if body.size_hint().exact().is_none() {
+            continued.set_body(crate::http::body::Body::from_body(Streamed::new(
+                body,
+                coding,
+                self.levels,
+                self.latency,
+            )));
+
+            return Ok(continued.with_headers(ContentEncoding {
+                coding: Some(coding),
+                // Not known until the encoding finishes, which is after the
+                // head has gone.
+                length: None,
+            }));
         }
 
         // Failing to read or to encode leaves the response as the handler
@@ -634,6 +728,8 @@ impl<C: Sync + 'static> Interceptor<C> for Compression {
 }
 
 pub mod levels;
+pub mod policy;
+pub mod streaming;
 
 #[cfg(test)]
 mod tests;

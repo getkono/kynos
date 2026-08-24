@@ -315,6 +315,18 @@ impl<H: HeaderParams> Continued<H> {
         self.response.headers()
     }
 
+    /// The extensions the chain produced.
+    ///
+    /// Readable, not writable, and for the same reason `headers` is: an
+    /// interceptor reads what a handler decided and does not decide for it.
+    /// This is the untyped channel — a handler puts a value in, an interceptor
+    /// that knows the type takes it out, and nothing about the operation's
+    /// description changes, because an extension has no wire form to describe.
+    #[must_use]
+    pub fn extensions(&self) -> &crate::http::Extensions {
+        self.response.extensions()
+    }
+
     /// Takes the body out, leaving an empty one behind.
     ///
     /// Paired with [`set_body`](Continued::set_body) for anything that reads a

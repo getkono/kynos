@@ -172,6 +172,7 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | Both ways a header group reaches the wire write the same fields | [`response/headers.rs`](../crates/kynos/src/response/headers.rs) asserting the two paths *agree*, rather than asserting each | `enforced` |
 | correctness | A re-encoded response states the length it actually sends | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs) over a handler that set its own length, comparing the stated value against the bytes received | `enforced` |
 | correctness | A response carrying a strong validator is never content-coded | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs)'s `partial` module, with the weakly tagged control differing in exactly the `W/` prefix | `enforced` |
+| correctness | An encoded stream decodes to exactly what the handler produced | [`compression/streaming.rs`](../crates/kynos/src/middleware/compression/streaming.rs) round-tripping a multi-frame body through both latency modes, and asserting the two modes differ in frame count and in size | `enforced` |
 | correctness | A response that advertises `Accept-Ranges` is never content-coded | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs)'s `partial` for the rule and its control, and `ranged_assets` resuming an asset download against the tag it was served with | `enforced` |
 
 **The last row is a known limit as much as a guarantee.** It says a static

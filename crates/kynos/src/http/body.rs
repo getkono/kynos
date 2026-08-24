@@ -68,6 +68,21 @@ impl Body {
         }
     }
 
+    /// A body that is another body, already erased.
+    ///
+    /// The one constructor an adapter needs: a body that wraps another -- a
+    /// compressing one, a counting one -- is still a body, and this is how it
+    /// becomes the erased kind without going through bytes or a stream.
+    #[cfg(feature = "compression")]
+    pub(crate) fn from_body<B>(body: B) -> Self
+    where
+        B: HttpBody<Data = Bytes, Error = BoxError> + Send + 'static,
+    {
+        Self {
+            inner: Mutex::new(body.boxed_unsync()),
+        }
+    }
+
     #[cfg(feature = "server")]
     pub(crate) fn from_incoming(body: hyper::body::Incoming) -> Self {
         Self {
