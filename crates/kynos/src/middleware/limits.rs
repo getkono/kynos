@@ -89,9 +89,17 @@ impl Responses for BodySizeExceeded {
 /// frame at a time. A chunked request declares no length, so the running count
 /// is the only bound there is and the whole body is materialised here before
 /// the handler is entered. Records then still arrive one at a time, but the
-/// memory the streaming was for has already been spent. `docs/nfr.md` records
-/// the limit; closing it needs a body that can be rebuilt as a stream rather
-/// than only from bytes.
+/// memory the streaming was for has already been spent.
+///
+/// That follows from what the declared 413 promises, not from what
+/// [`Body`](crate::http::body::Body) can be built from. A count that runs while
+/// the handler reads reaches its verdict only after the handler has acted on
+/// the bytes it was given, so streaming here would not restore the cap — it
+/// would move the refusal behind whatever an oversized payload had already
+/// caused. The alternatives are a 413 sent after those side effects, or a 411
+/// refusing every length-less body and with it every chunked upload; both are
+/// worse trades than the buffer. `docs/nfr.md` records the same conclusion, and
+/// there is no missing constructor to write.
 #[derive(Clone, Copy, Debug)]
 pub struct BodySize {
     /// The maximum body size, in bytes.
