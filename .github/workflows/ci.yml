@@ -4,9 +4,13 @@ on:
   push:
     branches:
       - master
+  # Every pull request, whatever it targets. Filtering on `master` meant a
+  # stacked pull request -- one based on another that has not merged yet --
+  # reported no checks at all, so the only evidence it had was its author
+  # saying the gates passed locally. That is the wrong half of the review to
+  # trust, and it is exactly the review where a long-lived base branch makes
+  # stacking the sensible way to work.
   pull_request:
-    branches:
-      - master
 
 permissions:
   contents: read
