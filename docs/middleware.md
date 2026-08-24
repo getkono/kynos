@@ -376,15 +376,23 @@ four different answers depending on which layer is asked.
 | Request smuggling | hyper and `httparse` | n/a | — | — | yes, and not Kynos's |
 | Reset flood | — | `max_pending_accept_reset_streams`, `max_local_error_reset_streams` | — | — | yes |
 | TLS handshake stall | — | — | `handshake_timeout`, 10 s | — | yes, with `tls` |
-| Decompression bomb | — | — | — | — | n/a: Kynos never decompresses a request body |
+| Decompression bomb | — | — | — | `Decompression`, when mounted | **no** |
 
-Three rows are worth reading twice.
+Four rows are worth reading twice.
 
 **A body cap is not default, and that is a decision.**
 [`nfr.md`](nfr.md#extraction) records the three reasons. The shortest is that a
 default limit would add 413 to every operation of every application that never
 asked for one — and this framework's whole position is that a declared response
 is a promise.
+
+**A decompression bomb is `BodySize`'s blind spot, not its job.** Two kilobytes
+of zeroes are a gigabyte of gzip output, so a cap measured before decoding
+measures the one number an attacker chooses freely. `Decompression` takes the
+limit instead and applies it to what the handler will actually see. The two
+cannot be mounted together — both answer 413, and `statuses_disjoint` refuses
+the pair — which is right rather than awkward: on a route that accepts content
+codings, `BodySize` alone is not a weaker guard but a misleading one.
 
 **The slow-body row depends on mounting order.** `BodySize` reads a length-less
 body frame by frame, so a client sending one frame slowly holds that loop open.

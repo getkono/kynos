@@ -151,6 +151,17 @@ name = "cors"
 required-features = ["openapi31", "macros", "json"]
 
 [[example]]
+name = "decompression"
+required-features = [
+  "openapi31",
+  "macros",
+  "server",
+  "http1",
+  "json",
+  "compression",
+]
+
+[[example]]
 name = "middleware"
 required-features = [
   "openapi31",

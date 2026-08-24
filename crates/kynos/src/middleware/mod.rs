@@ -80,6 +80,8 @@ pub mod compression;
 pub mod conditional;
 #[cfg(feature = "cookie")]
 pub mod cookies;
+#[cfg(feature = "compression")]
+pub mod decompression;
 #[cfg(feature = "trace")]
 pub mod trace;
 

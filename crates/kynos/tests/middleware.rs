@@ -814,3 +814,319 @@ mod encoding_policy {
         assert_eq!(reply.body, octets());
     }
 }
+
+/// Request-body decompression: the direction `Accept-Encoding` says nothing
+/// about.
+///
+/// RFC 9110 section 8.4 governs what arrives (`Content-Encoding`, listed in the
+/// order applied) and section 15.5.16 what a refusal looks like. The
+/// interesting assertions are not that gzip round-trips — that is
+/// `async-compression`'s property, not this crate's — but that the *request*
+/// the handler receives has been made honest: the coding gone, the length
+/// restated, and the metadata that described the coded form removed rather than
+/// left to mislead.
+#[cfg(feature = "compression")]
+mod decompression {
+    use kynos::{
+        Router,
+        extract::{
+            body::text::Text,
+            params::header::{HeaderParams, Headers},
+        },
+        http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
+        middleware::{compression::Compression, decompression::Decompression},
+        router::service::Service,
+    };
+
+    use super::support::{App, post};
+
+    /// Repetitive enough that its ratio is far past anything a real payload
+    /// reaches, which is what the bomb cases need.
+    fn payload() -> String {
+        "kynos ".repeat(4_096)
+    }
+
+    /// Echoes what it was given.
+    ///
+    /// The echo is what proves the handler saw decoded octets: `Text` handed
+    /// the coded form would return the gzip stream, and the comparison below
+    /// would fail on it.
+    #[kynos::post("/echo")]
+    async fn echo(Text(body): Text) -> Text {
+        Text(body)
+    }
+
+    /// The three fields that described the coded form, reported as the handler
+    /// received them.
+    ///
+    /// Hand-written rather than derived: what is under test is which of them
+    /// survived, so the group has to be able to say "absent" rather than fail
+    /// to decode.
+    #[derive(Debug)]
+    struct CodedForm {
+        encoding: Option<String>,
+        length: Option<String>,
+        digest: Option<String>,
+    }
+
+    impl HeaderParams for CodedForm {
+        const NAMES: &'static [&'static str] =
+            &["content-encoding", "content-length", "content-digest"];
+
+        fn decode(headers: &HeaderMap) -> Result<Self, kynos::error::rejection::HeaderRejection> {
+            let read = |name: &str| {
+                headers
+                    .get(name)
+                    .and_then(|value| value.to_str().ok())
+                    .map(ToOwned::to_owned)
+            };
+
+            Ok(Self {
+                encoding: read("content-encoding"),
+                length: read("content-length"),
+                digest: read("content-digest"),
+            })
+        }
+
+        fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+            Vec::new()
+        }
+    }
+
+    #[kynos::post("/fields")]
+    async fn fields(Headers(coded): Headers<CodedForm>) -> Text {
+        let shown = |field: Option<String>| field.unwrap_or_else(|| "<absent>".to_owned());
+
+        Text(format!(
+            "encoding={} length={} digest={}",
+            shown(coded.encoding),
+            shown(coded.length),
+            shown(coded.digest),
+        ))
+    }
+
+    fn service(decompression: Decompression) -> Service<App> {
+        Router::<App>::new()
+            .mount(kynos::routes![echo, fields])
+            .intercept(decompression)
+            .build(App::new())
+            .expect("a describable router")
+    }
+
+    /// Gzips `bytes` by asking Kynos's own encoder for them.
+    ///
+    /// No new dev-dependency: `sse.rs` records why one is expensive here — the
+    /// UI snapshots embed rustc's "the following other types implement" lists.
+    /// The codec is `async-compression`'s in both directions anyway, and what
+    /// these cases are about is the interceptor's plumbing rather than gzip.
+    async fn gzipped(bytes: &str) -> bytes::Bytes {
+        let encoder = Router::<App>::new()
+            .mount(kynos::routes![echo])
+            .intercept(Compression::new())
+            .build(App::new())
+            .expect("a describable router");
+
+        let reply = post(&encoder, "/echo")
+            .header("accept-encoding", "gzip")
+            .header("content-type", "text/plain")
+            .body(bytes.to_owned())
+            .call()
+            .await;
+
+        assert_eq!(
+            reply.field(header::CONTENT_ENCODING.as_str()).as_deref(),
+            Some("gzip"),
+            "the fixture was not encoded, so nothing below tests decoding"
+        );
+
+        reply.body
+    }
+
+    #[tokio::test]
+    async fn a_gzipped_body_reaches_the_handler_decoded() {
+        let encoded = gzipped(&payload()).await;
+        let service = service(Decompression::new(1024 * 1024));
+
+        let reply = post(&service, "/echo")
+            .header("content-encoding", "gzip")
+            .header("content-type", "text/plain")
+            .body(encoded)
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(reply.text(), payload());
+    }
+
+    /// The pass control, differing in one property: no coding was applied. A
+    /// body that was never encoded must arrive untouched, or mounting this
+    /// would break every plain request on the route.
+    #[tokio::test]
+    async fn a_plain_body_reaches_the_handler_unchanged() {
+        let service = service(Decompression::new(1024 * 1024));
+        let reply = post(&service, "/echo")
+            .header("content-type", "text/plain")
+            .body(payload())
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(reply.text(), payload());
+    }
+
+    /// RFC 9110 section 8.4: the representation *is* the coded form, and "all
+    /// other metadata about the representation is about the coded form". Once
+    /// the coded form is gone that metadata describes nothing — a
+    /// `Content-Length` left at the compressed size, or a digest computed over
+    /// compressed octets, is a statement about a body that no longer exists.
+    #[tokio::test]
+    async fn the_metadata_of_the_coded_form_does_not_survive_it() {
+        let encoded = gzipped(&payload()).await;
+        let service = service(Decompression::new(1024 * 1024));
+
+        let reply = post(&service, "/fields")
+            .header("content-encoding", "gzip")
+            .header("content-length", &encoded.len().to_string())
+            .header("content-digest", "sha-256=:deadbeef:")
+            .header("content-type", "text/plain")
+            .body(encoded)
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(
+            reply.text(),
+            format!(
+                "encoding=<absent> length={} digest=<absent>",
+                payload().len()
+            )
+        );
+    }
+
+    /// The control for the case above: the same route with nothing to strip.
+    /// Without it that case passes for an interceptor that removes those fields
+    /// from every request, encoded or not.
+    #[tokio::test]
+    async fn a_plain_body_keeps_the_metadata_that_still_describes_it() {
+        let service = service(Decompression::new(1024 * 1024));
+        let body = payload();
+
+        let reply = post(&service, "/fields")
+            .header("content-length", &body.len().to_string())
+            .header("content-digest", "sha-256=:deadbeef:")
+            .header("content-type", "text/plain")
+            .body(body.clone())
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(
+            reply.text(),
+            format!(
+                "encoding=<absent> length={} digest=sha-256=:deadbeef:",
+                body.len()
+            )
+        );
+    }
+
+    /// Section 8.4 permits a 415 for a coding the server will not accept, and
+    /// section 15.5.16 says `Accept-Encoding` ought to ride on it — otherwise
+    /// the client is told no without being told what would work.
+    #[tokio::test]
+    async fn an_unsupported_coding_is_refused_with_what_would_have_worked() {
+        let service = service(Decompression::new(1024 * 1024));
+        let reply = post(&service, "/echo")
+            .header("content-encoding", "deflate")
+            .header("content-type", "text/plain")
+            .body(payload())
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        assert_eq!(
+            reply.field(header::ACCEPT_ENCODING.as_str()).as_deref(),
+            Some("zstd, br, gzip")
+        );
+    }
+
+    /// A body that claims a coding it is not is a malformed request, not an
+    /// unsupported one: the server understands `gzip` perfectly well.
+    #[tokio::test]
+    async fn a_body_that_is_not_what_it_claims_is_a_bad_request() {
+        let service = service(Decompression::new(1024 * 1024));
+        let reply = post(&service, "/echo")
+            .header("content-encoding", "gzip")
+            .header("content-type", "text/plain")
+            .body("this is not a gzip stream")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            reply.field(header::ACCEPT_ENCODING.as_str()),
+            None,
+            "a body that failed to decode is not a complaint about the coding"
+        );
+    }
+
+    /// The attack the caps exist for. A few kilobytes on the wire become
+    /// megabytes in memory, and a limit measured before decoding waves it
+    /// through — which is why `BodySize` is not the guard for this route.
+    #[tokio::test]
+    async fn a_body_that_expands_past_the_absolute_limit_is_refused() {
+        let encoded = gzipped(&payload()).await;
+
+        assert!(
+            encoded.len() < 1_024,
+            "the fixture must pass a limit on the encoded bytes to say anything: {}",
+            encoded.len()
+        );
+
+        let service = service(Decompression::new(1_024));
+        let reply = post(&service, "/echo")
+            .header("content-encoding", "gzip")
+            .header("content-type", "text/plain")
+            .body(encoded)
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    /// The cheaper check, and the one that binds first: this payload is well
+    /// inside the absolute limit and still expands past a plausible multiple of
+    /// what arrived.
+    #[tokio::test]
+    async fn a_body_that_expands_past_the_ratio_is_refused() {
+        let encoded = gzipped(&payload()).await;
+        let service = service(Decompression::new(10 * 1024 * 1024).max_ratio(4));
+
+        let reply = post(&service, "/echo")
+            .header("content-encoding", "gzip")
+            .header("content-type", "text/plain")
+            .body(encoded)
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    /// The control for both bomb cases: the same interceptor, the same route, a
+    /// payload inside both bounds. Without it they pass for an interceptor that
+    /// refuses everything.
+    #[tokio::test]
+    async fn a_body_inside_both_bounds_is_handed_on() {
+        let encoded = gzipped("kynos").await;
+        let service = service(Decompression::new(10 * 1024 * 1024).max_ratio(100));
+
+        let reply = post(&service, "/echo")
+            .header("content-encoding", "gzip")
+            .header("content-type", "text/plain")
+            .body(encoded)
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(reply.text(), "kynos");
+    }
+}
