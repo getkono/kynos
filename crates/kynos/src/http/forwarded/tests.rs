@@ -209,6 +209,58 @@ fn a_network_never_matches_across_address_families() {
     assert!(!within(ip("10.0.0.1"), ip("::"), 0));
 }
 
+/// A scheme claimed by a sender nothing trusts is not believed.
+///
+/// `proto` names no hop of its own -- unlike a `for=` element, which at least
+/// says whose address it is -- so the only word behind it is the immediate
+/// sender's. A policy naming addresses and meeting a peer outside them has
+/// therefore been told nothing it may act on.
+///
+/// The consequence reaches further than the field. `client_is_secure` is what
+/// [`SecurityHeaders`] consults before sending HSTS, and RFC 6797 section 7.2
+/// forbids that field over non-secure transport -- so believing this claim puts
+/// the header on exactly the connection the specification rules out.
+///
+/// [`SecurityHeaders`]: crate::middleware::security_headers::SecurityHeaders
+#[test]
+fn a_scheme_claimed_by_an_untrusted_sender_is_not_believed() {
+    let headers = map(&[
+        ("x-forwarded-for", "203.0.113.7"),
+        ("x-forwarded-proto", "https"),
+    ]);
+    let trusted = TrustedProxies::addresses([ip("10.0.0.1")]);
+
+    // The peer is not the address the policy names, so nothing it wrote counts.
+    let resolved = Forwarded::resolve(&headers, Some(peer("203.0.113.9")), &trusted);
+
+    assert_eq!(resolved.client(), Some(ip("203.0.113.9")));
+    assert_eq!(
+        resolved.proto(),
+        None,
+        "a scheme was read from a hop the policy never named"
+    );
+    assert_eq!(resolved.client_is_secure(), None);
+}
+
+/// The control for the case above: the same claim from a sender the policy does
+/// name is believed.
+///
+/// Without it the assertion above passes for a `resolve` that drops every
+/// scheme, which would make the field useless rather than trustworthy.
+#[test]
+fn a_scheme_claimed_by_a_trusted_sender_is_believed() {
+    let headers = map(&[
+        ("x-forwarded-for", "203.0.113.7"),
+        ("x-forwarded-proto", "https"),
+    ]);
+    let trusted = TrustedProxies::addresses([ip("10.0.0.1")]);
+
+    let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &trusted);
+
+    assert_eq!(resolved.client(), Some(ip("203.0.113.7")));
+    assert_eq!(resolved.client_is_secure(), Some(true));
+}
+
 /// A request that arrived on no socket, with nothing trusted to name one.
 #[test]
 fn a_request_from_no_socket_resolves_to_no_client() {

@@ -205,6 +205,15 @@ impl Forwarded {
 
         let (addresses, proto) = elements(headers);
 
+        // Whether the hop that wrote the fields may be believed at all. The
+        // socket peer is the only sender this process observed rather than was
+        // told about, so nothing in the request is worth reading unless that
+        // peer is named -- either outright, or by `hops` budgeting a first step
+        // of trust. It is what decides `proto`, which names no hop of its own
+        // and so has only the immediate sender's word behind it.
+        let peer_is_trusted =
+            trusted.hops > 0 || peer_ip.is_some_and(|address| trusted.names(address));
+
         // Walk right to left. The rightmost element was written by the hop
         // nearest Kynos, and its immediate sender is the socket peer; each step
         // left moves one hop further out, and stops the moment a sender is one
@@ -213,9 +222,10 @@ impl Forwarded {
         // cannot be trusted" -- is exactly what stopping there respects.
         let mut client = peer_ip;
         let mut sender = peer_ip;
-        let mut believed = 0;
 
-        for address in addresses.iter().rev() {
+        // `believed` counts the elements already taken, so it is the index the
+        // walk is at -- and it is what `hops` is spent against.
+        for (believed, address) in addresses.iter().rev().enumerate() {
             let trusted_sender =
                 sender.is_some_and(|sender| trusted.names(sender)) || (believed < trusted.hops);
             if !trusted_sender {
@@ -224,12 +234,11 @@ impl Forwarded {
 
             client = Some(*address);
             sender = Some(*address);
-            believed += 1;
         }
 
         Self {
             client,
-            proto: proto.filter(|_| believed > 0 || !trusted.trusts_nobody()),
+            proto: proto.filter(|_| peer_is_trusted),
         }
     }
 
