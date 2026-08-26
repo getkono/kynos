@@ -2,10 +2,11 @@
 //! deliberately unconstrained.
 
 use crate::{
+    annotation::UNCHECKED_SCHEMA_ANNOTATION,
     model::{body::media_type::MediaType, schema::Schema},
     validate::{
-        UNCHECKED_SCHEMA_ANNOTATION,
-        violation::{SpecError, Violation},
+        rules::parameters::check_header_map,
+        violation::{SpecError, Violation, pointer_token},
     },
 };
 
@@ -14,14 +15,23 @@ pub(in crate::validate) fn check_media_type(
     content: &MediaType,
     violations: &mut Vec<Violation>,
 ) {
-    if content.example.is_some() && !content.examples.is_empty() {
-        violations.push(Violation::error(location, SpecError::ExampleExclusivity));
-    }
+    // The `example`/`examples` exclusion used to be checked here. A `MediaType`
+    // carries one [`Examples`] holding one form or the other, so a document
+    // setting both cannot reach this function: it fails to deserialize, and
+    // there is no way to build one.
 
     if let Some(schema) = &content.schema {
         if is_unchecked(schema) {
             violations.push(Violation::warning(location, SpecError::UncheckedSchema));
         }
+    }
+
+    for (property, encoding) in &content.encoding {
+        check_header_map(
+            &format!("{location}/encoding/{}/headers", pointer_token(property)),
+            &encoding.headers,
+            violations,
+        );
     }
 }
 

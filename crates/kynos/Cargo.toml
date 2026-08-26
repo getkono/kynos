@@ -9,17 +9,194 @@ repository.workspace = true
 publish.workspace = true
 
 [[test]]
+name = "ui"
+path = "tests/ui.rs"
+
+# The fixture directory `assets!` walks lives beside this target, so the target
+# has to be declared or `tests/assets/` would be taken for one.
+[[test]]
+name = "assets"
+path = "tests/assets.rs"
+required-features = ["openapi31", "macros", "assets"]
+
+[[test]]
 name = "panic-recovery-check"
 path = "tests/compile/panic_recovery.rs"
 harness = false
 
 [[example]]
-name = "http2"
-required-features = ["openapi31", "server", "http2"]
+name = "hello"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
+[[example]]
+name = "errors"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
+[[example]]
+name = "state"
+required-features = ["openapi31", "macros", "server", "http1"]
 
 [[example]]
 name = "graceful_shutdown"
-required-features = ["openapi31", "server", "http1"]
+required-features = ["openapi31", "macros", "server", "http1"]
+
+[[example]]
+name = "scalars"
+required-features = [
+  "openapi31",
+  "macros",
+  "server",
+  "http1",
+  "json",
+  "uuid",
+  "time-chrono",
+  "time-jiff",
+  "decimal-rust",
+  "decimal-big",
+]
+
+[[example]]
+name = "schema"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
+[[example]]
+name = "parameters"
+required-features = ["openapi31", "macros", "server", "http1", "json", "cookie"]
+
+[[example]]
+name = "payloads"
+required-features = [
+  "openapi31",
+  "macros",
+  "server",
+  "http1",
+  "json",
+  "form",
+  "multipart",
+]
+
+[[example]]
+name = "responses"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
+[[example]]
+name = "negotiation"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
+[[example]]
+name = "composition"
+required-features = ["openapi31", "macros", "server", "http1"]
+
+[[example]]
+name = "protobuf"
+required-features = ["openapi31", "macros", "server", "http1", "protobuf"]
+
+[[example]]
+name = "streaming"
+required-features = ["openapi32", "macros", "server", "http1", "json"]
+
+[[example]]
+name = "sse"
+required-features = ["openapi32", "macros", "server", "http1", "compression"]
+
+[[example]]
+name = "tracing"
+required-features = ["openapi31", "macros", "server", "http1", "trace"]
+
+[[example]]
+name = "auto_reload"
+required-features = ["openapi31", "macros", "server", "http1"]
+
+[[example]]
+name = "print_request_response"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
+[[example]]
+name = "document"
+required-features = [
+  "openapi32",
+  "macros",
+  "server",
+  "http1",
+  "json",
+  "yaml",
+]
+
+[[example]]
+name = "security_schemes"
+required-features = ["openapi31", "macros", "server", "http1"]
+
+[[example]]
+name = "jwt"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
+[[example]]
+name = "rate_limit"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
+[[example]]
+name = "cache"
+required-features = ["openapi31", "macros", "server", "http1", "json", "cache"]
+
+[[example]]
+name = "assets"
+# No `json`: nothing here has a JSON body. `assets-fs` implies `assets` and
+# `unchecked`, which is the point the example is making.
+required-features = ["openapi31", "macros", "server", "http1", "assets-fs"]
+
+[[example]]
+name = "cors"
+# No `server`: this example drives a built `Service` directly, because what it
+# demonstrates is the two exchanges a browser makes rather than a socket.
+required-features = ["openapi31", "macros", "json"]
+
+[[example]]
+name = "decompression"
+required-features = [
+  "openapi31",
+  "macros",
+  "server",
+  "http1",
+  "json",
+  "compression",
+]
+
+[[example]]
+name = "opentelemetry"
+required-features = ["openapi31", "macros", "server", "http1", "json", "trace"]
+
+[[example]]
+name = "middleware"
+required-features = [
+  "openapi31",
+  "macros",
+  "server",
+  "http1",
+  "json",
+  "compression",
+  "trace",
+]
+
+[[example]]
+name = "unchecked"
+required-features = [
+  "openapi31",
+  "macros",
+  "server",
+  "http1",
+  "json",
+  "unchecked",
+]
+
+[[example]]
+name = "testing"
+# No `server` and no `http1`: this example drives a built `Service` directly,
+# which is the whole point of it.
+required-features = ["openapi31", "macros", "json", "test-util"]
+
+[[example]]
+name = "tls"
+required-features = ["openapi31", "server", "http1", "http2", "tls"]
 
 [features]
 default = [
@@ -36,7 +213,14 @@ default = [
 # `openapi31` is the baseline. `openapi32` is a strict superset: enabling it is
 # purely additive for programs that use no 3.2-only construct.
 openapi31 = ["kynos-openapi/openapi31"]
-openapi32 = ["openapi31", "kynos-openapi/openapi32", "kynos-macros?/openapi32"]
+openapi32 = [
+  "openapi31",
+  "kynos-openapi/openapi32",
+  "kynos-macros?/openapi32",
+  # `response::stream` is the only thing that names a stream, and 3.1 has no
+  # `itemSchema` to describe one with, so the whole subtree is 3.2-only.
+  "dep:futures-core",
+]
 
 # --- Core ------------------------------------------------------------------
 macros = ["dep:kynos-macros"]
@@ -61,26 +245,78 @@ json = []
 form = ["dep:serde_urlencoded"]
 multipart = ["dep:multer"]
 protobuf = ["dep:prost"]
-cookie = ["dep:cookie"]
+# Kynos owns the RFC 6265 this needs. The `cookie` crate was declared here and
+# named by no source line: the derive hand-rolled the jar and the response side
+# did not exist. Using it now would put `cookie::Cookie` in a public signature,
+# which `docs/architecture.md`'s re-export rule forbids.
+cookie = []
 compression = ["dep:async-compression"]
+
+# --- Scalar formats --------------------------------------------------------
+# A type from outside `std` whose whole contribution is a JSON Schema `format`.
+# Each is additive and off by default; the mapping is normative in
+# `docs/schema.md`.
+uuid = ["dep:uuid"]
+
+# `time` is an umbrella, not a library: it carries the shapes both backends map
+# onto, so `date-time-local` is defined once and cannot change with a flag. It
+# names no crate, and on its own it does not compile. Note it is unrelated to
+# the `time` crate, which is not a backend and reaches the tree only through
+# `rcgen`, a dev-dependency of the TLS example.
+time = []
+time-chrono = ["time", "dep:chrono"]
+time-jiff = ["time", "dep:jiff"]
+
+# The same shape for decimals. Both backends write a JSON string, which is the
+# only representation that keeps the precision a decimal exists for.
+decimal = []
+decimal-rust = ["decimal", "dep:rust_decimal"]
+decimal-big = ["decimal", "dep:bigdecimal"]
 
 # --- Observability ---------------------------------------------------------
 # The `tracing` facade only. Choosing a subscriber stays the application's call.
 trace = ["dep:tracing"]
 
 # --- Document emission -----------------------------------------------------
-yaml = ["kynos-openapi/yaml"]
+# The facade names `serde_yaml_ng` itself, rather than only forwarding, because
+# `Error` converts from the YAML emitter's failure the same way it converts from
+# the JSON one. A passthrough would leave the two emitters unusable in the same
+# `kynos::Result` function.
+yaml = ["dep:serde_yaml_ng", "kynos-openapi/yaml"]
 
 # --- Testing ---------------------------------------------------------------
-test-util = []
+# The JSON Schema validator is pulled in here rather than unconditionally: a
+# normal build never checks a response against a schema, so it never carries
+# one.
+test-util = ["dep:jsonschema"]
+
+# --- Response cache --------------------------------------------------------
+# The store half (`Cache`) and the validator half (`Conditional`). The store
+# itself is the application's, which is the line `rate_limit` already draws:
+# prescribing one would mean prescribing a dependency.
+cache = []
+
+# --- Static assets ---------------------------------------------------------
+# `assets` compiles a directory into the binary as one described operation per
+# file: every path is a literal, so nothing is waived. `assets-fs` serves a
+# directory whose membership is not fixed, which no path template can express --
+# so it implies `unchecked` and is recorded at the document root.
+assets = ["kynos-macros?/assets"]
+# `io-util` is what lets a range be read rather than sliced: a seek and one
+# sized read cost the part, where reading the file and slicing costs the whole.
+assets-fs = ["assets", "unchecked", "tokio/fs", "tokio/io-util"]
 
 # --- Escape hatch ----------------------------------------------------------
-# Unlocks `layer_unchecked`, `route_unchecked` and `upgrade_unchecked`. Anything
-# reached through these is omitted from the emitted document, so the document
-# stops being authoritative and is stamped as such. Documented anti-pattern.
+# Unlocks `layer_unchecked`, `route_unchecked` and `upgrade_unchecked`. What
+# they reach is recorded and flagged rather than dropped -- an operation stays
+# in `paths` marked opaque, a route with no expressible template is listed at
+# the document root -- and the document is stamped non-authoritative.
+# Documented anti-pattern.
 unchecked = ["dep:tower", "dep:tower-service"]
 
 full = [
+  "assets",
+  "cache",
   "openapi32",
   "macros",
   "server",
@@ -96,6 +332,11 @@ full = [
   "trace",
   "yaml",
   "test-util",
+  "uuid",
+  "time-chrono",
+  "time-jiff",
+  "decimal-rust",
+  "decimal-big",
 ]
 
 [dependencies]
@@ -108,9 +349,10 @@ async-compression = { workspace = true, optional = true, features = [
   "brotli",
   "zstd",
 ] }
+bigdecimal = { workspace = true, optional = true }
 bytes = { workspace = true }
-cookie = { workspace = true, optional = true }
-futures-core = { workspace = true }
+chrono = { workspace = true, optional = true }
+futures-core = { workspace = true, optional = true }
 http = { workspace = true }
 http-body = { workspace = true }
 http-body-util = { workspace = true }
@@ -119,24 +361,82 @@ hyper-util = { workspace = true, optional = true, features = [
   "server",
   "tokio",
 ] }
-mime = { workspace = true }
+jiff = { workspace = true, optional = true }
+jsonschema = { workspace = true, optional = true }
+matchit = { workspace = true }
 multer = { workspace = true, optional = true }
 percent-encoding = { workspace = true }
-pin-project-lite = { workspace = true }
 prost = { workspace = true, optional = true }
+rust_decimal = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_urlencoded = { workspace = true, optional = true }
+serde_yaml_ng = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 tokio-rustls = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-service = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
+jsonwebtoken = { workspace = true }
+moka = { workspace = true }
+# An integration target drives `Service::call` and then has to read the
+# response, which means naming the body's own crates. Both are already
+# dependencies of the library, so this adds nothing to the graph -- and unlike
+# a genuinely new dev-dependency it cannot perturb the `.stderr` snapshots that
+# embed rustc's "the following other types implement" list.
+bytes = { workspace = true }
+http-body-util = { workspace = true }
 hyper = { workspace = true, features = ["client", "http1", "http2"] }
+# Applications derive serde alongside `kynos::Schema`, and the schema derive
+# reads those attributes, so the tests have to be able to write them.
+serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# The UI suite hands `Router::intercept` a real `tower::Layer`, so the negative
+# and its control differ only in whether the middleware declares itself.
+tower = { workspace = true }
+trybuild = { workspace = true }
+# A scalar format claims a wire form, and the claim is only worth as much as a
+# test that serializes the type and looks. That needs the serde integration the
+# library itself does not.
+bigdecimal = { workspace = true, features = ["serde"] }
+# `clock` is what makes `Local` exist. Kynos's own dependency does not enable
+# it, but chrono's defaults do, so an application almost always has it -- and
+# the UI case proving `DateTime<Local>` is refused has to fail for that reason
+# rather than because the type is missing.
+chrono = { workspace = true, features = ["alloc", "clock", "serde"] }
+# `tzdb-bundle-always` rather than the platform database, so a test that names a
+# zone does not depend on what the host has installed.
+jiff = { workspace = true, features = [
+  "std",
+  "serde",
+  "tzdb-bundle-always",
+] }
+# The TLS example mints its own certificate at startup, so it runs with nothing
+# prepared and nothing committed -- no PEM in the repository to expire, and no
+# reader blocked on generating one first.
+rcgen = { workspace = true }
+# The auto-reload example inherits a socket from `systemfd`. Reading a file
+# descriptor out of the environment is the supervisor's protocol rather than the
+# framework's, so the crate that speaks it stays a dev-dependency.
+listenfd = { workspace = true }
+rust_decimal = { workspace = true, features = ["serde"] }
+# Kynos depends on the `tracing` facade and deliberately never on a subscriber,
+# so the tracing example has to install one itself -- otherwise the feature's
+# whole output would be invisible to the reader it exists for.
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+# The same argument one layer further out: the OpenTelemetry example wires a
+# real exporter, and the crates that speak OTLP stay here rather than becoming
+# something the framework binds every application to.
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true, features = ["rt-tokio"] }
+opentelemetry-otlp = { workspace = true, features = ["grpc-tonic", "trace"] }
+opentelemetry-semantic-conventions = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+uuid = { workspace = true, features = ["serde"] }
 
 [lints]
 workspace = true

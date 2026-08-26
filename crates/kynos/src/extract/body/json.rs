@@ -1,7 +1,9 @@
 //! The `application/json` body codec.
 
+use std::collections::BTreeMap;
+
 use crate::{
-    error::rejection::Rejection,
+    error::rejection::BodyRejection,
     extract::{
         FromRequest,
         describe::{Describe, RequestContent},
@@ -29,12 +31,46 @@ use crate::{
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Json<T>(pub T);
 
-impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Json<T> {
-    type Rejection = Rejection;
+/// One spelling, read by both halves: what is decoded and what is described.
+const MEDIA_TYPE: &str = "application/json";
 
-    async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
-        let _ = (request, context);
-        todo!()
+impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Json<T> {
+    type Rejection = BodyRejection;
+
+    async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
+        let bytes = super::read_body(request, MEDIA_TYPE).await?;
+        serde_json::from_slice(&bytes).map(Self).map_err(rejection)
+    }
+}
+
+/// Malformed JSON is a 400; well-formed JSON that does not fit `T` is a 422.
+///
+/// serde reports a line and column rather than a location within the document,
+/// so a schema failure is attributed to the root JSON Pointer — the empty
+/// string — rather than to a pointer invented from a byte offset.
+fn rejection(error: serde_json::Error) -> BodyRejection {
+    if is_schema_failure(&error) {
+        BodyRejection::Schema {
+            failures: BTreeMap::from([(String::new(), error.to_string())]),
+        }
+    } else {
+        BodyRejection::Syntax {
+            detail: error.to_string(),
+        }
+    }
+}
+
+/// Where the 400/422 line falls: serde's `Data` category is a value that does
+/// not fit the type, and every other category is bytes that are not JSON.
+///
+/// One function rather than one per codec, so a second JSON body cannot draw
+/// the line somewhere else. `json_lines` draws it here too.
+pub(super) fn is_schema_failure(error: &serde_json::Error) -> bool {
+    match error.classify() {
+        serde_json::error::Category::Data => true,
+        serde_json::error::Category::Io
+        | serde_json::error::Category::Syntax
+        | serde_json::error::Category::Eof => false,
     }
 }
 
@@ -47,7 +83,7 @@ impl<T: Schema> Describe for Json<T> {
 
 impl<T: Schema> RequestContent for Json<T> {
     fn media_types() -> Vec<&'static str> {
-        vec!["application/json"]
+        vec![MEDIA_TYPE]
     }
 
     fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {

@@ -1,0 +1,8 @@
+error[E0308]: mismatched types
+  --> tests/ui/antipattern/interceptor_adds_what_it_declares.rs:40:12
+   |
+40 |         Ok(next.run(request).await)
+   |            ^^^^^^^^^^^^^^^^^^^^^^^ expected `Continued<Stamp>`, found `Continued`
+   |
+   = note: expected struct `Continued<Stamp>`
+              found struct `Continued<()>`

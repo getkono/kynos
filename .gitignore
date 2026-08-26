@@ -26,3 +26,5 @@ mise.local.toml
 # Generated coverage reports
 coverage-summary.txt
 lcov.info
+# Raw profiles llvm-cov leaves beside the crate it instrumented
+**/*.profraw

@@ -23,6 +23,9 @@
 pub mod problem;
 pub mod rejection;
 
+#[cfg(test)]
+mod tests;
+
 /// The result type used throughout the framework.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -35,7 +38,15 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub enum Error {
     /// The router describes an API that OpenAPI cannot express, or expresses
     /// incorrectly.
-    #[error("the router does not describe a valid API")]
+    ///
+    /// Every violation is named in the message rather than offered as a cause:
+    /// `source()` carries one error and a validation run produces a set, so a
+    /// chain cannot hold them. This variant has no cause for that reason, which
+    /// also keeps a reporter from printing the first violation twice.
+    #[error(
+        "the router does not describe a valid API:\n{}",
+        violations.iter().map(|violation| format!("  {violation}")).collect::<Vec<_>>().join("\n")
+    )]
     Invalid {
         /// Every violation found, most structural first.
         violations: Vec<kynos_openapi::Violation>,
@@ -49,16 +60,54 @@ pub enum Error {
     #[error(transparent)]
     Schema(#[from] crate::schema::registry::SchemaConflict),
 
-    /// The document could not be serialized.
-    #[error("the description could not be serialized")]
-    Serialize(#[from] serde_json::Error),
+    /// Two interceptors covering one operation disagreed about what they
+    /// contribute to it.
+    ///
+    /// Raised while the router is built, which is the whole point: two layers
+    /// that disagree about what a 429 means are caught before the service
+    /// starts rather than in production.
+    #[error(transparent)]
+    Contribution(#[from] crate::middleware::contribution::ContributionConflict),
 
-    /// The listener could not be bound, or the server could not start.
-    #[error("the server could not start")]
-    Io(#[from] std::io::Error),
+    /// An interceptor was configured with a combination it cannot honour.
+    ///
+    /// Distinct from [`Contribution`](Error::Contribution), which is two
+    /// interceptors disagreeing with each other. This is one interceptor
+    /// disagreeing with the protocol it implements, and it is a *value* rather
+    /// than a type — which is why it is caught while the router is built rather
+    /// than by the compiler.
+    #[error(transparent)]
+    Middleware(#[from] crate::middleware::MiddlewareError),
+
+    /// The description could not be emitted as JSON.
+    ///
+    /// Named after the emitter rather than after serialization in general: the
+    /// conversion is what records which one failed, so a caller reading the
+    /// message does not have to work out which of a document's two encodings
+    /// was in play.
+    #[error("the description could not be emitted as JSON")]
+    Json(#[from] serde_json::Error),
+
+    /// The description could not be emitted as YAML.
+    #[cfg(feature = "yaml")]
+    #[error("the description could not be emitted as YAML")]
+    Yaml(#[from] serde_yaml_ng::Error),
 
     /// The server configuration or transport failed.
     #[cfg(feature = "server")]
     #[error(transparent)]
     Server(#[from] crate::server::error::ServerError),
+}
+
+/// `From` is not transitive, so the `TlsError` to `ServerError` link does not on
+/// its own let `?` carry a TLS failure out of a `kynos::Result` function.
+///
+/// It is written out because the source qualifies for one: every `TlsError`
+/// variant names both what was being configured and what was wrong with it, so
+/// the conversion loses nothing and has nothing to add.
+#[cfg(feature = "tls")]
+impl From<crate::server::tls::error::TlsError> for Error {
+    fn from(error: crate::server::tls::error::TlsError) -> Self {
+        Self::Server(error.into())
+    }
 }

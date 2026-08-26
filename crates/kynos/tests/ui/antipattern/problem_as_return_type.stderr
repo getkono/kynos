@@ -1,0 +1,24 @@
+error[E0277]: `kynos::Problem` does not declare which responses it can produce
+  --> tests/ui/antipattern/problem_as_return_type.rs:11:15
+   |
+11 |     returns::<Result<kynos::response::status::NoContent, kynos::Problem>>();
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ undeclared responses
+   |
+   = help: the trait `kynos::response::Responses` is not implemented for `kynos::Problem`
+   = note: a handler's return type has to say what a consumer might receive; derive it with `#[derive(kynos::Reply)]`, or `#[derive(kynos::ApiError)]` for an error type
+   = help: the following other types implement trait `kynos::response::Responses`:
+             ()
+             Accepted<T>
+             AtCapacity
+             AuthRejection
+             BinaryStream<S, M>
+             BodyRejection
+             BodySizeExceeded
+             CookieRejection
+           and $N others
+   = note: required for `Result<NoContent, kynos::Problem>` to implement `kynos::response::Responses`
+note: required by a bound in `returns`
+  --> tests/ui/antipattern/problem_as_return_type.rs:8:47
+   |
+ 8 | fn returns<T: kynos::response::IntoResponse + kynos::response::Responses>() {}
+   |                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `returns`

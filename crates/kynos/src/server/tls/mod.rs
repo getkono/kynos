@@ -47,12 +47,11 @@ impl ClientCertificateConfig {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|error| TlsError::Pem {
                 kind: "certificate revocation list",
-                message: error.to_string(),
+                source: Box::new(error),
             })?;
         if parsed.is_empty() {
-            return Err(TlsError::Pem {
+            return Err(TlsError::EmptyPem {
                 kind: "certificate revocation list",
-                message: "no PEM item found".to_owned(),
             });
         }
         self.crls.extend(parsed);
@@ -166,7 +165,7 @@ impl TlsConfig {
             for certificate in client.roots {
                 roots
                     .add(certificate)
-                    .map_err(|error| TlsError::ClientVerifier(error.to_string()))?;
+                    .map_err(|error| TlsError::ClientVerifier(Box::new(error)))?;
             }
             let mut verifier = WebPkiClientVerifier::builder(Arc::new(roots));
             if !client.crls.is_empty() {
@@ -176,7 +175,7 @@ impl TlsConfig {
                 .with_client_cert_verifier(
                     verifier
                         .build()
-                        .map_err(|error| TlsError::ClientVerifier(error.to_string()))?,
+                        .map_err(|error| TlsError::ClientVerifier(Box::new(error)))?,
                 )
                 .with_cert_resolver(resolver)
         } else {

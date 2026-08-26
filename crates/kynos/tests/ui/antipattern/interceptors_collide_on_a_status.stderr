@@ -1,0 +1,31 @@
+error[E0080]: evaluation panicked: two interceptors covering this route answer with the same status; a consumer could not tell which one replied
+ --> $RUST/core/src/panic.rs
+  |
+  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<kynos::middleware::stack::Cons<kynos::middleware::limits::BodySize, ()> as kynos::middleware::stack::CompatibleWith<AlsoCaps, ()>>::CHECK` failed here
+  |
+ ::: src/middleware/stack.rs
+  |
+  | /         assert!(
+  | |             statuses_disjoint(
+  | |                 <N::Short as ShortCircuit>::STATUSES,
+  | |                 <H::Short as ShortCircuit>::STATUSES,
+... |
+  | |              a consumer could not tell which one replied"
+  | |         );
+  | |_________- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/router/mod.rs
+  |
+  |         let () = <I as CompatibleWith<N, C>>::CHECK;
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn kynos::Router::<(), Propagate, Cons<BodySize, ()>>::intercept::<AlsoCaps>`
+  --> tests/ui/antipattern/interceptors_collide_on_a_status.rs:38:13
+   |
+38 |       let _ = Router::<()>::new()
+   |  _____________^
+39 | |         .intercept(BodySize::new(1024))
+40 | |         .intercept(AlsoCaps);
+   | |____________________________^

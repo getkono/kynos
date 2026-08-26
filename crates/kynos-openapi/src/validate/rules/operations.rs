@@ -13,10 +13,10 @@ use crate::{
         rules::{
             content::check_media_type,
             extensions::check_extensions,
-            parameters::{check_header, check_parameter_list},
+            parameters::{check_header_map, check_parameter_list},
             paths::check_path_correspondence,
         },
-        violation::{SpecError, Violation},
+        violation::{SpecError, Violation, pointer_token},
     },
 };
 
@@ -86,7 +86,10 @@ pub(in crate::validate) fn check_operation_content(
     if let Some(RefOr::Item(body)) = &operation.request_body {
         for (media_type, content) in &body.content {
             check_media_type(
-                &format!("{location}/requestBody/{media_type}"),
+                &format!(
+                    "{location}/requestBody/content/{}",
+                    pointer_token(media_type)
+                ),
                 content,
                 violations,
             );
@@ -100,32 +103,21 @@ pub(in crate::validate) fn check_operation_content(
         let response_location = format!("{location}/responses/{status}");
         for (media_type, content) in &response.content {
             check_media_type(
-                &format!("{response_location}/content/{media_type}"),
+                &format!("{response_location}/content/{}", pointer_token(media_type)),
                 content,
                 violations,
             );
         }
-        for (name, header) in &response.headers {
-            if let Some(header) = header.as_item() {
-                check_header(
-                    &format!("{response_location}/headers/{name}"),
-                    name,
-                    header,
-                    violations,
-                );
-            }
-        }
-        for (name, link) in &response.links {
-            if let Some(link) = link.as_item() {
-                let set = usize::from(link.operation_ref.is_some())
-                    + usize::from(link.operation_id.is_some());
-                if set != 1 {
-                    violations.push(Violation::error(
-                        format!("{response_location}/links/{name}"),
-                        SpecError::LinkTargetExclusivity,
-                    ));
-                }
-            }
-        }
+        // A response link used to be checked here too: it names one of
+        // `operationRef` and `operationId`, which holds by construction, so a
+        // link carries nothing this function could reject. The same is true of
+        // a header's shape, its examples and its style -- but not of its name,
+        // which is a key in the map rather than anything the value's type can
+        // reach, so that one is still a rule.
+        check_header_map(
+            &format!("{response_location}/headers"),
+            &response.headers,
+            violations,
+        );
     }
 }

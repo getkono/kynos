@@ -23,19 +23,21 @@ buffer that consumes much of what it came for.
   trait exists — not public, not internal. The server calls tokio directly.
 - tokio types appear in zero handler-facing signatures. The one deliberate
   exception anywhere in the public API is
-  [`server::address::Listener::Tokio`](../crates/kynos/src/server/address.rs),
-  which exists so an
-  already-bound `tokio::net::TcpListener` can be handed to the server; naming
-  the runtime there is the point, not a leak.
+  [`server::address::Listener::Tokio`](../crates/kynos/src/server/address.rs)
+  together with its `From<tokio::net::TcpListener>` conversion, which exist so
+  an already-bound `tokio::net::TcpListener` can be handed to the server;
+  naming the runtime there is the point, not a leak. A surface check counts
+  both, because the conversion names the type as plainly as the variant does.
 - The runtime coupling surface is exactly five points, and they all live in
   `crates/kynos/src/server/`: the accept loop and listener, connection socket
-  read and write (the `hyper::rt` implementation), `spawn`, timers (request
-  timeout, keepalive, shutdown grace), and the shutdown signal. Holding that
-  count is about auditability and a small public surface, not about keeping a
-  swap open.
-- Bodies are streams of `Bytes`. A body producer is never runtime-aware, which
-  is what keeps the coupling surface at five points instead of spreading through
-  everything that can emit a response.
+  read and write (the `tokio::io::{AsyncRead, AsyncWrite}` bound on the
+  connection driver, adapted for hyper by `hyper_util::rt::TokioIo`), `spawn`,
+  timers (request timeout, keepalive, shutdown grace), and the shutdown
+  signal. Holding that count is about auditability and a small public surface,
+  not about keeping a swap open.
+- Bodies are streams of `Bytes`. A body producer is never runtime-aware —
+  *except where the body's own contract is a timer*, which is the Server-Sent
+  Events keep-alive and nothing else. See the allowance table below.
 - File I/O, database pools, `spawn_blocking` and body producers sit outside that
   boundary and stay the application's concern.
 - io_uring is not a second runtime and does not become one here. If
@@ -43,23 +45,84 @@ buffer that consumes much of what it came for.
   parallel connection driver inside this crate is out of scope, and io_uring is
   not a design constraint today.
 
-The policy is already visible in the tree: `crates/kynos-openapi/` carries no
-runtime dependency at all, and `crates/kynos/src/server/` is the only place
-the runtime is named. Work that would widen that set is the work this section
-exists to reject. [Dependencies](#dependencies) applies the same containment
-rule to the rest of the graph.
+The coupling surface inside `server/` is exactly the five points above, and
+that has not changed. What has is the claim that `server/` is the *only* place
+the runtime is named. It was already false at two sites when it was written, and
+a third has since been added deliberately.
+
+A rule that is false is worth less than a list that is checkable, so the claim
+is now an enumeration:
+
+| Site | Names | Why it is not in `server/` |
+| --- | --- | --- |
+| `server/{accept,connection,mod}.rs`, `server/tls/` | the five coupling points | — |
+| `middleware/limits.rs` | `tokio::{time::timeout, sync::Semaphore}` | the timer wraps the chain's future, which does not exist until after routing; the permit bounds requests already in it |
+| `middleware/compression.rs` | `tokio::io::{AsyncRead, ReadBuf}` | `async-compression`'s encoders are written against tokio's I/O traits; no byte here crosses a socket |
+| `response/stream/sse.rs` | `tokio::time::{Instant, Sleep, sleep}` | a keep-alive is a property of one body, and the connection driver cannot know a body is an event stream |
+| `router/assets/fs/` | `tokio::fs::{metadata, read, File}`, `tokio::io::{AsyncReadExt, AsyncSeekExt}` | which file a request wants is not known until routing has chosen the operation, and the read is the operation; a byte range seeks to what it asked for rather than reading the file and discarding most of it |
+
+**Five rows, and the count is the check.** [`nfr.md`](nfr.md#runtime) states the
+containment requirement against this table rather than against `server/` alone,
+so a sixth site is a failing build rather than a silently broken sentence.
+
+The fifth was added deliberately, which is what the table is for. Serving a
+file from disk means reading one, and which file is not known until routing has
+chosen the operation — so there is nowhere in `server/` for it to live. That it
+required an entry here, argued for on its own terms, is the mechanism working
+rather than the mechanism being worked around.
+
+Moving the SSE timer into `server/` was considered and rejected. `TestClient`
+and `Service::call` drive a built service with no server at all — which is what
+[`examples/testing.rs`](../crates/kynos/examples/testing.rs) exists to show — so
+a keep-alive owned by the connection driver would silently not happen in every
+test and every tower deployment, and it would add a general mechanism to `Body`
+for one caller.
+
+`crates/kynos-openapi/` still carries no runtime dependency at all. Work that
+would add a fifth row is the work this section exists to reject.
+[Dependencies](#dependencies) applies the same containment rule to the rest of
+the graph.
 
 ### Public API surface
 
 - No async machinery in public signatures: no `BoxFuture`, no `#[async_trait]`,
   no user-visible `Pin<Box<dyn Future>>`, no hand-rolled `Stream`
-  implementations.
+  implementations. The rule is scoped to the checked surface: `unchecked`
+  hands the service to `tower`, whose `Service::Future` is an associated type
+  Kynos does not choose, so
+  [`UncheckedService`](../crates/kynos/src/unchecked.rs) names a boxed future.
+  That is the shape of the escape hatch rather than an exception to the rule,
+  and it is the only one.
+
+  The clause is about the surface, so a hand-rolled `Stream` on a type nobody
+  can name is not an exception to it. Two exist and both are the same shape:
+  [`Framed<S>`](../crates/kynos/src/response/stream/json.rs) and
+  [`Records<S>`](../crates/kynos/src/response/stream/sse.rs) each take
+  `S: Stream` as a bound and stay private, which is only possible because the
+  caller brought the stream. What is left is the exception, and it is
+  enumerated for the reason the runtime allowance is: a rule that is false is
+  worth less than a list that is checkable.
+
+  | Site | Hand-rolls | Why no bound can carry it |
+  | --- | --- | --- |
+  | [`extract/body/json_lines/records.rs`](../crates/kynos/src/extract/body/json_lines/records.rs) | `Stream` for the public `Records<T>`, the streamed JSON request body | a *request* body's stream is produced by Kynos rather than supplied by the handler, so there is no caller type to bound |
+
+  **One public row, three sites, and the count is the check** — the count runs
+  in [`nfr.md`](nfr.md#workspace). The two `Records` are unrelated types that
+  ended up sharing a name: the private one frames SSE events on the way out,
+  the public one decodes JSON records on the way in, and only the second is
+  ever written in a handler signature.
 - `Send`-ness is decided once, at the runtime boundary — never per-trait, and
   never as a bound on a handler.
 - No lifetimes in handler signatures. Generics that exist for performance stay
   private.
 - Every public type is either a re-export from `http`, `bytes` or `serde`, or
   something Kynos is prepared to own indefinitely.
+- Fields the specification makes mutually exclusive are one enum, not several
+  `Option`s, and a field whose legal values are a subset of some wider type is
+  that subset. No validator rule restates either. See
+  [why exclusions are types](#why-exclusions-are-types-rather-than-rules) for
+  the bound on this.
 - Features are additive only.
 - Macros expand to readable code and carry user spans.
 - Ship 1.0, freeze the core, and put subsequent velocity into satellite crates.
@@ -83,7 +146,17 @@ by naming the row X displaces rather than by arguing that X is good.
   mean Kynos had taken the protocol over, which is a decision this section
   closes rather than defers.
 - A new dependency arrives feature-gated and additive, never as a widening of
-  the default build.
+  the default build. A corollary that has already bitten: a capability in the
+  *default* build cannot be gated, so it cannot take a dependency at all —
+  which is why base64 decoding and the constant-time comparison
+  [`security/`](../crates/kynos/src/security/) needs are written here rather
+  than taken from `base64` and `subtle`.
+- **A row is removed when the module it names goes the other way.** `cookie`
+  had a row and was named by no source line: the derive hand-rolled RFC 6265
+  and the response side did not exist. Using it once the response side landed
+  would have put `cookie::Cookie` in a public signature, against the re-export
+  rule above. The row is gone rather than left as aspiration — the same
+  correction `mime` and `pin-project-lite` already received.
 - rustls is the only TLS backend that ships. The accept path keeps the socket
   and the rustls connection separable rather than fusing them into one opaque
   stream, so a second backend stays an additive change. No public trait
@@ -96,34 +169,72 @@ by naming the row X displaces rather than by arguing that X is good.
 | Runtime, sockets, timers, signals | `tokio` | `server/` | built |
 | Request and response types | `http` | ambient | built |
 | Byte buffers | `bytes` | ambient | built |
-| Body trait and erasure | `http-body`, `http-body-util` | [`http/body.rs`](../crates/kynos/src/http/body.rs) | built |
-| Protocol driver, HTTP/1 and HTTP/2 | `hyper`, `hyper-util` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs), [`http/body.rs`](../crates/kynos/src/http/body.rs) | built |
+| Body trait and erasure | `http-body`, `http-body-util` | [`http/body.rs`](../crates/kynos/src/http/body.rs), [`extract/body/`](../crates/kynos/src/extract/body/), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
+| Protocol driver, HTTP/1 and HTTP/2 | `hyper` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs), [`http/body.rs`](../crates/kynos/src/http/body.rs) | built |
+| tokio adapters for the driver | `hyper-util` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs) | built |
 | HTTP/1 parsing | `httparse` | never — reached through `hyper` | built |
 | HTTP/2 framing | `h2` | never — reached through `hyper` | built |
 | TLS | `rustls`, via `tokio-rustls` | [`server/tls/`](../crates/kynos/src/server/tls/) | built |
-| Route matching | `matchit` | [`router/`](../crates/kynos/src/router/) | designed |
+| Route matching | `matchit` | [`router/`](../crates/kynos/src/router/) | built |
+| JSON Schema instance validation | `jsonschema` | [`test/conformance.rs`](../crates/kynos/src/test/conformance.rs), gated on `test-util` | built |
 | Percent-encoding | `percent-encoding` | [`__private/uri.rs`](../crates/kynos/src/__private/uri.rs) | built |
-| Media type parsing | `mime` | [`extract/media.rs`](../crates/kynos/src/extract/media.rs), [`response/negotiate/`](../crates/kynos/src/response/negotiate/) | designed |
 | Errors | `thiserror` | ambient | built |
 | Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | built |
-| Streaming bodies | `futures-core`, `pin-project-lite` | [`response/stream/`](../crates/kynos/src/response/stream/) | designed |
+| Streaming bodies | `futures-core` | [`response/stream/`](../crates/kynos/src/response/stream/), [`extract/body/json_lines/`](../crates/kynos/src/extract/body/json_lines/), [`http/body.rs`](../crates/kynos/src/http/body.rs), gated on `openapi32` | built |
 | JSON | `serde_json` | ambient with `serde` | built |
-| Form codec | `serde_urlencoded` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs) | designed |
-| Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | designed |
-| Protobuf codec | `prost` | [`extract/body/protobuf.rs`](../crates/kynos/src/extract/body/protobuf.rs), [`response/codec/protobuf.rs`](../crates/kynos/src/response/codec/protobuf.rs) | designed |
-| Cookies | `cookie` | [`extract/params/cookie.rs`](../crates/kynos/src/extract/params/cookie.rs) | designed |
-| Compression | `async-compression` | [`middleware/compression.rs`](../crates/kynos/src/middleware/compression.rs) | designed |
-| tower interop, escape hatch only | `tower`, `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | designed |
+| Form codec | `serde_urlencoded` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs) | built |
+| Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | built |
+| Protobuf codec | `prost` | [`extract/body/protobuf.rs`](../crates/kynos/src/extract/body/protobuf.rs), [`response/codec/protobuf.rs`](../crates/kynos/src/response/codec/protobuf.rs) | built |
+| Scalar formats, identifiers | `uuid` | [`schema/impls/identifier.rs`](../crates/kynos/src/schema/impls/identifier.rs) | built |
+| Scalar formats, dates and times | `chrono`, `jiff` | [`schema/impls/temporal/`](../crates/kynos/src/schema/impls/temporal/) | built |
+| Scalar formats, decimals | `rust_decimal`, `bigdecimal` | [`schema/impls/decimal/`](../crates/kynos/src/schema/impls/decimal/) | built |
+| Compression | `async-compression` | [`middleware/compression.rs`](../crates/kynos/src/middleware/compression.rs) | built |
+| tower interop, outward | `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
+| tower interop, inward | `tower` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
 | Document ordering | `indexmap` | [`kynos-openapi`](../crates/kynos-openapi/src/lib.rs) | built |
-| YAML emission | `serde_yaml_ng` | [`kynos-openapi/emit/`](../crates/kynos-openapi/src/emit/) | built |
+| YAML emission | `serde_yaml_ng` | [`kynos-openapi/emit/`](../crates/kynos-openapi/src/emit/), [`error/mod.rs`](../crates/kynos/src/error/mod.rs) | built |
 | Macro parsing | `proc-macro2`, `quote`, `syn` | [`kynos-macros`](../crates/kynos-macros/src/) | built |
 | HTTP/3, QUIC | — | — | out of scope |
 
-`built` means the dependency is wired and the module that owns it is
-implemented; `designed` means the crate is declared and its module is still
-skeleton. `hyper` has two sites rather than one because the body handover is
-where its `Incoming` type enters, and `http/body.rs` is by design the only
-place the erased body is named.
+Three statuses, and the distinction is what keeps the table checkable:
+
+| Status | Meaning |
+| --- | --- |
+| `built` | Reached by code that is implemented |
+| `designed` | Declared by a member crate; the module that owns it is still skeleton |
+| `chosen` | Settled as the answer, declared by nobody. It appears in no manifest and no lockfile |
+
+A row whose *Named in* column says `never` or `ambient` is `built` when the
+code that reaches it is implemented; it has no owning module to be a skeleton.
+`httparse` and `h2` are the clear cases: no member declares either, and they
+are reached only through `hyper`.
+
+`chosen` currently has no occupants, and the rows that held it are the reason
+the status is worth keeping. The three scalar-format rows were `chosen` while
+the decision was made and the alternatives closed — see
+[below](#what-does-not-move-and-why) — because declaring a dependency the tree
+does not name would break the consumed-by-a-member requirement in
+[`nfr.md`](nfr.md#dependencies) for no gain. Each arrived with the `Schema`
+implementation that names it and became `built` in the same commit, since a leaf
+implementation has no skeleton phase to be `designed` in.
+
+`matchit` was the fourth and left the same way: it arrived with the router
+implementation, which is exactly what a `chosen` row predicts happening to it.
+
+`hyper` has two sites rather than one because the body handover is where its
+`Incoming` type enters, and `http/body.rs` is by design the only place the
+erased body is named. `hyper-util` is a separate row because it is a separate
+allowance: it supplies the tokio adapters named in the runtime policy above,
+and it does not reach the body.
+
+The three scalar-format rows are a **new layer**, and saying so is the point.
+This table was organized by transport and codec and had no home for a crate whose
+only job is to give a value a JSON Schema `format` — which is why "can we add
+`uuid`?" read as unanswerable rather than as settled. Nothing is displaced,
+because there was nothing in that position to displace. The rule the layer
+inherits is the ordinary one: each crate is named only under
+[`schema/impls/`](../crates/kynos/src/schema/impls/), each arrives behind an
+off-by-default feature, and none is reachable from a default build.
 
 ### What does not move, and why
 
@@ -157,6 +268,51 @@ one: the accept path holds the socket and the rustls session as separable
 values, so a kernel-TLS path could be introduced additively later. That costs
 nothing today and is not a commitment — see the rationale below.
 
+**Two date backends and two decimal backends, not one each.** These are the only
+rows where Kynos ships alternatives, and the reason is that the alternatives are
+not competing answers to one question. `chrono` and `jiff` divide by ecosystem
+rather than capability; `rust_decimal` is a fixed 96-bit mantissa with a scale
+ceiling of 28 and `bigdecimal` is arbitrary precision, so money and science want
+different crates. Picking one would be choosing the user's problem for them,
+which invariant 3 forbids. An umbrella feature defines each concept's shape once
+so the backends cannot diverge in what they emit, and enabling an umbrella with
+no backend does not compile. The `time` crate is **not** a backend and will not
+become one; it reaches the tree only as a transitive dependency of `rcgen`,
+which is itself a dev-dependency of the TLS example. It used to arrive through
+`cookie` as well, which is gone.
+
+### Three dependencies static assets and caching would want, refused
+
+Each would be a *table* Kynos can write down and test as a closed enumeration,
+which is the form this project prefers to a database it cannot check.
+
+**No media-type guesser.** `mime_guess` bundles a generated database that only
+sampling can verify. The table in
+[`router/assets/media.rs`](../crates/kynos/src/router/assets/media.rs) is the
+whole set, so a test asserts it is closed, sorted and free of duplicates — and
+the emitted description prints whatever it resolved to, which makes a wrong row
+visible rather than silent.
+[`mime_names`](../crates/kynos-openapi/src/model/body/mime_names.rs) already
+records why a media type is a `&'static str` here rather than a parsed `Mime`.
+
+**No hasher.** An entity tag is a cache validator rather than a security
+primitive: RFC 9110 section 8.8.3 asks only that it change when the
+representation does, and nothing verifies it. `blake3` and `sha2` both arrive
+with the `unsafe` this workspace forbids, for a 64-bit token. FNV-1a with the
+length folded in is computed in `kynos-macros` at expansion time and never runs
+in a served request.
+
+**No HTTP-date crate.** Kynos sends no `Last-Modified` and reads no
+`If-Modified-Since`, so there is no date to render or parse. That is itself a
+decision: a strong entity tag is the stronger validator, and sending a date
+obliges honouring a request that carries one back. Sending neither half is
+consistent; sending one is not.
+
+`moka` and `jsonwebtoken` are a fourth kind. Both are named by one example and
+by nothing under `src/`, which is the standing `rcgen`, `listenfd` and
+`tracing-subscriber` already have: this table governs what Kynos depends on, not
+what an example demonstrates.
+
 ### Scope edges
 
 **HTTP/3 and QUIC are out.** The server contract is HTTP/1 and HTTP/2. If
@@ -168,12 +324,37 @@ is: they widen the coupling surface the runtime policy exists to bound.
 
 ### What the table does not yet claim
 
-Several rows are `designed` because the manifest runs ahead of the skeleton.
-`mime`, `multer`, `serde_urlencoded`, `async-compression`, `cookie` and
-`pin-project-lite` are declared by `crates/kynos` and named by no code in it,
-and `trybuild` sits in `[workspace.dependencies]` consumed by no member at all.
-That is the expected state during the API skeleton, and it is recorded because
-a dependency graph that overstates what is wired is worse than no graph.
+Nothing, as of the skeleton landing. Every row is `built`: the API-skeleton
+milestone is over, the `todo!()` bodies are implemented, and each crate the
+table names is reached by code that runs.
+
+That is a change worth recording rather than quietly deleting. `multer`,
+`serde_urlencoded`, `async-compression` and `cookie` were `designed` because the
+manifest ran ahead of the skeleton — declared by `crates/kynos` and named by no
+code in it. `futures-core` and `tower` were `designed` for a subtler reason: the
+crate was named, but only in the bound of a body that was still `todo!()`. All
+six are now consumed at exactly the path this table gives them, which is the
+property the *Named in* column exists to be checkable against.
+
+Each optional row is still gated behind an off-by-default feature, so no default
+build carries a dependency it does not use — which is why `futures-core` is
+optional rather than compiled into every 3.1 build for a module 3.1 cannot
+reach, and why `jsonschema` is reachable only through `test-util`.
+
+`chosen` therefore has no occupants either. It stays in the status table because
+the state it names is real and will recur: a decision made, and the alternatives
+closed, before any manifest records it.
+
+`mime` and `pin-project-lite` were in this list and are gone. Neither was a
+deferred wiring job: media types are carried as `&'static str` on purpose, for
+the reason [`mime_names.rs`](../crates/kynos-openapi/src/model/body/mime_names.rs)
+records — the model must express media type *ranges* and vendor types that a
+parsed `Mime` would normalize away — and the streaming surface pins nothing
+by hand. A row whose module deliberately went the other way is not `designed`,
+it is wrong.
+
+This section exists because a dependency graph that overstates what is wired is
+worse than no graph.
 
 ## Invariants
 
@@ -221,6 +402,64 @@ authoring slot.
 
 *Non-normative. This section explains the reasoning behind the rules above so
 that revisiting them is possible on the merits.*
+
+### Why exclusions are types rather than rules
+
+The OpenAPI specification states a good many exclusions between optional fields:
+a Parameter Object carries `schema` or `content`, a Media Type Object shows
+`example` or `examples`, a Link Object names `operationRef` or `operationId`.
+Each can be modelled as the fields the specification writes plus a rule that
+rejects the bad combinations, or as a type whose values are the good ones.
+
+`model/` takes the second, and the deciding argument is what happens to the
+validator under the first. A rule no document can violate is not a check, it is
+dead code — and a validator carrying dead rules is one a reader cannot trust to
+be exhaustive. Removing them leaves a module whose contents are exactly what a
+type cannot say on its own: uniqueness across a whole document, correspondence
+between a path template and its parameters, names that must resolve against
+declarations elsewhere.
+
+The consequences are the point rather than a side effect. The illegal
+combination cannot be built, cannot be parsed, and cannot be emitted, so the
+three ways a description reaches a client generator are closed at once instead
+of one at a time. The constructors are then a list of the specification's legal
+combinations, which is a thing a reviewer can check against the specification.
+And a field that only means something alongside another — `style` beside a
+schema, never beside a `content` — lives in the variant that gives it meaning,
+so setting it where it does not apply is not a mistake to report but a sentence
+with nowhere to be written.
+
+Exclusion is one of three cases, and the other two fall on either side of it.
+
+A *narrowed domain* is a field whose legal values are a subset of some wider
+type's. A Header Object's `style` is the extreme version: the specification
+gives it exactly one legal value, `simple`. This is the same argument with one
+field instead of two — the illegal values are illegal unconditionally, so a rule
+checking for them is dead the moment the type stops admitting them. `HeaderStyle`
+and `EncodingStyle` are `Style` narrowed this way.
+
+A *pairing* is two fields that constrain each other while both stay settable,
+and it stays a rule. A Parameter Object's `style` is legal or not depending on
+its `location`, and `location` is a public field, so a valid pair can be
+invalidated after construction; `IllegalStyle` therefore has work to do. The
+distinction is not whether the specification writes a table but whether the
+other side of the constraint is a live field. A header has no `in` to disagree
+with — it is fixed by the header's position in the document — so the same table
+collapses, for a header, into a domain.
+
+What survives all three are facts about *names*: the key a value is filed
+under, which no value's type reaches however narrow its fields become. A
+`Content-Type` entry in a `headers` map is ignored by the specification, and no
+`Header` can say so about itself, so that stays a rule beside uniqueness and
+path correspondence.
+
+The bound is round-tripping. `kynos-openapi` must hold descriptions it did not
+produce ([`routing.md`](routing.md#why-the-model-is-more-permissive-than-the-router)),
+so only combinations that make a *document* invalid may become unrepresentable.
+A rule about what Kynos is willing to *serve* is a router rule, and belongs in
+the narrower layer. Deprecation is not exclusion either: `SchemaObject::example`
+is superseded by `examples` rather than excluded by it, and both stay so that a
+parsed description survives the trip back out.
 
 ### Where io_uring would actually pay
 
@@ -271,6 +510,16 @@ per-connection TLS metadata per request copies the peer certificate chain each
 time; erasing every body through a boxed trait object behind a mutex allocates
 once per request for a body that is not shared. Those cost more per request
 than hyper's entire HTTP/1 codec, and none of them require replacing it.
+
+The second of the three is taken.
+[`Connection`](../crates/kynos/src/extract/connection.rs) is built once per
+accepted socket and reference-counted onto each request, so a certificate chain
+is copied once per connection rather than once per request. It landed as the fix
+for a defect rather than as an optimization — the metadata was private and
+`#[expect(dead_code)]`, and the extractor that was meant to read it panicked on
+every request — which is why the entry stays here rather than moving to a
+benchmark: the cost was real, and removing it was not what motivated the
+change.
 
 ### Why kernel TLS is deferred
 

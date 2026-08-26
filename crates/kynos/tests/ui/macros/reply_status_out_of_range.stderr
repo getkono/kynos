@@ -1,0 +1,5 @@
+error: a handler returns the final response, so its status is between 200 and 599; `100` is not
+ --> tests/ui/macros/reply_status_out_of_range.rs:7:22
+  |
+7 |     #[reply(status = 100)]
+  |                      ^^^

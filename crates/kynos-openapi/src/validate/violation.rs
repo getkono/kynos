@@ -48,6 +48,27 @@ impl std::fmt::Display for Violation {
     }
 }
 
+/// A violation is a line in a report rather than a link in a chain, so it
+/// carries no cause.
+///
+/// A validation run yields a list, and every consumer prints that list —
+/// `Router::validate` hands one back, and `Error::Invalid` renders one. `Display`
+/// is self-contained for that reason, so offering the [`SpecError`] it already
+/// names as a `source()` would make any reporter print the same sentence twice.
+///
+/// The implementation is still worth having: it is what lets a single violation
+/// be boxed, returned through `?`, or downcast back out of a `dyn Error`.
+impl std::error::Error for Violation {}
+
+/// Escapes one map key for use as a JSON Pointer token, per RFC 6901.
+///
+/// Every `paths` key contains a `/`, so a location that embeds one unescaped
+/// reads as several tokens and resolves against nothing. Shared so that the
+/// three places that build locations cannot disagree.
+pub(crate) fn pointer_token(key: &str) -> String {
+    key.replace('~', "~0").replace('/', "~1")
+}
+
 /// A way in which a document fails to conform.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -71,6 +92,23 @@ pub enum SpecError {
         template: String,
         /// The template already present.
         existing: String,
+    },
+
+    /// A `paths` key is not a legal path template.
+    ///
+    /// Reachable only for a description read from somewhere else: a template
+    /// Kynos constructs is checked when it is parsed.
+    ///
+    /// `reason` holds the parse failure itself rather than its text, so a caller
+    /// can match on which rule the key broke. It is interpolated rather than
+    /// declared as a `#[source]`: a violation is rendered in a list, so its
+    /// message has to be self-contained, and a cause could then only repeat it.
+    #[error("`{template}` is not a legal path template: {reason}")]
+    InvalidPathTemplate {
+        /// The offending key.
+        template: String,
+        /// Why it is not one.
+        reason: crate::model::paths::template::InvalidPathTemplate,
     },
 
     /// A path template variable has no corresponding parameter.
@@ -103,20 +141,22 @@ pub enum SpecError {
         location: String,
     },
 
-    /// A parameter or header set neither or both of `schema` and `content`.
-    #[error("`{name}` must set exactly one of `schema` and `content`")]
-    SchemaContentExclusivity {
-        /// The parameter or header name.
+    /// An interceptor's short circuit declared statuses its responses do not
+    /// describe, or the reverse.
+    ///
+    /// Only reachable from a hand-written `ShortCircuit`; the one the
+    /// `ApiError` derive emits comes from the same declaration as the
+    /// responses and cannot disagree with them.
+    #[error(
+        "`{name}` declares statuses {declared:?} as a short circuit but describes {described:?}"
+    )]
+    ShortCircuitMismatch {
+        /// The short-circuit type.
         name: String,
-    },
-
-    /// A `content` map did not hold exactly one entry.
-    #[error("the `content` of `{name}` must hold exactly one entry, found {found}")]
-    ContentNotSingular {
-        /// The parameter or header name.
-        name: String,
-        /// How many entries were present.
-        found: usize,
+        /// What its `STATUSES` const claimed.
+        declared: Vec<u16>,
+        /// What its `Responses` actually described.
+        described: Vec<u16>,
     },
 
     /// A serialization style is not legal at a parameter's location.
@@ -138,24 +178,17 @@ pub enum SpecError {
         name: String,
     },
 
-    /// Both the singular and plural example fields were set.
-    #[error("`example` and `examples` are mutually exclusive")]
-    ExampleExclusivity,
-
-    /// An Example Object set more than one of its value fields.
-    #[error("an Example Object must set only one value field, found {found}")]
-    ExampleValueExclusivity {
-        /// How many value fields were set.
-        found: usize,
+    /// A header was declared in a `headers` map despite being ignored.
+    ///
+    /// The parameter-side counterpart is [`SpecError::IgnoredHeaderParameter`].
+    #[error(
+        "`{name}` must not be declared here: the media type is stated separately, so \
+         the specification says such a definition is ignored"
+    )]
+    IgnoredHeader {
+        /// The offending header name.
+        name: String,
     },
-
-    /// A License Object set both `identifier` and `url`.
-    #[error("`identifier` and `url` are mutually exclusive on a License Object")]
-    LicenseExclusivity,
-
-    /// A Link Object did not identify exactly one target operation.
-    #[error("a Link Object must set exactly one of `operationRef` and `operationId`")]
-    LinkTargetExclusivity,
 
     /// An operation declared no responses.
     #[error("an operation must declare at least one response")]
@@ -238,6 +271,55 @@ pub enum SpecError {
     /// The description does not fully describe the service.
     #[error("this description omits part of the service and is not authoritative")]
     NotAuthoritative,
+
+    /// An operation is emitted but is covered by an `unchecked` waiver.
+    ///
+    /// It is still described; what it does is no longer verified.
+    #[error(
+        "this operation is covered by an `unchecked` waiver ({}), so its description is not \
+         verified",
+        reasons.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+    )]
+    OpaqueOperation {
+        /// Why the waiver was needed.
+        reasons: Vec<crate::annotation::OpaqueReason>,
+    },
+
+    /// A route is served but has no path template that could express it.
+    #[error(
+        "`{pattern}` is served but no path template can express it, so it has no `paths` entry"
+    )]
+    OpaqueRoute {
+        /// The router's matching pattern, verbatim.
+        pattern: String,
+    },
+
+    /// The description is opaque somewhere but does not say so at the root.
+    ///
+    /// The document-level stamp is the one-glance signal a consumer reads
+    /// before deciding whether to trust anything else, so a description that
+    /// omits it while carrying an opaque operation or route is worse than one
+    /// that is honestly incomplete.
+    #[error(
+        "this description contains opaque operations or routes but is not marked \
+         non-authoritative"
+    )]
+    AuthorityNotStamped,
+
+    /// A Kynos annotation was present but not in the shape Kynos emits.
+    ///
+    /// `detail` is text where
+    /// [`InvalidPathTemplate`](Self::InvalidPathTemplate)'s `reason` is a value,
+    /// and the asymmetry is forced rather than chosen: this cause is a
+    /// `serde_json::Error`, which is neither `Clone` nor `PartialEq`, so keeping
+    /// it would cost the derives every other value in the validation model has.
+    #[error("`{name}` is present but is not in the form Kynos emits: {detail}")]
+    MalformedAnnotation {
+        /// The offending field name.
+        name: String,
+        /// What went wrong reading it.
+        detail: String,
+    },
 
     /// The document declared nothing at all.
     #[error("a document must declare at least one of `paths`, `components` or `webhooks`")]

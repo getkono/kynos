@@ -15,7 +15,7 @@ Kynos is an idiomatic, performance-focused Rust framework for building REST APIs
 ## Development Guidelines
 
 - Pushing code: Atomic, semantic commits are strictly required. All PRs are *usually* merged rather than being squashed/rebased.
-- New features: Code implementation must be code-complete. Feature flag(s) must be modified when justified. When feasible, new features must be additive. Requirements are often missing context about the repository so all features must identify and finalize all technical ambiguity. Assert all decisions and standards-compliant behavior via the most appropriate testing method (e.g. property tests). When appropriate, each new group of feature should be demonstrated in some minimal example(s) in the appropriate crate's examples directory.
+- New features: Code implementation must be code-complete. Feature flag(s) must be modified when justified. When feasible, new features must be additive. Requirements are often missing context about the repository so all features must identify and finalize all technical ambiguity. Assert all decisions and standards-compliant behavior via the testing method `docs/testing.md` allocates to that kind of code, and write nothing that section lists as redundant. When appropriate, each new group of feature should be demonstrated in some minimal example(s) in the appropriate crate's examples directory.
 - Bug fixes: Correctness is strict. The offending code must be testable so refactor adjacent code to expose the internals for unit testing if required. Push strictly in order: red tests targetting failure case and asserting the correct invariants; implementation that addresses the red case with evidence the tests turned green.
 - Framework documentation is intentionally curated and minimal. The API should be mostly self-documenting so documentation serve to fill in the gaps such as design decisions and highlighting the important concepts and design patterns for beginners.
 - Tests: hermetic by construction. Nextest isolates each test in its own process, so never rely on shared state or test ordering, and never mask a flake with retries.
@@ -28,9 +28,10 @@ Kynos is an idiomatic, performance-focused Rust framework for building REST APIs
 - Declare shared dependency versions under `[workspace.dependencies]`.
 - Add a dependency to a member crate with `workspace = true` only when the crate consumes it.
 - A module becomes a directory once it holds two independently-changing concerns or exceeds ~400 lines excluding tests; tests move to a sibling `tests.rs`.
-- Submodules are `pub` with no parent re-exports, so every item has one canonical path; the crate root and `kynos::prelude` are the only curated shortcuts, and macro-support items live in `kynos::__private`.
+- Submodules are `pub` with no parent re-exports, so every item has one canonical path; the crate root and `kynos::prelude` are the only curated shortcuts, and macro-support items live in `kynos::__private`. A module that declares no item of its own — only trait implementations — is private instead, since it has nothing for a path to point at.
 - A feature gate belongs on the `pub mod` line, not repeated on each item inside it.
 - Do not introduce public framework APIs as placeholders, with one exception: the pre-v1 API-skeleton milestone, during which the surface is designed ahead of its implementation so it can be reviewed and frozen as a whole. A placeholder body must be `todo!()`, must be fully documented, and must appear in a `no_run` doc example proving the surface is usable. Once the skeleton is frozen this exception lapses.
+- A proc macro is exempt from the `no_run` example rule only while its expansion cannot compile in its own crate; a derive must expand to a well-formed implementation with `todo!()` bodies rather than `todo!()`-ing during expansion, since an expansion that aborts can appear in no test at all.
 
 ## Tooling
 

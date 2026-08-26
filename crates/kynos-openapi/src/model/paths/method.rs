@@ -65,6 +65,30 @@ impl Method {
             Self::Query => "QUERY",
         }
     }
+
+    /// The method with this wire spelling, if it has a Path Item field.
+    ///
+    /// Case-sensitive: HTTP method tokens are, and a description that spelled
+    /// one differently would not be describing the same request. Returns
+    /// `None` for a method OpenAPI has no field for, which is a different
+    /// answer from "not a method" — under `openapi32` those reach a Path Item
+    /// through `additionalOperations` instead.
+    #[must_use]
+    pub fn from_wire_str(name: &str) -> Option<Self> {
+        Some(match name {
+            "GET" => Self::Get,
+            "PUT" => Self::Put,
+            "POST" => Self::Post,
+            "DELETE" => Self::Delete,
+            "OPTIONS" => Self::Options,
+            "HEAD" => Self::Head,
+            "PATCH" => Self::Patch,
+            "TRACE" => Self::Trace,
+            #[cfg(feature = "openapi32")]
+            "QUERY" => Self::Query,
+            _ => return None,
+        })
+    }
 }
 
 impl fmt::Display for Method {

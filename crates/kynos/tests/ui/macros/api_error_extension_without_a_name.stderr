@@ -1,0 +1,5 @@
+error: an extension member is published under its field's name, and this field has none. Give the variant named fields
+  --> tests/ui/macros/api_error_extension_without_a_name.rs:10:14
+   |
+10 |     NotFound(#[problem(extension)] u64),
+   |              ^

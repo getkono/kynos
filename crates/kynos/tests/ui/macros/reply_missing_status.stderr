@@ -1,0 +1,5 @@
+error: variant `Created` does not say what status it produces; add `#[reply(status = ...)]`
+ --> tests/ui/macros/reply_missing_status.rs:8:5
+  |
+8 |     Created(u32),
+  |     ^^^^^^^

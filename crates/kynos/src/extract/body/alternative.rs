@@ -6,26 +6,26 @@
 
 use crate::extract::describe::RequestContent;
 
-// Every impl below pairs a codec with `Binary` or `Text`, so with no codec
-// feature enabled the matrix is empty and these would be unused.
+use crate::extract::{
+    body::{binary::Binary, text::Text},
+    media::MediaType,
+};
+
+// Only the codec pairs describe a schema; text and raw bytes do not.
 #[cfg(any(
     feature = "json",
     feature = "form",
     feature = "multipart",
     feature = "protobuf"
 ))]
-use crate::{
-    extract::{
-        body::{binary::Binary, text::Text},
-        media::MediaType,
-    },
-    schema::Schema,
-};
+use crate::schema::Schema;
 
 #[cfg(feature = "form")]
 use crate::extract::body::form::Form;
 #[cfg(feature = "json")]
 use crate::extract::body::json::Json;
+#[cfg(all(feature = "json", feature = "openapi32"))]
+use crate::extract::body::json_lines::{JsonLines, JsonSeq, records::Records};
 #[cfg(feature = "multipart")]
 use crate::extract::body::multipart::MultipartForm;
 #[cfg(feature = "protobuf")]
@@ -36,11 +36,29 @@ use crate::extract::body::protobuf::Protobuf;
 /// Kynos implements this for its non-overlapping body wrappers. It is not a
 /// blanket trait: writing `OneOf<Json<A>, Json<B>>` therefore fails to compile
 /// instead of making dispatch order observable.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` and `{Rhs}` cannot be alternatives",
+    label = "overlapping alternatives",
+    note = "two alternatives must be distinguishable by content type, so `OneOf` cannot hold \
+            two bodies that share one — dispatch order would decide which won, and no \
+            description can express that"
+)]
 pub trait Alternative<Rhs>: RequestContent
 where
     Rhs: RequestContent,
 {
 }
+
+// Text and raw bytes, which is the pair that needs no codec feature at all.
+//
+// Note what is *not* here: `Binary<A>` beside `Binary<B>`. Every other pair has
+// at least one side whose media type is fixed by the type, so an implementation
+// can be written per pair and reviewed; two `Binary`s are both chosen by a
+// marker, and `OneOf<Binary<Pdf>, Binary<Pdf>>` would satisfy any
+// implementation general enough to admit the useful case. A provable overlap is
+// not the same risk as a possible one.
+impl<M: MediaType> Alternative<Binary<M>> for Text {}
+impl<M: MediaType> Alternative<Text> for Binary<M> {}
 
 #[cfg(feature = "json")]
 impl<T: Schema> Alternative<Text> for Json<T> {}
@@ -107,3 +125,64 @@ impl<T: Schema, U: Schema> Alternative<Form<U>> for Protobuf<T> {}
 impl<T: Schema, U: Schema> Alternative<Protobuf<U>> for MultipartForm<T> {}
 #[cfg(all(feature = "multipart", feature = "protobuf"))]
 impl<T: Schema, U: Schema> Alternative<MultipartForm<U>> for Protobuf<T> {}
+
+// The streamed JSON bodies. Each carries one media type fixed by its own type,
+// exactly as `Json<T>` does, so every pair below is provably disjoint -- and
+// the pair of them is disjoint too, because NDJSON and RFC 7464 are two
+// spellings a client chooses between rather than two names for one framing.
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema> Alternative<Text> for JsonLines<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema> Alternative<JsonLines<Records<T>>> for Text {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, M: MediaType> Alternative<Binary<M>> for JsonLines<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, M: MediaType> Alternative<JsonLines<Records<T>>> for Binary<M> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema> Alternative<Text> for JsonSeq<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema> Alternative<JsonSeq<Records<T>>> for Text {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, M: MediaType> Alternative<Binary<M>> for JsonSeq<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, M: MediaType> Alternative<JsonSeq<Records<T>>> for Binary<M> {}
+
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, U: Schema> Alternative<Json<U>> for JsonLines<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, U: Schema> Alternative<JsonLines<Records<U>>> for Json<T> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, U: Schema> Alternative<Json<U>> for JsonSeq<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, U: Schema> Alternative<JsonSeq<Records<U>>> for Json<T> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, U: Schema> Alternative<JsonSeq<Records<U>>> for JsonLines<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32"))]
+impl<T: Schema, U: Schema> Alternative<JsonLines<Records<U>>> for JsonSeq<Records<T>> {}
+
+#[cfg(all(feature = "json", feature = "openapi32", feature = "form"))]
+impl<T: Schema, U: Schema> Alternative<Form<U>> for JsonLines<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32", feature = "form"))]
+impl<T: Schema, U: Schema> Alternative<JsonLines<Records<U>>> for Form<T> {}
+#[cfg(all(feature = "json", feature = "openapi32", feature = "form"))]
+impl<T: Schema, U: Schema> Alternative<Form<U>> for JsonSeq<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32", feature = "form"))]
+impl<T: Schema, U: Schema> Alternative<JsonSeq<Records<U>>> for Form<T> {}
+
+#[cfg(all(feature = "json", feature = "openapi32", feature = "multipart"))]
+impl<T: Schema, U: Schema> Alternative<MultipartForm<U>> for JsonLines<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32", feature = "multipart"))]
+impl<T: Schema, U: Schema> Alternative<JsonLines<Records<U>>> for MultipartForm<T> {}
+#[cfg(all(feature = "json", feature = "openapi32", feature = "multipart"))]
+impl<T: Schema, U: Schema> Alternative<MultipartForm<U>> for JsonSeq<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32", feature = "multipart"))]
+impl<T: Schema, U: Schema> Alternative<JsonSeq<Records<U>>> for MultipartForm<T> {}
+
+#[cfg(all(feature = "json", feature = "openapi32", feature = "protobuf"))]
+impl<T: Schema, U: Schema> Alternative<Protobuf<U>> for JsonLines<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32", feature = "protobuf"))]
+impl<T: Schema, U: Schema> Alternative<JsonLines<Records<U>>> for Protobuf<T> {}
+#[cfg(all(feature = "json", feature = "openapi32", feature = "protobuf"))]
+impl<T: Schema, U: Schema> Alternative<Protobuf<U>> for JsonSeq<Records<T>> {}
+#[cfg(all(feature = "json", feature = "openapi32", feature = "protobuf"))]
+impl<T: Schema, U: Schema> Alternative<JsonSeq<Records<U>>> for Protobuf<T> {}

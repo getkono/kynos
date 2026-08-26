@@ -1,0 +1,5 @@
+error: another variant already answers with `202`, and a `Reply` carries one variant per status. Give this one its own status, or fold the two bodies into a single type
+  --> tests/ui/macros/reply_status_repeated.rs:10:22
+   |
+10 |     #[reply(status = 202)]
+   |                      ^^^

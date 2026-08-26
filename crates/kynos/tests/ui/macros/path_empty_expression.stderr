@@ -1,0 +1,5 @@
+error: path template `/users/{}` contains an empty `{}` expression
+ --> tests/ui/macros/path_empty_expression.rs:2:18
+  |
+2 |     kynos::path!("/users/{}");
+  |                  ^^^^^^^^^^^

@@ -109,51 +109,161 @@ pub struct Contact {
 
 /// License information for the exposed API.
 ///
-/// [`identifier`](License::identifier) and [`url`](License::url) are mutually
-/// exclusive; [`crate::validate`] reports a document that sets both.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Every version of the specification makes `identifier` and `url` mutually
+/// exclusive, and makes both optional beside a required `name`. This type holds
+/// at most one of the two, so the three states the specification allows are the
+/// three a program can build — and a document setting both cannot be
+/// constructed, nor parsed, nor emitted.
+///
+/// Reach for [`spdx`](License::spdx) in preference to
+/// [`with_url`](License::with_url): an SPDX expression is machine-readable and a
+/// URL is not. Both are permitted, which is why both are here.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RawLicense", into = "RawLicense")]
 pub struct License {
-    /// The license name used for the API.
-    pub name: String,
-
-    /// An [SPDX] license expression for the API.
-    ///
-    /// Mutually exclusive with [`url`](License::url).
-    ///
-    /// [SPDX]: https://spdx.org/licenses/
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub identifier: Option<String>,
-
-    /// A URI for the license used for the API.
-    ///
-    /// Mutually exclusive with [`identifier`](License::identifier).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
+    name: String,
+    link: Option<LicenseLink>,
 
     /// Specification extensions.
-    #[serde(flatten)]
     pub extensions: Extensions,
 }
 
+/// How a license points at its terms, when it does.
+///
+/// An enum rather than two `Option` fields, for the reason
+/// [`SecurityScheme`](crate::model::security::SecurityScheme) is one: an
+/// unusable combination that cannot be spelled needs no rule to reject it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum LicenseLink {
+    /// An [SPDX] license expression.
+    ///
+    /// [SPDX]: https://spdx.org/licenses/
+    Spdx(String),
+
+    /// A URI for the license text.
+    Url(String),
+}
+
 impl License {
+    /// Creates a license identified by name alone.
+    ///
+    /// Valid, and the weakest of the three: a consumer gets something to show a
+    /// human and nothing to resolve.
+    pub fn named(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            link: None,
+            extensions: Extensions::default(),
+        }
+    }
+
     /// Creates a license identified by an SPDX expression.
     ///
     /// This is preferred over [`License::with_url`]: an SPDX identifier is
     /// machine-readable, a URL is not.
     pub fn spdx(name: impl Into<String>, identifier: impl Into<String>) -> Self {
         Self {
-            name: name.into(),
-            identifier: Some(identifier.into()),
-            ..Self::default()
+            link: Some(LicenseLink::Spdx(identifier.into())),
+            ..Self::named(name)
         }
     }
 
     /// Creates a license identified by a URL.
     pub fn with_url(name: impl Into<String>, url: impl Into<String>) -> Self {
         Self {
-            name: name.into(),
-            url: Some(url.into()),
-            ..Self::default()
+            link: Some(LicenseLink::Url(url.into())),
+            ..Self::named(name)
+        }
+    }
+
+    /// The license name used for the API.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The [SPDX] license expression, when this license carries one.
+    ///
+    /// [SPDX]: https://spdx.org/licenses/
+    #[must_use]
+    pub fn identifier(&self) -> Option<&str> {
+        match &self.link {
+            Some(LicenseLink::Spdx(identifier)) => Some(identifier),
+            _ => None,
+        }
+    }
+
+    /// The URI for the license, when this license carries one.
+    #[must_use]
+    pub fn url(&self) -> Option<&str> {
+        match &self.link {
+            Some(LicenseLink::Url(url)) => Some(url),
+            _ => None,
+        }
+    }
+}
+
+/// The wire shape: two flat optional fields, as the specification writes them.
+///
+/// The exclusion is enforced crossing this boundary rather than inside
+/// [`License`], so the invariant holds for a parsed document as well as a built
+/// one.
+#[derive(Serialize, Deserialize)]
+struct RawLicense {
+    name: String,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    identifier: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+
+    #[serde(flatten)]
+    extensions: Extensions,
+}
+
+/// A License Object that set both `identifier` and `url`.
+#[derive(Debug)]
+struct LicenseConflict;
+
+impl std::fmt::Display for LicenseConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("`identifier` and `url` are mutually exclusive on a License Object")
+    }
+}
+
+impl TryFrom<RawLicense> for License {
+    type Error = LicenseConflict;
+
+    fn try_from(raw: RawLicense) -> Result<Self, Self::Error> {
+        let link = match (raw.identifier, raw.url) {
+            (Some(_), Some(_)) => return Err(LicenseConflict),
+            (Some(identifier), None) => Some(LicenseLink::Spdx(identifier)),
+            (None, Some(url)) => Some(LicenseLink::Url(url)),
+            (None, None) => None,
+        };
+
+        Ok(Self {
+            name: raw.name,
+            link,
+            extensions: raw.extensions,
+        })
+    }
+}
+
+impl From<License> for RawLicense {
+    fn from(license: License) -> Self {
+        let (identifier, url) = match license.link {
+            Some(LicenseLink::Spdx(identifier)) => (Some(identifier), None),
+            Some(LicenseLink::Url(url)) => (None, Some(url)),
+            None => (None, None),
+        };
+
+        Self {
+            name: license.name,
+            identifier,
+            url,
+            extensions: license.extensions,
         }
     }
 }
@@ -171,10 +281,34 @@ mod tests {
     #[test]
     fn spdx_and_url_licenses_set_disjoint_fields() {
         let spdx = License::spdx("MIT", "MIT");
-        assert_eq!(spdx.identifier.as_deref(), Some("MIT"));
-        assert!(spdx.url.is_none());
+        assert_eq!(spdx.identifier(), Some("MIT"));
+        assert!(spdx.url().is_none());
 
         let url = License::with_url("MIT", "https://example.com/LICENSE");
-        assert!(url.identifier.is_none());
+        assert!(url.identifier().is_none());
+        assert_eq!(url.url(), Some("https://example.com/LICENSE"));
+
+        let bare = License::named("Proprietary");
+        assert!(bare.identifier().is_none());
+        assert!(bare.url().is_none());
+    }
+
+    #[test]
+    fn a_license_serializes_only_the_link_it_carries() {
+        let json = serde_json::to_string(&License::spdx("MIT", "MIT")).expect("serializable");
+        assert_eq!(json, r#"{"name":"MIT","identifier":"MIT"}"#);
+    }
+
+    #[test]
+    fn a_license_setting_both_links_does_not_deserialize() {
+        let error = serde_json::from_str::<License>(
+            r#"{"name":"MIT","identifier":"MIT","url":"https://example.com/LICENSE"}"#,
+        )
+        .expect_err("`identifier` and `url` are mutually exclusive");
+
+        assert!(
+            error.to_string().contains("mutually exclusive"),
+            "the rejection should say why: {error}"
+        );
     }
 }

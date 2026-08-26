@@ -1,0 +1,18 @@
+error[E0277]: the context `App` provides no `Db`
+  --> tests/ui/antipattern/inject_without_provider.rs:12:18
+   |
+12 |     resolvable::<App>();
+   |                  ^^^ cannot supply `Db`
+   |
+help: the trait `Provides<Db>` is not implemented for `App`
+  --> tests/ui/antipattern/inject_without_provider.rs:7:1
+   |
+ 7 | struct App;
+   | ^^^^^^^^^^
+   = note: add a `Db` field to the context type and `#[derive(kynos::Provider)]`, or write `impl Provides<Db> for App` by hand
+   = note: a dependency a handler asks for and the context does not have is a compile error here rather than a panic in production, which is the whole point of `Inject`
+note: required by a bound in `resolvable`
+  --> tests/ui/antipattern/inject_without_provider.rs:9:18
+   |
+ 9 | fn resolvable<C: kynos::di::Provides<Db>>() {}
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `resolvable`

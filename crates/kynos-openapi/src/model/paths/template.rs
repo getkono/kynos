@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// The error returned when a path template is malformed.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum InvalidPathTemplate {
     /// The template did not begin with `/`.
     #[error("path template `{0}` must begin with `/`")]
@@ -33,6 +34,34 @@ pub enum InvalidPathTemplate {
     /// The template contained a query string or fragment.
     #[error("path template `{0}` must not contain a query string or fragment")]
     NotAPath(String),
+
+    /// A literal segment contained a character the path grammar forbids.
+    ///
+    /// Outside a `{}` expression a template may only carry `pchar`: letters,
+    /// digits, `-._~`, the sub-delimiters `!$&'()*+,;=`, `:`, `@`, and
+    /// percent-encoded triples. Anything else — including any non-ASCII
+    /// character — has to arrive percent-encoded.
+    #[error(
+        "path template `{template}` contains `{character}` outside a `{{}}` expression, which the \
+         path grammar does not allow"
+    )]
+    IllegalLiteralCharacter {
+        /// The offending template.
+        template: String,
+        /// The character that is not allowed there.
+        character: char,
+    },
+
+    /// A `%` was not followed by two hexadecimal digits.
+    #[error("path template `{0}` contains a `%` that does not introduce a percent-encoded triple")]
+    MalformedPercentEncoding(String),
+
+    /// Two `/` met with nothing between them.
+    ///
+    /// A path segment always holds at least one character. A *trailing* `/` is
+    /// legal, because the grammar makes the final segment optional.
+    #[error("path template `{0}` has an empty segment")]
+    EmptySegment(String),
 }
 
 /// A parsed path template such as `/users/{id}/posts/{postId}`.
@@ -48,20 +77,130 @@ pub struct PathTemplate {
     variables: Vec<String>,
 }
 
+/// Whether `character` is `pchar`, the only thing a path literal may hold.
+///
+/// `pchar = unreserved / pct-encoded / sub-delims / ":" / "@"`, per RFC 3986
+/// section 3.3. `%` is handled by the caller, which has the following two
+/// characters in hand.
+const fn is_path_character(character: char) -> bool {
+    character.is_ascii_alphanumeric()
+        || matches!(
+            character,
+            '-' | '.'
+                | '_'
+                | '~'
+                | '!'
+                | '$'
+                | '&'
+                | '\''
+                | '('
+                | ')'
+                | '*'
+                | '+'
+                | ','
+                | ';'
+                | '='
+                | ':'
+                | '@'
+        )
+}
+
+/// Checks one literal run of a template, between `{}` expressions.
+///
+/// `/` is the segment separator rather than `pchar`, so it is allowed here and
+/// segmentation is left to callers that care about it.
+fn check_literal(literal: &str, raw: &str) -> Result<(), InvalidPathTemplate> {
+    let mut characters = literal.chars();
+    while let Some(character) = characters.next() {
+        match character {
+            '/' => {}
+            // Not `pchar` either, but a closing brace outside an expression is
+            // a brace mistake wherever it appears, and reporting it as a stray
+            // character would name the wrong problem.
+            '}' => return Err(InvalidPathTemplate::UnbalancedBraces(raw.to_owned())),
+            '%' => {
+                let high = characters.next();
+                let low = characters.next();
+                if !matches!((high, low), (Some(high), Some(low))
+                    if high.is_ascii_hexdigit() && low.is_ascii_hexdigit())
+                {
+                    return Err(InvalidPathTemplate::MalformedPercentEncoding(
+                        raw.to_owned(),
+                    ));
+                }
+            }
+            _ if is_path_character(character) => {}
+            _ => {
+                return Err(InvalidPathTemplate::IllegalLiteralCharacter {
+                    template: raw.to_owned(),
+                    character,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Rejects a segment with nothing in it.
+///
+/// `path-template = "/" *( path-segment "/" ) [ path-segment ]` and
+/// `path-segment = 1*( path-literal / template-expression )`, so two `/` never
+/// meet. A *trailing* `/` is legal, because the final segment is optional --
+/// and `/users` and `/users/` are different paths, which is what makes the
+/// trailing-slash policy an application-level decision rather than a parse
+/// question.
+///
+/// A variable name may itself contain a `/`, so this cannot be a split.
+fn check_segments(raw: &str) -> Result<(), InvalidPathTemplate> {
+    let mut in_expression = false;
+    let mut segment_is_empty = true;
+
+    // The leading `/` opens the first segment rather than closing one.
+    for character in raw.chars().skip(1) {
+        match character {
+            '{' => {
+                in_expression = true;
+                segment_is_empty = false;
+            }
+            '}' => in_expression = false,
+            '/' if !in_expression => {
+                if segment_is_empty {
+                    return Err(InvalidPathTemplate::EmptySegment(raw.to_owned()));
+                }
+                segment_is_empty = true;
+            }
+            _ => segment_is_empty = false,
+        }
+    }
+
+    Ok(())
+}
+
 impl PathTemplate {
     /// Parses a path template.
+    ///
+    /// Literal segments are checked against the path grammar; variable names
+    /// are not, because the grammar admits every character except a brace
+    /// there. A name that Kynos's router cannot match — a catch-all, say — is
+    /// still a legal OpenAPI template, and this type has to be able to hold one
+    /// so that an externally authored description round-trips. That narrower
+    /// contract is enforced where routes are registered.
     ///
     /// # Errors
     ///
     /// Returns [`InvalidPathTemplate`] when the template does not start with
-    /// `/`, has unbalanced or empty braces, repeats a variable, or carries a
-    /// query string or fragment.
+    /// `/`, has unbalanced or empty braces, repeats a variable, carries a query
+    /// string or fragment, or holds a character the path grammar does not allow
+    /// outside a `{}` expression.
     pub fn parse(raw: impl Into<String>) -> Result<Self, InvalidPathTemplate> {
         let raw = raw.into();
 
         if !raw.starts_with('/') {
             return Err(InvalidPathTemplate::MissingLeadingSlash(raw));
         }
+        // `?` and `#` are not `pchar` either, but a template carrying one is
+        // more likely a URL pasted whole than a stray character, so it keeps
+        // the error that says so.
         if raw.contains('?') || raw.contains('#') {
             return Err(InvalidPathTemplate::NotAPath(raw));
         }
@@ -69,6 +208,7 @@ impl PathTemplate {
         let mut variables = Vec::new();
         let mut rest = raw.as_str();
         while let Some(open) = rest.find('{') {
+            check_literal(&rest[..open], &raw)?;
             let after_open = &rest[open + 1..];
             let Some(close) = after_open.find('}') else {
                 return Err(InvalidPathTemplate::UnbalancedBraces(raw));
@@ -92,6 +232,8 @@ impl PathTemplate {
         if rest.contains('}') {
             return Err(InvalidPathTemplate::UnbalancedBraces(raw));
         }
+        check_literal(rest, &raw)?;
+        check_segments(&raw)?;
 
         Ok(Self { raw, variables })
     }

@@ -80,6 +80,27 @@ compile_error!(
 #[cfg(all(feature = "server", not(any(feature = "http1", feature = "http2"))))]
 compile_error!("the `server` feature requires at least one of `http1` or `http2`");
 
+// `time` carries the shapes the date and time backends map onto and names no
+// library of its own, so on its own it describes nothing. Saying so is better
+// than compiling to a feature that silently does nothing.
+#[cfg(all(
+    feature = "time",
+    not(any(feature = "time-chrono", feature = "time-jiff"))
+))]
+compile_error!(
+    "the `time` feature carries no types of its own; enable a backend, either `time-chrono` or \
+     `time-jiff`"
+);
+
+#[cfg(all(
+    feature = "decimal",
+    not(any(feature = "decimal-rust", feature = "decimal-big"))
+))]
+compile_error!(
+    "the `decimal` feature carries no types of its own; enable a backend, either `decimal-rust` \
+     or `decimal-big`"
+);
+
 #[doc(hidden)]
 pub mod __private;
 
@@ -116,10 +137,20 @@ pub use crate::{
 
 #[cfg(feature = "macros")]
 pub use kynos_macros::{
-    ApiError, Cookies, Headers, PathParams, Provider, QueryParams, Reply, Schema, SecurityScheme,
-    Tag, delete, get, head, operation, options, patch, path, post, put, routes, trace,
+    ApiError, HeaderParams, PathParams, Provider, QueryParams, Reply, Schema, SecurityScheme, Tag,
+    delete, get, head, operation, options, patch, path, post, put, routes, trace,
 };
 
+// Each of these derives a trait that its feature gates, so exporting it more
+// widely would only trade one diagnostic for a worse one: "no derive macro
+// named `CookieParams`" says which feature to enable, where an unresolved trait
+// in the expansion points at code the user did not write.
+#[cfg(all(feature = "macros", feature = "cookie"))]
+pub use kynos_macros::CookieParams;
+#[cfg(all(feature = "macros", feature = "multipart"))]
+pub use kynos_macros::MultipartForm;
+#[cfg(all(feature = "macros", feature = "assets"))]
+pub use kynos_macros::assets;
 #[cfg(all(feature = "macros", feature = "openapi32"))]
 pub use kynos_macros::query;
 
@@ -139,10 +170,15 @@ pub mod prelude {
 
     #[cfg(feature = "macros")]
     pub use crate::{
-        ApiError, Cookies, Headers, PathParams, Provider, QueryParams, Reply, Schema,
-        SecurityScheme, Tag, delete, get, head, operation, options, patch, path, post, put, routes,
-        trace,
+        ApiError, HeaderParams, PathParams, Provider, QueryParams, Reply, Schema, SecurityScheme,
+        Tag, delete, get, head, operation, options, patch, path, post, put, routes, trace,
     };
+
+    #[cfg(all(feature = "macros", feature = "cookie"))]
+    pub use crate::CookieParams;
+
+    #[cfg(all(feature = "macros", feature = "multipart"))]
+    pub use crate::MultipartForm;
 
     #[cfg(feature = "server")]
     pub use crate::server::Server;

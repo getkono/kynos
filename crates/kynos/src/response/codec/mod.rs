@@ -17,3 +17,6 @@ pub mod json;
 pub mod multipart;
 #[cfg(feature = "protobuf")]
 pub mod protobuf;
+
+#[cfg(test)]
+mod tests;

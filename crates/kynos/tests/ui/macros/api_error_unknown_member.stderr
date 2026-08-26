@@ -1,0 +1,5 @@
+error: `titel` is not part of the `#[problem(...)]` grammar
+ --> tests/ui/macros/api_error_unknown_member.rs:9:29
+  |
+9 |     #[problem(status = 404, titel = "User not found")]
+  |                             ^^^^^

@@ -24,3 +24,17 @@ fn optional_bodies_say_so() {
     let body = RequestBody::json(Schema::any()).optional();
     assert_eq!(body.required, Some(false));
 }
+
+#[test]
+fn an_encoding_declaring_a_style_no_query_parameter_could_take_is_refused() {
+    use crate::model::body::encoding::Encoding;
+
+    // An encoded property is serialized the way a query parameter is, so the
+    // path, header and cookie styles are not a combination to report but words
+    // `EncodingStyle` cannot read.
+    for style in ["matrix", "label", "simple", "cookie"] {
+        let json = format!(r#"{{"style":"{style}"}}"#);
+        serde_json::from_str::<Encoding>(&json)
+            .expect_err("an encoding takes only the query styles");
+    }
+}

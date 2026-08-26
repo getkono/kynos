@@ -5,10 +5,17 @@ config_roots = ["."]
 lockfile = true
 
 [tools]
+# `rust-src` is not a convenience here. A `const` assertion that fails inside
+# `kynos` surfaces with its primary span in `core`'s own `panic.rs`; rustc
+# prints that line's source when it can read it and degrades to a bare `note:`
+# when it cannot. The `ui` snapshots record one of those two renderings, so a
+# machine without the component fails the suite on the diagnostic's shape
+# rather than on anything the code did.
 rust = { version = "1.97.1", profile = "minimal", components = [
   "clippy",
   "llvm-tools-preview",
   "rust-analyzer",
+  "rust-src",
   "rustfmt",
 ] }
 hk = "1.53.0"
@@ -29,41 +36,83 @@ description = "Check Rust formatting"
 run = "cargo fmt --all -- --check"
 
 [tasks.lint]
-description = "Lint all workspace targets"
+description = "Lint all workspace targets with every feature enabled"
+# `--all-features` because without it Clippy never compiles an optional
+# feature's module, so it never reports one either. That is not theoretical: a
+# `cache` variant dead since 040a0af reached freeze review, and five `tls`
+# warnings stood the whole time the crate was linted on every push.
+run = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
+
+[tasks."lint:baseline"]
+description = "Lint all workspace targets at baseline features"
+# The command `lint` used to be, kept for the reason `test:baseline` exists:
+# `--all-features` compiles every `#[cfg(feature = ...)]` arm and no
+# `#[cfg(not(feature = ...))]` one. Widening `lint` without this would have
+# traded one blind spot for another.
 run = "cargo clippy --workspace --all-targets -- -D warnings"
 
 [tasks."lint:fix"]
 description = "Apply Clippy fixes across the workspace"
-run = "cargo clippy --fix --workspace --all-targets --allow-dirty --allow-staged -- -D warnings"
+run = "cargo clippy --fix --workspace --all-targets --all-features --allow-dirty --allow-staged -- -D warnings"
 
 [tasks.test]
 description = "Test all workspace targets"
 run = "cargo nextest run --workspace --all-targets --all-features"
+
+[tasks."test:baseline"]
+description = "Test all workspace targets at baseline features"
+# Every other test task passes `--all-features`, and `features:check` passes
+# `--no-dev-deps`, so before this task no test target was ever *built* with an
+# optional feature off -- against 67 `#[cfg]` sites in `kynos-openapi/src`
+# alone. A gate no test build exercises is a gate whose off-state is unknown.
+#
+# Baseline is the default feature set: `kynos-openapi`'s default is `openapi31`
+# and `kynos`'s selects it, so `--no-default-features --features openapi31`
+# would name the same build.
+#
+# The `ui` suite is excluded for the reason `ui:check` exists: trybuild
+# snapshots record the diagnostics of an `--all-features` build, and a trait
+# that is absent here rewords them.
+run = "cargo nextest run --workspace --all-targets -E 'not binary(ui)'"
 
 [tasks."test:doc"]
 description = "Run doc tests, which carry the compile-fail guarantees"
 run = "cargo test --workspace --all-features --doc"
 
 [tasks."features:check"]
-description = "Check every reachable feature combination"
+description = "Lint every reachable feature combination"
 # Kynos gates the OpenAPI 3.2 object model, every optional codec and the escape
 # hatches behind features. Without a powerset check a combination nobody builds
 # locally breaks silently.
+# Clippy with warnings denied rather than `cargo check`, which denied none: this
+# is the only gate that compiles a *partial* combination, so it is the only one
+# that can see a warning which needs one feature on and another off. `lint`
+# structurally cannot -- `assets-fs` implies `unchecked`, so `--all-features`
+# always carries the caller that kept `record_unchecked_route` from being dead.
+# Cargo passes trailing arguments to the selected package only, so the denial
+# reaches the three crates and no dependency; cargo-hack makes each member the
+# selected package in turn.
 # `--at-least-one-of` encodes the baseline: a build with neither spec version
 # is rejected by a `compile_error!`, and that rejection is correct rather than
 # a failure the matrix should report.
+# `time` and `decimal` are excluded for the same reason as `server`: each is an
+# umbrella that does not compile alone. Their backends imply them, so excluding
+# them costs no coverage -- every combination that can reach the shapes still
+# does.
 run = '''
-cargo hack check --workspace --feature-powerset --depth 2 --no-dev-deps \
+cargo hack clippy --workspace --feature-powerset --depth 2 --no-dev-deps \
   --exclude-no-default-features --exclude-all-features \
-  --exclude-features default,server,tls \
-  --at-least-one-of openapi31,openapi32
+  --exclude-features default,server,tls,time,decimal \
+  --at-least-one-of openapi31,openapi32 \
+  -- -D warnings
 
-cargo hack check -p kynos --feature-powerset --depth 2 --no-dev-deps \
+cargo hack clippy -p kynos --feature-powerset --depth 2 --no-dev-deps \
   --features server \
   --exclude-no-default-features --exclude-all-features \
-  --exclude-features default \
+  --exclude-features default,time,decimal \
   --at-least-one-of openapi31,openapi32 \
-  --at-least-one-of http1,http2
+  --at-least-one-of http1,http2 \
+  -- -D warnings
 
 invalid_server_output="$(mktemp)"
 trap 'rm -f "$invalid_server_output"' EXIT
@@ -74,6 +123,63 @@ if cargo check -p kynos --no-default-features --features openapi31,server \
 fi
 grep -F 'the `server` feature requires at least one of `http1` or `http2`' \
   "$invalid_server_output"
+
+invalid_time_output="$(mktemp)"
+trap 'rm -f "$invalid_server_output" "$invalid_time_output"' EXIT
+if cargo check -p kynos --no-default-features --features openapi31,time \
+    >"$invalid_time_output" 2>&1; then
+  echo "the time umbrella unexpectedly compiled without a backend" >&2
+  exit 1
+fi
+grep -F 'the `time` feature carries no types of its own' "$invalid_time_output"
+
+invalid_decimal_output="$(mktemp)"
+trap 'rm -f "$invalid_server_output" "$invalid_time_output" \
+  "$invalid_decimal_output"' EXIT
+if cargo check -p kynos --no-default-features --features openapi31,decimal \
+    >"$invalid_decimal_output" 2>&1; then
+  echo "the decimal umbrella unexpectedly compiled without a backend" >&2
+  exit 1
+fi
+grep -F 'the `decimal` feature carries no types of its own' \
+  "$invalid_decimal_output"
+'''
+
+[tasks."references:verify"]
+description = "Verify the vendored specification texts are unmodified"
+# Three checks rather than one. `sha256sum -c` catches a file edited in place,
+# but not a file added and left out of the manifest, and not a digest quoted in
+# the README that no longer names anything. The prose is what a reader consults
+# and `SHA256SUMS` is what CI checks, so the third check is what stops the two
+# becoming two statements of one fact that drift.
+run = '''
+set -eu
+cd references
+
+sha256sum -c SHA256SUMS --quiet
+
+listed="$(mktemp)"
+present="$(mktemp)"
+trap 'rm -f "$listed" "$present"' EXIT
+
+awk '{ print $2 }' SHA256SUMS | sort >"$listed"
+ls | grep -vx -e README.md -e SHA256SUMS | sort >"$present"
+
+if ! diff -u "$listed" "$present"; then
+  echo "references/SHA256SUMS does not list every vendored file" >&2
+  exit 1
+fi
+
+quoted="$(mktemp)"
+trap 'rm -f "$listed" "$present" "$quoted"' EXIT
+grep -oE '\b[0-9a-f]{64}\b' README.md | sort -u >"$quoted"
+
+while read -r digest; do
+  if ! grep -qF "$digest" SHA256SUMS; then
+    echo "README.md quotes digest $digest, which names no vendored file" >&2
+    exit 1
+  fi
+done <"$quoted"
 '''
 
 [tasks."docs:check"]
@@ -111,10 +217,17 @@ cargo +1.85 check --workspace --all-features
 description = "Run tests with LLVM coverage"
 run = "cargo llvm-cov nextest --workspace --all-targets --all-features"
 
+[tasks."ui:check"]
+description = "Run the compile-fail suite"
+# trybuild spawns its own `cargo`, so this must not run under `llvm-cov`:
+# the instrumentation flags reach the child and perturb the exact stderr the
+# snapshots record. Hence its own task rather than a line in `coverage:ci`.
+run = "cargo nextest run -p kynos --test ui --all-features"
+
 [tasks."coverage:ci"]
 description = "Generate CI coverage reports"
 run = [
-  "cargo llvm-cov nextest --workspace --all-targets --all-features --lcov --output-path lcov.info",
+  "cargo llvm-cov nextest --workspace --all-targets --all-features --lcov --output-path lcov.info -E 'not binary(ui)'",
   "cargo llvm-cov report --summary-only | tee coverage-summary.txt",
 ]
 
@@ -123,8 +236,12 @@ description = "Run formatting, linting, and tests"
 run = [
   { task = "format:check" },
   { task = "lint" },
+  { task = "lint:baseline" },
   { task = "test" },
+  { task = "test:baseline" },
   { task = "test:doc" },
+  { task = "ui:check" },
+  { task = "references:verify" },
   { task = "docs:check" },
   { task = "panic:check" },
 ]
@@ -154,6 +271,7 @@ description = "Run all pre-push checks"
 run = [
   { task = "format:check" },
   { task = "lint" },
+  { task = "lint:baseline" },
   { task = "coverage" },
   { task = "commits:check" },
 ]

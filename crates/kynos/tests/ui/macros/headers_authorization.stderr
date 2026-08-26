@@ -1,0 +1,5 @@
+error: `authorization` must not be declared as a header parameter: declare the credential instead, with `#[derive(SecurityScheme)]`, so that enforcing it and describing it are one act
+ --> tests/ui/macros/headers_authorization.rs:3:5
+  |
+3 |     authorization: String,
+  |     ^^^^^^^^^^^^^

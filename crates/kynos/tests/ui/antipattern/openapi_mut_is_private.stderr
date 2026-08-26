@@ -1,0 +1,10 @@
+error[E0624]: method `openapi_mut` is private
+ --> tests/ui/antipattern/openapi_mut_is_private.rs:4:21
+  |
+4 |     let _ = service.openapi_mut();
+  |                     ^^^^^^^^^^^ private method
+  |
+ ::: src/router/service.rs
+  |
+  |     pub(crate) fn openapi_mut(&mut self) -> &mut Document {
+  |     ----------------------------------------------------- private method defined here

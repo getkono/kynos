@@ -219,7 +219,7 @@ async fn connection_limit_applies_before_accepting_another_socket() {
             kynos_openapi::SpecVersion::V3_1,
             kynos_openapi::Info::new("Test", "1"),
         );
-        crate::router::service::Service::for_test(document, move |_| {
+        crate::router::service::Service::new(document, move |_| {
             let calls = Arc::clone(&calls);
             let release = Arc::clone(&release);
             async move {
@@ -289,7 +289,7 @@ async fn zero_shutdown_timeout_reports_an_incomplete_drain() {
             kynos_openapi::SpecVersion::V3_1,
             kynos_openapi::Info::new("Test", "1"),
         );
-        crate::router::service::Service::for_test(document, move |_| {
+        crate::router::service::Service::new(document, move |_| {
             let started = Arc::clone(&started);
             async move {
                 started.notify_one();
@@ -618,6 +618,10 @@ fn mutual_tls_rejects_an_existing_incompatible_component() {
 
 #[cfg(all(feature = "tls", feature = "http1"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+// Long because it is one scenario end to end: a CA, a server identity, a client
+// identity, a real socket and a verified round trip. Splitting it would put the
+// setup out of sight of the assertion that depends on it.
+#[expect(clippy::too_many_lines)]
 async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
     use http_body_util::{BodyExt as _, Empty};
     use hyper_util::rt::TokioIo;
@@ -750,13 +754,14 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
 #[cfg(feature = "tls")]
 #[test]
 fn tls_rejects_empty_pem_and_zero_handshake_timeouts() {
-    assert!(matches!(
-        crate::server::tls::TlsConfig::from_pem(b"", b""),
-        Err(crate::server::tls::error::TlsError::Pem { .. })
-    ));
-
     const SERVER_CERTIFICATE: &[u8] = include_bytes!("../../tests/fixtures/tls/server.pem");
     const SERVER_KEY: &[u8] = include_bytes!("../../tests/fixtures/tls/server.key");
+
+    assert!(matches!(
+        crate::server::tls::TlsConfig::from_pem(b"", b""),
+        Err(crate::server::tls::error::TlsError::EmptyPem { .. })
+    ));
+
     let config = crate::server::tls::TlsConfig::from_pem(SERVER_CERTIFICATE, SERVER_KEY)
         .expect("server identity parses");
     assert!(matches!(
@@ -768,8 +773,29 @@ fn tls_rejects_empty_pem_and_zero_handshake_timeouts() {
         .expect("certificate parses as a trust anchor");
     assert!(matches!(
         client.with_pem_crls(b""),
-        Err(crate::server::tls::error::TlsError::Pem { .. })
+        Err(crate::server::tls::error::TlsError::EmptyPem { .. })
     ));
+}
+
+/// A malformed PEM is a rustls failure Kynos wraps, and the wrapper says only
+/// which material was expected. Without the cause, "invalid certificate PEM" is
+/// the whole diagnostic and the reader learns nothing about what the parser
+/// actually objected to.
+#[cfg(feature = "tls")]
+#[test]
+fn a_malformed_pem_keeps_its_parser_failure_as_a_cause() {
+    let error =
+        crate::server::tls::TlsConfig::from_pem(b"-----BEGIN CERTIFICATE-----\nnot base64", b"")
+            .expect_err("a truncated certificate does not parse");
+
+    assert!(matches!(
+        error,
+        crate::server::tls::error::TlsError::Pem { .. }
+    ));
+    assert!(
+        std::error::Error::source(&error).is_some(),
+        "the parser failure must survive as a cause, not as a formatted string"
+    );
 }
 
 #[cfg(feature = "tls")]
@@ -795,7 +821,7 @@ fn test_service() -> crate::router::service::Service<()> {
         kynos_openapi::SpecVersion::V3_1,
         kynos_openapi::Info::new("Test", "1"),
     );
-    crate::router::service::Service::for_test(document, |_| async {
+    crate::router::service::Service::new(document, |_| async {
         crate::http::Response::new(crate::http::body::Body::from_bytes(
             bytes::Bytes::from_static(b"ok"),
         ))
@@ -816,7 +842,7 @@ fn blocking_service() -> (
             kynos_openapi::SpecVersion::V3_1,
             kynos_openapi::Info::new("Test", "1"),
         );
-        crate::router::service::Service::for_test(document, move |_| {
+        crate::router::service::Service::new(document, move |_| {
             let started = std::sync::Arc::clone(&started);
             let release = std::sync::Arc::clone(&release);
             async move {
@@ -844,4 +870,230 @@ fn request_http1(address: std::net::SocketAddr) -> String {
         .read_to_string(&mut response)
         .expect("response reads");
     response
+}
+
+/// Every configuration `validate_protocol_config` refuses.
+///
+/// Six branches, none of them reached before. A limit that stops being checked
+/// is one hyper is handed instead -- where a zero window stalls a connection
+/// and an oversized send buffer does not fit the protocol field it is written
+/// to. The branch is the whole value of the function, so each gets a case.
+///
+/// Gated on both protocols because the function takes one argument per enabled
+/// protocol; the feature matrix builds combinations with only one, and there
+/// the signature is a different one.
+#[cfg(all(feature = "http1", feature = "http2"))]
+mod protocol_configuration {
+    use std::time::Duration;
+
+    use crate::server::{
+        error::ServerError,
+        protocol::{
+            Http1Config, Http2Config, Http2FlowControl, Http2KeepAlive, validate_protocol_config,
+        },
+    };
+
+    fn refused(http1: Http1Config, http2: Http2Config) -> String {
+        match validate_protocol_config(http1, http2) {
+            Err(ServerError::InvalidConfiguration(reason)) => reason.to_owned(),
+            Err(other) => panic!("expected an invalid configuration, got {other}"),
+            Ok(()) => panic!("this configuration must be refused"),
+        }
+    }
+
+    /// One row per branch: what was set, and what it must be told.
+    fn cases() -> Vec<(&'static str, Http1Config, Http2Config, &'static str)> {
+        vec![
+            (
+                "no room for a single header",
+                Http1Config::default().max_headers(0),
+                Http2Config::default(),
+                "HTTP/1 max_headers must be non-zero",
+            ),
+            (
+                "a read buffer under the floor",
+                Http1Config::default().max_buffer_size(8_191),
+                Http2Config::default(),
+                "HTTP/1 max_buffer_size must be at least 8192",
+            ),
+            (
+                "a header read timeout that expires at once",
+                Http1Config::default().header_read_timeout(Some(Duration::ZERO)),
+                Http2Config::default(),
+                "HTTP/1 header_read_timeout must be non-zero when enabled",
+            ),
+            (
+                "a send buffer larger than the field that carries it",
+                Http1Config::default(),
+                Http2Config::default().max_send_buffer_size(u32::MAX as usize + 1),
+                "HTTP/2 limits must be non-zero and fit their protocol fields",
+            ),
+            (
+                "a fixed flow-control window that admits nothing",
+                Http1Config::default(),
+                Http2Config::default().flow_control(Http2FlowControl::Fixed {
+                    initial_stream_window_size: 0,
+                    initial_connection_window_size: 1024,
+                }),
+                "HTTP/2 fixed flow-control windows must be non-zero",
+            ),
+            (
+                "a keep-alive that never waits",
+                Http1Config::default(),
+                Http2Config::default().keep_alive(Some(Http2KeepAlive {
+                    interval: Duration::ZERO,
+                    timeout: Duration::from_secs(5),
+                })),
+                "HTTP/2 keep-alive durations must be non-zero",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_case_is_refused_for_the_reason_it_names() {
+        for (description, http1, http2, expected) in cases() {
+            assert_eq!(refused(http1, http2), expected, "{description}");
+        }
+    }
+
+    #[test]
+    fn the_defaults_are_accepted() {
+        validate_protocol_config(Http1Config::default(), Http2Config::default())
+            .expect("the defaults Kynos ships must be a configuration it accepts");
+    }
+
+    /// A count, so a limit added without a case fails the build.
+    #[test]
+    fn every_refusal_has_a_case() {
+        const SOURCE: &str = include_str!("protocol.rs");
+
+        let branches = SOURCE.matches("ServerError::InvalidConfiguration(").count();
+        assert_eq!(
+            cases().len(),
+            branches,
+            "`protocol.rs` refuses {branches} configuration(s) and {} have a case",
+            cases().len()
+        );
+    }
+}
+
+/// A served request carries the address it arrived from.
+///
+/// [`ConnectInfo`](crate::extract::connection::ConnectInfo) documents that the
+/// server inserts one before handing a request over, and its extractor
+/// `expect`s exactly that. Nothing did: `serve_http` inserted a private
+/// `ConnectionMetadata` instead, so every handler taking a `ConnectInfo`
+/// panicked on every request under the real server —
+/// [`examples/parameters.rs`](../../examples/parameters.rs) among them, where
+/// it is presented as working code.
+///
+/// The assertion is on the *value* rather than on mere presence, because an
+/// address the server invented would satisfy presence and still be wrong.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_served_request_carries_the_address_it_arrived_from() {
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(peer_address_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let address = bound.local_addrs()[0];
+    let server = tokio::spawn(bound.serve());
+
+    let (client_address, response) =
+        tokio::task::spawn_blocking(move || request_http1_from(address))
+            .await
+            .expect("blocking client joins");
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    let reported = response
+        .rsplit("\r\n\r\n")
+        .next()
+        .expect("a response has a body")
+        .to_owned();
+    assert_eq!(
+        reported,
+        client_address.to_string(),
+        "the handler was told `{reported}` and the client connected from `{client_address}`"
+    );
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// A service whose entire response is the peer address it was handed.
+///
+/// Reports `absent` rather than panicking, so a failure reads as a comparison
+/// against the address the client actually used instead of as a dropped
+/// connection.
+fn peer_address_service() -> crate::router::service::Service<()> {
+    let document = kynos_openapi::Document::new(
+        kynos_openapi::SpecVersion::V3_1,
+        kynos_openapi::Info::new("Test", "1"),
+    );
+    crate::router::service::Service::new(document, |request: crate::http::Request| async move {
+        // Through the extractor rather than through the extension it happens to
+        // read, so the test cannot pass while `ConnectInfo` is broken.
+        use crate::extract::FromRequestParts as _;
+
+        let (mut parts, _) = request.into_parts();
+        let crate::extract::connection::ConnectInfo(peer) =
+            crate::extract::connection::ConnectInfo::from_request_parts(&mut parts, &())
+                .await
+                .expect("extracting a peer address is infallible");
+        crate::http::Response::new(crate::http::body::Body::from_bytes(bytes::Bytes::from(
+            peer.to_string(),
+        )))
+    })
+}
+
+/// Requests over HTTP/1, reporting the address the client connected from.
+///
+/// The peer address the server sees is this socket's local address, which is
+/// what makes the comparison in the caller a real one rather than a round trip
+/// through a value the server chose.
+#[cfg(feature = "http1")]
+fn request_http1_from(address: std::net::SocketAddr) -> (std::net::SocketAddr, String) {
+    use std::io::{Read as _, Write as _};
+
+    let mut stream = std::net::TcpStream::connect(address).expect("server accepts");
+    let client_address = stream.local_addr().expect("a connected socket has one");
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .expect("request writes");
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .expect("response reads");
+    (client_address, response)
+}
+
+/// The header cap the driver is told about is the one that was configured.
+///
+/// `Http1Config::default` documents 100 and the forwarding branch skipped
+/// exactly that value, so Kynos's own default was an alias for a hyper constant
+/// Kynos does not own. The two agree today; nothing makes them keep agreeing,
+/// and an explicit `max_headers(100)` pinned nothing at all.
+///
+/// A sweep rather than one case, because the defect was a value-dependent
+/// branch and a single row would have been the wrong one.
+#[cfg(feature = "http1")]
+#[test]
+fn the_configured_http1_header_cap_is_the_one_the_driver_is_told() {
+    for configured in [1, 8, 64, 99, 100, 101, 1024] {
+        let config = Http1Config::default().max_headers(configured);
+
+        assert_eq!(
+            crate::server::protocol::forwarded_max_headers(&config),
+            configured,
+            "a cap of {configured} must reach the driver"
+        );
+    }
 }

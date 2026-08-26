@@ -1,0 +1,5 @@
+error: a split `rename` gives this field two wire names, and a description can carry one. Say which with `rename = "..."`, or name it explicitly in the Kynos attribute
+ --> tests/ui/macros/query_params_split_rename.rs:3:13
+  |
+3 |     #[serde(rename(serialize = "a", deserialize = "b"))]
+  |             ^^^^^^

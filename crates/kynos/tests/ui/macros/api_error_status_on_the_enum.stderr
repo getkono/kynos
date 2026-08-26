@@ -1,0 +1,5 @@
+error: a status belongs on each variant, because the point of an `ApiError` enum is that its variants fail differently. Move it to the variants
+ --> tests/ui/macros/api_error_status_on_the_enum.rs:7:20
+  |
+7 | #[problem(status = 404)]
+  |                    ^^^

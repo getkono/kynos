@@ -47,6 +47,15 @@ impl RouteArgs {
                         .unwrap_or_default();
                     match name.as_str() {
                         "operation_id" => operation_id = Some(expect_str(&pair.value)?),
+                        // Overwriting would discard the first silently, which is
+                        // the same defect as never reading it at all.
+                        "tag" if tag.is_some() => {
+                            return Err(syn::Error::new(
+                                pair.span(),
+                                "this route already names a tag, and it can name one. Apply the \
+                                 others with `Router::tag`, `Group::tag` or `EndpointBuilder::tag`",
+                            ));
+                        }
                         "tag" => tag = Some(expect_ident(&pair.value)?),
                         "path" => path = Some(expect_str(&pair.value)?),
                         _ => {

@@ -1,0 +1,5 @@
+error: path template `users/{id}` must begin with `/`
+ --> tests/ui/macros/path_missing_leading_slash.rs:2:18
+  |
+2 |     kynos::path!("users/{id}");
+  |                  ^^^^^^^^^^^^

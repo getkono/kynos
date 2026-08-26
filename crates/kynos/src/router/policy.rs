@@ -27,6 +27,7 @@ pub enum FallbackPolicy {
 /// # let _ = router;
 /// ```
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum TrailingSlashPolicy {
     /// Treat the two paths as distinct and use the normal not-found policy.
     #[default]

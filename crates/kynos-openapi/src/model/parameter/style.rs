@@ -36,6 +36,54 @@ pub enum Style {
     Cookie,
 }
 
+/// The one style a header may declare.
+///
+/// A [`Style`] narrowed to the value the specification leaves legal. A header
+/// has no `in` field for a style to disagree with, so the restriction is not a
+/// pairing between two fields but a domain: one variant, and a description
+/// naming any other style does not parse.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HeaderStyle {
+    /// Comma-separated values, defined by RFC 6570.
+    Simple,
+}
+
+impl From<HeaderStyle> for Style {
+    fn from(_: HeaderStyle) -> Self {
+        Self::Simple
+    }
+}
+
+/// The styles an encoded property may declare.
+///
+/// A [`Style`] narrowed the way [`HeaderStyle`] is. The specification gives an
+/// encoded property the query parameter styles and no others, and an encoding
+/// has no `in` field either, so this is a domain rather than a pairing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EncodingStyle {
+    /// Form-style expansion. Applied when none is stated.
+    Form,
+    /// Space-separated array or object values.
+    SpaceDelimited,
+    /// Pipe-separated array or object values.
+    PipeDelimited,
+    /// Nested objects rendered as `prop[key]=value`.
+    DeepObject,
+}
+
+impl From<EncodingStyle> for Style {
+    fn from(style: EncodingStyle) -> Self {
+        match style {
+            EncodingStyle::Form => Self::Form,
+            EncodingStyle::SpaceDelimited => Self::SpaceDelimited,
+            EncodingStyle::PipeDelimited => Self::PipeDelimited,
+            EncodingStyle::DeepObject => Self::DeepObject,
+        }
+    }
+}
+
 impl Style {
     /// The style applied when none is stated, given a parameter location.
     #[must_use]
@@ -64,8 +112,16 @@ impl Style {
     }
 
     /// Whether `explode` defaults to `true` for this style.
+    ///
+    /// The two styles that pair a name with each value default to exploding;
+    /// every other style defaults to `false`.
     #[must_use]
     pub fn default_explode(self) -> bool {
-        self == Self::Form
+        match self {
+            Self::Form => true,
+            #[cfg(feature = "openapi32")]
+            Self::Cookie => true,
+            _ => false,
+        }
     }
 }

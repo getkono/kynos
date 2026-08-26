@@ -11,14 +11,20 @@
 //! # How this module is laid out
 //!
 //! The request and response aliases live here; [`body`] holds the one type
-//! Kynos does define, and the erasure behind it.
+//! Kynos does define, and the erasure behind it, and [`cookie`] and [`etag`]
+//! the two fields whose grammar needs reading rather than looking up.
 
 pub mod body;
+pub mod cookie;
+pub mod etag;
+pub mod forwarded;
 
 use crate::http::body::Body;
 
 #[doc(no_inline)]
-pub use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Version, header};
+pub use http::{
+    Extensions, HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, Version, header,
+};
 
 /// An incoming request.
 pub type Request = http::Request<Body>;

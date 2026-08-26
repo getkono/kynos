@@ -1,0 +1,5 @@
+error: `accept` must not be declared as a header parameter: content negotiation decides this; return `Negotiated<T>` and let the description say which representations exist
+ --> tests/ui/macros/headers_accept.rs:3:5
+  |
+3 |     accept: String,
+  |     ^^^^^^

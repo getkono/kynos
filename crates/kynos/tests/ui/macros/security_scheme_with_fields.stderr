@@ -1,0 +1,8 @@
+error: `SecurityScheme` marks a type that names a way of authenticating, so it carries no fields
+ --> tests/ui/macros/security_scheme_with_fields.rs:3:15
+  |
+3 |   struct Bearer {
+  |  _______________^
+4 | |     token: String,
+5 | | }
+  | |_^

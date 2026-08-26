@@ -8,7 +8,9 @@
 //! items through `router`, `extract` and the rest — puts items no caller can
 //! use into modules callers read.
 
+pub mod endpoint;
 pub mod path;
+pub mod reply;
 pub mod uri;
 
 #[cfg(test)]

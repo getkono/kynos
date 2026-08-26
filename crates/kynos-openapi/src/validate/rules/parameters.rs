@@ -1,19 +1,24 @@
-//! Parameter and header rules: uniqueness, the schema/content exclusion, the
-//! closed style table, and the headers the specification refuses to describe.
+//! Parameter and header rules: uniqueness, the closed style table, and the
+//! headers the specification refuses to describe.
+//!
+//! What is left here is what a name or a whole list settles and a single value
+//! cannot: the schema/content exclusion and the style a header may declare are
+//! both decided by construction now, and neither has a rule.
 
 use std::collections::HashSet;
 
 use crate::{
+    Map,
     model::{
         parameter::{
             Parameter, ParameterIn,
-            header::{Header, is_ignored_header_parameter},
+            header::{Header, is_ignored_header, is_ignored_header_parameter},
         },
         reference::RefOr,
     },
     validate::{
         rules::extensions::check_extensions,
-        violation::{SpecError, Violation},
+        violation::{SpecError, Violation, pointer_token},
     },
 };
 
@@ -55,26 +60,12 @@ pub(in crate::validate) fn check_parameter_list(
             ));
         }
 
-        let has_schema = parameter.schema.is_some();
-        let has_content = !parameter.content.is_empty();
-        if has_schema == has_content {
-            violations.push(Violation::error(
-                location,
-                SpecError::SchemaContentExclusivity {
-                    name: parameter.name.clone(),
-                },
-            ));
-        } else if has_content && parameter.content.len() != 1 {
-            violations.push(Violation::error(
-                location,
-                SpecError::ContentNotSingular {
-                    name: parameter.name.clone(),
-                    found: parameter.content.len(),
-                },
-            ));
-        }
+        // The schema/content exclusion and the single-entry `content` rule used
+        // to be checked here. `ParameterShape` holds one or the other and its
+        // `Content` variant holds one pair, so neither violation can reach this
+        // function.
 
-        if let Some(style) = parameter.style {
+        if let Some(style) = parameter.style() {
             if !style.is_valid_for(parameter.location) {
                 violations.push(Violation::error(
                     location,
@@ -86,40 +77,43 @@ pub(in crate::validate) fn check_parameter_list(
             }
         }
 
-        if parameter.example.is_some() && !parameter.examples.is_empty() {
-            violations.push(Violation::error(location, SpecError::ExampleExclusivity));
-        }
+        // The `example`/`examples` exclusion used to be checked here too. A
+        // parameter carries one `Examples` holding one form or the other, so
+        // that violation cannot reach this function either.
 
         check_extensions(location, &parameter.extensions, violations);
     }
 }
 
-pub(in crate::validate) fn check_header(
+/// Checks the headers of a response or of an encoded part.
+///
+/// The name is the only thing here a `Header` cannot settle on its own: its
+/// shape, its examples and now its style are all decided by construction, but
+/// the name is a key in the surrounding map and no value's type reaches it.
+///
+/// [`Components::headers`](crate::Components::headers) is deliberately not
+/// checked. A reusable header is not yet in a response or an encoding, so
+/// nothing has stated its media type separately and there is nothing for it to
+/// contradict.
+pub(in crate::validate) fn check_header_map(
     location: &str,
-    name: &str,
-    header: &Header,
+    headers: &Map<RefOr<Header>>,
     violations: &mut Vec<Violation>,
 ) {
-    let has_schema = header.schema.is_some();
-    let has_content = !header.content.is_empty();
-    if has_schema == has_content {
-        violations.push(Violation::error(
-            location,
-            SpecError::SchemaContentExclusivity {
-                name: name.to_owned(),
-            },
-        ));
-    } else if has_content && header.content.len() != 1 {
-        violations.push(Violation::error(
-            location,
-            SpecError::ContentNotSingular {
-                name: name.to_owned(),
-                found: header.content.len(),
-            },
-        ));
-    }
+    for (name, header) in headers {
+        if is_ignored_header(name) {
+            violations.push(Violation::error(
+                location,
+                SpecError::IgnoredHeader { name: name.clone() },
+            ));
+        }
 
-    if header.example.is_some() && !header.examples.is_empty() {
-        violations.push(Violation::error(location, SpecError::ExampleExclusivity));
+        if let Some(header) = header.as_item() {
+            check_extensions(
+                &format!("{location}/{}", pointer_token(name)),
+                &header.extensions,
+                violations,
+            );
+        }
     }
 }

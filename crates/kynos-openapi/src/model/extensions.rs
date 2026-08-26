@@ -52,6 +52,16 @@ impl Extensions {
         self.0.get(key)
     }
 
+    /// Removes an extension, returning its value.
+    ///
+    /// Removal preserves the order of the remaining entries, which is what
+    /// keeps an emitted description byte-stable across an edit. Owning that
+    /// choice here is the point: a caller reaching through to the map would
+    /// have to make it, and could make it differently each time.
+    pub fn remove(&mut self, key: &str) -> Option<Value> {
+        self.0.shift_remove(key)
+    }
+
     /// Returns `true` when `name` is a well-formed extension field name that is
     /// not reserved by the OpenAPI Initiative.
     #[must_use]

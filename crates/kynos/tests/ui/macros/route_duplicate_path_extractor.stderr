@@ -1,0 +1,5 @@
+error: a handler may extract Path<T> only once
+  --> tests/ui/macros/route_duplicate_path_extractor.rs:12:5
+   |
+12 |     kynos::extract::params::path::Path(second): kynos::extract::params::path::Path<UserPath>,
+   |     ^^^^^

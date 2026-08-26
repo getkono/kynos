@@ -1,13 +1,105 @@
 //! Limits, and the responses they make possible.
+//!
+//! Each limit here owns a type for the response it answers with. That is what
+//! keeps the declaration and the behaviour one fact rather than two: the status
+//! a limit can produce is the status its response type describes, and a header
+//! that rides that status — `Retry-After` on a 503 — is described by the same
+//! type that sets it, rather than by a separate entry keyed on the status.
 
-use crate::http;
-use crate::middleware::{Interceptor, Next, contribution::OperationContribution};
+use std::{sync::Arc, time::Duration};
+
+use bytes::{Bytes, BytesMut};
+use http_body_util::BodyExt;
+use kynos_openapi::model::schema::types::SchemaType;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+
+use crate::{
+    error::problem::Problem,
+    http,
+    middleware::{Continued, Interceptor, Next},
+    response::{IntoResponse, Responses, ShortCircuit},
+    schema::registry::Registry,
+};
+
+/// Describes `Retry-After`, which is a delta-seconds count or an HTTP-date.
+///
+/// A string, because the field is one or the other and a schema claiming it is
+/// always an integer would be wrong half the time.
+fn retry_after_header() -> kynos_openapi::Header {
+    kynos_openapi::Header::new(kynos_openapi::Schema::of_type(SchemaType::String))
+        .with_description("How long to wait before retrying, in seconds or as an HTTP-date")
+}
+
+/// Sets `Retry-After` on `response` when there is a delay to advertise.
+fn set_retry_after(response: &mut http::Response, retry_after: Option<Duration>) {
+    // Deliberately not a let-chain: those are stable well above the declared
+    // MSRV, and this is not worth raising the floor for.
+    let Some(delay) = retry_after else { return };
+
+    if let Ok(value) = http::HeaderValue::from_str(&delay.as_secs().to_string()) {
+        response
+            .headers_mut()
+            .insert(http::header::RETRY_AFTER, value);
+    }
+}
+
+/// What [`BodySize`] answers with when a body is too large.
+///
+/// Carries the limit it enforced, so the response can say what was exceeded
+/// rather than only that something was.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BodySizeExceeded {
+    /// The maximum body size, in bytes.
+    pub limit: u64,
+}
+
+impl IntoResponse for BodySizeExceeded {
+    fn into_response(self) -> http::Response {
+        Problem::new(http::StatusCode::PAYLOAD_TOO_LARGE)
+            .with_detail(format!("the request body exceeds {} bytes", self.limit))
+            .into_response()
+    }
+}
+
+impl ShortCircuit for BodySizeExceeded {
+    const STATUSES: &'static [u16] = &[413];
+}
+
+impl Responses for BodySizeExceeded {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        kynos_openapi::Responses::new().with(
+            413,
+            kynos_openapi::Response::new("the request body exceeds the configured limit"),
+        )
+    }
+}
 
 /// Caps the size of a request body.
 ///
 /// Contributes 413 to every covered operation — which is the point.
 /// Configuring a limit and documenting that the limit exists are the same
 /// action, so an API cannot quietly reject payloads it claims to accept.
+///
+/// # What it costs a streaming read
+///
+/// A request declaring a `Content-Length` is decided from the head, and the
+/// body passes through untouched: a streaming extractor such as
+/// [`Records`](crate::extract::body::json_lines::records::Records) still receives it a
+/// frame at a time. A chunked request declares no length, so the running count
+/// is the only bound there is and the whole body is materialised here before
+/// the handler is entered. Records then still arrive one at a time, but the
+/// memory the streaming was for has already been spent.
+///
+/// That follows from what the declared 413 promises, not from what
+/// [`Body`](crate::http::body::Body) can be built from. A count that runs while
+/// the handler reads reaches its verdict only after the handler has acted on
+/// the bytes it was given, so streaming here would not restore the cap — it
+/// would move the refusal behind whatever an oversized payload had already
+/// caused. The alternatives are a 413 sent after those side effects, or a 411
+/// refusing every length-less body and with it every chunked upload; both are
+/// worse trades than the buffer. `docs/nfr.md` records the same conclusion, and
+/// there is no missing constructor to write.
 #[derive(Clone, Copy, Debug)]
 pub struct BodySize {
     /// The maximum body size, in bytes.
@@ -20,33 +112,158 @@ impl BodySize {
     pub fn new(bytes: u64) -> Self {
         Self { limit: bytes }
     }
+}
 
-    /// This interceptor's contribution.
-    #[must_use]
-    pub fn contribution(&self) -> OperationContribution {
-        todo!()
+/// The length the request declared, when it declared one.
+fn declared_length(headers: &http::HeaderMap) -> Option<u64> {
+    headers
+        .get(http::header::CONTENT_LENGTH)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// Reads `body` while the running total stays within `limit`.
+///
+/// `None` once the limit is passed, which is decided on the frame that passes
+/// it rather than after the whole body has arrived — a chunked body declares no
+/// length, so the count is the only bound there is.
+///
+/// A read that fails yields what arrived before it did. That is not a size
+/// violation and must not be reported as one; the body extractor beneath sees a
+/// truncated payload and rejects it with the status it already describes.
+async fn read_capped(mut body: crate::http::body::Body, limit: u64) -> Option<Bytes> {
+    let mut collected = BytesMut::new();
+
+    while let Some(frame) = body.frame().await {
+        let Ok(frame) = frame else { break };
+        let Ok(data) = frame.into_data() else {
+            continue;
+        };
+
+        let collected_so_far = u64::try_from(collected.len()).unwrap_or(u64::MAX);
+        let arriving = u64::try_from(data.len()).unwrap_or(u64::MAX);
+        if collected_so_far.saturating_add(arriving) > limit {
+            return None;
+        }
+
+        collected.extend_from_slice(&data);
     }
+
+    Some(collected.freeze())
 }
 
 impl<C: Sync + 'static> Interceptor<C> for BodySize {
-    fn contribution(&self) -> OperationContribution {
-        Self::contribution(self)
-    }
+    type Reads = ();
+    type Adds = ();
+    type Short = BodySizeExceeded;
 
     async fn intercept(
         &self,
         request: http::Request,
+        reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> http::Response {
-        let _ = (request, context, next);
-        todo!()
+    ) -> Result<Continued<()>, BodySizeExceeded> {
+        let _ = (reads, context);
+
+        // A declared length is the cheapest answer: an oversized upload is
+        // refused before a byte of it is read.
+        if let Some(declared) = declared_length(request.headers()) {
+            if declared > self.limit {
+                return Err(BodySizeExceeded { limit: self.limit });
+            }
+
+            // The protocol driver delivers no more than the length it was told,
+            // so the body passes through untouched and a streaming upload stays
+            // one.
+            return Ok(next.run(request).await);
+        }
+
+        // No declared length, so the count is the only bound: the body is read
+        // frame by frame and abandoned the moment it passes the limit. What
+        // arrives within it is handed on verbatim, since the only body Kynos can
+        // rebuild is one built from bytes.
+        let (parts, body) = request.into_parts();
+        let Some(bytes) = read_capped(body, self.limit).await else {
+            return Err(BodySizeExceeded { limit: self.limit });
+        };
+
+        let request = http::Request::from_parts(parts, crate::http::body::Body::from_bytes(bytes));
+        Ok(next.run(request).await)
+    }
+}
+
+/// What [`Timeout`] answers with when a handler runs too long.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TimedOut {
+    /// The limit the handler passed.
+    pub after: Duration,
+}
+
+impl IntoResponse for TimedOut {
+    fn into_response(self) -> http::Response {
+        Problem::new(http::StatusCode::REQUEST_TIMEOUT)
+            .with_detail(format!(
+                "the handler did not finish within {} seconds",
+                self.after.as_secs()
+            ))
+            .into_response()
+    }
+}
+
+impl ShortCircuit for TimedOut {
+    const STATUSES: &'static [u16] = &[408];
+}
+
+impl Responses for TimedOut {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        kynos_openapi::Responses::new().with(
+            408,
+            kynos_openapi::Response::new("the handler did not finish within the configured limit"),
+        )
     }
 }
 
 /// Caps how long a handler may run.
 ///
-/// Contributes 504.
+/// Contributes 408.
+///
+/// # Why 408 and not 504
+///
+/// RFC 9110 section 15.6.5 scopes 504 to a server "while acting as a gateway or
+/// proxy" awaiting "an upstream server it needed to access". Kynos is an origin
+/// and this interceptor wraps its own chain, so every clause of that definition
+/// is false — and 504 is a status a load balancer or CDN in front of the service
+/// genuinely sends, which made an origin's own indistinguishable from that hop's
+/// in logs and in client retry logic.
+///
+/// 408 is not exact either. Section 15.5.9 defines it as the server not having
+/// received "a complete request message within the time that it was prepared to
+/// wait", which describes the slow-body arrangement below precisely and the
+/// handler-runtime case only by extension. It is the closest status the
+/// specification defines, it carries a retry semantic clients already implement,
+/// and it is what `tower-http` sends for the same situation.
+///
+/// 503 would have read better for handler runtime — "temporary overload" — and
+/// is not available: [`Concurrency`] declares it, so `statuses_disjoint` would
+/// refuse a router carrying both. Bounding handler time *and* capping
+/// concurrency is an ordinary pairing, and a status choice that made it
+/// uncompilable would be a worse answer than an inexact one.
+///
+/// # Mount it outside a [`BodySize`]
+///
+/// A timeout wraps whatever is beneath it, so it bounds a body read only when
+/// it is the *earlier* `intercept` call, per
+/// [the module's ordering rule](super#the-order-a-chain-runs-in). [`BodySize`]
+/// walks a length-less body frame by frame, and a client that sends one frame
+/// slowly holds that loop open with nothing above it to end the exchange.
+///
+/// Nothing enforces this. `CompatibleWith` compares sets, and a set has no
+/// positions, so the wrong order compiles and describes itself identically.
 #[derive(Clone, Copy, Debug)]
 pub struct Timeout {
     /// The maximum handler duration.
@@ -58,62 +275,164 @@ impl Timeout {
     pub fn new(limit: std::time::Duration) -> Self {
         Self { limit }
     }
-
-    /// This interceptor's contribution.
-    pub fn contribution(&self) -> OperationContribution {
-        todo!()
-    }
 }
 
 impl<C: Sync + 'static> Interceptor<C> for Timeout {
-    fn contribution(&self) -> OperationContribution {
-        Self::contribution(self)
-    }
+    type Reads = ();
+    type Adds = ();
+    type Short = TimedOut;
 
     async fn intercept(
         &self,
         request: http::Request,
+        reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> http::Response {
-        let _ = (request, context, next);
-        todo!()
+    ) -> Result<Continued<()>, TimedOut> {
+        let _ = (reads, context);
+
+        // The timer is the one thing this cannot do for itself. Dropping the
+        // chain's future is what stops the handler: there is no other way to
+        // abandon work that is already running.
+        match tokio::time::timeout(self.limit, next.run(request)).await {
+            Ok(continued) => Ok(continued),
+            Err(_elapsed) => Err(TimedOut { after: self.limit }),
+        }
+    }
+}
+
+/// What [`Concurrency`] answers with when every slot is taken.
+///
+/// The `Retry-After` header is *this type's*, not a separate entry keyed on
+/// 503: the type that sets the header is the type that describes it, so the two
+/// cannot come apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AtCapacity {
+    /// How long a client should wait, when there is a useful answer.
+    pub retry_after: Option<Duration>,
+}
+
+impl IntoResponse for AtCapacity {
+    fn into_response(self) -> http::Response {
+        let mut response = Problem::new(http::StatusCode::SERVICE_UNAVAILABLE)
+            .with_detail("the service is at its concurrency limit")
+            .into_response();
+        set_retry_after(&mut response, self.retry_after);
+        response
+    }
+}
+
+impl ShortCircuit for AtCapacity {
+    const STATUSES: &'static [u16] = &[503];
+}
+
+impl Responses for AtCapacity {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let _ = registry;
+        kynos_openapi::Responses::new().with(
+            503,
+            kynos_openapi::Response::new("the service is at its concurrency limit")
+                .with_header("Retry-After", retry_after_header()),
+        )
     }
 }
 
 /// Caps concurrent in-flight requests.
 ///
 /// Contributes 503 and a `Retry-After` response header.
-#[derive(Clone, Copy, Debug)]
+///
+/// Requests are shed rather than queued by default: a queue is a delay a client
+/// cannot see, and 503 is the answer [`AtCapacity`] describes.
+/// [`queue_for`](Concurrency::queue_for) makes the wait bounded and explicit for
+/// a deployment that would rather absorb a burst than refuse it.
+///
+/// Cloning shares the permits, so one limit stays one limit however many copies
+/// the router holds — and mounting a *separate* instance on each endpoint is
+/// how one cap per endpoint is spelled.
+#[derive(Clone, Debug)]
 pub struct Concurrency {
     /// The maximum number of requests in flight at once.
     pub limit: usize,
+    slots: Arc<Semaphore>,
+    queue_for: Duration,
+    retry_after: Option<Duration>,
 }
 
 impl Concurrency {
     /// Limits in-flight requests to `limit`.
+    #[must_use]
     pub fn new(limit: usize) -> Self {
-        Self { limit }
+        Self {
+            limit,
+            slots: Arc::new(Semaphore::new(limit)),
+            queue_for: Duration::ZERO,
+            retry_after: None,
+        }
     }
 
-    /// This interceptor's contribution.
-    pub fn contribution(&self) -> OperationContribution {
-        todo!()
+    /// Waits up to `wait` for a slot before shedding.
+    ///
+    /// Declares nothing new. The answer when the wait expires is the same 503,
+    /// and a delay is not a response — `Timeout` already changes how long an
+    /// exchange takes without contributing a status for the change.
+    ///
+    /// Zero, the default, sheds immediately.
+    #[must_use]
+    pub fn queue_for(mut self, wait: Duration) -> Self {
+        self.queue_for = wait;
+        self
+    }
+
+    /// The `Retry-After` a shed response carries.
+    ///
+    /// Absent by default, because how long a slot takes to free is a property
+    /// of the requests already running and a number invented here is one the
+    /// service cannot honour. A deployment behind an autoscaler *does* know,
+    /// which is why this is a value it supplies rather than a guess Kynos makes
+    /// — and why [`AtCapacity`] describes the header either way.
+    #[must_use]
+    pub fn retry_after(mut self, delay: Duration) -> Self {
+        self.retry_after = Some(delay);
+        self
+    }
+
+    /// Takes a slot, waiting no longer than the configured queue.
+    ///
+    /// An owned permit rather than a counter pair: the chain's future can be
+    /// dropped at any await point, and a slot that leaked on cancellation would
+    /// shrink the limit until the process restarted.
+    async fn acquire(&self) -> Option<OwnedSemaphorePermit> {
+        if self.queue_for.is_zero() {
+            return Arc::clone(&self.slots).try_acquire_owned().ok();
+        }
+
+        tokio::time::timeout(self.queue_for, Arc::clone(&self.slots).acquire_owned())
+            .await
+            .ok()?
+            .ok()
     }
 }
 
 impl<C: Sync + 'static> Interceptor<C> for Concurrency {
-    fn contribution(&self) -> OperationContribution {
-        Self::contribution(self)
-    }
+    type Reads = ();
+    type Adds = ();
+    type Short = AtCapacity;
 
     async fn intercept(
         &self,
         request: http::Request,
+        reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> http::Response {
-        let _ = (request, context, next);
-        todo!()
+    ) -> Result<Continued<()>, AtCapacity> {
+        let _ = (reads, context);
+
+        let Some(_slot) = self.acquire().await else {
+            return Err(AtCapacity {
+                retry_after: self.retry_after,
+            });
+        };
+
+        Ok(next.run(request).await)
     }
 }

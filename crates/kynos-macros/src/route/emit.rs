@@ -63,14 +63,15 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenSt
             );
         }
     });
-    let tag_note = args.tag.as_ref().map(|tag| {
-        quote! {
-            const _: fn() = || {
-                fn assert_tag<T: ::kynos::router::operation::Tag>() {}
-                assert_tag::<#tag>();
-            };
-        }
-    });
+    // A tag is one of the operation's compile-time facts, so it reaches the
+    // description through the same constants as the method and the path rather
+    // than through a separate assertion that only proved the type was a `Tag`.
+    // Naming `NAME` carries that bound anyway, so one mistake is one
+    // diagnostic.
+    let tags = args.tag.as_ref().map_or_else(
+        || quote!(&[]),
+        |tag| quote!(&[<#tag as ::kynos::router::operation::Tag>::NAME]),
+    );
 
     quote! {
         #function
@@ -80,7 +81,7 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenSt
         #[derive(Clone, Copy, Debug, Default)]
         #visibility struct #endpoint {}
 
-        impl ::kynos::router::endpoint::EndpointMeta for #endpoint {
+        impl ::kynos::router::endpoint::meta::EndpointMeta for #endpoint {
             type PanicPolicy = #panic_policy;
 
             const METHOD: &'static str = #method;
@@ -90,11 +91,11 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenSt
             const SUMMARY: ::core::option::Option<&'static str> = #summary;
             const DESCRIPTION: ::core::option::Option<&'static str> = #description;
             const DEPRECATED: bool = #deprecated;
+            const TAGS: &'static [&'static str] = #tags;
         }
 
         #uri_impl
 
-        #tag_note
         #panic_strategy_check
     }
 }

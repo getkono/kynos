@@ -4,9 +4,13 @@ on:
   push:
     branches:
       - master
+  # Every pull request, whatever it targets. Filtering on `master` meant a
+  # stacked pull request -- one based on another that has not merged yet --
+  # reported no checks at all, so the only evidence it had was its author
+  # saying the gates passed locally. That is the wrong half of the review to
+  # trust, and it is exactly the review where a long-lived base branch makes
+  # stacking the sensible way to work.
   pull_request:
-    branches:
-      - master
 
 permissions:
   contents: read
@@ -43,6 +47,15 @@ jobs:
         run: mise run format:check
       - name: Lint
         run: mise run lint
+      # A second Clippy pass rather than a second job: `--all-features` and the
+      # default set share every dependency build, so they belong on one cache.
+      - name: Lint at baseline features
+        run: mise run lint:baseline
+      # Here because it compiles nothing, so it wants no Cargo cache of its
+      # own. It belongs in some job: `check` runs it, and the comment above
+      # says these jobs run every task `check` does.
+      - name: Verify the vendored specifications
+        run: mise run references:verify
 
   test:
     name: Tests
@@ -55,9 +68,12 @@ jobs:
         with:
           cargo-cache-key: test
       # The instrumented run is the test of record. It selects the same tests
-      # as `mise run test`, so running both would execute the suite twice.
+      # as `mise run test`, so running both would execute the suite twice --
+      # except the compile-fail suite, which cannot run instrumented.
       - name: Run tests under coverage
         run: mise run coverage:ci
+      - name: Run the compile-fail suite
+        run: mise run ui:check
       - name: Add coverage summary
         run: cat coverage-summary.txt >> "$GITHUB_STEP_SUMMARY"
       - name: Upload coverage artifact
@@ -95,6 +111,10 @@ jobs:
         uses: ./.github/actions/setup
         with:
           cargo-cache-key: features
+      # Ahead of `features:check`, which rewrites manifests in place while it
+      # walks the powerset: a run that shares a job with it must not follow it.
+      - name: Test at baseline features
+        run: mise run test:baseline
       - name: Check every feature combination
         run: mise run features:check
       # Also a check that a build configuration is rejected, so it belongs

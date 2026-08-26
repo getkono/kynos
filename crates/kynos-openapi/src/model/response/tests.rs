@@ -3,29 +3,124 @@ use crate::model::{
     response::{Response, Responses, status::StatusPattern},
 };
 
-#[test]
-fn status_patterns_round_trip_through_strings() {
-    for text in ["200", "404", "1XX", "2XX", "3XX", "4XX", "5XX"] {
-        let pattern: StatusPattern = text.parse().expect("valid");
-        assert_eq!(pattern.to_string(), text);
+const WILDCARDS: &[StatusPattern] = &[
+    StatusPattern::Informational,
+    StatusPattern::Success,
+    StatusPattern::Redirection,
+    StatusPattern::ClientError,
+    StatusPattern::ServerError,
+];
+
+/// The wire spelling of each wildcard, transcribed from the specification.
+///
+/// An exhaustive match, so a wildcard added to [`StatusPattern`] stops this
+/// file compiling until its spelling is written down. `Code` is excluded
+/// because it spells itself.
+///
+/// This is the oracle, and it exists because the round trip it replaces was
+/// not one: parsing `1XX` and rendering it back consults `FromStr` and
+/// `Display`, which are the same table written twice. Two spellings swapped
+/// between two variants satisfied that check in both directions.
+fn spelling(pattern: StatusPattern) -> Option<&'static str> {
+    match pattern {
+        StatusPattern::Informational => Some("1XX"),
+        StatusPattern::Success => Some("2XX"),
+        StatusPattern::Redirection => Some("3XX"),
+        StatusPattern::ClientError => Some("4XX"),
+        StatusPattern::ServerError => Some("5XX"),
+        StatusPattern::Code(_) => None,
     }
 }
 
+#[test]
+fn each_wildcard_parses_and_renders_as_the_specification_spells_it() {
+    for &pattern in WILDCARDS {
+        let spelled = spelling(pattern).expect("a wildcard has a spelling");
+
+        assert_eq!(
+            spelled.parse::<StatusPattern>().expect("a legal key"),
+            pattern,
+            "parsing {spelled}"
+        );
+        assert_eq!(pattern.to_string(), spelled, "rendering {pattern:?}");
+    }
+}
+
+/// Every status a response can carry, and the bounds on either side of them.
+#[test]
+fn an_exact_code_parses_and_renders_as_itself() {
+    for code in 100..=599u16 {
+        let text = code.to_string();
+
+        assert_eq!(
+            text.parse::<StatusPattern>().expect("a status in range"),
+            StatusPattern::Code(code)
+        );
+        assert_eq!(StatusPattern::Code(code).to_string(), text);
+    }
+
+    for code in [0u16, 99, 600, 999] {
+        assert!(
+            code.to_string().parse::<StatusPattern>().is_err(),
+            "{code} is not a status a response can carry"
+        );
+    }
+}
+
+/// The wildcards are five, and nothing shaped like a sixth is one.
 #[test]
 fn only_the_five_documented_wildcards_are_accepted() {
     assert!("6XX".parse::<StatusPattern>().is_err());
     assert!("2xx".parse::<StatusPattern>().is_err());
     assert!("20X".parse::<StatusPattern>().is_err());
-    assert!("99".parse::<StatusPattern>().is_err());
-    assert!("600".parse::<StatusPattern>().is_err());
+    assert!("XX".parse::<StatusPattern>().is_err());
+}
+
+/// Each wildcard and the class it covers.
+///
+/// An exhaustive match, so a wildcard added to [`StatusPattern`] stops this
+/// file compiling until its range is written down. `Code` is excluded because
+/// it is not a class -- it is checked separately below.
+fn covered_class(pattern: StatusPattern) -> Option<std::ops::RangeInclusive<u16>> {
+    match pattern {
+        StatusPattern::Informational => Some(100..=199),
+        StatusPattern::Success => Some(200..=299),
+        StatusPattern::Redirection => Some(300..=399),
+        StatusPattern::ClientError => Some(400..=499),
+        StatusPattern::ServerError => Some(500..=599),
+        StatusPattern::Code(_) => None,
+    }
 }
 
 #[test]
-fn wildcards_cover_their_class() {
-    assert!(StatusPattern::ClientError.matches(404));
-    assert!(!StatusPattern::ClientError.matches(500));
-    assert!(StatusPattern::Code(404).matches(404));
-    assert!(!StatusPattern::Code(404).matches(400));
+fn wildcards_cover_their_class_and_nothing_else() {
+    for &pattern in WILDCARDS {
+        let class = covered_class(pattern).expect("a wildcard covers a class");
+        // Every status a response can carry, against every wildcard: the
+        // boundaries are where an off-by-one would hide.
+        for code in 100..=599u16 {
+            assert_eq!(
+                pattern.matches(code),
+                class.contains(&code),
+                "{pattern:?} against {code}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_exact_code_matches_only_itself() {
+    for code in [200u16, 404, 500] {
+        let pattern = StatusPattern::Code(code);
+        assert!(covered_class(pattern).is_none());
+        for other in 100..=599u16 {
+            assert_eq!(
+                pattern.matches(other),
+                other == code,
+                "{code} against {other}"
+            );
+        }
+    }
 }
 
 #[test]

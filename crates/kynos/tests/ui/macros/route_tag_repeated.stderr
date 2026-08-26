@@ -1,0 +1,5 @@
+error: this route already names a tag, and it can name one. Apply the others with `Router::tag`, `Group::tag` or `EndpointBuilder::tag`
+  --> tests/ui/macros/route_tag_repeated.rs:10:37
+   |
+10 | #[kynos::get("/users", tag = Users, tag = Admin)]
+   |                                     ^^^

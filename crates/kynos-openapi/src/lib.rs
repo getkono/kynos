@@ -43,6 +43,7 @@ compile_error!(
      enable `openapi31`, or `openapi32`, which implies it."
 );
 
+pub mod annotation;
 pub mod emit;
 pub mod model;
 pub mod validate;
@@ -51,17 +52,22 @@ pub mod validate;
 // path inside `model` or `validate`; these shortcuts exist so that the common
 // names stay one import away despite the module tree being deep.
 pub use crate::{
+    annotation::{MalformedAnnotation, Opaque, OpaqueReason, OpaqueRoute},
     model::{
         body::{RequestBody, encoding::Encoding, media_type::MediaType},
         callback::Callback,
         components::{ComponentName, Components},
         document::{Document, SpecVersion},
-        example::Example,
+        example::{Example, ExampleValue, Examples},
         extensions::Extensions,
         external_docs::ExternalDocumentation,
         info::{Contact, Info, License},
-        link::Link,
-        parameter::{Parameter, ParameterIn, header::Header, style::Style},
+        link::{Link, LinkTarget},
+        parameter::{
+            Parameter, ParameterIn, ParameterShape,
+            header::{Header, HeaderShape},
+            style::{EncodingStyle, HeaderStyle, Style},
+        },
         paths::{
             Paths, item::PathItem, method::Method, operation::Operation, template::PathTemplate,
         },

@@ -1,0 +1,5 @@
+error: an untagged enum has no describable decoding rule: `anyOf` without a discriminator is ambiguous, and serde's first-match tie-break cannot be expressed. Use `#[serde(tag = "...")]`, which becomes a `discriminator`
+ --> tests/ui/macros/schema_untagged_enum.rs:2:9
+  |
+2 | #[serde(untagged)]
+  |         ^^^^^^^^

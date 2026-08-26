@@ -4,10 +4,10 @@
 //! such a declaration is ignored — so what describes the negotiation is the
 //! operation's `content` map, contributed by the representation tuple.
 
-mod representation;
+pub mod representation;
 
 use crate::{
-    error::rejection::Rejection,
+    error::rejection::NegotiationRejection,
     extract::{FromRequestParts, describe::Describe},
     http::{Parts, Response},
     response::{IntoResponse, Responses},
@@ -23,7 +23,7 @@ use crate::{
 ///
 /// ```no_run
 /// use kynos::{
-///     error::rejection::Rejection,
+///     error::rejection::NegotiationRejection,
 ///     extract::{
 ///         body::{binary::Binary, text::Text},
 ///         media::Pdf,
@@ -31,13 +31,27 @@ use crate::{
 ///     response::negotiate::{Accept, Negotiated},
 /// };
 ///
+/// struct Report {
+///     month: String,
+/// }
+///
 /// async fn report(
 ///     accept: Accept<(Text, Binary<Pdf>)>,
-/// ) -> Result<Negotiated<(Text, Binary<Pdf>)>, Rejection> {
-///     accept.respond((
-///         Text("plain report".to_owned()),
-///         Binary::new(Vec::<u8>::new()),
-///     ))
+/// ) -> Result<Negotiated<(Text, Binary<Pdf>)>, NegotiationRejection> {
+///     let report = Report { month: "2026-08".to_owned() };
+///
+///     // Closures, not values: the arm the client did not ask for never runs.
+///     accept.respond_with(
+///         &report,
+///         (
+///             |report: &Report| Text(report.month.clone()),
+///             |report: &Report| Binary::new(render_pdf(report)),
+///         ),
+///     )
+/// }
+///
+/// fn render_pdf(report: &Report) -> Vec<u8> {
+///     report.month.as_bytes().to_vec()
 /// }
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,7 +65,7 @@ impl<T> Accept<T> {
     ///
     /// An absent field is represented by `"*/*"`. Invalid quality values are
     /// rejected as malformed headers.
-    pub fn parse(value: &str) -> Result<Self, Rejection> {
+    pub fn parse(value: &str) -> Result<Self, NegotiationRejection> {
         let mut preferences = Vec::new();
         for (order, item) in value.split(',').enumerate() {
             let mut segments = item.trim().split(';');
@@ -89,11 +103,47 @@ impl<T> Accept<T> {
     }
 
     /// Chooses one offered representation or returns a documented 406.
-    pub fn respond(self, representations: T) -> Result<Negotiated<T>, Rejection>
+    ///
+    /// `producers` is a tuple of closures, one per alternative and in the same
+    /// order, each handed `source`. Exactly one runs: an alternative the client
+    /// did not ask for is never built, so rendering a PDF for a request that
+    /// wanted JSON is work that does not happen rather than work that is thrown
+    /// away.
+    ///
+    /// Passing the source separately is what lets every closure see it. Three
+    /// closures cannot each own one value, and making them borrow a captured
+    /// one would put the same lifetime problem in every handler.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NegotiationRejection::NotAcceptable`] when nothing on offer
+    /// matches what the client asked for.
+    pub fn respond_with<S, P>(
+        self,
+        source: &S,
+        producers: P,
+    ) -> Result<Negotiated<T>, NegotiationRejection>
     where
         T: representation::Representations,
+        P: representation::Producers<S, T>,
     {
-        let selected = T::media_types()
+        let selected = self.choose::<T>()?;
+
+        Ok(Negotiated {
+            response: producers.produce_at(source, selected),
+            offer: std::marker::PhantomData,
+        })
+    }
+
+    /// The index of the best alternative, or the 406.
+    ///
+    /// Split from `respond_with` so the ranking can be asserted without
+    /// producing a response: what is worth testing is which arm wins, and
+    /// building one would drag in every codec's writer.
+    pub(crate) fn choose<O: representation::Representations>(
+        &self,
+    ) -> Result<usize, NegotiationRejection> {
+        O::media_types()
             .iter()
             .enumerate()
             .filter_map(|(index, media_type)| self.score(media_type).map(|score| (score, index)))
@@ -103,12 +153,7 @@ impl<T> Accept<T> {
                     .then_with(|| right_index.cmp(left_index))
             })
             .map(|(_, index)| index)
-            .ok_or(Rejection::NotAcceptable)?;
-
-        Ok(Negotiated {
-            representations,
-            selected,
-        })
+            .ok_or(NegotiationRejection::NotAcceptable)
     }
 
     fn score(&self, media_type: &str) -> Option<(u16, u8, std::cmp::Reverse<usize>)> {
@@ -162,9 +207,8 @@ fn parse_quality(value: &str) -> Option<u16> {
         })
 }
 
-fn invalid_accept() -> Rejection {
-    Rejection::Header {
-        name: "Accept".to_owned(),
+fn invalid_accept() -> NegotiationRejection {
+    NegotiationRejection::MalformedAccept {
         detail: "expected comma-separated media ranges with q values from 0 to 1".to_owned(),
     }
 }
@@ -178,17 +222,36 @@ struct Preference {
 }
 
 impl<C: Sync, T: Send> FromRequestParts<C> for Accept<T> {
-    type Rejection = Rejection;
+    type Rejection = NegotiationRejection;
 
-    async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
-        let _ = (parts, context);
-        todo!()
+    async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
+        let mut values = parts.headers.get_all(crate::http::header::ACCEPT).iter();
+
+        // RFC 9110 12.5.1: a request with no `Accept` accepts any media type.
+        // A field that is *present* and empty is a different claim, and reaches
+        // `parse` so that it is answered as the malformed value it is.
+        let Some(first) = values.next() else {
+            return Self::parse("*/*");
+        };
+
+        // A field that may appear more than once is equivalent to one field
+        // holding the comma-separated list, which is the form `parse` reads.
+        let mut field = String::new();
+        for value in std::iter::once(first).chain(values) {
+            let value = value.to_str().map_err(|_| invalid_accept())?;
+            if !field.is_empty() {
+                field.push(',');
+            }
+            field.push_str(value);
+        }
+
+        Self::parse(&field)
     }
 }
 
 impl<T> Describe for Accept<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let responses = Rejection::responses(operation.registry());
+        let responses = NegotiationRejection::responses(operation.registry());
         operation.add_responses(responses);
     }
 }
@@ -200,15 +263,25 @@ impl<T> Describe for Accept<T> {
 /// operation's `content` map. Note that `Accept` itself is never declared as a
 /// parameter — the specification says such a declaration is ignored, and the
 /// `content` map is what actually describes the negotiation.
-#[derive(Clone, Debug, PartialEq, Eq)]
+// A response is neither `Clone` nor `PartialEq` -- a body is a stream, not a
+// value -- so `Negotiated` cannot be either now that it holds one rather than
+// the alternatives it might have built.
+#[derive(Debug)]
 pub struct Negotiated<T> {
-    representations: T,
-    selected: usize,
+    response: Response,
+
+    /// The offer, kept at the type level.
+    ///
+    /// `Responses` reads it and nothing else does: the chosen representation is
+    /// already a response by the time this exists, and the alternatives were
+    /// never built. Keeping `T` is what stops the description losing an arm the
+    /// handler could have served.
+    offer: std::marker::PhantomData<fn() -> T>,
 }
 
 impl<T: representation::Representations> IntoResponse for Negotiated<T> {
     fn into_response(self) -> Response {
-        self.representations.into_response_at(self.selected)
+        self.response
     }
 }
 

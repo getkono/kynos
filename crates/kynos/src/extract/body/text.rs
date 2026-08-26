@@ -1,7 +1,7 @@
 //! The `text/plain` body codec.
 
 use crate::{
-    error::rejection::Rejection,
+    error::rejection::BodyRejection,
     extract::{
         FromRequest,
         describe::{Describe, RequestContent},
@@ -15,12 +15,22 @@ use crate::{
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Text(pub String);
 
-impl<C: Sync> FromRequest<C> for Text {
-    type Rejection = Rejection;
+/// One spelling, read by both halves: what is decoded and what is described.
+const MEDIA_TYPE: &str = "text/plain";
 
-    async fn from_request(request: Request, context: &C) -> Result<Self, Self::Rejection> {
-        let _ = (request, context);
-        todo!()
+impl<C: Sync> FromRequest<C> for Text {
+    type Rejection = BodyRejection;
+
+    async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
+        let bytes = super::read_body(request, MEDIA_TYPE).await?;
+
+        // The body was accepted as UTF-8 or as unparameterized `text/plain`, so
+        // bytes that are not UTF-8 are a body that does not say what it claims.
+        String::from_utf8(bytes.into())
+            .map(Self)
+            .map_err(|error| BodyRejection::Syntax {
+                detail: error.to_string(),
+            })
     }
 }
 
@@ -33,11 +43,15 @@ impl Describe for Text {
 
 impl RequestContent for Text {
     fn media_types() -> Vec<&'static str> {
-        vec!["text/plain"]
+        vec![MEDIA_TYPE]
     }
 
+    // The body is a string, so it is described by the schema `String` already
+    // carries rather than by a second, hand-written one.
     fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody {
-        let _ = registry;
-        todo!()
+        kynos_openapi::RequestBody::new(
+            MEDIA_TYPE,
+            kynos_openapi::MediaType::new(registry.resolve::<String>()),
+        )
     }
 }

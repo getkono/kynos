@@ -1,0 +1,5 @@
+error: unknown route argument `method`
+ --> tests/ui/macros/route_method_argument.rs:3:28
+  |
+3 | #[kynos::get("/documents", method = "POST")]
+  |                            ^^^^^^

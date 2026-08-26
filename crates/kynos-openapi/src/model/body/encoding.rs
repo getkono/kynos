@@ -6,7 +6,7 @@ use crate::{
     Map,
     model::{
         extensions::Extensions,
-        parameter::{header::Header, style::Style},
+        parameter::{header::Header, style::EncodingStyle},
         reference::RefOr,
     },
 };
@@ -30,8 +30,11 @@ pub struct Encoding {
     pub headers: Map<RefOr<Header>>,
 
     /// How the property value is serialized.
+    ///
+    /// The specification gives this the query parameter styles, so a style a
+    /// query parameter could not take is one this field cannot hold.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub style: Option<Style>,
+    pub style: Option<EncodingStyle>,
 
     /// Whether an array or object generates one entry per member.
     #[serde(default, skip_serializing_if = "Option::is_none")]
