@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question about using Kynos
+    url: https://github.com/getkono/kynos/discussions/new?category=q-a
+    about: Usage questions and design discussion go to Discussions, not the issue tracker.
+  - name: Report a security vulnerability
+    url: https://github.com/getkono/kynos/security/advisories/new
+    about: Report privately through a security advisory. Do not open a public issue.
+  - name: Benchmarks and performance comparisons
+    url: https://github.com/getkono/kynos-bench
+    about: Benchmark methodology and cross-framework numbers live in kynos-bench.

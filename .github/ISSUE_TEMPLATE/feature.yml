@@ -1,0 +1,109 @@
+name: Feature request
+description: Propose an addition to what Kynos can express or do.
+title: "feat(scope): "
+labels: ["enhancement"]
+type: Feature
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Kynos is opinionated on purpose, and some edges are closed rather than
+        undecided. Permanently out of scope: **OpenAPI 3.0 and older**,
+        **WebSockets**, **templating and HTML rendering**, **abstraction over
+        the runtime** (tokio is a hard dependency, not a generic parameter), and
+        **custom transports and Unix sockets**. **HTTP/3 and QUIC** are gated on
+        demonstrated demand, not on design debate.
+
+        `docs/architecture.md` and the README's anti-patterns are normative. A
+        request that contradicts them is closed rather than argued, so read the
+        scope edges before writing.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched the open and closed issues and this is not a duplicate.
+          required: true
+        - label: I read the scope edges in `docs/architecture.md` and the README's anti-patterns; this contradicts neither.
+          required: true
+        - label: A human wrote and reviewed this request.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you cannot express today
+      description: >
+        Show the code you tried and how it fails — the compile error, or the
+        emitted document that does not describe what the handler actually does.
+        Start from the obstacle, not from the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API
+      description: >
+        Rust signatures, not prose. An example that would compile is worth more
+        than a paragraph describing one.
+      placeholder: |
+        ```rust
+        impl<S> Router<S> {
+            pub fn something(self, /* ... */) -> Self { /* ... */ }
+        }
+        ```
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface impact
+      options:
+        - Additive — new items only
+        - Changes an existing public signature
+        - Behaviour only, no API change
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: gate
+    attributes:
+      label: Feature gate
+      description: >
+        Which flag this lives behind. New capability arrives feature-gated and
+        additive, never as a widening of the default build — so answer with an
+        existing flag, `new: <name>`, or `default` only if it genuinely belongs
+        in every build.
+      placeholder: "compression, or: new: rate-limit"
+    validations:
+      required: true
+
+  - type: input
+    id: spec
+    attributes:
+      label: Specification basis
+      description: The OpenAPI or RFC 9110 section that requires or permits this, if one does.
+      placeholder: OpenAPI 3.2 §4.8.24, or RFC 9110 §14.2
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today instead
+      description: >
+        Your current workaround, and why it is not enough. Say explicitly
+        whether the `unchecked` escape hatch or a satellite crate already
+        covers this, and what that costs you.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to implement this.
+        - label: I would need guidance on where it belongs before starting.

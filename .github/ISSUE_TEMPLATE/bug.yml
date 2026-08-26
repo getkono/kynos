@@ -1,0 +1,146 @@
+name: Bug report
+description: Kynos behaves other than the standard, the documentation, or its own signatures promise.
+title: "fix(scope): "
+labels: ["bug"]
+type: Bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Three things this tracker does not treat as bugs:
+
+        - **An unimplemented surface.** The API is a pre-v1 skeleton and parts of
+          it are `todo!()`-bodied by design.
+        - **A deliberate refusal.** The README's anti-patterns list eleven things
+          Kynos declines to do on purpose.
+        - **A rule you disagree with.** Everything under `docs/` is normative.
+          Argue the rule in Discussions, not here.
+
+        What *is* worth reporting, and stated as such in the README: anything
+        `Router::openapi()` cannot express about a handler it routes.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched the open and closed issues and this is not a duplicate.
+          required: true
+        - label: I checked `docs/` and the README's anti-patterns; this is not deliberate behaviour.
+          required: true
+        - label: I reproduced this myself, and a human wrote and reviewed this report.
+          required: true
+
+  - type: dropdown
+    id: crate
+    attributes:
+      label: Crate
+      description: Where the defect lives, not where you observed it, if you can tell them apart.
+      options:
+        - kynos
+        - kynos-openapi
+        - kynos-macros
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Routing
+        - Extraction
+        - Responses and content negotiation
+        - Middleware
+        - Server, connection handling or TLS
+        - Schema and OpenAPI document emission
+        - Macros
+        - Dependency injection
+        - Security schemes
+        - Errors and problem details
+        - Documentation
+        - Other or not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The published version you depend on, or the commit SHA if you build from git.
+      placeholder: 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: features
+    attributes:
+      label: Features
+      description: >
+        The exact set you build with — the `features = [...]` list from your
+        manifest or the `--features` value you pass. Write `default` if you
+        changed nothing. Feature combinations are where this framework breaks,
+        so a wrong answer here wastes the whole report.
+      placeholder: default, tls, compression
+    validations:
+      required: true
+
+  - type: input
+    id: toolchain
+    attributes:
+      label: Toolchain and platform
+      description: Output of `rustc -V`, plus your OS and architecture. The MSRV is 1.85.
+      placeholder: rustc 1.97.1 (a1b2c3d4e 2026-07-02) — Linux x86_64
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should happen, and on whose authority
+      description: >
+        Name the source of the expectation: an RFC 9110 section, an OpenAPI 3.1
+        or 3.2 section, a statement in `docs/`, or a rustdoc guarantee. "It
+        surprised me" is a question for Discussions, not a bug.
+      placeholder: |
+        RFC 9110 §8.8.1 requires a strong validator to change whenever the
+        representation data changes observably, so ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happens instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: >
+        The smallest complete program or failing test that shows it, the
+        `[dependencies]` stanza it builds against, and the exact command you
+        ran. A report without one is closed unread.
+      placeholder: |
+        ```toml
+        [dependencies]
+        kynos = { version = "0.1.0", features = ["tls"] }
+        ```
+
+        ```rust
+        fn main() { /* ... */ }
+        ```
+
+        `cargo run --features tls`
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: Compiler output, panic backtrace, wire capture, or the emitted document fragment.
+      render: text
