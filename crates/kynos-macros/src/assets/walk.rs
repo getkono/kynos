@@ -16,6 +16,35 @@ const MAX_DEPTH: usize = 32;
 /// How many files a set may hold.
 const MAX_FILES: usize = 100_000;
 
+/// Filename suffixes that mark a stored content coding, and the coding token
+/// each one names.
+///
+/// A *stored* coding, not one Kynos produces: a build pipeline writes
+/// `app.js.br` beside `app.js`, and the set serves whichever the client
+/// accepts. That is why there is no compressor here and no dependency on one --
+/// and why each stored form can carry its own strong validator, which is the
+/// whole point. RFC 9110 section 8.8.1 forbids one strong entity tag from
+/// naming two representations, so a coding without its own tag is a coding that
+/// cannot be ranged over.
+const STORED_CODINGS: &[(&str, &str)] = &[(".br", "br"), (".gz", "gzip"), (".zst", "zstd")];
+
+/// The coding `name` is a stored form of, and the name it encodes.
+fn stored_coding(name: &str) -> Option<(&'static str, &str)> {
+    STORED_CODINGS
+        .iter()
+        .find_map(|(suffix, coding)| name.strip_suffix(suffix).map(|base| (*coding, base)))
+}
+
+/// One stored content coding of a file.
+pub(super) struct Encoded {
+    /// The coding token, as `Content-Encoding` spells it.
+    pub(super) coding: &'static str,
+    /// The absolute path `include_bytes!` is given.
+    pub(super) absolute: String,
+    /// The quoted entity tag, minted from *these* octets.
+    pub(super) etag: String,
+}
+
 /// One embedded file.
 pub(super) struct Embedded {
     /// The relative, `/`-separated path it serves at.
@@ -24,6 +53,8 @@ pub(super) struct Embedded {
     pub(super) absolute: String,
     /// The quoted entity tag.
     pub(super) etag: String,
+    /// Stored codings of the same representation, each with its own validator.
+    pub(super) encodings: Vec<Encoded>,
 }
 
 /// What the walk found.
@@ -68,16 +99,84 @@ pub(super) fn walk(args: &AssetArgs) -> syn::Result<Walked> {
     let total_bytes = files.iter().map(|file| file.byte_count).sum();
 
     Ok(Walked {
-        files: files
-            .into_iter()
-            .map(|file| Embedded {
-                path: file.path,
-                absolute: file.absolute,
-                etag: file.etag,
-            })
-            .collect(),
+        files: fold_encodings(files),
         total_bytes,
     })
+}
+
+/// Attaches each stored coding to the file it is a coding *of*.
+///
+/// `app.js.br` beside `app.js` is not a second resource; it is the same
+/// representation in another content coding, and serving it at its own path
+/// would describe an operation no client asks for while leaving the one it does
+/// ask for unable to answer `Accept-Encoding`.
+///
+/// A coding whose base file is absent stays a file of its own. Somebody shipping
+/// `archive.tar.gz` for download means the path, not the coding, and a set that
+/// swallowed it would serve nothing at the URL the page links to.
+///
+/// `files` arrives sorted by path, and `app.js` sorts before `app.js.br`
+/// because `.` precedes every suffix character used here -- but nothing relies
+/// on that: the base set is collected first, in full, before anything is
+/// folded.
+fn fold_encodings(files: Vec<Found>) -> Vec<Embedded> {
+    let paths: std::collections::HashSet<&str> =
+        files.iter().map(|file| file.path.as_str()).collect();
+
+    // Which files are codings of another, decided before anything moves.
+    let is_coding_of: Vec<Option<(&'static str, String)>> = files
+        .iter()
+        .map(|file| {
+            stored_coding(&file.path)
+                .filter(|(_, base)| paths.contains(base))
+                .map(|(coding, base)| (coding, base.to_owned()))
+        })
+        .collect();
+
+    let mut embedded: Vec<Embedded> = Vec::new();
+    let mut index_of: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
+    for (file, coding) in files.iter().zip(&is_coding_of) {
+        if coding.is_some() {
+            continue;
+        }
+        index_of.insert(file.path.clone(), embedded.len());
+        embedded.push(Embedded {
+            path: file.path.clone(),
+            absolute: file.absolute.clone(),
+            etag: file.etag.clone(),
+            encodings: Vec::new(),
+        });
+    }
+
+    for (file, coding) in files.iter().zip(&is_coding_of) {
+        let Some((coding, base)) = coding else {
+            continue;
+        };
+        let Some(index) = index_of.get(base) else {
+            continue;
+        };
+        embedded[*index].encodings.push(Encoded {
+            coding,
+            absolute: file.absolute.clone(),
+            etag: file.etag.clone(),
+        });
+    }
+
+    // Deterministic, and it decides which coding a tie goes to: the order here
+    // is the order `preferred` is offered, so `br` before `gzip` before `zstd`
+    // would be the wrong default -- brotli is the smallest and the one a client
+    // naming all three at equal weight should get.
+    for file in &mut embedded {
+        file.encodings.sort_by_key(|encoded| {
+            STORED_CODINGS
+                .iter()
+                .position(|(_, coding)| *coding == encoded.coding)
+                .unwrap_or(usize::MAX)
+        });
+    }
+
+    embedded
 }
 
 /// One file, before the count is folded away.
