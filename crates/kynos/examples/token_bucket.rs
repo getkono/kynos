@@ -362,3 +362,181 @@ async fn main() -> kynos::Result<()> {
         .serve()
         .await
 }
+
+// --- The tests ------------------------------------------------------------
+
+/// What the injected clock is for.
+///
+/// The module doc claims a limiter whose only clock is `Instant::now` can be
+/// tested for refusal and never for refill. These are the tests that claim
+/// cannot be written without the trait: every one of them moves time by hand,
+/// none of them sleeps, and `.config/nextest.toml` sets `retries = 0` because a
+/// limiter test that needs a retry is measuring the machine rather than the
+/// bucket.
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    /// A clock a test moves by hand.
+    ///
+    /// `Arc<Mutex<_>>` rather than a `Cell`, because [`Clock`] is `Sync`: the
+    /// limiter holds its clock behind a shared reference, and the test has to
+    /// keep a handle it can still advance afterwards.
+    #[derive(Clone)]
+    struct TestClock(Arc<Mutex<Instant>>);
+
+    impl TestClock {
+        /// A clock stopped at an arbitrary instant. Which instant is immaterial
+        /// -- every assertion here is about an elapsed duration.
+        fn new() -> Self {
+            Self(Arc::new(Mutex::new(Instant::now())))
+        }
+
+        /// Moves time forward, without the test waiting for it.
+        fn advance(&self, step: Duration) {
+            let mut at = self.0.lock().expect("no holder of this lock panics");
+            *at += step;
+        }
+    }
+
+    impl Clock for TestClock {
+        fn now(&self) -> Instant {
+            *self.0.lock().expect("no holder of this lock panics")
+        }
+    }
+
+    impl<K, C: Clock> TokenBucket<K, C> {
+        /// How many buckets the map holds, which is the quantity the sweep
+        /// bounds. Private to the tests: a limiter has no reason to publish it.
+        fn tracked(&self) -> usize {
+            self.buckets
+                .lock()
+                .expect("no holder of this lock panics")
+                .per_key
+                .len()
+        }
+    }
+
+    /// A bucket with no key partitioning, spent through `spend` directly.
+    ///
+    /// Keying is `RateLimitKey`'s and is asserted where it lives; what these
+    /// tests are about is the arithmetic underneath it.
+    fn bucket(
+        capacity: u32,
+        refill_per_second: f64,
+        clock: &TestClock,
+    ) -> TokenBucket<(), TestClock> {
+        TokenBucket::new(capacity, refill_per_second, (), clock.clone())
+    }
+
+    #[test]
+    fn a_burst_is_spent_down_to_the_refusal() {
+        let clock = TestClock::new();
+        let limiter = bucket(3, 1.0, &clock);
+
+        // `remaining` is what is left *after* the request, so a capacity of
+        // three counts down rather than starting at three.
+        for expected in [2, 1, 0] {
+            let limit = limiter.spend("client").expect("the burst is unspent");
+            assert_eq!(limit.quota, 3);
+            assert_eq!(limit.remaining, expected);
+        }
+
+        let (_, limit) = limiter.spend("client").expect_err("the burst is spent");
+        assert_eq!(limit.remaining, 0);
+    }
+
+    #[test]
+    fn an_empty_bucket_refills_with_no_test_sleeping() {
+        let clock = TestClock::new();
+        let limiter = bucket(2, 2.0, &clock);
+
+        limiter.spend("client").expect("the burst is unspent");
+        limiter.spend("client").expect("the burst is unspent");
+        limiter.spend("client").expect_err("the burst is spent");
+
+        // Exactly one token at two a second. The refusal above and the
+        // allowance below are the same bucket at two instants, which is the
+        // assertion no un-injected clock can make.
+        clock.advance(Duration::from_millis(500));
+
+        let limit = limiter.spend("client").expect("a token has accrued");
+        assert_eq!(limit.remaining, 0);
+    }
+
+    #[test]
+    fn the_wait_is_one_token_rather_than_the_window() {
+        let clock = TestClock::new();
+        let limiter = bucket(4, 1.0, &clock);
+        for _ in 0..4 {
+            limiter.spend("client").expect("the burst is unspent");
+        }
+
+        let (wait, limit) = limiter.spend("client").expect_err("the burst is spent");
+
+        // The window this limiter advertises is four seconds; the wait it hands
+        // a refused client is one. A client told to wait the window waits four
+        // times longer than the service requires.
+        assert_eq!(limiter.advertised[0].window, Some(Duration::from_secs(4)));
+        assert_eq!(wait, Duration::from_secs(1));
+        assert_eq!(limit.reset, wait);
+    }
+
+    #[test]
+    fn a_bucket_idle_past_the_threshold_is_dropped() {
+        let clock = TestClock::new();
+        // Fills in two seconds, so the sweep runs at most once every two and
+        // evicts at four.
+        let limiter = bucket(2, 1.0, &clock);
+        limiter.spend("first").expect("the burst is unspent");
+        assert_eq!(limiter.tracked(), 1);
+
+        clock.advance(Duration::from_secs(5));
+        limiter.spend("second").expect("a fresh bucket is full");
+
+        // One, not two: `first` was swept, and only `second` remains.
+        assert_eq!(limiter.tracked(), 1);
+    }
+
+    #[test]
+    fn a_bucket_inside_the_threshold_survives_the_sweep() {
+        let clock = TestClock::new();
+        let limiter = bucket(2, 1.0, &clock);
+        limiter.spend("first").expect("the burst is unspent");
+
+        // Past the sweep interval, so the scan runs -- and short of the
+        // eviction threshold, so it drops nothing.
+        clock.advance(Duration::from_secs(3));
+        limiter.spend("second").expect("a fresh bucket is full");
+
+        assert_eq!(limiter.tracked(), 2);
+    }
+
+    #[test]
+    fn a_bucket_outlives_its_threshold_by_at_most_one_sweep() {
+        let clock = TestClock::new();
+        let limiter = bucket(2, 1.0, &clock);
+        limiter.spend("first").expect("the burst is unspent");
+
+        // The sweep is due every two seconds, so these two requests land on
+        // either side of one: the second scan runs at three seconds and keeps
+        // `first`, which is still inside the four-second threshold.
+        clock.advance(Duration::from_secs(3));
+        limiter.spend("second").expect("a fresh bucket is full");
+
+        // Four and a half seconds: `first` is past the threshold, but the next
+        // sweep is not due until five, so it is still held. That is the price
+        // of amortising the scan, and it is what bounds the map at three fill
+        // times rather than two.
+        clock.advance(Duration::from_millis(1500));
+        limiter.spend("second").expect("a token has accrued");
+        assert_eq!(limiter.tracked(), 2);
+
+        // The sweep it was waiting for.
+        clock.advance(Duration::from_millis(500));
+        limiter.spend("second").expect("a token has accrued");
+        assert_eq!(limiter.tracked(), 1);
+    }
+}

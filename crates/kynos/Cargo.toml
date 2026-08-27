@@ -140,6 +140,10 @@ required-features = ["openapi31", "macros", "server", "http1", "json"]
 [[example]]
 name = "token_bucket"
 required-features = ["openapi31", "macros", "server", "http1", "json"]
+# An example is `test = false` by default, so the bucket's unit tests would
+# compile under `--all-targets` and never run. They are the evidence for the
+# claim the file makes about its injected clock, so they have to run.
+test = true
 
 [[example]]
 name = "cache"
