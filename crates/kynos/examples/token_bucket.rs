@@ -47,10 +47,14 @@
 //! * **Exclusions are by operation, not by path.** [`Route::operation_id`] is
 //!   the description's own key, so an exemption cannot be widened by a client
 //!   inventing a URL that happens to match a prefix.
-//! * **Memory is bounded by a sweep.** A bucket that has been full for longer
-//!   than it takes to fill is indistinguishable from one that never existed, so
-//!   it is dropped. Without this, per-client keying is an unbounded map fed by
-//!   whoever is talking to you.
+//! * **Memory is bounded by a sweep, and the sweep is amortised.** A bucket
+//!   that has been full for longer than it takes to fill is indistinguishable
+//!   from one that never existed, so it is dropped. Without this, per-client
+//!   keying is an unbounded map fed by whoever is talking to you. The scan is
+//!   linear in the live buckets and runs under the one lock, so it runs at most
+//!   once per fill time rather than once per request: a bucket can outlive its
+//!   threshold by one sweep interval, which holds the map to the clients seen
+//!   in the last three fill times instead of two.
 
 use std::{
     collections::HashMap,
@@ -118,6 +122,14 @@ struct Bucket {
     at: Instant,
 }
 
+/// Every client's buckets, and when they were last swept.
+struct Buckets {
+    /// One bucket per client key.
+    per_key: HashMap<String, Bucket>,
+    /// When `per_key` was last scanned for buckets to drop.
+    swept_at: Instant,
+}
+
 /// A token bucket per client, kept in this process.
 struct TokenBucket<K, C: Clock> {
     /// The most tokens a bucket may hold, which is the burst a client may spend
@@ -125,17 +137,21 @@ struct TokenBucket<K, C: Clock> {
     capacity: f64,
     /// Tokens added per second.
     refill_per_second: f64,
+    /// How long a bucket takes to fill from empty, derived once from the two
+    /// fields above, which never change. It sets both the eviction threshold
+    /// and how often the sweep runs.
+    idle_before_full: Duration,
     /// Operations this limiter does not apply to, by operation id.
     exempt: &'static [&'static str],
     /// How a request is partitioned into a bucket.
     key: K,
-    /// One bucket per client key.
+    /// One bucket per client key, and when they were last swept.
     ///
     /// A `std::sync::Mutex` rather than an async one: every critical section
     /// here is arithmetic on a small map with no `await` inside it, so the lock
     /// is never held across a suspension point and an async mutex would buy
     /// contention handling nobody needs.
-    buckets: Mutex<HashMap<String, Bucket>>,
+    buckets: Mutex<Buckets>,
     /// What the limiter reports about itself, built once.
     advertised: Vec<QuotaPolicy>,
     clock: C,
@@ -144,21 +160,28 @@ struct TokenBucket<K, C: Clock> {
 impl<K, C: Clock> TokenBucket<K, C> {
     /// A bucket of `capacity` tokens refilling at `refill_per_second`.
     fn new(capacity: u32, refill_per_second: f64, key: K, clock: C) -> Self {
+        let idle_before_full = Duration::from_secs_f64(f64::from(capacity) / refill_per_second);
+        // The injected clock, not `Instant::now`: the first sweep is due one
+        // fill time after construction, and a test that moves its own clock has
+        // to be able to reach that instant.
+        let swept_at = clock.now();
         Self {
             capacity: f64::from(capacity),
             refill_per_second,
+            idle_before_full,
             exempt: &[],
             key,
-            buckets: Mutex::new(HashMap::new()),
+            buckets: Mutex::new(Buckets {
+                per_key: HashMap::new(),
+                swept_at,
+            }),
             advertised: vec![QuotaPolicy {
                 name: "burst".into(),
                 quota: u64::from(capacity),
                 // The window a quota of `capacity` is replenished over, which
                 // is what a client reading the policy needs to convert the
                 // ceiling into a rate.
-                window: Some(Duration::from_secs_f64(
-                    f64::from(capacity) / refill_per_second,
-                )),
+                window: Some(idle_before_full),
                 unit: QuotaUnit::Requests,
             }],
             clock,
@@ -199,14 +222,24 @@ impl<K, C: Clock> TokenBucket<K, C> {
         let now = self.clock.now();
         let mut buckets = self.buckets.lock().expect("no holder of this lock panics");
 
-        // Bounded memory. A bucket that has been full for longer than it takes
-        // to fill carries no information a fresh one would not, so it is
-        // dropped rather than kept for a client that may never return.
-        let idle_before_full = Duration::from_secs_f64(self.capacity / self.refill_per_second);
-        buckets
-            .retain(|_, bucket| now.duration_since(bucket.at) < idle_before_full.saturating_mul(2));
+        // Bounded memory, amortised. A bucket that has been full for longer
+        // than it takes to fill carries no information a fresh one would not,
+        // so it is dropped rather than kept for a client that may never return.
+        // The scan is linear in the live buckets and holds the one lock the
+        // whole time, so running it per request would make every request pay
+        // for every client seen recently -- worst under the spike this exists
+        // to survive. Running it once per fill time instead leaves a bucket at
+        // most one interval past its threshold, so the map holds the clients
+        // seen in the last three fill times: still finite, still explainable.
+        if now.duration_since(buckets.swept_at) >= self.idle_before_full {
+            let idle_limit = self.idle_before_full.saturating_mul(2);
+            buckets
+                .per_key
+                .retain(|_, bucket| now.duration_since(bucket.at) < idle_limit);
+            buckets.swept_at = now;
+        }
 
-        let bucket = buckets.entry(key.to_owned()).or_insert(Bucket {
+        let bucket = buckets.per_key.entry(key.to_owned()).or_insert(Bucket {
             tokens: self.capacity,
             at: now,
         });
