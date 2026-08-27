@@ -348,6 +348,37 @@ An enum with no deprecated variant is untouched. The alternative was emitting
 nothing and leaving the description disagreeing with the type it came from,
 which is the failure this codebase treats as worse than a verbose shape: nobody
 can see it.
+## The order components are emitted in
+
+A description is emitted in **insertion order**, and insertion order is fixed by
+the shape of the API rather than by anything that varies between runs. Nothing
+sorts: [`Map<V>`](../crates/kynos-openapi/src/lib.rs) is an `IndexMap`
+throughout the model, so what goes in first comes out first.
+
+For `components/schemas` the order is **depth-first, post-order over the router
+build**: a component is registered after the descent into its own fields
+finishes, so everything a type refers to is emitted before the type that refers
+to it. `Registry::resolve`
+([`schema/registry.rs`](../crates/kynos/src/schema/registry.rs)) is where that
+falls out — it reserves the name, descends, and only then registers. A type that
+refers to itself resolves through the reserved name to a `$ref`, which is what
+terminates the descent rather than looping.
+
+Everything else follows the same rule one level up: `paths` in mount order,
+`tags` in declaration order, an operation's `responses` in the order the handler
+and the interceptors covering it declared them.
+
+**This is a guarantee, not an accident of the current implementation.** Beam's
+acceptance contract gates its migration on byte-deterministic export, and a
+conformance-fixture corpus is only worth committing if regenerating it produces
+the same file. The registry, the router and the validator each keep a `HashMap`;
+each is indexed and none is iterated, and
+[`tests/determinism.rs`](../crates/kynos/tests/determinism.rs) is what holds
+that line — it emits one fixture description in three separate processes and
+compares the bytes. A second *process* rather than a second call is the point:
+each process re-runs the whole build — router, registry, validation — under a
+fresh hash seed, so every collection upstream of the model is rebuilt and
+re-walked. A second call would reuse the same maps and agree with itself.
 
 ## Rules
 
@@ -363,6 +394,8 @@ can see it.
 | 8 | An untagged enum is refused; an untagged struct is left to serde | the same ledger, and `tests/ui/macros/schema_untagged_enum.rs` for the wording |
 | 9 | `deprecated` comes from Rust's `#[deprecated]` and nowhere else | one helper in [`derive/common.rs`](../crates/kynos-macros/src/derive/common.rs), read by the `Schema` derive and the route attribute alike |
 | 10 | A description never carries `deprecated: false` | the emitters write `Some(true)` or nothing |
+| 11 | A description is the same bytes in every process that emits it | [`tests/determinism.rs`](../crates/kynos/tests/determinism.rs), emitting one fixture in three processes |
+| 12 | A component is registered after everything it refers to | the same file, over a known nesting chain |
 
 ## Rationale
 

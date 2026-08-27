@@ -63,7 +63,8 @@ disabled, or passes trivially and hides the regression it was meant to catch.
 | correctness | Every model type emits the field names and nesting the specification gives it | One exact-JSON case per type in `tests/wire.rs`, counted against the type list | `enforced` |
 | correctness | The corpus a downstream generator is built against is the one this build emits | [`tests/conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs), comparing every committed document against a freshly emitted one | `enforced` |
 | correctness | Emitted documents validate against both 3.1 and 3.2 validators | CI step over a fixture app covering the full type matrix | `planned` |
-| correctness | Emitted documents are byte-deterministic across runs and platforms | CI comparing repeated generation and cross-OS builds | `planned` |
+| correctness | Emitted documents are byte-deterministic across runs | [`tests/determinism.rs`](../crates/kynos/tests/determinism.rs), emitting one fixture description in three separate processes and byte-comparing | `enforced` |
+| correctness | Emitted documents are byte-deterministic across platforms | A cross-OS CI job, which does not exist: every job runs on `ubuntu-latest` | `planned` |
 | dx | No public item exposes `Pin`, `BoxFuture` or a tokio type | `cargo-public-api` assertion | `needs-tooling` |
 | operability | `--check` mode exits nonzero on drift from the committed document | A binary target, used as a required gate on the framework's own examples | `blocked-on-impl` |
 | performance | Generation time and output size scale sub-quadratically in operation count | Measured at 10/100/1000 operations with a fitted-slope assertion | `kynos-bench` |
@@ -100,7 +101,22 @@ dependency at all, which is deliberate — but nothing prevents that from
 changing, which is why it is listed rather than assumed.
 
 Ordering is `IndexMap`-backed throughout, so determinism is a design property;
-the requirement above is that it be *verified*, not merely intended.
+the requirement above is that it be *verified*, not merely intended. It is now
+verified in one direction and not the other, which is why the row became two.
+
+**Across runs is enforced, and it takes a second process to enforce it.**
+`properties.rs`'s `serialization_is_deterministic` serializes one already-built
+model `Document` twice, so the registry's `origins`, the router's `index_of` and
+the validator's sets are never on its path — it is that weaker statement.
+`tests/determinism.rs` re-executes the test binary instead, so each emission
+rebuilds and re-walks all three from scratch under a fresh hash seed; a second
+call would reuse the same maps and agree with itself trivially. Each is indexed
+rather than walked, and that test is what keeps them so.
+
+**Across platforms is not enforced, and saying so is the point of the split.**
+Every CI job runs on `ubuntu-latest`. The plausible divergences are a path
+separator reaching a component name and a float formatting differently, neither
+of which anything here would currently catch.
 
 ## Routing
 
