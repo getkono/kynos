@@ -132,16 +132,6 @@ fn strongly_tagged(headers: &http::HeaderMap) -> bool {
 
 /// The deprecated spellings a recipient must treat as `token`.
 ///
-/// RFC 9110 sections 8.4.1.1 and 8.4.1.3: "A recipient SHOULD consider
-/// `x-compress` to be equivalent to `compress`" and the same for `x-gzip`.
-/// Only `gzip` has one among the codings Kynos ships.
-fn aliases(token: &str) -> &'static [&'static str] {
-    match token {
-        "gzip" => &["x-gzip"],
-        _ => &[],
-    }
-}
-
 /// What a request refusing every available representation is answered with.
 ///
 /// RFC 9110 section 12.4.1: when no available representation is acceptable, the
@@ -178,55 +168,6 @@ impl crate::response::Responses for NotAcceptable {
     }
 }
 
-/// The quality `accept` assigns `token`, honouring `*`.
-///
-/// `None` when neither the token nor a wildcard appears, which is what
-/// distinguishes "not mentioned" from "mentioned and refused" -- the difference
-/// between the two is the whole of `q=0`.
-fn quality(accept: &str, token: &str) -> Option<f32> {
-    let mut wildcard = None;
-
-    for entry in accept.split(',') {
-        let mut parts = entry.split(';');
-        let name = parts.next().unwrap_or_default().trim();
-
-        // A malformed weight is a refusal rather than a default: a client that
-        // wrote something unparsable did not ask for this coding.
-        let weight = parts
-            .find_map(|parameter| {
-                let parameter = parameter.trim();
-                parameter
-                    .strip_prefix("q=")
-                    .or_else(|| parameter.strip_prefix("Q="))
-            })
-            .map_or(1.0, |weight| {
-                weight
-                    .trim()
-                    .parse()
-                    // RFC 9110 section 12.4.2 bounds a qvalue at 1. A larger
-                    // one is not a qvalue, and reading it literally lets
-                    // `gzip;q=1.5` outrank a legitimate `q=1.0` -- a preference
-                    // inversion a client cannot have meant. Clamped rather than
-                    // refused: the client did ask for the coding.
-                    .map_or(0.0, |weight: f32| weight.clamp(0.0, 1.0))
-            });
-
-        if name.eq_ignore_ascii_case(token)
-            || aliases(token)
-                .iter()
-                .any(|alias| alias.eq_ignore_ascii_case(name))
-        {
-            return Some(weight);
-        }
-
-        if name == "*" {
-            wildcard = Some(weight);
-        }
-    }
-
-    wildcard
-}
-
 /// What negotiation decided, per RFC 9110 section 12.5.3.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Negotiated {
@@ -254,7 +195,7 @@ fn negotiate(headers: &http::HeaderMap) -> Negotiated {
 
     let mut best: Option<(Coding, f32)> = None;
     for coding in Coding::ALL {
-        let Some(weight) = quality(accept, coding.token()) else {
+        let Some(weight) = crate::http::coding::quality(accept, coding.token()) else {
             continue;
         };
 
@@ -271,7 +212,7 @@ fn negotiate(headers: &http::HeaderMap) -> Negotiated {
     // by the Accept-Encoding header field stating either `identity;q=0` or
     // `*;q=0` without a more specific entry for `identity`". `quality` falls
     // back to the wildcard, so both spellings land here as `Some(0.0)`.
-    let identity = quality(accept, "identity").unwrap_or(1.0);
+    let identity = crate::http::coding::identity_quality(accept);
 
     let Some((coding, weight)) = best else {
         return if identity > 0.0 {

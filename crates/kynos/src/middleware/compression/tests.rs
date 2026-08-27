@@ -1,6 +1,6 @@
 //! Negotiation, and the guard that keeps a strong validator honest.
 
-use super::{Coding, Negotiated, negotiate, quality, strongly_tagged};
+use super::{Coding, Negotiated, negotiate, strongly_tagged};
 use crate::http::{HeaderMap, HeaderValue, header};
 
 /// A request accepting `value`, or accepting nothing at all.
@@ -102,23 +102,16 @@ fn every_negotiation_rule_the_specification_states_is_applied() {
 ///
 /// RFC 9110 section 12.4.2 bounds it at 1. Read literally, `q=1.5` beats a
 /// legitimate `q=1.0` -- a preference inversion no client can have meant.
+///
+/// The clamping itself is asserted where it now lives, in
+/// [`http::coding`](crate::http::coding); what belongs here is the outcome it
+/// produces for *this* interceptor's choice among the codings it can produce.
 #[test]
 fn a_weight_outside_the_range_cannot_outrank_one_inside_it() {
-    assert_eq!(quality("gzip;q=1.5", "gzip"), Some(1.0));
-    assert_eq!(quality("gzip;q=-1", "gzip"), Some(0.0));
-
-    // The inversion itself: with clamping, the server's preference decides.
     assert_eq!(
         negotiate(&accepting(Some("gzip;q=1.5, zstd;q=1.0"))),
         Negotiated::Encode(Coding::Zstd)
     );
-}
-
-/// An unparsable weight is a refusal, which the module already argued for:
-/// a client that wrote something meaningless did not ask for this coding.
-#[test]
-fn an_unparsable_weight_is_a_refusal() {
-    assert_eq!(quality("gzip;q=abc", "gzip"), Some(0.0));
 }
 
 fn tagged(value: Option<&str>) -> HeaderMap {
