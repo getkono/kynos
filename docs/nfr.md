@@ -61,6 +61,7 @@ disabled, or passes trivially and hides the regression it was meant to catch.
 | compatibility | Every release tag is gated on semantic-version correctness | `cargo-semver-checks` | `needs-tooling` |
 | correctness | The IR round-trips through serialization losslessly | `proptest` over generated IR values | `enforced`, with two exclusions below, each characterized |
 | correctness | Every model type emits the field names and nesting the specification gives it | One exact-JSON case per type in `tests/wire.rs`, counted against the type list | `enforced` |
+| correctness | The corpus a downstream generator is built against is the one this build emits | [`tests/conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs), comparing every committed document against a freshly emitted one | `enforced` |
 | correctness | Emitted documents validate against both 3.1 and 3.2 validators | CI step over a fixture app covering the full type matrix | `planned` |
 | correctness | Emitted documents are byte-deterministic across runs and platforms | CI comparing repeated generation and cross-OS builds | `planned` |
 | dx | No public item exposes `Pin`, `BoxFuture` or a tokio type | `cargo-public-api` assertion | `needs-tooling` |

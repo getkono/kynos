@@ -257,6 +257,57 @@ where a negotiated alternative must both serialize and describe itself — and
 even there the conjunction is written at the impl site rather than pushed into
 the trait.
 
+## Unions
+
+A Rust enum is described as `oneOf`. Which shape the branches take follows
+serde's tagging, because the description has to match what serde actually reads
+and writes:
+
+| serde | Emitted |
+| --- | --- |
+| every variant is a unit | `type: string` with an `enum` of the names, unless one is deprecated — see [Deprecation](#deprecation) |
+| externally tagged, the default | `oneOf`; a unit variant is its own name as a `const` string, and anything else a one-property object keyed by the variant name |
+| `#[serde(tag = "...")]` | `oneOf` of objects each carrying the tag as a `const` property beside the variant's own, plus a `discriminator`. A newtype variant has no properties to sit beside, so it becomes an `allOf` of a tag-only object and its payload |
+| `#[serde(tag = "...", content = "...")]` | the same, with the payload under the content property, which a unit variant omits |
+| `#[serde(untagged)]` | **refused** |
+
+`discriminator` is emitted exactly when a tag is present, because that is when
+there is a property every branch carries for a consumer to switch on.
+
+### Why untagged is refused
+
+`oneOf` without a discriminator is not a decoding rule. It says a payload
+matches one of these shapes; it does not say *which*, and serde's answer —
+first branch that deserializes, in declaration order — is not expressible in
+JSON Schema. A generator reading it has to guess, and two generators may guess
+differently while both honouring the description. That is a worse failure than
+refusing, because it is silent.
+
+So the refusal stands, and it is a claim about what is describable rather than
+an unimplemented case.
+
+**This was reopened and re-answered.** The question was whether a downstream
+consumer needed untagged types; the acceptance contract it came from asks for
+*"enums, tagged unions, `oneOf`"* and never names untagged. Everything on that
+list is already emitted, so nothing was blocked. Reading the contract rather
+than the summary of it is what settled the question.
+
+### What to write instead
+
+Add a tag. `#[serde(tag = "kind")]` costs one property on the wire and buys a
+`discriminator`, which is the construct that makes the choice determinable
+rather than guessable.
+
+Where the payload genuinely is arbitrary — a proxy passthrough, a third party's
+webhook envelope — that is what
+[`Unchecked<T>`](../crates/kynos/src/schema/unchecked.rs) is for: it emits the
+permissive schema with an annotation saying the shape is unspecified on
+purpose, which is honest where an ambiguous `oneOf` is not.
+
+`#[serde(untagged)]` on anything that is not an enum is serde's to refuse, and
+it does. The derive stays quiet there rather than adding a second diagnostic
+about enums to a struct.
+
 ## Deprecation
 
 `#[deprecated]` — Rust's own attribute, not a Kynos one — becomes
@@ -308,8 +359,10 @@ can see it.
 | 4 | An umbrella feature without a backend does not compile | `compile_error!` in the crate root |
 | 5 | No unconstrained schema is emitted silently | absence of `Schema`, and `Unchecked` for saying so deliberately |
 | 6 | `Schema` names no serde trait | the trait's own declaration, and `protobuf.rs` compiling without serde |
-| 7 | `deprecated` comes from Rust's `#[deprecated]` and nowhere else | one helper in [`derive/common.rs`](../crates/kynos-macros/src/derive/common.rs), read by the `Schema` derive and the route attribute alike |
-| 8 | A description never carries `deprecated: false` | the emitters write `Some(true)` or nothing |
+| 7 | An enum is described as `oneOf`, and carries a `discriminator` exactly when serde gives it a tag | the derive's ledger in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs), and `schema_tagged_enum.rs` in the pass suite |
+| 8 | An untagged enum is refused; an untagged struct is left to serde | the same ledger, and `tests/ui/macros/schema_untagged_enum.rs` for the wording |
+| 9 | `deprecated` comes from Rust's `#[deprecated]` and nowhere else | one helper in [`derive/common.rs`](../crates/kynos-macros/src/derive/common.rs), read by the `Schema` derive and the route attribute alike |
+| 10 | A description never carries `deprecated: false` | the emitters write `Some(true)` or nothing |
 
 ## Rationale
 

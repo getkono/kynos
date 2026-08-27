@@ -239,6 +239,13 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
 /// Schema. An internally or adjacently tagged enum becomes a `discriminator`,
 /// which is.
 fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
+    // Only an enum can be untagged. serde refuses the attribute anywhere else
+    // in its own words, and a second diagnostic calling a struct an enum is
+    // this derive restating a serde shape rule and misnaming the shape.
+    if !matches!(input.data, syn::Data::Enum(_)) {
+        return Ok(());
+    }
+
     for attr in &input.attrs {
         if !attr.path().is_ident("serde") {
             continue;
