@@ -28,7 +28,7 @@ use syn::{
     parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma,
 };
 
-use crate::derive::common::{doc_string, skip_value};
+use crate::derive::common::{doc_string, is_deprecated, skip_value};
 
 /// Keys taking a number, which may be written as an integer or a float.
 const NUMERIC: &[&str] = &[
@@ -80,6 +80,12 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let body = body(input, &container);
 
     Ok(quote! {
+        // A deprecated type still has to describe itself, and the impl below
+        // names it. Without this, `#[deprecated]` plus `#[derive(Schema)]` is a
+        // warning at the type's own definition -- an error under `-D warnings`,
+        // which this workspace and many others set. serde's derives carry the
+        // same allow for the same reason.
+        #[allow(deprecated)]
         impl #impl_generics ::kynos::schema::Schema for #name #ty_generics #where_clause {
             fn schema(
                 registry: &mut ::kynos::schema::registry::Registry,
@@ -314,7 +320,7 @@ fn string_value(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<Option<Str
 
 /// The `schema` body for whatever shape the type has.
 fn body(input: &DeriveInput, container: &Container) -> TokenStream2 {
-    match &input.data {
+    let described = match &input.data {
         Data::Struct(data) => described(
             struct_body(&data.fields, container),
             container.doc.as_deref(),
@@ -322,6 +328,34 @@ fn body(input: &DeriveInput, container: &Container) -> TokenStream2 {
         Data::Enum(data) => described(enum_body(data, container), container.doc.as_deref()),
         // Refused at the top of `expand_inner`.
         Data::Union(_) => quote!(::kynos::openapi::Schema::default()),
+    };
+
+    deprecate(described, is_deprecated(&input.attrs))
+}
+
+/// Marks the schema deprecated, where the item said so and the schema can say it.
+///
+/// Shaped like [`described`], and for the same reason: a boolean schema has
+/// nowhere to carry a keyword, so it carries none. A `$ref` does -- from 3.1
+/// onward a schema `$ref` applies its siblings -- which is what lets a
+/// deprecated field whose type is a named component be marked at the field
+/// rather than on the component every other field shares.
+///
+/// Never `Some(false)`. The specification defaults the keyword to false, so
+/// writing it out states nothing and puts a word in every schema in the
+/// document; `Operation::set_deprecated` already takes the same line.
+fn deprecate(schema: TokenStream2, deprecated: bool) -> TokenStream2 {
+    if !deprecated {
+        return schema;
+    }
+    quote! {
+        {
+            let mut deprecated = #schema;
+            if let ::kynos::openapi::Schema::Object(keywords) = &mut deprecated {
+                keywords.deprecated = ::core::option::Option::Some(true);
+            }
+            deprecated
+        }
     }
 }
 
@@ -442,6 +476,14 @@ fn object_body(
                     }
                 }
             });
+            let deprecated = is_deprecated(&field.attrs).then(|| {
+                quote! {
+                    let mut schema = schema;
+                    if let ::kynos::openapi::Schema::Object(property) = &mut schema {
+                        property.deprecated = ::core::option::Option::Some(true);
+                    }
+                }
+            });
             let require = is_required(field)
                 .then(|| quote!(required.push(::std::string::String::from(#wire));));
 
@@ -450,6 +492,7 @@ fn object_body(
                     let schema = registry.resolve::<#ty>();
                     #constrained
                     #described
+                    #deprecated
                     keywords.properties.insert(::std::string::String::from(#wire), schema);
                 }
                 #require
@@ -505,7 +548,17 @@ fn enum_body(data: &DataEnum, container: &Container) -> TokenStream2 {
         .filter(|variant| !is_skipped(&variant.attrs))
         .collect();
 
+    // An `enum` array of names is the compact shape, and it has nowhere to put
+    // a keyword about one member: JSON Schema deprecates a *schema*, and every
+    // name in that array shares one. So a deprecated unit variant drops the
+    // compact shape for the `oneOf` of `const` branches, which says the same
+    // thing about the wire and gives each name a schema of its own to mark.
+    // The alternative was emitting nothing, which is a description silently
+    // disagreeing with the type it came from.
+    let any_deprecated = variants.iter().any(|variant| is_deprecated(&variant.attrs));
+
     if container.tag.is_none()
+        && !any_deprecated
         && variants
             .iter()
             .all(|variant| matches!(variant.fields, Fields::Unit))
@@ -558,7 +611,13 @@ fn enum_body(data: &DataEnum, container: &Container) -> TokenStream2 {
 /// One `oneOf` branch: the variant, shaped by how the enum is tagged.
 fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
     let name = variant_name(variant, container);
-    let described = |schema: TokenStream2| described(schema, doc_string(&variant.attrs).as_deref());
+    let deprecated = is_deprecated(&variant.attrs);
+    let described = |schema: TokenStream2| {
+        deprecate(
+            described(schema, doc_string(&variant.attrs).as_deref()),
+            deprecated,
+        )
+    };
 
     match (&container.tag, &container.content) {
         // Adjacently tagged: the tag and the payload are two properties of one
