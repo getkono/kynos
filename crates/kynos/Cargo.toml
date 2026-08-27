@@ -145,6 +145,12 @@ required-features = ["openapi31", "macros", "server", "http1", "json"]
 # claim the file makes about its injected clock, so they have to run.
 test = true
 
+# Ranged delivery over a source that is not a filesystem, which is the case
+# `assets` cannot cover: it serves files.
+[[example]]
+name = "ranged"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
 [[example]]
 name = "cache"
 required-features = ["openapi31", "macros", "server", "http1", "json", "cache"]

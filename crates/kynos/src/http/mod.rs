@@ -17,6 +17,7 @@
 pub mod body;
 pub mod coding;
 pub mod cookie;
+pub mod date;
 pub mod etag;
 pub mod forwarded;
 

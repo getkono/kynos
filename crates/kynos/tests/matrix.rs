@@ -352,13 +352,13 @@ async fn visit() -> NoContent {
 /// keep.
 #[cfg(feature = "cache")]
 #[kynos::get("/revalidated")]
-async fn revalidated() -> WithHeaders<Json<User>, kynos::middleware::conditional::ETag> {
+async fn revalidated() -> WithHeaders<Json<User>, kynos::http::etag::ETag> {
     WithHeaders::new(
         Json(User {
             id: 9,
             name: "stable".to_owned(),
         }),
-        kynos::middleware::conditional::ETag::strong("v1"),
+        kynos::http::etag::ETag::strong("v1"),
     )
 }
 
