@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 
-use super::{ByteSource, InMemory, SPAN, Spans};
+use super::{ByteSource, InMemory, SPAN, Spans, Truncated};
 use bytes::Bytes;
 
 /// A source that records what it was asked for.
@@ -43,8 +43,14 @@ impl ByteSource for Counting {
     }
 }
 
-/// Drains a body into the octets it yielded.
-async fn drain<S: super::ByteSource>(mut body: super::Spans<S>) -> Vec<u8> {
+/// Polls `body` to a stop, into the octets it yielded and whatever ended it.
+///
+/// Takes the body by reference so a test can ask what it reports *after* it has
+/// stopped, which is where both the exhaustion and the truncation cases are
+/// decided.
+async fn collect<S: ByteSource>(
+    body: &mut Spans<S>,
+) -> (Vec<u8>, Option<crate::http::body::BoxError>) {
     use std::{
         future::poll_fn,
         pin::Pin,
@@ -54,20 +60,35 @@ async fn drain<S: super::ByteSource>(mut body: super::Spans<S>) -> Vec<u8> {
     use http_body::Body;
 
     let mut collected = Vec::new();
+    let mut failure = None;
     poll_fn(|context| {
         loop {
-            match ready!(Pin::new(&mut body).poll_frame(context)) {
+            match ready!(Pin::new(&mut *body).poll_frame(context)) {
                 Some(Ok(frame)) => {
                     if let Ok(span) = frame.into_data() {
                         collected.extend_from_slice(&span);
                     }
                 }
-                Some(Err(error)) => panic!("this source cannot fail: {error}"),
+                Some(Err(error)) => {
+                    failure = Some(error);
+                    return Poll::Ready(());
+                }
                 None => return Poll::Ready(()),
             }
         }
     })
     .await;
+    (collected, failure)
+}
+
+/// Drains a body that cannot fail into the octets it yielded.
+async fn drain<S: ByteSource>(mut body: Spans<S>) -> Vec<u8> {
+    let (collected, failure) = collect(&mut body).await;
+    assert!(
+        failure.is_none(),
+        "this source cannot fail: {}",
+        failure.map(|error| error.to_string()).unwrap_or_default()
+    );
     collected
 }
 
@@ -117,9 +138,15 @@ async fn one_octet_is_one_span() {
     assert_eq!(drain(Spans::new(source, 0, 0)).await.len(), 1);
 }
 
-/// A source that stops early ends the body rather than spinning on it.
+/// A source that stops early fails the body rather than ending it short.
+///
+/// The head is already on the wire by the time a span is read, carrying a
+/// `Content-Length` -- and a `Content-Range` for a 206 -- sized from the
+/// complete length. Ending the body here would answer 200 or 206 with fewer
+/// octets than those fields name, which is the truncation section 14.4 tells a
+/// recipient never to recombine. It has to be a stream failure instead.
 #[tokio::test]
-async fn a_source_that_returns_nothing_ends_the_body() {
+async fn a_source_that_returns_nothing_fails_the_body() {
     struct Empty;
 
     impl ByteSource for Empty {
@@ -134,7 +161,99 @@ async fn a_source_that_returns_nothing_ends_the_body() {
         }
     }
 
-    assert!(drain(Spans::new(Arc::new(Empty), 0, 999)).await.is_empty());
+    let mut body = Spans::new(Arc::new(Empty), 0, 999);
+    let (octets, failure) = collect(&mut body).await;
+
+    assert!(octets.is_empty());
+    let failure = failure.expect("a source that reads nothing cannot fill the length it named");
+    let truncated = failure
+        .downcast_ref::<Truncated>()
+        .expect("the failure names the span the source would not fill");
+    assert_eq!((truncated.first(), truncated.last()), (0, 999));
+    assert!(
+        failure.to_string().contains("0..=999"),
+        "the message says which offsets went unanswered: {failure}"
+    );
+
+    // Terminating rather than spinning was the whole reason the old code ended
+    // the body, so the replacement owes the same property: a driver that polls
+    // on past the failure is ended, not read from again.
+    let (after, failure) = collect(&mut body).await;
+    assert!(after.is_empty());
+    assert!(
+        failure.is_none(),
+        "the failure is reported once, not forever"
+    );
+}
+
+/// A source that answers with less than it was asked for is asked again.
+///
+/// The other half of the same decision. A short read makes progress, so the
+/// remainder is read on the next poll and the span is filled in full -- there
+/// is nothing wrong on the wire to fail over, and failing would rule out every
+/// source that answers with whatever one underlying read returned.
+#[tokio::test]
+async fn a_short_read_is_finished_on_the_next_poll() {
+    /// Answers a kibibyte at a time however wide the ask.
+    struct Trickling {
+        reads: AtomicUsize,
+    }
+
+    impl ByteSource for Trickling {
+        type Error = std::convert::Infallible;
+
+        async fn complete_length(&self) -> Result<u64, Self::Error> {
+            Ok(4_096)
+        }
+
+        async fn read_span(&self, first: u64, last: u64) -> Result<Bytes, Self::Error> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            let width = usize::try_from(last - first + 1).unwrap().min(1_024);
+            Ok(Bytes::from(vec![b'y'; width]))
+        }
+    }
+
+    let source = Arc::new(Trickling {
+        reads: AtomicUsize::new(0),
+    });
+
+    let mut body = Spans::new(Arc::clone(&source), 0, 4_095);
+    let (octets, failure) = collect(&mut body).await;
+
+    assert!(failure.is_none(), "a short read is not a failure");
+    assert_eq!(
+        octets.len(),
+        4_096,
+        "every octet the head named is delivered"
+    );
+    assert_eq!(
+        source.reads.load(Ordering::Relaxed),
+        4,
+        "one read per kibibyte the source was willing to answer with"
+    );
+}
+
+/// An exhausted body owes nothing.
+///
+/// The span is inclusive, so the count remaining is one more than the
+/// difference -- which is one, not zero, once the cursor has passed the last
+/// offset. A `Content-Length` an octet too long is one a client waits out.
+#[tokio::test]
+async fn an_exhausted_body_reports_no_remaining_octets() {
+    use http_body::Body;
+
+    let mut body = Spans::new(Counting::new(4), 0, 3);
+    assert_eq!(body.size_hint().exact(), Some(4));
+
+    let (octets, failure) = collect(&mut body).await;
+
+    assert!(failure.is_none());
+    assert_eq!(octets.len(), 4);
+    assert_eq!(
+        body.size_hint().exact(),
+        Some(0),
+        "a drained body still naming an octet is one nothing will ever send"
+    );
 }
 
 /// The in-memory source answers what it holds, and clamps rather than panicking.

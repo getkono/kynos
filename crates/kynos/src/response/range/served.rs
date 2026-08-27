@@ -144,7 +144,11 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
     /// Returns the source's own error if the length cannot be read. A failed
     /// *span* read surfaces on the body stream instead, because by then the
     /// status and the fields have been sent and there is nothing left to turn
-    /// into a different response.
+    /// into a different response. So does a source that stops short of the
+    /// length it reported: the `Content-Length` here is sized from
+    /// `complete_length`, so a representation truncated after it was measured
+    /// fails the body with [`Truncated`](super::source::Truncated) rather than
+    /// ending it under a 200 or a 206 that names more octets than arrived.
     pub async fn deliver(self, conditions: &Conditions) -> Result<Delivery<M>, S::Error> {
         let complete_length = self.source.complete_length().await?;
 

@@ -14,6 +14,12 @@
 //! that read everything and sliced would be honest about the octets and wrong
 //! about the work.
 //!
+//! A source that answers with *fewer* octets than were asked for is simply
+//! asked again for the remainder, so the body still delivers the whole span.
+//! One that answers with *none* has said it cannot make progress at all, and
+//! [`Truncated`] fails the body rather than ending it short of the length
+//! already on the wire.
+//!
 //! # Not sealed
 //!
 //! `Rangeable` is sealed because its members are claims about what a byte range
@@ -99,16 +105,71 @@ pub trait ByteSource: Send + Sync + 'static {
     /// The octets from `first` to `last`, inclusive.
     ///
     /// Both offsets are within the length this source last reported, so an
-    /// implementation does not have to bounds-check them against it. Returning
-    /// fewer octets than were asked for is a failure rather than a short read:
-    /// the `Content-Range` naming a span the body does not fill produces a field
-    /// section 14.4 tells a recipient never to recombine.
+    /// implementation does not have to bounds-check them against it.
+    ///
+    /// Returning fewer octets than were asked for is a short read and costs
+    /// nothing but another call: the remainder is asked for on the next poll,
+    /// and the body still fills the span its `Content-Range` names. Returning
+    /// *none* is a failure -- it is the one answer that makes no progress, so
+    /// the body cannot go on and cannot end without being shorter than a field
+    /// section 14.4 tells a recipient never to recombine. It surfaces as
+    /// [`Truncated`] on the body stream.
     fn read_span(
         &self,
         first: u64,
         last: u64,
     ) -> impl Future<Output = Result<Bytes, Self::Error>> + Send;
 }
+
+/// A source stopped short of the length it reported.
+///
+/// Raised when [`ByteSource::read_span`] answers a non-empty span with no
+/// octets, which is the one short read that cannot be retried: a source with
+/// fewer octets to give would give them, so one that gives none is telling the
+/// body it can make no progress. A file or an object truncated between
+/// [`complete_length`](ByteSource::complete_length) and the read is an ordinary
+/// race for a filesystem or an object store, not a broken implementation.
+///
+/// It arrives on the body stream rather than as a status, because by then
+/// [`Served::deliver`](super::served::Served::deliver) has already sent a
+/// `Content-Length` -- and a `Content-Range` for a 206 -- sized from the
+/// complete length. Cutting the body off mid-stream is what tells a recipient
+/// the octets it holds are not the part it was promised; ending the body
+/// quietly would hand it a truncated representation under a 200 or a 206.
+///
+/// A caller reads it back out of [`Body::Error`](http_body::Body::Error) by
+/// downcasting the boxed error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Truncated {
+    first: u64,
+    last: u64,
+}
+
+impl Truncated {
+    /// The first offset the source was asked for.
+    #[must_use]
+    pub const fn first(&self) -> u64 {
+        self.first
+    }
+
+    /// The last offset the source was asked for, inclusive.
+    #[must_use]
+    pub const fn last(&self) -> u64 {
+        self.last
+    }
+}
+
+impl std::fmt::Display for Truncated {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "byte source returned no octets for {}..={}, so the representation is shorter than the complete length it reported",
+            self.first, self.last
+        )
+    }
+}
+
+impl std::error::Error for Truncated {}
 
 /// A representation held in memory.
 ///
@@ -209,6 +270,21 @@ impl<S: ByteSource> Spans<S> {
             reading: None,
         }
     }
+
+    /// The span the next read covers, which is also the one an empty answer
+    /// failed to fill -- neither offset moves while a read is in flight, so the
+    /// two callers see the same pair.
+    fn span(&self) -> (u64, u64) {
+        (
+            self.cursor,
+            self.last.min(self.cursor.saturating_add(SPAN - 1)),
+        )
+    }
+
+    /// Whether every octet asked for has been read.
+    fn exhausted(&self) -> bool {
+        self.cursor > self.last
+    }
 }
 
 impl<S: ByteSource> http_body::Body for Spans<S> {
@@ -227,13 +303,23 @@ impl<S: ByteSource> http_body::Body for Spans<S> {
                 this.reading = None;
 
                 return match read {
+                    Ok(span) if span.is_empty() => {
+                        // Nothing came back for a span that is still owed, so
+                        // the source has said it can make no progress. The head
+                        // is long gone and named a length this body can no
+                        // longer reach, so it fails rather than ending short --
+                        // and the cursor is moved past the end so a driver that
+                        // polls on regardless is answered once and then ended,
+                        // never spun.
+                        let (first, last) = this.span();
+                        this.cursor = this.last.saturating_add(1);
+                        let truncated = Truncated { first, last };
+                        Poll::Ready(Some(Err(Box::new(truncated) as Self::Error)))
+                    }
                     Ok(span) => {
-                        // A source that returned nothing cannot make progress,
-                        // and looping on it would spin forever rather than
-                        // ending the body.
-                        if span.is_empty() {
-                            return Poll::Ready(None);
-                        }
+                        // A short answer is not a failure: the cursor advances
+                        // by what arrived and the remainder is asked for on the
+                        // next poll, so the span is still filled in full.
                         this.cursor = this
                             .cursor
                             .saturating_add(u64::try_from(span.len()).unwrap_or(u64::MAX));
@@ -243,23 +329,32 @@ impl<S: ByteSource> http_body::Body for Spans<S> {
                 };
             }
 
-            if this.cursor > this.last {
+            if this.exhausted() {
                 return Poll::Ready(None);
             }
 
-            let first = this.cursor;
-            let last = this.last.min(first.saturating_add(SPAN - 1));
+            let (first, last) = this.span();
             let source = std::sync::Arc::clone(&this.source);
             this.reading = Some(Box::pin(async move { source.read_span(first, last).await }));
         }
     }
 
-    /// The exact length, which a caller already fixed from `complete_length`.
+    /// The exact length still to come, which a caller already fixed from
+    /// `complete_length`.
     ///
     /// Stated so the response carries a `Content-Length` rather than a chunked
     /// encoding: section 14.4 asks a 206 to name the part it encloses, and a
     /// client sizing a download reads the field rather than counting octets.
+    ///
+    /// Zero once the cursor has passed the last offset. The span is inclusive,
+    /// so the remaining count is one more than the difference -- but an
+    /// exhausted body has no remainder to add one to, and reporting one octet
+    /// that will never arrive is how a caller ends up waiting for it.
     fn size_hint(&self) -> http_body::SizeHint {
+        if self.exhausted() {
+            return http_body::SizeHint::with_exact(0);
+        }
+
         http_body::SizeHint::with_exact(self.last.saturating_sub(self.cursor).saturating_add(1))
     }
 }
