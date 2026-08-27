@@ -21,15 +21,39 @@ fn rendered(cookie: &Cookie) -> Option<String> {
 /// transcribed list is a third place the set is written down, and it drifts.
 /// Every attribute builder takes `mut self` and returns `Self`, which is what
 /// separates them from `new`, `removal`, `name` and `encode`.
+///
+/// The scan reads the shape rather than a line. Comment lines go first, so a
+/// `pub fn` inside a doc example is not mistaken for a declaration, and what
+/// remains is collapsed onto one line, so a signature rustfmt has wrapped over
+/// four lines reads the same as one that fits on one. `const` is tolerated
+/// between `pub` and `fn`, and both halves of the shape are required: a
+/// `mut self` receiver *and* a `-> Self` return, so a future method that
+/// consumes a cookie without building one is not reported as an unexercised
+/// attribute.
 #[test]
 fn every_attribute_builder_is_covered_by_the_sweep() {
     let source = include_str!("../cookie.rs");
-
-    let declared: std::collections::BTreeSet<&str> = source
+    let code = source
         .lines()
-        .filter_map(|line| line.trim().strip_prefix("pub fn "))
-        .filter(|rest| rest.contains("(mut self"))
-        .filter_map(|rest| rest.split('(').next())
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .flat_map(str::split_whitespace)
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let declared: std::collections::BTreeSet<&str> = code
+        .split("pub ")
+        .skip(1)
+        .map(|item| item.strip_prefix("const ").unwrap_or(item))
+        .filter_map(|item| item.strip_prefix("fn ")?.split_once('('))
+        .filter_map(|(name, rest)| {
+            // Up to the body, or to the `;` of a signature that has none.
+            let signature = rest.split(['{', ';']).next()?.trim();
+            // The receiver, and nothing that merely starts like it: collapsing
+            // a wrapped signature leaves `mut self ,` rather than `mut self,`.
+            let after_receiver = signature.strip_prefix("mut self")?.trim_start();
+            let takes_mut_self = after_receiver.starts_with(',') || after_receiver.starts_with(')');
+            (takes_mut_self && signature.contains("-> Self")).then_some(name.trim())
+        })
         .collect();
 
     let swept = std::collections::BTreeSet::from([
@@ -44,7 +68,7 @@ fn every_attribute_builder_is_covered_by_the_sweep() {
 
     assert_eq!(
         declared, swept,
-        "an attribute builder is not exercised by `every_attribute_reaches_the_field_in_order`;          add it to that cookie and to this set, or the field it renders is asserted nowhere"
+        "an attribute builder is not exercised by `every_attribute_reaches_the_field_in_order`; add it to that cookie and to this set, or the field it renders is asserted nowhere"
     );
 }
 
