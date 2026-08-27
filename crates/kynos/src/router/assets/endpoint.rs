@@ -34,6 +34,28 @@ struct AssetHeaders {
     negotiable: bool,
 }
 
+impl AssetHeaders {
+    /// The same group, as a 304 is allowed to carry it.
+    ///
+    /// RFC 9110 section 15.4.5 lists what a 304 *must* repeat from the 200 --
+    /// `Content-Location`, `Date`, `ETag`, `Vary`, `Cache-Control` and
+    /// `Expires` -- and then bounds the rest: "a sender SHOULD NOT generate
+    /// representation metadata other than the above listed fields unless said
+    /// metadata exists for the purpose of guiding cache updates".
+    ///
+    /// `Content-Encoding` is representation metadata and is not on that list.
+    /// Nor does it guide a cache update: RFC 9111 section 4.3.4 identifies the
+    /// stored response to update by its validator, and the `ETag` that goes
+    /// with the 304 already names the coding, since each stored form carries
+    /// its own. So the field is dropped rather than repeated -- which is also
+    /// why `declare_response_headers` declares `Content-Encoding` for 200 and
+    /// 206 only.
+    fn not_modified(mut self) -> Self {
+        self.coding = None;
+        self
+    }
+}
+
 impl HeaderParams for AssetHeaders {
     const NAMES: &'static [&'static str] = &["etag", "cache-control", "content-encoding", "vary"];
 
@@ -230,6 +252,10 @@ impl AssetEndpoint {
             // never sends either, and declaring them would put a field in the
             // description no response can carry -- the exact gap
             // `assert_declared_responses_covered` exists to catch.
+            //
+            // Which is also why the two part company at 304: section 15.4.5
+            // requires `Vary` there and bounds the representation metadata that
+            // may join it, so `Content-Encoding` is neither sent nor declared.
             if (name == "Content-Encoding" || name == "Vary") && self.asset.encodings().is_empty() {
                 continue;
             }
@@ -379,7 +405,10 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
                 *response.status_mut() = StatusCode::NOT_MODIFIED;
                 crate::extract::params::header::write(
                     response.headers_mut(),
-                    &self.headers(&chosen),
+                    // Without the `Content-Encoding`: section 15.4.5 bounds a
+                    // 304 to the fields it lists, and the `ETag` below already
+                    // names which stored form the client's copy is.
+                    &self.headers(&chosen).not_modified(),
                 );
                 return response;
             }

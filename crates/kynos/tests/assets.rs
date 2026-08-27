@@ -483,6 +483,13 @@ fn each_operation_declares_every_status_a_file_can_answer_with() {
         .as_item()
         .expect("an inline 304");
     assert!(not_modified.headers.contains_key("ETag"));
+    // Section 15.4.5 requires both of these on a 304 that a 200 would have
+    // carried, and bounds what else may join them: `Content-Encoding` is
+    // representation metadata the list does not name, so it is neither sent
+    // nor declared here. `a_conditional_request_is_answered_per_representation`
+    // is the other half -- the wire agreeing with this.
+    assert!(not_modified.headers.contains_key("Vary"));
+    assert!(!not_modified.headers.contains_key("Content-Encoding"));
     // Section 14.3 advertises a range of a representation, and a 304 carries
     // none -- so the field is not declared where it is not sent.
     assert!(!not_modified.headers.contains_key("Accept-Ranges"));
@@ -999,6 +1006,23 @@ async fn a_conditional_request_is_answered_per_representation() {
         .call()
         .await;
     assert_eq!(matched.status, StatusCode::NOT_MODIFIED);
+    // Which representation is current is said by the validator, per section
+    // 15.4.5's list, and `Vary` is on that list too.
+    assert_eq!(matched.field("etag").as_deref(), Some(encoded_tag.as_str()));
+    assert_eq!(
+        matched.field("vary").as_deref(),
+        Some("accept-encoding"),
+        "section 15.4.5 requires the `Vary` the 200 would have carried"
+    );
+    // And nothing beyond it: "a sender SHOULD NOT generate representation
+    // metadata other than the above listed fields", which `Content-Encoding`
+    // is and is not among. The 304 is also where the description says so --
+    // `Content-Encoding` is declared for 200 and 206 only.
+    assert_eq!(
+        matched.field("content-encoding"),
+        None,
+        "a 304 carrying representation metadata section 15.4.5 does not list"
+    );
 
     // Different representation: it is not.
     let crossed = get(&service, "/static/css/app.css")
