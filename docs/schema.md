@@ -265,7 +265,7 @@ and writes:
 
 | serde | Emitted |
 | --- | --- |
-| every variant is a unit | `type: string` with an `enum` of the names |
+| every variant is a unit | `type: string` with an `enum` of the names, unless one is deprecated — see [Deprecation](#deprecation) |
 | externally tagged, the default | `oneOf`; a unit variant is its own name as a `const` string, and anything else a one-property object keyed by the variant name |
 | `#[serde(tag = "...")]` | `oneOf` of objects each carrying the tag as a `const` property beside the variant's own, plus a `discriminator`. A newtype variant has no properties to sit beside, so it becomes an `allOf` of a tag-only object and its payload |
 | `#[serde(tag = "...", content = "...")]` | the same, with the payload under the content property, which a unit variant omits |
@@ -308,6 +308,47 @@ purpose, which is honest where an ambiguous `oneOf` is not.
 it does. The derive stays quiet there rather than adding a second diagnostic
 about enums to a struct.
 
+## Deprecation
+
+`#[deprecated]` — Rust's own attribute, not a Kynos one — becomes
+`deprecated: true` wherever a description can carry it: on the type, on a field,
+on an enum variant, and on a handler, where it marks the operation.
+
+There is deliberately no `#[schema(deprecated)]` key. A second spelling would
+let the two disagree, and the disagreement has a bad direction: a field marked
+in the description but not in the compiler is a deprecation the people most able
+to act on it are never warned about. Reading the language's attribute keeps one
+fact in one place.
+
+The `note` is not read. `#[deprecated(note = "...")]` addresses a Rust caller at
+the call site, and `deprecated` in a description is a boolean; forwarding the
+note would repeat advice about a Rust API to a consumer that has none.
+
+`deprecated: false` is never emitted. The keyword defaults to false, so writing
+it out states nothing and puts a word in every schema in the document.
+
+### The one shape that has to change
+
+An enum whose variants are all units is normally `type: string` with an `enum`
+array of the names. That array is *one schema shared by every name*, so it has
+nowhere to record that one of them is retired.
+
+Deprecating a unit variant therefore drops the compact shape for the `oneOf` of
+`const` branches, which describes exactly the same wire values and gives each
+name a schema of its own to mark:
+
+```json
+{ "oneOf": [
+    { "type": "string", "const": "Web" },
+    { "type": "string", "const": "Fax", "deprecated": true }
+] }
+```
+
+An enum with no deprecated variant is untouched. The alternative was emitting
+nothing and leaving the description disagreeing with the type it came from,
+which is the failure this codebase treats as worse than a verbose shape: nobody
+can see it.
+
 ## Rules
 
 | # | Rule | Enforced by |
@@ -320,6 +361,8 @@ about enums to a struct.
 | 6 | `Schema` names no serde trait | the trait's own declaration, and `protobuf.rs` compiling without serde |
 | 7 | An enum is described as `oneOf`, and carries a `discriminator` exactly when serde gives it a tag | the derive's ledger in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs), and `schema_tagged_enum.rs` in the pass suite |
 | 8 | An untagged enum is refused; an untagged struct is left to serde | the same ledger, and `tests/ui/macros/schema_untagged_enum.rs` for the wording |
+| 9 | `deprecated` comes from Rust's `#[deprecated]` and nowhere else | one helper in [`derive/common.rs`](../crates/kynos-macros/src/derive/common.rs), read by the `Schema` derive and the route attribute alike |
+| 10 | A description never carries `deprecated: false` | the emitters write `Some(true)` or nothing |
 
 ## Rationale
 
