@@ -552,3 +552,106 @@ async fn an_unconfigured_service_ignores_the_client_address_a_request_claims() {
         "a client chose its own bucket by writing a header nobody was trusted to send"
     );
 }
+
+// --- A policy Kynos does not ship ----------------------------------------
+//
+// Everything above drives `Quotas`, the policy Kynos does ship. `RateLimitPolicy`
+// is the seam an application implements instead when it wants a different
+// algorithm -- a token bucket, a leaky bucket, a quota bought per month --
+// and nothing asserted that the seam carries a decision to the wire.
+//
+// That is what `examples/token_bucket.rs` is written against, and it is the
+// half Kynos owns: an application supplies the answer, Kynos supplies the 429,
+// the `Retry-After` and the fields.
+
+/// A policy that answers from a script rather than from a clock.
+///
+/// Deliberately trivial. The point under test is the seam, not an algorithm --
+/// a real one lives in `examples/token_bucket.rs`, where it can be read as a
+/// whole.
+struct Scripted {
+    /// What each successive request is answered with.
+    answers: Mutex<std::vec::IntoIter<kynos::middleware::rate_limit::decision::Decision>>,
+    advertised: Vec<kynos::middleware::rate_limit::decision::QuotaPolicy>,
+}
+
+impl<C: Sync + 'static> kynos::middleware::rate_limit::decision::RateLimitPolicy<C> for Scripted {
+    fn advertised(&self) -> &[kynos::middleware::rate_limit::decision::QuotaPolicy] {
+        &self.advertised
+    }
+
+    async fn check(
+        &self,
+        _request: &kynos::http::Request,
+        _route: kynos::router::operation::Route<'_>,
+        _context: &C,
+    ) -> kynos::middleware::rate_limit::decision::Decision {
+        self.answers
+            .lock()
+            .expect("no holder of this lock panics")
+            .next()
+            .expect("the script covers every request the test makes")
+    }
+}
+
+/// An application's own policy reaches the wire as a 429 with a `Retry-After`.
+///
+/// The seam `examples/token_bucket.rs` is built on. Without this, a policy that
+/// decided correctly and was then dropped on the floor would look identical to
+/// one that allowed everything.
+#[tokio::test]
+async fn a_policy_kynos_does_not_ship_reaches_the_wire() {
+    use kynos::middleware::rate_limit::decision::{Decision, QuotaPolicy, QuotaUnit, ServiceLimit};
+
+    let limit = |remaining| ServiceLimit {
+        name: "burst".into(),
+        quota: 10,
+        remaining,
+        reset: Duration::from_secs(2),
+    };
+
+    let service = Router::<()>::new()
+        .mount(kynos::routes![counted, other])
+        .intercept(
+            RateLimit::new(Scripted {
+                answers: Mutex::new(
+                    vec![
+                        Decision::allow(limit(9)),
+                        Decision::deny(Duration::from_secs(7), limit(0)),
+                    ]
+                    .into_iter(),
+                ),
+                advertised: vec![QuotaPolicy {
+                    name: "burst".into(),
+                    quota: 10,
+                    window: Some(Duration::from_secs(2)),
+                    unit: QuotaUnit::Requests,
+                }],
+            })
+            .standard_fields(),
+        )
+        .build(())
+        .expect("a describable router");
+
+    let allowed = get(&service, "/counted").call().await;
+    assert_eq!(allowed.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        allowed.field("ratelimit").as_deref(),
+        Some("\"burst\";r=9;t=2")
+    );
+
+    let refused = get(&service, "/counted").call().await;
+    assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+
+    // The two time fields come from two places, and the script gives them
+    // different values so that a wiring which read one from the other would
+    // fail here. `Retry-After` is the `Denial`'s own wait -- when this client
+    // may try again -- while `t=` is the `ServiceLimit`'s `reset`, which is
+    // when the quota replenishes. A policy is free to make them agree; Kynos
+    // does not make them agree on its behalf.
+    assert_eq!(refused.field("retry-after").as_deref(), Some("7"));
+    assert_eq!(
+        refused.field("ratelimit").as_deref(),
+        Some("\"burst\";r=0;t=2")
+    );
+}
