@@ -16,10 +16,11 @@ use std::{
 
 use kynos::{
     Router,
+    http::etag::ETag,
     http::{Method, StatusCode, header},
     middleware::{
         cache::{Cache, CacheStore, PrimaryKey, StoredResponse},
-        conditional::{Conditional, ETag},
+        conditional::Conditional,
     },
     prelude::*,
     response::{headers::WithHeaders, status::NoContent},

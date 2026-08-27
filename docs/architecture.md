@@ -302,11 +302,26 @@ with the `unsafe` this workspace forbids, for a 64-bit token. FNV-1a with the
 length folded in is computed in `kynos-macros` at expansion time and never runs
 in a served request.
 
-**No HTTP-date crate.** Kynos sends no `Last-Modified` and reads no
-`If-Modified-Since`, so there is no date to render or parse. That is itself a
-decision: a strong entity tag is the stronger validator, and sending a date
-obliges honouring a request that carries one back. Sending neither half is
-consistent; sending one is not.
+**No HTTP-date crate**, and still none — but the premise under it changed.
+This row used to read "Kynos sends no `Last-Modified` and reads no
+`If-Modified-Since`, so there is no date to render or parse". Ranged delivery
+sends one and reads one, so there is.
+
+What the row refuses is a *dependency*, and the reason it gives applies
+unchanged: a crate here would be a database only sampling can verify. An
+HTTP-date is not that. RFC 9110 section 5.6.7 is a fixed-width grammar over a
+closed set of day and month names — three formats, all enumerable — which is
+exactly the shape this section says the project prefers to write down and test.
+[`http/date.rs`](../crates/kynos/src/http/date.rs) is that table, and its round
+trip is swept across a leap boundary rather than sampled.
+
+The row's other clause was conditional and is honoured: "sending a date obliges
+honouring a request that carries one back. Sending neither half is consistent;
+sending one is not." Both halves landed together.
+
+The ranking is unchanged. Section 8.8.2 gives `Last-Modified` one-second
+resolution, so section 13.1.3 ranks `If-None-Match` above it and a strong entity
+tag stays what Kynos reaches for first.
 
 `moka` and `jsonwebtoken` are a fourth kind. Both are named by one example and
 by nothing under `src/`, which is the standing `rcgen`, `listenfd` and

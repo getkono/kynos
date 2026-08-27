@@ -16,7 +16,7 @@ use bytes::Bytes;
 use http_body::{Body as HttpBody, Frame, SizeHint};
 use http_body_util::{BodyExt, Empty, Full, combinators::UnsyncBoxBody};
 
-type BoxError = Box<dyn StdError + Send + Sync>;
+pub(crate) type BoxError = Box<dyn StdError + Send + Sync>;
 
 /// The request body.
 ///
@@ -71,9 +71,13 @@ impl Body {
     /// A body that is another body, already erased.
     ///
     /// The one constructor an adapter needs: a body that wraps another -- a
-    /// compressing one, a counting one -- is still a body, and this is how it
-    /// becomes the erased kind without going through bytes or a stream.
-    #[cfg(feature = "compression")]
+    /// compressing one, a counting one, a ranged one reading spans -- is still
+    /// a body, and this is how it becomes the erased kind without going through
+    /// bytes or a stream.
+    ///
+    /// Ungated: `response::range` is behind no feature and produces one, so a
+    /// `compression` gate here would make ranged delivery depend on an
+    /// unrelated flag.
     pub(crate) fn from_body<B>(body: B) -> Self
     where
         B: HttpBody<Data = Bytes, Error = BoxError> + Send + 'static,

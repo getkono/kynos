@@ -231,8 +231,9 @@ mod partial {
         Router,
         error::rejection::RangeRejection,
         extract::{body::binary::Binary, media::OctetStream},
+        http::etag::ETag,
         http::{StatusCode, header},
-        middleware::{compression::Compression, conditional::ETag},
+        middleware::compression::Compression,
         response::{
             headers::WithHeaders,
             range::{Range, Ranged},

@@ -36,6 +36,94 @@
 //! functions, and the alternative to exporting them is every application
 //! writing the comma scan again.
 
+use kynos_openapi::model::schema::types::SchemaType;
+
+use crate::{
+    extract::params::header::HeaderParams,
+    http::{HeaderValue, header},
+    schema::registry::Registry,
+};
+
+// `ETag` lives here rather than in `middleware::conditional` for the reason the
+// comparison functions do, stated above: `response::range` is behind no feature
+// and needs to mint one, and `conditional` is behind `cache`. A type the
+// ungated caller cannot reach is not the single implementation.
+
+/// An entity tag a handler attaches to its own response.
+///
+/// A [`HeaderParams`] group, so attaching one is *declaring* one and the
+/// conflict check sees it. Return it through
+/// [`WithHeaders`](crate::response::headers::WithHeaders).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ETag {
+    /// The tag, without quotes or a weakness marker.
+    pub value: String,
+    /// Whether the tag is weak.
+    pub weak: bool,
+}
+
+impl ETag {
+    /// A strong tag: the representation is byte-for-byte this one.
+    #[must_use]
+    pub fn strong(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            weak: false,
+        }
+    }
+
+    /// A weak tag: the representation is equivalent, not identical.
+    #[must_use]
+    pub fn weak(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            weak: true,
+        }
+    }
+
+    /// The field value.
+    #[must_use]
+    pub fn encode(&self) -> Option<HeaderValue> {
+        // RFC 9110 section 8.8.3: `etagc` is printable ASCII without `"`.
+        if !self
+            .value
+            .bytes()
+            .all(|byte| (0x21..=0x7e).contains(&byte) && byte != b'"')
+        {
+            return None;
+        }
+
+        let marker = if self.weak { "W/" } else { "" };
+        HeaderValue::from_str(&format!("{marker}\"{}\"", self.value)).ok()
+    }
+}
+
+impl HeaderParams for ETag {
+    const NAMES: &'static [&'static str] = &["etag"];
+
+    fn encode(&self) -> Vec<(http::HeaderName, HeaderValue)> {
+        Self::encode(self)
+            .map(|value| vec![(header::ETAG, value)])
+            .unwrap_or_default()
+    }
+
+    fn response_headers(
+        registry: &mut Registry,
+    ) -> kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>> {
+        let _ = registry;
+
+        let mut headers = kynos_openapi::Map::new();
+        headers.insert(
+            "ETag".to_owned(),
+            kynos_openapi::RefOr::Item(
+                kynos_openapi::Header::new(kynos_openapi::Schema::of_type(SchemaType::String))
+                    .with_description("The entity tag of this representation"),
+            ),
+        );
+        headers
+    }
+}
+
 /// `*`, which matches any current representation the server has.
 pub const ANY: &str = "*";
 

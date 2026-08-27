@@ -1,4 +1,6 @@
-use super::{ETag, IfNoneMatch, NotModified, Preconditions, matched};
+use crate::http::etag::ETag;
+
+use super::{IfNoneMatch, NotModified, Preconditions, matched};
 use crate::{
     extract::params::header::HeaderParams,
     http::{HeaderMap, HeaderValue, header},
