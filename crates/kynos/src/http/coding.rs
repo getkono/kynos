@@ -7,6 +7,8 @@
 //! has *stored*. The question differs; RFC 9110 section 12.5.3's answer does
 //! not, and a second copy of the qvalue rules is a second place they can drift.
 
+/// The deprecated spellings a recipient must treat as `token`.
+///
 /// RFC 9110 sections 8.4.1.1 and 8.4.1.3: "A recipient SHOULD consider
 /// `x-compress` to be equivalent to `compress`" and the same for `x-gzip`.
 /// Only `gzip` has one among the codings Kynos names.

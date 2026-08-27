@@ -130,8 +130,6 @@ fn strongly_tagged(headers: &http::HeaderMap) -> bool {
         .is_some_and(|tag| !crate::http::etag::is_weak(tag.trim()))
 }
 
-/// The deprecated spellings a recipient must treat as `token`.
-///
 /// What a request refusing every available representation is answered with.
 ///
 /// RFC 9110 section 12.4.1: when no available representation is acceptable, the
