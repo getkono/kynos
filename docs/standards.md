@@ -68,7 +68,7 @@ in [`middleware.md`](middleware.md).
 | --- | --- |
 | `Compression` never encodes beneath a strong validator | RFC 9110 §8.8.1: a validator shared by a coded and an uncoded representation *is* weak, and the encoder cannot restate one from where it sits |
 | A streamed encode sends no `Content-Length` | RFC 9110 §8.6 forbids forwarding one known to be incorrect, and the encoded length is not known until after the head has gone |
-| `Compression` never encodes a ranged or range-advertising response | RFC 9110 §14.1.2 computes ranges over encoded octets and §8.8.1 forbids one strong validator naming two representations |
+| `Compression` never encodes a ranged or range-advertising response | RFC 9110 §14.1.2 computes ranges over encoded octets and §8.8.1 forbids one strong validator naming two representations. An asset set answers `Accept-Encoding` itself instead, minting a validator per stored coding, which is the same sections satisfied rather than traded against |
 | `Compression` ships no `deflate` or `compress` | RFC 9110 §8.4.1.2 records that `deflate` is widely mis-implemented; `compress` is obsolete |
 | `Cache` has no heuristic freshness | RFC 9111 §4.2.2 permits one; every heuristic is a guess that turns a correct origin into an incorrect cache |
 | `Cache` never stores a response setting a cookie | `Vary` cannot protect against it — the cookie is in the response, and nothing in the request selects it |

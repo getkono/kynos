@@ -60,6 +60,68 @@ pub struct Asset {
     path: &'static str,
     bytes: &'static [u8],
     etag: &'static str,
+    encodings: &'static [Encoded],
+}
+
+/// One stored content coding of an asset, with a validator of its own.
+///
+/// A *stored* coding: a build pipeline writes `app.js.br` beside `app.js`, and
+/// [`assets!`](crate::assets) folds the two into one resource. Kynos compresses
+/// nothing here, which is what makes the tag trustworthy — these octets exist
+/// on disk at compile time and are hashed like any other file.
+///
+/// # Why each coding carries its own tag
+///
+/// RFC 9110 section 8.8.1: a strong entity tag names one representation, and
+/// "different representations of the same resource" must not share one. Section
+/// 14.1.2 then calculates a byte range against "the encoded sequence of bytes"
+/// when a content coding is applied. One tag over both forms makes section
+/// 13.1.5's `If-Range` succeed on a resume it exists to refuse, and the client
+/// splices encoded octets onto an identity prefix — nothing errors and the file
+/// is wrong.
+///
+/// A tag per stored coding is what makes both properties hold at once, which
+/// [`Compression`](crate::middleware::compression) cannot do: it is handed a
+/// response whose tag and range were already decided.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Encoded {
+    coding: &'static str,
+    bytes: &'static [u8],
+    etag: &'static str,
+}
+
+impl Encoded {
+    /// A coding of a file, stored beside it.
+    ///
+    /// What [`assets!`](crate::assets) emits. `coding` is the token
+    /// `Content-Encoding` carries; `etag` is quoted and minted from `bytes`
+    /// rather than from the file it encodes.
+    #[must_use]
+    pub const fn stored(coding: &'static str, bytes: &'static [u8], etag: &'static str) -> Self {
+        Self {
+            coding,
+            bytes,
+            etag,
+        }
+    }
+
+    /// The coding token, as `Content-Encoding` spells it.
+    #[must_use]
+    pub const fn coding(&self) -> &'static str {
+        self.coding
+    }
+
+    /// The stored octets.
+    #[must_use]
+    pub const fn bytes(&self) -> &'static [u8] {
+        self.bytes
+    }
+
+    /// The entity tag for *these* octets, quoted.
+    #[must_use]
+    pub const fn etag(&self) -> &'static str {
+        self.etag
+    }
 }
 
 impl Asset {
@@ -70,7 +132,39 @@ impl Asset {
     /// field.
     #[must_use]
     pub const fn embedded(path: &'static str, bytes: &'static [u8], etag: &'static str) -> Self {
-        Self { path, bytes, etag }
+        Self {
+            path,
+            bytes,
+            etag,
+            encodings: &[],
+        }
+    }
+
+    /// A file compiled into the binary, with stored codings of it.
+    ///
+    /// What [`assets!`](crate::assets) emits where the directory held
+    /// `app.js.br` or `app.js.gz` beside `app.js`. `encodings` is in the order
+    /// the server prefers, which decides a tie between codings the client
+    /// weighted equally.
+    #[must_use]
+    pub const fn embedded_with_codings(
+        path: &'static str,
+        bytes: &'static [u8],
+        etag: &'static str,
+        encodings: &'static [Encoded],
+    ) -> Self {
+        Self {
+            path,
+            bytes,
+            etag,
+            encodings,
+        }
+    }
+
+    /// Every stored coding of this file, in the server's preference order.
+    #[must_use]
+    pub const fn encodings(&self) -> &'static [Encoded] {
+        self.encodings
     }
 
     /// The path, relative to wherever the set is mounted.

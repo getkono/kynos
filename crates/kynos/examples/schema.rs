@@ -21,6 +21,12 @@
 //!   so `MapKey` produces the key's *constraints* rather than its schema —
 //!   string-ness is then true by construction rather than a promise nothing
 //!   checks.
+//! * **`#[deprecated]` is read from the language, not restated.** It marks a
+//!   type, a field, a variant or a handler, and the `note` stays in Rust
+//!   because a description's `deprecated` is a boolean. Deprecating a *unit*
+//!   variant is the one case that changes shape: an `enum` array of names is
+//!   one schema shared by every name, so it becomes a `oneOf` of `const`
+//!   branches that each have somewhere to carry the keyword.
 //! * **Weakness is allowed; silent weakness is not.** `Unchecked<T>` is the one
 //!   way to put an unconstrained value in a body. It annotates the schema and
 //!   makes `validate` warn, and `deny_unchecked_schemas` turns that warning
@@ -83,6 +89,16 @@ struct Product {
     /// `#[schema(required = false)]`, because `required` follows from the type.
     #[schema(max_length = 2_000)]
     summary: Option<String>,
+
+    /// Rust's own `#[deprecated]` becomes `deprecated: true` on this property.
+    ///
+    /// There is no `#[schema(deprecated)]`. One attribute means the compiler's
+    /// warning and the description's keyword cannot disagree -- and the
+    /// disagreement that matters is a field marked for consumers but not for
+    /// the people writing the Rust that fills it.
+    #[deprecated(note = "use `tags`; the note stays in Rust and never reaches the description")]
+    #[schema(max_length = 120)]
+    keywords: Option<String>,
 }
 
 /// How a product was priced.
@@ -99,6 +115,9 @@ enum Pricing {
     Fixed { cents: u64 },
     /// A price that depends on how many are bought.
     Tiered { tiers: Vec<Tier> },
+    /// Retired. A deprecated variant marks its own `oneOf` branch and no other.
+    #[deprecated(note = "priced per contract instead")]
+    Negotiated,
 }
 
 /// One step of a tiered price.
@@ -151,6 +170,11 @@ async fn get_catalogue() -> Json<Catalogue> {
         price_cents: 12_950,
         tags: vec!["input".to_owned(), "keyboard".to_owned()],
         summary: Some("Eighty-seven keys and no regrets.".to_owned()),
+        // Deprecated, and the compiler says so at the one place it is filled in
+        // -- which is the whole argument for reading the language's attribute
+        // rather than inventing a second one only the description reads.
+        #[allow(deprecated)]
+        keywords: None,
     };
 
     Json(Catalogue {

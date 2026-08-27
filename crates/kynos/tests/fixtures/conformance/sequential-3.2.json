@@ -1,0 +1,228 @@
+{
+  "openapi": "3.2.0",
+  "info": {
+    "title": "API",
+    "version": "0.0.0"
+  },
+  "paths": {
+    "/readings/export": {
+      "get": {
+        "summary": "Streams readings as JSON Lines, described item by item.",
+        "description": "The `itemSchema` case: 3.1 can only call this an opaque string, which is the\nwhole reason a generator needs 3.2.",
+        "operationId": "export",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/x-ndjson": {
+                "itemSchema": {
+                  "$ref": "#/components/schemas/Reading"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reports/live": {
+      "get": {
+        "summary": "Streams reports as Server-Sent Events.",
+        "description": "The envelope case: the response is `text/event-stream` with an `itemSchema`\ndescribing the *event*, and the JSON in its `data` field reached through\n`contentMediaType` and `contentSchema`.",
+        "operationId": "live",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/event-stream": {
+                "itemSchema": {
+                  "properties": {
+                    "data": {
+                      "type": "string",
+                      "contentMediaType": "application/json",
+                      "contentSchema": {
+                        "$ref": "#/components/schemas/Report"
+                      }
+                    },
+                    "event": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "retry": {
+                      "type": "integer",
+                      "minimum": 0.0
+                    }
+                  },
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readings": {
+      "post": {
+        "summary": "An ordinary JSON body, so the corpus is not only streams.",
+        "operationId": "record",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Reading"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "the resource was created",
+            "headers": {
+              "Location": {
+                "description": "Where the created resource lives",
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Reading"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Reading": {
+        "properties": {
+          "at_millis": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was taken, in milliseconds since the epoch."
+          },
+          "value": {
+            "type": "number",
+            "format": "double",
+            "description": "What was read."
+          }
+        },
+        "type": "object",
+        "required": [
+          "at_millis",
+          "value"
+        ],
+        "description": "One reading, which is what every stream here carries."
+      },
+      "Report": {
+        "oneOf": [
+          {
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "sample"
+              },
+              "reading": {
+                "$ref": "#/components/schemas/Reading"
+              }
+            },
+            "type": "object",
+            "required": [
+              "kind",
+              "reading"
+            ],
+            "description": "A measurement."
+          },
+          {
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "heartbeat"
+              }
+            },
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "description": "A device saying nothing is wrong."
+          }
+        ],
+        "description": "How a device reported in.\n\nA tagged union, which is the shape a generator can decode by reading one\nproperty. `#[serde(untagged)]` is refused, so no fixture can carry one.",
+        "discriminator": {
+          "propertyName": "kind"
+        }
+      },
+      "Problem": {
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "maximum": 65535.0,
+            "minimum": 0.0,
+            "format": "uint16"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "instance": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "type",
+          "status"
+        ],
+        "title": "Problem Details",
+        "description": "An RFC 9457 problem detail."
+      }
+    }
+  }
+}

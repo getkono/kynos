@@ -15,6 +15,7 @@
 //! the two fields whose grammar needs reading rather than looking up.
 
 pub mod body;
+pub mod coding;
 pub mod cookie;
 pub mod date;
 pub mod etag;

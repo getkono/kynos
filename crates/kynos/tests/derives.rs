@@ -288,3 +288,145 @@ fn every_derive_has_a_witness() {
         WITNESSED.len()
     );
 }
+
+// --- `#[deprecated]` reaching the description -------------------------------
+//
+// The derive reads Rust's own attribute rather than a `#[schema(deprecated)]`
+// key of its own, so the compiler's warning and the description's keyword
+// cannot disagree. These pin the emitted shape; `docs/schema.md` states the
+// rule.
+
+/// A shape retired in favour of something else.
+///
+/// Deliberately carries no `#[allow(deprecated)]` of its own: deriving `Schema`
+/// on a deprecated type must not warn at the type's own definition, and this is
+/// where that is checked. It fails to compile under `-D warnings` if the
+/// derive stops emitting the allow inside its impl.
+#[deprecated(note = "the note addresses a Rust caller and never reaches the description")]
+#[derive(Schema, serde::Serialize)]
+struct RetiredShape {
+    id: u64,
+}
+
+/// Carries one field nobody should send any more.
+#[derive(Schema, serde::Serialize)]
+struct PartlyRetired {
+    id: u64,
+    #[deprecated]
+    legacy_name: String,
+}
+
+/// An internally tagged enum with one retired branch.
+#[derive(Schema, serde::Serialize)]
+#[serde(tag = "kind")]
+enum Settlement {
+    Card {
+        last4: String,
+    },
+    #[deprecated]
+    Cheque,
+}
+
+/// Every variant is a unit, and one of them is retired.
+#[derive(Schema, serde::Serialize)]
+enum Channel {
+    Web,
+    #[deprecated]
+    Fax,
+}
+
+/// Every variant is a unit and none is retired: the compact shape stands.
+#[derive(Schema, serde::Serialize)]
+enum Currency {
+    Gbp,
+    Jpy,
+}
+
+/// The schema `T` emits, as JSON.
+fn emitted<T: SchemaTrait>() -> serde_json::Value {
+    let mut registry = kynos::schema::registry::Registry::new();
+    serde_json::to_value(T::schema(&mut registry)).expect("a schema serializes")
+}
+
+/// A deprecated type says so, and says nothing about the note.
+#[test]
+#[allow(deprecated)]
+fn a_deprecated_type_is_marked() {
+    let schema = emitted::<RetiredShape>();
+
+    assert_eq!(schema["deprecated"], serde_json::json!(true));
+    assert!(
+        !schema.to_string().contains("addresses a Rust caller"),
+        "the note reached the description: {schema}"
+    );
+}
+
+/// A deprecated field is marked on the property, not on the type it borrows.
+#[test]
+fn a_deprecated_field_is_marked() {
+    let schema = emitted::<PartlyRetired>();
+
+    assert_eq!(
+        schema["properties"]["legacy_name"]["deprecated"],
+        serde_json::json!(true)
+    );
+    assert_eq!(
+        schema["properties"]["id"].get("deprecated"),
+        None,
+        "a field nobody deprecated carries the keyword"
+    );
+    assert_eq!(
+        schema.get("deprecated"),
+        None,
+        "one deprecated field deprecated the whole type"
+    );
+}
+
+/// A deprecated variant is marked on its own branch and no other.
+#[test]
+fn a_deprecated_variant_is_marked() {
+    let schema = emitted::<Settlement>();
+    let branches = schema["oneOf"]
+        .as_array()
+        .expect("a tagged enum is a oneOf");
+
+    let marked: Vec<bool> = branches
+        .iter()
+        .map(|branch| branch.get("deprecated") == Some(&serde_json::json!(true)))
+        .collect();
+
+    assert_eq!(marked, vec![false, true], "{schema}");
+}
+
+/// Deprecating one name of an all-unit enum drops the compact shape for one
+/// that has somewhere to put the keyword.
+///
+/// `enum: ["Web", "Fax"]` is one schema shared by every name, so it cannot say
+/// that one of them is retired. The `oneOf` of `const` branches describes the
+/// same wire values and gives each its own schema. Emitting nothing was the
+/// alternative, and it would leave the description disagreeing with the type in
+/// the one direction nobody can see.
+#[test]
+fn deprecating_one_name_gives_every_name_its_own_schema() {
+    let schema = emitted::<Channel>();
+    let branches = schema["oneOf"].as_array().expect("{schema}");
+
+    assert_eq!(branches.len(), 2);
+    assert_eq!(branches[0]["const"], serde_json::json!("Web"));
+    assert_eq!(branches[0].get("deprecated"), None);
+    assert_eq!(branches[1]["const"], serde_json::json!("Fax"));
+    assert_eq!(branches[1]["deprecated"], serde_json::json!(true));
+}
+
+/// The control: without a deprecation the compact shape is unchanged.
+#[test]
+fn an_all_unit_enum_keeps_the_compact_shape() {
+    assert_eq!(
+        emitted::<Currency>(),
+        serde_json::json!({
+            "type": "string",
+            "enum": ["Gbp", "Jpy"],
+            "description": "Every variant is a unit and none is retired: the compact shape stands."
+        })
+    );
+}

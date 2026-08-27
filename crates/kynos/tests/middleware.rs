@@ -512,8 +512,14 @@ mod ranged_assets {
         exclude = [".map"],
     }
 
-    /// The stylesheet, whole.
-    const STYLESHEET: &str = "body { margin: 0 }\n";
+    /// A file the set stores in one form only, so `Compression` is the only
+    /// thing that could encode it.
+    ///
+    /// `css/app.css` used to be this fixture and no longer can be: it now ships
+    /// with stored `.br` and `.gz` siblings, so a `gzip` request gets an encoded
+    /// representation from the *set* and the assertion below would be testing
+    /// the wrong mechanism. The composition of the two is asserted separately.
+    const DOCS: &str = "<!doctype html>\n<title>Docs</title>\n";
 
     fn service() -> Service<()> {
         Router::<()>::new()
@@ -531,20 +537,69 @@ mod ranged_assets {
     async fn a_resumed_asset_download_is_spliced_from_the_representation_its_tag_named() {
         let service = service();
 
-        let whole = get(&service, "/static/css/app.css")
+        let whole = get(&service, "/static/docs/index.html")
             .header("accept-encoding", "gzip")
             .call()
             .await;
 
         assert_eq!(whole.status, StatusCode::OK);
         assert_eq!(whole.field(header::CONTENT_ENCODING.as_str()), None);
-        assert_eq!(whole.text(), STYLESHEET);
+        assert_eq!(whole.text(), DOCS);
 
         let etag = whole
             .field(header::ETAG.as_str())
             .expect("an entity tag over the octets that were sent");
 
         // What a client that lost the connection after six bytes sends next.
+        let resumed = get(&service, "/static/docs/index.html")
+            .header("accept-encoding", "gzip")
+            .header("if-range", &etag)
+            .header("range", "bytes=6-")
+            .call()
+            .await;
+
+        assert_eq!(resumed.status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            resumed.field(header::CONTENT_RANGE.as_str()).as_deref(),
+            Some("bytes 6-35/36")
+        );
+        assert_eq!(resumed.field(header::CONTENT_ENCODING.as_str()), None);
+
+        // The splice the client performs, which must reproduce the file.
+        let mut spliced = whole.text()[..6].to_owned();
+        spliced.push_str(&resumed.text());
+        assert_eq!(spliced, DOCS);
+    }
+
+    /// A stored coding is served, ranged and resumed with `Compression` mounted.
+    ///
+    /// The composition the two halves have to have. `Compression` still refuses
+    /// -- the response advertises `Accept-Ranges` and carries a strong tag --
+    /// and the encoded octets come from the *set*, which minted a validator for
+    /// them. That is the case the interceptor cannot reach and the asset server
+    /// can: the coding and the tag are decided in the same place.
+    #[tokio::test]
+    async fn a_stored_coding_still_ranges_beneath_the_encoder() {
+        let service = service();
+        let stored = &include_bytes!("assets/css/app.css.gz")[..];
+
+        let whole = get(&service, "/static/css/app.css")
+            .header("accept-encoding", "gzip")
+            .call()
+            .await;
+
+        assert_eq!(whole.status, StatusCode::OK);
+        // From the set, not from the interceptor.
+        assert_eq!(
+            whole.field(header::CONTENT_ENCODING.as_str()).as_deref(),
+            Some("gzip")
+        );
+        assert_eq!(&whole.body[..], stored);
+
+        let etag = whole
+            .field(header::ETAG.as_str())
+            .expect("a tag over the octets that were sent");
+
         let resumed = get(&service, "/static/css/app.css")
             .header("accept-encoding", "gzip")
             .header("if-range", &etag)
@@ -555,14 +610,12 @@ mod ranged_assets {
         assert_eq!(resumed.status, StatusCode::PARTIAL_CONTENT);
         assert_eq!(
             resumed.field(header::CONTENT_RANGE.as_str()).as_deref(),
-            Some("bytes 6-18/19")
+            Some(format!("bytes 6-{}/{}", stored.len() - 1, stored.len()).as_str())
         );
-        assert_eq!(resumed.field(header::CONTENT_ENCODING.as_str()), None);
 
-        // The splice the client performs, which must reproduce the file.
-        let mut spliced = whole.text()[..6].to_owned();
-        spliced.push_str(&resumed.text());
-        assert_eq!(spliced, STYLESHEET);
+        let mut spliced = whole.body[..6].to_vec();
+        spliced.extend_from_slice(&resumed.body);
+        assert_eq!(spliced, stored);
     }
 }
 

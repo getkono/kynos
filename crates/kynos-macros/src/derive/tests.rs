@@ -148,6 +148,35 @@ mod schema {
     fn every_schema_diagnostic_has_a_case() {
         every_diagnostic_has_a_case("schema.rs", include_str!("schema.rs"), ledger().len());
     }
+
+    /// `#[serde(untagged)]` on a struct is serde's diagnostic to raise, not ours.
+    ///
+    /// The refusal exists because an untagged *enum* has no describable
+    /// decoding rule. A struct has no variants to choose between, so the
+    /// sentence does not apply to one -- and serde already refuses the
+    /// attribute there, in its own words. Raising a second diagnostic that
+    /// calls a struct an enum is this derive restating a serde shape rule and
+    /// getting the noun wrong, which is exactly what `Container` reads serde's
+    /// attributes rather than re-deriving them in order to avoid.
+    #[test]
+    fn untagged_on_a_struct_is_left_to_serde() {
+        let input: syn::DeriveInput = syn::parse2(quote::quote!(
+            #[serde(untagged)]
+            struct Receipt {
+                total: u32,
+            }
+        ))
+        .expect("the case itself must parse");
+
+        let Err(error) = expand_inner(&input) else {
+            return;
+        };
+
+        assert!(
+            !error.to_string().contains("untagged enum"),
+            "a struct was refused with a sentence about enums: {error}"
+        );
+    }
 }
 
 mod api_error {

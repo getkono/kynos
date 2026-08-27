@@ -61,6 +61,7 @@ disabled, or passes trivially and hides the regression it was meant to catch.
 | compatibility | Every release tag is gated on semantic-version correctness | `cargo-semver-checks` | `needs-tooling` |
 | correctness | The IR round-trips through serialization losslessly | `proptest` over generated IR values | `enforced`, with two exclusions below, each characterized |
 | correctness | Every model type emits the field names and nesting the specification gives it | One exact-JSON case per type in `tests/wire.rs`, counted against the type list | `enforced` |
+| correctness | The corpus a downstream generator is built against is the one this build emits | [`tests/conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs), comparing every committed document against a freshly emitted one | `enforced` |
 | correctness | Emitted documents validate against both 3.1 and 3.2 validators | CI step over a fixture app covering the full type matrix | `planned` |
 | correctness | Emitted documents are byte-deterministic across runs and platforms | CI comparing repeated generation and cross-OS builds | `planned` |
 | dx | No public item exposes `Pin`, `BoxFuture` or a tokio type | `cargo-public-api` assertion | `needs-tooling` |
@@ -173,6 +174,7 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | A re-encoded response states the length it actually sends | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs) over a handler that set its own length, comparing the stated value against the bytes received | `enforced` |
 | correctness | A response carrying a strong validator is never content-coded | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs)'s `partial` module, with the weakly tagged control differing in exactly the `W/` prefix | `enforced` |
 | correctness | An encoded stream decodes to exactly what the handler produced | [`compression/streaming.rs`](../crates/kynos/src/middleware/compression/streaming.rs) round-tripping a multi-frame body through both latency modes, and asserting the two modes differ in frame count and in size | `enforced` |
+| correctness | A stored content coding carries a validator of its own, and a range is calculated over the octets that were sent | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) over a fixture holding real `.br`, `.gz` and `.zst` siblings: two representations get two tags, a resume across them is refused, and a 304 answers per representation | `enforced` |
 | correctness | A ranged representation is never held whole: a source is asked for a span and returns that span | [`response/range/source/tests.rs`](../crates/kynos/src/response/range/source/tests.rs), over a fake that records the widest span anything asked for | `enforced` |
 | correctness | A ranged delivery answers 200, 206, 304 and 416 where RFC 9110 sections 13 and 14 say each belongs, and evaluates the conditions before the range | [`tests/ranged.rs`](../crates/kynos/tests/ranged.rs) over a source that is not a filesystem | `enforced` |
 | correctness | A ranged body never ends shorter than the `Content-Length` its head already sent: a source that stops making progress fails the stream instead | [`response/range/source/tests.rs`](../crates/kynos/src/response/range/source/tests.rs), over a source that answers a span with nothing, and one that answers it short and is asked again | `enforced` |
@@ -189,9 +191,12 @@ by which the first row would fail. That is also why
 it measures the size an attacker sets freely. `Decompression` declares 413 for
 that reason, which makes mounting the two together a compile error.
 
-**The `Accept-Ranges` row is a known limit as much as a guarantee.** It says a static
-asset under `Compression` ships uncompressed, which is a bandwidth cost on
-exactly the files worth encoding. It is recorded here rather than left to the
+**The `Accept-Ranges` row is a known limit as much as a guarantee, and the limit
+is now smaller than it was.** It says a static asset under `Compression` ships
+uncompressed, which is a bandwidth cost on exactly the files worth encoding —
+but a set whose build pipeline writes `app.js.br` beside `app.js` serves the
+encoded form itself, under a validator minted for those octets. What is left is
+a set with no stored coding, and a handler minting its own strong tag. It is recorded here rather than left to the
 interceptor's documentation because it is a deliberate trade against RFC 9110
 §8.8.1 — one strong validator cannot name both the identity file and an encoded
 one, and the encoder is downstream of where both the range and the tag are
