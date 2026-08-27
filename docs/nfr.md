@@ -173,6 +173,7 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | A re-encoded response states the length it actually sends | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs) over a handler that set its own length, comparing the stated value against the bytes received | `enforced` |
 | correctness | A response carrying a strong validator is never content-coded | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs)'s `partial` module, with the weakly tagged control differing in exactly the `W/` prefix | `enforced` |
 | correctness | An encoded stream decodes to exactly what the handler produced | [`compression/streaming.rs`](../crates/kynos/src/middleware/compression/streaming.rs) round-tripping a multi-frame body through both latency modes, and asserting the two modes differ in frame count and in size | `enforced` |
+| correctness | A stored content coding carries a validator of its own, and a range is calculated over the octets that were sent | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) over a fixture holding real `.br`, `.gz` and `.zst` siblings: two representations get two tags, a resume across them is refused, and a 304 answers per representation | `enforced` |
 | correctness | A response that advertises `Accept-Ranges` is never content-coded | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs)'s `partial` for the rule and its control, and `ranged_assets` resuming an asset download against the tag it was served with | `enforced` |
 | security | A compressed request body cannot cost more memory than the route's declared limit | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs)'s `decompression`, refusing a body that passes a limit on its encoded size and expands past the decoded one, with a control inside both bounds | `enforced` |
 | correctness | Metadata describing a coded form does not outlive the decode | The same module, asserting `Content-Encoding`, `Content-Length` and `Content-Digest` as the handler receives them, with a control that carried no coding | `enforced` |
@@ -186,9 +187,12 @@ by which the first row would fail. That is also why
 it measures the size an attacker sets freely. `Decompression` declares 413 for
 that reason, which makes mounting the two together a compile error.
 
-**The `Accept-Ranges` row is a known limit as much as a guarantee.** It says a static
-asset under `Compression` ships uncompressed, which is a bandwidth cost on
-exactly the files worth encoding. It is recorded here rather than left to the
+**The `Accept-Ranges` row is a known limit as much as a guarantee, and the limit
+is now smaller than it was.** It says a static asset under `Compression` ships
+uncompressed, which is a bandwidth cost on exactly the files worth encoding —
+but a set whose build pipeline writes `app.js.br` beside `app.js` serves the
+encoded form itself, under a validator minted for those octets. What is left is
+a set with no stored coding, and a handler minting its own strong tag. It is recorded here rather than left to the
 interceptor's documentation because it is a deliberate trade against RFC 9110
 §8.8.1 — one strong validator cannot name both the identity file and an encoded
 one, and the encoder is downstream of where both the range and the tag are
