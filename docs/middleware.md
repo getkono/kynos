@@ -555,6 +555,39 @@ field name, so `SetCookies` declares one `Set-Cookie` entry and says the rest in
 its description. That is the honest half of what can be said, and understating a
 description beats claiming a shape the format has no way to express.
 
+## The attributes a cookie carries
+
+Seven, and the set is closed: `Path`, `Domain`, `Max-Age`, `Secure`,
+`HttpOnly`, `SameSite` and `Partitioned`. `Cookie::removal` is the eighth thing
+a caller reaches for and is not an attribute — it is a cookie with an empty
+value and `Max-Age=0`, carrying whatever scope the original was set with,
+because a user agent matches a removal on `Path` and `Domain` and ignores one
+that does not.
+
+Three of them are supplied rather than merely accepted, because the alternative
+is a cookie the service believes it set and the client silently discarded:
+`SameSite=None` implies `Secure`, `__Secure-` implies `Secure`, and `__Host-`
+implies both `Secure` and `Path=/`.
+
+**`Expires` is deliberately absent.** RFC 6265bis §4.1.2.1 gives `Max-Age`
+precedence wherever both appear, so a cookie carrying both is one attribute
+stating the lifetime and one being ignored. `Max-Age` is also a duration, which
+is what a server actually knows; `Expires` is an absolute HTTP-date, so
+emitting one means trusting the client's clock against the server's and
+serializing a date format that `architecture.md`'s dependency table has no row
+for — an HTTP-date crate is one of the three dependencies it names as refused.
+`Max-Age=0` is the removal, so nothing needs a date in the past either.
+
+That is the whole of what an acceptance contract asking for "Path, HttpOnly,
+Secure, SameSite, Max-Age, and expiry attributes" needs: the expiry is
+`Max-Age`, stated as a duration.
+
+The set being closed is asserted rather than intended.
+[`response/cookie/tests.rs`](../crates/kynos/src/response/cookie/tests.rs)
+reads the builders off the source and counts them against the sweep that
+renders them, so an eighth attribute that no test exercises fails the build
+instead of shipping unasserted.
+
 ## What the cookie interceptor is not
 
 `SetCookies` writes cookies. It does not sign them, encrypt them, or keep a
