@@ -9,6 +9,45 @@ fn rendered(cookie: &Cookie) -> Option<String> {
         .map(|value| value.to_str().expect("a printable field").to_owned())
 }
 
+/// The attribute set is closed, and the sweep below covers all of it.
+///
+/// `every_attribute_reaches_the_field_in_order` asserts the whole rendered
+/// string, which is the right shape for order -- but it names its attributes,
+/// and a name is not a count. An eighth builder would render an eighth
+/// attribute and turn nothing red, because the sweep would simply not call it.
+///
+/// The declared side is read off the source rather than transcribed, the way
+/// `tests/interceptors.rs` walks `src/middleware/` rather than listing it: a
+/// transcribed list is a third place the set is written down, and it drifts.
+/// Every attribute builder takes `mut self` and returns `Self`, which is what
+/// separates them from `new`, `removal`, `name` and `encode`.
+#[test]
+fn every_attribute_builder_is_covered_by_the_sweep() {
+    let source = include_str!("../cookie.rs");
+
+    let declared: std::collections::BTreeSet<&str> = source
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("pub fn "))
+        .filter(|rest| rest.contains("(mut self"))
+        .filter_map(|rest| rest.split('(').next())
+        .collect();
+
+    let swept = std::collections::BTreeSet::from([
+        "domain",
+        "http_only",
+        "max_age",
+        "partitioned",
+        "path",
+        "same_site",
+        "secure",
+    ]);
+
+    assert_eq!(
+        declared, swept,
+        "an attribute builder is not exercised by `every_attribute_reaches_the_field_in_order`;          add it to that cookie and to this set, or the field it renders is asserted nowhere"
+    );
+}
+
 /// Every attribute, in the order RFC 6265bis lists them.
 ///
 /// A sweep of the shape rather than one case per attribute: the order is part
