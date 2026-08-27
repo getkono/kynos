@@ -42,6 +42,7 @@ edit.
 | `Concurrency` | RFC 9110 §15.6.4 (503), §10.2.3 (`Retry-After`) | [`rfc9110.txt`](../references/rfc9110.txt) |
 | `RateLimit` | `draft-ietf-httpapi-ratelimit-headers-11` §3, RFC 9651 §3.3.3 (`sf-string`), RFC 6585 §4 (429), RFC 9110 §10.2.3 (`Retry-After`) | [`draft-…-ratelimit-headers-11.txt`](../references/draft-ietf-httpapi-ratelimit-headers-11.txt), [`rfc9651.txt`](../references/rfc9651.txt), [`rfc6585.txt`](../references/rfc6585.txt) |
 | — its default spelling | RFC 6648 (deprecating `X-`), departed from deliberately | [`rfc6648.txt`](../references/rfc6648.txt) |
+| `response::range` (`Served`, `ByteSource`) | RFC 9110 §14 (range requests), §13.1.2–13.1.5 (preconditions), §5.6.7 (HTTP dates), §9.3.2 (HEAD) | [`rfc9110.txt`](../references/rfc9110.txt) |
 | `SetCookies`, and `response::cookie` | RFC 6265 §4.1 (`Set-Cookie`), `draft-ietf-httpbis-rfc6265bis-22` §4.1.3 (name prefixes), §5.6 (size) | [`rfc6265.txt`](../references/rfc6265.txt), [`draft-…-rfc6265bis-22.txt`](../references/draft-ietf-httpbis-rfc6265bis-22.txt) |
 | `RequestId` | none. `X-Request-Id` is defined by no specification; RFC 6648 argues against the spelling and W3C Trace Context is the standardised alternative | [`rfc6648.txt`](../references/rfc6648.txt), [`w3c-trace-context-20211123.html`](../references/w3c-trace-context-20211123.html) |
 | `Trace` | none | — |

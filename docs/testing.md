@@ -48,6 +48,7 @@ attribute outlived its reason and went with it.
 | [`cookies.rs`](../crates/kynos/tests/cookies.rs) | that two `Set-Cookie` fields reach the wire as two, which no unit test of either end can see |
 | [`unchecked.rs`](../crates/kynos/tests/unchecked.rs) | that the escape hatches serve, that the router's own machinery still covers them, and what the waiver leaves on the document |
 | [`assets.rs`](../crates/kynos/tests/assets.rs) | both asset modes: what an embedded set describes, what a served directory records instead, that traversal is refused end to end, and the whole range surface a file answers with — the 206 carrying exactly the octets its `Content-Range` names, the 416 stating the complete length, an unusable field ignored, and `If-Range` and `If-None-Match` deciding which of the two a client gets |
+| [`ranged.rs`](../crates/kynos/tests/ranged.rs) | ranged delivery over a `ByteSource` that is not a filesystem: every status sections 13 and 14 allow, that a matching condition beats a range, that a tag outranks a date, and that HEAD carries every field and no content |
 | [`cache.rs`](../crates/kynos/tests/cache.rs) | that a hit is served, that a response stating no lifetime is not, and that a `Conditional` over a `Cache` answers with no body — properties of a *sequence* of requests |
 | [`compile/panic_recovery.rs`](../crates/kynos/tests/compile/panic_recovery.rs) | `catch_panics` refuses to compile under `panic = "abort"` |
 
@@ -328,11 +329,11 @@ text. `mise.toml` therefore lists it: a snapshot suite that passes on the
 machine that recorded it and fails everywhere else is testing the environment.
 
 **`on_unimplemented` attributes must land before any snapshot is recorded.**
-Sixteen traits carry `#[diagnostic::on_unimplemented]` —
+Seventeen traits carry `#[diagnostic::on_unimplemented]` —
 `Provides`, `Handler`, `FromRequestParts`, `FromRequest`, `Describe`,
 `RequestContent`, `IntoResponse`, `Responses`, `Schema`, `MapKey`,
-`Alternative`, `ShortCircuit`, `EndpointMeta`, `IntoEndpoints`, `Carries` and
-`Rangeable`.
+`Alternative`, `ShortCircuit`, `EndpointMeta`, `IntoEndpoints`, `Carries`,
+`Rangeable` and `ByteSource`.
 Each one replaces the compiler's generic "the trait bound is not satisfied"
 with a message naming the fix.
 
