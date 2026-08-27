@@ -134,6 +134,17 @@ required-features = ["openapi31", "macros", "server", "http1", "json"]
 name = "rate_limit"
 required-features = ["openapi31", "macros", "server", "http1", "json"]
 
+# The other half of the rate-limiting pair: `rate_limit` replaces the store,
+# this replaces the algorithm. No dev-dependency, which is the point -- a
+# process-local bucket is `std` and arithmetic.
+[[example]]
+name = "token_bucket"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+# An example is `test = false` by default, so the bucket's unit tests would
+# compile under `--all-targets` and never run. They are the evidence for the
+# claim the file makes about its injected clock, so they have to run.
+test = true
+
 [[example]]
 name = "cache"
 required-features = ["openapi31", "macros", "server", "http1", "json", "cache"]

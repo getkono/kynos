@@ -9,6 +9,69 @@ fn rendered(cookie: &Cookie) -> Option<String> {
         .map(|value| value.to_str().expect("a printable field").to_owned())
 }
 
+/// The attribute set is closed, and the sweep below covers all of it.
+///
+/// `every_attribute_reaches_the_field_in_order` asserts the whole rendered
+/// string, which is the right shape for order -- but it names its attributes,
+/// and a name is not a count. An eighth builder would render an eighth
+/// attribute and turn nothing red, because the sweep would simply not call it.
+///
+/// The declared side is read off the source rather than transcribed, the way
+/// `tests/interceptors.rs` walks `src/middleware/` rather than listing it: a
+/// transcribed list is a third place the set is written down, and it drifts.
+/// Every attribute builder takes `mut self` and returns `Self`, which is what
+/// separates them from `new`, `removal`, `name` and `encode`.
+///
+/// The scan reads the shape rather than a line. Comment lines go first, so a
+/// `pub fn` inside a doc example is not mistaken for a declaration, and what
+/// remains is collapsed onto one line, so a signature rustfmt has wrapped over
+/// four lines reads the same as one that fits on one. `const` is tolerated
+/// between `pub` and `fn`, and both halves of the shape are required: a
+/// `mut self` receiver *and* a `-> Self` return, so a future method that
+/// consumes a cookie without building one is not reported as an unexercised
+/// attribute.
+#[test]
+fn every_attribute_builder_is_covered_by_the_sweep() {
+    let source = include_str!("../cookie.rs");
+    let code = source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .flat_map(str::split_whitespace)
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let declared: std::collections::BTreeSet<&str> = code
+        .split("pub ")
+        .skip(1)
+        .map(|item| item.strip_prefix("const ").unwrap_or(item))
+        .filter_map(|item| item.strip_prefix("fn ")?.split_once('('))
+        .filter_map(|(name, rest)| {
+            // Up to the body, or to the `;` of a signature that has none.
+            let signature = rest.split(['{', ';']).next()?.trim();
+            // The receiver, and nothing that merely starts like it: collapsing
+            // a wrapped signature leaves `mut self ,` rather than `mut self,`.
+            let after_receiver = signature.strip_prefix("mut self")?.trim_start();
+            let takes_mut_self = after_receiver.starts_with(',') || after_receiver.starts_with(')');
+            (takes_mut_self && signature.contains("-> Self")).then_some(name.trim())
+        })
+        .collect();
+
+    let swept = std::collections::BTreeSet::from([
+        "domain",
+        "http_only",
+        "max_age",
+        "partitioned",
+        "path",
+        "same_site",
+        "secure",
+    ]);
+
+    assert_eq!(
+        declared, swept,
+        "an attribute builder is not exercised by `every_attribute_reaches_the_field_in_order`; add it to that cookie and to this set, or the field it renders is asserted nowhere"
+    );
+}
+
 /// Every attribute, in the order RFC 6265bis lists them.
 ///
 /// A sweep of the shape rather than one case per attribute: the order is part
