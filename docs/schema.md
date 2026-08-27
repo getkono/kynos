@@ -257,6 +257,38 @@ where a negotiated alternative must both serialize and describe itself — and
 even there the conjunction is written at the impl site rather than pushed into
 the trait.
 
+## The order components are emitted in
+
+A description is emitted in **insertion order**, and insertion order is fixed by
+the shape of the API rather than by anything that varies between runs. Nothing
+sorts: [`Map<V>`](../crates/kynos-openapi/src/lib.rs) is an `IndexMap`
+throughout the model, so what goes in first comes out first.
+
+For `components/schemas` the order is **depth-first, post-order over the router
+build**: a component is registered after the descent into its own fields
+finishes, so everything a type refers to is emitted before the type that refers
+to it. `Registry::resolve`
+([`schema/registry.rs`](../crates/kynos/src/schema/registry.rs)) is where that
+falls out — it reserves the name, descends, and only then registers. A type that
+refers to itself resolves through the reserved name to a `$ref`, which is what
+terminates the descent rather than looping.
+
+Everything else follows the same rule one level up: `paths` in mount order,
+`tags` in declaration order, an operation's `responses` in the order the handler
+and the interceptors covering it declared them.
+
+**This is a guarantee, not an accident of the current implementation.** Beam's
+acceptance contract gates its migration on byte-deterministic export, and a
+conformance-fixture corpus is only worth committing if regenerating it produces
+the same file. The registry, the router and the validator each keep a `HashMap`;
+each is indexed and none is iterated, and
+[`tests/determinism.rs`](../crates/kynos/tests/determinism.rs) is what holds
+that line — it emits one fixture description in three separate processes and
+compares the bytes. A second *process* rather than a second call is the point:
+`RandomState` is seeded once per process, so two `HashMap`s holding the same
+keys iterate identically for that process's lifetime, and a same-process
+comparison agrees with itself whether or not a `HashMap` reached the output.
+
 ## Rules
 
 | # | Rule | Enforced by |
@@ -267,6 +299,8 @@ the trait.
 | 4 | An umbrella feature without a backend does not compile | `compile_error!` in the crate root |
 | 5 | No unconstrained schema is emitted silently | absence of `Schema`, and `Unchecked` for saying so deliberately |
 | 6 | `Schema` names no serde trait | the trait's own declaration, and `protobuf.rs` compiling without serde |
+| 7 | A description is the same bytes in every process that emits it | [`tests/determinism.rs`](../crates/kynos/tests/determinism.rs), emitting one fixture in three processes |
+| 8 | A component is registered after everything it refers to | the same file, over a known nesting chain |
 
 ## Rationale
 
