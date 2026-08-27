@@ -329,6 +329,40 @@ One thing worth knowing about the two halves. The 429's headers ride on
 because a short-circuit never calls `with_headers` — so the conflict check,
 which compares `Adds` against `Adds`, is not weakened by the pair.
 
+### Replacing the algorithm, and why no bucket ships
+
+`Quotas` is one implementation of `RateLimitPolicy`, not the trait's only
+inhabitant. An application wanting a different algorithm — a token bucket, a
+leaky bucket, an allowance bought by the month — implements that trait instead
+and keeps everything else: the 429, `Retry-After`, both header spellings, the
+description, and the `RateLimitKey` implementations that decide whose bucket a
+request counts against.
+
+**Kynos ships no token bucket.** Not because one is hard, but because there is
+no single right one, and the differences are exactly the parts a service has to
+choose: whether a bucket is per process or per fleet, what happens to a client
+whose bucket was evicted, whether an idle client's tokens accrue for a minute or
+a day. A shipped bucket answers all three by fiat, and a service wanting
+different answers would carry the wrong one in the binary and write its own
+anyway. [`examples/token_bucket.rs`](../crates/kynos/examples/token_bucket.rs)
+is a production-shaped one — `std` only, injected clock, continuous refill,
+bounded memory — written to be read and copied rather than depended on.
+
+**There is no `rate-limit` feature flag either.** Gating this module would gate
+`RateLimit`, `Decision` and the two header spellings, which are
+description-shaping surface, behind a flag whose off-state buys nothing: the
+counters are the only expensive part and they are the application's under every
+configuration. A flag that removes no dependency and no cost is a build
+configuration to get wrong.
+
+The seam is asserted rather than assumed.
+[`tests/rate_limit.rs`](../crates/kynos/tests/rate_limit.rs)'s
+`a_policy_kynos_does_not_ship_reaches_the_wire` drives a policy Kynos does not
+ship and reads what came back, with `Retry-After` and the `RateLimit` field's
+`t=` given deliberately different values — they answer different questions, one
+from the `Denial` and one from the `ServiceLimit`, and a wiring that read either
+from the other would fail there.
+
 ## The order a chain runs in
 
 **The first `intercept` call is the outermost interceptor.** A chain is a slice
