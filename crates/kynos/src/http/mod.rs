@@ -16,6 +16,7 @@
 
 pub mod body;
 pub mod cookie;
+pub mod date;
 pub mod etag;
 pub mod forwarded;
 
