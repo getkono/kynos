@@ -285,9 +285,9 @@ each is indexed and none is iterated, and
 [`tests/determinism.rs`](../crates/kynos/tests/determinism.rs) is what holds
 that line — it emits one fixture description in three separate processes and
 compares the bytes. A second *process* rather than a second call is the point:
-`RandomState` is seeded once per process, so two `HashMap`s holding the same
-keys iterate identically for that process's lifetime, and a same-process
-comparison agrees with itself whether or not a `HashMap` reached the output.
+each process re-runs the whole build — router, registry, validation — under a
+fresh hash seed, so every collection upstream of the model is rebuilt and
+re-walked. A second call would reuse the same maps and agree with itself.
 
 ## Rules
 

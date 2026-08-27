@@ -104,14 +104,13 @@ the requirement above is that it be *verified*, not merely intended. It is now
 verified in one direction and not the other, which is why the row became two.
 
 **Across runs is enforced, and it takes a second process to enforce it.**
-`RandomState` is seeded once per process, so two `HashMap`s holding the same
-keys iterate identically for that process's lifetime — a second call in the same
-process agrees with the first whether or not a `HashMap` reached the output, and
-`properties.rs`'s `serialization_is_deterministic` is that weaker statement.
+`properties.rs`'s `serialization_is_deterministic` serializes one already-built
+model `Document` twice, so the registry's `origins`, the router's `index_of` and
+the validator's sets are never on its path — it is that weaker statement.
 `tests/determinism.rs` re-executes the test binary instead, so each emission
-draws its own seed. The registry's `origins`, the router's `index_of` and the
-validator's sets are each indexed rather than walked, and that test is what
-keeps them so.
+rebuilds and re-walks all three from scratch under a fresh hash seed; a second
+call would reuse the same maps and agree with itself trivially. Each is indexed
+rather than walked, and that test is what keeps them so.
 
 **Across platforms is not enforced, and saying so is the point of the split.**
 Every CI job runs on `ubuntu-latest`. The plausible divergences are a path

@@ -13,12 +13,13 @@
 //!
 //! # Why a second process rather than a second call
 //!
-//! `properties.rs` already asserts that emitting one document twice gives one
-//! string, and that is the weaker half. `RandomState` is seeded once per
-//! process, so two `HashMap`s holding the same keys iterate the same way for
-//! the life of that process — a same-process comparison agrees with itself
-//! whether or not a `HashMap` reached the output. Only a fresh process draws a
-//! fresh seed, which is why this test spawns one.
+//! `properties.rs` already asserts that serializing one document twice gives
+//! one string, and that is the weaker half: it starts from an already-built
+//! model `Document`, so none of those `HashMap`s is on its path at all. A fresh
+//! process re-runs the whole build — router, registry, validation — under a
+//! fresh hash seed, so every one of them is rebuilt and re-walked. A second
+//! call against the same `Router` would reuse the same maps and agree with
+//! itself trivially.
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
