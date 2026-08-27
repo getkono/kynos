@@ -115,32 +115,53 @@ pub(super) fn walk(args: &AssetArgs) -> syn::Result<Walked> {
 /// `archive.tar.gz` for download means the path, not the coding, and a set that
 /// swallowed it would serve nothing at the URL the page links to.
 ///
-/// `files` arrives sorted by path, and `app.js` sorts before `app.js.br`
-/// because `.` precedes every suffix character used here -- but nothing relies
-/// on that: the base set is collected first, in full, before anything is
-/// folded.
+/// "Absent" means absent from the *resources*, not merely from the directory: a
+/// coding folds into its base only when that base is itself served. So `app.js`,
+/// `app.js.br` and `app.js.br.gz` become `app.js` carrying `br`, plus
+/// `app.js.br.gz` at its own path -- the `br` form it names is no longer a
+/// resource to hang a coding on, and the alternative is dropping a file the
+/// build wrote with no diagnostic anywhere to say so. Every file ends up either
+/// a resource or one coding of one; never neither, and never both.
+///
+/// That is why classification and folding are the same pass. Deciding what is a
+/// coding against the raw path set, and then attaching against the resources, is
+/// the same question asked of two different sets -- and the file a coding of a
+/// coding falls between is the answer they disagree about.
+///
+/// Shortest name first, because stripping a coding suffix leaves a strictly
+/// shorter name: a base is always classified before anything encoding it.
+/// `files` may arrive in any order, and the result is put back in path order
+/// regardless, so the emitted set is byte-identical across machines.
 fn fold_encodings(files: Vec<Found>) -> Vec<Embedded> {
-    let paths: std::collections::HashSet<&str> =
-        files.iter().map(|file| file.path.as_str()).collect();
-
-    // Which files are codings of another, decided before anything moves.
-    let is_coding_of: Vec<Option<(&'static str, String)>> = files
-        .iter()
-        .map(|file| {
-            stored_coding(&file.path)
-                .filter(|(_, base)| paths.contains(base))
-                .map(|(coding, base)| (coding, base.to_owned()))
-        })
-        .collect();
+    let mut order: Vec<&Found> = files.iter().collect();
+    // Length ties are broken by the path, so the order -- and with it which of
+    // two same-length names is decided first -- does not depend on the walk.
+    order.sort_by(|left, right| {
+        left.path
+            .len()
+            .cmp(&right.path.len())
+            .then_with(|| left.path.cmp(&right.path))
+    });
 
     let mut embedded: Vec<Embedded> = Vec::new();
-    let mut index_of: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut index_of: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
 
-    for (file, coding) in files.iter().zip(&is_coding_of) {
-        if coding.is_some() {
+    for file in order {
+        // A coding of something already known to be a resource folds in.
+        // Anything else -- a base outside the set, or one that folded away
+        // itself -- is a resource, since its path is all that is left of it.
+        if let Some((coding, index)) = stored_coding(&file.path)
+            .and_then(|(coding, base)| Some((coding, *index_of.get(base)?)))
+        {
+            embedded[index].encodings.push(Encoded {
+                coding,
+                absolute: file.absolute.clone(),
+                etag: file.etag.clone(),
+            });
             continue;
         }
-        index_of.insert(file.path.clone(), embedded.len());
+
+        index_of.insert(&file.path, embedded.len());
         embedded.push(Embedded {
             path: file.path.clone(),
             absolute: file.absolute.clone(),
@@ -149,19 +170,7 @@ fn fold_encodings(files: Vec<Found>) -> Vec<Embedded> {
         });
     }
 
-    for (file, coding) in files.iter().zip(&is_coding_of) {
-        let Some((coding, base)) = coding else {
-            continue;
-        };
-        let Some(index) = index_of.get(base) else {
-            continue;
-        };
-        embedded[*index].encodings.push(Encoded {
-            coding,
-            absolute: file.absolute.clone(),
-            etag: file.etag.clone(),
-        });
-    }
+    embedded.sort_by(|left, right| left.path.cmp(&right.path));
 
     // Deterministic, and it decides which coding a tie goes to: the order here
     // is the order `preferred` is offered, so `br` before `gzip` before `zstd`
@@ -322,4 +331,142 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     // Two files differing only in trailing zero bytes hash alike under FNV-1a
     // alone, which a build output can produce.
     (hashed ^ (bytes.len() as u64)).wrapping_mul(PRIME)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Embedded, Found, fold_encodings};
+
+    /// One walked file, with a tag that names it so a mix-up is readable.
+    fn found(path: &str) -> Found {
+        Found {
+            path: path.to_owned(),
+            absolute: format!("/root/{path}"),
+            etag: format!("\"{path}\""),
+            byte_count: 0,
+        }
+    }
+
+    /// Every input file is either a resource or a coding of one, never neither.
+    ///
+    /// The invariant the folding exists to preserve: a set that swallowed a
+    /// file would serve nothing at a URL the build wrote, with no diagnostic
+    /// anywhere to say so.
+    fn assert_nothing_lost(paths: &[&str], embedded: &[Embedded]) {
+        let codings: usize = embedded.iter().map(|file| file.encodings.len()).sum();
+        assert_eq!(
+            paths.len(),
+            embedded.len() + codings,
+            "{paths:?} folded to {:?} plus {codings} codings",
+            embedded.iter().map(|file| &file.path).collect::<Vec<_>>()
+        );
+    }
+
+    /// Folds `paths`, and asserts the result does not depend on their order.
+    fn fold(paths: &[&str]) -> Vec<Embedded> {
+        let folded = fold_encodings(paths.iter().copied().map(found).collect());
+
+        let mut reversed: Vec<&str> = paths.to_vec();
+        reversed.reverse();
+        let other = fold_encodings(reversed.iter().copied().map(found).collect());
+
+        let shape = |files: &[Embedded]| {
+            files
+                .iter()
+                .map(|file| {
+                    (
+                        file.path.clone(),
+                        file.encodings
+                            .iter()
+                            .map(|encoded| encoded.coding)
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            shape(&folded),
+            shape(&other),
+            "the fold depended on the order `files` arrived in"
+        );
+
+        assert_nothing_lost(paths, &folded);
+        folded
+    }
+
+    /// A stored coding beside its base is the same resource in another coding.
+    #[test]
+    fn a_coding_folds_into_the_file_it_encodes() {
+        let paths = ["app.js", "app.js.br"];
+        let folded = fold(&paths);
+
+        assert_eq!(folded.len(), 1);
+        assert_eq!(folded[0].path, "app.js");
+        assert_eq!(folded[0].absolute, "/root/app.js");
+        assert_eq!(
+            folded[0]
+                .encodings
+                .iter()
+                .map(|encoded| (encoded.coding, encoded.absolute.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("br", "/root/app.js.br")]
+        );
+    }
+
+    /// A coding of a coding is a resource, because the form it encodes is not.
+    ///
+    /// `app.js.br` folds away, so there is nothing for `app.js.br.gz` to attach
+    /// to -- and a file with nowhere to attach is served at its own path rather
+    /// than dropped.
+    #[test]
+    fn a_coding_whose_base_is_not_a_resource_stays_a_resource() {
+        let paths = ["app.js", "app.js.br", "app.js.br.gz"];
+        let folded = fold(&paths);
+
+        assert_eq!(
+            folded.iter().map(|file| &file.path).collect::<Vec<_>>(),
+            vec!["app.js", "app.js.br.gz"]
+        );
+
+        let base = &folded[0];
+        assert_eq!(
+            base.encodings
+                .iter()
+                .map(|encoded| encoded.coding)
+                .collect::<Vec<_>>(),
+            vec!["br"]
+        );
+        assert!(
+            folded[1].encodings.is_empty(),
+            "nothing encodes `app.js.br.gz`"
+        );
+    }
+
+    /// A coding whose base is absent from the directory means the path.
+    #[test]
+    fn a_coding_without_a_base_is_a_file_of_its_own() {
+        let paths = ["archive.tar.gz"];
+        let folded = fold(&paths);
+
+        assert_eq!(folded.len(), 1);
+        assert_eq!(folded[0].path, "archive.tar.gz");
+        assert!(folded[0].encodings.is_empty());
+    }
+
+    /// Several codings of one file arrive in the order `preferred` offers them.
+    #[test]
+    fn the_codings_of_one_file_are_ordered_smallest_first() {
+        let paths = ["app.js", "app.js.gz", "app.js.zst", "app.js.br"];
+        let folded = fold(&paths);
+
+        assert_eq!(folded.len(), 1);
+        assert_eq!(
+            folded[0]
+                .encodings
+                .iter()
+                .map(|encoded| encoded.coding)
+                .collect::<Vec<_>>(),
+            vec!["br", "gzip", "zstd"]
+        );
+    }
 }
