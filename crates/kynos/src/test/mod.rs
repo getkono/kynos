@@ -272,7 +272,11 @@ impl<C> TestRequest<'_, C> {
         self
     }
 
-    /// Adds a query string, encoded from a serializable value.
+    /// Adds a query string to the target, encoded from a serializable value.
+    ///
+    /// Named for the part of the target it writes, because [`TestClient::query`]
+    /// one link up the chain begins a `QUERY` request: two `query` methods on
+    /// one expression would read as the same call.
     ///
     /// Appends to whatever the path already carries, so a test can name the
     /// stable part of a target once and vary the rest.
@@ -283,7 +287,7 @@ impl<C> TestRequest<'_, C> {
     /// struct of scalars cannot cause.
     #[cfg(feature = "form")]
     #[must_use]
-    pub fn query<T: serde::Serialize>(mut self, value: &T) -> Self {
+    pub fn query_string<T: serde::Serialize>(mut self, value: &T) -> Self {
         let encoded = serde_urlencoded::to_string(value).expect("a serializable query");
         if !encoded.is_empty() {
             let separator = if self.path.contains('?') { '&' } else { '?' };

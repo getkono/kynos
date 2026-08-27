@@ -174,7 +174,7 @@ async fn any_method_can_be_sent() {
 async fn a_request_carries_a_query_a_cookie_a_body_and_a_peer() {
     let seen: Seen = client()
         .post("/echo")
-        .query(&Filter {
+        .query_string(&Filter {
             limit: Some(10),
             label: Some("a b".to_owned()),
         })
@@ -221,7 +221,7 @@ async fn a_form_body_is_sent_as_a_form() {
 async fn a_query_appends_to_a_path_that_has_one() {
     let seen: Seen = client()
         .post("/echo?page=2")
-        .query(&Filter {
+        .query_string(&Filter {
             limit: Some(1),
             label: None,
         })
