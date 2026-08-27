@@ -42,6 +42,11 @@ pub mod connection;
 pub mod describe;
 pub mod media;
 pub mod params;
+// The receive half of `response::stream::sse`, gated with it. A 3.1 build has
+// no `itemSchema` to describe a stream with, so it has no `Sse<T>` to resume --
+// and an extractor for the header a resume carries would be half a feature.
+#[cfg(feature = "openapi32")]
+pub mod sse;
 
 use std::future::Future;
 
