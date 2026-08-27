@@ -73,6 +73,8 @@ pub mod headers;
 #[cfg(feature = "openapi32")]
 pub mod parts;
 pub mod rangeable;
+pub mod served;
+pub mod source;
 pub mod spec;
 
 use core::convert::Infallible;
@@ -434,3 +436,61 @@ fn declare(
 
 #[cfg(test)]
 mod tests;
+
+/// The statuses and fields a [`Served`](served::Served) delivery can produce.
+///
+/// One place, so the description and the deliverer cannot disagree about which
+/// statuses exist. The set is exactly what section 14 and section 13 allow a
+/// ranged GET or HEAD to answer with: 200, 206, 304 and 416, plus the 400 an
+/// unreadable `Range` never produces — section 14.2 says an unusable field is
+/// ignored, so there is no 400 here and declaring one would be a promise
+/// nothing keeps.
+#[must_use]
+pub fn delivery_responses(media_type: &str) -> kynos_openapi::Responses {
+    use kynos_openapi::{Header, MediaType, Response as OpenApiResponse, Schema, StatusPattern};
+
+    let content = || MediaType::new(Schema::Object(Box::default()));
+    let string = || {
+        Header::new(Schema::of_type(
+            kynos_openapi::model::schema::types::SchemaType::String,
+        ))
+    };
+
+    let mut responses = kynos_openapi::Responses::new()
+        .with(
+            200,
+            OpenApiResponse::with_content("the whole representation", media_type, content()),
+        )
+        .with(
+            206,
+            OpenApiResponse::with_content("the part the request asked for", media_type, content()),
+        )
+        .with(304, OpenApiResponse::new("the client's copy is current"));
+
+    for (status, name, header) in [
+        (200, "Accept-Ranges", string()),
+        (206, "Accept-Ranges", string()),
+        (200, "ETag", string()),
+        (206, "ETag", string()),
+        (304, "ETag", string()),
+        (200, "Last-Modified", string()),
+        (206, "Last-Modified", string()),
+        (304, "Last-Modified", string()),
+        (
+            206,
+            "Content-Range",
+            headers::ContentRange::satisfied_header(),
+        ),
+    ] {
+        if let Some(kynos_openapi::RefOr::Item(response)) = responses
+            .responses
+            .get_mut(&StatusPattern::Code(status).to_string())
+        {
+            response
+                .headers
+                .insert(name.to_owned(), kynos_openapi::RefOr::Item(header));
+        }
+    }
+
+    responses
+}
