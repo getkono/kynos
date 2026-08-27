@@ -45,11 +45,13 @@ pub(crate) fn doc_lines(function: &ItemFn) -> Vec<String> {
         .collect()
 }
 
-/// Whether the item carries `#[deprecated]`, which becomes
+/// Whether the handler carries `#[deprecated]`, which becomes
 /// `Operation.deprecated`.
+///
+/// Delegates to [`crate::derive::common::is_deprecated`] so an operation and a
+/// schema answer the question the same way. They did not always: this read the
+/// function's attributes and the `Schema` derive read nothing at all, so a
+/// deprecated field reached no description.
 pub(crate) fn is_deprecated(function: &ItemFn) -> bool {
-    function
-        .attrs
-        .iter()
-        .any(|attribute| attribute.path().is_ident("deprecated"))
+    crate::derive::common::is_deprecated(&function.attrs)
 }

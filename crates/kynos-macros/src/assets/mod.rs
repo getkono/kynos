@@ -50,11 +50,36 @@ pub(crate) fn expand_inner(args: &AssetArgs) -> syn::Result<proc_macro2::TokenSt
         let path = &file.path;
         let absolute = &file.absolute;
         let etag = &file.etag;
+
+        if file.encodings.is_empty() {
+            return quote! {
+                ::kynos::router::assets::Asset::embedded(
+                    #path,
+                    ::core::include_bytes!(#absolute),
+                    #etag,
+                )
+            };
+        }
+
+        let encodings = file.encodings.iter().map(|encoded| {
+            let coding = encoded.coding;
+            let absolute = &encoded.absolute;
+            let etag = &encoded.etag;
+            quote! {
+                ::kynos::router::assets::Encoded::stored(
+                    #coding,
+                    ::core::include_bytes!(#absolute),
+                    #etag,
+                )
+            }
+        });
+
         quote! {
-            ::kynos::router::assets::Asset::embedded(
+            ::kynos::router::assets::Asset::embedded_with_codings(
                 #path,
                 ::core::include_bytes!(#absolute),
                 #etag,
+                &[#(#encodings),*],
             )
         }
     });

@@ -145,6 +145,14 @@ grep -F 'the `decimal` feature carries no types of its own' \
   "$invalid_decimal_output"
 '''
 
+[tasks."fixtures:generate"]
+description = "Regenerate the conformance-fixture corpus"
+# The `trybuild` idiom: the test writes when told to and compares otherwise, so
+# a change to what Kynos emits reaches review as a diff of the documents a
+# downstream generator is built against.
+env = { KYNOS_FIXTURES = "overwrite" }
+run = "cargo nextest run -p kynos --test conformance_corpus --all-features"
+
 [tasks."references:verify"]
 description = "Verify the vendored specification texts are unmodified"
 # Three checks rather than one. `sha256sum -c` catches a file edited in place,

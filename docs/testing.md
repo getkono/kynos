@@ -40,15 +40,16 @@ attribute outlived its reason and went with it.
 | [`reporting.rs`](../crates/kynos/tests/reporting.rs) | every error type a caller can receive is `Error + Send + Sync + 'static` |
 | [`typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) | a route attribute's `relative_uri` percent-encodes its parameters |
 | [`size.rs`](../crates/kynos/tests/size.rs) | a build failure does not inline a `Violation`, and a `Result` costs no more than it |
+| [`conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs) | that the committed corpus is what this build emits, and that it still carries the 3.2 constructs it exists to pin — asserted against the committed *text*, since what a downstream repository reads is the file |
 | [`conformance.rs`](../crates/kynos/tests/conformance.rs) | that the responses a suite observed match what the document promises, and that every declared response was exercised |
 | [`matrix.rs`](../crates/kynos/tests/matrix.rs) | the same two assertions over every layer Kynos owns, which is the only place a wrong *document* fails a test |
 | [`dispatch.rs`](../crates/kynos/tests/dispatch.rs), [`routing.rs`](../crates/kynos/tests/routing.rs), [`panics.rs`](../crates/kynos/tests/panics.rs) | every outcome one request can reach, the routes the router declines, and that recovery happens only where it was asked for |
 | [`limits.rs`](../crates/kynos/tests/limits.rs), [`interceptors.rs`](../crates/kynos/tests/interceptors.rs), [`middleware.rs`](../crates/kynos/tests/middleware.rs), [`cors.rs`](../crates/kynos/tests/cors.rs), [`description.rs`](../crates/kynos/tests/description.rs), [`sse.rs`](../crates/kynos/tests/sse.rs) | each interceptor doing what it declares, setting only what it declared, and declaring it on exactly the operations it covers. `middleware.rs` also holds `partial` and `ranged_assets`, which assert that compression leaves anything a byte range is calculated against alone — a range is calculated over the encoded octets, so re-encoding a 206 puts a `Content-Range` on a body it is wrong about, and encoding a 200 that advertises `Accept-Ranges` puts one strong `ETag` over two representations. `ranged_assets` is the second half end to end: it resumes an asset download against the tag it was served with and splices the two halves back into the file. `description.rs` carries the same scope question one level down in its second half: which *statuses* within an operation a response field's declaration reaches, which is where `Accept-Ranges`, `Content-Range` and the 416 are each pinned to the statuses that give them a meaning |
-| [`rate_limit.rs`](../crates/kynos/tests/rate_limit.rs) | the shipped limiter over a store: one quota and several, burst, keying, exemption, and both failure policies — behaviour that is a property of a *sequence* of requests rather than of any one |
+| [`rate_limit.rs`](../crates/kynos/tests/rate_limit.rs) | the shipped limiter over a store: one quota and several, burst, keying, exemption, and both failure policies — and, since an application may replace the algorithm outright, that a `RateLimitPolicy` Kynos does not ship reaches the wire with its own `Retry-After` — behaviour that is a property of a *sequence* of requests rather than of any one |
 | [`client.rs`](../crates/kynos/tests/client.rs) | the `TestClient`'s own surface rather than the harness's: every method the router accepts, a query string, a cookie jar, a peer address, the three body setters, and the two assertions a suite would otherwise hand-roll — a 206 checked as a `Content-Range` *and* a body that fills it, and a finite event stream read as its events |
 | [`cookies.rs`](../crates/kynos/tests/cookies.rs) | that two `Set-Cookie` fields reach the wire as two, which no unit test of either end can see |
 | [`unchecked.rs`](../crates/kynos/tests/unchecked.rs) | that the escape hatches serve, that the router's own machinery still covers them, and what the waiver leaves on the document |
-| [`assets.rs`](../crates/kynos/tests/assets.rs) | both asset modes: what an embedded set describes, what a served directory records instead, that traversal is refused end to end, and the whole range surface a file answers with — the 206 carrying exactly the octets its `Content-Range` names, the 416 stating the complete length, an unusable field ignored, and `If-Range` and `If-None-Match` deciding which of the two a client gets |
+| [`assets.rs`](../crates/kynos/tests/assets.rs) | both asset modes, and the stored-coding surface — that two representations get two strong tags, that a resume across them is refused, that a 304 answers per representation, and that `Vary` is sent only by the files that negotiate: what an embedded set describes, what a served directory records instead, that traversal is refused end to end, and the whole range surface a file answers with — the 206 carrying exactly the octets its `Content-Range` names, the 416 stating the complete length, an unusable field ignored, and `If-Range` and `If-None-Match` deciding which of the two a client gets |
 | [`cache.rs`](../crates/kynos/tests/cache.rs) | that a hit is served, that a response stating no lifetime is not, and that a `Conditional` over a `Cache` answers with no body — properties of a *sequence* of requests |
 | [`compile/panic_recovery.rs`](../crates/kynos/tests/compile/panic_recovery.rs) | `catch_panics` refuses to compile under `panic = "abort"` |
 
@@ -150,6 +151,27 @@ paid — `router/`, `extract/params/`, `response/codec/`, `response/stream/`,
 functions behind. It is recorded rather than deleted because a future skeleton
 milestone would reach for it again, and because the shape of what it deferred is
 the reason those modules were the last to be covered.
+
+**Conformance has an outward-facing half, and Kynos owns it.** The harness
+checks a running service against its own description and exports nothing, which
+answers "does this service keep its promises" and not "are the promises the ones
+a client generator was built against". Neither repository can check the second
+from its own side, so the checkable thing between them is a committed corpus:
+[`tests/fixtures/conformance/`](../crates/kynos/tests/fixtures/conformance/),
+regenerated with `mise run fixtures:generate` and compared on every run.
+
+Ownership was worth settling rather than assuming. The acceptance contract this
+came from says a downstream generator must "pass fixtures generated by Kynos"
+and "the same Kynos-generated conformance fixtures" — Kynos emits the contract,
+the generator consumes it, and the fixtures are the contract written down. The
+corpus carries the constructs a 3.2 generator is forked to understand and a 3.1
+one cannot express: `itemSchema`, `contentMediaType`, `contentSchema` and the
+SSE envelope.
+
+It is only sound because emission is byte-stable. Without
+[`determinism.rs`](../crates/kynos/tests/determinism.rs), "the committed file
+equals a freshly generated one" would be a statement about the order two
+`HashMap`s happened to iterate in.
 
 **Conformance is a system obligation, not a module one.** No allocation above
 substitutes for it, which is why it has a row of its own. The parsing half still

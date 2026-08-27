@@ -220,6 +220,21 @@ information in the validator to distinguish those representations". Without it,
 licenses the client to combine, and identity octets land on the end of an
 encoded prefix. Nothing errors; the file is just wrong.
 
+**An asset set gets the compression back, by storing it.** A directory holding
+`app.js.br` beside `app.js` serves whichever the client accepts — and mints a
+strong validator per stored form, so section 8.8.1 is satisfied and section
+14.1.2's range is calculated over the octets actually sent. `Compression` still
+refuses the response, and correctly: it is handed one whose coding and tag were
+already decided. That is the whole asymmetry. The encoder cannot mint a
+validator, because the only sanctioned way for it to write a response header is
+the `Adds` group, and declaring `etag` there makes `Compression` beside
+`Cache::deriving_etags` a compile error on a stack that is otherwise correct.
+The asset server is downstream of nothing: it decides both at once.
+
+So the cost below is now the cost for a set whose build pipeline writes no
+encoded form, and for `Compression` over a handler that mints its own strong
+tag.
+
 **The cost is real, and it lands on the content most worth compressing.** A
 stylesheet or a JS bundle served by an `AssetSet` under `Compression` ships
 uncompressed, because every file the asset server answers advertises ranges.
@@ -328,6 +343,40 @@ One thing worth knowing about the two halves. The 429's headers ride on
 `Responses`; a success's ride on `Adds`. They never co-occur on one response,
 because a short-circuit never calls `with_headers` — so the conflict check,
 which compares `Adds` against `Adds`, is not weakened by the pair.
+
+### Replacing the algorithm, and why no bucket ships
+
+`Quotas` is one implementation of `RateLimitPolicy`, not the trait's only
+inhabitant. An application wanting a different algorithm — a token bucket, a
+leaky bucket, an allowance bought by the month — implements that trait instead
+and keeps everything else: the 429, `Retry-After`, both header spellings, the
+description, and the `RateLimitKey` implementations that decide whose bucket a
+request counts against.
+
+**Kynos ships no token bucket.** Not because one is hard, but because there is
+no single right one, and the differences are exactly the parts a service has to
+choose: whether a bucket is per process or per fleet, what happens to a client
+whose bucket was evicted, whether an idle client's tokens accrue for a minute or
+a day. A shipped bucket answers all three by fiat, and a service wanting
+different answers would carry the wrong one in the binary and write its own
+anyway. [`examples/token_bucket.rs`](../crates/kynos/examples/token_bucket.rs)
+is a production-shaped one — `std` only, injected clock, continuous refill,
+bounded memory — written to be read and copied rather than depended on.
+
+**There is no `rate-limit` feature flag either.** Gating this module would gate
+`RateLimit`, `Decision` and the two header spellings, which are
+description-shaping surface, behind a flag whose off-state buys nothing: the
+counters are the only expensive part and they are the application's under every
+configuration. A flag that removes no dependency and no cost is a build
+configuration to get wrong.
+
+The seam is asserted rather than assumed.
+[`tests/rate_limit.rs`](../crates/kynos/tests/rate_limit.rs)'s
+`a_policy_kynos_does_not_ship_reaches_the_wire` drives a policy Kynos does not
+ship and reads what came back, with `Retry-After` and the `RateLimit` field's
+`t=` given deliberately different values — they answer different questions, one
+from the `Denial` and one from the `ServiceLimit`, and a wiring that read either
+from the other would fail there.
 
 ## The order a chain runs in
 
@@ -554,6 +603,39 @@ so nothing noticed until one did.
 field name, so `SetCookies` declares one `Set-Cookie` entry and says the rest in
 its description. That is the honest half of what can be said, and understating a
 description beats claiming a shape the format has no way to express.
+
+## The attributes a cookie carries
+
+Seven, and the set is closed: `Path`, `Domain`, `Max-Age`, `Secure`,
+`HttpOnly`, `SameSite` and `Partitioned`. `Cookie::removal` is the eighth thing
+a caller reaches for and is not an attribute — it is a cookie with an empty
+value and `Max-Age=0`, carrying whatever scope the original was set with,
+because a user agent matches a removal on `Path` and `Domain` and ignores one
+that does not.
+
+Three of them are supplied rather than merely accepted, because the alternative
+is a cookie the service believes it set and the client silently discarded:
+`SameSite=None` implies `Secure`, `__Secure-` implies `Secure`, and `__Host-`
+implies both `Secure` and `Path=/`.
+
+**`Expires` is deliberately absent.** RFC 6265bis §4.1.2.1 gives `Max-Age`
+precedence wherever both appear, so a cookie carrying both is one attribute
+stating the lifetime and one being ignored. `Max-Age` is also a duration, which
+is what a server actually knows; `Expires` is an absolute HTTP-date, so
+emitting one means trusting the client's clock against the server's and
+serializing a date format that `architecture.md`'s dependency table has no row
+for — an HTTP-date crate is one of the three dependencies it names as refused.
+`Max-Age=0` is the removal, so nothing needs a date in the past either.
+
+That is the whole of what an acceptance contract asking for "Path, HttpOnly,
+Secure, SameSite, Max-Age, and expiry attributes" needs: the expiry is
+`Max-Age`, stated as a duration.
+
+The set being closed is asserted rather than intended.
+[`response/cookie/tests.rs`](../crates/kynos/src/response/cookie/tests.rs)
+reads the builders off the source and counts them against the sweep that
+renders them, so an eighth attribute that no test exercises fails the build
+instead of shipping unasserted.
 
 ## What the cookie interceptor is not
 

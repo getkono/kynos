@@ -23,7 +23,11 @@
 //!   that drops the connection reconnects with `Last-Event-ID` set to the last
 //!   [`Event::id`] it saw, and a browser does it without being asked. Minting
 //!   ids while ignoring the header is the worse of the two failures: it looks
-//!   resumable and replays from the beginning.
+//!   resumable and replays from the beginning. [`LastEventId`] is the receive
+//!   half, named so the reconnect contract is a type rather than a string
+//!   somebody has to spell correctly. Kynos owns neither retention nor replay:
+//!   `Feed::resuming_after` below is the application's, and that is the whole
+//!   division of labour.
 //! * **`retry` is advice, and it belongs on the first event.** It sets how long
 //!   a client waits before reconnecting, in milliseconds. Repeating it on every
 //!   event costs bytes on every event to say what was already said.
@@ -45,7 +49,7 @@ use std::{
 };
 
 use kynos::{
-    extract::params::header::Headers,
+    extract::sse::LastEventId,
     middleware::compression::{Compression, streaming::LatencyMode},
     prelude::*,
     response::stream::sse::{Event, KeepAlive, Sse},
@@ -97,20 +101,6 @@ impl Update {
             Self::Closed => "closed",
         }
     }
-}
-
-/// Where a reconnecting client asks to resume from.
-///
-/// `Last-Event-ID` is sent by a browser automatically on reconnect, and is
-/// absent on the first connection — which is why the field is an `Option` and
-/// not a required parameter. It is also not one of the three header names a
-/// group may not declare, since nothing in the specification says a parameter
-/// definition for it is ignored.
-#[allow(dead_code)]
-#[derive(HeaderParams)]
-struct Resume {
-    #[header(rename = "Last-Event-ID")]
-    last_event_id: Option<String>,
 }
 
 /// A feed that can begin part-way through.
@@ -199,8 +189,8 @@ impl futures_core::Stream for Feed {
 /// service expects to sit behind. That is the only thing it has to be shorter
 /// than, and picking it is a deployment question rather than a protocol one.
 #[kynos::get("/updates")]
-async fn updates(Headers(resume): Headers<Resume>) -> Sse<Feed> {
-    Sse::new(Feed::resuming_after(resume.last_event_id.as_deref())).keep_alive(
+async fn updates(LastEventId(resume): LastEventId) -> Sse<Feed> {
+    Sse::new(Feed::resuming_after(resume.as_deref())).keep_alive(
         KeepAlive::new()
             .interval(Duration::from_secs(15))
             .comment("still connected"),
