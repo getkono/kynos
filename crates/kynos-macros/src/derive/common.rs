@@ -7,7 +7,9 @@
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
-use syn::{Data, DataStruct, DeriveInput, Field, Fields, FieldsNamed, LitStr, spanned::Spanned};
+use syn::{
+    Attribute, Data, DataStruct, DeriveInput, Field, Fields, FieldsNamed, LitStr, spanned::Spanned,
+};
 
 /// The named fields of a struct, or a diagnostic naming what was found instead.
 pub(crate) fn named_fields<'a>(
@@ -57,6 +59,25 @@ pub(crate) fn unit_struct(input: &DeriveInput, derive: &str, purpose: &str) -> s
             format!("`{derive}` marks a type that {purpose}, so it must be a unit struct"),
         )),
     }
+}
+
+/// Whether the item carries Rust's own `#[deprecated]`.
+///
+/// One rule for every place a description can say `deprecated`: an operation
+/// reads it from the handler function, a schema from the type, the field or the
+/// variant. Kynos defines no `deprecated` key of its own, because the language
+/// already has the attribute and a second spelling would let the two disagree
+/// -- a field marked in the description and not in the compiler is a
+/// deprecation nobody is warned about.
+///
+/// The note is deliberately not read. `#[deprecated(note = "...")]` addresses a
+/// Rust caller at the call site, and `SchemaObject::deprecated` is a boolean; a
+/// description that carried the note would be repeating advice about a Rust API
+/// to a consumer that has none.
+pub(crate) fn is_deprecated(attrs: &[Attribute]) -> bool {
+    attrs
+        .iter()
+        .any(|attribute| attribute.path().is_ident("deprecated"))
 }
 
 /// Skips the value of the nested-meta item just matched.

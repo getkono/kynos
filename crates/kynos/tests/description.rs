@@ -391,3 +391,37 @@ fn an_operation_that_reads_a_range_but_cannot_fail_declares_no_416() {
     let ranged = operation(&document, "/recordings/current");
     assert!(ranged.responses.responses.contains_key("416"));
 }
+
+// --- `#[deprecated]` on a handler -------------------------------------------
+
+/// Superseded by `beta`.
+#[deprecated(note = "use `beta`")]
+#[kynos::get("/retired")]
+async fn retired() -> NoContent {
+    NoContent
+}
+
+/// One rule reaches every place a description says `deprecated`.
+///
+/// The handler attribute and the `Schema` derive both read Rust's own
+/// `#[deprecated]` through the same helper, so an operation and a field cannot
+/// answer the question differently. Nothing covered the operation half before,
+/// which is how it survived the helper moving.
+#[test]
+fn a_deprecated_handler_marks_its_operation() {
+    #[allow(deprecated)]
+    let document = Router::<()>::new()
+        .mount(kynos::routes![retired, alpha])
+        .openapi()
+        .expect("the fixture describes itself");
+
+    assert_eq!(
+        operation(&document, "/retired").deprecated,
+        Some(true),
+        "a deprecated handler reached the document unmarked"
+    );
+
+    // The control: an operation nobody deprecated says nothing, rather than
+    // saying `false` in every description Kynos emits.
+    assert_eq!(operation(&document, "/alpha").deprecated, None);
+}
