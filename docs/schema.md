@@ -257,6 +257,47 @@ where a negotiated alternative must both serialize and describe itself — and
 even there the conjunction is written at the impl site rather than pushed into
 the trait.
 
+## Deprecation
+
+`#[deprecated]` — Rust's own attribute, not a Kynos one — becomes
+`deprecated: true` wherever a description can carry it: on the type, on a field,
+on an enum variant, and on a handler, where it marks the operation.
+
+There is deliberately no `#[schema(deprecated)]` key. A second spelling would
+let the two disagree, and the disagreement has a bad direction: a field marked
+in the description but not in the compiler is a deprecation the people most able
+to act on it are never warned about. Reading the language's attribute keeps one
+fact in one place.
+
+The `note` is not read. `#[deprecated(note = "...")]` addresses a Rust caller at
+the call site, and `deprecated` in a description is a boolean; forwarding the
+note would repeat advice about a Rust API to a consumer that has none.
+
+`deprecated: false` is never emitted. The keyword defaults to false, so writing
+it out states nothing and puts a word in every schema in the document.
+
+### The one shape that has to change
+
+An enum whose variants are all units is normally `type: string` with an `enum`
+array of the names. That array is *one schema shared by every name*, so it has
+nowhere to record that one of them is retired.
+
+Deprecating a unit variant therefore drops the compact shape for the `oneOf` of
+`const` branches, which describes exactly the same wire values and gives each
+name a schema of its own to mark:
+
+```json
+{ "oneOf": [
+    { "type": "string", "const": "Web" },
+    { "type": "string", "const": "Fax", "deprecated": true }
+] }
+```
+
+An enum with no deprecated variant is untouched. The alternative was emitting
+nothing and leaving the description disagreeing with the type it came from,
+which is the failure this codebase treats as worse than a verbose shape: nobody
+can see it.
+
 ## Rules
 
 | # | Rule | Enforced by |
@@ -267,6 +308,8 @@ the trait.
 | 4 | An umbrella feature without a backend does not compile | `compile_error!` in the crate root |
 | 5 | No unconstrained schema is emitted silently | absence of `Schema`, and `Unchecked` for saying so deliberately |
 | 6 | `Schema` names no serde trait | the trait's own declaration, and `protobuf.rs` compiling without serde |
+| 7 | `deprecated` comes from Rust's `#[deprecated]` and nowhere else | one helper in [`derive/common.rs`](../crates/kynos-macros/src/derive/common.rs), read by the `Schema` derive and the route attribute alike |
+| 8 | A description never carries `deprecated: false` | the emitters write `Some(true)` or nothing |
 
 ## Rationale
 
