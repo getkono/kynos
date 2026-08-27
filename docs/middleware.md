@@ -220,6 +220,21 @@ information in the validator to distinguish those representations". Without it,
 licenses the client to combine, and identity octets land on the end of an
 encoded prefix. Nothing errors; the file is just wrong.
 
+**An asset set gets the compression back, by storing it.** A directory holding
+`app.js.br` beside `app.js` serves whichever the client accepts — and mints a
+strong validator per stored form, so section 8.8.1 is satisfied and section
+14.1.2's range is calculated over the octets actually sent. `Compression` still
+refuses the response, and correctly: it is handed one whose coding and tag were
+already decided. That is the whole asymmetry. The encoder cannot mint a
+validator, because the only sanctioned way for it to write a response header is
+the `Adds` group, and declaring `etag` there makes `Compression` beside
+`Cache::deriving_etags` a compile error on a stack that is otherwise correct.
+The asset server is downstream of nothing: it decides both at once.
+
+So the cost below is now the cost for a set whose build pipeline writes no
+encoded form, and for `Compression` over a handler that mints its own strong
+tag.
+
 **The cost is real, and it lands on the content most worth compressing.** A
 stylesheet or a JS bundle served by an `AssetSet` under `Compression` ships
 uncompressed, because every file the asset server answers advertises ranges.

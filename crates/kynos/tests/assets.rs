@@ -41,11 +41,24 @@ fn the_set_holds_what_the_directory_held_minus_what_was_excluded() {
     // Summed rather than compared against a literal: what is worth asserting is
     // that the constant counts the bytes that were actually embedded, and a
     // literal would only restate the fixture's current size.
+    //
+    // "Embedded" includes every stored coding. `warn_over` exists to warn about
+    // what a set costs the binary, and a total that counted only the identity
+    // octets would under-report a directory whose build pipeline writes a
+    // brotli form of everything -- which roughly doubles the file count and is
+    // exactly when the warning is wanted.
     assert_eq!(
         Fixture::TOTAL_BYTES,
         Fixture::ASSETS
             .iter()
-            .map(|asset| asset.bytes().len())
+            .map(|asset| {
+                asset.bytes().len()
+                    + asset
+                        .encodings()
+                        .iter()
+                        .map(|encoded| encoded.bytes().len())
+                        .sum::<usize>()
+            })
             .sum::<usize>()
     );
 }
@@ -470,6 +483,13 @@ fn each_operation_declares_every_status_a_file_can_answer_with() {
         .as_item()
         .expect("an inline 304");
     assert!(not_modified.headers.contains_key("ETag"));
+    // Section 15.4.5 requires both of these on a 304 that a 200 would have
+    // carried, and bounds what else may join them: `Content-Encoding` is
+    // representation metadata the list does not name, so it is neither sent
+    // nor declared here. `a_conditional_request_is_answered_per_representation`
+    // is the other half -- the wire agreeing with this.
+    assert!(not_modified.headers.contains_key("Vary"));
+    assert!(!not_modified.headers.contains_key("Content-Encoding"));
     // Section 14.3 advertises a range of a representation, and a 304 carries
     // none -- so the field is not declared where it is not sent.
     assert!(!not_modified.headers.contains_key("Accept-Ranges"));
@@ -482,6 +502,10 @@ fn each_operation_declares_every_status_a_file_can_answer_with() {
 }
 
 /// Every request field the file reads is declared, and nothing else is.
+///
+/// `css/app.css` has stored codings, so it reads `Accept-Encoding` too. The
+/// control is below: `docs/index.html` has none, and declares nothing about a
+/// negotiation whose outcome it could not change.
 #[test]
 fn each_operation_declares_the_fields_it_reads() {
     let document = served().openapi().expect("a describable router");
@@ -498,7 +522,24 @@ fn each_operation_declares_the_fields_it_reads() {
         .collect();
     names.sort_unstable();
 
-    assert_eq!(names, ["If-None-Match", "If-Range", "Range"]);
+    assert_eq!(
+        names,
+        ["Accept-Encoding", "If-None-Match", "If-Range", "Range"]
+    );
+
+    let plain = document.paths.0["/static/docs/index.html"]
+        .get
+        .as_ref()
+        .expect("a GET");
+    let mut plain_names: Vec<&str> = plain
+        .parameters
+        .iter()
+        .filter_map(|parameter| parameter.as_item())
+        .map(|parameter| parameter.name.as_str())
+        .collect();
+    plain_names.sort_unstable();
+
+    assert_eq!(plain_names, ["If-None-Match", "If-Range", "Range"]);
 }
 
 /// Two files get two operation ids, and each is derived from its own path.
@@ -774,4 +815,220 @@ mod directory {
     fn the_waiver_names_itself() {
         assert_eq!(served().unchecked_reasons(), [OpaqueReason::StaticAssets]);
     }
+}
+
+// --- A validator per stored coding ----------------------------------------
+//
+// The capability #30 was filed for. RFC 9110 section 8.8.1 forbids one strong
+// entity tag from naming two representations, and section 14.1.2 calculates a
+// byte range against the *encoded* octets when a coding is applied. A set that
+// served an encoded form under the identity form's tag would make section
+// 13.1.5's `If-Range` succeed on exactly the resume it exists to refuse.
+//
+// The fixture holds `css/app.css` with real `.br` and `.gz` siblings, and
+// `index.html` with a `.zst` one, produced by the `brotli`, `gzip` and `zstd`
+// tools rather than written by hand.
+
+/// The stored form is served, under its own tag, and says which coding it is.
+#[tokio::test]
+async fn a_stored_coding_is_served_with_its_own_validator() {
+    let service = served().build(()).expect("a servable router");
+
+    let identity = get(&service, "/static/css/app.css").call().await;
+    let encoded = get(&service, "/static/css/app.css")
+        .header("accept-encoding", "br")
+        .call()
+        .await;
+
+    assert_eq!(encoded.status, StatusCode::OK);
+    assert_eq!(encoded.field("content-encoding").as_deref(), Some("br"));
+    assert_eq!(encoded.body, &include_bytes!("assets/css/app.css.br")[..]);
+
+    // The whole point: two representations, two tags. One tag over both is what
+    // section 8.8.1 forbids and what makes a resumed download corrupt.
+    let identity_tag = identity.field("etag").expect("a tagged 200");
+    let encoded_tag = encoded.field("etag").expect("a tagged 200");
+    assert_ne!(identity_tag, encoded_tag);
+
+    // And the identity form is untouched by the coding existing.
+    assert_eq!(identity.field("content-encoding"), None);
+    assert_eq!(identity.body, &include_bytes!("assets/css/app.css")[..]);
+}
+
+/// A file that can answer differently says so, and one that cannot does not.
+#[tokio::test]
+async fn vary_is_sent_by_the_files_that_negotiate() {
+    let service = served().build(()).expect("a servable router");
+
+    let negotiable = get(&service, "/static/css/app.css").call().await;
+    assert_eq!(
+        negotiable.field("vary").as_deref(),
+        Some("accept-encoding"),
+        "a file with stored codings must not be cached without its key"
+    );
+
+    // The control. Sending `Vary` here would partition a cache key for a
+    // resource that answers the same way whatever is accepted.
+    let fixed = get(&service, "/static/docs/index.html").call().await;
+    assert_eq!(fixed.field("vary"), None);
+}
+
+/// The client's preference decides, and its refusals are honoured.
+#[tokio::test]
+async fn negotiation_picks_what_the_client_asked_for() {
+    let service = served().build(()).expect("a servable router");
+
+    let coding = |accept: Option<&str>| {
+        let service = &service;
+        let accept = accept.map(str::to_owned);
+        async move {
+            let mut pending = get(service, "/static/css/app.css");
+            if let Some(accept) = &accept {
+                pending = pending.header("accept-encoding", accept);
+            }
+            pending.call().await.field("content-encoding")
+        }
+    };
+
+    assert_eq!(coding(Some("gzip")).await.as_deref(), Some("gzip"));
+    assert_eq!(coding(Some("br")).await.as_deref(), Some("br"));
+
+    // A tie goes to the server's order, which the walk sorts to prefer brotli.
+    assert_eq!(coding(Some("gzip, br")).await.as_deref(), Some("br"));
+
+    // A coding this file does not store is not invented.
+    assert_eq!(coding(Some("zstd")).await, None);
+
+    // Saying nothing gets the form every client can read.
+    assert_eq!(coding(None).await, None);
+
+    // Identity's default weight is 1, so a downweighted coding loses to it.
+    assert_eq!(coding(Some("br;q=0.9")).await, None);
+    assert_eq!(
+        coding(Some("br;q=0.9, identity;q=0")).await.as_deref(),
+        Some("br")
+    );
+}
+
+/// A range is taken from the octets actually sent, guarded by that form's tag.
+///
+/// The case this whole feature exists for. Before it, a client resuming an
+/// encoded download compared `If-Range` against the identity tag, matched, and
+/// spliced encoded octets onto an identity prefix — nothing errors and the file
+/// is wrong.
+#[tokio::test]
+async fn a_range_is_calculated_over_the_representation_that_was_sent() {
+    let service = served().build(()).expect("a servable router");
+    let stored = &include_bytes!("assets/css/app.css.br")[..];
+
+    let whole = get(&service, "/static/css/app.css")
+        .header("accept-encoding", "br")
+        .call()
+        .await;
+    let tag = whole.field("etag").expect("a tagged 200");
+
+    let part = get(&service, "/static/css/app.css")
+        .header("accept-encoding", "br")
+        .header("range", "bytes=0-3")
+        .header("if-range", &tag)
+        .call()
+        .await;
+
+    assert_eq!(part.status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(part.field("content-encoding").as_deref(), Some("br"));
+    assert_eq!(part.body, &stored[..4]);
+    assert_eq!(
+        part.field("content-range").as_deref(),
+        Some(format!("bytes 0-3/{}", stored.len()).as_str())
+    );
+
+    // The two halves recombine into the representation they came from.
+    let rest = get(&service, "/static/css/app.css")
+        .header("accept-encoding", "br")
+        .header("range", &format!("bytes=4-{}", stored.len() - 1))
+        .header("if-range", &tag)
+        .call()
+        .await;
+
+    let mut spliced = part.body.to_vec();
+    spliced.extend_from_slice(&rest.body);
+    assert_eq!(spliced, stored);
+}
+
+/// The identity tag does not license a resume of the encoded form.
+///
+/// Section 13.1.5 gives `If-Range` to a strong validator so that a resume can
+/// be refused when the representation changed underneath it. A client holding
+/// the identity tag and now receiving brotli is exactly that case, and it gets
+/// the whole representation rather than a part it would splice wrongly.
+#[tokio::test]
+async fn a_resume_across_two_representations_is_refused() {
+    let service = served().build(()).expect("a servable router");
+
+    let identity_tag = get(&service, "/static/css/app.css")
+        .call()
+        .await
+        .field("etag")
+        .expect("a tagged 200");
+
+    let resumed = get(&service, "/static/css/app.css")
+        .header("accept-encoding", "br")
+        .header("range", "bytes=0-3")
+        .header("if-range", &identity_tag)
+        .call()
+        .await;
+
+    assert_eq!(resumed.status, StatusCode::OK);
+    assert_eq!(resumed.field("content-encoding").as_deref(), Some("br"));
+    assert_eq!(resumed.body, &include_bytes!("assets/css/app.css.br")[..]);
+}
+
+/// A 304 answers for the representation this request would have received.
+///
+/// A client holding the brotli tag and now asking for identity has a current
+/// copy of something it is no longer being offered. Answering 304 would leave
+/// it with octets it just said it wanted decoded.
+#[tokio::test]
+async fn a_conditional_request_is_answered_per_representation() {
+    let service = served().build(()).expect("a servable router");
+
+    let encoded_tag = get(&service, "/static/css/app.css")
+        .header("accept-encoding", "br")
+        .call()
+        .await
+        .field("etag")
+        .expect("a tagged 200");
+
+    // Same representation: the copy is current.
+    let matched = get(&service, "/static/css/app.css")
+        .header("accept-encoding", "br")
+        .header("if-none-match", &encoded_tag)
+        .call()
+        .await;
+    assert_eq!(matched.status, StatusCode::NOT_MODIFIED);
+    // Which representation is current is said by the validator, per section
+    // 15.4.5's list, and `Vary` is on that list too.
+    assert_eq!(matched.field("etag").as_deref(), Some(encoded_tag.as_str()));
+    assert_eq!(
+        matched.field("vary").as_deref(),
+        Some("accept-encoding"),
+        "section 15.4.5 requires the `Vary` the 200 would have carried"
+    );
+    // And nothing beyond it: "a sender SHOULD NOT generate representation
+    // metadata other than the above listed fields", which `Content-Encoding`
+    // is and is not among. The 304 is also where the description says so --
+    // `Content-Encoding` is declared for 200 and 206 only.
+    assert_eq!(
+        matched.field("content-encoding"),
+        None,
+        "a 304 carrying representation metadata section 15.4.5 does not list"
+    );
+
+    // Different representation: it is not.
+    let crossed = get(&service, "/static/css/app.css")
+        .header("if-none-match", &encoded_tag)
+        .call()
+        .await;
+    assert_eq!(crossed.status, StatusCode::OK);
+    assert_eq!(crossed.field("content-encoding"), None);
 }
