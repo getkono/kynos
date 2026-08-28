@@ -40,6 +40,18 @@ impl MediaType for Png {
     const MEDIA_TYPE: &'static str = "image/png";
 }
 
+/// `text/html; charset=utf-8`.
+///
+/// The charset is part of the constant rather than left to the recipient to
+/// sniff, which is the same call [`Text`](crate::extract::body::text::Text)
+/// makes for `text/plain`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Html;
+
+impl MediaType for Html {
+    const MEDIA_TYPE: &'static str = "text/html; charset=utf-8";
+}
+
 /// `application/json`, for a query string described as JSON.
 #[cfg(feature = "json")]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]

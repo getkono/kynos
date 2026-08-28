@@ -105,12 +105,7 @@ fn body_conformance(
             declared()
         )];
     };
-    let Some(representation) = response
-        .content
-        .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case(&media_type))
-        .map(|(_, representation)| representation)
-    else {
+    let Some(representation) = declared_representation(&response.content, &media_type) else {
         return vec![format!(
             "`{media_type}` is not a declared representation; the description declares {}",
             declared()
@@ -280,6 +275,32 @@ fn resolve_response<'d>(
 }
 
 /// The media type a response stated, lowercased and without its parameters.
+/// The representation declared for `media_type`, if one is.
+///
+/// An exact match first, then one ignoring the declared key's parameters. Both
+/// halves are needed. A description may declare two representations differing
+/// only by parameter -- `text/plain; charset=utf-8` beside a legacy charset --
+/// and stripping first would hand back whichever came first in the map. But a
+/// `Content-Type` is compared with its own parameters already stripped, so
+/// without the fallback a declared `text/html; charset=utf-8` could never
+/// match anything, and every parameterized media type in the document would
+/// read as undeclared.
+fn declared_representation<'a>(
+    content: &'a kynos_openapi::Map<kynos_openapi::MediaType>,
+    media_type: &str,
+) -> Option<&'a kynos_openapi::MediaType> {
+    content
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(media_type))
+        .or_else(|| {
+            content.iter().find(|(name, _)| {
+                let (base, _) = name.split_once(';').unwrap_or((name.as_str(), ""));
+                base.trim().eq_ignore_ascii_case(media_type)
+            })
+        })
+        .map(|(_, representation)| representation)
+}
+
 fn media_type(headers: &HeaderMap) -> Option<String> {
     let value = headers.get(header::CONTENT_TYPE)?.to_str().ok()?;
     let (media_type, _) = value.split_once(';').unwrap_or((value, ""));
@@ -504,5 +525,53 @@ mod tests {
             declared_response(&with_default, 404).map(|(key, _)| key),
             Some("default".to_owned())
         );
+    }
+
+    /// One `content` map, from the media types it declares.
+    fn content(declared: &[&str]) -> kynos_openapi::Map<kynos_openapi::MediaType> {
+        declared
+            .iter()
+            .map(|name| {
+                (
+                    (*name).to_owned(),
+                    kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())),
+                )
+            })
+            .collect()
+    }
+
+    /// A `Content-Type` is compared with its parameters already stripped, so a
+    /// declared media type carrying one has to match the bare form -- or every
+    /// parameterized entry in a document reads as undeclared. `text/html` and
+    /// `text/css` both reach the document that way through `router::assets`.
+    #[test]
+    fn a_declared_media_type_matches_despite_its_parameters() {
+        let declared = content(&["text/html; charset=utf-8"]);
+
+        assert!(super::declared_representation(&declared, "text/html").is_some());
+    }
+
+    /// The exact match is tried first, so two representations differing only by
+    /// parameter resolve to the one actually named rather than to whichever the
+    /// map happened to hold first.
+    #[test]
+    fn an_exact_declaration_wins_over_a_parameter_stripped_one() {
+        let declared = content(&["text/plain; charset=iso-8859-1", "text/plain"]);
+
+        let chosen = super::declared_representation(&declared, "text/plain");
+        assert!(chosen.is_some());
+        assert!(std::ptr::eq(
+            chosen.expect("a representation"),
+            declared.get("text/plain").expect("the exact entry"),
+        ));
+    }
+
+    /// The control: relaxing the parameter comparison must not make an
+    /// unrelated media type match.
+    #[test]
+    fn an_undeclared_media_type_still_does_not_match() {
+        let declared = content(&["text/html; charset=utf-8"]);
+
+        assert!(super::declared_representation(&declared, "application/json").is_none());
     }
 }

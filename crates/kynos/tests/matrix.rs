@@ -462,6 +462,12 @@ fn service() -> kynos::Result<kynos::router::service::Service<App>> {
             .mount(kynos::routes![revalidated]),
     );
 
+    // Mounted here rather than only in `tests/docs.rs`, because the reference
+    // page is the one described `text/html` 200 in the workspace and nothing
+    // else checks a described HTML response against a live exchange.
+    #[cfg(feature = "docs")]
+    let router = router.docs(kynos::router::docs::Docs::scalar());
+
     #[cfg(feature = "cookie")]
     let router = router.group(
         kynos::router::group::Group::<App>::new("/")
@@ -501,6 +507,9 @@ async fn the_owned_layer_matrix_matches_the_description_it_emits() {
     exercise_the_limits(&client).await;
     #[cfg(feature = "assets")]
     exercise_the_ranges(&client).await;
+
+    #[cfg(feature = "docs")]
+    exercise_the_reference(&client).await;
 
     client.assert_conformance();
     client.assert_declared_responses_covered();
@@ -870,6 +879,25 @@ fn an_interceptors_response_header_is_declared_where_a_consumer_resolves_it() {
          interceptor sets is filed under a key nothing resolves to",
         success.headers.keys().collect::<Vec<_>>()
     );
+}
+
+/// Both halves of the mounted reference.
+///
+/// Each declares one status and one media type, so this is the whole of what
+/// the description claims about them.
+#[cfg(feature = "docs")]
+async fn exercise_the_reference(client: &TestClient<App>) {
+    client
+        .get("/docs")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+
+    client
+        .get("/openapi.json")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
 }
 
 /// Every status a ranged file can answer with, so the document's 200, 206, 304

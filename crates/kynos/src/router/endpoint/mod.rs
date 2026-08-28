@@ -82,3 +82,36 @@ impl<C: Send + Sync + 'static, E: Endpoint<C>> DynEndpoint<C> for E {
         Box::pin(Endpoint::call(self, request, context))
     }
 }
+
+/// A stable, readable identifier for one served path.
+///
+/// Derived from the path rather than counted, so two sets mounted in one router
+/// collide only where they genuinely serve the same path -- and so the id does
+/// not move when a sibling is added beside it.
+///
+/// Shared by the modules that register operations no handler function named,
+/// and so have no identifier to take from one. Gated on exactly those, because
+/// a build with neither reaches it from nowhere.
+#[cfg(any(feature = "assets", feature = "docs"))]
+pub(crate) fn operation_id(prefix: &str, path: &str) -> String {
+    let mut id = String::with_capacity(prefix.len() + path.len() + 1);
+    id.push_str(prefix);
+
+    let trimmed = path.trim_matches('/');
+    if trimmed.is_empty() {
+        id.push_str("_index");
+        return id;
+    }
+
+    id.push('_');
+    for character in trimmed.chars() {
+        // An `operationId` is a token a generator turns into a function name,
+        // so anything that is not one becomes `_`.
+        if character.is_ascii_alphanumeric() {
+            id.push(character);
+        } else {
+            id.push('_');
+        }
+    }
+    id
+}

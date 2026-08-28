@@ -128,6 +128,7 @@ of which anything here would currently catch.
 | security | A served asset path is enumerated, never joined from request input | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) asserting an embedded set registers only literal `paths` keys, and [`router/assets/fs/tests.rs`](../crates/kynos/src/router/assets/fs/tests.rs) sweeping every escape a resolver must refuse against a control that must not be | `enforced` |
 | correctness | A route with no expressible template is recorded rather than described | [`tests/unchecked.rs`](../crates/kynos/tests/unchecked.rs) asserting a catch-all takes no `paths` key and reaches `x-kynos-opaque-routes` | `enforced` |
 | operability | Metric labels derive from operation IDs, never request paths | [`tests/dispatch.rs`](../crates/kynos/tests/dispatch.rs) asserting `MatchedPath` is the template rather than the request target, so two concrete paths under one template produce one label | `enforced` |
+| correctness | The description a service serves is the description it emits | [`tests/docs.rs`](../crates/kynos/tests/docs.rs), byte-comparing the description route's body against `Router::openapi`'s JSON, and asserting a nested mount moves both routes and the page's pointer with them | `enforced` |
 
 The allocation row is scoped rather than absolute because of what the pinned
 router actually guarantees; [`routing.md`](routing.md) records the two cases

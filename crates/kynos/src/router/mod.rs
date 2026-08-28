@@ -7,6 +7,8 @@
 
 #[cfg(feature = "assets")]
 pub mod assets;
+#[cfg(feature = "docs")]
+pub mod docs;
 pub mod endpoint;
 pub mod group;
 pub mod operation;
@@ -67,6 +69,14 @@ pub(crate) struct Mounted<C> {
     /// outermost first. `pub(crate)` because `unchecked` reads it back.
     #[cfg(feature = "unchecked")]
     pub(crate) unchecked_layers: Vec<Arc<dyn crate::unchecked::ErasedLayer>>,
+    /// Which half of a reference this is, when it is one.
+    ///
+    /// Here rather than in a list of its own because `absorb_router` has
+    /// already applied every enclosing prefix to `path` by the time this is
+    /// read, and because an entry dropped for a violation takes its half of the
+    /// mount with it rather than leaving a page pointed at nothing.
+    #[cfg(feature = "docs")]
+    pub(crate) docs: Option<docs::Role>,
 }
 
 /// The root of an API.
@@ -232,6 +242,8 @@ impl<C, P, I> Router<C, P, I> {
                 catch_panics,
                 #[cfg(feature = "unchecked")]
                 unchecked_layers: Vec::new(),
+                #[cfg(feature = "docs")]
+                docs: None,
             });
         }
     }
@@ -357,6 +369,52 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
         let mut sink = endpoint::set::Endpoints::new();
         endpoints.into_endpoints(&mut sink);
         self.absorb(sink.into_inner(), "", &[], &[], false);
+        self
+    }
+
+    /// Mounts an API reference: the page a human opens, and the description it
+    /// fetches.
+    ///
+    /// Both are ordinary described operations, so the document gains two
+    /// `paths` keys and says so. See [`router::docs`](docs) for what that costs
+    /// and why it is not hidden.
+    ///
+    /// The description is serialized while this router is built, because it has
+    /// to describe these two routes -- and the page is pointed at the path the
+    /// description actually got, so nesting moves both halves together.
+    ///
+    /// Whether a deployment exposes its reference stays the deployment's
+    /// decision. This returns `Self` rather than changing the router's type, so
+    /// both arms of a conditional agree:
+    ///
+    /// ```no_run
+    /// use kynos::{Router, router::docs::Docs};
+    ///
+    /// let router = Router::<()>::new();
+    /// let router = if std::env::var("DOCS").is_ok() {
+    ///     router.docs(Docs::scalar())
+    /// } else {
+    ///     router
+    /// };
+    /// # let _ = router;
+    /// ```
+    #[cfg(feature = "docs")]
+    #[must_use]
+    pub fn docs(mut self, docs: docs::Docs) -> Self
+    where
+        C: Send + Sync + 'static,
+    {
+        // Through `absorb` one half at a time, so a docs path meets the same two
+        // rules every other path does and the role stays unambiguous when a
+        // violation drops the entry.
+        for (endpoint, role) in docs.into_halves() {
+            let first = self.mounted.len();
+            self.absorb(vec![endpoint], "", &[], &[], false);
+            for mounted in &mut self.mounted[first..] {
+                mounted.docs = Some(role.clone());
+            }
+        }
+
         self
     }
 
@@ -619,6 +677,14 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     {
         let described = self.describe()?;
         let document = described.into_document()?;
+
+        // After the document exists, and after every violation has been raised.
+        // Both orderings are load-bearing: a reference describes the two routes
+        // that serve it, so its bytes cannot predate the document -- and an
+        // entry `absorb` or `absorb_router` dropped has already failed the
+        // build above, so no half of a mount reaches this unpaired.
+        #[cfg(feature = "docs")]
+        docs::render(&self.mounted, &document)?;
 
         let mut matcher = matchit::Router::new();
         let mut paths: Vec<PathEntry<C>> = Vec::new();
