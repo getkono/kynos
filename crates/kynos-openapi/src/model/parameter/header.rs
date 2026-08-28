@@ -121,6 +121,7 @@ pub enum HeaderShape {
 
 impl Header {
     /// Creates a header described by a schema.
+    #[must_use]
     pub fn new(schema: Schema) -> Self {
         Self::shaped(HeaderShape::Schema {
             schema,

@@ -39,7 +39,10 @@ use kynos::{
     middleware::{
         cors::Cors,
         limits::{BodySize, Concurrency, Timeout},
-        rate_limit::{Decision, QuotaPolicy, RateLimit, RateLimitPolicy, ServiceLimit},
+        rate_limit::{
+            RateLimit,
+            decision::{Decision, QuotaPolicy, RateLimitPolicy, ServiceLimit},
+        },
         request_id::RequestId,
     },
     prelude::*,
@@ -218,7 +221,7 @@ impl AllowsOnce {
                 name: "fixture".into(),
                 quota: 1,
                 window: Some(Duration::from_secs(60)),
-                unit: kynos::middleware::rate_limit::QuotaUnit::Requests,
+                unit: kynos::middleware::rate_limit::decision::QuotaUnit::Requests,
             }],
         }
     }

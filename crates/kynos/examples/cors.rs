@@ -108,13 +108,13 @@ async fn preflight(service: &Service<()>) {
 
     // Derived from the operations declared on the path, so what the preflight
     // advertises and what the description promises cannot disagree.
-    show(&response, header::ACCESS_CONTROL_ALLOW_METHODS);
-    show(&response, header::ACCESS_CONTROL_ALLOW_HEADERS);
-    show(&response, header::ACCESS_CONTROL_MAX_AGE);
+    show(&response, &header::ACCESS_CONTROL_ALLOW_METHODS);
+    show(&response, &header::ACCESS_CONTROL_ALLOW_HEADERS);
+    show(&response, &header::ACCESS_CONTROL_MAX_AGE);
 
     // All three fields the answer read, so a cache cannot reuse a `DELETE`
     // preflight's answer for a `PATCH`.
-    show(&response, header::VARY);
+    show(&response, &header::VARY);
 }
 
 /// The request the preflight was about.
@@ -127,13 +127,13 @@ async fn real_request(service: &Service<()>) {
     .await;
 
     println!("\nreal request -> {}", response.status());
-    show(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN);
-    show(&response, header::ACCESS_CONTROL_EXPOSE_HEADERS);
+    show(&response, &header::ACCESS_CONTROL_ALLOW_ORIGIN);
+    show(&response, &header::ACCESS_CONTROL_EXPOSE_HEADERS);
 
     // `Vary: Origin` on the real response too. Without it a shared cache would
     // hand one origin's `Access-Control-Allow-Origin` to another, which is the
     // whole of the CORS check defeated.
-    show(&response, header::VARY);
+    show(&response, &header::VARY);
 }
 
 /// An origin no list names, permitted by the rule instead.
@@ -149,7 +149,7 @@ async fn a_predicate_origin(service: &Service<()>) {
 
     // Echoed rather than `*`: a predicate cannot be summarized as a wildcard,
     // which is exactly why it stays compatible with credentials.
-    show(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN);
+    show(&response, &header::ACCESS_CONTROL_ALLOW_ORIGIN);
 }
 
 /// An origin the allow-list does not name.
@@ -216,8 +216,8 @@ async fn send(service: &Service<()>, method: Method, fields: &[(&str, &str)]) ->
 }
 
 /// Prints one response header, when it is there.
-fn show(response: &Response, name: header::HeaderName) {
-    if let Some(value) = response.headers().get(&name) {
+fn show(response: &Response, name: &header::HeaderName) {
+    if let Some(value) = response.headers().get(name) {
         println!("  {name}: {}", value.to_str().unwrap_or("<unprintable>"));
     }
 }

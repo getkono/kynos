@@ -166,7 +166,11 @@ pub(super) fn recovers_in(
 ///
 /// ```no_run
 /// use std::time::Duration;
-/// use kynos::middleware::rate_limit::{Quota, Quotas, RateLimit, key::ByPeerAddress};
+/// use kynos::middleware::rate_limit::{
+///     RateLimit,
+///     key::ByPeerAddress,
+///     quota::{Quota, Quotas},
+/// };
 /// # use kynos::middleware::rate_limit::store::RateLimitStore;
 /// # struct MyStore;
 /// # impl RateLimitStore for MyStore {

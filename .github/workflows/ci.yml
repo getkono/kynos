@@ -57,6 +57,11 @@ jobs:
       - name: Verify the vendored specifications
         run: mise run references:verify
 
+      # Here for the same reason, and beside that one because it is the same
+      # kind of gate: it reads committed text rather than compiling anything.
+      - name: Verify dependency and runtime containment
+        run: mise run containment:check
+
   test:
     name: Tests
     runs-on: ubuntu-latest

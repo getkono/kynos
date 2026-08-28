@@ -127,7 +127,7 @@ impl StoredResponse {
 /// Where a [`Cache`](super::Cache) keeps responses.
 ///
 /// The store is the application's, for the reason
-/// [`RateLimitStore`](crate::middleware::rate_limit::RateLimitStore) is:
+/// [`RateLimitStore`](crate::middleware::rate_limit::store::RateLimitStore) is:
 /// prescribing one would mean prescribing a dependency.
 ///
 /// # The contract

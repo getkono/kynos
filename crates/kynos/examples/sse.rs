@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! cargo run -p kynos --example sse --no-default-features \
-//!   --features openapi32,macros,server,http1
+//!   --features openapi32,macros,server,http1,compression
 //! ```
 //!
 //! [`streaming.rs`](streaming.rs) covers the other sequential media types — the

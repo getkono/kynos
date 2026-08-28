@@ -205,7 +205,7 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | A non-error response to an unsafe method drops what was stored for that target | [`tests/cache.rs`](../crates/kynos/tests/cache.rs) over a live store-then-write-then-read sequence, with a control asserting a refused write drops nothing, plus a unit case over the status classes section 4.4 defines | `enforced` |
 | security | A forwarding field is believed only where the application named the hop that wrote it | [`http/forwarded/tests.rs`](../crates/kynos/src/http/forwarded/tests.rs) over the hop, address and network policies including a forged chain, plus [`tests/rate_limit.rs`](../crates/kynos/tests/rate_limit.rs) asserting an unconfigured service ignores a claimed address | `enforced` |
 | security | An unsafe request a browser says came from another site is refused | [`csrf/tests.rs`](../crates/kynos/src/middleware/csrf/tests.rs) over every rule in order, including `Sec-Fetch-Site` winning over a claimed trusted `Origin`, plus a live exchange in [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) | `enforced` |
-| correctness | Content-coding negotiation follows section 12.5.3, including the wildcard form of an identity refusal | [`middleware/compression.rs`](../crates/kynos/src/middleware/compression.rs) over a table of every rule the section states | `enforced` |
+| correctness | Content-coding negotiation follows section 12.5.3, including the wildcard form of an identity refusal | [`middleware/compression/`](../crates/kynos/src/middleware/compression/) over a table of every rule the section states | `enforced` |
 | security | A response setting a cookie is never stored | `every_refusal_has_a_case` over the whole `Unstorable` set, counted against its variants | `enforced` |
 | correctness | Both ways a header group reaches the wire write the same fields | [`response/headers.rs`](../crates/kynos/src/response/headers.rs) asserting the two paths *agree*, rather than asserting each | `enforced` |
 | correctness | A re-encoded response states the length it actually sends | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs) over a handler that set its own length, comparing the stated value against the bytes received | `enforced` |
@@ -256,7 +256,7 @@ guarantee. It has already earned its keep twice — see
 | performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `kynos-bench` |
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `kynos-bench` |
 | compatibility | `Listener::Tokio` is the only public item naming a tokio type | `cargo-public-api` assertion over the framework surface | `needs-tooling` |
-| compatibility | Every `tokio` mention outside `crates/kynos/src/server/` appears in the allowance table in [`architecture.md`](architecture.md#runtime-policy), and the table has exactly five rows | CI grep for `tokio` outside that module tree, counted against the table | `planned` |
+| compatibility | Every `tokio` mention outside `crates/kynos/src/server/` appears in the allowance table in [`architecture.md`](architecture.md#runtime-policy), and the table has exactly six rows | `mise run containment:check`, which reads the table rather than restating it, over source stripped of comments, string literals and `#[cfg(test)]` modules | `enforced` |
 
 The last two rows are the enforcement of the tokio-only policy in
 [`architecture.md`](architecture.md#runtime-policy). There is no runtime
@@ -266,11 +266,17 @@ through the listener handover it is meant to.
 
 The containment row is written against an enumerated table rather than against
 `server/` alone, and that is a correction rather than a loosening: the grep as
-originally stated **fails today**, at `middleware/limits.rs` and
-`middleware/compression.rs`, and had done since before it was written down.
-Counting against a four-row table is checkable in this repository's
-exhaustiveness idiom — a fifth site fails the build — where the older sentence
-could only ever have been wired by deleting it.
+originally stated **failed**, at `middleware/limits.rs` and
+`middleware/compression/`, and had done since before it was written down.
+Counting against the table is checkable in this repository's exhaustiveness
+idiom — a seventh site fails the build — where the older sentence could only
+ever have been wired by deleting it.
+
+Wiring the count is what found the rest of the drift: a sixth site,
+`middleware/decompression/`, that the table did not list, and a row still
+naming `middleware/compression.rs` after that module became a directory. Both
+are corrected in [`architecture.md`](architecture.md#runtime-policy). A count
+asserted only in prose is a count nobody is holding.
 
 The `blocked-on-dependency` row is the one requirement a pinned dependency
 prevents rather than delays: hyper releases HTTP/2 flow-control capacity when a
@@ -299,6 +305,31 @@ every chunked upload. That is why the row reads `by-design` and not
 documented where the decision is made rather than only here, because that is
 where someone mounting a cap will meet it.
 
+### The module-size budget
+
+AGENTS.md: *"A module becomes a directory once it holds two independently-changing
+concerns or exceeds ~400 lines excluding tests."* Twenty-nine files under
+`crates/*/src` are still over that line, and `containment:check` holds that
+number so it can only move on purpose.
+
+It is a budget rather than a gate because the rule interacts with the one
+directly above it in AGENTS.md — *"Submodules are `pub` with no parent
+re-exports"* — in a way worth stating. Splitting a module that declares several
+public types lengthens every one of their paths, because no re-export may
+preserve the old one. `error/rejection.rs` is the clearest case: eight rejection
+types in 644 lines, and splitting it turns `error::rejection::PathRejection`
+into `error::rejection::path::PathRejection`. Around eighteen of the twenty-nine
+are that shape, worth roughly a hundred public paths between them.
+
+Splitting a module that declares *one* type and a pile of `impl` blocks costs
+nothing, because the type stays declared where it was and an inherent `impl` may
+sit in any module of the crate. That is why `router/`, `emit/downgrade/` and
+`derive/schema/` were split and the rest were not: the first group is free, and
+the second is a decision about a surface the README marks frozen.
+
+The budget is the honest record of that. It falls when a module is split, and
+raising it means saying in the same commit why a new module needs the room.
+
 ## Dependencies
 
 Containment rows enforcing the graph in
@@ -307,11 +338,11 @@ fails the build when a crate is named outside the module that owns it.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| compatibility | `hyper` and `hyper-util` are named only in `server/connection.rs` and `http/body.rs` | CI grep over `crates/*/src`, excluding test modules | `planned` |
-| compatibility | `tokio-rustls` and `rustls` are named only under `server/tls/` | CI grep over `crates/*/src`, excluding test modules | `planned` |
-| compatibility | `matchit` may be named only under `router/` | CI grep over `crates/*/src` | `planned` |
-| compatibility | `h2` and `httparse` are never named | CI grep over `crates/*/src`, allowing the `b"h2"` ALPN identifier | `planned` |
-| compatibility | `tower` and `tower-service` are named only in `unchecked.rs` | CI grep over `crates/*/src` | `planned` |
+| compatibility | `hyper` and `hyper-util` are named only in `server/connection.rs` and `http/body.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `tokio-rustls` and `rustls` are named only under `server/tls/` | `mise run containment:check` | `enforced` |
+| compatibility | `matchit` may be named only under `router/` | `mise run containment:check` | `enforced` |
+| compatibility | `h2` and `httparse` are never named | `mise run containment:check` | `enforced` |
+| compatibility | `tower` and `tower-service` are named only in `unchecked.rs` | `mise run containment:check` | `enforced` |
 | dx | Every crate in `[workspace.dependencies]` is consumed by a member | `cargo-udeps` or an equivalent manifest check | `needs-tooling` |
 
 The last row now passes: `mime` and `pin-project-lite` are gone, `trybuild` and
@@ -384,9 +415,10 @@ open against a `kynos-otel` that may never be written.
 | reliability | Every reachable feature combination compiles | `mise run features:check` (`cargo hack --feature-powerset`) | `enforced` |
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
 | reliability | Tests are hermetic; no shared state, no ordering dependence, no retries | `cargo-nextest` process isolation, `retries = 0`, guarded by `crates/kynos/tests/hermeticity.rs` | `enforced` |
+| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 29 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
 | reliability | Panic recovery refuses to compile under `panic = "abort"` | `mise run panic:check` | `enforced` |
 | reliability | Commits follow Conventional Commits | `convco`, via git hook and CI | `enforced` |
-| compatibility | Every hand-rolled `Stream` implementation is private, except the one row in [`architecture.md`](architecture.md#public-api-surface), and there are exactly three of them | CI grep for `Stream for` over `crates/*/src`, excluding test modules, counted against the table and the two private sites its prose names | `planned` |
+| compatibility | Every hand-rolled `Stream` implementation is private, except the one row in [`architecture.md`](architecture.md#public-api-surface), and there are exactly three of them | `mise run containment:check`, counting `Stream for` against the table and the two private sites its prose names | `enforced` |
 | dx | Every public item is documented | `missing_docs = "deny"` plus `mise run docs:check` | `enforced` |
 | dx | Every public item has a compiling doc example | Doctests already run via `mise run test:doc`; *presence* of an example per item is unenforced | `planned` |
 | compatibility | Public API item count is tracked as a budget | `cargo-public-api` count with a committed baseline | `needs-tooling` |

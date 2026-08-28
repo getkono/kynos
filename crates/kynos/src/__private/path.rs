@@ -1,6 +1,7 @@
 //! Const-evaluable comparisons, for the assertions a route attribute emits.
 
 /// Compares derived path parameter names with a route template in const code.
+#[must_use]
 pub const fn path_parameter_names_match(left: &[&str], right: &[&str]) -> bool {
     if left.len() != right.len() {
         return false;

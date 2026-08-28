@@ -202,7 +202,8 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// declaration.
 ///
 /// Constraints go on fields, and the grammar is exactly the keys of
-/// [`Constraints`](../kynos/schema/constraints/struct.Constraints.html) so that
+/// [`Constraints`](https://docs.rs/kynos/latest/kynos/schema/constraints/struct.Constraints.html)
+/// so that
 /// the attribute and the type it fills cannot drift: `minimum`, `maximum`,
 /// `exclusive_minimum`, `exclusive_maximum`, `multiple_of`, `min_length`,
 /// `max_length`, `pattern`, `min_items`, `max_items` and the `unique_items`

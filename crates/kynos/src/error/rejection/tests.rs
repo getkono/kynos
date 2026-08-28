@@ -300,28 +300,28 @@ fn every_rejection_a_caller_can_receive_has_a_case() {
 /// uses for `Error`, applied to the types a *caller* meets rather than the one
 /// a builder does.
 fn ledger() -> Vec<(&'static str, StatusCode, &'static [StatusCode])> {
-    fn path(rejection: PathRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
+    fn path(rejection: &PathRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
         let name = match rejection {
             PathRejection::Invalid { .. } => "PathRejection::Invalid",
         };
         (name, rejection.status(), PathRejection::statuses())
     }
 
-    fn query(rejection: QueryRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
+    fn query(rejection: &QueryRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
         let name = match rejection {
             QueryRejection::Invalid { .. } => "QueryRejection::Invalid",
         };
         (name, rejection.status(), QueryRejection::statuses())
     }
 
-    fn header(rejection: HeaderRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
+    fn header(rejection: &HeaderRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
         let name = match rejection {
             HeaderRejection::Invalid { .. } => "HeaderRejection::Invalid",
         };
         (name, rejection.status(), HeaderRejection::statuses())
     }
 
-    fn body(rejection: BodyRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
+    fn body(rejection: &BodyRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
         let name = match rejection {
             BodyRejection::Syntax { .. } => "BodyRejection::Syntax",
             BodyRejection::Schema { .. } => "BodyRejection::Schema",
@@ -331,7 +331,7 @@ fn ledger() -> Vec<(&'static str, StatusCode, &'static [StatusCode])> {
     }
 
     fn negotiation(
-        rejection: NegotiationRejection,
+        rejection: &NegotiationRejection,
     ) -> (&'static str, StatusCode, &'static [StatusCode]) {
         let name = match rejection {
             NegotiationRejection::MalformedAccept { .. } => "NegotiationRejection::MalformedAccept",
@@ -347,7 +347,7 @@ fn ledger() -> Vec<(&'static str, StatusCode, &'static [StatusCode])> {
         (name, rejection.status(), RangeRejection::statuses())
     }
 
-    fn auth(rejection: AuthRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
+    fn auth(rejection: &AuthRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
         let name = match rejection {
             AuthRejection::Unauthenticated { .. } => "AuthRejection::Unauthenticated",
             AuthRejection::Forbidden => "AuthRejection::Forbidden",
@@ -358,38 +358,38 @@ fn ledger() -> Vec<(&'static str, StatusCode, &'static [StatusCode])> {
     let text = |detail: &str| detail.to_owned();
 
     vec![
-        path(PathRejection::Invalid {
+        path(&PathRejection::Invalid {
             name: text("id"),
             detail: text("not a number"),
         }),
-        query(QueryRejection::Invalid {
+        query(&QueryRejection::Invalid {
             name: text("limit"),
             detail: text("not a number"),
         }),
-        header(HeaderRejection::Invalid {
+        header(&HeaderRejection::Invalid {
             name: text("if-none-match"),
             detail: text("not an entity tag"),
         }),
-        body(BodyRejection::Syntax {
+        body(&BodyRejection::Syntax {
             detail: text("unexpected end of input"),
         }),
-        body(BodyRejection::Schema {
+        body(&BodyRejection::Schema {
             failures: [(text("/name"), text("expected a string"))]
                 .into_iter()
                 .collect(),
         }),
-        body(BodyRejection::UnsupportedMediaType {
+        body(&BodyRejection::UnsupportedMediaType {
             received: Some(text("text/plain")),
         }),
-        negotiation(NegotiationRejection::MalformedAccept {
+        negotiation(&NegotiationRejection::MalformedAccept {
             detail: text("a bare comma"),
         }),
-        negotiation(NegotiationRejection::NotAcceptable),
+        negotiation(&NegotiationRejection::NotAcceptable),
         range(RangeRejection::NotSatisfiable {
             complete_length: 1234,
         }),
-        auth(AuthRejection::unauthenticated()),
-        auth(AuthRejection::Forbidden),
+        auth(&AuthRejection::unauthenticated()),
+        auth(&AuthRejection::Forbidden),
     ]
 }
 

@@ -221,6 +221,10 @@ fn load(id: u64) -> Result<User, RowMissing> {
     Err(RowMissing(id))
 }
 
+// The signature a real store would have -- it takes the row it is storing.
+// This stub always fails, so it never reaches the move, but narrowing the
+// parameter to fit the stub would make the example misleading.
+#[allow(clippy::needless_pass_by_value)]
 fn insert(user: User) -> Result<User, StoreError> {
     if user.id == 0 {
         return Err(StoreError::EmailTaken);

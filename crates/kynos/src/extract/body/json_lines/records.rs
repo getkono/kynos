@@ -24,7 +24,7 @@ use crate::{
 /// exists: a value holding a newline stays one record.
 ///
 /// One spelling, read by both halves: the byte this decoder scans for is the
-/// byte [`response::stream::json`](crate::response::stream::json) writes in
+/// byte the responding half of this codec writes in
 /// front of every record it emits.
 pub(crate) const RECORD_SEPARATOR: u8 = 0x1e;
 
@@ -230,7 +230,7 @@ impl<T> Records<T> {
             // Whatever the framing put in front of the record is not part of it.
             let _ = frame.split_to(prefix.min(frame.len()));
 
-            let record = trimmed(frame.freeze());
+            let record = trimmed(&frame.freeze());
             if record.is_empty() {
                 continue;
             }
@@ -320,7 +320,7 @@ impl<T: serde::de::DeserializeOwned> Records<T> {
 ///
 /// Trimming is what makes a `\r\n` line ending and RFC 7464's trailing newline
 /// the same non-event, and it is what decides a record is empty.
-fn trimmed(frame: Bytes) -> Bytes {
+fn trimmed(frame: &Bytes) -> Bytes {
     let start = frame
         .iter()
         .position(|byte| !byte.is_ascii_whitespace())

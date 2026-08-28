@@ -40,7 +40,10 @@ use std::{net::Ipv4Addr, time::Duration};
 use kynos::{
     Router,
     middleware::{
-        cache::{Cache, CacheStore, PrimaryKey, StoredResponse},
+        cache::{
+            Cache,
+            store::{CacheStore, PrimaryKey, StoredResponse},
+        },
         conditional::Conditional,
     },
     prelude::*,

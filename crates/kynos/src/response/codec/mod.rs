@@ -6,17 +6,21 @@
 //! the responding half: one module per codec, gated the same way its extracting
 //! half is.
 
-pub mod binary;
-pub mod text;
+// Private, for the reason `schema::impls` gives: each of these declares no
+// item, only the responding half of a codec whose type lives under
+// `extract::body`, so there is nothing here for a canonical path to point at.
+// `multipart` is the exception -- it declares `IntoMultipart` and `IntoPart`.
+mod binary;
+mod text;
 
 #[cfg(feature = "form")]
-pub mod form;
+mod form;
 #[cfg(feature = "json")]
-pub mod json;
+mod json;
 #[cfg(feature = "multipart")]
 pub mod multipart;
 #[cfg(feature = "protobuf")]
-pub mod protobuf;
+mod protobuf;
 
 #[cfg(test)]
 mod tests;

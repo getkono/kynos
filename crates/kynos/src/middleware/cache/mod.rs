@@ -32,8 +32,7 @@ use std::{convert::Infallible, marker::PhantomData, time::Duration};
 
 use kynos_openapi::model::schema::types::SchemaType;
 
-pub use store::{CacheStore, PrimaryKey, StoredResponse};
-
+use crate::middleware::cache::store::{CacheStore, PrimaryKey, StoredResponse};
 use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams},
     http::{self, HeaderMap, HeaderValue, header},
@@ -158,7 +157,10 @@ impl CacheTagging for Tagged {
 /// declares no validator.
 ///
 /// ```no_run
-/// use kynos::middleware::cache::{Cache, CacheStore, PrimaryKey, StoredResponse};
+/// use kynos::middleware::cache::{
+///     Cache,
+///     store::{CacheStore, PrimaryKey, StoredResponse},
+/// };
 /// # struct MyStore;
 /// # impl CacheStore<()> for MyStore {
 /// #     async fn get(&self, _: &PrimaryKey, _: &()) -> Vec<StoredResponse> { Vec::new() }

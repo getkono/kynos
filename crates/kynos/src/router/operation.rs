@@ -155,8 +155,8 @@ impl OperationCx<'_> {
     /// own rejection looks like, and the handler's own response for a status is
     /// the more specific of the two. Only statuses the operation says nothing
     /// about are taken from `responses`.
-    pub fn add_responses(&mut self, responses: kynos_openapi::Responses) {
-        self.operation.responses.merge_from(&responses);
+    pub fn add_responses(&mut self, responses: &kynos_openapi::Responses) {
+        self.operation.responses.merge_from(responses);
     }
 
     /// Declares a header this input causes the operation to send.
@@ -189,7 +189,7 @@ impl OperationCx<'_> {
         &mut self,
         status: StatusPattern,
         name: impl Into<String>,
-        header: kynos_openapi::Header,
+        header: &kynos_openapi::Header,
     ) {
         let name = name.into();
 
@@ -207,12 +207,7 @@ impl OperationCx<'_> {
                 .collect();
 
             for key in covered {
-                declare_header(
-                    &mut self.operation.responses.responses,
-                    &key,
-                    &name,
-                    &header,
-                );
+                declare_header(&mut self.operation.responses.responses, &key, &name, header);
             }
 
             return;
@@ -224,12 +219,7 @@ impl OperationCx<'_> {
             .responses
             .entry(key.clone())
             .or_insert_with(|| RefOr::Item(Response::new(describe_status(status))));
-        declare_header(
-            &mut self.operation.responses.responses,
-            &key,
-            &name,
-            &header,
-        );
+        declare_header(&mut self.operation.responses.responses, &key, &name, header);
     }
 
     /// Sets the operation identifier.

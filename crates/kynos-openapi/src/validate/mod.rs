@@ -24,7 +24,11 @@ mod rules;
 use crate::{
     model::document::{Document, SpecVersion},
     validate::{
-        rules::{extensions::check_extensions, opaque::check_opaque},
+        rules::{
+            document::{check_component_names, check_servers, check_tags},
+            extensions::check_extensions,
+            opaque::check_opaque,
+        },
         violation::{Severity, SpecError, Violation},
     },
 };
@@ -71,9 +75,9 @@ impl Validator {
         // document carrying both cannot reach this function: it fails to
         // deserialize, and there is no way to build one.
 
-        self.check_servers(document, &mut violations);
-        self.check_tags(document, &mut violations);
-        self.check_component_names(document, &mut violations);
+        check_servers(document, &mut violations);
+        check_tags(document, &mut violations);
+        check_component_names(document, &mut violations);
         self.check_paths(document, &mut violations);
         check_opaque(document, &mut violations);
         check_extensions("#", &document.extensions, &mut violations);

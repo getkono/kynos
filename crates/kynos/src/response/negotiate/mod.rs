@@ -252,7 +252,7 @@ impl<C: Sync, T: Send> FromRequestParts<C> for Accept<T> {
 impl<T> Describe for Accept<T> {
     fn describe(operation: &mut OperationCx<'_>) {
         let responses = NegotiationRejection::responses(operation.registry());
-        operation.add_responses(responses);
+        operation.add_responses(&responses);
     }
 }
 

@@ -222,7 +222,7 @@ impl Docs {
 /// A docs path, checked where it was written.
 ///
 /// Panics rather than recording a violation: this is a literal at a mount site,
-/// which is the case [`AssetEndpoint`](crate::router::assets::AssetEndpoint)
+/// which is the case [`AssetEndpoint`](crate::router::assets::endpoint::AssetEndpoint)
 /// already answers the same way. A template carrying a *variable* parses fine
 /// and is refused later by the validator, which reports it as the undeclared
 /// path parameter it is.

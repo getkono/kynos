@@ -57,19 +57,28 @@ is now an enumeration:
 | --- | --- | --- |
 | `server/{accept,connection,mod}.rs`, `server/tls/` | the five coupling points | — |
 | `middleware/limits.rs` | `tokio::{time::timeout, sync::Semaphore}` | the timer wraps the chain's future, which does not exist until after routing; the permit bounds requests already in it |
-| `middleware/compression.rs` | `tokio::io::{AsyncRead, ReadBuf}` | `async-compression`'s encoders are written against tokio's I/O traits; no byte here crosses a socket |
+| `middleware/compression/` | `tokio::io::{AsyncRead, AsyncWrite, ReadBuf}` | `async-compression`'s encoders are written against tokio's I/O traits; no byte here crosses a socket |
+| `middleware/decompression/` | `tokio::io::{AsyncRead, ReadBuf}` | the same traits for the same reason, in the other direction: a client-compressed request body is decoded before an extractor sees it, which is as far from a socket as the encoders are |
 | `response/stream/sse.rs` | `tokio::time::{Instant, Sleep, sleep}` | a keep-alive is a property of one body, and the connection driver cannot know a body is an event stream |
 | `router/assets/fs/` | `tokio::fs::{metadata, read, File}`, `tokio::io::{AsyncReadExt, AsyncSeekExt}` | which file a request wants is not known until routing has chosen the operation, and the read is the operation; a byte range seeks to what it asked for rather than reading the file and discarding most of it |
 
-**Five rows, and the count is the check.** [`nfr.md`](nfr.md#runtime) states the
+**Six rows, and the count is the check.** [`nfr.md`](nfr.md#runtime) states the
 containment requirement against this table rather than against `server/` alone,
-so a sixth site is a failing build rather than a silently broken sentence.
+so a seventh site is a failing build rather than a silently broken sentence.
+`mise run containment:check` is where that count runs.
 
-The fifth was added deliberately, which is what the table is for. Serving a
-file from disk means reading one, and which file is not known until routing has
-chosen the operation — so there is nowhere in `server/` for it to live. That it
-required an entry here, argued for on its own terms, is the mechanism working
-rather than the mechanism being worked around.
+The last two were added deliberately, which is what the table is for. Serving
+a file from disk means reading one, and which file is not known until routing
+has chosen the operation — so there is nowhere in `server/` for it to live.
+Decompression is the compression row's mirror: a client-compressed body is
+decoded before an extractor sees it, on the same `async-compression` traits and
+at the same distance from a socket. That each required an entry here, argued for
+on its own terms, is the mechanism working rather than the mechanism being
+worked around.
+
+Decompression is also the case that shows why this count had to be wired rather
+than asserted. It was a sixth site while the sentence above said there were
+five, and the row that would have caught it was `planned`.
 
 Moving the SSE timer into `server/` was considered and rejected. `TestClient`
 and `Service::call` drive a built service with no server at all — which is what
@@ -188,7 +197,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | Scalar formats, identifiers | `uuid` | [`schema/impls/identifier.rs`](../crates/kynos/src/schema/impls/identifier.rs) | built |
 | Scalar formats, dates and times | `chrono`, `jiff` | [`schema/impls/temporal/`](../crates/kynos/src/schema/impls/temporal/) | built |
 | Scalar formats, decimals | `rust_decimal`, `bigdecimal` | [`schema/impls/decimal/`](../crates/kynos/src/schema/impls/decimal/) | built |
-| Compression | `async-compression` | [`middleware/compression.rs`](../crates/kynos/src/middleware/compression.rs) | built |
+| Compression | `async-compression` | [`middleware/compression/`](../crates/kynos/src/middleware/compression/) | built |
 | tower interop, outward | `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
 | tower interop, inward | `tower` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
 | Document ordering | `indexmap` | [`kynos-openapi`](../crates/kynos-openapi/src/lib.rs) | built |
@@ -327,6 +336,40 @@ tag stays what Kynos reaches for first.
 by nothing under `src/`, which is the standing `rcgen`, `listenfd` and
 `tracing-subscriber` already have: this table governs what Kynos depends on, not
 what an example demonstrates.
+
+### What each feature gates
+
+The [README](../README.md#feature-flags) says what a flag *adds*, which is what
+someone choosing one needs. This says what it *gates* and which document here
+governs the thing behind it, which is what someone changing one needs. Fourteen
+of these were named nowhere in this directory, and a flag whose module has a
+normative home should be reachable from it.
+
+A gate belongs on the `pub mod` line rather than on each item inside, so the
+module column is also where the `#[cfg]` lives.
+
+| Flag | Gates | Governed by |
+| --- | --- | --- |
+| `openapi31` | the 3.1 object model; the baseline every other flag builds on | [`standards.md`](standards.md) |
+| `openapi32` | the 3.2 superset, `#[cfg]`-gated rather than runtime-optional | [`standards.md`](standards.md), [`routing.md`](routing.md) |
+| `macros` | `kynos-macros`: the route attributes and the derives | [`handlers.md`](handlers.md) |
+| `server` | `server/`, and with it the entire runtime coupling surface | [Runtime policy](#runtime-policy) |
+| `http1`, `http2` | the protocol versions hyper drives; `server` alone is a `compile_error!` | [Runtime policy](#runtime-policy) |
+| `tls` | `server/tls/`, the only place `rustls` may be named | [Runtime policy](#runtime-policy) |
+| `json` | the application JSON codecs. *Not* document emission, which is unconditional | [`handlers.md`](handlers.md) |
+| `form`, `multipart`, `protobuf` | the other request and response codecs, one module each under `extract/body/` and `response/codec/` | [`handlers.md`](handlers.md) |
+| `cookie` | cookie parameters, response cookies and `SetCookies`. Names no crate: Kynos owns the RFC 6265 | [`standards.md`](standards.md) |
+| `compression` | `middleware/compression/` and `middleware/decompression/`, two of the six runtime-allowance rows | [`middleware.md`](middleware.md) |
+| `trace` | the `tracing` facade only; the subscriber stays the application's | [`middleware.md`](middleware.md) |
+| `uuid`, `time-*`, `decimal-*` | one `schema/impls/` module each. `time` and `decimal` are umbrellas that define the shape both backends map onto | [`schema.md`](schema.md#behind-a-feature-flag) |
+| `yaml` | the second document emitter, in `kynos-openapi` and re-exported | [`standards.md`](standards.md) |
+| `test-util` | `test/`, and the JSON Schema validator its conformance assertions need | [`testing.md`](testing.md) |
+| `cache` | `middleware/cache/` and `middleware/conditional/`: the seam, never a store | [`middleware.md`](middleware.md) |
+| `assets` | `assets!` and `router/assets/`: a fixed set, so every path is a literal and nothing is waived | [`routing.md`](routing.md) |
+| `assets-fs` | `router/assets/fs/`. Implies `unchecked`, because a directory's membership is not fixed | [`routing.md`](routing.md) |
+| `docs` | `Router::docs`: the reference page and the description, as two described operations | [`routing.md`](routing.md) |
+| `unchecked` | `unchecked.rs`, the only place `tower` may be named. Documented anti-pattern | [`middleware.md`](middleware.md) |
+| `full` | every flag above except `unchecked` and `assets-fs`. A testing convenience, not a recommended default | — |
 
 ### Scope edges
 

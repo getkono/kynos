@@ -3,5 +3,5 @@
 fn describes_responses<T: kynos::response::Responses>() {}
 
 fn main() {
-    describes_responses::<kynos::response::codec::json::Json<serde_json::Value>>();
+    describes_responses::<kynos::extract::body::json::Json<serde_json::Value>>();
 }

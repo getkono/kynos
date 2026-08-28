@@ -9,5 +9,8 @@
 pub mod binary;
 pub mod sse;
 
+// Private, unlike its siblings: `binary` declares `BinaryStream` and `sse`
+// declares `Sse` and its parts, where this module only implements for the two
+// types `extract::body::json_lines` declares.
 #[cfg(feature = "json")]
-pub mod json;
+mod json;

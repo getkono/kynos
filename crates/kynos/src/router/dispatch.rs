@@ -242,7 +242,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             .and_then(|method| entry.position(method));
 
         let Some(position) = position else {
-            let response = self.fallback(StatusCode::METHOD_NOT_ALLOWED, &self.method_not_allowed);
+            let response = fallback(StatusCode::METHOD_NOT_ALLOWED, &self.method_not_allowed);
             let response = with_allow(response, &entry.allow);
             return self.finish(response, None, started);
         };
@@ -413,7 +413,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             }
         }
 
-        self.fallback(StatusCode::NOT_FOUND, &self.not_found)
+        fallback(StatusCode::NOT_FOUND, &self.not_found)
     }
 
     /// The same path with its final slash added or removed, when that reaches a
@@ -428,17 +428,17 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
 
         self.matcher.at(&candidate).is_ok().then_some(candidate)
     }
+}
 
-    /// The body shape a fallback takes, which is all a [`FallbackPolicy`]
-    /// chooses — never the status.
-    fn fallback(&self, status: StatusCode, policy: &FallbackPolicy) -> Response {
-        match policy {
-            FallbackPolicy::Problem => Problem::new(status).into_response(),
-            FallbackPolicy::Empty => {
-                let mut response = Response::new(Body::empty());
-                *response.status_mut() = status;
-                response
-            }
+/// The body shape a fallback takes, which is all a [`FallbackPolicy`]
+/// chooses — never the status.
+fn fallback(status: StatusCode, policy: &FallbackPolicy) -> Response {
+    match policy {
+        FallbackPolicy::Problem => Problem::new(status).into_response(),
+        FallbackPolicy::Empty => {
+            let mut response = Response::new(Body::empty());
+            *response.status_mut() = status;
+            response
         }
     }
 }

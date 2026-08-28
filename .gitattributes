@@ -1,1 +1,14 @@
+# The compile-fail suite byte-compares roughly 157 `.stderr` snapshots against
+# what rustc prints. A checkout that rewrote them to CRLF would fail every one
+# of them for a reason no contributor could act on, so line endings are
+# normalized in the repository and checked out as LF everywhere.
+* text=auto eol=lf
+
+# Everything vendored is exempt, and this line has to come after the wildcard
+# to win. `references/SHA256SUMS` pins the digest of each file and
+# `mise run references:verify` checks it, so a filter that touched one byte on
+# checkout would fail that gate -- and the point of vendoring a specification is
+# that it is the bytes the standards body published, not a normalized copy.
+references/** -text
+
 references/rfc9110.txt -text whitespace=-trailing-space

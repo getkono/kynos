@@ -125,14 +125,14 @@ pub(super) fn describe(operation: &mut OperationCx<'_>, media_type: &str) {
         // no more of a JSON Schema than the file does.
         kynos_openapi::MediaType::new(kynos_openapi::Schema::Object(Box::default())),
     );
-    operation.add_responses(kynos_openapi::Responses::new().with(206, partial));
+    operation.add_responses(&kynos_openapi::Responses::new().with(206, partial));
 
     // The 416 comes from the rejection that produces it, so the problem shape
     // and the `unsatisfied-range` grammar are declared once for the whole
     // framework rather than restated here.
     let unsatisfiable =
         <RangeRejection as crate::response::Responses>::responses(operation.registry());
-    operation.add_responses(unsatisfiable);
+    operation.add_responses(&unsatisfiable);
 
     operation.add_parameter(range::parameter());
     operation.add_parameter(range::conditional_parameter());
@@ -143,7 +143,7 @@ pub(super) fn describe(operation: &mut OperationCx<'_>, media_type: &str) {
                 operation.add_response_header(
                     kynos_openapi::StatusPattern::Code(status),
                     name,
-                    header,
+                    &header,
                 );
             }
         }
@@ -152,6 +152,6 @@ pub(super) fn describe(operation: &mut OperationCx<'_>, media_type: &str) {
     operation.add_response_header(
         kynos_openapi::StatusPattern::Code(206),
         "Content-Range",
-        ContentRange::satisfied_header(),
+        &ContentRange::satisfied_header(),
     );
 }

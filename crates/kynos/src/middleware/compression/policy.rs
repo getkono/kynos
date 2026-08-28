@@ -71,7 +71,7 @@ impl Encoding {
 /// # {
 /// use kynos::{
 ///     middleware::compression::policy::{Encoding, WithEncoding},
-///     response::codec::json::Json,
+///     extract::body::json::Json,
 /// };
 /// # #[derive(kynos::Schema, serde::Serialize)]
 /// # struct Receipt { token: String }

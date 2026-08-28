@@ -155,7 +155,7 @@ the time a handler argument is built.
 which return a response directly and declare it through
 an interceptor's `Short`. They are not extractor rejections and have no rejection
 variant; an interceptor builds a `Problem` itself. See
-[`middleware.md`](middleware.md#operationcontribution).
+[`middleware.md`](middleware.md#declaring-is-not-describing).
 
 **[`kynos::Error`](../crates/kynos/src/error/mod.rs).** The framework's own
 failure, raised while a router is built or a server started — never while
@@ -237,7 +237,7 @@ This document owns the error side of the same rule.
 Reading the status set off the conversion would require running it, and a
 description you can only obtain by executing the program is one you cannot check
 in CI — the same argument
-[`middleware.md`](middleware.md#operationcontribution) makes for contributions
+[`middleware.md`](middleware.md#declaring-is-not-describing) makes for contributions
 being inert data. Declaring the set separately admits the failure mode where it
 disagrees with the conversion, which is why the derive computes both from the
 same attributes rather than trusting an author to keep two lists aligned.

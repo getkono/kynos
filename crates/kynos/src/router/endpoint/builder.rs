@@ -297,7 +297,7 @@ where
 
         if recovers::<P>() {
             let responses = dispatch::panic_responses(operation.registry());
-            operation.add_responses(responses);
+            operation.add_responses(&responses);
         }
     }
 

@@ -41,15 +41,15 @@ pub mod media;
 
 use std::borrow::Cow;
 
+use crate::router::assets::endpoint::AssetEndpoint;
 use crate::router::endpoint::set::{Endpoints, IntoEndpoints};
 
-mod endpoint;
+pub mod endpoint;
+
 mod range;
 
 #[cfg(feature = "assets-fs")]
 pub mod fs;
-
-pub use endpoint::AssetEndpoint;
 
 /// One file an asset set serves.
 ///
@@ -331,7 +331,7 @@ impl<C: Send + Sync + 'static> IntoEndpoints<C> for AssetSet {
         for asset in self.assets {
             sink.push(AssetEndpoint::new(
                 *asset,
-                asset.path.to_owned(),
+                asset.path,
                 self.cache_control,
                 &self.operation_id_prefix,
             ));
@@ -340,7 +340,7 @@ impl<C: Send + Sync + 'static> IntoEndpoints<C> for AssetSet {
         for (asset, directory) in self.indexed() {
             sink.push(AssetEndpoint::new(
                 *asset,
-                directory,
+                &directory,
                 self.cache_control,
                 &self.operation_id_prefix,
             ));

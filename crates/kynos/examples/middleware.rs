@@ -44,7 +44,10 @@ use kynos::{
         compression::{Compression, levels::GzipLevel},
         cors::Cors,
         limits::{BodySize, Concurrency, Timeout},
-        rate_limit::{Decision, QuotaPolicy, QuotaUnit, RateLimit, RateLimitPolicy, ServiceLimit},
+        rate_limit::{
+            RateLimit,
+            decision::{Decision, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
+        },
         request_id::{CorrelationHeaders, Counter, RequestId, RequestIdSource},
         trace::Trace,
     },
