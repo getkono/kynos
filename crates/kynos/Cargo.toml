@@ -124,9 +124,11 @@ required-features = [
 
 [[example]]
 name = "docs_ui"
-# All defaults, so this one runs bare. `json` is here for `media::Json` on the
-# description route, not for the reference UI, which is a string.
-required-features = ["openapi31", "macros", "server", "http1", "json"]
+# `docs` sits in the list rather than beside it: the wiring has to compile in
+# both profiles, and `debug_assertions` decides only whether this deployment
+# mounts it. `json` is now for the handlers' own payloads -- the description
+# route is the framework's and states its own media type.
+required-features = ["openapi31", "macros", "server", "http1", "json", "docs"]
 
 [[example]]
 name = "security_schemes"
