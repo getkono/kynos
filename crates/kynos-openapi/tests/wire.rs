@@ -614,6 +614,47 @@ fn a_null_survives_a_round_trip_at_every_site() {
     );
 }
 
+/// Every object the specification lets carry an extension round-trips one.
+///
+/// `references/3.1.2.md` says "This object MAY be extended with Specification
+/// Extensions" of the Paths Object (`:790`), the Callback Object (`:2154`), the
+/// Discriminator Object (`:3337`) and the XML Object (`:3499`). Four objects
+/// modelled it and four did not, and the two failure modes differ:
+/// `Xml` and `Discriminator` have no catch-all, so serde drops an `x-` member
+/// on the floor; `Paths` and `Callback` are `#[serde(transparent)]` over a bare
+/// map, so an `x-` member whose value is not an object of the map's type makes
+/// a **legal document fail to parse at all**.
+///
+/// The values here are deliberately not objects. An object-valued extension on
+/// `Paths` happens to parse — as an empty `PathItem` — which is the shape that
+/// would let a narrower test pass while the gap stayed open.
+#[test]
+fn every_extensible_object_round_trips_an_extension() {
+    fn round_trips<T>(name: &str, json: &str)
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        let parsed: T = serde_json::from_str(json)
+            .unwrap_or_else(|error| panic!("{name} must read an `x-` member: {error}"));
+        assert_eq!(
+            serde_json::to_string(&parsed).expect("serializable"),
+            json,
+            "{name} must write the `x-` member back"
+        );
+    }
+
+    round_trips::<Paths>("a Paths Object", r#"{"x-audience":"internal"}"#);
+    round_trips::<Callback>("a Callback Object", r#"{"x-audience":"internal"}"#);
+    round_trips::<Discriminator>(
+        "a Discriminator Object",
+        r#"{"propertyName":"petType","x-audience":"internal"}"#,
+    );
+    round_trips::<Xml>(
+        "an XML Object",
+        r#"{"name":"order","x-audience":"internal"}"#,
+    );
+}
+
 /// A `PathItem` carrying both `$ref` and siblings loses the siblings.
 ///
 /// `RefOr` is untagged with `Ref` first, so anything carrying `$ref`
