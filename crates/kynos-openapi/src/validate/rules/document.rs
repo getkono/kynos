@@ -124,15 +124,27 @@ impl Validator {
         violations: &mut Vec<Violation>,
     ) {
         let components = &document.components;
-        let groups: [(&str, Vec<&String>); 5] = [
-            ("schemas", components.schemas.keys().collect()),
+
+        // Every section, because the specification says "**All** the fixed
+        // fields declared above". Five of them were consulted, which let a key
+        // in any of the others through whatever it was. `extensions` is not a
+        // section: its keys are `x-` prefixed names, checked by their own rule.
+        let groups = [
+            ("schemas", components.schemas.keys().collect::<Vec<_>>()),
             ("responses", components.responses.keys().collect()),
             ("parameters", components.parameters.keys().collect()),
+            ("examples", components.examples.keys().collect()),
             ("requestBodies", components.request_bodies.keys().collect()),
+            ("headers", components.headers.keys().collect()),
             (
                 "securitySchemes",
                 components.security_schemes.keys().collect(),
             ),
+            ("links", components.links.keys().collect()),
+            ("callbacks", components.callbacks.keys().collect()),
+            ("pathItems", components.path_items.keys().collect()),
+            #[cfg(feature = "openapi32")]
+            ("mediaTypes", components.media_types.keys().collect()),
         ];
 
         for (group, names) in groups {
