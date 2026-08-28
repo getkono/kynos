@@ -20,6 +20,42 @@ use crate::{
 };
 
 /// The version of the OpenAPI Specification a document targets.
+/// `#[non_exhaustive]` because OpenAPI 3.2 adds to this and the addition is
+/// `#[cfg]`-gated. Cargo unifies features across a dependency graph, so any
+/// crate enabling `openapi32` enables it for every crate in the build -- and
+/// without this attribute that would turn a downstream exhaustive `match` into
+/// a compile error, which is not what "purely additive" is supposed to mean.
+///
+/// The same reasoning marks [`Method`](crate::Method),
+/// [`ParameterIn`](crate::ParameterIn), [`Style`](crate::Style),
+/// [`ExampleValue`](crate::ExampleValue) and
+/// [`SecurityScheme`](crate::SecurityScheme). Matching one takes a wildcard
+/// arm, in either build:
+///
+/// ```
+/// # use kynos_openapi::SpecVersion;
+/// fn label(version: SpecVersion) -> &'static str {
+///     match version {
+///         SpecVersion::V3_1 => "3.1",
+///         _ => "newer",
+///     }
+/// }
+/// # assert_eq!(label(SpecVersion::V3_1), "3.1");
+/// ```
+///
+/// Without one it does not compile, which is the guarantee: this is the error
+/// a downstream crate would otherwise have met the day something else in its
+/// build turned `openapi32` on.
+///
+/// ```compile_fail
+/// # use kynos_openapi::SpecVersion;
+/// fn label(version: SpecVersion) -> &'static str {
+///     match version {
+///         SpecVersion::V3_1 => "3.1",
+///     }
+/// }
+/// ```
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum SpecVersion {
     /// OpenAPI 3.1, the baseline.

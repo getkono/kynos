@@ -228,7 +228,11 @@ default = [
 
 # --- Specification version -------------------------------------------------
 # `openapi31` is the baseline. `openapi32` is a strict superset: enabling it is
-# purely additive for programs that use no 3.2-only construct.
+# additive for programs that use no 3.2-only construct. Cargo unifies features
+# across a dependency graph, so anything in the build can turn this on for
+# everything in it -- which is why every model type it extends with a variant is
+# `#[non_exhaustive]`. A struct literal naming every field of a model type is
+# the one construct that does not survive it.
 openapi31 = ["kynos-openapi/openapi31"]
 openapi32 = [
   "openapi31",

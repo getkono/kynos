@@ -23,6 +23,12 @@ use crate::{
 };
 
 /// Where a parameter is carried.
+/// `#[non_exhaustive]` because OpenAPI 3.2 adds to this and the addition is
+/// `#[cfg]`-gated. Cargo unifies features across a dependency graph, so any
+/// crate enabling `openapi32` enables it for every crate in the build -- and
+/// without this attribute that would turn a downstream exhaustive `match` into
+/// a compile error, which is not what "purely additive" is supposed to mean.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ParameterIn {

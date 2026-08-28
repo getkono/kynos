@@ -57,7 +57,7 @@ Each of these is something another Rust framework offers and Kynos does not, and
 
 ## Feature flags
 
-`openapi31` is the baseline and is enabled by default. `openapi32` is a strict superset — enabling it is purely additive for a program that uses no 3.2-only construct.
+`openapi31` is the baseline and is enabled by default. `openapi32` is a strict superset — enabling it is additive for a program that uses no 3.2-only construct. Because Cargo unifies features across a dependency graph, any crate in the build can turn it on for every crate, so the model types it extends are `#[non_exhaustive]`: matching one takes a wildcard arm in either build. The one thing it does not survive is a struct literal naming every field of a model type, which is why the model's own examples end theirs with `..Default::default()`.
 
 3.2-only fields are `#[cfg]`-gated rather than runtime-optional, so a 3.1-only build cannot construct a description it is unable to emit. That is also why `Sse`, `JsonLines` and `QueryString` require `openapi32`: OpenAPI 3.1 has no `itemSchema` and no `in: querystring`, so under 3.1 those payloads can only be described as opaque strings. Kynos would rather not compile than describe your stream inaccurately.
 

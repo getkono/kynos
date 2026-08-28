@@ -60,7 +60,10 @@
 //!
 //! `openapi31` is the baseline; `openapi32` is a strict superset that unlocks
 //! Server-Sent Events, streaming bodies and whole-query-string parameters,
-//! none of which OpenAPI 3.1 can describe. The default-on `json` feature adds
+//! none of which OpenAPI 3.1 can describe. Enabling it is additive: Cargo
+//! unifies features across a dependency graph, so the model types it extends
+//! are [`non_exhaustive`](openapi::SpecVersion) and a `match` over one keeps
+//! compiling either way. The default-on `json` feature adds
 //! application JSON request and response codecs; it does not control OpenAPI
 //! document serialization or the framework's problem-details responses.
 //!

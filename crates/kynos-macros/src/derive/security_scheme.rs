@@ -342,6 +342,12 @@ fn describe(args: &SchemeArgs, kind: &Ident, input: &DeriveInput) -> proc_macro2
                             ::std::string::String::from(#text),
                         );
                     }
+                    // `SecurityScheme` is `#[non_exhaustive]`, so a later
+                    // scheme type is an arm this expansion has not been taught.
+                    // Every type the specification defines carries a
+                    // `description`, so the arm exists to keep an application's
+                    // build working, not because it can be reached.
+                    _ => {}
                 }
             }
         });
@@ -360,6 +366,7 @@ fn describe(args: &SchemeArgs, kind: &Ident, input: &DeriveInput) -> proc_macro2
                 | ::kynos::openapi::SecurityScheme::OpenIdConnect { deprecated, .. } => {
                     *deprecated = ::core::option::Option::Some(true);
                 }
+                _ => {}
             }
         }
     });
