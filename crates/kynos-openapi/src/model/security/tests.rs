@@ -113,6 +113,10 @@ fn every_constructor_builds_what_it_names() {
 
     let cases = [
         (
+            SecurityScheme::http("negotiate", None),
+            serde_json::json!({ "type": "http", "scheme": "negotiate" }),
+        ),
+        (
             SecurityScheme::bearer(None),
             serde_json::json!({ "type": "http", "scheme": "bearer" }),
         ),

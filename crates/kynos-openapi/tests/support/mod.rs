@@ -1011,74 +1011,81 @@ pub(crate) fn arb_scheme_common() -> BoxedStrategy<(Option<String>, Option<bool>
     (arb_opt_text(), arb_flag(), arb_extensions(EXTENSION_KEYS)).boxed()
 }
 
+/// The locations an API key may legally be carried in.
+///
+/// Narrower than [`LOCATIONS`] on purpose. `path` and `querystring` are not
+/// among them, and the three constructors are the only way in now that every
+/// variant is `#[non_exhaustive]` — but nothing is lost by it: what an
+/// `in` value costs a round trip is the same for all five, and `arb_parameter`
+/// already draws from the full set.
+const API_KEY_LOCATIONS: &[ParameterIn] =
+    &[ParameterIn::Query, ParameterIn::Header, ParameterIn::Cookie];
+
+/// Applies the three fields every scheme carries.
+///
+/// Through the public setters rather than a struct literal, because every
+/// variant is `#[non_exhaustive]` and this generator lives in a separate
+/// crate — so it builds a scheme exactly the way any downstream crate has to.
+fn with_common(
+    scheme: SecurityScheme,
+    (description, deprecated, extensions): (Option<String>, Option<bool>, Extensions),
+) -> SecurityScheme {
+    #[cfg(not(feature = "openapi32"))]
+    let _ = deprecated;
+
+    let mut scheme = match description {
+        Some(description) => scheme.with_description(description),
+        None => scheme,
+    };
+
+    #[cfg(feature = "openapi32")]
+    if let Some(deprecated) = deprecated {
+        scheme = scheme.with_deprecated(deprecated);
+    }
+
+    for (key, value) in extensions.0 {
+        scheme = scheme.with_extension(key, value);
+    }
+    scheme
+}
+
 pub(crate) fn arb_security_scheme() -> BoxedStrategy<SecurityScheme> {
     prop_oneof![
-        (arb_text(), select(LOCATIONS), arb_scheme_common()).prop_map(
-            |(name, location, (description, deprecated, extensions))| {
-                #[cfg(not(feature = "openapi32"))]
-                let _ = deprecated;
-                SecurityScheme::ApiKey {
-                    name,
-                    location,
-                    description,
-                    #[cfg(feature = "openapi32")]
-                    deprecated,
-                    extensions,
-                }
+        (arb_text(), select(API_KEY_LOCATIONS), arb_scheme_common()).prop_map(
+            |(name, location, common)| {
+                let scheme = match location {
+                    ParameterIn::Query => SecurityScheme::api_key_query(name),
+                    ParameterIn::Cookie => SecurityScheme::api_key_cookie(name),
+                    _ => SecurityScheme::api_key_header(name),
+                };
+                with_common(scheme, common)
             }
         ),
         (arb_text(), arb_opt_text(), arb_scheme_common()).prop_map(
-            |(scheme, bearer_format, (description, deprecated, extensions))| {
-                #[cfg(not(feature = "openapi32"))]
-                let _ = deprecated;
-                SecurityScheme::Http {
-                    scheme,
-                    bearer_format,
-                    description,
-                    #[cfg(feature = "openapi32")]
-                    deprecated,
-                    extensions,
-                }
-            }
+            |(scheme, bearer_format, common)| with_common(
+                SecurityScheme::http(scheme, bearer_format),
+                common
+            )
         ),
-        arb_scheme_common().prop_map(|(description, deprecated, extensions)| {
-            #[cfg(not(feature = "openapi32"))]
-            let _ = deprecated;
-            SecurityScheme::MutualTls {
-                description,
-                #[cfg(feature = "openapi32")]
-                deprecated,
-                extensions,
-            }
-        }),
+        arb_scheme_common().prop_map(|common| with_common(SecurityScheme::mutual_tls(), common)),
         (arb_oauth_flows(), arb_opt_text(), arb_scheme_common()).prop_map(
-            |(flows, oauth2_metadata_url, (description, deprecated, extensions))| {
+            |(flows, oauth2_metadata_url, common)| {
                 #[cfg(not(feature = "openapi32"))]
-                let _ = (oauth2_metadata_url, deprecated);
-                SecurityScheme::OAuth2 {
-                    flows: Box::new(flows),
-                    #[cfg(feature = "openapi32")]
-                    oauth2_metadata_url,
-                    description,
-                    #[cfg(feature = "openapi32")]
-                    deprecated,
-                    extensions,
+                let _ = oauth2_metadata_url;
+
+                #[allow(unused_mut)]
+                let mut scheme = SecurityScheme::oauth2(flows);
+
+                #[cfg(feature = "openapi32")]
+                if let Some(url) = oauth2_metadata_url {
+                    scheme = scheme.with_oauth2_metadata_url(url);
                 }
+
+                with_common(scheme, common)
             }
         ),
-        (arb_url(), arb_scheme_common()).prop_map(
-            |(open_id_connect_url, (description, deprecated, extensions))| {
-                #[cfg(not(feature = "openapi32"))]
-                let _ = deprecated;
-                SecurityScheme::OpenIdConnect {
-                    open_id_connect_url,
-                    description,
-                    #[cfg(feature = "openapi32")]
-                    deprecated,
-                    extensions,
-                }
-            }
-        ),
+        (arb_url(), arb_scheme_common())
+            .prop_map(|(url, common)| with_common(SecurityScheme::open_id_connect(url), common)),
     ]
     .boxed()
 }

@@ -71,6 +71,11 @@ pub enum ExampleValue {
     /// A URI identifying the serialized example, written to `externalValue`.
     ///
     /// For payloads that cannot be embedded in JSON or YAML.
+    ///
+    /// `#[non_exhaustive]` on the *variant*, because 3.2 adds `data` to it.
+    /// The attribute on the enum covers a variant being added and says nothing
+    /// about this one's field list; see the type's own documentation.
+    #[non_exhaustive]
     External {
         /// The URI identifying the example.
         uri: String,
