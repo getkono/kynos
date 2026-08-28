@@ -290,3 +290,143 @@ fn well_formed_is_the_same_answer_in_a_const_context_as_at_run_time() {
 fn a_tag_naming_no_real_language_is_still_well_formed() {
     assert!(LanguageTag::parse("zz-Qaaa-QM").is_ok());
 }
+
+// -- RFC 4647 matching --------------------------------------------------------
+
+use crate::response::language::matching::{MatchKind, classify};
+
+/// RFC 4647 section 3.3.1, transcribed.
+///
+/// "A language range matches a particular language tag if, in a
+/// case-insensitive comparison, it exactly equals the tag, or if it exactly
+/// equals a prefix of the tag such that the first character following the
+/// prefix is `-`." Written as string operations, which is a different
+/// computation from the subtag walk under test rather than a copy of it.
+fn basic_filtering(range: &str, tag: &str) -> bool {
+    if range == "*" {
+        return true;
+    }
+    let range = range.to_ascii_lowercase();
+    let tag = tag.to_ascii_lowercase();
+    tag == range || tag.starts_with(&format!("{range}-"))
+}
+
+/// RFC 4647 section 3.4, transcribed as the truncation loop the text describes.
+///
+/// "The language range is progressively truncated from the end until a matching
+/// language tag is located. Single letter or digit subtags ... are removed at
+/// the same time as their closest trailing subtag."
+fn lookup(range: &str, tag: &str) -> bool {
+    if range == "*" {
+        return false;
+    }
+    let mut range = range.to_ascii_lowercase();
+    let tag = tag.to_ascii_lowercase();
+
+    loop {
+        if range == tag {
+            return true;
+        }
+        let Some((head, _)) = range.rsplit_once('-') else {
+            return false;
+        };
+        range = head.to_owned();
+        // A truncation that leaves a trailing singleton removes it too.
+        if range.rsplit('-').next().is_some_and(|last| last.len() == 1) {
+            let Some((head, _)) = range.rsplit_once('-') else {
+                return false;
+            };
+            range = head.to_owned();
+        }
+    }
+}
+
+/// Every range-and-tag pair over a closed alphabet, against both transcriptions.
+///
+/// The alphabet is one subtag of each length that behaves differently -- a
+/// singleton, a two-letter subtag, a three-letter one -- and sequences of one
+/// to three of them. That is 39 tags and 40 ranges, so 1,560 pairs, swept
+/// rather than sampled: the space closes, and `docs/testing.md` says a sweep is
+/// the stronger statement where it does.
+#[test]
+fn every_pair_of_a_range_and_a_tag_classifies_as_the_two_schemes_say() {
+    let alphabet = ["x", "yy", "zzz"];
+    let mut sequences = Vec::new();
+    for first in alphabet {
+        sequences.push(first.to_owned());
+        for second in alphabet {
+            sequences.push(format!("{first}-{second}"));
+            for third in alphabet {
+                sequences.push(format!("{first}-{second}-{third}"));
+            }
+        }
+    }
+    assert_eq!(sequences.len(), 3 + 9 + 27, "the alphabet is not closed");
+
+    let mut ranges = sequences.clone();
+    ranges.push("*".to_owned());
+
+    let mut swept = 0;
+    for range in &ranges {
+        for tag in &sequences {
+            let observed = classify(range, tag);
+            let filters = basic_filtering(range, tag);
+            let looks_up = lookup(range, tag);
+
+            assert_eq!(
+                observed.is_some(),
+                filters || looks_up,
+                "{range} against {tag}"
+            );
+
+            match observed.map(|(kind, _)| kind) {
+                None => {}
+                Some(MatchKind::Exact) => assert!(range.eq_ignore_ascii_case(tag)),
+                Some(MatchKind::Wildcard) => assert_eq!(range, "*"),
+                Some(MatchKind::Truncates) => {
+                    assert!(looks_up, "{range} against {tag}");
+                    assert!(!range.eq_ignore_ascii_case(tag));
+                }
+                Some(MatchKind::Extends) => {
+                    assert!(filters, "{range} against {tag}");
+                    assert!(!looks_up, "{range} against {tag}");
+                    assert_ne!(range, "*");
+                }
+            }
+
+            swept += 1;
+        }
+    }
+
+    assert_eq!(swept, 40 * 39, "the sweep is not closed");
+}
+
+#[test]
+fn a_range_and_a_tag_that_diverge_match_under_neither_scheme() {
+    assert_eq!(classify("en-GB", "en-US"), None);
+    assert_eq!(classify("en-US", "en-GB"), None);
+}
+
+#[test]
+fn a_truncation_never_stops_on_a_trailing_singleton() {
+    // RFC 4647 section 3.4's own worked example: the range falls from
+    // `zh-Hant-CN-x-private1` straight to `zh-Hant-CN`.
+    assert_eq!(
+        classify("zh-Hant-CN-x-private1", "zh-Hant-CN"),
+        Some((MatchKind::Truncates, 3))
+    );
+    assert_eq!(classify("zh-Hant-CN-x-private1", "zh-Hant-CN-x"), None);
+}
+
+#[test]
+fn matching_ignores_case_in_both_directions() {
+    assert_eq!(classify("EN-gb", "en-GB"), Some((MatchKind::Exact, 2)));
+    assert_eq!(classify("en", "EN-GB"), Some((MatchKind::Extends, 1)));
+}
+
+#[test]
+fn a_lookup_match_is_ranked_above_a_filtering_one() {
+    assert!(MatchKind::Truncates > MatchKind::Extends);
+    assert!(MatchKind::Exact > MatchKind::Truncates);
+    assert!(MatchKind::Extends > MatchKind::Wildcard);
+}

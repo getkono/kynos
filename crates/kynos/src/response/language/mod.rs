@@ -29,6 +29,7 @@
 //! translate, and it ships no catalogue — see
 //! [`architecture.md`](../../../../docs/architecture.md)'s third invariant.
 
+pub mod matching;
 pub mod tag;
 
 #[cfg(test)]
