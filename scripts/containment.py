@@ -198,6 +198,29 @@ if undeclared := sorted(hand_rolled - declared):
         + "\n    ".join(undeclared)
     )
 
+# --- The module-size budget -------------------------------------------------
+# AGENTS.md: a module becomes a directory once it exceeds ~400 lines excluding
+# tests. Files still over that line are a debt, and `nfr.md` writes down how
+# many there are so the number can only move deliberately -- down as one is
+# split, and never up without someone editing the ledger and saying why.
+NFR = (ROOT / "docs/nfr.md").read_text()
+oversized = sorted(
+    path
+    for path, _ in FILES
+    if len((ROOT / path).read_text().split("\n")) > 400
+)
+
+budget = re.search(r"a module-size budget of (\d+) files", NFR)
+if budget is None:
+    failures.append("nfr.md no longer states the module-size budget")
+elif int(budget.group(1)) != len(oversized):
+    failures.append(
+        f"nfr.md budgets {budget.group(1)} files over ~400 lines and there are "
+        f"{len(oversized)}. Splitting one means lowering the budget in the same "
+        "commit; adding one means arguing for it there.\n    "
+        + "\n    ".join(oversized)
+    )
+
 # --- Report -----------------------------------------------------------------
 for failure in failures:
     print(f"containment: {failure}", file=sys.stderr)

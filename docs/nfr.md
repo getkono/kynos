@@ -305,6 +305,31 @@ every chunked upload. That is why the row reads `by-design` and not
 documented where the decision is made rather than only here, because that is
 where someone mounting a cap will meet it.
 
+### The module-size budget
+
+AGENTS.md: *"A module becomes a directory once it holds two independently-changing
+concerns or exceeds ~400 lines excluding tests."* Twenty-nine files under
+`crates/*/src` are still over that line, and `containment:check` holds that
+number so it can only move on purpose.
+
+It is a budget rather than a gate because the rule interacts with the one
+directly above it in AGENTS.md — *"Submodules are `pub` with no parent
+re-exports"* — in a way worth stating. Splitting a module that declares several
+public types lengthens every one of their paths, because no re-export may
+preserve the old one. `error/rejection.rs` is the clearest case: eight rejection
+types in 644 lines, and splitting it turns `error::rejection::PathRejection`
+into `error::rejection::path::PathRejection`. Around eighteen of the twenty-nine
+are that shape, worth roughly a hundred public paths between them.
+
+Splitting a module that declares *one* type and a pile of `impl` blocks costs
+nothing, because the type stays declared where it was and an inherent `impl` may
+sit in any module of the crate. That is why `router/`, `emit/downgrade/` and
+`derive/schema/` were split and the rest were not: the first group is free, and
+the second is a decision about a surface the README marks frozen.
+
+The budget is the honest record of that. It falls when a module is split, and
+raising it means saying in the same commit why a new module needs the room.
+
 ## Dependencies
 
 Containment rows enforcing the graph in
@@ -390,6 +415,7 @@ open against a `kynos-otel` that may never be written.
 | reliability | Every reachable feature combination compiles | `mise run features:check` (`cargo hack --feature-powerset`) | `enforced` |
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
 | reliability | Tests are hermetic; no shared state, no ordering dependence, no retries | `cargo-nextest` process isolation, `retries = 0`, guarded by `crates/kynos/tests/hermeticity.rs` | `enforced` |
+| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 29 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
 | reliability | Panic recovery refuses to compile under `panic = "abort"` | `mise run panic:check` | `enforced` |
 | reliability | Commits follow Conventional Commits | `convco`, via git hook and CI | `enforced` |
 | compatibility | Every hand-rolled `Stream` implementation is private, except the one row in [`architecture.md`](architecture.md#public-api-surface), and there are exactly three of them | `mise run containment:check`, counting `Stream for` against the table and the two private sites its prose names | `enforced` |
