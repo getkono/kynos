@@ -251,6 +251,57 @@ rustup toolchain install 1.85 --profile minimal --no-self-update
 cargo +1.85 check --workspace --all-features
 '''
 
+[tasks."publish:check"]
+description = "Package every crate exactly as crates.io will receive it"
+# The gate that was missing. Every other task here builds the working tree, so a
+# file the code needs but the archive omits is invisible to all of them.
+# `cargo package` writes each member's `.crate` and then rebuilds it from the
+# extracted tarball, which is the only thing that can notice.
+#
+# `--workspace` rather than three `-p` runs. The three crates depend on each
+# other and none is on crates.io, so a per-crate run cannot resolve
+# `kynos-openapi = "0.1.0"`. Multi-package packaging -- stable since Cargo 1.90
+# -- stages the tarballs in a local registry under `target/package/` and
+# resolves each member against the archives of the ones before it: the same
+# mechanism, and the same order, `cargo publish` will use.
+#
+# That means this needs Cargo 1.90 or later and does not run at the declared
+# MSRV of 1.85. Not a contradiction: the MSRV is what an application needs to
+# *build* Kynos, not what a maintainer needs to publish it. `[tools]` pins
+# 1.97.1 and CI uses it.
+#
+# `--all-features` for the reason `lint` has it. The verify step compiles the
+# library, and at default features it compiles a fraction of `src/`: a module
+# reachable only under `tls` or `assets` could be missing from the archive and
+# a default-features verify would still pass. `release-plz.toml` sets
+# `publish_all_features = true` so the release itself runs this same check.
+#
+# Deliberately no `--allow-dirty`. Packaging a working tree that matches no
+# commit produces an artifact nobody can reproduce, and that is the failure this
+# task exists to catch rather than tolerate.
+#
+# The `--list` loop runs first because it costs a second and the failure it
+# catches would otherwise surface only after three from-scratch all-feature
+# builds. It checks `LICENSE` and nothing else: `readme` in each manifest
+# already makes a missing README a manifest error, which `--list` itself raises,
+# while nothing at all points at `LICENSE` -- and MIT requires the notice to
+# travel with the copy, so this is the only thing that would notice it going
+# missing. The members come from `cargo metadata`, so a fourth crate is covered
+# the day it is added rather than the day someone remembers this list.
+run = '''
+set -eu
+
+for package in $(cargo metadata --no-deps --format-version 1 \
+  | python3 -c 'import json,sys; print(" ".join(p["name"] for p in json.load(sys.stdin)["packages"]))'); do
+  if ! cargo package --list --quiet -p "$package" | grep -qx LICENSE; then
+    echo "$package would be published without LICENSE" >&2
+    exit 1
+  fi
+done
+
+cargo package --workspace --all-features
+'''
+
 [tasks.coverage]
 description = "Run tests with LLVM coverage"
 run = "cargo llvm-cov nextest --workspace --all-targets --all-features"
