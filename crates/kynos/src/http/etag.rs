@@ -39,7 +39,7 @@
 use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
-    extract::params::header::HeaderParams,
+    extract::params::header::{EncodeHeaders, HeaderParams},
     http::{HeaderValue, header},
     schema::registry::Registry,
 };
@@ -101,12 +101,6 @@ impl ETag {
 impl HeaderParams for ETag {
     const NAMES: &'static [&'static str] = &["etag"];
 
-    fn encode(&self) -> Vec<(http::HeaderName, HeaderValue)> {
-        Self::encode(self)
-            .map(|value| vec![(header::ETAG, value)])
-            .unwrap_or_default()
-    }
-
     fn response_headers(
         registry: &mut Registry,
     ) -> kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>> {
@@ -121,6 +115,14 @@ impl HeaderParams for ETag {
             ),
         );
         headers
+    }
+}
+
+impl EncodeHeaders for ETag {
+    fn encode(&self) -> Vec<(http::HeaderName, HeaderValue)> {
+        Self::encode(self)
+            .map(|value| vec![(header::ETAG, value)])
+            .unwrap_or_default()
     }
 }
 

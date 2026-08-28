@@ -1,7 +1,7 @@
 //! Declaring response headers as part of the return type.
 
 use crate::{
-    extract::params::header::HeaderParams,
+    extract::params::header::{EncodeHeaders, HeaderParams},
     http::Response,
     response::{IntoResponse, Responses},
     schema::registry::Registry,
@@ -38,7 +38,7 @@ impl<T, H> WithHeaders<T, H> {
 impl<T, H> IntoResponse for WithHeaders<T, H>
 where
     T: IntoResponse,
-    H: HeaderParams,
+    H: EncodeHeaders,
 {
     fn into_response(self) -> Response {
         let mut response = self.body.into_response();
@@ -89,7 +89,7 @@ where
 mod tests {
     use super::WithHeaders;
     use crate::{
-        extract::params::header::HeaderParams,
+        extract::params::header::{EncodeHeaders, HeaderParams},
         http::{HeaderName, HeaderValue, Response, header},
         middleware::Continued,
         response::IntoResponse,
@@ -102,7 +102,9 @@ mod tests {
     impl HeaderParams for TwoCookies {
         const NAMES: &'static [&'static str] = &["set-cookie"];
         const REPEATABLE: bool = true;
+    }
 
+    impl EncodeHeaders for TwoCookies {
         fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
             vec![
                 (header::SET_COOKIE, HeaderValue::from_static("first=1")),
@@ -118,14 +120,16 @@ mod tests {
     impl HeaderParams for OneEncoding {
         const NAMES: &'static [&'static str] = &["content-encoding"];
         const VARIES: &'static [&'static str] = &["accept-encoding"];
+    }
 
+    impl EncodeHeaders for OneEncoding {
         fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
             vec![(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"))]
         }
     }
 
     /// What one group writes, through both ways a group reaches the wire.
-    fn both_paths<G: HeaderParams + Copy>(
+    fn both_paths<G: EncodeHeaders + Copy>(
         group: G,
         name: &HeaderName,
     ) -> (Vec<String>, Vec<String>) {

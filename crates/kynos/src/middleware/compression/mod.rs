@@ -14,7 +14,7 @@ use http_body_util::BodyExt;
 use tokio::io::{AsyncRead, ReadBuf};
 
 use crate::{
-    extract::params::header::HeaderParams,
+    extract::params::header::{EncodeHeaders, HeaderParams},
     http,
     middleware::{
         Continued, Interceptor, Next,
@@ -68,7 +68,6 @@ pub struct ContentEncoding {
 impl HeaderParams for ContentEncoding {
     const NAMES: &'static [&'static str] = &["content-encoding", "content-length"];
     const DESCRIBED: bool = false;
-
     // `Vary` rides on every response, encoded or not: what the cache has to know
     // is that the answer depends on `Accept-Encoding`, which is true the moment
     // this interceptor is mounted. It is declared here rather than in `NAMES`
@@ -76,7 +75,9 @@ impl HeaderParams for ContentEncoding {
     // `Compression` and `Cors` covering one route a compile error, and they are
     // a pairing every browser-facing service wants.
     const VARIES: &'static [&'static str] = &["accept-encoding"];
+}
 
+impl EncodeHeaders for ContentEncoding {
     fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
         let Some(coding) = self.coding else {
             return Vec::new();

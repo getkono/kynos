@@ -88,7 +88,7 @@ pub mod trace;
 use std::{future::Future, sync::Arc};
 
 use crate::{
-    extract::params::header::HeaderParams,
+    extract::params::header::{DecodeHeaders, EncodeHeaders, HeaderParams},
     http::{Request, Response},
     middleware::erased::{ErasedInterceptor, ErasedTerminal},
     response::ShortCircuit,
@@ -133,12 +133,12 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
     /// Request headers this interceptor reads, and therefore declares.
     ///
     /// `()` when it reads none.
-    type Reads: HeaderParams + Send;
+    type Reads: DecodeHeaders + Send;
 
     /// Response headers this interceptor adds to a forwarded response.
     ///
     /// `()` when it adds none.
-    type Adds: HeaderParams;
+    type Adds: EncodeHeaders;
 
     /// Responses this interceptor produces without reaching the handler.
     ///
@@ -288,7 +288,7 @@ impl<H: HeaderParams> Continued<H> {
     /// Changes the type, so an interceptor whose `Adds` names a group has to
     /// call this to return at all — and one whose `Adds` is `()` has nothing it
     /// could attach.
-    pub fn with_headers<G: HeaderParams>(mut self, headers: G) -> Continued<G> {
+    pub fn with_headers<G: EncodeHeaders>(mut self, headers: G) -> Continued<G> {
         crate::extract::params::header::write(self.response.headers_mut(), &headers);
 
         Continued {
@@ -495,7 +495,7 @@ pub trait Observer<C>: Send + Sync + 'static {
 
 #[cfg(test)]
 mod tests {
-    use super::{Continued, HeaderParams};
+    use super::{Continued, EncodeHeaders, HeaderParams};
     use crate::http::{HeaderName, HeaderValue, Response, header};
 
     /// A group that declares no header of its own and varies on `origin` —
@@ -505,14 +505,16 @@ mod tests {
     impl HeaderParams for VariesOnOrigin {
         const NAMES: &'static [&'static str] = &[];
         const VARIES: &'static [&'static str] = &["origin"];
+    }
 
+    impl EncodeHeaders for VariesOnOrigin {
         fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
             Vec::new()
         }
     }
 
     /// The `Vary` a response carries after `headers` rides on it.
-    fn vary_after<G: HeaderParams>(existing: Option<&str>, headers: G) -> Option<String> {
+    fn vary_after<G: EncodeHeaders>(existing: Option<&str>, headers: G) -> Option<String> {
         let mut response = Response::new(crate::http::body::Body::empty());
 
         if let Some(existing) = existing {
@@ -576,7 +578,9 @@ mod tests {
         impl HeaderParams for TwoCookies {
             const NAMES: &'static [&'static str] = &["set-cookie"];
             const REPEATABLE: bool = true;
+        }
 
+        impl EncodeHeaders for TwoCookies {
             fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
                 vec![
                     (
@@ -614,7 +618,9 @@ mod tests {
 
         impl HeaderParams for OneEncoding {
             const NAMES: &'static [&'static str] = &["content-encoding"];
+        }
 
+        impl EncodeHeaders for OneEncoding {
             fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
                 vec![(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"))]
             }
@@ -644,7 +650,9 @@ mod tests {
 
         impl HeaderParams for Silent {
             const NAMES: &'static [&'static str] = &[];
+        }
 
+        impl EncodeHeaders for Silent {
             fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
                 Vec::new()
             }

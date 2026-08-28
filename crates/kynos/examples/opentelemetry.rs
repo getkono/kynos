@@ -59,7 +59,7 @@ use std::{convert::Infallible, net::Ipv4Addr};
 
 use kynos::{
     error::rejection::HeaderRejection,
-    extract::params::header::HeaderParams,
+    extract::params::header::{DecodeHeaders, EncodeHeaders, HeaderParams},
     http::{self, HeaderMap, HeaderName, HeaderValue},
     middleware::{Continued, Interceptor, Next},
     prelude::*,
@@ -86,7 +86,9 @@ struct TraceContext {
 
 impl HeaderParams for TraceContext {
     const NAMES: &'static [&'static str] = &["traceparent", "tracestate"];
+}
 
+impl DecodeHeaders for TraceContext {
     fn decode(headers: &HeaderMap) -> Result<Self, HeaderRejection> {
         let read = |name: &str| {
             headers
@@ -104,7 +106,9 @@ impl HeaderParams for TraceContext {
             tracestate: read("tracestate"),
         })
     }
+}
 
+impl EncodeHeaders for TraceContext {
     fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
         // Nothing is written back: Trace Context travels with the request.
         Vec::new()

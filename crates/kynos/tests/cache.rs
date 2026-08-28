@@ -117,7 +117,9 @@ struct CacheControl;
 impl kynos::extract::params::header::HeaderParams for CacheControl {
     const NAMES: &'static [&'static str] = &["cache-control"];
     const DESCRIBED: bool = false;
+}
 
+impl kynos::extract::params::header::EncodeHeaders for CacheControl {
     fn encode(&self) -> Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)> {
         vec![(
             header::CACHE_CONTROL,

@@ -29,7 +29,7 @@ use bytes::Bytes;
 use kynos_openapi::{OpaqueReason, OpaqueRoute};
 
 use crate::{
-    extract::params::header::HeaderParams,
+    extract::params::header::{EncodeHeaders, HeaderParams},
     http::{HeaderValue, Request, Response, StatusCode, header},
     middleware::catch_panic::PanicPolicy,
     response::range::{Selection, spec},
@@ -170,7 +170,9 @@ struct FileHeaders {
 
 impl HeaderParams for FileHeaders {
     const NAMES: &'static [&'static str] = &["etag", "cache-control"];
+}
 
+impl EncodeHeaders for FileHeaders {
     fn encode(&self) -> Vec<(crate::http::HeaderName, HeaderValue)> {
         let mut fields = Vec::with_capacity(2);
 

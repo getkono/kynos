@@ -24,7 +24,7 @@ use bytes::Bytes;
 
 use crate::{
     error::rejection::RangeRejection,
-    extract::params::header::HeaderParams,
+    extract::params::header::{EncodeHeaders, HeaderParams},
     http::{HeaderValue, Response, StatusCode, header},
     response::{
         IntoResponse,
@@ -43,7 +43,7 @@ use crate::{
 /// For octets already in hand. A sender that knows the length without holding
 /// the bytes — a file on disk — calls [`range::select`] itself and reaches
 /// [`assembled`] with only the part it read.
-pub(super) fn respond<H: HeaderParams>(
+pub(super) fn respond<H: EncodeHeaders>(
     octets: Bytes,
     media_type: &str,
     headers: &H,
@@ -65,7 +65,7 @@ pub(super) fn respond<H: HeaderParams>(
 }
 
 /// The response carrying `body`, which is whatever `selection` said to send.
-pub(super) fn assembled<H: HeaderParams>(
+pub(super) fn assembled<H: EncodeHeaders>(
     body: Bytes,
     selection: Selection,
     media_type: &str,

@@ -31,18 +31,13 @@ pub trait CookieParams: Sized {
     /// The whole [`HeaderMap`] rather than the `Cookie` field alone, because a
     /// request may carry more than one and the jar is their concatenation.
     ///
-    /// # Panics
-    ///
-    /// The default panics. Derive `CookieParams`, or write this by hand, before
-    /// extracting the group.
-    fn decode(headers: &HeaderMap) -> Result<Self, CookieRejection> {
-        let _ = headers;
-        unimplemented!(
-            "`{}` does not decode cookies: derive `CookieParams` on it, or implement `decode` by \
-             hand",
-            std::any::type_name::<Self>()
-        )
-    }
+    /// Required, where the header and parameter groups split their two
+    /// directions into traits of their own. There is nothing to split here: a
+    /// cookie group is only ever read — a cookie is *set* through
+    /// [`response::cookie`](crate::response::cookie) — so the one-direction
+    /// case the defaults existed for does not arise, and a default would only
+    /// let a group satisfy this trait without doing the one thing it is for.
+    fn decode(headers: &HeaderMap) -> Result<Self, CookieRejection>;
 
     /// Describes the declared OpenAPI cookie parameters.
     ///
@@ -84,19 +79,10 @@ mod tests {
     use super::CookieParams;
     use crate::{error::rejection::CookieRejection, http::HeaderMap};
 
-    /// A group that has said nothing about how it is spelled.
-    #[derive(Debug)]
-    struct Unspelled;
-
-    impl CookieParams for Unspelled {
-        const NAMES: &'static [&'static str] = &["session"];
-    }
-
-    #[test]
-    #[should_panic(expected = "does not decode cookies")]
-    fn a_group_that_declares_no_decoder_says_so() {
-        let _ = Unspelled::decode(&HeaderMap::new());
-    }
+    // A `#[should_panic]` case stood here, asserting that a group declaring no
+    // decoder said so at run time. `decode` is required now — a cookie group is
+    // only ever read, so there was never a one-direction case to keep a default
+    // for — and a group without one does not compile. The control below stays.
 
     /// The control, which also pins the reason the signature takes the whole
     /// map: a request may carry more than one `Cookie` field, and the jar is
@@ -141,8 +127,19 @@ mod tests {
     /// they all are.
     #[test]
     fn the_default_description_requires_no_cookie_it_names() {
+        /// A group that says what it is named and nothing more.
+        struct Named;
+
+        impl CookieParams for Named {
+            const NAMES: &'static [&'static str] = &["session"];
+
+            fn decode(_: &HeaderMap) -> Result<Self, CookieRejection> {
+                Ok(Self)
+            }
+        }
+
         let mut registry = crate::schema::registry::Registry::new();
-        let parameters = Unspelled::parameters(&mut registry);
+        let parameters = Named::parameters(&mut registry);
 
         assert_eq!(parameters.len(), 1);
         assert_eq!(parameters[0].name, "session");

@@ -20,46 +20,14 @@ use crate::extract::media::MediaType;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Query<T>(pub T);
 
-/// A group of query parameters.
+/// A group of query parameters, as the description sees it.
 ///
-/// The two value-shaped methods have panicking defaults, for the reason
-/// [`PathParams`](crate::extract::params::path::PathParams)' do: a group that
-/// has not said how its fields are spelled cannot be decoded or encoded on its
-/// behalf, and a group written out by hand for one direction need not write the
-/// other.
+/// The two directions are [`DecodeQuery`] and [`EncodeQuery`], for the reason
+/// [`PathParams`](crate::extract::params::path::PathParams)' are: a group is
+/// often only ever read or only ever written, and expressing that as a
+/// defaulted method with an `unimplemented!()` body made a group that supplied
+/// neither satisfy this trait and panic on its first request.
 pub trait QueryParams: Sized + Schema {
-    /// Decodes a raw query string.
-    ///
-    /// `None` when the request carried no `?` at all, which is distinct from
-    /// the empty query string a bare `?` produces.
-    ///
-    /// # Panics
-    ///
-    /// The default panics. Derive `QueryParams`, or write this by hand, before
-    /// extracting the group.
-    fn decode(query: Option<&str>) -> Result<Self, QueryRejection> {
-        let _ = query;
-        unimplemented!(
-            "`{}` does not decode a query string: derive `QueryParams` on it, or implement \
-             `decode` by hand",
-            std::any::type_name::<Self>()
-        )
-    }
-
-    /// Encodes this value as a query string without the leading `?`.
-    ///
-    /// # Panics
-    ///
-    /// The default panics, for the reason [`decode`](QueryParams::decode)'s
-    /// does.
-    fn encode(&self) -> String {
-        unimplemented!(
-            "`{}` does not encode a query string: derive `QueryParams` on it, or implement \
-             `encode` by hand",
-            std::any::type_name::<Self>()
-        )
-    }
-
     /// Describes the individual OpenAPI query parameters.
     ///
     /// The default projects the group's own schema: one parameter per property,
@@ -99,7 +67,27 @@ pub trait QueryParams: Sized + Schema {
     }
 }
 
-impl<C: Sync, T: QueryParams + Send> FromRequestParts<C> for Query<T> {
+/// Reading a query parameter group from a request.
+///
+/// `#[derive(QueryParams)]` writes this.
+pub trait DecodeQuery: QueryParams {
+    /// Decodes a raw query string.
+    ///
+    /// `None` when the request carried no `?` at all, which is distinct from
+    /// the empty query string a bare `?` produces.
+    fn decode(query: Option<&str>) -> Result<Self, QueryRejection>;
+}
+
+/// Writing a query parameter group into a typed endpoint URI.
+///
+/// The counterpart to [`DecodeQuery`]; see [`QueryParams`] for why the two are
+/// apart.
+pub trait EncodeQuery: QueryParams {
+    /// Encodes this value as a query string without the leading `?`.
+    fn encode(&self) -> String;
+}
+
+impl<C: Sync, T: DecodeQuery + Send> FromRequestParts<C> for Query<T> {
     type Rejection = QueryRejection;
 
     async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
@@ -244,38 +232,18 @@ impl<T: Schema, M: MediaType> Describe for QueryString<T, M> {
 
 #[cfg(test)]
 mod tests {
-    use super::QueryParams;
+    use super::{DecodeQuery, QueryParams};
     use crate::{
         error::rejection::QueryRejection,
         schema::{Schema, registry::Registry},
     };
 
-    /// A group that has said nothing about how it is spelled.
-    #[derive(Debug)]
-    struct Unspelled;
-
-    impl Schema for Unspelled {
-        fn schema(registry: &mut Registry) -> kynos_openapi::Schema {
-            let _ = registry;
-            kynos_openapi::Schema::any()
-        }
-    }
-
-    impl QueryParams for Unspelled {}
-
-    /// Both value-shaped defaults say which trait is missing rather than
-    /// decoding to nothing.
-    #[test]
-    #[should_panic(expected = "does not decode a query string")]
-    fn a_group_that_declares_no_decoder_says_so() {
-        let _ = Unspelled::decode(Some("a=1"));
-    }
-
-    #[test]
-    #[should_panic(expected = "does not encode a query string")]
-    fn a_group_that_declares_no_encoder_says_so() {
-        let _ = Unspelled.encode();
-    }
+    // Two `#[should_panic]` cases stood here, asserting that a group declaring
+    // neither direction said so at run time. `DecodeQuery` and `EncodeQuery`
+    // are separate traits now, so such a group does not compile and there is
+    // nothing left to provoke. The control below stays: it is what proves the
+    // decoder is reached, which is the half a compile-time guarantee cannot
+    // say anything about.
 
     /// The control: a group that declares a decoder is not touched by the
     /// default, and sees the distinction the signature draws — `None` for a
@@ -292,7 +260,9 @@ mod tests {
             }
         }
 
-        impl QueryParams for Recorded {
+        impl QueryParams for Recorded {}
+
+        impl DecodeQuery for Recorded {
             fn decode(query: Option<&str>) -> Result<Self, QueryRejection> {
                 Ok(Self(query.map(str::to_owned)))
             }
