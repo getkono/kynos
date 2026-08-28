@@ -165,7 +165,14 @@ pub mod prelude {
         extract::params::{path::Path, query::Query},
         response::status::{Created, NoContent},
         router::{Router, group::Group},
-        schema::Schema as SchemaTrait,
+        // Not `as SchemaTrait`. rustc renders a trait by its shortest *visible*
+        // path, so an alias here became the name in every user's compiler
+        // output — a name with no canonical path and no mention in the
+        // documentation, contradicting the `on_unimplemented` message printed
+        // directly above it. A derive lives in the macro namespace and a trait
+        // in the type namespace, which is how `serde` exports both as
+        // `Serialize`, so the two can share this name too.
+        schema::Schema,
     };
 
     #[cfg(feature = "json")]
