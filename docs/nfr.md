@@ -9,6 +9,7 @@ only if it never claims a guarantee CI does not actually enforce.
 | Status | Meaning |
 | --- | --- |
 | `enforced` | A CI job runs this today. Regressions fail the build |
+| `partial` | A job runs this today, but it cannot fail the build or cannot see the whole requirement. What it does and does not cover is stated in the row |
 | `planned` | The requirement is settled and the method needs no tool this repository lacks; it is simply not wired |
 | `needs-tooling` | Settled, and blocked on installing something. The tool is named |
 | `blocked-on-impl` | The surface the method would assert against does not exist yet |
@@ -24,9 +25,11 @@ while the closing section says it deliberately will not; those rows are
 already lives.
 
 Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
-`trybuild`, `proptest`, and rustdoc with `missing_docs = "deny"`. Not yet
-present: `cargo-public-api`, `cargo-semver-checks`, `cargo-fuzz`. `criterion` is
-not on this list and will not be: benchmarks live in `kynos-bench`.
+`trybuild`, `proptest`, rustdoc with `missing_docs = "deny"`, and
+`cargo-semver-checks` — the last only through release-plz, at default features
+and fail-open, which is why its rows read `partial`. Not yet present:
+`cargo-public-api`, `cargo-fuzz`. `criterion` is not on this list and will not
+be: benchmarks live in `kynos-bench`.
 
 ## Thresholds
 
@@ -58,7 +61,7 @@ disabled, or passes trivially and hides the regression it was meant to catch.
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | compatibility | Public API surface is diffed on every change; an addition requires explicit budget approval, a removal fails the build | `cargo-public-api` | `needs-tooling` |
-| compatibility | Every release tag is gated on semantic-version correctness | `cargo-semver-checks` | `needs-tooling` |
+| compatibility | Every release reports whether the version bump matches the API change | `cargo-semver-checks`, run by release-plz for every crate | `partial`; the workspace-wide row in [Workspace](#workspace) records what it does and does not buy |
 | correctness | The IR round-trips through serialization losslessly | `proptest` over generated IR values | `enforced`, with two exclusions below, each characterized |
 | correctness | Every model type emits the field names and nesting the specification gives it | One exact-JSON case per type in `tests/wire.rs`, counted against the type list | `enforced` |
 | correctness | The corpus a downstream generator is built against is the one this build emits | [`tests/conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs), comparing every committed document against a freshly emitted one | `enforced` |
@@ -369,6 +372,8 @@ open against a `kynos-otel` that may never be written.
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | reliability | The declared MSRV builds | `mise run msrv:check`, dedicated CI job | `enforced` |
+| reliability | Every crate's published archive builds from a pristine extraction, with every feature | `mise run publish:check` (`cargo package --workspace --all-features`), dedicated CI job | `enforced` |
+| compatibility | A release reports whether its API broke | `cargo-semver-checks` via release-plz, verdict in the release pull request body | `partial`: default features only, and fail-open — it is evidence for the reviewer, not a gate. See the tooling gap below |
 | reliability | Every reachable feature combination compiles | `mise run features:check` (`cargo hack --feature-powerset`) | `enforced` |
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
 | reliability | Tests are hermetic; no shared state, no ordering dependence, no retries | `cargo-nextest` process isolation, `retries = 0`, guarded by `crates/kynos/tests/hermeticity.rs` | `enforced` |
@@ -391,7 +396,7 @@ what they unblock:
 | `trybuild` | Compile-fail and UI rows in routing, extraction and macros | Already in `[workspace.dependencies]`; needs only a consumer |
 | `proptest` | IR round-tripping, schema projection, the conformance harness | |
 | `cargo-fuzz` | Extractor panic-freedom | Needs a committed corpus and a nightly job |
-| `cargo-semver-checks` | Release-tag gating | Meaningful now that the surface is implemented; needs a release tag to compare against |
+| `cargo-semver-checks` | The `compatibility` row in [Workspace](#workspace), at full feature coverage | No longer absent: release-plz installs and runs it on every release. Not closed either -- it is invoked with default features only, and it is fail-open, reporting "compatible" for any failure that does not name a required major bump, so a toolchain error is indistinguishable from a clean run. Closing it means a `mise run semver:check` passing `--all-features`, which needs 0.1.0 on crates.io to compare against |
 
 `criterion` is intentionally absent from this list. Benchmarks live in
 [`getkono/kynos-bench`](https://github.com/getkono/kynos-bench) along with the
