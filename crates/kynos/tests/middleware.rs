@@ -9,7 +9,8 @@
 use kynos::{
     http::{Method, Request, StatusCode, header},
     middleware::rate_limit::{
-        Decision, QuotaPolicy, QuotaUnit, RateLimit, RateLimitPolicy, ServiceLimit,
+        RateLimit,
+        decision::{Decision, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
     },
     router::operation::Route,
 };

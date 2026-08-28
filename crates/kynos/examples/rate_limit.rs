@@ -43,8 +43,10 @@ use kynos::{
     Router,
     http::forwarded::TrustedProxies,
     middleware::rate_limit::{
-        Quota, Quotas, RateLimit, RateLimitStore, StoreFailure,
+        RateLimit,
         key::{And, ByClientAddress, ByRoute},
+        quota::{Quota, Quotas},
+        store::{RateLimitStore, StoreFailure},
     },
     prelude::*,
     response::status::NoContent,

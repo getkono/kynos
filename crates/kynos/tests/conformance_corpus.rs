@@ -37,9 +37,10 @@ use std::{path::PathBuf, pin::Pin};
 
 use kynos::{
     Router,
+    extract::body::json_lines::JsonLines,
     openapi::{Document, SpecVersion},
     prelude::*,
-    response::stream::{json::JsonLines, sse::Sse},
+    response::stream::sse::Sse,
 };
 use serde::{Deserialize, Serialize};
 

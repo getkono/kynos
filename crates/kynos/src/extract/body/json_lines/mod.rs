@@ -27,7 +27,7 @@ use crate::{
 };
 
 /// One spelling, read by every half: what is decoded, what is described, and
-/// what [`response::stream::json`](crate::response::stream::json) sends.
+/// what the responding half of this codec sends.
 pub(crate) const LINES_MEDIA_TYPE: &str = "application/x-ndjson";
 
 /// One spelling, read by every half, as [`LINES_MEDIA_TYPE`] is.

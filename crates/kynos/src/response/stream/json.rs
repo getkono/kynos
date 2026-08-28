@@ -25,11 +25,7 @@ const NEWLINE: &[u8] = b"\n";
 /// RFC 7464's separator, written from the one byte the decoder scans for.
 const SEQUENCE_PREFIX: &[u8] = &[RECORD_SEPARATOR];
 
-/// The two streamed JSON codecs, as responses.
-///
-/// These are the same types a handler extracts with; the aliases exist so that
-/// a handler's return type reads as a response.
-pub use crate::extract::body::json_lines::{JsonLines, JsonSeq};
+use crate::extract::body::json_lines::{JsonLines, JsonSeq};
 
 /// Streams each item as one JSON value followed by a newline.
 ///

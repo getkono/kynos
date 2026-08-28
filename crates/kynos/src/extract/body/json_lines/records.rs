@@ -24,7 +24,7 @@ use crate::{
 /// exists: a value holding a newline stays one record.
 ///
 /// One spelling, read by both halves: the byte this decoder scans for is the
-/// byte [`response::stream::json`](crate::response::stream::json) writes in
+/// byte the responding half of this codec writes in
 /// front of every record it emits.
 pub(crate) const RECORD_SEPARATOR: u8 = 0x1e;
 

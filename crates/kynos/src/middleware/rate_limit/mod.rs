@@ -1,9 +1,9 @@
 //! Rate limiting.
 //!
 //! Kynos supplies the description, the 429, the headers and — through
-//! [`Quotas`] — a sliding-window algorithm over named quotas. What stays the
-//! application's is *where the counters live*, because prescribing a store would
-//! mean prescribing a dependency.
+//! [`Quotas`](quota::Quotas) — a sliding-window algorithm over named quotas.
+//! What stays the application's is *where the counters live*, because
+//! prescribing a store would mean prescribing a dependency.
 //!
 //! # How this module is laid out
 //!
@@ -20,13 +20,10 @@ pub mod store;
 
 use std::marker::PhantomData;
 
-pub use decision::{
-    Allowance, Decision, Denial, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit,
+use crate::middleware::rate_limit::{
+    decision::{Decision, QuotaPolicy, RateLimitPolicy, ServiceLimit},
+    headers::{RateLimitFields, RateLimitHeaders, RateLimited, RateLimitedFields},
 };
-pub use headers::{RateLimitFields, RateLimitHeaders, RateLimited, RateLimitedFields};
-pub use quota::{Quota, Quotas};
-pub use store::{RateLimitStore, StoreFailure};
-
 use crate::{
     extract::params::header::EncodeHeaders,
     http,
@@ -131,7 +128,10 @@ impl RateLimitSpelling for Structured {
 /// use std::time::Duration;
 /// use kynos::{
 ///     http,
-///     middleware::rate_limit::{Decision, RateLimit, RateLimitPolicy, ServiceLimit},
+///     middleware::rate_limit::{
+///         RateLimit,
+///         decision::{Decision, RateLimitPolicy, ServiceLimit},
+///     },
 ///     router::operation::Route,
 /// };
 ///

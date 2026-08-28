@@ -19,7 +19,10 @@ use kynos::{
     http::etag::ETag,
     http::{Method, StatusCode, header},
     middleware::{
-        cache::{Cache, CacheStore, PrimaryKey, StoredResponse},
+        cache::{
+            Cache,
+            store::{CacheStore, PrimaryKey, StoredResponse},
+        },
         conditional::Conditional,
     },
     prelude::*,

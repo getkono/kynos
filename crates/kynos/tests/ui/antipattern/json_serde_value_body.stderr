@@ -1,8 +1,8 @@
 error[E0277]: `Value` cannot describe itself as a schema
  --> tests/ui/antipattern/json_serde_value_body.rs:6:27
   |
-6 |     describes_responses::<kynos::response::codec::json::Json<serde_json::Value>>();
-  |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not describable
+6 |     describes_responses::<kynos::extract::body::json::Json<serde_json::Value>>();
+  |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not describable
   |
   = help: the trait `kynos::schema::Schema` is not implemented for `Value`
   = note: derive it with `#[derive(kynos::Schema)]`

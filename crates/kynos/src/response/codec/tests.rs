@@ -165,9 +165,18 @@ fn every_codec_has_a_wire_case() {
     /// `binary`, `text`, `form`, `json`, `multipart`, `protobuf`.
     const WITNESSED: usize = 6;
 
+    // Either visibility. What is counted is codecs, and whether a codec's
+    // module is `pub` says only whether it declares an item of its own --
+    // `multipart` declares two traits, the other five declare nothing and are
+    // private. A codec still writes bytes either way, so keying this on `pub`
+    // would have let the whole set go uncounted the day they were sealed.
     let declared = SOURCE
         .lines()
-        .filter(|line| line.starts_with("pub mod "))
+        .filter_map(|line| {
+            line.strip_prefix("pub mod ")
+                .or_else(|| line.strip_prefix("mod "))
+        })
+        .filter(|declaration| *declaration != "tests;")
         .count();
 
     assert_eq!(

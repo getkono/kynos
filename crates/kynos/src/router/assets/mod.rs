@@ -41,15 +41,15 @@ pub mod media;
 
 use std::borrow::Cow;
 
+use crate::router::assets::endpoint::AssetEndpoint;
 use crate::router::endpoint::set::{Endpoints, IntoEndpoints};
 
-mod endpoint;
+pub mod endpoint;
+
 mod range;
 
 #[cfg(feature = "assets-fs")]
 pub mod fs;
-
-pub use endpoint::AssetEndpoint;
 
 /// One file an asset set serves.
 ///

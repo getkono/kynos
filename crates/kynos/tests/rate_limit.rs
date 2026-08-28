@@ -18,8 +18,10 @@ use kynos::{
     http::StatusCode,
     http::forwarded::TrustedProxies,
     middleware::rate_limit::{
-        Quota, Quotas, RateLimit, RateLimitStore, StoreFailure,
+        RateLimit,
         key::{And, ByClientAddress, ByHeader, ByPeerAddress, ByRoute, Shared},
+        quota::{Quota, Quotas},
+        store::{RateLimitStore, StoreFailure},
     },
     response::status::NoContent,
 };

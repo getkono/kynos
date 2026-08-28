@@ -36,7 +36,7 @@
 //!   record that fails still has a status to spend, because nothing reaches
 //!   the socket until the handler's future resolves. It is one type in both
 //!   directions, so it is imported once, from the module that defines it —
-//!   `response::stream::json` re-exports it so a return type reads as a
+//!   the responding half is implemented there so a return type reads as a
 //!   response, and here it is a return type *and* an argument.
 //!
 //! Server-Sent Events are the fourth sequential media type, and the only one
