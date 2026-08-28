@@ -9,10 +9,13 @@ use crate::validate::violation::pointer_token;
 #[cfg(feature = "openapi32")]
 use crate::model::{
     body::{encoding::Encoding, media_type::MediaType},
+    callback::Callback,
+    components::Components,
     example::{Example, ExampleValue, Examples},
-    parameter::ParameterIn,
-    paths::operation::Operation,
+    parameter::{Parameter, ParameterIn, header::Header},
+    paths::{item::PathItem, operation::Operation},
     reference::RefOr,
+    response::{Response, Responses},
     schema::Schema,
     security::{SecurityScheme, oauth::OAuthFlows},
 };
@@ -53,29 +56,24 @@ pub fn three_two_only_constructs(document: &Document) -> Vec<String> {
                 }
             }
         }
-        if !document.components.media_types.is_empty() {
-            blockers.push("#/components/mediaTypes".to_owned());
-        }
-
-        for (name, scheme) in &document.components.security_schemes {
-            let location = format!("#/components/securitySchemes/{}", pointer_token(name));
-            if let RefOr::Item(scheme) = scheme {
-                collect_security_scheme_blockers(&location, scheme, &mut blockers);
-            }
-        }
+        collect_components_blockers("#/components", &document.components, &mut blockers);
 
         for (raw, item) in &document.paths.0 {
-            let location = format!("#/paths/{}", pointer_token(raw));
-            if item.query.is_some() {
-                blockers.push(format!("{location}/query"));
-            }
-            if !item.additional_operations.is_empty() {
-                blockers.push(format!("{location}/additionalOperations"));
-            }
-            for (method, operation) in item.operations() {
-                let op = format!("{location}/{}", method.as_wire_str().to_lowercase());
-                collect_operation_blockers(&op, operation, &mut blockers);
-            }
+            collect_path_item_blockers(
+                &format!("#/paths/{}", pointer_token(raw)),
+                item,
+                &mut blockers,
+            );
+        }
+
+        // A webhook is a Path Item, and every 3.2 construct one can carry is
+        // one a Path Item under `paths` can carry.
+        for (name, item) in &document.webhooks {
+            collect_path_item_blockers(
+                &format!("#/webhooks/{}", pointer_token(name)),
+                item,
+                &mut blockers,
+            );
         }
 
         blockers
@@ -143,15 +141,158 @@ fn collect_oauth_flow_blockers(location: &str, flows: &OAuthFlows, blockers: &mu
     }
 }
 
+/// Visits each present item of a `RefOr` map, at the pointer it lives at.
+///
+/// A `RefOr::Ref` is skipped rather than followed: it names an object defined
+/// elsewhere in the document, and that definition is walked where it is
+/// written. Following it here would report one construct once per reference.
+#[cfg(feature = "openapi32")]
+fn for_each_item<'a, T: 'a>(
+    section: &str,
+    entries: impl IntoIterator<Item = (&'a String, &'a RefOr<T>)>,
+    mut visit: impl FnMut(String, &T),
+) {
+    for (name, entry) in entries {
+        if let RefOr::Item(item) = entry {
+            visit(format!("{section}/{}", pointer_token(name)), item);
+        }
+    }
+}
+
+/// The same for a map holding its values directly.
+#[cfg(feature = "openapi32")]
+fn for_each<'a, T: 'a>(
+    section: &str,
+    entries: impl IntoIterator<Item = (&'a String, &'a T)>,
+    mut visit: impl FnMut(String, &T),
+) {
+    for (name, item) in entries {
+        visit(format!("{section}/{}", pointer_token(name)), item);
+    }
+}
+
+/// Every reusable object, each reached the same way its inline twin is.
+///
+/// `mediaTypes` is the whole map rather than anything within it: the section
+/// itself arrived in 3.2, so its presence is the blocker and descending into it
+/// would name one document twice.
+#[cfg(feature = "openapi32")]
+fn collect_components_blockers(
+    location: &str,
+    components: &Components,
+    blockers: &mut Vec<String>,
+) {
+    if !components.media_types.is_empty() {
+        blockers.push(format!("{location}/mediaTypes"));
+    }
+
+    for_each_item(
+        &format!("{location}/securitySchemes"),
+        &components.security_schemes,
+        |at, scheme| collect_security_scheme_blockers(&at, scheme, blockers),
+    );
+    for_each(
+        &format!("{location}/schemas"),
+        &components.schemas,
+        |at, schema| collect_schema_blockers(&at, schema, blockers),
+    );
+    for_each_item(
+        &format!("{location}/responses"),
+        &components.responses,
+        |at, response| collect_response_blockers(&at, response, blockers),
+    );
+    for_each_item(
+        &format!("{location}/parameters"),
+        &components.parameters,
+        |at, parameter| collect_parameter_blockers(&at, parameter, blockers),
+    );
+    for_each_item(
+        &format!("{location}/headers"),
+        &components.headers,
+        |at, header| collect_header_blockers(&at, header, blockers),
+    );
+    for_each_item(
+        &format!("{location}/examples"),
+        &components.examples,
+        |at, example| collect_example_blockers(&at, example, blockers),
+    );
+    for_each_item(
+        &format!("{location}/requestBodies"),
+        &components.request_bodies,
+        |at, body| {
+            for (media_type, content) in &body.content {
+                collect_media_type_blockers(
+                    &format!("{at}/content/{}", pointer_token(media_type)),
+                    content,
+                    blockers,
+                );
+            }
+        },
+    );
+    for_each(
+        &format!("{location}/pathItems"),
+        &components.path_items,
+        |at, item| collect_path_item_blockers(&at, item, blockers),
+    );
+    for_each_item(
+        &format!("{location}/callbacks"),
+        &components.callbacks,
+        |at, callback| collect_callback_blockers(&at, callback, blockers),
+    );
+}
+
+/// One Path Item, wherever it hangs: `paths`, `webhooks`, a component, or a
+/// callback expression.
+#[cfg(feature = "openapi32")]
+fn collect_path_item_blockers(location: &str, item: &PathItem, blockers: &mut Vec<String>) {
+    if item.query.is_some() {
+        blockers.push(format!("{location}/query"));
+    }
+    if !item.additional_operations.is_empty() {
+        blockers.push(format!("{location}/additionalOperations"));
+    }
+
+    // Parameters hoisted above the operations apply to every one of them, so a
+    // 3.2 location declared here is no less 3.2 for being declared once.
+    for parameter in item.parameters.iter().filter_map(RefOr::as_item) {
+        collect_parameter_blockers(
+            &format!("{location}/parameters/{}", parameter.name),
+            parameter,
+            blockers,
+        );
+    }
+
+    for (method, operation) in item.operations() {
+        collect_operation_blockers(
+            &format!("{location}/{}", method.as_wire_str().to_lowercase()),
+            operation,
+            blockers,
+        );
+    }
+}
+
+/// The Path Items a callback expression maps to.
+#[cfg(feature = "openapi32")]
+fn collect_callback_blockers(location: &str, callback: &Callback, blockers: &mut Vec<String>) {
+    for (expression, item) in &callback.0 {
+        if let RefOr::Item(item) = item {
+            collect_path_item_blockers(
+                &format!("{location}/{}", pointer_token(expression)),
+                item,
+                blockers,
+            );
+        }
+    }
+}
+
 #[cfg(feature = "openapi32")]
 fn collect_operation_blockers(location: &str, operation: &Operation, blockers: &mut Vec<String>) {
     for parameter in operation.parameters.iter().filter_map(RefOr::as_item) {
-        if parameter.location == ParameterIn::Querystring {
-            blockers.push(format!("{location}/parameters/{}", parameter.name));
-        }
-        if parameter.style() == Some(crate::model::parameter::style::Style::Cookie) {
-            blockers.push(format!("{location}/parameters/{}/style", parameter.name));
-        }
+        collect_parameter_blockers(
+            &format!("{location}/parameters/{}", parameter.name),
+            parameter,
+            blockers,
+        );
     }
 
     if let Some(RefOr::Item(body)) = &operation.request_body {
@@ -167,22 +308,127 @@ fn collect_operation_blockers(location: &str, operation: &Operation, blockers: &
         }
     }
 
-    for (status, response) in &operation.responses.responses {
-        let Some(response) = response.as_item() else {
-            continue;
-        };
-        if response.summary.is_some() {
-            blockers.push(format!("{location}/responses/{status}/summary"));
-        }
-        for (media_type, content) in &response.content {
-            collect_media_type_blockers(
-                &format!(
-                    "{location}/responses/{status}/content/{}",
-                    pointer_token(media_type)
-                ),
-                content,
+    collect_responses_blockers(location, &operation.responses, blockers);
+
+    for (name, callback) in &operation.callbacks {
+        if let RefOr::Item(callback) = callback {
+            collect_callback_blockers(
+                &format!("{location}/callbacks/{}", pointer_token(name)),
+                callback,
                 blockers,
             );
+        }
+    }
+}
+
+/// The keyed responses *and* the `default` beside them.
+///
+/// The two are separate fields, and walking only the map is what let a 3.2
+/// construct in a `default` response through.
+#[cfg(feature = "openapi32")]
+fn collect_responses_blockers(location: &str, responses: &Responses, blockers: &mut Vec<String>) {
+    for (status, response) in &responses.responses {
+        if let Some(response) = response.as_item() {
+            collect_response_blockers(
+                &format!("{location}/responses/{status}"),
+                response,
+                blockers,
+            );
+        }
+    }
+
+    if let Some(default) = responses.default_response.as_ref().and_then(RefOr::as_item) {
+        collect_response_blockers(&format!("{location}/responses/default"), default, blockers);
+    }
+}
+
+#[cfg(feature = "openapi32")]
+fn collect_response_blockers(location: &str, response: &Response, blockers: &mut Vec<String>) {
+    if response.summary.is_some() {
+        blockers.push(format!("{location}/summary"));
+    }
+
+    for (media_type, content) in &response.content {
+        collect_media_type_blockers(
+            &format!("{location}/content/{}", pointer_token(media_type)),
+            content,
+            blockers,
+        );
+    }
+
+    for (name, header) in &response.headers {
+        if let RefOr::Item(header) = header {
+            collect_header_blockers(
+                &format!("{location}/headers/{}", pointer_token(name)),
+                header,
+                blockers,
+            );
+        }
+    }
+}
+
+/// A parameter, located at the pointer the caller built for it.
+///
+/// The location is passed in rather than appended here because a parameter is
+/// named by its position under an operation and by its component key under
+/// `components`, and only the caller knows which.
+#[cfg(feature = "openapi32")]
+fn collect_parameter_blockers(location: &str, parameter: &Parameter, blockers: &mut Vec<String>) {
+    if parameter.location == ParameterIn::Querystring {
+        blockers.push(location.to_owned());
+    }
+    if parameter.style() == Some(crate::model::parameter::style::Style::Cookie) {
+        blockers.push(format!("{location}/style"));
+    }
+
+    if let Some((media_type, content)) = parameter.content() {
+        collect_media_type_blockers(
+            &format!("{location}/content/{}", pointer_token(media_type)),
+            content,
+            blockers,
+        );
+    }
+
+    if let Some(schema) = parameter.schema() {
+        collect_schema_blockers(&format!("{location}/schema"), schema, blockers);
+    }
+
+    if let Some(Examples::Named(examples)) = parameter.examples() {
+        for (name, example) in examples {
+            if let Some(example) = example.as_item() {
+                collect_example_blockers(
+                    &format!("{location}/examples/{}", pointer_token(name)),
+                    example,
+                    blockers,
+                );
+            }
+        }
+    }
+}
+
+#[cfg(feature = "openapi32")]
+fn collect_header_blockers(location: &str, header: &Header, blockers: &mut Vec<String>) {
+    if let Some((media_type, content)) = header.content() {
+        collect_media_type_blockers(
+            &format!("{location}/content/{}", pointer_token(media_type)),
+            content,
+            blockers,
+        );
+    }
+
+    if let Some(schema) = header.schema() {
+        collect_schema_blockers(&format!("{location}/schema"), schema, blockers);
+    }
+
+    if let Some(Examples::Named(examples)) = header.examples() {
+        for (name, example) in examples {
+            if let Some(example) = example.as_item() {
+                collect_example_blockers(
+                    &format!("{location}/examples/{}", pointer_token(name)),
+                    example,
+                    blockers,
+                );
+            }
         }
     }
 }

@@ -727,6 +727,9 @@ mod reach {
         MediaType::sequential(Schema::any())
     }
 
+    // Long for the reason `ledger` above is: one row per container, written
+    // out rather than generated, because the count of them is the coverage.
+    #[expect(clippy::too_many_lines)]
     fn cases() -> Vec<(&'static str, Document, String)> {
         let mut cases = Vec::new();
         let orders = PathTemplate::parse("/orders").expect("a valid template");
