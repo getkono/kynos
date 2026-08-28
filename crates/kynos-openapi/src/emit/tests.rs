@@ -679,7 +679,13 @@ mod blockers {
     /// the check say what it always meant.
     #[test]
     fn every_three_two_field_is_reported() {
-        const REPORTER: &str = include_str!("downgrade.rs");
+        // Both halves: the entry point holds the document-level segments and
+        // `walk.rs` holds every nested one, so reading only the first would
+        // let this pass on a fraction of the locations it is counting.
+        const REPORTER: &str = concat!(
+            include_str!("downgrade.rs"),
+            include_str!("downgrade/walk.rs")
+        );
 
         let segments: BTreeSet<&str> = REPORTER
             .split('"')
@@ -707,7 +713,13 @@ mod blockers {
     /// reporting site from losing the case that proves what it says.
     #[test]
     fn every_construct_has_a_case() {
-        const SOURCE: &str = include_str!("downgrade.rs");
+        // Both halves, for the reason the test above gives: every reporting
+        // site is in `walk.rs`, so counting only the entry point would count
+        // almost none of them and pass by comparing zero against zero.
+        const SOURCE: &str = concat!(
+            include_str!("downgrade.rs"),
+            include_str!("downgrade/walk.rs")
+        );
 
         let sites = SOURCE.matches("blockers.push(").count();
         assert_eq!(
