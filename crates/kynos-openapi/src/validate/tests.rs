@@ -58,6 +58,104 @@ fn duplicate_operation_ids_are_rejected() {
     ));
 }
 
+/// Every operation the document describes is validated, not only `paths`.
+///
+/// `references/3.1.2.md:979` and `references/3.2.0.md:680` say an
+/// `operationId` "MUST be unique among **all operations described in the
+/// API**". A webhook, a reusable path item and a callback all describe
+/// operations, and `check_paths` iterated `document.paths` alone — so every
+/// operation-level rule stopped at that boundary. `rules/opaque.rs` already
+/// walks all four containers, so this was an oversight in one walk rather than
+/// a position the crate had taken.
+///
+/// One case per container, and one per rule would be the wrong axis: what was
+/// broken is the *route to* the operation, not any individual rule.
+#[test]
+fn an_operation_outside_paths_is_validated_too() {
+    use crate::model::{callback::Callback, reference::RefOr};
+
+    let duplicate = || {
+        PathItem::new().with_operation(
+            Method::Get,
+            Operation::new("shared").with_responses(ok_responses()),
+        )
+    };
+
+    // The one in `paths` is the first sighting; each case below adds a second
+    // somewhere the walk did not reach.
+    let with_second = |place: &dyn Fn(&mut Document)| {
+        let mut document = document_with(&[("/users", duplicate())]);
+        place(&mut document);
+        errors(&document)
+    };
+
+    let webhooks = with_second(&|document| {
+        document
+            .webhooks
+            .insert("orderPlaced".to_owned(), duplicate());
+    });
+    assert!(
+        webhooks
+            .iter()
+            .any(|error| matches!(error, SpecError::DuplicateOperationId { .. })),
+        "a webhook describes an operation; got {webhooks:?}"
+    );
+
+    let components = with_second(&|document| {
+        document
+            .components
+            .path_items
+            .insert("Shared".to_owned(), duplicate());
+    });
+    assert!(
+        components
+            .iter()
+            .any(|error| matches!(error, SpecError::DuplicateOperationId { .. })),
+        "a reusable path item describes an operation; got {components:?}"
+    );
+
+    let callbacks = with_second(&|document| {
+        document.components.callbacks.insert(
+            "onData".to_owned(),
+            RefOr::Item(Callback::new().with("{$request.body#/url}", duplicate())),
+        );
+    });
+    assert!(
+        callbacks
+            .iter()
+            .any(|error| matches!(error, SpecError::DuplicateOperationId { .. })),
+        "a callback describes an operation; got {callbacks:?}"
+    );
+}
+
+/// An operation with no responses is reported wherever it is written.
+///
+/// The companion to the case above, and a different rule on purpose: it shows
+/// the walk carries *every* operation-level rule rather than the one that
+/// happens to be keyed on a document-wide map.
+#[test]
+fn a_responseless_operation_outside_paths_is_reported() {
+    let mut document = document_with(&[(
+        "/users",
+        PathItem::new().with_operation(
+            Method::Get,
+            Operation::new("listUsers").with_responses(ok_responses()),
+        ),
+    )]);
+    document.webhooks.insert(
+        "orderPlaced".to_owned(),
+        PathItem::new().with_operation(Method::Post, Operation::new("onOrderPlaced")),
+    );
+
+    let found = errors(&document);
+    assert!(
+        found
+            .iter()
+            .any(|error| matches!(error, SpecError::NoResponses)),
+        "got {found:?}"
+    );
+}
+
 #[test]
 fn paths_differing_only_in_variable_name_are_the_same_path() {
     let make = |id: &str| {
