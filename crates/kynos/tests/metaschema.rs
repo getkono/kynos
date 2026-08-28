@@ -22,7 +22,16 @@
 //! objects to. `kynos_openapi::emit::downgrade` is what refuses those, and the
 //! two checks are kept because neither subsumes the other.
 
-#![cfg(all(feature = "macros", feature = "json", feature = "openapi32"))]
+// `test-util` carries the JSON Schema validator this needs, and is in the list
+// rather than in a `required-features` because there is no `[[test]]` to put
+// one on: the target is auto-discovered so that `crates/kynos/Cargo.toml` can
+// keep the file out of the published archive, where its oracle does not exist.
+#![cfg(all(
+    feature = "macros",
+    feature = "json",
+    feature = "openapi32",
+    feature = "test-util"
+))]
 
 use std::path::PathBuf;
 
