@@ -482,6 +482,61 @@ fn security_requirements_must_name_a_declared_scheme() {
     ));
 }
 
+/// 3.2 lets a requirement name a scheme by URI; 3.1 does not.
+///
+/// `references/3.2.0.md:4685`: the name "MUST **either** correspond to a
+/// security scheme declared in the Security Schemes … **or be the URI of a
+/// Security Scheme Object**". `references/3.1.2.md:4129` has only the first
+/// half, and the rule was written to it and never gated — so a valid 3.2
+/// document naming `./foo` is reported as an error.
+///
+/// A bare undeclared name stays an error under both. It is a legal relative
+/// URI reference in the abstract, but 3.2 says a name matching a component
+/// name is a component name and that referencing by single-segment relative
+/// URI is spelled `./foo` — so the bare form is the typo the rule exists to
+/// catch, and reading it as a URI would make the check vacuous.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_three_two_requirement_may_name_a_scheme_by_uri() {
+    let requiring = |name: &str| {
+        let item = PathItem::new().with_operation(
+            Method::Get,
+            Operation::new("listUsers")
+                .with_responses(ok_responses())
+                .with_security(SecurityRequirement::scheme(name)),
+        );
+        document_with(&[("/users", item)])
+    };
+    let unknown_schemes = |document: &Document, version: SpecVersion| {
+        Validator::new(version)
+            .validate(document)
+            .into_iter()
+            .filter(|v| matches!(v.error, SpecError::UnknownSecurityScheme { .. }))
+            .count()
+    };
+
+    for name in ["./foo", "https://example.com/schemes#/Bearer"] {
+        let document = requiring(name);
+        assert_eq!(
+            unknown_schemes(&document, SpecVersion::V3_2),
+            0,
+            "3.2 permits `{name}`"
+        );
+        assert_eq!(
+            unknown_schemes(&document, SpecVersion::V3_1),
+            1,
+            "3.1 does not permit `{name}`"
+        );
+    }
+
+    let bare = requiring("Bearer");
+    assert_eq!(
+        unknown_schemes(&bare, SpecVersion::V3_2),
+        1,
+        "a bare undeclared name is a typo under either version"
+    );
+}
+
 #[test]
 fn a_declared_scheme_satisfies_the_requirement() {
     let mut document = document_with(&[(
