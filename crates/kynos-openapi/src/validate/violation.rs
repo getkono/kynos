@@ -194,6 +194,21 @@ pub enum SpecError {
     #[error("an operation must declare at least one response")]
     NoResponses,
 
+    /// `encoding` was declared beside `prefixEncoding` or `itemEncoding`.
+    ///
+    /// 3.2 makes the three mutually exclusive: the first names properties, the
+    /// other two name array positions, and an object cannot be both.
+    ///
+    /// Gated, because the two fields it conflicts with are 3.2's — under 3.1
+    /// there is nothing for `encoding` to conflict with, so a variant that
+    /// existed there would be one no document could ever provoke.
+    #[cfg(feature = "openapi32")]
+    #[error(
+        "`encoding` describes named properties and `prefixEncoding`/`itemEncoding` describe array \
+         positions; a media type declares one or the other, never both"
+    )]
+    ConflictingEncoding,
+
     /// A response carried no description, which 3.1 requires.
     ///
     /// 3.2 makes it optional, so this is raised only when validating against

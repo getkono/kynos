@@ -951,6 +951,8 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::IgnoredHeader { .. } => "IgnoredHeader",
         SpecError::NoResponses => "NoResponses",
         SpecError::MissingResponseDescription => "MissingResponseDescription",
+        #[cfg(feature = "openapi32")]
+        SpecError::ConflictingEncoding => "ConflictingEncoding",
         SpecError::InvalidComponentName { .. } => "InvalidComponentName",
         SpecError::DuplicateTag { .. } => "DuplicateTag",
         SpecError::UnknownTagParent { .. } => "UnknownTagParent",
@@ -988,6 +990,10 @@ const RAISED_ELSEWHERE: &[&str] = &[
     // one does, and carries a ledger case below.
     #[cfg(not(feature = "openapi32"))]
     "RequiresV3_2",
+    // The same: `encoding` conflicts with `prefixEncoding` and `itemEncoding`,
+    // neither of which a 3.1 build has.
+    #[cfg(not(feature = "openapi32"))]
+    "ConflictingEncoding",
     // `kynos`'s `short_circuit_mismatch` compares an interceptor's declared
     // statuses against the responses it describes. No document reaches it, and
     // `crates/kynos/src/response/mod.rs` covers it where it lives.
@@ -1145,6 +1151,25 @@ fn ledger_parameters() -> Vec<(&'static str, SpecVersion, Document)> {
                 .with_responses(Responses::new().with(200, Response::default()))),
         )]),
     );
+    // 3.2 only: `prefixEncoding` is what `encoding` conflicts with, and it does
+    // not exist under 3.1, so neither does the conflict.
+    #[cfg(feature = "openapi32")]
+    push("ConflictingEncoding", {
+        use crate::model::body::{RequestBody, encoding::Encoding, media_type::MediaType};
+
+        let mut content = MediaType::new(Schema::of_type(SchemaType::Object));
+        content
+            .encoding
+            .insert("part".to_owned(), Encoding::new("text/plain"));
+        content.prefix_encoding = Some(vec![Encoding::new("text/plain")]);
+
+        document_with(&[(
+            "/uploads",
+            get(Operation::new("upload")
+                .with_request_body(RequestBody::new("multipart/mixed", content))
+                .with_responses(ok_responses())),
+        )])
+    });
     cases
 }
 
