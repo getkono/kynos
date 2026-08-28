@@ -509,34 +509,103 @@ fn wire_types_in_source() -> BTreeSet<String> {
     found
 }
 
-// --- The two round-trip gaps `nfr.md` records ----------------------------
+// --- The round-trip gap `nfr.md` records ---------------------------------
 //
-// Both are excluded from the generators in `support/`, which keeps the
-// round-trip property honest but leaves the behaviour unrecorded. These are
-// the record. Each asserts what happens *today*, so closing either gap turns a
-// test red on purpose rather than passing in silence.
+// Excluded from the generators in `support/`, which keeps the round-trip
+// property honest but leaves the behaviour unrecorded. This is the record. It
+// asserts what happens *today*, so closing the gap turns a test red on purpose
+// rather than passing in silence.
 
-/// A JSON `null` example does not survive a round trip.
+/// A JSON `null` survives a round trip wherever the model admits a value.
 ///
-/// The loss is on the way *in*, not the way out: `Some(Value::Null)` writes
-/// `null` faithfully, and `Option<Value>` then folds that `null` back into
-/// `None` when it is read. JSON `null` is a legal example and a legal default,
-/// so a description using one is silently changed. The remedy is a
-/// double-`Option` deserializer at each site; when it lands, this test fails
-/// and is replaced by its opposite.
+/// It used not to. `Option<Value>` folds a present `null` back into `None` on
+/// the way in, so `Some(Value::Null)` was written faithfully and read back as
+/// absent — and JSON `null` is a legal `example`, a legal `default` and a legal
+/// `const`, which made a description using one silently different after a
+/// round trip.
 ///
-/// `SchemaObject`'s `default` and `const` lose a `null` the same way, for the
-/// same reason. One case records the shape of the gap; eight would not record
-/// more of it.
+/// Every site is asserted rather than one. The previous single case was right
+/// to say that one records the *shape* of a gap; a fix is the other way round,
+/// because a site that kept the old behaviour is exactly what a single case
+/// would not see.
+// `SchemaObject::example` is deprecated in favour of `examples` and is still a
+// field a description can carry, so it is still a field a round trip has to
+// keep. Deprecated is not the same as gone.
+#[expect(deprecated)]
 #[test]
-fn a_null_example_does_not_survive_a_round_trip() {
-    let original = Example::new(Value::Null);
-    let json = serde_json::to_string(&original).expect("serializable");
-    let parsed: Example = serde_json::from_str(&json).expect("what the model emits, it reads");
+fn a_null_survives_a_round_trip_at_every_site() {
+    fn round_trip<T>(original: &T, expected_json: &str) -> T
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        let json = serde_json::to_string(original).expect("serializable");
+        assert_eq!(json, expected_json, "the null is written out");
+        serde_json::from_str(&json).expect("what the model emits, it reads")
+    }
 
-    assert_eq!(json, r#"{"value":null}"#, "the null is written out");
-    assert!(parsed.value().is_none(), "but does not come back");
-    assert_ne!(parsed, original);
+    let example = Example::new(Value::Null);
+    assert_eq!(
+        round_trip(&example, r#"{"value":null}"#),
+        example,
+        "an Example Object's `value`"
+    );
+
+    let mut schema = SchemaObject::default();
+    schema.const_value = Some(Value::Null);
+    assert_eq!(
+        round_trip(&schema, r#"{"const":null}"#),
+        schema,
+        "a Schema Object's `const`"
+    );
+
+    let mut schema = SchemaObject::default();
+    schema.default = Some(Value::Null);
+    assert_eq!(
+        round_trip(&schema, r#"{"default":null}"#),
+        schema,
+        "a Schema Object's `default`"
+    );
+
+    let mut schema = SchemaObject::default();
+    schema.example = Some(Value::Null);
+    assert_eq!(
+        round_trip(&schema, r#"{"example":null}"#),
+        schema,
+        "a Schema Object's `example`"
+    );
+
+    let mut link = Link::to_operation("getOrder");
+    link.request_body = Some(Value::Null);
+    assert_eq!(
+        round_trip(&link, r#"{"operationId":"getOrder","requestBody":null}"#),
+        link,
+        "a Link Object's `requestBody`"
+    );
+
+    let parameter =
+        Parameter::new("id", ParameterIn::Query, Schema::any()).with_example(Value::Null);
+    assert_eq!(
+        round_trip(
+            &parameter,
+            r#"{"name":"id","in":"query","schema":true,"example":null}"#
+        ),
+        parameter,
+        "a Parameter Object's `example`"
+    );
+
+    let header = Header::new(Schema::any()).with_example(Value::Null);
+    assert_eq!(
+        round_trip(&header, r#"{"schema":true,"example":null}"#),
+        header,
+        "a Header Object's `example`"
+    );
+
+    let media_type = MediaType::new(Schema::any()).with_example(Value::Null);
+    assert_eq!(
+        round_trip(&media_type, r#"{"schema":true,"example":null}"#),
+        media_type,
+        "a Media Type Object's `example`"
+    );
 }
 
 /// A `PathItem` carrying both `$ref` and siblings loses the siblings.

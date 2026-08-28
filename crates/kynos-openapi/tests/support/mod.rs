@@ -189,22 +189,6 @@ pub(crate) fn arb_json() -> BoxedStrategy<Value> {
     .boxed()
 }
 
-/// A JSON value that is never `null`.
-///
-/// Every `Option<Value>` field in the model conflates an absent field with a
-/// present `null`: `Some(Value::Null)` is written as `null`, and `null` is read
-/// back as `None`. Nulls nested inside an array or object are unaffected, so
-/// only the outermost value is constrained here.
-pub(crate) fn arb_present_json() -> BoxedStrategy<Value> {
-    prop_oneof![
-        any::<bool>().prop_map(Value::Bool),
-        select(&[-1i64, 0, 7][..]).prop_map(|number| Value::Number(number.into())),
-        arb_text().prop_map(Value::String),
-        prop::collection::vec(arb_json(), 0..=2).prop_map(Value::Array),
-    ]
-    .boxed()
-}
-
 pub(crate) fn arb_extensions(keys: &'static [&'static str]) -> BoxedStrategy<Extensions> {
     arb_map(keys, arb_json(), 2).prop_map(Extensions).boxed()
 }
@@ -532,14 +516,13 @@ pub(crate) fn arb_example_carrier() -> BoxedStrategy<Example> {
     #[cfg(feature = "openapi32")]
     {
         prop_oneof![
-            arb_present_json().prop_map(Example::new),
+            arb_json().prop_map(Example::new),
             arb_text().prop_map(Example::external),
-            arb_present_json().prop_map(Example::data),
+            arb_json().prop_map(Example::data),
             arb_text().prop_map(Example::serialized),
-            (arb_present_json(), arb_text())
+            (arb_json(), arb_text())
                 .prop_map(|(data, serialized)| Example::data_serialized(data, serialized)),
-            (arb_present_json(), arb_text())
-                .prop_map(|(data, uri)| Example::data_external(data, uri)),
+            (arb_json(), arb_text()).prop_map(|(data, uri)| Example::data_external(data, uri)),
         ]
         .boxed()
     }
@@ -547,7 +530,7 @@ pub(crate) fn arb_example_carrier() -> BoxedStrategy<Example> {
     #[cfg(not(feature = "openapi32"))]
     {
         prop_oneof![
-            arb_present_json().prop_map(Example::new),
+            arb_json().prop_map(Example::new),
             arb_text().prop_map(Example::external),
         ]
         .boxed()
@@ -581,7 +564,7 @@ pub(crate) fn arb_header() -> BoxedStrategy<Header> {
         prop::option::of(Just(HeaderStyle::Simple)),
         arb_flag(),
         prop::option::of(arb_schema()),
-        prop::option::of(arb_present_json()),
+        prop::option::of(arb_json()),
         arb_map(COMPONENT_KEYS, arb_ref_or(arb_example()), 1),
         arb_extensions(EXTENSION_KEYS),
     )
@@ -661,7 +644,7 @@ pub(crate) fn arb_media_type() -> BoxedStrategy<MediaType> {
     (
         prop::option::of(arb_schema()),
         prop::option::of(arb_schema()),
-        prop::option::of(arb_present_json()),
+        prop::option::of(arb_json()),
         arb_map(COMPONENT_KEYS, arb_ref_or(arb_example()), 1),
         arb_map(PARAMETER_NAMES, arb_encoding(), 1),
         prop::option::of(prop::collection::vec(arb_encoding(), 0..=1)),
@@ -715,7 +698,7 @@ pub(crate) fn arb_link() -> BoxedStrategy<Link> {
         arb_opt_text(),
         prop::option::of(select(OPERATION_IDS).prop_map(str::to_owned)),
         arb_map(PARAMETER_NAMES, arb_json(), 2),
-        prop::option::of(arb_present_json()),
+        prop::option::of(arb_json()),
         arb_opt_text(),
         prop::option::of(arb_server()),
         arb_extensions(EXTENSION_KEYS),
@@ -806,7 +789,7 @@ pub(crate) fn arb_parameter() -> BoxedStrategy<Parameter> {
         (arb_flag(), arb_flag(), arb_flag(), arb_flag(), arb_flag()),
         prop::option::of(select(STYLES)),
         prop::option::of(arb_schema()),
-        prop::option::of(arb_present_json()),
+        prop::option::of(arb_json()),
         (
             arb_map(COMPONENT_KEYS, arb_ref_or(arb_example()), 1),
             arb_content(),
