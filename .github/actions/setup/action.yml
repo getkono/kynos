@@ -6,7 +6,8 @@ inputs:
     description: >-
       Names the Cargo cache to restore. Jobs build with different feature sets
       and rustflags, so their artifacts do not interchange and each one needs
-      its own key. Leave empty for a job that runs no Cargo build.
+      its own key. Leave empty for a job that runs no Cargo build, or whose
+      build lands outside the target directory this caches.
     required: false
     default: ""
 

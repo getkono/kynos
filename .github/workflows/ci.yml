@@ -28,7 +28,7 @@ env:
   CARGO_INCREMENTAL: 0
   NEXTEST_PROFILE: ci
 
-# Between them these jobs run every task in `mise run check`, plus the three
+# Between them these jobs run every task in `mise run check`, plus the four
 # that are too slow to belong there. Splitting them apart trades one serial
 # runner for parallel ones and gives each its own Cargo cache; keep a task in
 # exactly one job so no two jobs compile the same thing.
@@ -139,6 +139,28 @@ jobs:
           cargo-cache-key: msrv
       - name: Check the declared MSRV
         run: mise run msrv:check
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      # No `cargo-cache-key`. `cargo package` verifies by extracting each
+      # `.crate` and building it under `target/package/<crate>-<version>/target`,
+      # beside a staging registry in `target/package/tmp-registry/` -- neither of
+      # which `Swatinem/rust-cache` keys or prunes, so caching this job would
+      # spend the repository's cache budget on three extracted source trees, on
+      # a job whose next run rebuilds from a pristine extraction by design. The
+      # cost is re-fetching the dependency graph each run, which is the cheaper
+      # half.
+      - name: Set up
+        uses: ./.github/actions/setup
+      # `cargo package` refuses to archive a dirty tree, and `actions/checkout`
+      # leaves a clean one, so this also proves the archive is exactly what the
+      # commit says it is.
+      - name: Package every crate
+        run: mise run publish:check
 
   commits:
     name: Conventional commits
