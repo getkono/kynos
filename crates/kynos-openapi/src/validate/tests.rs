@@ -396,6 +396,34 @@ fn an_operation_must_declare_a_response() {
     assert!(matches!(found.as_slice(), [SpecError::NoResponses]));
 }
 
+/// An extension is not a response code.
+///
+/// `references/3.2.0.md:2109`: "The Responses Object MUST contain at least one
+/// response code". `Responses::is_empty` deliberately counts extensions, and
+/// argues for it: a Responses Object holding only `x-` fields is skipped whole
+/// on serialization, so ignoring them there would drop it from a round trip.
+/// That is right for the *predicate* and wrong for this *rule*, which reused
+/// it — so `{"x-poll-interval": 30}` as a whole Responses Object satisfied a
+/// requirement it plainly does not meet.
+#[test]
+fn extensions_alone_do_not_satisfy_the_response_requirement() {
+    let mut responses = Responses::new();
+    responses.extensions.insert("x-poll-interval", 30);
+
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("listUsers").with_responses(responses),
+    );
+
+    let found = errors(&document_with(&[("/users", item)]));
+    assert!(
+        found
+            .iter()
+            .any(|error| matches!(error, SpecError::NoResponses)),
+        "got {found:?}"
+    );
+}
+
 /// 3.1 requires a response description; 3.2 does not.
 ///
 /// `references/3.1.2.md:2010` marks `description` **REQUIRED** and
