@@ -550,24 +550,30 @@ fn a_null_survives_a_round_trip_at_every_site() {
         "an Example Object's `value`"
     );
 
-    let mut schema = SchemaObject::default();
-    schema.const_value = Some(Value::Null);
+    let schema = SchemaObject {
+        const_value: Some(Value::Null),
+        ..SchemaObject::default()
+    };
     assert_eq!(
         round_trip(&schema, r#"{"const":null}"#),
         schema,
         "a Schema Object's `const`"
     );
 
-    let mut schema = SchemaObject::default();
-    schema.default = Some(Value::Null);
+    let schema = SchemaObject {
+        default: Some(Value::Null),
+        ..SchemaObject::default()
+    };
     assert_eq!(
         round_trip(&schema, r#"{"default":null}"#),
         schema,
         "a Schema Object's `default`"
     );
 
-    let mut schema = SchemaObject::default();
-    schema.example = Some(Value::Null);
+    let schema = SchemaObject {
+        example: Some(Value::Null),
+        ..SchemaObject::default()
+    };
     assert_eq!(
         round_trip(&schema, r#"{"example":null}"#),
         schema,

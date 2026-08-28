@@ -16,6 +16,9 @@ pub mod extensions;
 pub mod external_docs;
 pub mod info;
 pub mod link;
+// Private: it declares one deserializer the model's own fields point at, and
+// nothing a caller has a path to.
+mod nullable;
 pub mod parameter;
 pub mod paths;
 pub mod reference;
