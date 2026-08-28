@@ -295,3 +295,36 @@ fn wire_spellings_are_case_sensitive_and_closed() {
     assert_eq!(Method::from_wire_str("PROPFIND"), None);
     assert_eq!(Method::from_wire_str(""), None);
 }
+
+/// Every described method converts to `http::Method` and back.
+///
+/// Swept rather than sampled, because the point is that the two spellings
+/// agree across the whole set — one representative would prove only that the
+/// conversion exists.
+#[cfg(feature = "http")]
+#[test]
+fn every_method_round_trips_through_the_http_crate() {
+    for described in Method::all() {
+        let wire: http::Method = (*described).into();
+        assert_eq!(wire.as_str(), described.as_wire_str());
+        assert_eq!(
+            Method::try_from(&wire).expect("what we just wrote, we read"),
+            *described
+        );
+    }
+}
+
+/// A method no Path Item field names is refused, and says which.
+///
+/// `PROPFIND` is an extension method: 3.2 describes one through
+/// `additionalOperations`, which is a Path Item field rather than a
+/// conversion, so this direction has to be fallible.
+#[cfg(feature = "http")]
+#[test]
+fn a_method_with_no_path_item_field_is_refused() {
+    let extension = http::Method::from_bytes(b"PROPFIND").expect("a valid method token");
+
+    let error = Method::try_from(&extension).expect_err("no Path Item field names it");
+    assert_eq!(error.method, "PROPFIND");
+    assert!(error.to_string().contains("additionalOperations"));
+}
