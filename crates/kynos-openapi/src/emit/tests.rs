@@ -937,3 +937,144 @@ mod reach {
         }
     }
 }
+
+/// Every position a 3.2 *field* can occupy is one the downgrade reads.
+///
+/// `reach` above plants one construct per container and proves the walk
+/// arrives; this fixes the container and varies the *position within it*. The
+/// two fail differently, and the second is invisible to the first: a walk can
+/// reach an object and still never read the field, because reading it is a
+/// separate line from arriving at it.
+///
+/// `Server.name` is the field that shows the difference. A Server Object hangs
+/// in four places — the document root, a Path Item, an Operation and a Link —
+/// and only the first was read, so a `name` written in any of the other three
+/// emitted under `openapi: 3.1.2` carrying a field 3.1 does not define. The
+/// 3.1 meta-schema sets `unevaluatedProperties: false` on `$defs/server`, so
+/// what came out was not merely over-described; it was invalid.
+///
+/// `every_three_two_field_is_reported` could not see this. It asks whether a
+/// gated wire name appears among `downgrade.rs`'s string literals, and `name`
+/// is a substring of `#/servers/{index}/name` — so the field counted as
+/// reported on the strength of the one position that did read it.
+#[cfg(feature = "openapi32")]
+mod positions {
+    use super::document;
+    use crate::model::{
+        document::{Document, SpecVersion},
+        link::Link,
+        paths::{item::PathItem, method::Method, operation::Operation, template::PathTemplate},
+        reference::RefOr,
+        response::{Response, Responses},
+        server::Server,
+    };
+
+    /// A server carrying the 3.2 `name`, and nothing else 3.2.
+    fn named() -> Server {
+        Server {
+            name: Some("production".to_owned()),
+            ..Server::new("https://api.example.com")
+        }
+    }
+
+    /// One case per position, written out rather than generated: the count of
+    /// them is the coverage, as it is in `reach`.
+    fn cases() -> Vec<(&'static str, Document, String)> {
+        let orders = PathTemplate::parse("/orders").expect("a valid template");
+        let mut cases = Vec::new();
+
+        cases.push((
+            "the document root",
+            {
+                let mut document = document();
+                document.servers.push(named());
+                document
+            },
+            "#/servers/0/name".to_owned(),
+        ));
+
+        cases.push((
+            "a path item",
+            {
+                let mut document = document();
+                document.paths.insert(
+                    &orders,
+                    PathItem {
+                        servers: vec![named()],
+                        ..PathItem::new()
+                    },
+                );
+                document
+            },
+            "#/paths/~1orders/servers/0/name".to_owned(),
+        ));
+
+        cases.push((
+            "an operation",
+            {
+                let mut document = document();
+                document.paths.insert(
+                    &orders,
+                    PathItem::new().with_operation(
+                        Method::Get,
+                        Operation {
+                            servers: vec![named()],
+                            ..Operation::default()
+                        },
+                    ),
+                );
+                document
+            },
+            "#/paths/~1orders/get/servers/0/name".to_owned(),
+        ));
+
+        cases.push((
+            "a link on a response",
+            {
+                let mut document = document();
+                // `Link::target` is private, so the update syntax the other
+                // cases use is unavailable; `server` is a public field.
+                let mut link = Link::to_operation("getOrder");
+                link.server = Some(named());
+                let response = Response {
+                    links: [("next".to_owned(), RefOr::Item(link))]
+                        .into_iter()
+                        .collect(),
+                    ..Response::new("ok")
+                };
+                document.paths.insert(
+                    &orders,
+                    PathItem::new().with_operation(
+                        Method::Get,
+                        Operation {
+                            responses: Responses::new().with(200, response),
+                            ..Operation::default()
+                        },
+                    ),
+                );
+                document
+            },
+            "#/paths/~1orders/get/responses/200/links/next/server/name".to_owned(),
+        ));
+
+        cases
+    }
+
+    #[test]
+    fn every_position_a_server_hangs_in_is_read() {
+        for (position, document, expected) in cases() {
+            assert_eq!(
+                crate::emit::downgrade::three_two_only_constructs(&document),
+                vec![expected],
+                "a 3.2 `Server.name` in {position} must be found and reported there"
+            );
+        }
+    }
+
+    #[test]
+    fn a_named_server_in_any_position_refuses_to_emit_as_three_one() {
+        for (position, document, _) in cases() {
+            document.emit(SpecVersion::V3_1).expect_err(position);
+        }
+    }
+}
