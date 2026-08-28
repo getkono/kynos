@@ -83,7 +83,8 @@ impl<T> Accept<T> {
                     return Err(invalid_accept());
                 };
                 if name.trim().eq_ignore_ascii_case("q") {
-                    quality = parse_quality(value.trim()).ok_or_else(invalid_accept)?;
+                    quality =
+                        crate::http::quality::parse(value.trim()).ok_or_else(invalid_accept)?;
                 }
             }
             preferences.push(Preference {
@@ -184,27 +185,6 @@ impl<T> Accept<T> {
                 (quality != 0).then_some((quality, specificity, order))
             })
     }
-}
-
-fn parse_quality(value: &str) -> Option<u16> {
-    if value == "0" || value == "0.0" || value == "0.00" || value == "0.000" {
-        return Some(0);
-    }
-    if value == "1" || value == "1.0" || value == "1.00" || value == "1.000" {
-        return Some(1_000);
-    }
-    let digits = value.strip_prefix("0.")?;
-    if digits.is_empty() || digits.len() > 3 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    digits
-        .parse::<u16>()
-        .ok()
-        .map(|quality| match digits.len() {
-            1 => quality * 100,
-            2 => quality * 10,
-            _ => quality,
-        })
 }
 
 fn invalid_accept() -> NegotiationRejection {
