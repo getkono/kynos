@@ -84,6 +84,13 @@ pub struct Header {
 /// [`ParameterShape`](crate::model::parameter::ParameterShape) without
 /// `allowReserved`: header values are not URI-encoded, so there is no reserved
 /// set to allow through, and a field for it would be a question with no answer.
+///
+/// That is 3.1's reasoning, and 3.1 agrees — it forbids `allowReserved` on a
+/// Header Object outright. **3.2 does not.** It drops the field from that
+/// prohibition, so a 3.2 Header Object may carry one and this type cannot hold
+/// it: such a header loses the field on a round trip. That is a missing 3.2
+/// feature rather than a wrong answer to 3.1's question, and it is deliberately
+/// not fixed here — adding it widens the model rather than correcting it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum HeaderShape {
     /// A schema, plus how its value is serialized.

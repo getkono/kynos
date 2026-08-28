@@ -454,6 +454,14 @@ separately from anything else here:
 
 All three were retrieved on 2026-08-23.
 
+**These three are ahead of the code.** Kynos ships no security-header
+middleware — `crates/kynos/src/middleware/` contains none under any feature — so
+unlike every other text here they bind nothing today.
+[`docs/standards.md`](../docs/standards.md) used to carry a row saying
+otherwise and no longer does. RFC 6797 is the exception: its section 7.2 already
+binds the reasoning in `http::forwarded`, which is what decides whether a
+transport was secure in the first place.
+
 `X-Content-Type-Options` and `X-Frame-Options` are in none of them: the first is
 defined by WHATWG's Fetch and HTML standards, and the second by RFC 7034, which
 is Informational and largely superseded by CSP's `frame-ancestors`. Both are

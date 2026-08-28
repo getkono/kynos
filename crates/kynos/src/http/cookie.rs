@@ -4,8 +4,15 @@
 //! because two unrelated things read a jar and only one of them is a parameter.
 //! A credential carried in a cookie is a
 //! [`SecurityScheme`](crate::security::SecurityScheme), and it has to work in a
-//! build with no `cookie` feature — the feature names a *dependency*, and RFC
-//! 6265's splitting rules need none.
+//! build with no `cookie` feature.
+//!
+//! That used to be argued as "the feature names a *dependency*, and RFC 6265's
+//! splitting rules need none". The premise is gone: the `cookie` crate was
+//! removed and the feature names no dependency at all. The conclusion stands on
+//! its own — what `cookie` gates is the *parameter* surface, and a cookie
+//! credential is a security scheme rather than a parameter, so gating this
+//! would put a `SecurityScheme` out of reach of a build that can still declare
+//! one.
 
 use crate::http::{HeaderMap, header::COOKIE};
 
