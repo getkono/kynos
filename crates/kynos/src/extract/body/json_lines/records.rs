@@ -230,7 +230,7 @@ impl<T> Records<T> {
             // Whatever the framing put in front of the record is not part of it.
             let _ = frame.split_to(prefix.min(frame.len()));
 
-            let record = trimmed(frame.freeze());
+            let record = trimmed(&frame.freeze());
             if record.is_empty() {
                 continue;
             }
@@ -320,7 +320,7 @@ impl<T: serde::de::DeserializeOwned> Records<T> {
 ///
 /// Trimming is what makes a `\r\n` line ending and RFC 7464's trailing newline
 /// the same non-event, and it is what decides a record is empty.
-fn trimmed(frame: Bytes) -> Bytes {
+fn trimmed(frame: &Bytes) -> Bytes {
     let start = frame
         .iter()
         .position(|byte| !byte.is_ascii_whitespace())

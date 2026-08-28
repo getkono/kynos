@@ -77,7 +77,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for DocsPage {
              the browser, so this operation sends the page and nothing else.",
         );
 
-        operation.add_responses(kynos_openapi::Responses::new().with(
+        operation.add_responses(&kynos_openapi::Responses::new().with(
             200,
             kynos_openapi::Response::with_content(
                 "the reference page",
@@ -116,7 +116,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for DocsDescription {
              on the way past.",
         );
 
-        operation.add_responses(kynos_openapi::Responses::new().with(
+        operation.add_responses(&kynos_openapi::Responses::new().with(
             200,
             kynos_openapi::Response::with_content(
                 "the OpenAPI description",

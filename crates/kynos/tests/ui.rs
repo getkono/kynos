@@ -14,10 +14,7 @@
 //! Cases that could only fail with a feature *off* are therefore not here.
 //! [`ui/PENDING.md`](ui/PENDING.md) names them.
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 #[test]
 fn ui() {
@@ -53,7 +50,7 @@ fn every_rejected_schema_type_has_a_case() {
          heading `# Types deliberately left without an implementation`"
     );
 
-    let cases = compile_fail_cases(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ui/schema"));
+    let cases = compile_fail_cases(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ui/schema"));
     assert_eq!(
         cases, rows,
         "`tests/ui/schema/` holds {cases} case(s) for {rows} row(s) of the rejection table in \
@@ -80,8 +77,8 @@ fn rejection_table_rows(source: &str) -> usize {
 }
 
 /// The `.rs` files directly inside `directory`.
-fn compile_fail_cases(directory: PathBuf) -> usize {
-    fs::read_dir(&directory)
+fn compile_fail_cases(directory: &Path) -> usize {
+    fs::read_dir(directory)
         .unwrap_or_else(|error| panic!("reading {}: {error}", directory.display()))
         .filter_map(Result::ok)
         .filter(|entry| entry.path().extension().is_some_and(|it| it == "rs"))

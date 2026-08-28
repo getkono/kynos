@@ -53,6 +53,7 @@ const EXT_VALUE_ENCODE_SET: &percent_encoding::AsciiSet = &percent_encoding::NON
 /// site Kynos has.
 ///
 /// Lives here for the same reason the decoder below does.
+#[must_use]
 pub fn encode_ext_value(value: &str) -> String {
     percent_encoding::utf8_percent_encode(value, EXT_VALUE_ENCODE_SET).to_string()
 }
@@ -73,6 +74,7 @@ pub fn decode_path_value(value: &str) -> Result<std::borrow::Cow<'_, str>, std::
 }
 
 /// Builds a URI for a generated endpoint without dynamic parameters.
+#[must_use]
 pub fn endpoint_uri(template: &str) -> Uri {
     template
         .parse()

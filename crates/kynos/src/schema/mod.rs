@@ -169,6 +169,7 @@ pub trait Schema {
     ///
     /// Anonymous types — tuples, `Option<T>`, `Vec<T>` — return `None` and are
     /// inlined. Named structs and enums return a name and are `$ref`'d.
+    #[must_use]
     fn name() -> Option<ComponentName> {
         None
     }
@@ -213,6 +214,7 @@ pub trait MapKey: Schema {
     /// Nothing, by default — which is what makes the resulting
     /// `propertyNames` vacuous for a plain [`String`] key, and why a map keyed
     /// by one emits none at all.
+    #[must_use]
     fn key_constraints() -> constraints::Constraints {
         constraints::Constraints::default()
     }

@@ -122,7 +122,7 @@ impl AssetEndpoint {
     #[must_use]
     pub(super) fn new(
         asset: Asset,
-        path: String,
+        path: &str,
         cache_control: Option<&'static str>,
         prefix: &str,
     ) -> Self {
@@ -133,7 +133,7 @@ impl AssetEndpoint {
         Self {
             asset,
             template,
-            operation_id: operation_id(prefix, &path),
+            operation_id: operation_id(prefix, path),
             cache_control,
         }
     }
@@ -264,7 +264,7 @@ impl AssetEndpoint {
             operation.add_response_header(
                 kynos_openapi::StatusPattern::Code(status),
                 name,
-                kynos_openapi::Header::new(kynos_openapi::Schema::of_type(
+                &kynos_openapi::Header::new(kynos_openapi::Schema::of_type(
                     kynos_openapi::model::schema::types::SchemaType::String,
                 ))
                 .with_description(description),
@@ -306,7 +306,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
             kynos_openapi::Response::new("the client's copy is current"),
         );
 
-        operation.add_responses(responses);
+        operation.add_responses(&responses);
 
         // `If-None-Match` is read, so it is declared. The group is not used for
         // extraction -- an asset endpoint reads it directly -- but a consumer

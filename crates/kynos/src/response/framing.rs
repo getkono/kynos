@@ -31,6 +31,9 @@ pub(crate) const CRLF: &[u8] = b"\r\n";
 /// a fixed prefix and a counter, raised until nothing encapsulates it. The
 /// first candidate wins for every body that was not written to defeat it, so
 /// this is one pass over the parts.
+// Owned because the search clones the iterator once per candidate. A shared
+// reference to an iterator can be neither cloned into one nor advanced.
+#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn boundary<'a>(bodies: impl Iterator<Item = &'a [u8]> + Clone) -> String {
     let mut counter: u64 = 0;
     loop {

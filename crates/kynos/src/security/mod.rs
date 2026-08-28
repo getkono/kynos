@@ -99,6 +99,7 @@ pub trait SecurityScheme: Send + Sync + 'static {
     /// The scopes this scheme requires by default.
     ///
     /// Meaningful only for OAuth 2.0 and OpenID Connect.
+    #[must_use]
     fn scopes() -> &'static [&'static str] {
         &[]
     }
@@ -110,6 +111,7 @@ pub trait SecurityScheme: Send + Sync + 'static {
     /// the description and the challenge on the wire are one string. A client
     /// has to handle it, which makes it part of what the 401 response *is*
     /// rather than an implementation detail of enforcing the scheme.
+    #[must_use]
     fn challenge() -> Option<&'static str> {
         None
     }

@@ -99,7 +99,7 @@ pub(super) fn walk(args: &AssetArgs) -> syn::Result<Walked> {
     let total_bytes = files.iter().map(|file| file.byte_count).sum();
 
     Ok(Walked {
-        files: fold_encodings(files),
+        files: fold_encodings(&files),
         total_bytes,
     })
 }
@@ -132,7 +132,7 @@ pub(super) fn walk(args: &AssetArgs) -> syn::Result<Walked> {
 /// shorter name: a base is always classified before anything encoding it.
 /// `files` may arrive in any order, and the result is put back in path order
 /// regardless, so the emitted set is byte-identical across machines.
-fn fold_encodings(files: Vec<Found>) -> Vec<Embedded> {
+fn fold_encodings(files: &[Found]) -> Vec<Embedded> {
     let mut order: Vec<&Found> = files.iter().collect();
     // Length ties are broken by the path, so the order -- and with it which of
     // two same-length names is decided first -- does not depend on the walk.
@@ -364,11 +364,11 @@ mod tests {
 
     /// Folds `paths`, and asserts the result does not depend on their order.
     fn fold(paths: &[&str]) -> Vec<Embedded> {
-        let folded = fold_encodings(paths.iter().copied().map(found).collect());
+        let folded = fold_encodings(&paths.iter().copied().map(found).collect::<Vec<_>>());
 
         let mut reversed: Vec<&str> = paths.to_vec();
         reversed.reverse();
-        let other = fold_encodings(reversed.iter().copied().map(found).collect());
+        let other = fold_encodings(&reversed.iter().copied().map(found).collect::<Vec<_>>());
 
         let shape = |files: &[Embedded]| {
             files

@@ -81,7 +81,7 @@ where
         }
 
         let responses = <I::Short as Responses>::responses(operation.registry());
-        operation.add_responses(responses);
+        operation.add_responses(&responses);
 
         if <I::Adds as HeaderParams>::DESCRIBED {
             let headers = <I::Adds as HeaderParams>::response_headers(operation.registry());
@@ -90,7 +90,7 @@ where
                 // operation already reaches; only an inline definition has
                 // anything to add here.
                 if let RefOr::Item(header) = header {
-                    operation.add_response_header(StatusPattern::Success, name, header);
+                    operation.add_response_header(StatusPattern::Success, name, &header);
                 }
             }
         }

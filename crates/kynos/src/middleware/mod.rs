@@ -288,6 +288,10 @@ impl<H: HeaderParams> Continued<H> {
     /// Changes the type, so an interceptor whose `Adds` names a group has to
     /// call this to return at all — and one whose `Adds` is `()` has nothing it
     /// could attach.
+    // By value so the call reads `.with_headers(Group { .. })`. The group is
+    // built for this call and has no second reader, so borrowing it would
+    // only ask the caller to write `&` for a value it is done with.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn with_headers<G: EncodeHeaders>(mut self, headers: G) -> Continued<G> {
         crate::extract::params::header::write(self.response.headers_mut(), &headers);
 

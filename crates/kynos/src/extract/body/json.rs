@@ -48,6 +48,9 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Json<T> 
 /// serde reports a line and column rather than a location within the document,
 /// so a schema failure is attributed to the root JSON Pointer — the empty
 /// string — rather than to a pointer invented from a byte offset.
+// By value because this is a `map_err` argument, which is handed the error
+// it consumes. A reference does not fit that signature.
+#[allow(clippy::needless_pass_by_value)]
 fn rejection(error: serde_json::Error) -> BodyRejection {
     if is_schema_failure(&error) {
         BodyRejection::Schema {

@@ -886,7 +886,7 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
 
             if mounted.catch_panics || catches::<P>() {
                 let responses = dispatch::panic_responses(cx.registry());
-                cx.add_responses(responses);
+                cx.add_responses(&responses);
             }
 
             let operation = cx.finish();

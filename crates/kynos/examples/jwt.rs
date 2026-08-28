@@ -283,6 +283,9 @@ impl<C: Sync> Authenticator<AccessToken, C> for Keys {
 ///
 /// Expired, wrong issuer, wrong audience, bad signature: telling a caller which
 /// one it was tells an attacker which tokens exist and which keys are live.
+// By value for the reason the two `map_err` call sites above give: the
+// combinator hands over the error, and discarding it is the whole point.
+#[allow(clippy::needless_pass_by_value)]
 fn unauthenticated_whatever<E>(error: E) -> AuthRejection {
     let _ = error;
     AuthRejection::unauthenticated()

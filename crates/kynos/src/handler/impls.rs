@@ -33,7 +33,7 @@ macro_rules! describe_parts {
         let rejected = <<$ty as FromRequestParts<C>>::Rejection as Responses>::responses(
             $operation.registry(),
         );
-        $operation.add_responses(rejected);
+        $operation.add_responses(&rejected);
     }};
 }
 
@@ -70,9 +70,9 @@ macro_rules! impl_handler {
                     <<$last as FromRequest<C>>::Rejection as Responses>::responses(
                         operation.registry(),
                     );
-                operation.add_responses(rejected);
+                operation.add_responses(&rejected);
                 let returned = <Res as Responses>::responses(operation.registry());
-                operation.add_responses(returned);
+                operation.add_responses(&returned);
             }
         }
 
@@ -99,7 +99,7 @@ macro_rules! impl_handler {
                 $( describe_parts!($head, operation); )*
                 describe_parts!($last, operation);
                 let returned = <Res as Responses>::responses(operation.registry());
-                operation.add_responses(returned);
+                operation.add_responses(&returned);
             }
         }
     };
@@ -121,7 +121,7 @@ where
 
     fn describe(operation: &mut OperationCx<'_>) {
         let returned = <Res as Responses>::responses(operation.registry());
-        operation.add_responses(returned);
+        operation.add_responses(&returned);
     }
 }
 

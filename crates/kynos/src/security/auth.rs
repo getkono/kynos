@@ -356,7 +356,7 @@ fn declare<S: SecurityScheme>(operation: &mut OperationCx<'_>, scopes: Vec<&'sta
     // described 401 when the operation declares none, and merging cannot
     // replace a response that already exists.
     let responses = AuthRejection::responses(operation.registry());
-    operation.add_responses(responses);
+    operation.add_responses(&responses);
 
     // RFC 9110 section 11.6.1: a 401 MUST carry at least one challenge. Only a
     // scheme that has one declares it, so a credential carried outside the
@@ -371,7 +371,7 @@ fn declare<S: SecurityScheme>(operation: &mut OperationCx<'_>, scopes: Vec<&'sta
         operation.add_response_header(
             StatusPattern::Code(StatusCode::UNAUTHORIZED.as_u16()),
             "WWW-Authenticate",
-            Header::new(Schema::of_type(SchemaType::String))
+            &Header::new(Schema::of_type(SchemaType::String))
                 .required(true)
                 .with_description(
                     "The challenge the client must answer, per RFC 9110 section 11.6.1.",

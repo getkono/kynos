@@ -251,7 +251,7 @@ mod tests {
     ///
     /// `Field` has no `Parse`, and a field only means anything inside the item
     /// that holds it, so the wrapper is the shortest honest way to build one.
-    fn only_field(declaration: TokenStream2) -> syn::Field {
+    fn only_field(declaration: &TokenStream2) -> syn::Field {
         named(quote!(struct Holder { #declaration }))
             .named
             .into_iter()
@@ -287,7 +287,7 @@ mod tests {
             for serde in [None, Some("from_serde")] {
                 let kynos_attribute = kynos.map(|name| quote!(#[param(rename = #name)]));
                 let serde_attribute = serde.map(|name| quote!(#[serde(rename = #name)]));
-                let field = only_field(quote! {
+                let field = only_field(&quote! {
                     #kynos_attribute
                     #serde_attribute
                     user_id: u64
@@ -319,7 +319,7 @@ mod tests {
             ("a parenthesized group", quote!(unknown(a, b))),
             ("a bare path", quote!(unknown)),
         ] {
-            let field = only_field(quote! {
+            let field = only_field(&quote! {
                 #[param(#skipped, rename = "chosen")]
                 user_id: u64
             });
@@ -336,7 +336,7 @@ mod tests {
     /// does not know is skipped rather than refused.
     #[test]
     fn an_unrecognized_key_alone_is_not_an_error() {
-        let field = only_field(quote! {
+        let field = only_field(&quote! {
             #[param(unknown = 1)]
             user_id: u64
         });
@@ -347,7 +347,7 @@ mod tests {
     /// A Kynos attribute belonging to another derive is not this one's to read.
     #[test]
     fn only_the_named_attribute_is_consulted() {
-        let field = only_field(quote! {
+        let field = only_field(&quote! {
             #[header(rename = "X-Other")]
             user_id: u64
         });
@@ -485,7 +485,7 @@ mod tests {
             (
                 "serde's split rename, which gives one field two wire names",
                 wire_name(
-                    &only_field(quote! {
+                    &only_field(&quote! {
                         #[serde(rename(serialize = "a", deserialize = "b"))]
                         user_id: u64
                     }),
