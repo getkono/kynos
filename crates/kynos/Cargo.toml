@@ -7,6 +7,24 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
+# crates.io renders this file as the crate page, and it is the only thing a
+# reader sees before deciding to `cargo add`. It is its own file rather than a
+# symlink to the repository README because crates.io resolves relative links
+# against the package's path in the repository, so every `docs/...` link in the
+# root README would resolve to `crates/kynos/docs/...` and 404. Naming it
+# explicitly rather than relying on Cargo's auto-detection makes a deleted README
+# a manifest error instead of a silently blank crate page.
+readme = "README.md"
+# Five is crates.io's limit on each. `swagger` is deliberately absent despite
+# being the highest-traffic search term in this space: the README puts OpenAPI
+# 3.0 and older permanently out of scope, so claiming it would be exactly the
+# misdescription this framework exists to prevent.
+keywords = ["openapi", "rest", "api", "http", "framework"]
+categories = [
+  "web-programming::http-server",
+  "network-programming",
+  "asynchronous",
+]
 
 [[test]]
 name = "ui"

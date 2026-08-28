@@ -7,6 +7,13 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
+# See the note in `crates/kynos/Cargo.toml`: a crate's own README, not a link to
+# the workspace one, because crates.io resolves relative links against the
+# package's directory in the repository. This one's whole job is to say "depend
+# on `kynos` instead", which is worth rendering.
+readme = "README.md"
+keywords = ["kynos", "openapi", "macros", "proc-macro", "rest"]
+categories = ["web-programming", "development-tools"]
 
 [lib]
 proc-macro = true

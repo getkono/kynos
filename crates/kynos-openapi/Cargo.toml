@@ -7,6 +7,14 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
+# See the note in `crates/kynos/Cargo.toml`: a crate's own README, not a link to
+# the workspace one, because crates.io resolves relative links against the
+# package's directory in the repository.
+readme = "README.md"
+# This crate is usable without the runtime, so it is findable on the terms of
+# the document model rather than of the framework.
+keywords = ["openapi", "oas", "json-schema", "schema", "rest"]
+categories = ["web-programming", "data-structures", "encoding"]
 
 [[example]]
 name = "standalone"
