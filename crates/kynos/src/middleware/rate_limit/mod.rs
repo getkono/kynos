@@ -28,7 +28,7 @@ pub use quota::{Quota, Quotas};
 pub use store::{RateLimitStore, StoreFailure};
 
 use crate::{
-    extract::params::header::HeaderParams,
+    extract::params::header::EncodeHeaders,
     http,
     middleware::{Continued, Interceptor, Next},
     response::ShortCircuit,
@@ -45,7 +45,7 @@ mod sealed {
 /// the names reach generated clients.
 pub trait RateLimitSpelling: sealed::Sealed + Send + Sync + 'static {
     /// The group a forwarded response carries.
-    type Headers: HeaderParams;
+    type Headers: EncodeHeaders;
     /// What a refusal answers with.
     type Denied: ShortCircuit;
 

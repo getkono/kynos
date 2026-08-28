@@ -4,10 +4,10 @@ error[E0277]: `dyn Debug` cannot describe itself as a schema
 6 |     describable::<Box<dyn std::fmt::Debug>>();
   |                   ^^^^^^^^^^^^^^^^^^^^^^^^ not describable
   |
-  = help: the trait `SchemaTrait` is not implemented for `dyn Debug`
+  = help: the trait `kynos::schema::Schema` is not implemented for `dyn Debug`
   = note: derive it with `#[derive(kynos::Schema)]`
   = note: some types are refused on purpose — `serde_json::Value`, `usize`, `SystemTime` and friends. Wrap one in `kynos::schema::unchecked::Unchecked` to say the payload really is unconstrained
-  = help: the following other types implement trait `SchemaTrait`:
+  = help: the following other types implement trait `kynos::schema::Schema`:
             ()
             (A, B)
             (A, B, C)
@@ -17,7 +17,7 @@ error[E0277]: `dyn Debug` cannot describe itself as a schema
             (A, B, C, D, E, F, G)
             (A, B, C, D, E, F, G, H)
           and $N others
-  = note: required for `Box<dyn Debug>` to implement `SchemaTrait`
+  = note: required for `Box<dyn Debug>` to implement `kynos::schema::Schema`
 note: required by a bound in `describable`
  --> tests/ui/schema/trait_object.rs:3:19
   |
@@ -31,7 +31,7 @@ error[E0277]: the size for values of type `dyn Debug` cannot be known at compila
   |                   ^^^^^^^^^^^^^^^^^^^^^^^^ doesn't have a size known at compile-time
   |
   = help: the trait `Sized` is not implemented for `dyn Debug`
-help: the trait `SchemaTrait` is implemented for `Box<T>`
+help: the trait `kynos::schema::Schema` is implemented for `Box<T>`
  --> src/schema/impls/wrapper.rs
   |
   |             impl<T: Schema> Schema for $ty<T> {
@@ -39,7 +39,7 @@ help: the trait `SchemaTrait` is implemented for `Box<T>`
 ...
   | transparent!(Box, Arc);
   | ---------------------- in this macro invocation
-  = note: required for `Box<dyn Debug>` to implement `SchemaTrait`
+  = note: required for `Box<dyn Debug>` to implement `kynos::schema::Schema`
 note: required by a bound in `describable`
  --> tests/ui/schema/trait_object.rs:3:19
   |

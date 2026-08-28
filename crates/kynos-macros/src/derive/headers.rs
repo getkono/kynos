@@ -103,24 +103,35 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let response_headers = response_headers_body(&params);
     let encode = header_encode_body(&params);
 
+    // Three implementations; see `path_params.rs` for why the directions are
+    // separate traits. A derived group does both, which is why `Headers<T>`
+    // and `WithHeaders<_, T>` both keep working on one derive.
     Ok(quote! {
-        impl #impl_generics ::kynos::extract::params::header::HeaderParams
+        impl #impl_generics ::kynos::extract::params::header::DecodeHeaders
             for #name #ty_generics #where_clause
         {
-            #names_item
-
             fn decode(
                 headers: &::kynos::http::HeaderMap,
             ) -> ::core::result::Result<Self, ::kynos::error::rejection::HeaderRejection> {
                 #(#reads)*
                 #value
             }
+        }
 
+        impl #impl_generics ::kynos::extract::params::header::EncodeHeaders
+            for #name #ty_generics #where_clause
+        {
             fn encode(
                 &self,
             ) -> ::std::vec::Vec<(::kynos::http::HeaderName, ::kynos::http::HeaderValue)> {
                 #encode
             }
+        }
+
+        impl #impl_generics ::kynos::extract::params::header::HeaderParams
+            for #name #ty_generics #where_clause
+        {
+            #names_item
 
             fn parameters(
                 registry: &mut ::kynos::schema::registry::Registry,

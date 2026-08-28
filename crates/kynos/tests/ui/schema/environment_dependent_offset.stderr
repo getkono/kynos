@@ -4,10 +4,10 @@ error[E0277]: `DateTime<Local>` cannot describe itself as a schema
 10 |     describable::<chrono::DateTime<chrono::Local>>();
    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not describable
    |
-   = help: the trait `SchemaTrait` is not implemented for `DateTime<Local>`
+   = help: the trait `kynos::schema::Schema` is not implemented for `DateTime<Local>`
    = note: derive it with `#[derive(kynos::Schema)]`
    = note: some types are refused on purpose — `serde_json::Value`, `usize`, `SystemTime` and friends. Wrap one in `kynos::schema::unchecked::Unchecked` to say the payload really is unconstrained
-help: the following other types implement trait `SchemaTrait`
+help: the following other types implement trait `kynos::schema::Schema`
   --> src/schema/impls/temporal/chrono.rs
    |
    | impl Schema for ::chrono::DateTime<::chrono::Utc> {

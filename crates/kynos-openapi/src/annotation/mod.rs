@@ -390,7 +390,7 @@ fn item_operations(item: &PathItem) -> Box<dyn Iterator<Item = &Operation> + '_>
                 .callbacks
                 .values()
                 .filter_map(RefOr::as_item)
-                .flat_map(|callback| callback.0.values())
+                .flat_map(|callback| callback.items.values())
                 .filter_map(RefOr::as_item)
                 .flat_map(item_operations),
         )
@@ -401,7 +401,7 @@ fn item_operations(item: &PathItem) -> Box<dyn Iterator<Item = &Operation> + '_>
 fn operations(document: &Document) -> impl Iterator<Item = &Operation> {
     document
         .paths
-        .0
+        .items
         .values()
         .chain(document.webhooks.values())
         .chain(document.components.path_items.values())
@@ -412,7 +412,7 @@ fn operations(document: &Document) -> impl Iterator<Item = &Operation> {
                 .callbacks
                 .values()
                 .filter_map(RefOr::as_item)
-                .flat_map(|callback| callback.0.values())
+                .flat_map(|callback| callback.items.values())
                 .filter_map(RefOr::as_item)
                 .flat_map(item_operations),
         )

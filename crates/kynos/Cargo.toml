@@ -412,7 +412,7 @@ full = [
 
 [dependencies]
 kynos-macros = { workspace = true, optional = true }
-kynos-openapi = { workspace = true }
+kynos-openapi = { workspace = true, features = ["http"] }
 
 async-compression = { workspace = true, optional = true, features = [
   "tokio",

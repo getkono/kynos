@@ -54,8 +54,20 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     );
     let encode = query_encode_body(&params);
 
+    // Three implementations; see `path_params.rs` for why the directions are
+    // separate traits.
     Ok(quote! {
         impl #impl_generics ::kynos::extract::params::query::QueryParams
+            for #name #ty_generics #where_clause
+        {
+            fn parameters(
+                registry: &mut ::kynos::schema::registry::Registry,
+            ) -> ::std::vec::Vec<::kynos::openapi::Parameter> {
+                #parameters
+            }
+        }
+
+        impl #impl_generics ::kynos::extract::params::query::DecodeQuery
             for #name #ty_generics #where_clause
         {
             fn decode(
@@ -65,15 +77,13 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                 #(#reads)*
                 #value
             }
+        }
 
+        impl #impl_generics ::kynos::extract::params::query::EncodeQuery
+            for #name #ty_generics #where_clause
+        {
             fn encode(&self) -> ::std::string::String {
                 #encode
-            }
-
-            fn parameters(
-                registry: &mut ::kynos::schema::registry::Registry,
-            ) -> ::std::vec::Vec<::kynos::openapi::Parameter> {
-                #parameters
             }
         }
     })

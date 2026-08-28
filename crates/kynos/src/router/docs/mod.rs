@@ -69,7 +69,10 @@ use std::{
 };
 
 use bytes::Bytes;
-use kynos_openapi::{Document, PathTemplate};
+use kynos_openapi::{
+    Document, PathTemplate,
+    validate::violation::{Severity, SpecError, Violation},
+};
 
 use crate::{
     error::Result,
@@ -95,6 +98,7 @@ pub struct Docs {
     description_at: PathTemplate,
     title: Option<String>,
     operation_id_prefix: Cow<'static, str>,
+    violations: Vec<Violation>,
 }
 
 impl Docs {
@@ -124,25 +128,25 @@ impl Docs {
     /// since the URL it hardcodes does not move when the router does.
     #[must_use]
     pub fn custom(page: impl Into<Cow<'static, str>>) -> Self {
+        let mut violations = Vec::new();
         Self {
             page: page.into(),
-            at: template("/docs"),
-            description_at: template("/openapi.json"),
+            at: template("/docs", &mut violations),
+            description_at: template("/openapi.json", &mut violations),
             title: None,
             operation_id_prefix: Cow::Borrowed("docs"),
+            violations,
         }
     }
 
     /// Where the page is served. `/docs` by default.
     ///
-    /// # Panics
-    ///
-    /// If `path` is not a legal path template. A literal written at a mount
-    /// site is checked on the spot rather than deferred to build time, which is
-    /// the call [`assets`](crate::router::assets) already makes.
+    /// A path that is not a legal template is recorded as a violation and
+    /// surfaces from [`Router::validate`](crate::router::Router::validate),
+    /// which is where every other malformed path in a description surfaces.
     #[must_use]
     pub fn at(mut self, path: &str) -> Self {
-        self.at = template(path);
+        self.at = template(path, &mut self.violations);
         self
     }
 
@@ -152,13 +156,16 @@ impl Docs {
     /// applied, so nesting a router that carries a reference moves both halves
     /// together.
     ///
-    /// # Panics
-    ///
-    /// As [`at`](Self::at).
+    /// A malformed path is recorded, as [`at`](Self::at)'s is.
     #[must_use]
     pub fn description_at(mut self, path: &str) -> Self {
-        self.description_at = template(path);
+        self.description_at = template(path, &mut self.violations);
         self
+    }
+
+    /// The violations collected while this reference was configured.
+    pub(crate) fn take_violations(&mut self) -> Vec<Violation> {
+        std::mem::take(&mut self.violations)
     }
 
     /// The page's title. The document's own `info.title` by default.
@@ -219,9 +226,33 @@ impl Docs {
 /// already answers the same way. A template carrying a *variable* parses fine
 /// and is refused later by the validator, which reports it as the undeclared
 /// path parameter it is.
-fn template(path: &str) -> PathTemplate {
-    PathTemplate::parse(path)
-        .unwrap_or_else(|error| panic!("`{path}` is not a servable docs path: {error}"))
+/// Parses a mount-site path literal, recording a malformed one.
+///
+/// A `Violation` rather than a panic, and rather than the `assert!`
+/// [`assets_directory`](crate::router::assets::fs) used to use. All three are
+/// the same situation — a path literal written at a mount site — and answered
+/// it three different ways, two of which carried arguments that contradicted
+/// each other. `Group::new` is the one this follows: it keeps
+/// [`Router::validate`](crate::router::Router::validate) the single place a
+/// malformed description surfaces, and a builder method that returned a
+/// `Result` would make every mount two lines.
+fn template(path: &str, violations: &mut Vec<Violation>) -> PathTemplate {
+    match PathTemplate::parse(path) {
+        Ok(template) => template,
+        Err(reason) => {
+            violations.push(Violation {
+                location: "#/paths".to_owned(),
+                severity: Severity::Error,
+                error: SpecError::InvalidPathTemplate {
+                    template: path.to_owned(),
+                    reason,
+                },
+            });
+            // A template the router will not mount. The violation is what the
+            // caller is told; this only has to be a value.
+            PathTemplate::parse("/").expect("a root path is always a legal template")
+        }
+    }
 }
 
 /// Which half of one reference a mounted entry is.

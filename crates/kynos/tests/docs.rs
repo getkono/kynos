@@ -34,7 +34,7 @@ fn both_docs_routes_are_described_where_they_are_mounted() {
     for path in ["/docs", "/openapi.json"] {
         let item = document
             .paths
-            .0
+            .items
             .get(path)
             .unwrap_or_else(|| panic!("{path} is missing from the document"));
         assert!(item.get.is_some(), "{path} declares no GET");
@@ -49,7 +49,7 @@ fn a_router_that_mounts_no_docs_describes_neither_path() {
 
     for path in ["/docs", "/openapi.json"] {
         assert!(
-            !document.paths.0.contains_key(path),
+            !document.paths.items.contains_key(path),
             "{path} is described by a router that mounts no reference",
         );
     }
@@ -66,7 +66,7 @@ fn the_page_is_described_as_html_and_the_description_as_json() {
         ("/docs", "text/html; charset=utf-8"),
         ("/openapi.json", "application/json"),
     ] {
-        let operation = document.paths.0[path].get.as_ref().expect("a GET");
+        let operation = document.paths.items[path].get.as_ref().expect("a GET");
         let ok = operation
             .responses
             .responses
@@ -245,4 +245,31 @@ async fn either_docs_route_answers_only_get() {
         assert_eq!(reply.status, StatusCode::METHOD_NOT_ALLOWED, "{path}");
         assert_eq!(reply.field("allow").as_deref(), Some("GET"), "{path}");
     }
+}
+
+/// A malformed docs path is reported, not thrown.
+///
+/// `Docs::at` used to panic on a literal `PathTemplate` could not parse, which
+/// made a path written at a mount site the one malformed path in a description
+/// that stopped the program rather than being collected with the rest.
+/// `Group::new` already recorded a `Violation` for the same situation, and this
+/// is the case that pins the two to one answer.
+#[test]
+fn a_docs_path_that_is_not_a_template_is_reported_rather_than_panicking() {
+    // No leading slash, which is `MissingLeadingSlash` and the simplest thing
+    // a Paths key can be wrong about.
+    let router = support::router().docs(Docs::scalar().at("docs"));
+
+    let violations = router.validate().expect("validation itself succeeds");
+    assert!(
+        violations.iter().any(|violation| matches!(
+            &violation.error,
+            kynos::openapi::SpecError::InvalidPathTemplate { template, .. } if template == "docs"
+        )),
+        "expected the bad path among the violations, got {violations:?}"
+    );
+
+    // And the router refuses to build, rather than serving a reference at a
+    // path it could not describe.
+    assert!(router.build(App::new()).is_err());
 }

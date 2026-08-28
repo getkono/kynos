@@ -4,10 +4,10 @@ error[E0277]: `u128` cannot describe itself as a schema
 6 |     describable::<u128>();
   |                   ^^^^ not describable
   |
-  = help: the trait `SchemaTrait` is not implemented for `u128`
+  = help: the trait `kynos::schema::Schema` is not implemented for `u128`
   = note: derive it with `#[derive(kynos::Schema)]`
   = note: some types are refused on purpose — `serde_json::Value`, `usize`, `SystemTime` and friends. Wrap one in `kynos::schema::unchecked::Unchecked` to say the payload really is unconstrained
-  = help: the following other types implement trait `SchemaTrait`:
+  = help: the following other types implement trait `kynos::schema::Schema`:
             f32
             f64
             i16

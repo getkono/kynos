@@ -68,6 +68,12 @@ const ACCEPTED: &str = "zstd, br, gzip";
 const MAX_CODINGS: usize = 4;
 
 /// What [`Decompression`] answers with when it will not hand a body on.
+///
+/// `#[non_exhaustive]`, as every other error type an application can match on
+/// is. A `ShortCircuit` type is exactly what a `match` in application code
+/// receives, so a variant added here would otherwise be a breaking change made
+/// by accident.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Undecodable {
     /// The body named a content coding this server cannot decode.

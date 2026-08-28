@@ -55,27 +55,38 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let parameters = parameters_body(&params, &quote!(::kynos::openapi::ParameterIn::Path), true);
     let encode = path_encode_body(&params);
 
+    // Three implementations, because the two directions are their own traits.
+    // A derive supplies both, so nothing a user writes changes; what the split
+    // removes is the *hand-written* group that supplied neither and panicked.
     Ok(quote! {
         impl #impl_generics ::kynos::extract::params::path::PathParams
             for #name #ty_generics #where_clause
         {
             #names_item
 
+            fn parameters(
+                registry: &mut ::kynos::schema::registry::Registry,
+            ) -> ::std::vec::Vec<::kynos::openapi::Parameter> {
+                #parameters
+            }
+        }
+
+        impl #impl_generics ::kynos::extract::params::path::DecodePath
+            for #name #ty_generics #where_clause
+        {
             fn decode(
                 values: &[(&str, &str)],
             ) -> ::core::result::Result<Self, ::kynos::error::rejection::PathRejection> {
                 #(#reads)*
                 #value
             }
+        }
 
+        impl #impl_generics ::kynos::extract::params::path::EncodePath
+            for #name #ty_generics #where_clause
+        {
             fn encode(&self) -> ::std::vec::Vec<(&'static str, ::std::string::String)> {
                 #encode
-            }
-
-            fn parameters(
-                registry: &mut ::kynos::schema::registry::Registry,
-            ) -> ::std::vec::Vec<::kynos::openapi::Parameter> {
-                #parameters
             }
         }
     })

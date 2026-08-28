@@ -35,7 +35,7 @@ pub(in crate::server) fn apply_mutual_tls(
     }
 
     require_mutual_tls(&mut document.security);
-    for path in document.paths.0.values_mut() {
+    for path in document.paths.items.values_mut() {
         for operation in [
             &mut path.get,
             &mut path.put,

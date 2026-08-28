@@ -5,7 +5,7 @@ use std::convert::Infallible;
 use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
-    extract::params::header::HeaderParams,
+    extract::params::header::{EncodeHeaders, HeaderParams},
     http,
     middleware::{Continued, Interceptor, Next},
     response::cookie::Cookie,
@@ -28,16 +28,6 @@ impl HeaderParams for SetCookieHeaders {
     const NAMES: &'static [&'static str] = &["set-cookie"];
     const REPEATABLE: bool = true;
 
-    fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
-        self.cookies
-            .iter()
-            // A cookie that cannot be a field value is dropped rather than
-            // panicking: `Cookie::encode` already refused it, and a response
-            // path that panics is worse than one short a cookie.
-            .filter_map(|cookie| Some((http::header::SET_COOKIE, cookie.encode()?)))
-            .collect()
-    }
-
     fn response_headers(
         registry: &mut Registry,
     ) -> kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>> {
@@ -58,6 +48,18 @@ impl HeaderParams for SetCookieHeaders {
             ),
         );
         headers
+    }
+}
+
+impl EncodeHeaders for SetCookieHeaders {
+    fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
+        self.cookies
+            .iter()
+            // A cookie that cannot be a field value is dropped rather than
+            // panicking: `Cookie::encode` already refused it, and a response
+            // path that panics is worse than one short a cookie.
+            .filter_map(|cookie| Some((http::header::SET_COOKIE, cookie.encode()?)))
+            .collect()
     }
 }
 

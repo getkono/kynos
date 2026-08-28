@@ -177,7 +177,12 @@ pub struct SchemaObject {
     pub ty: Option<TypeSet>,
 
     /// The instance must equal this value.
-    #[serde(rename = "const", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "const",
+        default,
+        deserialize_with = "crate::model::nullable::some",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub const_value: Option<Value>,
 
     /// The instance must equal one of these values.
@@ -341,7 +346,11 @@ pub struct SchemaObject {
     pub description: Option<String>,
 
     /// The default value for the described instance.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "crate::model::nullable::some",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub default: Option<Value>,
 
     /// Whether the described instance is deprecated.
@@ -386,7 +395,11 @@ pub struct SchemaObject {
     /// [`examples`](SchemaObject::examples). Present so that parsed
     /// descriptions round-trip; Kynos does not emit it.
     #[deprecated(note = "use `examples`, which the specification supersedes this with")]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "crate::model::nullable::some",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub example: Option<Value>,
 
     /// Keywords not recognized by this model.

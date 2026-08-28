@@ -10,11 +10,20 @@
 //!         | kind = "<nav | badge | audience | ...>"   OpenAPI 3.2
 //! ```
 //!
-//! The 3.2 members are read whatever the build, and emitted only where the
-//! document model has a field for them: a member that silently did nothing
-//! under `openapi31` would be worse than one that is simply not carried, and a
-//! diagnostic here would make enabling a feature elsewhere in the dependency
-//! graph change whether an application compiles.
+//! The 3.2 members are refused under `openapi31` rather than dropped.
+//!
+//! They used to be dropped, on the argument that a diagnostic here makes
+//! enabling a feature elsewhere in the dependency graph decide whether an
+//! application compiles. That is true, and it is the lesser of the two costs.
+//! Dropping them means the *same source* emits a different description
+//! depending on a flag some other crate sets — silently, and in the one
+//! artifact this framework exists to keep honest. A build that fails names its
+//! remedy; a description that quietly says less does not.
+//!
+//! It also settles a disagreement rather than creating one.
+//! [`security_scheme`](super::security_scheme) refuses `metadata_url` and the
+//! device authorization flow on exactly these grounds, so the two files
+//! answered one question two ways and only one of them had written down why.
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -40,7 +49,7 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
     }
 }
 
-fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     unit_struct(input, "Tag", "names a group of operations")?;
 
     let name = &input.ident;
@@ -67,18 +76,47 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             );)
         });
 
-    let extended = cfg!(feature = "openapi32");
-    let summary = args.summary.filter(|_| extended).map(|text| {
+    // `summary`, `kind` and `parent` are 3.2's additions to the Tag Object. A
+    // 3.1 build has no field to put them in, and dropping them silently would
+    // emit a description that quietly says less than the source asked for --
+    // and would say something different depending on a feature any crate in
+    // the graph can turn on. `security_scheme.rs` refuses its own 3.2-only
+    // keys the same way, and this is the half that did not.
+    if !cfg!(feature = "openapi32") {
+        for (key, span) in [
+            (
+                "summary",
+                args.summary.as_ref().map(syn::spanned::Spanned::span),
+            ),
+            ("kind", args.kind.as_ref().map(syn::spanned::Spanned::span)),
+            (
+                "parent",
+                args.parent.as_ref().map(syn::spanned::Spanned::span),
+            ),
+        ] {
+            if let Some(span) = span {
+                return Err(syn::Error::new(
+                    span,
+                    format!(
+                        "`{key}` writes a Tag Object field that OpenAPI 3.2 introduced, and this \
+                         build describes 3.1; enable the `openapi32` feature, or drop it"
+                    ),
+                ));
+            }
+        }
+    }
+
+    let summary = args.summary.map(|text| {
         quote!(tag.summary = ::core::option::Option::Some(
             ::std::string::String::from(#text)
         );)
     });
-    let kind = args.kind.filter(|_| extended).map(|text| {
+    let kind = args.kind.map(|text| {
         quote!(tag.kind = ::core::option::Option::Some(
             ::std::string::String::from(#text)
         );)
     });
-    let parent = args.parent.filter(|_| extended).map(|parent| {
+    let parent = args.parent.map(|parent| {
         quote! {
             tag.parent = ::core::option::Option::Some(
                 ::std::string::String::from(

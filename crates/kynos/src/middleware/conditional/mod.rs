@@ -4,7 +4,7 @@ use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
     error::rejection::HeaderRejection,
-    extract::params::header::HeaderParams,
+    extract::params::header::{DecodeHeaders, EncodeHeaders, HeaderParams},
     http::{self, HeaderMap, HeaderValue, etag, header},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
@@ -35,6 +35,23 @@ pub struct Preconditions {
 impl HeaderParams for Preconditions {
     const NAMES: &'static [&'static str] = &["if-none-match"];
 
+    fn parameters(registry: &mut Registry) -> Vec<kynos_openapi::Parameter> {
+        let _ = registry;
+
+        vec![
+            kynos_openapi::Parameter::header(
+                "If-None-Match",
+                kynos_openapi::Schema::of_type(SchemaType::String),
+            )
+            .with_description(
+                "The entity tags the client already holds, per RFC 9110 section 13.1.2. A match \
+                 is answered with 304.",
+            ),
+        ]
+    }
+}
+
+impl DecodeHeaders for Preconditions {
     /// Never fails.
     ///
     /// RFC 9110 section 13.1: a recipient ignores a condition it cannot
@@ -54,24 +71,11 @@ impl HeaderParams for Preconditions {
                 }),
         })
     }
+}
 
+impl EncodeHeaders for Preconditions {
     fn encode(&self) -> Vec<(http::HeaderName, HeaderValue)> {
         Vec::new()
-    }
-
-    fn parameters(registry: &mut Registry) -> Vec<kynos_openapi::Parameter> {
-        let _ = registry;
-
-        vec![
-            kynos_openapi::Parameter::header(
-                "If-None-Match",
-                kynos_openapi::Schema::of_type(SchemaType::String),
-            )
-            .with_description(
-                "The entity tags the client already holds, per RFC 9110 section 13.1.2. A match \
-                 is answered with 304.",
-            ),
-        ]
     }
 }
 

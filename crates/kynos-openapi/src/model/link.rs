@@ -149,6 +149,7 @@ struct RawLink {
     #[serde(
         rename = "requestBody",
         default,
+        deserialize_with = "crate::model::nullable::some",
         skip_serializing_if = "Option::is_none"
     )]
     request_body: Option<Value>,

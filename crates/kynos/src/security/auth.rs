@@ -244,7 +244,11 @@ pub trait Scopes: Send + Sync + 'static {
 /// A const generic would be the natural spelling, but `&'static [&'static str]`
 /// is not a permitted const parameter type, so the scope set is a type
 /// implementing [`Scopes`].
-pub struct Scoped<S: SecurityScheme, R: Scopes>(pub S::Credential, pub std::marker::PhantomData<R>);
+/// The marker is private, so a handler destructures `Scoped(claims)` the way
+/// it destructures [`Auth`] and [`MaybeAuth`]. It used to be a second public
+/// field, which made every pattern `Scoped(claims, _)` and made this the only
+/// marker-carrying type in the crate whose `PhantomData` a caller could see.
+pub struct Scoped<S: SecurityScheme, R: Scopes>(pub S::Credential, std::marker::PhantomData<R>);
 
 // See `Auth`: bounded on the credential, and without `Default`.
 impl<S: SecurityScheme, R: Scopes> Clone for Scoped<S, R>
@@ -279,7 +283,17 @@ where
 impl<S: SecurityScheme, R: Scopes> Eq for Scoped<S, R> where S::Credential: Eq {}
 
 impl<S: SecurityScheme, R: Scopes> Scoped<S, R> {
+    /// Wraps a credential that has been verified and authorized.
+    ///
+    /// The marker field is private, so this is how one is built from outside
+    /// the crate — as [`Auth`] and [`MaybeAuth`] need no constructor, being
+    /// one-field newtypes.
+    pub fn new(credential: S::Credential) -> Self {
+        Self(credential, std::marker::PhantomData)
+    }
+
     /// Unwraps the verified and authorized credential.
+    #[must_use]
     pub fn into_inner(self) -> S::Credential {
         self.0
     }

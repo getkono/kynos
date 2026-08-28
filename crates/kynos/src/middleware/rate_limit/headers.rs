@@ -6,7 +6,7 @@ use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
     error::problem::Problem,
-    extract::params::header::HeaderParams,
+    extract::params::header::{EncodeHeaders, HeaderParams},
     http,
     middleware::rate_limit::decision::{QuotaPolicy, ServiceLimit},
     response::{IntoResponse, Responses, ShortCircuit},
@@ -98,22 +98,6 @@ impl HeaderParams for RateLimitHeaders {
         "x-ratelimit-reset",
     ];
 
-    fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
-        [
-            ("x-ratelimit-limit", self.limit),
-            ("x-ratelimit-remaining", self.remaining),
-            ("x-ratelimit-reset", whole_seconds(self.reset)),
-        ]
-        .into_iter()
-        .filter_map(|(name, value)| {
-            Some((
-                http::HeaderName::from_static(name),
-                http::HeaderValue::from_str(&value.to_string()).ok()?,
-            ))
-        })
-        .collect()
-    }
-
     fn response_headers(
         registry: &mut Registry,
     ) -> kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>> {
@@ -139,6 +123,24 @@ impl HeaderParams for RateLimitHeaders {
     }
 }
 
+impl EncodeHeaders for RateLimitHeaders {
+    fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
+        [
+            ("x-ratelimit-limit", self.limit),
+            ("x-ratelimit-remaining", self.remaining),
+            ("x-ratelimit-reset", whole_seconds(self.reset)),
+        ]
+        .into_iter()
+        .filter_map(|(name, value)| {
+            Some((
+                http::HeaderName::from_static(name),
+                http::HeaderValue::from_str(&value.to_string()).ok()?,
+            ))
+        })
+        .collect()
+    }
+}
+
 /// The `RateLimit` and `RateLimit-Policy` fields the draft defines.
 ///
 /// Both are structured-field Lists of Items: `RateLimit-Policy` says what the
@@ -155,25 +157,10 @@ pub struct RateLimitFields {
 
 impl HeaderParams for RateLimitFields {
     const NAMES: &'static [&'static str] = &["ratelimit", "ratelimit-policy"];
-
-    fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
-        let mut fields = Vec::new();
-
-        if let Some(value) = render_limits(&self.limits) {
-            fields.push((http::HeaderName::from_static("ratelimit"), value));
-        }
-        if let Some(value) = render_policies(&self.policies) {
-            fields.push((http::HeaderName::from_static("ratelimit-policy"), value));
-        }
-
-        fields
-    }
-
     fn response_headers(
         registry: &mut Registry,
     ) -> kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>> {
         let _ = registry;
-
         let mut headers = kynos_openapi::Map::new();
         headers.insert(
             "RateLimit".to_owned(),
@@ -190,6 +177,21 @@ impl HeaderParams for RateLimitFields {
             ),
         );
         headers
+    }
+}
+
+impl EncodeHeaders for RateLimitFields {
+    fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
+        let mut fields = Vec::new();
+
+        if let Some(value) = render_limits(&self.limits) {
+            fields.push((http::HeaderName::from_static("ratelimit"), value));
+        }
+        if let Some(value) = render_policies(&self.policies) {
+            fields.push((http::HeaderName::from_static("ratelimit-policy"), value));
+        }
+
+        fields
     }
 }
 
@@ -373,6 +375,6 @@ fn set_retry_after(response: &mut http::Response, retry_after: Duration) {
 ///
 /// Through the one writer, so a short circuit and a forwarded response spell a
 /// group the same way.
-fn write_group<G: HeaderParams>(response: &mut http::Response, group: &G) {
+fn write_group<G: EncodeHeaders>(response: &mut http::Response, group: &G) {
     crate::extract::params::header::write(response.headers_mut(), group);
 }

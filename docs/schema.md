@@ -31,7 +31,7 @@ Three vocabularies, and the distinction matters because their guarantees differ.
 
 | Source | Members | Guarantee |
 | --- | --- | --- |
-| Defined by OAS itself | `int32`, `int64`, `float`, `double`, `password` | Named in the specification ([3.1.1 §Data Type Format](../references/3.1.1.md)) |
+| Defined by OAS itself | `int32`, `int64`, `float`, `double`, `password` | Named in the specification ([3.1.2 §Data Type Format](../references/3.1.2.md)) |
 | The JSON Schema Validation vocabulary | `date-time`, `date`, `time`, `duration`, `uuid`, `uri`, `ipv4`, `ipv6`, `email`, `regex` and the rest of §7.3 | Non-validating annotations by default |
 | The [OAI Format Registry](https://spec.openapis.org/registry/format/) | `date-time-local`, `time-local`, `decimal`, `decimal128`, `char`, `int8`–`int64`, `uint8`–`uint64`, `http-date`, `media-range`, … | "Support for any registered format is strictly OPTIONAL, and support for one registered format does not imply support for any others" |
 

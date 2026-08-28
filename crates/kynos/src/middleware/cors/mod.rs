@@ -15,7 +15,7 @@ pub(crate) mod preflight;
 use std::{borrow::Cow, convert::Infallible, marker::PhantomData, time::Duration};
 
 use crate::{
-    extract::params::header::HeaderParams,
+    extract::params::header::{EncodeHeaders, HeaderParams},
     http,
     middleware::{Continued, Interceptor, Next},
 };
@@ -60,9 +60,7 @@ impl<const DESCRIBED: bool> HeaderParams for CorsHeaders<DESCRIBED> {
         "access-control-allow-credentials",
         "access-control-expose-headers",
     ];
-
     const DESCRIBED: bool = DESCRIBED;
-
     // The answer depends on which origin asked, whenever the allow-list holds
     // more than one — and a shared cache that did not know would hand one
     // origin's `Access-Control-Allow-Origin` to another, which is the whole of
@@ -70,7 +68,9 @@ impl<const DESCRIBED: bool> HeaderParams for CorsHeaders<DESCRIBED> {
     // multi-origin configuration, because the header a cache keys on must not
     // depend on a builder call the cache cannot see.
     const VARIES: &'static [&'static str] = &["origin"];
+}
 
+impl<const DESCRIBED: bool> EncodeHeaders for CorsHeaders<DESCRIBED> {
     fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
         let Some(origin) = self.origin.clone() else {
             // Nothing was permitted, and a CORS header the protocol did not
@@ -124,7 +124,7 @@ impl sealed::Sealed for Documented {}
 /// fails if a third is ever added.
 pub trait CorsDocumentation: sealed::Sealed + Send + Sync + 'static {
     /// The header group this state declares.
-    type Headers: HeaderParams;
+    type Headers: EncodeHeaders;
 
     /// Labels computed headers as the group this state declares.
     ///

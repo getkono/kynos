@@ -29,8 +29,18 @@ openapi31 = []
 # construct a document it is unable to describe.
 openapi32 = ["openapi31"]
 yaml = ["dep:serde_yaml_ng"]
+# Conversions between `Method` and `http::Method`. Optional because this crate
+# is otherwise runtime-free, which `docs/nfr.md` records as deliberate: a
+# document model needs no HTTP implementation to describe HTTP. `kynos` turns it
+# on unconditionally, so it costs a framework user nothing and a standalone user
+# nothing unless asked for.
+#
+# The impls live here because the orphan rule puts them here: both types are
+# foreign to `kynos`, so `kynos` cannot write them however much it wants to.
+http = ["dep:http"]
 
 [dependencies]
+http = { workspace = true, optional = true }
 indexmap = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

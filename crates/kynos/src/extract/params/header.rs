@@ -65,14 +65,16 @@ pub trait HeaderParams: Sized {
     /// cache reads `Vary`, a client generator has no use for it.
     ///
     /// ```
-    /// use kynos::extract::params::header::HeaderParams;
+    /// use kynos::extract::params::header::{EncodeHeaders, HeaderParams};
     ///
     /// struct Encoding;
     ///
     /// impl HeaderParams for Encoding {
     ///     const NAMES: &'static [&'static str] = &["content-encoding"];
     ///     const VARIES: &'static [&'static str] = &["accept-encoding"];
+    /// }
     ///
+    /// impl EncodeHeaders for Encoding {
     ///     fn encode(&self) -> Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)> {
     ///         Vec::new()
     ///     }
@@ -83,7 +85,9 @@ pub trait HeaderParams: Sized {
     /// impl HeaderParams for CrossOrigin {
     ///     const NAMES: &'static [&'static str] = &["access-control-allow-origin"];
     ///     const VARIES: &'static [&'static str] = &["origin"];
+    /// }
     ///
+    /// impl EncodeHeaders for CrossOrigin {
     ///     fn encode(&self) -> Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)> {
     ///         Vec::new()
     ///     }
@@ -113,37 +117,6 @@ pub trait HeaderParams: Sized {
     /// and [`WithHeaders`](crate::response::headers::WithHeaders) go through,
     /// which is what makes "the two cannot disagree" true rather than intended.
     const REPEATABLE: bool = false;
-
-    /// Decodes this group from request headers.
-    ///
-    /// # Panics
-    ///
-    /// The default panics. Derive `HeaderParams`, or write this by hand, before
-    /// extracting the group — an interceptor that only *adds* headers writes
-    /// [`encode`](HeaderParams::encode) and needs no decoder, which is why this
-    /// is a default rather than a requirement.
-    fn decode(headers: &HeaderMap) -> Result<Self, HeaderRejection> {
-        let _ = headers;
-        unimplemented!(
-            "`{}` does not decode headers: derive `HeaderParams` on it, or implement `decode` by \
-             hand",
-            std::any::type_name::<Self>()
-        )
-    }
-
-    /// Encodes this group as response header values.
-    ///
-    /// # Panics
-    ///
-    /// The default panics, for the reason [`decode`](HeaderParams::decode)'s
-    /// does — mirrored, since a group read but never written needs no encoder.
-    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-        unimplemented!(
-            "`{}` does not encode headers: derive `HeaderParams` on it, or implement `encode` by \
-             hand",
-            std::any::type_name::<Self>()
-        )
-    }
 
     /// Describes the declared OpenAPI header parameters.
     ///
@@ -181,6 +154,26 @@ pub trait HeaderParams: Sized {
     }
 }
 
+/// Reading a header group from a request.
+///
+/// `#[derive(HeaderParams)]` writes this. An interceptor that only *adds*
+/// headers implements [`EncodeHeaders`] alone and never this — `AssetHeaders`
+/// and `FileHeaders` are exactly that, and both carried a reachable panic while
+/// `decode` was a defaulted method here.
+pub trait DecodeHeaders: HeaderParams {
+    /// Decodes this group from request headers.
+    fn decode(headers: &HeaderMap) -> Result<Self, HeaderRejection>;
+}
+
+/// Writing a header group onto a response.
+///
+/// The counterpart to [`DecodeHeaders`]. A group that is read but never written
+/// implements that one alone.
+pub trait EncodeHeaders: HeaderParams {
+    /// Encodes this group as response header values.
+    fn encode(&self) -> Vec<(HeaderName, HeaderValue)>;
+}
+
 /// The empty group: no headers read, none added, nothing declared.
 ///
 /// What an interceptor names when it reads no header, or adds none.
@@ -193,7 +186,7 @@ pub trait HeaderParams: Sized {
 /// [`WithHeaders`](crate::response::headers::WithHeaders) on a handler's — go
 /// through here, because "the two cannot disagree" is only true when they are
 /// one function. They were two, and they did.
-pub(crate) fn write<G: HeaderParams>(fields: &mut crate::http::HeaderMap, group: &G) {
+pub(crate) fn write<G: EncodeHeaders>(fields: &mut crate::http::HeaderMap, group: &G) {
     for (name, value) in group.encode() {
         if G::REPEATABLE {
             fields.append(name, value);
@@ -208,15 +201,6 @@ pub(crate) fn write<G: HeaderParams>(fields: &mut crate::http::HeaderMap, group:
 impl HeaderParams for () {
     const NAMES: &'static [&'static str] = &[];
 
-    fn decode(headers: &HeaderMap) -> Result<Self, HeaderRejection> {
-        let _ = headers;
-        Ok(())
-    }
-
-    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-        Vec::new()
-    }
-
     fn parameters(registry: &mut Registry) -> Vec<Parameter> {
         let _ = registry;
         Vec::new()
@@ -228,7 +212,20 @@ impl HeaderParams for () {
     }
 }
 
-impl<C: Sync, T: HeaderParams + Send> FromRequestParts<C> for Headers<T> {
+impl DecodeHeaders for () {
+    fn decode(headers: &HeaderMap) -> Result<Self, HeaderRejection> {
+        let _ = headers;
+        Ok(())
+    }
+}
+
+impl EncodeHeaders for () {
+    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+        Vec::new()
+    }
+}
+
+impl<C: Sync, T: DecodeHeaders + Send> FromRequestParts<C> for Headers<T> {
     type Rejection = HeaderRejection;
 
     async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {

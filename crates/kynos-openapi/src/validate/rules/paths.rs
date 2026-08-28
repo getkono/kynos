@@ -35,7 +35,7 @@ impl Validator {
         let mut operation_ids: HashMap<&str, String> = HashMap::new();
         let mut normalized_paths: HashMap<String, &String> = HashMap::new();
 
-        for (raw, item) in &document.paths.0 {
+        for (raw, item) in &document.paths.items {
             let location = format!("#/paths/{}", pointer_token(raw));
 
             let template = match PathTemplate::parse(raw.clone()) {
@@ -67,21 +67,122 @@ impl Validator {
                 }
             }
 
-            check_parameter_list(&location, &item.parameters, violations);
+            self.check_item(
+                &location,
+                Some(&template),
+                item,
+                &declared_schemes,
+                &declared_tags,
+                &mut operation_ids,
+                violations,
+            );
+        }
 
-            for (method, operation) in item.operations() {
-                let op_location = format!("{location}/{}", method.as_wire_str().to_lowercase());
-                self.check_operation(
-                    &op_location,
-                    &template,
+        // Every other container an operation can be described in. The
+        // specification scopes `operationId` uniqueness to "all operations
+        // described in the API", and each of these describes some — so a walk
+        // that stopped at `paths` left every operation-level rule stopping
+        // there too. `rules/opaque.rs` already visits the same four.
+        //
+        // No template: a webhook name and a callback expression are not path
+        // templates, so the correspondence rule has nothing to compare and is
+        // skipped rather than fabricated. Every other rule applies unchanged.
+        for (name, item) in &document.webhooks {
+            self.check_item(
+                &format!("#/webhooks/{}", pointer_token(name)),
+                None,
+                item,
+                &declared_schemes,
+                &declared_tags,
+                &mut operation_ids,
+                violations,
+            );
+        }
+
+        for (name, item) in &document.components.path_items {
+            self.check_item(
+                &format!("#/components/pathItems/{}", pointer_token(name)),
+                None,
+                item,
+                &declared_schemes,
+                &declared_tags,
+                &mut operation_ids,
+                violations,
+            );
+        }
+
+        for (name, callback) in &document.components.callbacks {
+            let Some(callback) = callback.as_item() else {
+                continue;
+            };
+            for (expression, item) in &callback.items {
+                let Some(item) = item.as_item() else { continue };
+                self.check_item(
+                    &format!(
+                        "#/components/callbacks/{}/{}",
+                        pointer_token(name),
+                        pointer_token(expression)
+                    ),
+                    None,
                     item,
-                    operation,
                     &declared_schemes,
                     &declared_tags,
                     &mut operation_ids,
                     violations,
                 );
             }
+        }
+    }
+
+    /// One Path Item's parameters and every operation on it.
+    ///
+    /// `template` is `None` wherever the item hangs off something that is not
+    /// a path — a webhook, a reusable component, a callback expression — which
+    /// is the only rule that distinguishes those positions from `paths`.
+    #[allow(clippy::too_many_arguments)]
+    fn check_item<'doc>(
+        self,
+        location: &str,
+        template: Option<&PathTemplate>,
+        item: &'doc PathItem,
+        declared_schemes: &HashSet<&str>,
+        declared_tags: &HashSet<&str>,
+        operation_ids: &mut HashMap<&'doc str, String>,
+        violations: &mut Vec<Violation>,
+    ) {
+        check_parameter_list(location, &item.parameters, violations);
+
+        let named = item
+            .operations()
+            .map(|(method, operation)| (method.as_wire_str().to_lowercase(), operation));
+
+        // 3.2 puts an operation under `additionalOperations` when no field of
+        // its own exists for the method, and `operations()` is `Method::all()`
+        // driven, so it never yields one. An operation written there is as
+        // real as one written beside it.
+        #[cfg(feature = "openapi32")]
+        let named = named.chain(
+            item.additional_operations
+                .iter()
+                .map(|(method, operation)| {
+                    (
+                        format!("additionalOperations/{}", pointer_token(method)),
+                        &**operation,
+                    )
+                }),
+        );
+
+        for (segment, operation) in named {
+            self.check_operation(
+                &format!("{location}/{segment}"),
+                template,
+                item,
+                operation,
+                declared_schemes,
+                declared_tags,
+                operation_ids,
+                violations,
+            );
         }
     }
 }

@@ -352,10 +352,12 @@ fn describe(args: &SchemeArgs, kind: &Ident, input: &DeriveInput) -> proc_macro2
             }
         });
 
-    // 3.2 introduced `deprecated`, and a build without it has no field to put
-    // the answer in. Decided here rather than in the expansion, because a
-    // `#[cfg]` emitted into an application's crate would read that crate's
-    // features rather than the document model's.
+    // `args.deprecated` is only ever set under `openapi32` -- the parse refuses
+    // the key otherwise -- so this needs no second version test. The `cfg!`
+    // stays because it is what stops the arm below being *compiled* into a 3.1
+    // build, where the field it names does not exist. Decided here rather than
+    // in the expansion, because a `#[cfg]` emitted into an application's crate
+    // would read that crate's features rather than the document model's.
     let deprecated = (args.deprecated && cfg!(feature = "openapi32")).then(|| {
         quote! {
             match &mut scheme {
@@ -531,6 +533,17 @@ fn parse_args(input: &DeriveInput) -> syn::Result<SchemeArgs> {
                 "credential" => args.credential = Some(meta.value()?.parse()?),
                 "challenge" => args.challenge = Some(meta.value()?.parse()?),
                 "description" => args.description = Some(meta.value()?.parse()?),
+                // Refused rather than dropped, for the reason `metadata_url`
+                // below is: a build with no field to put the answer in would
+                // otherwise emit a scheme that quietly is not deprecated.
+                "deprecated" if !cfg!(feature = "openapi32") => {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        "`deprecated` writes a Security Scheme Object field that OpenAPI 3.2 \
+                         introduced, and this build describes 3.1; enable the `openapi32` \
+                         feature, or drop it",
+                    ));
+                }
                 "deprecated" => args.deprecated = true,
                 "carrier" => {
                     let value: Ident = meta.value()?.parse()?;

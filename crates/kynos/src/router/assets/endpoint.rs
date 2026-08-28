@@ -3,7 +3,7 @@
 use kynos_openapi::{Method, PathTemplate};
 
 use crate::{
-    extract::params::header::HeaderParams,
+    extract::params::header::{EncodeHeaders, HeaderParams},
     http::{HeaderValue, Request, Response, StatusCode, etag, header},
     response::range::spec,
     router::{
@@ -58,7 +58,6 @@ impl AssetHeaders {
 
 impl HeaderParams for AssetHeaders {
     const NAMES: &'static [&'static str] = &["etag", "cache-control", "content-encoding", "vary"];
-
     // `VARIES` is deliberately not set. It is a constant on the group, so it
     // would put `Vary: Accept-Encoding` on *every* asset -- including the files
     // with one stored form, which answer the same way whatever is accepted and
@@ -70,7 +69,9 @@ impl HeaderParams for AssetHeaders {
     // contributes its own `Vary` through `vary_on`, which merges into whatever
     // the response already carries -- and this endpoint is the innermost
     // writer, so there is never an inner value for it to clobber.
+}
 
+impl EncodeHeaders for AssetHeaders {
     fn encode(&self) -> Vec<(crate::http::HeaderName, HeaderValue)> {
         let mut fields = Vec::with_capacity(4);
 

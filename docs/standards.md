@@ -47,7 +47,6 @@ edit.
 | `RequestId` | none. `X-Request-Id` is defined by no specification; RFC 6648 argues against the spelling and W3C Trace Context is the standardised alternative | [`rfc6648.txt`](../references/rfc6648.txt), [`w3c-trace-context-20211123.html`](../references/w3c-trace-context-20211123.html) |
 | `Trace` | none | — |
 | `Csrf` | W3C Fetch Metadata (`Sec-Fetch-Site`), WHATWG Fetch (`Origin`), RFC 9113 §8.3.1 (`:authority`) | [`w3c-fetch-metadata-20250401.html`](../references/w3c-fetch-metadata-20250401.html), [`whatwg-fetch-2026-06.html`](../references/whatwg-fetch-2026-06.html), [`rfc9113.txt`](../references/rfc9113.txt) |
-| `SecurityHeaders` | RFC 6797 §6.1 and §7.2 (HSTS), W3C CSP Level 3, Referrer Policy, Permissions Policy, RFC 7034 (`X-Frame-Options`) | [`rfc6797.txt`](../references/rfc6797.txt), [`w3c-csp3-20260813.html`](../references/w3c-csp3-20260813.html), [`w3c-referrer-policy-20170126.html`](../references/w3c-referrer-policy-20170126.html), [`w3c-permissions-policy-20260618.html`](../references/w3c-permissions-policy-20260618.html) |
 | `Decompression` | RFC 9110 §8.4 (`Content-Encoding`), §15.5.16 (415), RFC 7932 (`br`), RFC 9659 (`zstd`) | [`rfc9110.txt`](../references/rfc9110.txt), [`rfc7932.txt`](../references/rfc7932.txt), [`rfc9659.txt`](../references/rfc9659.txt) |
 | Forwarded addresses | RFC 7239 §5.2 (`for`), §6 (`nodename`), §8.1 (what it is worth) | [`rfc7239.txt`](../references/rfc7239.txt) |
 | Message framing, wherever a body's length changes | RFC 9110 §8.6 (`Content-Length`), RFC 9112 §6 (HTTP/1.1), RFC 9113 §8.1.1 and §8.2.2 (HTTP/2) | [`rfc9112.txt`](../references/rfc9112.txt), [`rfc9113.txt`](../references/rfc9113.txt) |
@@ -58,6 +57,35 @@ Two entries in that table are worth reading as statements rather than
 references. `RequestId` and `Trace` are governed by nothing, and saying so is the
 point: a reader looking for the specification behind `X-Request-Id` should find
 out here that there is none, rather than concluding the citation was forgotten.
+
+**There is no `SecurityHeaders` row, and there was one.** It cited RFC 6797,
+CSP Level 3, Referrer Policy, Permissions Policy and RFC 7034 for a middleware
+`crates/kynos/src/middleware/` does not contain under any feature — so the
+table asserted a mapping for a module that does not exist, which is the one
+state the policy above says it must not have. The four texts stay vendored:
+[`references/README.md`](../references/README.md) records that they are ahead
+of the code rather than binding it.
+
+## The document model
+
+The middleware table is about HTTP. The OpenAPI specification governs
+`crates/kynos-openapi/` in exactly the same way and had no entry here at all,
+which left every rule in that crate — and every departure from one — with no
+home under this document's own policy.
+
+| Component | Governed by | Vendored as |
+| --- | --- | --- |
+| `model/` | OAS 3.1 §4 (Schema, and every object), OAS 3.2 §4 for the additions | [`3.1.2.md`](../references/3.1.2.md), [`3.2.0.md`](../references/3.2.0.md) |
+| `validate/` | the MUSTs those texts state that a type cannot enforce: `operationId` uniqueness (3.1 §4.8.10), parameter uniqueness and path correspondence (§4.8.9), component key syntax (§4.8.7), style/location legality (§4.8.11) | same |
+| `emit/downgrade` | the 3.1/3.2 delta itself: what 3.2 adds is what 3.1 cannot be handed | same |
+| the meta-schemas | the OAI's own JSON Schema description of a document | [`oas-3.1-schema-2022-10-07.json`](../references/oas-3.1-schema-2022-10-07.json), [`oas-3.2-schema-2025-09-17.json`](../references/oas-3.2-schema-2025-09-17.json) |
+
+Two departures, both argued in the code that makes them:
+
+| Deviation | Why |
+| --- | --- |
+| `encoding` ⊕ `prefixEncoding`/`itemEncoding` is a validation rule, not a sum type | Every other stated exclusion in the model is a type. These two fields are 3.2-only, so a sum type would give one field a different shape in a 3.1 build than a 3.2 one — and a type that changes with a feature is the non-additivity `openapi32` exists to avoid. `validate/rules/content.rs` carries the argument |
+| A requirement's name may be a URI under 3.2 but a bare undeclared name is still refused | 3.2 §4.8.30 admits both spellings. A single-segment relative reference is a legal URI, so reading one as a URI would accept every misspelling; 3.2 also says such a reference is spelled `./foo`. `validate/rules/operations.rs` carries the argument |
 
 ## Deviations, argued
 
@@ -102,3 +130,23 @@ that somebody looked, and it is where the next such reading belongs.
 All seven were found by reading each module against its governing text rather
 than by a failing test, which is the argument for this document existing. Each
 now has one.
+
+A second such reading has since happened, against the OpenAPI texts rather than
+the HTTP ones. It found nine, and each is closed the same way:
+
+| Was | Closed by |
+| --- | --- |
+| A 3.2 `Server.name` below the document root emitted under `openapi: 3.1.2`, which the 3.1 meta-schema rejects | a Server Object read wherever one hangs — the root, a Path Item, an Operation, a Link |
+| Six enum variants gained a 3.2 field without being `#[non_exhaustive]`, so a downstream pattern broke when any crate enabled `openapi32` | the attribute on each variant, with the constructor surface completed so sealing them left the type buildable |
+| Four objects the specification says MAY be extended could not be; two of them failed to *parse* a legal document | `Extensions` on `Paths`, `Callback`, `Discriminator` and `Xml` |
+| A JSON `null` `example`, `default` or `const` was read back as absent | a deserializer that tells an absent field from a present `null`, at all eight sites |
+| A legal 3.2 response stating only a `summary` would not parse | `description` optional, with 3.1's requirement moved to `validate` |
+| `operationId` uniqueness — and every other operation rule — stopped at `paths`, though the MUST says "all operations described in the API" | webhooks, reusable path items, callbacks and `additionalOperations` walked too |
+| A 3.2 requirement naming a scheme by URI was reported as an error | the second spelling 3.2 admits, gated on the version |
+| A Responses Object holding only an extension satisfied "at least one response code" | a predicate that asks about responses rather than about emptiness |
+| Component keys were checked in five of eleven sections, against a MUST that says "**All**" | every section |
+
+Two more were found in the same reading and are *not* in that table, because
+neither is a conformance failure: `#[derive(Tag)]` dropped 3.2-only members
+silently under `openapi31`, and a `Concurrency` limit of zero built a service
+that refused everything. Both are recorded where they live.

@@ -473,6 +473,23 @@ fn wire_types_in_source() -> BTreeSet<String> {
 
             let source = std::fs::read_to_string(&path).expect("readable source");
             let lines: Vec<&str> = source.lines().collect();
+
+            // A hand-written implementation is as much a wire form as a
+            // derived one. Reading only the derive made this depend on prose:
+            // `Responses` was counted because its doc comment happens to say
+            // "Serializes", and `Paths` and `Callback` were not counted at all
+            // once they grew implementations of their own.
+            for line in &lines {
+                let Some(rest) = line.strip_prefix("impl Serialize for ") else {
+                    continue;
+                };
+                found.insert(
+                    rest.chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect(),
+                );
+            }
+
             for (index, line) in lines.iter().enumerate() {
                 let Some(rest) = line
                     .strip_prefix("pub struct ")
@@ -509,34 +526,150 @@ fn wire_types_in_source() -> BTreeSet<String> {
     found
 }
 
-// --- The two round-trip gaps `nfr.md` records ----------------------------
+// --- The round-trip gap `nfr.md` records ---------------------------------
 //
-// Both are excluded from the generators in `support/`, which keeps the
-// round-trip property honest but leaves the behaviour unrecorded. These are
-// the record. Each asserts what happens *today*, so closing either gap turns a
-// test red on purpose rather than passing in silence.
+// Excluded from the generators in `support/`, which keeps the round-trip
+// property honest but leaves the behaviour unrecorded. This is the record. It
+// asserts what happens *today*, so closing the gap turns a test red on purpose
+// rather than passing in silence.
 
-/// A JSON `null` example does not survive a round trip.
+/// A JSON `null` survives a round trip wherever the model admits a value.
 ///
-/// The loss is on the way *in*, not the way out: `Some(Value::Null)` writes
-/// `null` faithfully, and `Option<Value>` then folds that `null` back into
-/// `None` when it is read. JSON `null` is a legal example and a legal default,
-/// so a description using one is silently changed. The remedy is a
-/// double-`Option` deserializer at each site; when it lands, this test fails
-/// and is replaced by its opposite.
+/// It used not to. `Option<Value>` folds a present `null` back into `None` on
+/// the way in, so `Some(Value::Null)` was written faithfully and read back as
+/// absent — and JSON `null` is a legal `example`, a legal `default` and a legal
+/// `const`, which made a description using one silently different after a
+/// round trip.
 ///
-/// `SchemaObject`'s `default` and `const` lose a `null` the same way, for the
-/// same reason. One case records the shape of the gap; eight would not record
-/// more of it.
+/// Every site is asserted rather than one. The previous single case was right
+/// to say that one records the *shape* of a gap; a fix is the other way round,
+/// because a site that kept the old behaviour is exactly what a single case
+/// would not see.
+// `SchemaObject::example` is deprecated in favour of `examples` and is still a
+// field a description can carry, so it is still a field a round trip has to
+// keep. Deprecated is not the same as gone.
+#[expect(deprecated)]
 #[test]
-fn a_null_example_does_not_survive_a_round_trip() {
-    let original = Example::new(Value::Null);
-    let json = serde_json::to_string(&original).expect("serializable");
-    let parsed: Example = serde_json::from_str(&json).expect("what the model emits, it reads");
+fn a_null_survives_a_round_trip_at_every_site() {
+    fn round_trip<T>(original: &T, expected_json: &str) -> T
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        let json = serde_json::to_string(original).expect("serializable");
+        assert_eq!(json, expected_json, "the null is written out");
+        serde_json::from_str(&json).expect("what the model emits, it reads")
+    }
 
-    assert_eq!(json, r#"{"value":null}"#, "the null is written out");
-    assert!(parsed.value().is_none(), "but does not come back");
-    assert_ne!(parsed, original);
+    let example = Example::new(Value::Null);
+    assert_eq!(
+        round_trip(&example, r#"{"value":null}"#),
+        example,
+        "an Example Object's `value`"
+    );
+
+    let schema = SchemaObject {
+        const_value: Some(Value::Null),
+        ..SchemaObject::default()
+    };
+    assert_eq!(
+        round_trip(&schema, r#"{"const":null}"#),
+        schema,
+        "a Schema Object's `const`"
+    );
+
+    let schema = SchemaObject {
+        default: Some(Value::Null),
+        ..SchemaObject::default()
+    };
+    assert_eq!(
+        round_trip(&schema, r#"{"default":null}"#),
+        schema,
+        "a Schema Object's `default`"
+    );
+
+    let schema = SchemaObject {
+        example: Some(Value::Null),
+        ..SchemaObject::default()
+    };
+    assert_eq!(
+        round_trip(&schema, r#"{"example":null}"#),
+        schema,
+        "a Schema Object's `example`"
+    );
+
+    let mut link = Link::to_operation("getOrder");
+    link.request_body = Some(Value::Null);
+    assert_eq!(
+        round_trip(&link, r#"{"operationId":"getOrder","requestBody":null}"#),
+        link,
+        "a Link Object's `requestBody`"
+    );
+
+    let parameter =
+        Parameter::new("id", ParameterIn::Query, Schema::any()).with_example(Value::Null);
+    assert_eq!(
+        round_trip(
+            &parameter,
+            r#"{"name":"id","in":"query","schema":true,"example":null}"#
+        ),
+        parameter,
+        "a Parameter Object's `example`"
+    );
+
+    let header = Header::new(Schema::any()).with_example(Value::Null);
+    assert_eq!(
+        round_trip(&header, r#"{"schema":true,"example":null}"#),
+        header,
+        "a Header Object's `example`"
+    );
+
+    let media_type = MediaType::new(Schema::any()).with_example(Value::Null);
+    assert_eq!(
+        round_trip(&media_type, r#"{"schema":true,"example":null}"#),
+        media_type,
+        "a Media Type Object's `example`"
+    );
+}
+
+/// Every object the specification lets carry an extension round-trips one.
+///
+/// `references/3.1.2.md` says "This object MAY be extended with Specification
+/// Extensions" of the Paths Object (`:790`), the Callback Object (`:2154`), the
+/// Discriminator Object (`:3337`) and the XML Object (`:3499`). Four objects
+/// modelled it and four did not, and the two failure modes differ:
+/// `Xml` and `Discriminator` have no catch-all, so serde drops an `x-` member
+/// on the floor; `Paths` and `Callback` are `#[serde(transparent)]` over a bare
+/// map, so an `x-` member whose value is not an object of the map's type makes
+/// a **legal document fail to parse at all**.
+///
+/// The values here are deliberately not objects. An object-valued extension on
+/// `Paths` happens to parse — as an empty `PathItem` — which is the shape that
+/// would let a narrower test pass while the gap stayed open.
+#[test]
+fn every_extensible_object_round_trips_an_extension() {
+    fn round_trips<T>(name: &str, json: &str)
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        let parsed: T = serde_json::from_str(json)
+            .unwrap_or_else(|error| panic!("{name} must read an `x-` member: {error}"));
+        assert_eq!(
+            serde_json::to_string(&parsed).expect("serializable"),
+            json,
+            "{name} must write the `x-` member back"
+        );
+    }
+
+    round_trips::<Paths>("a Paths Object", r#"{"x-audience":"internal"}"#);
+    round_trips::<Callback>("a Callback Object", r#"{"x-audience":"internal"}"#);
+    round_trips::<Discriminator>(
+        "a Discriminator Object",
+        r#"{"propertyName":"petType","x-audience":"internal"}"#,
+    );
+    round_trips::<Xml>(
+        "an XML Object",
+        r#"{"name":"order","x-audience":"internal"}"#,
+    );
 }
 
 /// A `PathItem` carrying both `$ref` and siblings loses the siblings.

@@ -117,7 +117,9 @@ struct CacheControl;
 impl kynos::extract::params::header::HeaderParams for CacheControl {
     const NAMES: &'static [&'static str] = &["cache-control"];
     const DESCRIBED: bool = false;
+}
 
+impl kynos::extract::params::header::EncodeHeaders for CacheControl {
     fn encode(&self) -> Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)> {
         vec![(
             header::CACHE_CONTROL,
@@ -415,7 +417,7 @@ fn a_cache_and_a_conditional_declare_disjoint_fields() {
         .openapi()
         .expect("a describable router");
 
-    let operation = document.paths.0["/tagged"].get.as_ref().expect("a GET");
+    let operation = document.paths.items["/tagged"].get.as_ref().expect("a GET");
 
     let mut statuses: Vec<&str> = operation
         .responses

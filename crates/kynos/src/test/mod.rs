@@ -202,14 +202,14 @@ impl<C> TestClient<C> {
             .filter_map(|record| {
                 let template = matched_template(document, &record.path)?;
                 let method = Method::from_wire_str(record.method.as_str())?;
-                let operation = document.paths.0.get(template)?.operation(method)?;
+                let operation = document.paths.items.get(template)?.operation(method)?;
                 let (key, _) = declared_response(&operation.responses, record.status.as_u16())?;
                 Some((template, method, key))
             })
             .collect();
 
         let mut missing = Vec::new();
-        for (template, item) in &document.paths.0 {
+        for (template, item) in &document.paths.items {
             for (method, operation) in item.operations() {
                 for key in declared_keys(&operation.responses) {
                     if !exercised.contains(&(template.as_str(), method, key.clone())) {

@@ -65,6 +65,7 @@ pub struct OperationCx<'a> {
 
 impl<'a> OperationCx<'a> {
     /// Begins describing an operation against `registry`.
+    #[must_use]
     pub fn new(registry: &'a mut Registry) -> Self {
         Self {
             registry,

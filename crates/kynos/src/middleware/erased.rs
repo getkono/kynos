@@ -14,7 +14,7 @@ use std::{future::Future, pin::Pin};
 use kynos_openapi::{RefOr, StatusPattern};
 
 use crate::{
-    extract::params::header::HeaderParams,
+    extract::params::header::{DecodeHeaders, HeaderParams},
     http::{Request, Response},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses},
@@ -105,7 +105,7 @@ where
         Box::pin(async move {
             // Extraction happens here so that `intercept` receives what it
             // declared rather than a request to go looking in.
-            let reads = match <I::Reads as HeaderParams>::decode(request.headers()) {
+            let reads = match <I::Reads as DecodeHeaders>::decode(request.headers()) {
                 Ok(reads) => reads,
                 Err(rejection) => return rejection.into_response(),
             };

@@ -30,7 +30,7 @@
     feature = "openapi31"
 ))]
 
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 
 use kynos::{
     Router,
@@ -431,7 +431,9 @@ fn service() -> kynos::Result<kynos::router::service::Service<App>> {
         )
         .group(
             kynos::router::group::Group::<App>::new("/")
-                .intercept(Concurrency::new(1))
+                .intercept(Concurrency::new(
+                    NonZeroUsize::new(1).expect("one is not zero"),
+                ))
                 .mount(kynos::routes![under_capacity]),
         )
         .group(
@@ -832,7 +834,7 @@ fn a_declared_response_header_reaches_the_description() {
     let service = service().expect("a describable router");
     let document = service.openapi();
 
-    let listing = document.paths.0["/users"]
+    let listing = document.paths.items["/users"]
         .get
         .as_ref()
         .expect("a GET operation");
@@ -864,7 +866,7 @@ fn an_interceptors_response_header_is_declared_where_a_consumer_resolves_it() {
     let service = service().expect("a describable router");
     let document = service.openapi();
 
-    let listing = document.paths.0["/users/{id}"]
+    let listing = document.paths.items["/users/{id}"]
         .get
         .as_ref()
         .expect("a GET operation");

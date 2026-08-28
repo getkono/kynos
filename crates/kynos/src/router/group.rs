@@ -77,7 +77,7 @@ pub(crate) struct GroupParts<C> {
 impl<C> Group<C, Propagate, ()> {
     /// Creates a group mounted at `prefix`.
     #[must_use]
-    pub fn new(prefix: &'static str) -> Self {
+    pub fn new(prefix: &str) -> Self {
         // `PathTemplate` is the only parser for a path in the workspace, so the
         // prefix is checked by the same rules the paths beneath it are. A
         // malformed one is recorded rather than returned, because a builder

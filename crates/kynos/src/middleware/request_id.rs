@@ -9,7 +9,7 @@ use std::{
 
 use crate::{
     error::rejection::HeaderRejection,
-    extract::params::header::HeaderParams,
+    extract::params::header::{DecodeHeaders, EncodeHeaders, HeaderParams},
     http,
     middleware::{Continued, Interceptor, Next},
     schema::registry::Registry,
@@ -51,17 +51,17 @@ impl RequestIdSource for Counter {
 
 /// A header group that can carry a correlation identifier.
 ///
-/// [`RequestId`] has to produce a value of the group it declares, and a
-/// [`HeaderParams`] group is reached only through its own constructor.
-/// [`decode`](HeaderParams::decode) is not that constructor: the trait
-/// documents it as optional for a group that is only ever *added*, which is
-/// exactly what [`Adds`](crate::middleware::Interceptor::Adds) is.
-/// Requiring this instead is what keeps a group written to that rule from
-/// failing once per request rather than once at compile time.
+/// [`RequestId`] has to produce a value of the group it declares, and a header
+/// group is reached only through its own constructor. Decoding is not that
+/// constructor, and a correlation group has no decoder to be one:
+/// [`Adds`](crate::middleware::Interceptor::Adds) is by definition a group an
+/// interceptor only writes, so it implements `EncodeHeaders` and not
+/// `DecodeHeaders`. This is
+/// what supplies the value instead.
 ///
 /// ```
 /// use kynos::{
-///     extract::params::header::HeaderParams,
+///     extract::params::header::{EncodeHeaders, HeaderParams},
 ///     http::{HeaderName, HeaderValue},
 ///     middleware::request_id::CorrelationHeaders,
 /// };
@@ -70,7 +70,11 @@ impl RequestIdSource for Counter {
 ///
 /// impl HeaderParams for TraceId {
 ///     const NAMES: &'static [&'static str] = &["x-trace-id"];
+/// }
 ///
+/// // A correlation group only ever *adds* its field, so it writes the
+/// // encoding half and never the decoding one.
+/// impl EncodeHeaders for TraceId {
 ///     fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
 ///         vec![(HeaderName::from_static("x-trace-id"), self.0.clone())]
 ///     }
@@ -82,7 +86,7 @@ impl RequestIdSource for Counter {
 ///     }
 /// }
 /// ```
-pub trait CorrelationHeaders: HeaderParams {
+pub trait CorrelationHeaders: EncodeHeaders {
     /// Builds the group from the identifier this request is correlated by.
     ///
     /// One identifier, under every name the group declares.
@@ -102,24 +106,6 @@ pub struct XRequestId(
 
 impl HeaderParams for XRequestId {
     const NAMES: &'static [&'static str] = &["x-request-id"];
-
-    fn decode(headers: &http::HeaderMap) -> Result<Self, HeaderRejection> {
-        headers
-            .get("x-request-id")
-            .cloned()
-            .map(Self)
-            .ok_or_else(|| HeaderRejection::Invalid {
-                name: "X-Request-Id".to_owned(),
-                detail: "the header is absent".to_owned(),
-            })
-    }
-
-    fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
-        vec![(
-            http::HeaderName::from_static("x-request-id"),
-            self.0.clone(),
-        )]
-    }
 
     fn parameters(registry: &mut Registry) -> Vec<kynos_openapi::Parameter> {
         let _ = registry;
@@ -143,6 +129,28 @@ impl HeaderParams for XRequestId {
             ),
         );
         headers
+    }
+}
+
+impl DecodeHeaders for XRequestId {
+    fn decode(headers: &http::HeaderMap) -> Result<Self, HeaderRejection> {
+        headers
+            .get("x-request-id")
+            .cloned()
+            .map(Self)
+            .ok_or_else(|| HeaderRejection::Invalid {
+                name: "X-Request-Id".to_owned(),
+                detail: "the header is absent".to_owned(),
+            })
+    }
+}
+
+impl EncodeHeaders for XRequestId {
+    fn encode(&self) -> Vec<(http::HeaderName, http::HeaderValue)> {
+        vec![(
+            http::HeaderName::from_static("x-request-id"),
+            self.0.clone(),
+        )]
     }
 }
 

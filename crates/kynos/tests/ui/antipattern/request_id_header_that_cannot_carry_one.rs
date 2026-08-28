@@ -7,7 +7,7 @@
 //! of once here.
 
 use kynos::{
-    extract::params::header::HeaderParams,
+    extract::params::header::{EncodeHeaders, HeaderParams},
     http::{HeaderName, HeaderValue},
     middleware::request_id::RequestId,
     prelude::*,
@@ -17,7 +17,9 @@ struct TraceId(HeaderValue);
 
 impl HeaderParams for TraceId {
     const NAMES: &'static [&'static str] = &["x-trace-id"];
+}
 
+impl EncodeHeaders for TraceId {
     fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
         vec![(HeaderName::from_static("x-trace-id"), self.0.clone())]
     }

@@ -4,6 +4,7 @@ pub mod oauth;
 pub mod requirement;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::model::{extensions::Extensions, parameter::ParameterIn, security::oauth::OAuthFlows};
 
@@ -18,11 +19,61 @@ use crate::model::{extensions::Extensions, parameter::ParameterIn, security::oau
 /// crate enabling `openapi32` enables it for every crate in the build -- and
 /// without this attribute that would turn a downstream exhaustive `match` into
 /// a compile error, which is not what "purely additive" is supposed to mean.
+///
+/// # Every variant is sealed too
+///
+/// The attribute above covers a variant being *added*. 3.2 also adds a field
+/// to every variant already here — `deprecated`, and `oauth2MetadataUrl` on
+/// [`OAuth2`](Self::OAuth2) — so each variant carries the attribute as well.
+/// The enum's does not reach a variant's field list, and a field list is what
+/// a pattern names.
+///
+/// So a pattern takes `..`, and reads the same in either build:
+///
+/// ```
+/// # use kynos_openapi::SecurityScheme;
+/// fn scheme_of(security: &SecurityScheme) -> Option<&str> {
+///     match security {
+///         SecurityScheme::Http { scheme, .. } => Some(scheme),
+///         _ => None,
+///     }
+/// }
+/// # assert_eq!(scheme_of(&SecurityScheme::basic()), Some("basic"));
+/// ```
+///
+/// Without it, naming every field is a compile error even when the list is
+/// complete for this build — which is the guarantee. It is the error a
+/// downstream crate would otherwise have met the day something else in its
+/// build turned `openapi32` on.
+///
+/// ```compile_fail
+/// # use kynos_openapi::SecurityScheme;
+/// fn scheme_of(security: &SecurityScheme) -> Option<&str> {
+///     match security {
+///         SecurityScheme::Http {
+///             scheme,
+///             bearer_format,
+///             description,
+///             deprecated,
+///             extensions,
+///         } => Some(scheme),
+///         _ => None,
+///     }
+/// }
+/// ```
+///
+/// Construction goes through the constructors for the same reason:
+/// [`http`](Self::http), [`bearer`](Self::bearer), [`basic`](Self::basic), the
+/// three `api_key_*`, [`mutual_tls`](Self::mutual_tls),
+/// [`oauth2`](Self::oauth2) and [`open_id_connect`](Self::open_id_connect),
+/// then [`with_description`](Self::with_description),
+/// [`with_extension`](Self::with_extension) and the rest.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SecurityScheme {
     /// A key carried in a header, query parameter or cookie.
+    #[non_exhaustive]
     #[serde(rename = "apiKey")]
     ApiKey {
         /// The name of the header, query parameter or cookie.
@@ -47,6 +98,7 @@ pub enum SecurityScheme {
     },
 
     /// An RFC 7235 `Authorization` header scheme.
+    #[non_exhaustive]
     #[serde(rename = "http")]
     Http {
         /// The registered authorization scheme name, such as `bearer`.
@@ -77,6 +129,7 @@ pub enum SecurityScheme {
     /// Kynos declares this automatically when the listener is configured to
     /// verify client certificates, so enabling mTLS cannot leave the
     /// description silent about it.
+    #[non_exhaustive]
     #[serde(rename = "mutualTLS")]
     MutualTls {
         /// A description of the scheme.
@@ -94,6 +147,7 @@ pub enum SecurityScheme {
     },
 
     /// OAuth 2.0.
+    #[non_exhaustive]
     #[serde(rename = "oauth2")]
     OAuth2 {
         /// The supported flows.
@@ -123,6 +177,7 @@ pub enum SecurityScheme {
     },
 
     /// OpenID Connect Discovery.
+    #[non_exhaustive]
     #[serde(rename = "openIdConnect")]
     OpenIdConnect {
         /// The OpenID Connect Discovery URL.
@@ -144,11 +199,15 @@ pub enum SecurityScheme {
 }
 
 impl SecurityScheme {
-    /// An HTTP bearer token scheme.
+    /// An HTTP authentication scheme, named by its RFC 7235 scheme token.
+    ///
+    /// [`bearer`](Self::bearer) and [`basic`](Self::basic) are the two worth
+    /// naming; this is for the rest of the IANA registry, and for a scheme
+    /// read out of a description someone else wrote.
     #[must_use]
-    pub fn bearer(bearer_format: Option<String>) -> Self {
+    pub fn http(scheme: impl Into<String>, bearer_format: Option<String>) -> Self {
         Self::Http {
-            scheme: "bearer".to_owned(),
+            scheme: scheme.into(),
             bearer_format,
             description: None,
             #[cfg(feature = "openapi32")]
@@ -157,17 +216,16 @@ impl SecurityScheme {
         }
     }
 
+    /// An HTTP bearer token scheme.
+    #[must_use]
+    pub fn bearer(bearer_format: Option<String>) -> Self {
+        Self::http("bearer", bearer_format)
+    }
+
     /// An HTTP basic authentication scheme.
     #[must_use]
     pub fn basic() -> Self {
-        Self::Http {
-            scheme: "basic".to_owned(),
-            bearer_format: None,
-            description: None,
-            #[cfg(feature = "openapi32")]
-            deprecated: None,
-            extensions: Extensions::new(),
-        }
+        Self::http("basic", None)
     }
 
     /// An API key carried in a header.
@@ -257,6 +315,48 @@ impl SecurityScheme {
             | Self::OpenIdConnect { description, .. } => description,
         };
         *slot = Some(description.into());
+        self
+    }
+
+    /// Attaches a specification extension.
+    ///
+    /// Every variant is `#[non_exhaustive]`, so a caller outside this crate
+    /// cannot reach `extensions` through a struct literal; this is how one
+    /// arrives. Reading them back needs no method — a pattern with `..` still
+    /// binds the field.
+    #[must_use]
+    pub fn with_extension(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
+        let slot = match &mut self {
+            Self::ApiKey { extensions, .. }
+            | Self::Http { extensions, .. }
+            | Self::MutualTls { extensions, .. }
+            | Self::OAuth2 { extensions, .. }
+            | Self::OpenIdConnect { extensions, .. } => extensions,
+        };
+        slot.insert(key, value);
+        self
+    }
+
+    /// States whether the scheme is deprecated.
+    ///
+    /// [`deprecate`](Self::deprecate) is the common case. This exists because
+    /// `deprecated: false` is a thing a description can say and a round trip
+    /// has to keep saying, which a method that only ever writes `true` cannot
+    /// express.
+    ///
+    /// Introduced in OpenAPI 3.2, and a blocker for emitting the document as
+    /// 3.1 — see [`emit`](crate::emit).
+    #[cfg(feature = "openapi32")]
+    #[must_use]
+    pub fn with_deprecated(mut self, deprecated: bool) -> Self {
+        let slot = match &mut self {
+            Self::ApiKey { deprecated, .. }
+            | Self::Http { deprecated, .. }
+            | Self::MutualTls { deprecated, .. }
+            | Self::OAuth2 { deprecated, .. }
+            | Self::OpenIdConnect { deprecated, .. } => deprecated,
+        };
+        *slot = Some(deprecated);
         self
     }
 
