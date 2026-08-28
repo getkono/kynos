@@ -420,6 +420,7 @@ open against a `kynos-otel` that may never be written.
 | reliability | Commits follow Conventional Commits | `convco`, via git hook and CI | `enforced` |
 | compatibility | Every hand-rolled `Stream` implementation is private, except the one row in [`architecture.md`](architecture.md#public-api-surface), and there are exactly three of them | `mise run containment:check`, counting `Stream for` against the table and the two private sites its prose names | `enforced` |
 | compatibility | No parent re-exports a submodule, so every public item has exactly one path | `mise run containment:check`, refusing a `pub use` that names `crate`, `self`, `super` or a module the same file declares, outside the `lib.rs` that carries the crate root and the prelude | `enforced` |
+| dx | No item stands in for its implementation with a `todo!()` body | `mise run containment:check`, which sees code only after doc comments are stripped, so the `todo!()` elisions inside doc examples are not candidates | `enforced`, now that the API-skeleton exception has lapsed |
 | dx | Every public item is documented | `missing_docs = "deny"` plus `mise run docs:check` | `enforced` |
 | dx | Every public item has a compiling doc example | Doctests already run via `mise run test:doc`; *presence* of an example per item is unenforced | `planned` |
 | compatibility | Public API item count is tracked as a budget | `cargo-public-api` count with a committed baseline | `needs-tooling` |
