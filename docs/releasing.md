@@ -11,10 +11,12 @@ This is a runbook. Nothing here is normative for implementation work.
 1. **Commits land on `master`.** `release-plz-pr` recomputes the release pull
    request from the Conventional Commits since the last tag: the version bump in
    `[workspace.package]`, and a changelog entry per crate.
-2. **That pull request runs CI.** It runs unattended because the workflow
-   authenticates as a GitHub App. Opened with `secrets.GITHUB_TOKEN` instead,
-   its runs would sit in an approval-required state waiting for someone to
-   click "Approve workflows to run".
+2. **Ask that pull request for its CI.** It arrives with no checks. GitHub does
+   not let a pull request opened with `secrets.GITHUB_TOKEN` start workflow runs
+   unattended, so a human has to either approve the held runs or close and
+   reopen the pull request, which re-attributes the event to a person. Do this
+   before reading the changelog, not after: this is the one merge here that
+   publishes to crates.io, and it is the one whose CI does not start itself.
 3. **Merging it publishes.** `release-plz-release` publishes `kynos-openapi`,
    then `kynos-macros`, then `kynos` — an order release-plz derives from the
    dependency graph, waiting for each to appear in the index before starting the
@@ -60,35 +62,24 @@ what `cargo publish` will do. CI runs the same task on every push, in the
 
 Everything in this section happens outside the repository. Do it in order.
 
-### 1. Create the GitHub App — before the workflow reaches `master`
+No secret is part of it. `release-plz.yml` authenticates with
+`secrets.GITHUB_TOKEN`, which every run already has, so there is no App to
+create, no key to rotate and no repository secret this pipeline reads. What that
+costs is step 2 of [the loop](#the-loop), where a human asks the release pull
+request for its CI. Closing *that* gap later means a GitHub App or a fine-grained
+personal access token in place of `secrets.GITHUB_TOKEN` in both jobs.
+Repository-wide Actions permission to create pull requests does not close it:
+that setting grants the right to open the pull request, not the ability of the
+pull request to trigger runs — release PR #17 sat with zero checks while the
+setting was on.
 
-Release pull requests must be able to start their own workflow runs. Opened with
-`secrets.GITHUB_TOKEN`, their runs are created in an approval-required state
-that a human has to click through — which for the one pull request whose merge
-publishes to crates.io is exactly the check most likely to be waved past.
-
-Do this step *first*: with the secrets absent, the token step fails and both
-release-plz jobs do nothing on every push to `master`.
-
-1. Create a GitHub App. Set a name and a homepage URL, uncheck **Active** under
-   Webhook, and grant **Repository permissions**: `Contents` read & write,
-   `Pull requests` read & write. Restrict installation to this account.
-2. Generate a private key and install the App on `getkono/kynos`.
-3. Add the App's **Client ID** as the repository secret
-   `RELEASE_PLZ_APP_CLIENT_ID` and the private key as
-   `RELEASE_PLZ_APP_PRIVATE_KEY`. The Client ID, not the App ID: the action
-   deprecated the `app-id` input.
-
-A fine-grained personal access token works in the same place, at the cost of
-attributing the release commit to a person and needing manual rotation.
-
-### 2. Create the `release` label
+### 1. Create the `release` label
 
 `release-plz.toml` labels the release pull request `release`. Create it by hand
 so it gets a colour and a description rather than the arbitrary one the API
 assigns to a label created on first use.
 
-### 3. Delete the abandoned release branches
+### 2. Delete the abandoned release branches
 
 Eleven `release-plz-*` branches survive from runs whose pull requests were closed
 by hand. Release-plz will not reuse them.
@@ -99,7 +90,7 @@ git ls-remote --heads origin 'release-plz-*' \
   | xargs -r -n1 git push origin --delete
 ```
 
-### 4. Publish 0.1.0
+### 3. Publish 0.1.0
 
 crates.io does not accept a *new* crate through Trusted Publishing, so the first
 version of each of the three needs a registry token. This is a crates.io
@@ -148,7 +139,7 @@ publishing for every release after it.
      --notes-file <(sed -n '/^## \[0.1.0\]/,/^## \[/p' crates/kynos/CHANGELOG.md)
    ```
 
-### 5. Configure Trusted Publishing
+### 4. Configure Trusted Publishing
 
 For each of `kynos`, `kynos-macros` and `kynos-openapi`, on crates.io:
 **Settings → Trusted Publishing → Add**, platform GitHub, then
@@ -165,7 +156,7 @@ Proceeding without it.` and the run then fails at `cargo publish` with an
 authentication error. Check the `Release` job's log for that warning before
 suspecting anything else.
 
-### 6. Say that something is published
+### 5. Say that something is published
 
 Two statements become false the moment 0.1.0 lands:
 

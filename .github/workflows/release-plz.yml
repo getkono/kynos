@@ -6,9 +6,6 @@ on:
       - master
 
 # Nothing is granted by default; each job asks for exactly what it needs.
-# Neither asks to write contents, because release-plz pushes branches, commits
-# and tags through the GitHub API using the App token below rather than through
-# the git CLI -- which is also what makes `persist-credentials: false` safe.
 permissions: {}
 
 env:
@@ -36,9 +33,12 @@ jobs:
     if: github.repository_owner == 'getkono'
     runs-on: ubuntu-latest
     permissions:
-      # `actions/checkout` only. Tags, releases and branches go through the App
-      # token.
-      contents: read
+      # Release-plz pushes the tags and cuts the GitHub release through the API,
+      # authenticating with the workflow token below.
+      contents: write
+      # It reads the release pull request that this merge closed in order to
+      # build the announcement.
+      pull-requests: read
       # Mint the OIDC token crates.io Trusted Publishing exchanges for a
       # short-lived registry token. Release-plz performs the exchange itself,
       # reuses one token for every crate in the run, and revokes it when the run
@@ -50,6 +50,9 @@ jobs:
       # for the one publish trusted publishing cannot do, the first -- would
       # make an empty or forgotten secret able to silently disable it. The first
       # publish happens from a workstation instead; `docs/releasing.md` has it.
+      #
+      # Trusted Publishing is unaffected by the choice of `GITHUB_TOKEN` below:
+      # the OIDC token is minted from this permission, not from that credential.
       id-token: write
     steps:
       - &checkout
@@ -71,27 +74,6 @@ jobs:
       - &setup
         name: Set up
         uses: ./.github/actions/setup
-      # A GitHub App token rather than `secrets.GITHUB_TOKEN`. A pull request
-      # opened with the default token cannot start a workflow run unattended:
-      # since June 2026 GitHub creates the runs in an approval-required state a
-      # human has to click through, and before that it created none at all.
-      # Either way release PR #17 sat with zero checks -- the one pull request
-      # whose merge publishes to crates.io was the only one in the repository
-      # that nothing had ever tested.
-      #
-      # Both secrets have to exist before this file reaches master -- with them
-      # absent the step fails and neither job does anything. `docs/releasing.md`
-      # sequences that.
-      #
-      # `client-id`, not `app-id`: the action deprecated the latter in favour of
-      # the former, and this App is being created new.
-      - &app-token
-        name: Generate a GitHub App token
-        id: app-token
-        uses: actions/create-github-app-token@v3
-        with:
-          client-id: ${{ secrets.RELEASE_PLZ_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
       - name: Run release-plz
         # Pinned to a commit rather than to the moving `v0.5` tag, which
         # upstream repoints at every 0.5.x patch. This is the one step in the
@@ -102,16 +84,35 @@ jobs:
         with:
           command: release
         env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Open, or refresh, the release pull request: the version bumps and the
   # changelogs for everything on master that is not published yet.
+  #
+  # This job authenticates with `secrets.GITHUB_TOKEN`, which carries one cost
+  # worth stating where the decision lives. GitHub does not let a pull request
+  # opened with that token start workflow runs unattended -- the anti-recursion
+  # rule -- so the release pull request arrives with no checks against it, as
+  # release PR #17 has demonstrated since 2026-08-10. Merging it is therefore
+  # the one merge in this repository whose CI a human has to ask for, by
+  # approving the held runs or by closing and reopening the pull request so the
+  # runs are attributed to a person. `docs/releasing.md` makes that a step of
+  # the loop rather than something to remember.
+  #
+  # A GitHub App token is what removes that step, at the cost of an App, two
+  # secrets and their rotation. Repository-wide Actions permission to create
+  # pull requests is *not* an alternative: it grants the right to open the pull
+  # request, not the ability of that pull request to trigger runs.
   release-pr:
     name: Release PR
     if: github.repository_owner == 'getkono'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # Push the `release-plz-` branch carrying the version bumps and the
+      # changelogs.
+      contents: write
+      # Open the release pull request, and label it `release`.
+      pull-requests: write
     # One release pull request at a time per branch. Unlike the release job, a
     # superseded run here loses nothing: the next push recomputes the whole
     # pull request from master.
@@ -121,10 +122,9 @@ jobs:
     steps:
       - *checkout
       - *setup
-      - *app-token
       - name: Run release-plz
         uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
         with:
           command: release-pr
         env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
