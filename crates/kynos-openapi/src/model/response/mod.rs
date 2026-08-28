@@ -75,9 +75,24 @@ impl Responses {
     /// Extensions count. `Operation.responses` is skipped when this is true,
     /// so ignoring them would silently drop a `Responses` that carries only
     /// `x-` fields — which is exactly the drop a round trip must not make.
+    ///
+    /// This is therefore *not* the question the specification's "MUST contain
+    /// at least one response code" asks. [`declares_a_response`] is.
+    ///
+    /// [`declares_a_response`]: Responses::declares_a_response
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.default_response.is_none() && self.responses.is_empty() && self.extensions.is_empty()
+    }
+
+    /// Returns `true` when a status code or `default` is declared.
+    ///
+    /// The distinction from [`is_empty`](Responses::is_empty) is the whole
+    /// point: an extension is not a response, so a Responses Object carrying
+    /// only `x-` fields is *not* empty and still declares nothing.
+    #[must_use]
+    pub fn declares_a_response(&self) -> bool {
+        self.default_response.is_some() || !self.responses.is_empty()
     }
 
     /// Looks up the response declared for an exact status code.

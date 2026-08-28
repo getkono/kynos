@@ -46,7 +46,7 @@ impl Validator {
             }
         }
 
-        if operation.responses.is_empty() {
+        if !operation.responses.declares_a_response() {
             violations.push(Violation::error(location, SpecError::NoResponses));
         }
 
