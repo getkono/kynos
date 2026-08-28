@@ -329,6 +329,22 @@ assets = ["kynos-macros?/assets"]
 # sized read cost the part, where reading the file and slicing costs the whole.
 assets-fs = ["assets", "unchecked", "tokio/fs", "tokio/io-util"]
 
+# --- API reference ---------------------------------------------------------
+# Mounts the page a human opens and the description it fetches, as two ordinary
+# described operations. Off by default because turning it on widens the
+# published contract by two `paths` keys: a client generated from a
+# docs-enabled deployment carries two operations a docs-disabled one does not,
+# and that is a deployment's decision rather than the framework's. Hiding the
+# pair behind `unchecked` instead would stamp the whole document
+# non-authoritative in order to conceal routes Kynos itself mounted.
+#
+# It names no crate. `serde_json` is already unconditional, and a renderer is a
+# string -- each built-in page is a script tag, so a third is `Docs::custom`
+# rather than a pull request here. Note it does not imply `json`, which is
+# about application payloads: the description route states its own media type
+# rather than reaching for the `media::Json` marker that feature gates.
+docs = []
+
 # --- Escape hatch ----------------------------------------------------------
 # Unlocks `layer_unchecked`, `route_unchecked` and `upgrade_unchecked`. What
 # they reach is recorded and flagged rather than dropped -- an operation stays
@@ -340,6 +356,7 @@ unchecked = ["dep:tower", "dep:tower-service"]
 full = [
   "assets",
   "cache",
+  "docs",
   "openapi32",
   "macros",
   "server",
