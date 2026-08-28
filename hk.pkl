@@ -22,6 +22,25 @@ hooks {
                 fix = "mise run lint:fix"
                 depends = List("format")
             }
+            // Check-only: the script reports where a rule is broken and cannot
+            // know which of the two edits that reach it -- the source or the
+            // table it is counted against -- was the mistaken one.
+            //
+            // Here as well as in `hooks:pre-push` because the rules it holds are
+            // layout rules, and layout is what a commit is reviewed as. It reads
+            // committed text and compiles nothing, so it costs a fraction of the
+            // Clippy pass above it. The globs are the inputs it actually reads:
+            // the sources, the two documents whose tables it counts against, and
+            // the script itself.
+            ["containment"] {
+                glob = List(
+                    "*.rs",
+                    "docs/architecture.md",
+                    "docs/nfr.md",
+                    "scripts/containment.py",
+                )
+                check = "mise run containment:check"
+            }
         }
     }
     ["commit-msg"] {
