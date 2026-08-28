@@ -289,6 +289,106 @@ fn an_encoding_header_named_content_type_is_reported() {
     );
 }
 
+/// Every component section's keys are checked, not five of them.
+///
+/// `references/3.1.2.md:593`: "**All** the fixed fields declared above are
+/// objects that MUST use keys that match `^[a-zA-Z0-9\.\-_]+$`". The check
+/// covered `schemas`, `responses`, `parameters`, `requestBodies` and
+/// `securitySchemes`, so a key in any of the other five — six under 3.2 —
+/// passed whatever it was.
+///
+/// One case per section rather than one representative, because what is under
+/// test is the *set* of sections consulted; a representative section is the
+/// thing that was already passing.
+#[test]
+fn every_component_section_checks_its_keys() {
+    use crate::model::{
+        callback::Callback, example::Example, link::Link, parameter::header::Header,
+        paths::item::PathItem, reference::RefOr, schema::Schema,
+    };
+
+    const BAD: &str = "not a name";
+
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("listUsers").with_responses(ok_responses()),
+    );
+    let mut document = document_with(&[("/users", item)]);
+    let components = &mut document.components;
+    components
+        .schemas
+        .insert(BAD.to_owned(), Schema::of_type(SchemaType::String));
+    components
+        .responses
+        .insert(BAD.to_owned(), RefOr::Item(Response::new("ok")));
+    components.parameters.insert(
+        BAD.to_owned(),
+        RefOr::Item(Parameter::query("q", Schema::of_type(SchemaType::String))),
+    );
+    components.examples.insert(
+        BAD.to_owned(),
+        RefOr::Item(Example::new(serde_json::json!("x"))),
+    );
+    components.request_bodies.insert(
+        BAD.to_owned(),
+        RefOr::Item(crate::model::body::RequestBody::default()),
+    );
+    components.headers.insert(
+        BAD.to_owned(),
+        RefOr::Item(Header::new(Schema::of_type(SchemaType::String))),
+    );
+    components.security_schemes.insert(
+        BAD.to_owned(),
+        RefOr::Item(crate::model::security::SecurityScheme::basic()),
+    );
+    components
+        .links
+        .insert(BAD.to_owned(), RefOr::Item(Link::to_operation("listUsers")));
+    components
+        .callbacks
+        .insert(BAD.to_owned(), RefOr::Item(Callback::new()));
+    components
+        .path_items
+        .insert(BAD.to_owned(), PathItem::new());
+    #[cfg(feature = "openapi32")]
+    components.media_types.insert(
+        BAD.to_owned(),
+        RefOr::Item(crate::model::body::media_type::MediaType::new(
+            Schema::of_type(SchemaType::String),
+        )),
+    );
+
+    let reported: Vec<String> = violations(&document)
+        .into_iter()
+        .filter(|v| matches!(v.error, SpecError::InvalidComponentName { .. }))
+        .map(|v| v.location)
+        .collect();
+
+    let expected = [
+        "schemas",
+        "responses",
+        "parameters",
+        "examples",
+        "requestBodies",
+        "headers",
+        "securitySchemes",
+        "links",
+        "callbacks",
+        "pathItems",
+        #[cfg(feature = "openapi32")]
+        "mediaTypes",
+    ];
+
+    for section in expected {
+        assert!(
+            reported
+                .iter()
+                .any(|location| location.starts_with(&format!("#/components/{section}/"))),
+            "`components.{section}` accepted `{BAD}` as a key; reported: {reported:?}"
+        );
+    }
+}
+
 #[test]
 fn an_operation_must_declare_a_response() {
     let item = PathItem::new().with_operation(Method::Get, Operation::new("listUsers"));
