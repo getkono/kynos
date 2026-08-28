@@ -26,6 +26,24 @@ categories = [
   "asynchronous",
 ]
 
+# A published archive is immutable: crates.io does not let a version be replaced
+# or withdrawn, so anything that reaches one reaches it permanently. The TLS
+# suite's fixtures are a key pair and the certificates that go with it, and
+# `client.key` and `server.key` are literal `-----BEGIN PRIVATE KEY-----` PEM.
+# They are throwaway test material rather than a credential to anything, but
+# publishing private keys trips every secret scanner pointed at the registry and
+# cannot be undone afterwards.
+#
+# The whole directory rather than the two `.key` files. A certificate is only
+# useful beside the key that signs for it, so shipping the three `.pem` halves
+# alone would leave the archive carrying material no longer good for anything.
+#
+# This is the narrow fix. The wider one is the argument this manifest already
+# makes for the TLS *example*, which mints its own certificate at startup so
+# that no PEM is committed at all; applying it to the fixtures would remove them
+# from the repository rather than from the archive, and is filed separately.
+exclude = ["tests/fixtures/tls/"]
+
 [[test]]
 name = "ui"
 path = "tests/ui.rs"
