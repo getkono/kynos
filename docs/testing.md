@@ -15,9 +15,10 @@ these are asked to enforce; this document is about the mechanics.
 | Property | `crates/kynos-openapi/tests/`, over `support/`'s generators | `proptest` | round-tripping, determinism and totality over generated documents | built |
 | Conformance | a harness over a fixture app | `TestClient` over live responses | *emitted ⊇ observable* against a running service | in use |
 
-A module becomes a directory once it holds two independently-changing concerns
-or exceeds ~400 lines, and its tests move to a sibling `tests.rs` at that point.
-That is why unit tests appear at
+Tests move to a sibling `tests.rs` once a module passes ~400 lines, whether or
+not that module also becomes a directory — the two halves of the layout rule are
+separate, and [`nfr.md`](nfr.md#the-module-size-budget) says why the second one
+is a prompt rather than a trigger. That is why unit tests appear at
 [`di/tests.rs`](../crates/kynos/src/di/tests.rs),
 [`schema/tests.rs`](../crates/kynos/src/schema/tests.rs) and
 [`response/negotiate/tests.rs`](../crates/kynos/src/response/negotiate/tests.rs)

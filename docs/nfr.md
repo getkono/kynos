@@ -307,28 +307,32 @@ where someone mounting a cap will meet it.
 
 ### The module-size budget
 
-AGENTS.md: *"A module becomes a directory once it holds two independently-changing
-concerns or exceeds ~400 lines excluding tests."* Twenty-nine files under
-`crates/*/src` are still over that line, and `containment:check` holds that
-number so it can only move on purpose.
+AGENTS.md: *"A module becomes a directory once it holds two
+independently-changing concerns … Passing ~400 lines excluding tests is when to
+ask that question, not an answer to it."* Twenty-nine files under `crates/*/src`
+are past that line and asked it, and `containment:check` holds that number so it
+can only move on purpose.
 
-It is a budget rather than a gate because the rule interacts with the one
-directly above it in AGENTS.md — *"Submodules are `pub` with no parent
+The line count is a prompt rather than a trigger because the rule interacts with
+the one directly above it in AGENTS.md — *"Submodules are `pub` with no parent
 re-exports"* — in a way worth stating. Splitting a module that declares several
 public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: eight rejection
-types in 644 lines, and splitting it turns `error::rejection::PathRejection`
-into `error::rejection::path::PathRejection`. Around eighteen of the twenty-nine
-are that shape, worth roughly a hundred public paths between them.
+types in 644 lines, and splitting it would turn `error::rejection::PathRejection`
+into `error::rejection::path::PathRejection`. Sixteen of the twenty-nine are that
+shape, worth roughly a hundred public paths between them — and each is one
+cohesive family, which is precisely what the concern test says may stay a file.
+So they stay: a longer path is a worse name, and the rule's first clause already
+permits the shorter one. That was settled before v0.1.0, while the surface could
+still have moved for free.
 
 Splitting a module that declares *one* type and a pile of `impl` blocks costs
 nothing, because the type stays declared where it was and an inherent `impl` may
 sit in any module of the crate. That is why `router/`, `emit/downgrade/` and
-`derive/schema/` were split and the rest were not: the first group is free, and
-the second is a decision about a surface the README marks frozen.
+`derive/schema/` were split and the rest were not.
 
-The budget is the honest record of that. It falls when a module is split, and
-raising it means saying in the same commit why a new module needs the room.
+The budget is the honest record of what stayed. It falls when a module is split,
+and raising it means saying in the same commit why a new module needs the room.
 
 ## Dependencies
 
