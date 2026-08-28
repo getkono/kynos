@@ -221,6 +221,41 @@ elif int(budget.group(1)) != len(oversized):
         + "\n    ".join(oversized)
     )
 
+# --- Parent re-exports ------------------------------------------------------
+# AGENTS.md: submodules are `pub` with no parent re-exports, so every item has
+# one canonical path, and the crate root and `kynos::prelude` are the only
+# curated shortcuts. Both of those live in `lib.rs`, which is why it is the one
+# file exempt rather than a list of names.
+#
+# What is refused is a *second* path to one of our own items: a `pub use` naming
+# `crate`, `self`, `super`, or a module the same file declares. Re-exporting a
+# foreign crate is a facade rather than a second path -- `http/mod.rs`
+# republishes `http::HeaderMap`, which does not thereby acquire a Kynos path at
+# all -- so the rule is written against where the path leads, not against an
+# allowlist of files that would need editing every time one moved.
+#
+# `pub(crate) use` is left alone. The rule is about the paths a *user* can write,
+# and a crate-visible alias is not one of them.
+DECLARED_MODULE = re.compile(r"\bmod\s+(\w+)\s*[;{]")
+REEXPORT = re.compile(r"^[ \t]*pub\s+use\s+(\w+)", re.MULTILINE)
+
+reexports = []
+for path, text in FILES:
+    if path.endswith("/lib.rs"):
+        continue
+    own = set(DECLARED_MODULE.findall(text)) | {"crate", "self", "super"}
+    reexports += [
+        f"{path}: pub use {head}::..."
+        for head in REEXPORT.findall(text)
+        if head in own
+    ]
+
+if reexports:
+    failures.append(
+        "a `pub use` re-publishes one of our own items, giving it a second path "
+        "where the layout rule allows exactly one:\n    " + "\n    ".join(sorted(reexports))
+    )
+
 # --- Report -----------------------------------------------------------------
 for failure in failures:
     print(f"containment: {failure}", file=sys.stderr)
