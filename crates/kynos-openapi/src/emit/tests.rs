@@ -47,6 +47,8 @@ fn a_document_using_no_three_two_construct_has_no_blockers() {
 /// caller is shown.
 #[cfg(feature = "openapi32")]
 mod blockers {
+    use std::{collections::BTreeSet, fs, path::Path};
+
     use super::document;
     use crate::{
         emit::downgrade::three_two_only_constructs,
@@ -54,11 +56,12 @@ mod blockers {
             body::{encoding::Encoding, media_type::MediaType},
             components::ComponentName,
             document::{Document, SpecVersion},
+            example::Example,
             parameter::{Parameter, ParameterIn, style::Style},
             paths::{item::PathItem, method::Method, operation::Operation, template::PathTemplate},
             reference::RefOr,
             response::{Response, Responses},
-            schema::Schema,
+            schema::{Schema, discriminator::Discriminator, object::SchemaObject, xml::Xml},
             security::{
                 SecurityScheme,
                 oauth::{OAuthFlow, OAuthFlows},
@@ -359,6 +362,100 @@ mod blockers {
                 })),
                 in_security_scheme("flows/authorizationCode/deviceAuthorizationUrl"),
             )],
+            // The Encoding Object's own three fields, which share their names
+            // with the three the Media Type Object carries. A walk that stops
+            // at the media type sees neither the nested `encoding` map nor the
+            // two positional fields beneath it.
+            vec![
+                (
+                    with_request_content(
+                        MediaType::new(Schema::any()).with_encoding(
+                            "part",
+                            Encoding {
+                                encoding: [("inner".to_owned(), Encoding::new("text/plain"))]
+                                    .into_iter()
+                                    .collect(),
+                                ..Encoding::new("multipart/mixed")
+                            },
+                        ),
+                    ),
+                    in_request_body("encoding/part/encoding"),
+                ),
+                (
+                    with_request_content(MediaType::new(Schema::any()).with_encoding(
+                        "part",
+                        Encoding {
+                            prefix_encoding: Some(vec![Encoding::new("text/plain")]),
+                            ..Encoding::new("multipart/mixed")
+                        },
+                    )),
+                    in_request_body("encoding/part/prefixEncoding"),
+                ),
+                (
+                    with_request_content(MediaType::new(Schema::any()).with_encoding(
+                        "part",
+                        Encoding {
+                            item_encoding: Some(Box::new(Encoding::new("text/plain"))),
+                            ..Encoding::new("multipart/mixed")
+                        },
+                    )),
+                    in_request_body("encoding/part/itemEncoding"),
+                ),
+            ],
+            // The two example fields 3.2 added beside `value`. `data_external`
+            // is its own row because `externalValue` is a field 3.1 *can*
+            // express, so the value is not the blocker and `dataValue` riding
+            // on it is.
+            vec![
+                (
+                    with_request_content(
+                        MediaType::new(Schema::any())
+                            .with_named_example("e", Example::data(serde_json::json!({"id": 1}))),
+                    ),
+                    in_request_body("examples/e/dataValue"),
+                ),
+                (
+                    with_request_content(
+                        MediaType::new(Schema::any())
+                            .with_named_example("e", Example::serialized("id=1")),
+                    ),
+                    in_request_body("examples/e/serializedValue"),
+                ),
+                (
+                    with_request_content(MediaType::new(Schema::any()).with_named_example(
+                        "e",
+                        Example::data_external(
+                            serde_json::json!({"id": 1}),
+                            "https://example.com/e.json",
+                        ),
+                    )),
+                    in_request_body("examples/e/dataValue"),
+                ),
+            ],
+            // Inside a Schema Object, which the walk did not enter at all.
+            // Neither name is an `x-` extension, so 3.1 has no way to read
+            // either -- even though 3.1 leaves the schema subtree open enough
+            // that its own meta-schema does not object.
+            vec![(
+                with_request_content(MediaType::new(Schema::Object(Box::new(SchemaObject {
+                    xml: Some(Xml {
+                        node_type: Some("element".to_owned()),
+                        ..Xml::default()
+                    }),
+                    ..SchemaObject::default()
+                })))),
+                in_request_body("schema/xml/nodeType"),
+            )],
+            vec![(
+                with_request_content(MediaType::new(Schema::Object(Box::new(SchemaObject {
+                    discriminator: Some(Discriminator {
+                        default_mapping: Some("#/components/schemas/Fallback".to_owned()),
+                        ..Discriminator::new("kind")
+                    }),
+                    ..SchemaObject::default()
+                })))),
+                in_request_body("schema/discriminator/defaultMapping"),
+            )],
         ]
     }
 
@@ -390,6 +487,171 @@ mod blockers {
         }
     }
 
+    /// Every wire name the model gates behind `openapi32`, read from `model/`.
+    ///
+    /// A field is a gate followed, past any attributes and documentation, by a
+    /// field declaration; its wire name is its `rename` where it has one and
+    /// its identifier otherwise. Gates introducing an enum variant, a match
+    /// arm, an `impl` or a function are skipped -- they are not wire names.
+    fn gated_wire_names() -> BTreeSet<String> {
+        const GATE: &str = "#[cfg(feature = \"openapi32\")]";
+
+        fn walk(directory: &Path, names: &mut BTreeSet<String>) {
+            let entries = fs::read_dir(directory).expect("the model sources are beside this test");
+            for entry in entries.map(|entry| entry.expect("a readable directory entry")) {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, names);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    collect(
+                        &fs::read_to_string(&path).expect("a readable source file"),
+                        names,
+                    );
+                }
+            }
+        }
+
+        fn collect(source: &str, names: &mut BTreeSet<String>) {
+            let lines: Vec<&str> = source.lines().map(str::trim).collect();
+            for (index, line) in lines.iter().enumerate() {
+                if *line != GATE {
+                    continue;
+                }
+
+                // Step past the attributes and documentation between the gate
+                // and whatever it gates, tracking brackets so a `#[serde(..)]`
+                // written over several lines is one step rather than several.
+                let mut cursor = index + 1;
+                let mut depth = 0i32;
+                while let Some(current) = lines.get(cursor) {
+                    let open = current.matches('[').count() + current.matches('(').count();
+                    let close = current.matches(']').count() + current.matches(')').count();
+                    let attribute = depth > 0 || current.starts_with("#[");
+                    if !attribute && !current.starts_with("//") && !current.is_empty() {
+                        break;
+                    }
+                    depth += i32::try_from(open).expect("a short line")
+                        - i32::try_from(close).expect("a short line");
+                    cursor += 1;
+                }
+
+                let Some(declaration) = lines.get(cursor) else {
+                    continue;
+                };
+                let Some(identifier) = field_identifier(declaration) else {
+                    continue;
+                };
+
+                let attributes = lines[index + 1..cursor].join(" ");
+                names.insert(rename_in(&attributes).unwrap_or_else(|| camel_case(&identifier)));
+            }
+        }
+
+        /// The identifier of `line` when it *declares* a field.
+        ///
+        /// Nothing for a variant, an arm, or any other item a gate may sit
+        /// above -- and nothing for a field *initializer*, which shares the
+        /// `name: rest` shape. The two are told apart by what follows the
+        /// colon: a declaration names a type, an initializer gives a value.
+        fn field_identifier(line: &str) -> Option<String> {
+            let declaration = line.strip_prefix("pub ").unwrap_or(line);
+            let (identifier, rest) = declaration.split_once(": ")?;
+            let identifier = identifier.trim();
+
+            let names_a_type = rest.starts_with(|c: char| c.is_ascii_uppercase())
+                || ["bool", "u16", "u32", "u64", "f64", "usize", "String"]
+                    .iter()
+                    .any(|primitive| rest.starts_with(primitive));
+            let names_a_field = !identifier.is_empty()
+                && identifier.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
+                && identifier
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_');
+
+            (names_a_type && names_a_field && line.ends_with(',')).then(|| identifier.to_owned())
+        }
+
+        /// A field identifier as the wire spells it when no `rename` says
+        /// otherwise. Every renamed field in this model is renamed to the
+        /// camelCase of its identifier, and a single-word identifier is its own
+        /// camelCase -- so this is the same rule read from the other side, and
+        /// it is what lets the domain struct and the wire struct that carries
+        /// the `rename` agree on one name.
+        fn camel_case(identifier: &str) -> String {
+            let mut camel = String::with_capacity(identifier.len());
+            let mut capitalize = false;
+            for character in identifier.chars() {
+                if character == '_' {
+                    capitalize = true;
+                } else if capitalize {
+                    camel.extend(character.to_uppercase());
+                    capitalize = false;
+                } else {
+                    camel.push(character);
+                }
+            }
+            camel
+        }
+
+        /// The `rename = "..."` value within a run of attributes.
+        fn rename_in(attributes: &str) -> Option<String> {
+            let (_, rest) = attributes.split_once("rename = \"")?;
+            let (value, _) = rest.split_once('"')?;
+            Some(value.to_owned())
+        }
+
+        let mut names = BTreeSet::new();
+        walk(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("src/model"),
+            &mut names,
+        );
+        assert!(
+            !names.is_empty(),
+            "the scan found no gated field, so it is measuring nothing"
+        );
+        names
+    }
+
+    /// Every 3.2 field the model can hold is one the downgrade reports.
+    ///
+    /// The anchor here is the *model*, and that is the whole point. This test
+    /// counted `blockers.push` sites in `downgrade.rs` against the ledger,
+    /// which proves every blocker has a case -- the converse of what has to
+    /// hold. A field added with no blocker is exactly the document that emits
+    /// as 3.1 while carrying a keyword 3.1 cannot read, and a reporter counted
+    /// against itself can never see one. Five fields had slipped through when
+    /// this was written.
+    ///
+    /// Names are matched against the string literals `downgrade.rs` builds its
+    /// locations from, rather than against its source text, so an identifier
+    /// that merely happens to share a field's spelling does not satisfy it.
+    #[test]
+    fn every_three_two_field_is_reported() {
+        const REPORTER: &str = include_str!("downgrade.rs");
+
+        let literals: String = REPORTER
+            .split('"')
+            .skip(1)
+            .step_by(2)
+            .collect::<Vec<_>>()
+            .join("\u{1f}");
+
+        let unreported: Vec<String> = gated_wire_names()
+            .into_iter()
+            .filter(|name| !literals.contains(name.as_str()))
+            .collect();
+
+        assert!(
+            unreported.is_empty(),
+            "the model gates {unreported:?} behind `openapi32` and the downgrade names \
+             none of them, so a document carrying one emits as 3.1 with no complaint"
+        );
+    }
+
+    /// Every construct the downgrade reports is exercised by a ledger row.
+    ///
+    /// The counterpart to the test above, and the weaker direction: it keeps a
+    /// reporting site from losing the case that proves what it says.
     #[test]
     fn every_construct_has_a_case() {
         const SOURCE: &str = include_str!("downgrade.rs");
