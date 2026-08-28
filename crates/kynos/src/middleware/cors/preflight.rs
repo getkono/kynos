@@ -287,5 +287,4 @@ fn seconds(age: &Duration) -> Option<HeaderValue> {
 }
 
 #[cfg(test)]
-#[path = "preflight_tests.rs"]
 mod tests;
