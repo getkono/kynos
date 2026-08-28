@@ -12,12 +12,14 @@ use crate::model::{
     callback::Callback,
     components::Components,
     example::{Example, ExampleValue, Examples},
+    link::Link,
     parameter::{Parameter, ParameterIn, header::Header},
     paths::{item::PathItem, operation::Operation},
     reference::RefOr,
     response::{Response, Responses},
     schema::Schema,
     security::{SecurityScheme, oauth::OAuthFlows},
+    server::Server,
 };
 
 /// Lists the OpenAPI 3.2-only constructs a document uses.
@@ -40,11 +42,7 @@ pub fn three_two_only_constructs(document: &Document) -> Vec<String> {
         if document.self_uri.is_some() {
             blockers.push("#/$self".to_owned());
         }
-        for (index, server) in document.servers.iter().enumerate() {
-            if server.name.is_some() {
-                blockers.push(format!("#/servers/{index}/name"));
-            }
-        }
+        collect_servers_blockers("#", &document.servers, &mut blockers);
         for (index, tag) in document.tags.iter().enumerate() {
             for (field, present) in [
                 ("summary", tag.summary.is_some()),
@@ -171,6 +169,37 @@ fn for_each<'a, T: 'a>(
     }
 }
 
+/// One Server Object, wherever it hangs.
+///
+/// A Server Object is not reachable from one place. The specification hangs
+/// one off the document, off a Path Item, off an Operation and off a Link, and
+/// `name` is 3.2-only in all four. Reading it at the root alone let the other
+/// three emit as 3.1 carrying a field 3.1 does not define — and the 3.1
+/// meta-schema sets `unevaluatedProperties: false` on `$defs/server`, so the
+/// result was invalid rather than merely generous.
+#[cfg(feature = "openapi32")]
+fn collect_server_blockers(location: &str, server: &Server, blockers: &mut Vec<String>) {
+    if server.name.is_some() {
+        blockers.push(format!("{location}/name"));
+    }
+}
+
+/// The same for a `servers` array, at the index each one sits at.
+#[cfg(feature = "openapi32")]
+fn collect_servers_blockers(location: &str, servers: &[Server], blockers: &mut Vec<String>) {
+    for (index, server) in servers.iter().enumerate() {
+        collect_server_blockers(&format!("{location}/servers/{index}"), server, blockers);
+    }
+}
+
+/// One Link Object, which is 3.1 apart from the Server Object it may carry.
+#[cfg(feature = "openapi32")]
+fn collect_link_blockers(location: &str, link: &Link, blockers: &mut Vec<String>) {
+    if let Some(server) = &link.server {
+        collect_server_blockers(&format!("{location}/server"), server, blockers);
+    }
+}
+
 /// Every reusable object, each reached the same way its inline twin is.
 ///
 /// `mediaTypes` is the whole map rather than anything within it: the section
@@ -239,6 +268,13 @@ fn collect_components_blockers(
         &components.callbacks,
         |at, callback| collect_callback_blockers(&at, callback, blockers),
     );
+    for_each_item(
+        &format!("{location}/links"),
+        &components.links,
+        |at, link| {
+            collect_link_blockers(&at, link, blockers);
+        },
+    );
 }
 
 /// One Path Item, wherever it hangs: `paths`, `webhooks`, a component, or a
@@ -262,9 +298,23 @@ fn collect_path_item_blockers(location: &str, item: &PathItem, blockers: &mut Ve
         );
     }
 
+    collect_servers_blockers(location, &item.servers, blockers);
+
     for (method, operation) in item.operations() {
         collect_operation_blockers(
             &format!("{location}/{}", method.as_wire_str().to_lowercase()),
+            operation,
+            blockers,
+        );
+    }
+
+    // `operations()` is `Method::all()`-driven, so it stops at the methods with
+    // a field of their own. The map's own presence is already a blocker above,
+    // which masks this today — but a construct is reported where it lives, and
+    // an operation written here is as real as one written beside it.
+    for (method, operation) in &item.additional_operations {
+        collect_operation_blockers(
+            &format!("{location}/additionalOperations/{}", pointer_token(method)),
             operation,
             blockers,
         );
@@ -309,6 +359,7 @@ fn collect_operation_blockers(location: &str, operation: &Operation, blockers: &
     }
 
     collect_responses_blockers(location, &operation.responses, blockers);
+    collect_servers_blockers(location, &operation.servers, blockers);
 
     for (name, callback) in &operation.callbacks {
         if let RefOr::Item(callback) = callback {
@@ -365,6 +416,10 @@ fn collect_response_blockers(location: &str, response: &Response, blockers: &mut
             );
         }
     }
+
+    for_each_item(&format!("{location}/links"), &response.links, |at, link| {
+        collect_link_blockers(&at, link, blockers);
+    });
 }
 
 /// A parameter, located at the pointer the caller built for it.
