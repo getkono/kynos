@@ -38,3 +38,11 @@ syn = { workspace = true, features = ["full", "extra-traits", "parsing"] }
 
 [lints]
 workspace = true
+
+# docs.rs builds with default features unless told otherwise, which here would
+# leave `assets!` undocumented -- the one macro whose feature is not on by
+# default -- and would document the 3.1 expansion only. See the note in
+# `crates/kynos/Cargo.toml` for why this is `all-features` rather than a list,
+# and for the `doc_auto_cfg` incantation that must not come back.
+[package.metadata.docs.rs]
+all-features = true

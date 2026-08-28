@@ -520,3 +520,21 @@ uuid = { workspace = true, features = ["serde"] }
 
 [lints]
 workspace = true
+
+# docs.rs builds with default features unless told otherwise, which for Kynos
+# would publish a framework with no TLS, no codec beyond JSON, no scalar format,
+# no static assets and no escape hatch -- most of the surface `docs/` describes.
+# `all-features` rather than a list because a list is a second copy of the
+# feature table that drifts, and because this is exactly what
+# `mise run docs:check` already builds with warnings denied: what docs.rs
+# publishes is what CI proved.
+#
+# Deliberately no `rustdoc-args` and no `#![cfg_attr(docsrs, ...)]` in
+# `src/lib.rs`. The "available on crate feature X only" badges need rustdoc's
+# unstable `doc_cfg` gate, which is a nightly-only commitment across all three
+# crates and a separate decision. What must not come back is the older
+# `feature(doc_auto_cfg)` incantation: rustc removed that gate in 1.92.0, merged
+# into `doc_cfg` (rust-lang/rust#138907), so writing it would fail the docs.rs
+# build outright with E0557 rather than degrade.
+[package.metadata.docs.rs]
+all-features = true

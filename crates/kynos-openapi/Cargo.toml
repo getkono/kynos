@@ -42,3 +42,18 @@ proptest = { workspace = true }
 
 [lints]
 workspace = true
+
+# docs.rs builds with default features unless told otherwise, which here would
+# publish the 3.1 model alone: every field OpenAPI 3.2 introduces is `#[cfg]`-
+# gated, so a default-features build documents a document model that cannot
+# describe half of what the crate supports, and `yaml` would be invisible too.
+# `all-features` rather than a list because a list is a second copy of the
+# feature table that drifts, and because this is exactly what
+# `mise run docs:check` already builds with warnings denied: what docs.rs
+# publishes is what CI proved.
+#
+# Deliberately no `rustdoc-args` and no `#![cfg_attr(docsrs, ...)]` in
+# `src/lib.rs`; see the note in `crates/kynos/Cargo.toml` for why, and for the
+# incantation that must not come back.
+[package.metadata.docs.rs]
+all-features = true
