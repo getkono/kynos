@@ -27,8 +27,13 @@
 //! * **`openapi_as` targets rather than downgrades.** Asking for 3.1 fails, and
 //!   that is the whole point: a silent downgrade would emit a description
 //!   omitting a real operation, which is worse than no description at all.
-//! * **Serving the document is an ordinary route.** There is no special hook,
-//!   because there does not need to be one.
+//! * **Serving the document is an ordinary route**, and this file writes one by
+//!   hand: an injected `Bytes` and a `Binary<media::Json>` return is the whole
+//!   of it. `Router::docs`, behind the `docs` feature, mounts that same route
+//!   beside a page that reads it -- see [`docs_ui.rs`](docs_ui.rs). It is a
+//!   convenience over this, not a mechanism this ever needed, and what it
+//!   actually owns is the ordering: a reference has to describe the routes
+//!   serving it, so its bytes cannot exist until the router is built.
 //!
 //! The document's own operation is described as `application/json` carrying an
 //! unconstrained schema, which is honest: the OpenAPI meta-schema is not a

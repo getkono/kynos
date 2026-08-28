@@ -89,6 +89,7 @@ feature. It serves the route and gets no `paths` entry, recording it under
 | [`Router::merge`](../crates/kynos/src/router/mod.rs) | another router at the same level | the two operation sets union |
 | [`Router::intercept`](../crates/kynos/src/router/mod.rs) | every operation in the router | every one of their descriptions |
 | [`Router::observe`](../crates/kynos/src/router/mod.rs) | every operation in the router | nothing — observers change nothing |
+| [`Router::docs`](../crates/kynos/src/router/docs/) | two operations, at the paths the `Docs` names | two `paths` entries, rendered from the very document that describes them |
 
 A route attribute also emits `relative_uri`, taking exactly the path and query
 types that route extracts — so a link that no longer matches its target is a
@@ -124,6 +125,19 @@ line, `sink.push(self)`.
 `Endpoints` is opaque and append-only. The prefix, the panic policy and the
 interceptors belong to whatever is mounting, not to the endpoints, so there is
 nothing there for a caller to reach into.
+
+### The description a router serves is the one it emits
+
+`Router::docs` is the only mount whose *payload* is the document. The bytes
+cannot exist before `build`, because the two operations it registers are in the
+document they serve — and the page's pointer cannot be settled earlier either,
+since a `nest` prefix is applied while the outer router is built, after the
+`Docs` value was constructed. Both halves are therefore rendered at `build`,
+which is what makes the served description byte-identical to `openapi`'s and the
+page's link true of the path the route actually got.
+
+It follows rule 11 rather than bending it: what is served is `openapi`'s own
+output, not a document patched on the way past.
 
 ## `validate`, `openapi`, `build`
 
