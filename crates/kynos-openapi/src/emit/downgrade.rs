@@ -8,10 +8,12 @@ use crate::validate::violation::pointer_token;
 // blockers, which a build without `openapi32` cannot have any of.
 #[cfg(feature = "openapi32")]
 use crate::model::{
-    body::media_type::MediaType,
+    body::{encoding::Encoding, media_type::MediaType},
+    example::{Example, ExampleValue, Examples},
     parameter::ParameterIn,
     paths::operation::Operation,
     reference::RefOr,
+    schema::Schema,
     security::{SecurityScheme, oauth::OAuthFlows},
 };
 
@@ -195,5 +197,130 @@ fn collect_media_type_blockers(location: &str, content: &MediaType, blockers: &m
         if present {
             blockers.push(format!("{location}/{field}"));
         }
+    }
+
+    // The three fields above are the Media Type Object's. Everything below is
+    // one level further down, which is where this stopped: an Encoding Object
+    // carries the same three names of its own, an Example Object carries the
+    // two 3.2 added beside `value`, and a Schema Object holds the two that ride
+    // on `xml` and `discriminator`.
+    for (property, encoding) in &content.encoding {
+        collect_encoding_blockers(
+            &format!("{location}/encoding/{}", pointer_token(property)),
+            encoding,
+            blockers,
+        );
+    }
+
+    if let Some(Examples::Named(examples)) = content.examples() {
+        for (name, example) in examples {
+            if let Some(example) = example.as_item() {
+                collect_example_blockers(
+                    &format!("{location}/examples/{}", pointer_token(name)),
+                    example,
+                    blockers,
+                );
+            }
+        }
+    }
+
+    // Not `item_schema`: its presence is already a blocker above, so walking it
+    // would name the same document twice.
+    if let Some(schema) = &content.schema {
+        collect_schema_blockers(&format!("{location}/schema"), schema, blockers);
+    }
+}
+
+/// The Encoding Object's own three 3.2 fields.
+///
+/// Nested encodings are not walked, and that is not an omission: each of these
+/// three *is* the nesting, so reporting the outer field already refuses the
+/// emission and naming what sits beneath it would say the same thing twice.
+#[cfg(feature = "openapi32")]
+fn collect_encoding_blockers(location: &str, encoding: &Encoding, blockers: &mut Vec<String>) {
+    for (field, present) in [
+        ("encoding", !encoding.encoding.is_empty()),
+        ("prefixEncoding", encoding.prefix_encoding.is_some()),
+        ("itemEncoding", encoding.item_encoding.is_some()),
+    ] {
+        if present {
+            blockers.push(format!("{location}/{field}"));
+        }
+    }
+}
+
+/// The two example forms 3.2 added beside `value`.
+///
+/// `externalValue` is a form 3.1 can express, so an external example is not
+/// itself a blocker -- only the `dataValue` that 3.2 lets ride along with it.
+#[cfg(feature = "openapi32")]
+fn collect_example_blockers(location: &str, example: &Example, blockers: &mut Vec<String>) {
+    let (data, serialized) = match example.value() {
+        Some(ExampleValue::External { data, .. }) => (data.is_some(), false),
+        Some(ExampleValue::Data { serialized, .. }) => (true, serialized.is_some()),
+        Some(ExampleValue::Serialized(_)) => (false, true),
+        Some(ExampleValue::Embedded(_)) | None => (false, false),
+    };
+
+    for (field, present) in [("dataValue", data), ("serializedValue", serialized)] {
+        if present {
+            blockers.push(format!("{location}/{field}"));
+        }
+    }
+}
+
+/// `xml.nodeType` and `discriminator.defaultMapping`, wherever they are nested.
+///
+/// Walked over the serialized schema rather than over `SchemaObject`'s fields.
+/// Nineteen of those fields hold a subschema, and a hand-written walk over them
+/// is exactly the shape that made this function necessary in the first place:
+/// correct when written and silently short by one the next time a keyword is
+/// added. The serialized form has no such edge to miss.
+///
+/// Both names are matched only directly beneath a key that holds the object
+/// defining them, so a `properties` entry that happens to be spelled `xml` is
+/// not mistaken for an XML Object unless it also carries `nodeType` -- and a
+/// schema that does is refused rather than downgraded, which is the safe way to
+/// be wrong here.
+#[cfg(feature = "openapi32")]
+fn collect_schema_blockers(location: &str, schema: &Schema, blockers: &mut Vec<String>) {
+    let Ok(value) = serde_json::to_value(schema) else {
+        return;
+    };
+    collect_schema_value_blockers(location, &value, blockers);
+}
+
+#[cfg(feature = "openapi32")]
+fn collect_schema_value_blockers(
+    location: &str,
+    value: &serde_json::Value,
+    blockers: &mut Vec<String>,
+) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            for (holder, field) in [("xml", "nodeType"), ("discriminator", "defaultMapping")] {
+                let carries = fields
+                    .get(holder)
+                    .and_then(serde_json::Value::as_object)
+                    .is_some_and(|held| held.contains_key(field));
+                if carries {
+                    blockers.push(format!("{location}/{holder}/{field}"));
+                }
+            }
+
+            for (key, nested) in fields {
+                collect_schema_value_blockers(
+                    &format!("{location}/{}", pointer_token(key)),
+                    nested,
+                    blockers,
+                );
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                collect_schema_value_blockers(&format!("{location}/{index}"), item, blockers);
+            }
+        }
+        _ => {}
     }
 }

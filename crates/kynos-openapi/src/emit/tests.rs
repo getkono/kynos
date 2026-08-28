@@ -436,26 +436,28 @@ mod blockers {
             // Neither name is an `x-` extension, so 3.1 has no way to read
             // either -- even though 3.1 leaves the schema subtree open enough
             // that its own meta-schema does not object.
-            vec![(
-                with_request_content(MediaType::new(Schema::Object(Box::new(SchemaObject {
-                    xml: Some(Xml {
-                        node_type: Some("element".to_owned()),
-                        ..Xml::default()
-                    }),
-                    ..SchemaObject::default()
-                })))),
-                in_request_body("schema/xml/nodeType"),
-            )],
-            vec![(
-                with_request_content(MediaType::new(Schema::Object(Box::new(SchemaObject {
-                    discriminator: Some(Discriminator {
-                        default_mapping: Some("#/components/schemas/Fallback".to_owned()),
-                        ..Discriminator::new("kind")
-                    }),
-                    ..SchemaObject::default()
-                })))),
-                in_request_body("schema/discriminator/defaultMapping"),
-            )],
+            vec![
+                (
+                    with_request_content(MediaType::new(Schema::Object(Box::new(SchemaObject {
+                        xml: Some(Xml {
+                            node_type: Some("element".to_owned()),
+                            ..Xml::default()
+                        }),
+                        ..SchemaObject::default()
+                    })))),
+                    in_request_body("schema/xml/nodeType"),
+                ),
+                (
+                    with_request_content(MediaType::new(Schema::Object(Box::new(SchemaObject {
+                        discriminator: Some(Discriminator {
+                            default_mapping: Some("#/components/schemas/Fallback".to_owned()),
+                            ..Discriminator::new("kind")
+                        }),
+                        ..SchemaObject::default()
+                    })))),
+                    in_request_body("schema/discriminator/defaultMapping"),
+                ),
+            ],
         ]
     }
 
