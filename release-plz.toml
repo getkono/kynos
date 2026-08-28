@@ -114,9 +114,9 @@ git_release_enable = false
 # all, because pull requests here are merged rather than squashed. The public
 # record of a release is not a git log.
 #
-# `.versionrc` records the same intent for standard-version, a tool this
-# repository has never run. This is that intent expressed in the file
-# release-plz actually reads, with one deliberate departure: `docs` is shown
+# A `.versionrc` used to record the same intent for standard-version, a tool
+# this repository never ran; it is deleted. This is that intent expressed in the
+# file release-plz actually reads, with one deliberate departure: `docs` is shown
 # rather than hidden. Rustdoc is this framework's contract surface, so a
 # documentation change to it is user-visible in a way a `test` change is not.
 
