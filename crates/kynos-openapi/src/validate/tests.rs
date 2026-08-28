@@ -666,15 +666,10 @@ const RAISED_ELSEWHERE: &[&str] = &[
     "UnknownTagParent",
     #[cfg(not(feature = "openapi32"))]
     "TagParentCycle",
-    // 3.1 permits a document that declares nothing, and a baseline build has no
-    // `SpecVersion::V3_2` to validate against instead.
-    #[cfg(not(feature = "openapi32"))]
-    "EmptyDocument",
 ];
 
 /// One document per variant, each named by the variant it must raise and the
-/// version to validate it at. Only `EmptyDocument` needs a version other than
-/// the baseline: 3.1 permits a document that declares nothing.
+/// version to validate it at.
 ///
 /// Split by the rule module that raises each group, which is also the order
 /// `Validator::validate` runs them in.
@@ -957,14 +952,12 @@ fn ledger_opacity() -> Vec<(&'static str, SpecVersion, Document)> {
         document
     });
 
-    // 3.1 permits a document that declares nothing, so this one case carries a
-    // different version rather than a different document.
-    #[cfg(feature = "openapi32")]
-    cases.push((
+    // Every version Kynos emits requires a document to declare something, so
+    // this case needs no version of its own.
+    push(
         "EmptyDocument",
-        SpecVersion::V3_2,
-        Document::new(SpecVersion::V3_2, Info::new("Test", "1.0.0")),
-    ));
+        Document::new(SpecVersion::V3_1, Info::new("Test", "1.0.0")),
+    );
 
     cases
 }
