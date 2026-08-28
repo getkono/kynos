@@ -22,6 +22,23 @@ use crate::{
 };
 
 impl Validator {
+    /// Whether `name` is a Security Scheme Object's URI rather than a
+    /// component name.
+    ///
+    /// 3.2 admits both (`references/3.2.0.md:4685`); 3.1 admits only a
+    /// component name, so this is always `false` there.
+    ///
+    /// A *bare* single-segment name is not read as a URI even though one would
+    /// be a legal relative reference. 3.2 says a name matching a component
+    /// name is a component name, and that referencing by single-segment
+    /// relative URI is spelled `./foo` — so `Bearer` with nothing declared is
+    /// the misspelling this rule exists to catch, and accepting it would leave
+    /// the rule with nothing to reject.
+    fn names_a_scheme_by_uri(self, name: &str) -> bool {
+        self.version.supports_3_2()
+            && (name.contains('/') || name.contains(':') || name.contains('#'))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(in crate::validate) fn check_operation<'doc>(
         self,
@@ -86,7 +103,9 @@ impl Validator {
 
         for requirement in operation.security.iter().flatten() {
             for name in requirement.0.keys() {
-                if !declared_schemes.contains(name.as_str()) {
+                if !declared_schemes.contains(name.as_str())
+                    && !self.names_a_scheme_by_uri(name.as_str())
+                {
                     violations.push(Violation::error(
                         location,
                         SpecError::UnknownSecurityScheme { name: name.clone() },
