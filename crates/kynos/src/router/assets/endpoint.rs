@@ -8,7 +8,7 @@ use crate::{
     response::range::spec,
     router::{
         assets::{Asset, range},
-        endpoint::Endpoint,
+        endpoint::{Endpoint, operation_id},
         operation::OperationCx,
     },
 };
@@ -270,34 +270,6 @@ impl AssetEndpoint {
             );
         }
     }
-}
-
-/// A stable, readable identifier for one served path.
-///
-/// Derived from the path rather than counted, so two sets mounted in one router
-/// collide only where they genuinely serve the same file — and so the id does
-/// not move when a file is added beside it.
-fn operation_id(prefix: &str, path: &str) -> String {
-    let mut id = String::with_capacity(prefix.len() + path.len() + 1);
-    id.push_str(prefix);
-
-    let trimmed = path.trim_matches('/');
-    if trimmed.is_empty() {
-        id.push_str("_index");
-        return id;
-    }
-
-    id.push('_');
-    for character in trimmed.chars() {
-        // An `operationId` is a token a generator turns into a function name,
-        // so anything that is not one becomes `_`.
-        if character.is_ascii_alphanumeric() {
-            id.push(character);
-        } else {
-            id.push('_');
-        }
-    }
-    id
 }
 
 impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
