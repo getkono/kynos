@@ -6,7 +6,7 @@
 //! that rides that status — `Retry-After` on a 503 — is described by the same
 //! type that sets it, rather than by a separate entry keyed on the status.
 
-use std::{sync::Arc, time::Duration};
+use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 
 use bytes::{Bytes, BytesMut};
 use http_body_util::BodyExt;
@@ -373,7 +373,7 @@ impl Responses for AtCapacity {
 #[derive(Clone, Debug)]
 pub struct Concurrency {
     /// The maximum number of requests in flight at once.
-    pub limit: usize,
+    pub limit: NonZeroUsize,
     slots: Arc<Semaphore>,
     queue_for: Duration,
     retry_after: Option<Duration>,
@@ -382,10 +382,10 @@ pub struct Concurrency {
 impl Concurrency {
     /// Limits in-flight requests to `limit`.
     #[must_use]
-    pub fn new(limit: usize) -> Self {
+    pub fn new(limit: NonZeroUsize) -> Self {
         Self {
             limit,
-            slots: Arc::new(Semaphore::new(limit)),
+            slots: Arc::new(Semaphore::new(limit.get())),
             queue_for: Duration::ZERO,
             retry_after: None,
         }

@@ -30,7 +30,7 @@
     feature = "openapi31"
 ))]
 
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 
 use kynos::{
     Router,
@@ -431,7 +431,9 @@ fn service() -> kynos::Result<kynos::router::service::Service<App>> {
         )
         .group(
             kynos::router::group::Group::<App>::new("/")
-                .intercept(Concurrency::new(1))
+                .intercept(Concurrency::new(
+                    NonZeroUsize::new(1).expect("one is not zero"),
+                ))
                 .mount(kynos::routes![under_capacity]),
         )
         .group(

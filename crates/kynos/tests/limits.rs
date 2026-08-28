@@ -12,7 +12,7 @@
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 
 use kynos::{
     Router,
@@ -25,6 +25,15 @@ use kynos::{
 mod support;
 
 use support::{App, User, get, send};
+
+/// A concurrency limit of one, which most of the cases below want.
+///
+/// `Concurrency::new` takes a `NonZeroUsize` because zero would be a service
+/// that refuses everything; naming the conversion once keeps the cases about
+/// what they are testing.
+fn one() -> NonZeroUsize {
+    NonZeroUsize::new(1).expect("one is not zero")
+}
 
 // --- BodySize: 413 -------------------------------------------------------
 
@@ -149,7 +158,7 @@ async fn a_handler_past_the_limit_is_answered_with_the_status_its_type_declares(
 async fn a_request_past_the_concurrency_limit_is_refused_while_the_first_runs() {
     let service = Router::<()>::new()
         .mount(kynos::routes![slow, prompt])
-        .intercept(Concurrency::new(1))
+        .intercept(Concurrency::new(one()))
         .build(())
         .expect("a describable router");
 
@@ -176,7 +185,7 @@ async fn a_request_past_the_concurrency_limit_is_refused_while_the_first_runs() 
 async fn a_released_slot_is_available_to_the_next_request() {
     let service = Router::<()>::new()
         .mount(kynos::routes![prompt])
-        .intercept(Concurrency::new(1))
+        .intercept(Concurrency::new(one()))
         .build(())
         .expect("a describable router");
 
@@ -312,8 +321,8 @@ async fn a_timeout_over_a_body_limit_declares_both_statuses() {
 async fn one_limit_per_endpoint_caps_each_endpoint_separately() {
     let service = Router::<()>::new()
         .mount((
-            kynos::routes![slow].0.intercept(Concurrency::new(1)),
-            kynos::routes![prompt].0.intercept(Concurrency::new(1)),
+            kynos::routes![slow].0.intercept(Concurrency::new(one())),
+            kynos::routes![prompt].0.intercept(Concurrency::new(one())),
         ))
         .build(())
         .expect("a describable router");
@@ -341,7 +350,7 @@ async fn one_limit_per_endpoint_caps_each_endpoint_separately() {
 async fn a_queued_request_waits_for_a_slot_rather_than_being_shed() {
     let service = Router::<()>::new()
         .mount(kynos::routes![slow, prompt])
-        .intercept(Concurrency::new(1).queue_for(Duration::from_secs(2)))
+        .intercept(Concurrency::new(one()).queue_for(Duration::from_secs(2)))
         .build(())
         .expect("a describable router");
 
@@ -363,7 +372,7 @@ async fn a_queued_request_waits_for_a_slot_rather_than_being_shed() {
 async fn a_queue_that_expires_sheds_the_same_status() {
     let service = Router::<()>::new()
         .mount(kynos::routes![slow, prompt])
-        .intercept(Concurrency::new(1).queue_for(Duration::from_millis(20)))
+        .intercept(Concurrency::new(one()).queue_for(Duration::from_millis(20)))
         .build(())
         .expect("a describable router");
 
@@ -383,7 +392,7 @@ async fn a_queue_that_expires_sheds_the_same_status() {
 async fn a_configured_retry_after_reaches_a_shed_response() {
     let service = Router::<()>::new()
         .mount(kynos::routes![slow, prompt])
-        .intercept(Concurrency::new(1).retry_after(Duration::from_secs(5)))
+        .intercept(Concurrency::new(one()).retry_after(Duration::from_secs(5)))
         .build(())
         .expect("a describable router");
 
@@ -409,7 +418,7 @@ async fn a_configured_retry_after_reaches_a_shed_response() {
 async fn a_slot_is_released_when_a_request_is_abandoned() {
     let service = Router::<()>::new()
         .mount(kynos::routes![slow, prompt])
-        .intercept(Concurrency::new(1))
+        .intercept(Concurrency::new(one()))
         .build(())
         .expect("a describable router");
 

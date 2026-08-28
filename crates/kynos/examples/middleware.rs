@@ -35,7 +35,7 @@
 //!   a group covers that group. There is no way to apply one and not document
 //!   it, and no way to document it at a different scope than it runs at.
 
-use std::{convert::Infallible, net::Ipv4Addr, time::Duration};
+use std::{convert::Infallible, net::Ipv4Addr, num::NonZeroUsize, time::Duration};
 
 use kynos::{
     http,
@@ -353,7 +353,9 @@ async fn main() -> kynos::Result<()> {
         // not enforce the order; `docs/middleware.md` is where it is stated.
         .intercept(Timeout::new(Duration::from_secs(30)))
         .intercept(BodySize::new(1_048_576))
-        .intercept(Concurrency::new(256))
+        .intercept(Concurrency::new(
+            NonZeroUsize::new(256).expect("a nonzero concurrency limit"),
+        ))
         // Rate limiting. Every number a response prints comes from the policy,
         // because every one is a property of the counters the policy keeps:
         // there is no ceiling argument here to drift from the one it enforces.
