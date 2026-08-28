@@ -123,6 +123,12 @@ required-features = [
 ]
 
 [[example]]
+name = "docs_ui"
+# All defaults, so this one runs bare. `json` is here for `media::Json` on the
+# description route, not for the reference UI, which is a string.
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
+[[example]]
 name = "security_schemes"
 required-features = ["openapi31", "macros", "server", "http1"]
 

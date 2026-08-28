@@ -75,6 +75,7 @@ needs more than the defaults. Each file's own header explains why it needs them.
 | --- | --- | --- |
 | [`graceful_shutdown.rs`](graceful_shutdown.rs) | Every shutdown trigger, the drain deadline, and reading the bound addresses | — |
 | [`auto_reload.rs`](auto_reload.rs) | Inheriting a listening socket so a rebuild does not drop it | — |
+| [`docs_ui.rs`](docs_ui.rs) | A Scalar or Redoc reference switched on from the environment, and what mounting it costs the document | — |
 
 ## Testing and escape hatches
 
