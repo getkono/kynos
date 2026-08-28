@@ -162,8 +162,17 @@ pub mod prelude {
     pub use crate::{
         di::inject::Inject,
         error::{Error, Result, problem::Problem},
-        extract::params::{path::Path, query::Query},
-        response::status::{Created, NoContent},
+        // `Headers` beside `HeaderParams`, and the rest of the pairs. The
+        // derives were all exported here and half the types they are used with
+        // were not, so `Path`/`PathParams` and `Query`/`QueryParams` arrived
+        // together while `Auth`, `Headers` and `Cookies` had to be reached by
+        // their canonical paths. `Auth` was the sharpest: `docs/security.md`
+        // calls it the only door.
+        extract::params::{header::Headers, path::Path, query::Query},
+        response::{
+            headers::WithHeaders,
+            status::{Accepted, Created, NoContent, Redirect},
+        },
         router::{Router, group::Group},
         // Not `as SchemaTrait`. rustc renders a trait by its shortest *visible*
         // path, so an alias here became the name in every user's compiler
@@ -173,6 +182,7 @@ pub mod prelude {
         // in the type namespace, which is how `serde` exports both as
         // `Serialize`, so the two can share this name too.
         schema::Schema,
+        security::auth::Auth,
     };
 
     #[cfg(feature = "json")]
@@ -183,6 +193,9 @@ pub mod prelude {
         ApiError, HeaderParams, PathParams, Provider, QueryParams, Reply, Schema, SecurityScheme,
         Tag, delete, get, head, operation, options, patch, path, post, put, routes, trace,
     };
+
+    #[cfg(feature = "cookie")]
+    pub use crate::extract::params::cookie::Cookies;
 
     #[cfg(all(feature = "macros", feature = "cookie"))]
     pub use crate::CookieParams;

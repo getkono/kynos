@@ -246,3 +246,30 @@ async fn either_docs_route_answers_only_get() {
         assert_eq!(reply.field("allow").as_deref(), Some("GET"), "{path}");
     }
 }
+
+/// A malformed docs path is reported, not thrown.
+///
+/// `Docs::at` used to panic on a literal `PathTemplate` could not parse, which
+/// made a path written at a mount site the one malformed path in a description
+/// that stopped the program rather than being collected with the rest.
+/// `Group::new` already recorded a `Violation` for the same situation, and this
+/// is the case that pins the two to one answer.
+#[test]
+fn a_docs_path_that_is_not_a_template_is_reported_rather_than_panicking() {
+    // No leading slash, which is `MissingLeadingSlash` and the simplest thing
+    // a Paths key can be wrong about.
+    let router = support::router().docs(Docs::scalar().at("docs"));
+
+    let violations = router.validate().expect("validation itself succeeds");
+    assert!(
+        violations.iter().any(|violation| matches!(
+            &violation.error,
+            kynos::openapi::SpecError::InvalidPathTemplate { template, .. } if template == "docs"
+        )),
+        "expected the bad path among the violations, got {violations:?}"
+    );
+
+    // And the router refuses to build, rather than serving a reference at a
+    // path it could not describe.
+    assert!(router.build(App::new()).is_err());
+}

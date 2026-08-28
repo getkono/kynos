@@ -321,17 +321,25 @@ impl<C: Send + Sync + 'static, P: PanicPolicy, I> Router<C, P, I> {
     /// # let _ = router;
     /// ```
     ///
-    /// # Panics
-    ///
-    /// If `prefix` is not a literal path segment sequence — it is the mount
-    /// point rather than a template, so it carries no variables of its own.
+    /// A `prefix` carrying a variable is recorded as a violation and surfaces
+    /// from [`Router::validate`](crate::router::Router::validate): it is the
+    /// mount point rather than a template, so it has no variables of its own.
+    /// This used to `assert!`, which made a path literal at a mount site the
+    /// one kind of malformed path that stopped the program instead of being
+    /// reported with the rest.
     #[must_use]
-    pub fn assets_directory(self, prefix: &str, directory: Directory) -> Self {
+    pub fn assets_directory(mut self, prefix: &str, directory: Directory) -> Self {
         let prefix = prefix.trim_end_matches('/');
-        assert!(
-            !prefix.contains('{'),
-            "`{prefix}` is a mount point rather than a template, so it carries no variables"
-        );
+        if prefix.contains('{') {
+            self.violations.push(kynos_openapi::Violation {
+                location: "#/paths".to_owned(),
+                severity: kynos_openapi::Severity::Error,
+                error: kynos_openapi::SpecError::OpaqueRoute {
+                    pattern: format!("{prefix}/{{*path}}"),
+                },
+            });
+            return self;
+        }
 
         let pattern = format!("{prefix}/{{*path}}");
         let record = OpaqueRoute::new(pattern.clone(), OpaqueReason::StaticAssets)

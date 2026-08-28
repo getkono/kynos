@@ -400,10 +400,15 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     /// ```
     #[cfg(feature = "docs")]
     #[must_use]
-    pub fn docs(mut self, docs: docs::Docs) -> Self
+    pub fn docs(mut self, mut docs: docs::Docs) -> Self
     where
         C: Send + Sync + 'static,
     {
+        // A path literal `Docs` could not parse is recorded there and drained
+        // here, so it reaches `validate` alongside every other malformed path
+        // rather than panicking at the mount site.
+        self.violations.extend(docs.take_violations());
+
         // Through `absorb` one half at a time, so a docs path meets the same two
         // rules every other path does and the role stays unambiguous when a
         // violation drops the entry.
@@ -455,11 +460,7 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
 
     /// Mounts another router beneath a path prefix.
     #[must_use]
-    pub fn nest<NP: PanicPolicy, NI>(
-        mut self,
-        prefix: &'static str,
-        router: Router<C, NP, NI>,
-    ) -> Self
+    pub fn nest<NP: PanicPolicy, NI>(mut self, prefix: &str, router: Router<C, NP, NI>) -> Self
     where
         C: 'static,
         NI: CompatibleStack<I, C>,

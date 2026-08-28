@@ -592,6 +592,24 @@ mod directory {
         Router::<()>::new().assets_directory("/files", Directory::new("tests/assets"))
     }
 
+    /// A mount prefix carrying a variable is reported, not asserted.
+    ///
+    /// It used to `assert!`, which made this the one malformed path in a
+    /// description that stopped the program rather than joining the others.
+    /// `Group::new` and `Docs::at` both record a `Violation`; so does this.
+    #[test]
+    fn a_prefix_carrying_a_variable_is_reported_rather_than_asserted() {
+        let router =
+            Router::<()>::new().assets_directory("/files/{tenant}", Directory::new("tests/assets"));
+
+        let violations = router.validate().expect("validation itself succeeds");
+        assert!(
+            !violations.is_empty(),
+            "a prefix with a variable must be reported"
+        );
+        assert!(router.build(()).is_err());
+    }
+
     #[tokio::test]
     async fn a_file_is_served_from_disk() {
         let service = served().build(()).expect("a buildable router");
