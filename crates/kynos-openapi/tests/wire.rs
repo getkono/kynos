@@ -395,7 +395,12 @@ fn document_cases() -> Vec<Case> {
             &Document::new(SpecVersion::V3_1, Info::new("Orders", "1.0.0")),
             json!({
                 "openapi": "3.1.2",
-                "info": { "title": "Orders", "version": "1.0.0" }
+                "info": { "title": "Orders", "version": "1.0.0" },
+                // Always present, even empty: a document carrying none of
+                // `paths`, `components` or `webhooks` violates a MUST in every
+                // version, and this is the one of the three that is always
+                // true of an API.
+                "paths": {}
             }),
         ),
     ]

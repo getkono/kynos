@@ -46,6 +46,31 @@ Do not use `3.0.0.md`, `3.0.1.md`, `3.0.2.md`, `3.0.3.md`, `3.1.0.md`, or
 `3.1.1.md` for implementation decisions unless the task is explicitly auditing
 historical wording between patch releases.
 
+### Machine-readable meta-schemas
+
+The two files below are not specification *text*. They are the OAI's own JSON
+Schema descriptions of an OpenAPI Document, vendored so that CI can check an
+emitted document against the specification mechanically rather than by reading.
+Both are Apache-2.0, from the same repository as the prose above.
+
+| File | Document | Retrieved | SHA-256 |
+| --- | --- | --- | --- |
+| [`oas-3.1-schema-2022-10-07.json`](oas-3.1-schema-2022-10-07.json) | [OAS 3.1 schema, 2022-10-07](https://spec.openapis.org/oas/3.1/schema/2022-10-07) | 2026-08-28 | `da01ba28852cac0de53893797cb8d1942bc3b05084f526dcc216717dec314ed0` |
+| [`oas-3.2-schema-2025-09-17.json`](oas-3.2-schema-2025-09-17.json) | [OAS 3.2 schema, 2025-09-17](https://spec.openapis.org/oas/3.2/schema/2025-09-17) | 2026-08-28 | `0c9d74bf25f9b9388b2d81e421ef60fdefa9feffa94898dadfc501b342b3bfcc` |
+
+Each declares JSON Schema draft 2020-12 and references nothing outside itself,
+so validating against one needs no network and stays hermetic — which is the
+same reason `jsonschema` is configured with its resolvers off in the root
+manifest.
+
+**Read them as necessary rather than sufficient.** Both are the *base* schemas,
+which describe the OpenAPI structure and deliberately leave the Schema Object
+open: 3.1 permits arbitrary keywords there, so a 3.2-only keyword nested inside
+a schema — `xml.nodeType`, `discriminator.defaultMapping` — is not something the
+3.1 file can object to. Those are caught by
+[`emit::downgrade`](../crates/kynos-openapi/src/emit/downgrade.rs) instead, and
+the two checks are kept because neither subsumes the other.
+
 ## HTTP Semantics
 
 [`rfc9110.txt`](rfc9110.txt) is an unmodified, byte-for-byte copy of the RFC

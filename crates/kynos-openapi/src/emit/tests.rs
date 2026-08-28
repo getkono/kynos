@@ -10,12 +10,19 @@ fn document() -> Document {
     Document::new(SpecVersion::V3_1, Info::new("Orders", "1.0.0"))
 }
 
+/// A document with nothing in it still declares `paths`.
+///
+/// Not a stylistic choice: every version requires at least one of `paths`,
+/// `components` or `webhooks`, so a document that skipped all three violated a
+/// MUST. An empty Paths Object is the honest one of the three to write -- the
+/// specification's "Security Filtering" section gives it the meaning "you are
+/// in the right place and there is nothing here to show you".
 #[test]
-fn a_bare_document_emits_only_the_required_fields() {
+fn a_bare_document_declares_paths_and_nothing_else() {
     let json = document().to_json().expect("serializable");
     assert!(json.contains(r#""openapi": "3.1.2""#));
     assert!(json.contains(r#""title": "Orders""#));
-    assert!(!json.contains("paths"));
+    assert!(json.contains(r#""paths": {}"#));
     assert!(!json.contains("components"));
 }
 
@@ -47,6 +54,8 @@ fn a_document_using_no_three_two_construct_has_no_blockers() {
 /// caller is shown.
 #[cfg(feature = "openapi32")]
 mod blockers {
+    use std::{collections::BTreeSet, fs, path::Path};
+
     use super::document;
     use crate::{
         emit::downgrade::three_two_only_constructs,
@@ -54,11 +63,12 @@ mod blockers {
             body::{encoding::Encoding, media_type::MediaType},
             components::ComponentName,
             document::{Document, SpecVersion},
+            example::Example,
             parameter::{Parameter, ParameterIn, style::Style},
             paths::{item::PathItem, method::Method, operation::Operation, template::PathTemplate},
             reference::RefOr,
             response::{Response, Responses},
-            schema::Schema,
+            schema::{Schema, discriminator::Discriminator, object::SchemaObject, xml::Xml},
             security::{
                 SecurityScheme,
                 oauth::{OAuthFlow, OAuthFlows},
@@ -359,6 +369,102 @@ mod blockers {
                 })),
                 in_security_scheme("flows/authorizationCode/deviceAuthorizationUrl"),
             )],
+            // The Encoding Object's own three fields, which share their names
+            // with the three the Media Type Object carries. A walk that stops
+            // at the media type sees neither the nested `encoding` map nor the
+            // two positional fields beneath it.
+            vec![
+                (
+                    with_request_content(
+                        MediaType::new(Schema::any()).with_encoding(
+                            "part",
+                            Encoding {
+                                encoding: [("inner".to_owned(), Encoding::new("text/plain"))]
+                                    .into_iter()
+                                    .collect(),
+                                ..Encoding::new("multipart/mixed")
+                            },
+                        ),
+                    ),
+                    in_request_body("encoding/part/encoding"),
+                ),
+                (
+                    with_request_content(MediaType::new(Schema::any()).with_encoding(
+                        "part",
+                        Encoding {
+                            prefix_encoding: Some(vec![Encoding::new("text/plain")]),
+                            ..Encoding::new("multipart/mixed")
+                        },
+                    )),
+                    in_request_body("encoding/part/prefixEncoding"),
+                ),
+                (
+                    with_request_content(MediaType::new(Schema::any()).with_encoding(
+                        "part",
+                        Encoding {
+                            item_encoding: Some(Box::new(Encoding::new("text/plain"))),
+                            ..Encoding::new("multipart/mixed")
+                        },
+                    )),
+                    in_request_body("encoding/part/itemEncoding"),
+                ),
+            ],
+            // The two example fields 3.2 added beside `value`. `data_external`
+            // is its own row because `externalValue` is a field 3.1 *can*
+            // express, so the value is not the blocker and `dataValue` riding
+            // on it is.
+            vec![
+                (
+                    with_request_content(
+                        MediaType::new(Schema::any())
+                            .with_named_example("e", Example::data(serde_json::json!({"id": 1}))),
+                    ),
+                    in_request_body("examples/e/dataValue"),
+                ),
+                (
+                    with_request_content(
+                        MediaType::new(Schema::any())
+                            .with_named_example("e", Example::serialized("id=1")),
+                    ),
+                    in_request_body("examples/e/serializedValue"),
+                ),
+                (
+                    with_request_content(MediaType::new(Schema::any()).with_named_example(
+                        "e",
+                        Example::data_external(
+                            serde_json::json!({"id": 1}),
+                            "https://example.com/e.json",
+                        ),
+                    )),
+                    in_request_body("examples/e/dataValue"),
+                ),
+            ],
+            // Inside a Schema Object, which the walk did not enter at all.
+            // Neither name is an `x-` extension, so 3.1 has no way to read
+            // either -- even though 3.1 leaves the schema subtree open enough
+            // that its own meta-schema does not object.
+            vec![
+                (
+                    with_request_content(MediaType::new(Schema::Object(Box::new(SchemaObject {
+                        xml: Some(Xml {
+                            node_type: Some("element".to_owned()),
+                            ..Xml::default()
+                        }),
+                        ..SchemaObject::default()
+                    })))),
+                    in_request_body("schema/xml/nodeType"),
+                ),
+                (
+                    with_request_content(MediaType::new(Schema::Object(Box::new(SchemaObject {
+                        discriminator: Some(Discriminator {
+                            default_mapping: Some("#/components/schemas/Fallback".to_owned()),
+                            ..Discriminator::new("kind")
+                        }),
+                        ..SchemaObject::default()
+                    })))),
+                    in_request_body("schema/discriminator/defaultMapping"),
+                ),
+            ],
         ]
     }
 
@@ -390,6 +496,171 @@ mod blockers {
         }
     }
 
+    /// Every wire name the model gates behind `openapi32`, read from `model/`.
+    ///
+    /// A field is a gate followed, past any attributes and documentation, by a
+    /// field declaration; its wire name is its `rename` where it has one and
+    /// its identifier otherwise. Gates introducing an enum variant, a match
+    /// arm, an `impl` or a function are skipped -- they are not wire names.
+    fn gated_wire_names() -> BTreeSet<String> {
+        const GATE: &str = "#[cfg(feature = \"openapi32\")]";
+
+        fn walk(directory: &Path, names: &mut BTreeSet<String>) {
+            let entries = fs::read_dir(directory).expect("the model sources are beside this test");
+            for entry in entries.map(|entry| entry.expect("a readable directory entry")) {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, names);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    collect(
+                        &fs::read_to_string(&path).expect("a readable source file"),
+                        names,
+                    );
+                }
+            }
+        }
+
+        fn collect(source: &str, names: &mut BTreeSet<String>) {
+            let lines: Vec<&str> = source.lines().map(str::trim).collect();
+            for (index, line) in lines.iter().enumerate() {
+                if *line != GATE {
+                    continue;
+                }
+
+                // Step past the attributes and documentation between the gate
+                // and whatever it gates, tracking brackets so a `#[serde(..)]`
+                // written over several lines is one step rather than several.
+                let mut cursor = index + 1;
+                let mut depth = 0i32;
+                while let Some(current) = lines.get(cursor) {
+                    let open = current.matches('[').count() + current.matches('(').count();
+                    let close = current.matches(']').count() + current.matches(')').count();
+                    let attribute = depth > 0 || current.starts_with("#[");
+                    if !attribute && !current.starts_with("//") && !current.is_empty() {
+                        break;
+                    }
+                    depth += i32::try_from(open).expect("a short line")
+                        - i32::try_from(close).expect("a short line");
+                    cursor += 1;
+                }
+
+                let Some(declaration) = lines.get(cursor) else {
+                    continue;
+                };
+                let Some(identifier) = field_identifier(declaration) else {
+                    continue;
+                };
+
+                let attributes = lines[index + 1..cursor].join(" ");
+                names.insert(rename_in(&attributes).unwrap_or_else(|| camel_case(&identifier)));
+            }
+        }
+
+        /// The identifier of `line` when it *declares* a field.
+        ///
+        /// Nothing for a variant, an arm, or any other item a gate may sit
+        /// above -- and nothing for a field *initializer*, which shares the
+        /// `name: rest` shape. The two are told apart by what follows the
+        /// colon: a declaration names a type, an initializer gives a value.
+        fn field_identifier(line: &str) -> Option<String> {
+            let declaration = line.strip_prefix("pub ").unwrap_or(line);
+            let (identifier, rest) = declaration.split_once(": ")?;
+            let identifier = identifier.trim();
+
+            let names_a_type = rest.starts_with(|c: char| c.is_ascii_uppercase())
+                || ["bool", "u16", "u32", "u64", "f64", "usize", "String"]
+                    .iter()
+                    .any(|primitive| rest.starts_with(primitive));
+            let names_a_field = !identifier.is_empty()
+                && identifier.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
+                && identifier
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_');
+
+            (names_a_type && names_a_field && line.ends_with(',')).then(|| identifier.to_owned())
+        }
+
+        /// A field identifier as the wire spells it when no `rename` says
+        /// otherwise. Every renamed field in this model is renamed to the
+        /// camelCase of its identifier, and a single-word identifier is its own
+        /// camelCase -- so this is the same rule read from the other side, and
+        /// it is what lets the domain struct and the wire struct that carries
+        /// the `rename` agree on one name.
+        fn camel_case(identifier: &str) -> String {
+            let mut camel = String::with_capacity(identifier.len());
+            let mut capitalize = false;
+            for character in identifier.chars() {
+                if character == '_' {
+                    capitalize = true;
+                } else if capitalize {
+                    camel.extend(character.to_uppercase());
+                    capitalize = false;
+                } else {
+                    camel.push(character);
+                }
+            }
+            camel
+        }
+
+        /// The `rename = "..."` value within a run of attributes.
+        fn rename_in(attributes: &str) -> Option<String> {
+            let (_, rest) = attributes.split_once("rename = \"")?;
+            let (value, _) = rest.split_once('"')?;
+            Some(value.to_owned())
+        }
+
+        let mut names = BTreeSet::new();
+        walk(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("src/model"),
+            &mut names,
+        );
+        assert!(
+            !names.is_empty(),
+            "the scan found no gated field, so it is measuring nothing"
+        );
+        names
+    }
+
+    /// Every 3.2 field the model can hold is one the downgrade reports.
+    ///
+    /// The anchor here is the *model*, and that is the whole point. This test
+    /// counted `blockers.push` sites in `downgrade.rs` against the ledger,
+    /// which proves every blocker has a case -- the converse of what has to
+    /// hold. A field added with no blocker is exactly the document that emits
+    /// as 3.1 while carrying a keyword 3.1 cannot read, and a reporter counted
+    /// against itself can never see one. Five fields had slipped through when
+    /// this was written.
+    ///
+    /// Names are matched against the string literals `downgrade.rs` builds its
+    /// locations from, rather than against its source text, so an identifier
+    /// that merely happens to share a field's spelling does not satisfy it.
+    #[test]
+    fn every_three_two_field_is_reported() {
+        const REPORTER: &str = include_str!("downgrade.rs");
+
+        let literals: String = REPORTER
+            .split('"')
+            .skip(1)
+            .step_by(2)
+            .collect::<Vec<_>>()
+            .join("\u{1f}");
+
+        let unreported: Vec<String> = gated_wire_names()
+            .into_iter()
+            .filter(|name| !literals.contains(name.as_str()))
+            .collect();
+
+        assert!(
+            unreported.is_empty(),
+            "the model gates {unreported:?} behind `openapi32` and the downgrade names \
+             none of them, so a document carrying one emits as 3.1 with no complaint"
+        );
+    }
+
+    /// Every construct the downgrade reports is exercised by a ledger row.
+    ///
+    /// The counterpart to the test above, and the weaker direction: it keeps a
+    /// reporting site from losing the case that proves what it says.
     #[test]
     fn every_construct_has_a_case() {
         const SOURCE: &str = include_str!("downgrade.rs");
@@ -403,5 +674,266 @@ mod blockers {
              as 3.1 with no complaint",
             ledger().len()
         );
+    }
+}
+
+/// Every container a 3.2 construct can sit in is one the downgrade walks.
+///
+/// The ledger beside this proves each construct is *recognised*; this proves
+/// each is *reached*. They are different failures with the same consequence,
+/// and the second is invisible to the first: a construct with a perfectly good
+/// blocker still emits as 3.1 if the walk never arrives at the object holding
+/// it. The walk reached `paths` and `components.securitySchemes` and nothing
+/// else, so a webhook, a reusable component, a hoisted path-item parameter, a
+/// callback and a `default` response were all exempt.
+///
+/// One planted construct per container, chosen for being unambiguous rather
+/// than for being interesting -- what is under test is the route to it.
+#[cfg(feature = "openapi32")]
+mod reach {
+    use super::document;
+    use crate::model::{
+        body::{RequestBody, media_type::MediaType},
+        callback::Callback,
+        components::ComponentName,
+        document::{Document, SpecVersion},
+        example::Example,
+        parameter::{Parameter, ParameterIn, header::Header},
+        paths::{item::PathItem, method::Method, operation::Operation, template::PathTemplate},
+        reference::RefOr,
+        response::{Response, Responses},
+        schema::Schema,
+    };
+
+    /// A component key, which every case below needs and none varies.
+    fn key() -> ComponentName {
+        ComponentName::new("Reused").expect("a legal component key")
+    }
+
+    /// A response carrying the 3.2 `summary` field.
+    fn summarised() -> Response {
+        Response {
+            summary: Some("The order".to_owned()),
+            ..Response::new("ok")
+        }
+    }
+
+    /// A path item whose one operation answers with [`summarised`].
+    fn item_with_summarised_response() -> PathItem {
+        PathItem::new().with_operation(
+            Method::Get,
+            Operation {
+                responses: Responses::new().with(200, summarised()),
+                ..Operation::default()
+            },
+        )
+    }
+
+    /// A media type describing a sequential body, which is 3.2-only.
+    fn sequential() -> MediaType {
+        MediaType::sequential(Schema::any())
+    }
+
+    // Long for the reason `ledger` above is: one row per container, written
+    // out rather than generated, because the count of them is the coverage.
+    #[expect(clippy::too_many_lines)]
+    fn cases() -> Vec<(&'static str, Document, String)> {
+        let mut cases = Vec::new();
+        let orders = PathTemplate::parse("/orders").expect("a valid template");
+
+        cases.push((
+            "webhooks",
+            {
+                let mut document = document();
+                document
+                    .webhooks
+                    .insert("orderPlaced".to_owned(), item_with_summarised_response());
+                document
+            },
+            "#/webhooks/orderPlaced/get/responses/200/summary".to_owned(),
+        ));
+
+        cases.push((
+            "components.pathItems",
+            {
+                let mut document = document();
+                document
+                    .components
+                    .path_items
+                    .insert("Shared".to_owned(), item_with_summarised_response());
+                document
+            },
+            "#/components/pathItems/Shared/get/responses/200/summary".to_owned(),
+        ));
+
+        cases.push((
+            "components.responses",
+            {
+                let mut document = document();
+                document
+                    .components
+                    .responses
+                    .insert(key().to_string(), RefOr::Item(summarised()));
+                document
+            },
+            "#/components/responses/Reused/summary".to_owned(),
+        ));
+
+        cases.push((
+            "components.parameters",
+            {
+                let mut document = document();
+                document.components.parameters.insert(
+                    key().to_string(),
+                    RefOr::Item(Parameter::new("q", ParameterIn::Querystring, Schema::any())),
+                );
+                document
+            },
+            "#/components/parameters/Reused".to_owned(),
+        ));
+
+        cases.push((
+            "components.requestBodies",
+            {
+                let mut document = document();
+                document.components.request_bodies.insert(
+                    key().to_string(),
+                    RefOr::Item(RequestBody::new("application/json", sequential())),
+                );
+                document
+            },
+            "#/components/requestBodies/Reused/content/application~1json/itemSchema".to_owned(),
+        ));
+
+        cases.push((
+            "components.headers",
+            {
+                let mut document = document();
+                document.components.headers.insert(
+                    key().to_string(),
+                    RefOr::Item(Header::with_content("application/json", sequential())),
+                );
+                document
+            },
+            "#/components/headers/Reused/content/application~1json/itemSchema".to_owned(),
+        ));
+
+        cases.push((
+            "components.examples",
+            {
+                let mut document = document();
+                document
+                    .components
+                    .examples
+                    .insert(key().to_string(), RefOr::Item(Example::serialized("id=1")));
+                document
+            },
+            "#/components/examples/Reused/serializedValue".to_owned(),
+        ));
+
+        cases.push((
+            "components.callbacks",
+            {
+                let mut document = document();
+                let mut callback = Callback::new();
+                callback.0.insert(
+                    "{$request.body#/url}".to_owned(),
+                    RefOr::Item(item_with_summarised_response()),
+                );
+                document
+                    .components
+                    .callbacks
+                    .insert(key().to_string(), RefOr::Item(callback));
+                document
+            },
+            "#/components/callbacks/Reused/{$request.body#~1url}/get/responses/200/summary"
+                .to_owned(),
+        ));
+
+        cases.push((
+            "pathItem.parameters",
+            {
+                let mut document = document();
+                document.paths.insert(
+                    &orders,
+                    PathItem {
+                        parameters: vec![RefOr::Item(Parameter::new(
+                            "q",
+                            ParameterIn::Querystring,
+                            Schema::any(),
+                        ))],
+                        ..PathItem::new()
+                    },
+                );
+                document
+            },
+            "#/paths/~1orders/parameters/q".to_owned(),
+        ));
+
+        cases.push((
+            "operation.callbacks",
+            {
+                let mut document = document();
+                let mut callback = Callback::new();
+                callback.0.insert(
+                    "{$request.body#/url}".to_owned(),
+                    RefOr::Item(item_with_summarised_response()),
+                );
+                document.paths.insert(
+                    &orders,
+                    PathItem::new().with_operation(
+                        Method::Get,
+                        Operation {
+                            callbacks: [("onData".to_owned(), RefOr::Item(callback))]
+                                .into_iter()
+                                .collect(),
+                            ..Operation::default()
+                        },
+                    ),
+                );
+                document
+            },
+            "#/paths/~1orders/get/callbacks/onData/{$request.body#~1url}/get/responses/200/summary"
+                .to_owned(),
+        ));
+
+        cases.push((
+            "responses.default",
+            {
+                let mut document = document();
+                document.paths.insert(
+                    &orders,
+                    PathItem::new().with_operation(
+                        Method::Get,
+                        Operation {
+                            responses: Responses::new().with_default(summarised()),
+                            ..Operation::default()
+                        },
+                    ),
+                );
+                document
+            },
+            "#/paths/~1orders/get/responses/default/summary".to_owned(),
+        ));
+
+        cases
+    }
+
+    #[test]
+    fn every_container_is_walked() {
+        for (container, document, expected) in cases() {
+            assert_eq!(
+                crate::emit::downgrade::three_two_only_constructs(&document),
+                vec![expected],
+                "a 3.2 construct in `{container}` must be found and reported there"
+            );
+        }
+    }
+
+    #[test]
+    fn a_construct_in_any_container_refuses_to_emit_as_three_one() {
+        for (container, document, _) in cases() {
+            document.emit(SpecVersion::V3_1).expect_err(container);
+        }
     }
 }

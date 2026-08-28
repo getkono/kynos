@@ -19,6 +19,13 @@ name = "assets"
 path = "tests/assets.rs"
 required-features = ["openapi31", "macros", "assets"]
 
+# Reads the vendored meta-schemas, so it needs the JSON Schema validator that
+# `test-util` carries and the 3.2 constructs the corpus pins.
+[[test]]
+name = "metaschema"
+path = "tests/metaschema.rs"
+required-features = ["openapi32", "macros", "json", "test-util"]
+
 [[test]]
 name = "panic-recovery-check"
 path = "tests/compile/panic_recovery.rs"
@@ -236,7 +243,11 @@ default = [
 
 # --- Specification version -------------------------------------------------
 # `openapi31` is the baseline. `openapi32` is a strict superset: enabling it is
-# purely additive for programs that use no 3.2-only construct.
+# additive for programs that use no 3.2-only construct. Cargo unifies features
+# across a dependency graph, so anything in the build can turn this on for
+# everything in it -- which is why every model type it extends with a variant is
+# `#[non_exhaustive]`. A struct literal naming every field of a model type is
+# the one construct that does not survive it.
 openapi31 = ["kynos-openapi/openapi31"]
 openapi32 = [
   "openapi31",
@@ -423,6 +434,15 @@ tracing = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
+# `multer`'s reader takes a `Stream`, so the test that reparses a rendered
+# multipart body with an independent reader has to name one. It is a
+# dev-dependency rather than an edge on the `multipart` feature because only
+# the test wants it: `futures-core` reaches the library through `openapi32`
+# alone, and widening that to `multipart` would put a dependency in a 3.1 build
+# for a type no shipped code names. It adds nothing to the graph either --
+# `multer` already pulls it in through `futures-util` -- so, like `bytes` and
+# `http-body-util` below, it cannot perturb the `.stderr` snapshots.
+futures-core = { workspace = true }
 jsonwebtoken = { workspace = true }
 moka = { workspace = true }
 # An integration target drives `Service::call` and then has to read the

@@ -9,6 +9,12 @@ use crate::model::parameter::ParameterIn;
 /// Not every combination of style and location is legal; OpenAPI 3.2 states
 /// that the table of valid combinations is closed. [`crate::validate`] checks
 /// the pairing.
+/// `#[non_exhaustive]` because OpenAPI 3.2 adds to this and the addition is
+/// `#[cfg]`-gated. Cargo unifies features across a dependency graph, so any
+/// crate enabling `openapi32` enables it for every crate in the build -- and
+/// without this attribute that would turn a downstream exhaustive `match` into
+/// a compile error, which is not what "purely additive" is supposed to mean.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Style {

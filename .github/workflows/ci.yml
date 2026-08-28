@@ -117,6 +117,11 @@ jobs:
         run: mise run test:baseline
       - name: Check every feature combination
         run: mise run features:check
+      # After `features:check`, which strips dev-dependencies while it walks:
+      # this one needs them, so it must not run against a manifest that job
+      # left rewritten.
+      - name: Check every target at each feature
+        run: mise run features:targets
       # Also a check that a build configuration is rejected, so it belongs
       # here rather than on the critical path in `test`.
       - name: Check panic recovery gating

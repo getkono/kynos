@@ -145,6 +145,36 @@ grep -F 'the `decimal` feature carries no types of its own' \
   "$invalid_decimal_output"
 '''
 
+[tasks."features:targets"]
+description = "Compile every target, not only the library, at each feature"
+# `features:check` passes `--no-dev-deps`, so it never builds a test or an
+# example -- which means no `#[cfg(test)]` block is ever compiled at a partial
+# feature set, and neither is any `required-features` example. The only feature
+# sets test code is otherwise built at are *default* (`test:baseline`) and *all*
+# (`test`), so a unit test naming a crate that only some other feature pulls in
+# compiles in both and in nothing else. That is exactly how a `futures_core` use
+# under the `multipart` gate survived: `futures-core` reaches the tree only
+# through `openapi32`.
+#
+# One feature at a time against the 3.1 baseline, rather than
+# `features:check`'s powerset. Each run here builds every target rather than
+# only the library, so a second dimension would cost a great deal; and the gap
+# being closed is a single feature's own test code, which is what
+# `openapi31 + F` exercises. The 3.2 side of each gate is already built by
+# `test` and `lint`, both of which pass `--all-features`.
+#
+# `openapi31` is pinned with `--features` rather than requested with
+# `--at-least-one-of`, which cargo-hack accepts only alongside a powerset.
+#
+# The exclusions are `features:check`'s, for its reasons: `server` and `tls`
+# need an HTTP protocol, `time` and `decimal` are umbrellas that do not compile
+# alone, and `full` would pull in everything and check nothing partial.
+run = '''
+cargo hack check --workspace --each-feature --all-targets \
+  --features openapi31 \
+  --exclude-features default,server,tls,time,decimal,full
+'''
+
 [tasks."fixtures:generate"]
 description = "Regenerate the conformance-fixture corpus"
 # The `trybuild` idiom: the test writes when told to and compares otherwise, so

@@ -62,7 +62,7 @@ disabled, or passes trivially and hides the regression it was meant to catch.
 | correctness | The IR round-trips through serialization losslessly | `proptest` over generated IR values | `enforced`, with two exclusions below, each characterized |
 | correctness | Every model type emits the field names and nesting the specification gives it | One exact-JSON case per type in `tests/wire.rs`, counted against the type list | `enforced` |
 | correctness | The corpus a downstream generator is built against is the one this build emits | [`tests/conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs), comparing every committed document against a freshly emitted one | `enforced` |
-| correctness | Emitted documents validate against both 3.1 and 3.2 validators | CI step over a fixture app covering the full type matrix | `planned` |
+| correctness | Emitted documents validate against both 3.1 and 3.2 validators | [`tests/metaschema.rs`](../crates/kynos/tests/metaschema.rs), checking a fixture app's 3.1 and 3.2 emissions and the committed corpus against the OAI's own vendored schemas, with a control asserting the 3.1 file rejects a 3.2-only root field | `enforced`, for the structure; the Schema Object is out of its reach, below |
 | correctness | Emitted documents are byte-deterministic across runs | [`tests/determinism.rs`](../crates/kynos/tests/determinism.rs), emitting one fixture description in three separate processes and byte-comparing | `enforced` |
 | correctness | Emitted documents are byte-deterministic across platforms | A cross-OS CI job, which does not exist: every job runs on `ubuntu-latest` | `planned` |
 | dx | No public item exposes `Pin`, `BoxFuture` or a tokio type | `cargo-public-api` assertion | `needs-tooling` |
@@ -76,6 +76,16 @@ satellite crate. That, and the two observability rows below, are the only three
 `blocked-on-impl` rows left — the API-skeleton milestone accounted for the rest,
 and each moved to the status its evidence actually supports rather than all of
 them moving to `enforced`.
+
+**The meta-schema row is `enforced` and is not the whole claim.** Both vendored
+files are the *base* schemas: they describe the OpenAPI structure and leave the
+Schema Object open, because 3.1 permits arbitrary keywords there. So a 3.2-only
+keyword nested in a schema — `xml.nodeType`, `discriminator.defaultMapping` — is
+not something the 3.1 file objects to, and
+[`emit::downgrade`](../crates/kynos-openapi/src/emit/downgrade.rs) is what
+refuses those. Neither check subsumes the other, which is why both run: the
+schema knows the structure the emitter does not restate, and the emitter knows
+the vocabulary the schema deliberately leaves open.
 
 Two shapes are excluded from the round-trip property, and both are real gaps
 rather than test convenience:
