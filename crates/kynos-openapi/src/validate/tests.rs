@@ -296,6 +296,48 @@ fn an_operation_must_declare_a_response() {
     assert!(matches!(found.as_slice(), [SpecError::NoResponses]));
 }
 
+/// 3.1 requires a response description; 3.2 does not.
+///
+/// `references/3.1.2.md:2010` marks `description` **REQUIRED** and
+/// `references/3.2.0.md:2161` does not. The requirement used to live in the
+/// type, as `description: String`, which enforced it on 3.2 as well and made a
+/// legal 3.2 document unparseable. It lives here now, where it is checked
+/// against the version the document claims rather than against every version at
+/// once.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_response_without_a_description_is_a_three_one_violation() {
+    let summarised = Response {
+        summary: Some("The order".to_owned()),
+        ..Response::default()
+    };
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("getOrder").with_responses(Responses::new().with(200, summarised)),
+    );
+    let document = document_with(&[("/orders", item)]);
+
+    assert!(
+        errors(&document)
+            .iter()
+            .any(|error| matches!(error, SpecError::MissingResponseDescription)),
+        "3.1 requires one"
+    );
+
+    let under_three_two: Vec<SpecError> = Validator::new(SpecVersion::V3_2)
+        .validate(&document)
+        .into_iter()
+        .filter(|v| v.severity == super::Severity::Error)
+        .map(|v| v.error)
+        .collect();
+    assert!(
+        !under_three_two
+            .iter()
+            .any(|error| matches!(error, SpecError::MissingResponseDescription)),
+        "3.2 does not"
+    );
+}
+
 #[test]
 fn security_requirements_must_name_a_declared_scheme() {
     let item = PathItem::new().with_operation(
@@ -627,6 +669,7 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::IgnoredHeaderParameter { .. } => "IgnoredHeaderParameter",
         SpecError::IgnoredHeader { .. } => "IgnoredHeader",
         SpecError::NoResponses => "NoResponses",
+        SpecError::MissingResponseDescription => "MissingResponseDescription",
         SpecError::InvalidComponentName { .. } => "InvalidComponentName",
         SpecError::DuplicateTag { .. } => "DuplicateTag",
         SpecError::UnknownTagParent { .. } => "UnknownTagParent",
@@ -808,6 +851,18 @@ fn ledger_parameters() -> Vec<(&'static str, SpecVersion, Document)> {
     push(
         "NoResponses",
         document_with(&[("/users", get(Operation::new("listUsers")))]),
+    );
+    // A response with no description at all, which is the whole of what this
+    // rule is about. `summary` would make it a *useful* 3.2 document, and is
+    // 3.2-only — so naming it here would leave the variant with no case at
+    // baseline features, where the rule fires just the same.
+    push(
+        "MissingResponseDescription",
+        document_with(&[(
+            "/users",
+            get(Operation::new("listUsers")
+                .with_responses(Responses::new().with(200, Response::default()))),
+        )]),
     );
     cases
 }

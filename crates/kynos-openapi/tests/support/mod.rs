@@ -735,7 +735,8 @@ pub(crate) fn arb_link() -> BoxedStrategy<Link> {
 pub(crate) fn arb_response() -> BoxedStrategy<Response> {
     (
         arb_opt_text(),
-        arb_text(),
+        // Optional since 3.2, so the description-less shape is drawn too.
+        arb_opt_text(),
         arb_map(PARAMETER_NAMES, arb_ref_or(arb_header()), 2),
         arb_content(),
         arb_map(COMPONENT_KEYS, arb_ref_or(arb_link()), 1),

@@ -168,7 +168,7 @@ fn merging_keeps_the_existing_entry_on_conflict() {
 
     assert_eq!(base.responses.len(), 2);
     let two_hundred = base.get(200).and_then(RefOr::as_item).expect("present");
-    assert_eq!(two_hundred.description, "mine");
+    assert_eq!(two_hundred.description.as_deref(), Some("mine"));
 }
 
 /// A 3.2 Response Object stating only a summary parses.

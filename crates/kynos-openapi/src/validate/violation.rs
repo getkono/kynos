@@ -194,6 +194,14 @@ pub enum SpecError {
     #[error("an operation must declare at least one response")]
     NoResponses,
 
+    /// A response carried no description, which 3.1 requires.
+    ///
+    /// 3.2 makes it optional, so this is raised only when validating against
+    /// 3.1. The model holds `Option<String>` because a 3.2 document may state
+    /// only a summary; the version is what decides whether that is legal.
+    #[error("a response must have a description under OpenAPI 3.1")]
+    MissingResponseDescription,
+
     /// A component key used characters the specification forbids.
     #[error("`{name}` is not a valid component name: expected only `A-Z a-z 0-9 . - _`")]
     InvalidComponentName {

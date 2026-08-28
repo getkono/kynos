@@ -7,6 +7,7 @@ use crate::{
     model::{
         paths::{item::PathItem, operation::Operation, template::PathTemplate},
         reference::RefOr,
+        response::Response,
     },
     validate::{
         Validator,
@@ -47,6 +48,31 @@ impl Validator {
 
         if operation.responses.is_empty() {
             violations.push(Violation::error(location, SpecError::NoResponses));
+        }
+
+        // 3.1 marks a response's `description` REQUIRED and 3.2 does not, so
+        // the model holds an `Option` and this is where the requirement is
+        // applied — against the version the document claims, rather than
+        // against both at once.
+        if !self.version.supports_3_2() {
+            let mut require_description = |status: &str, response: &RefOr<Response>| {
+                if response
+                    .as_item()
+                    .is_some_and(|response| response.description.is_none())
+                {
+                    violations.push(Violation::error(
+                        format!("{location}/responses/{status}"),
+                        SpecError::MissingResponseDescription,
+                    ));
+                }
+            };
+
+            for (status, response) in &operation.responses.responses {
+                require_description(status, response);
+            }
+            if let Some(default) = &operation.responses.default_response {
+                require_description("default", default);
+            }
         }
 
         for tag in &operation.tags {

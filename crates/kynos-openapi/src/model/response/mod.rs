@@ -169,10 +169,20 @@ pub struct Response {
 
     /// A description of the response. [CommonMark] syntax may be used.
     ///
-    /// Required: a response with no description is not a valid description.
+    /// **Required by 3.1, optional in 3.2.** 3.1 marks it `REQUIRED`; 3.2
+    /// drops the marker, so a response stating only a
+    /// [`summary`](Response::summary) is a legal 3.2 document. Modelling it as
+    /// a `String` enforced 3.1's rule on both versions and made such a
+    /// document unparseable, so the requirement lives in
+    /// [`validate`](crate::validate) instead, where it is checked against the
+    /// version the document claims.
+    ///
+    /// [`new`](Response::new) sets it, which is the common case and the only
+    /// one 3.1 admits.
     ///
     /// [CommonMark]: https://spec.commonmark.org/
-    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 
     /// Headers sent with the response.
     ///
@@ -198,7 +208,7 @@ impl Response {
     /// Creates a response with no body.
     pub fn new(description: impl Into<String>) -> Self {
         Self {
-            description: description.into(),
+            description: Some(description.into()),
             ..Self::default()
         }
     }

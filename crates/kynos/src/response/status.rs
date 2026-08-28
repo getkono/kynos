@@ -209,7 +209,7 @@ fn body_response(
 
     match body.responses.shift_remove(&key) {
         Some(kynos_openapi::RefOr::Item(mut response)) => {
-            description.clone_into(&mut response.description);
+            response.description = Some(description.to_owned());
             response
         }
         Some(reference) => {
