@@ -90,7 +90,9 @@ impl<C: Send + Sync + 'static, E: Endpoint<C>> DynEndpoint<C> for E {
 /// not move when a sibling is added beside it.
 ///
 /// Shared by the modules that register operations no handler function named,
-/// and so have no identifier to take from one.
+/// and so have no identifier to take from one. Gated on exactly those, because
+/// a build with neither reaches it from nowhere.
+#[cfg(any(feature = "assets", feature = "docs"))]
 pub(crate) fn operation_id(prefix: &str, path: &str) -> String {
     let mut id = String::with_capacity(prefix.len() + path.len() + 1);
     id.push_str(prefix);
