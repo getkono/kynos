@@ -43,7 +43,7 @@ impl Validator {
     pub(in crate::validate) fn check_operation<'doc>(
         self,
         location: &str,
-        template: &PathTemplate,
+        template: Option<&PathTemplate>,
         item: &PathItem,
         operation: &'doc Operation,
         declared_schemes: &HashSet<&str>,
@@ -115,7 +115,9 @@ impl Validator {
         }
 
         check_parameter_list(location, &operation.parameters, violations);
-        check_path_correspondence(location, template, item, operation, violations);
+        if let Some(template) = template {
+            check_path_correspondence(location, template, item, operation, violations);
+        }
         check_operation_content(location, operation, violations);
 
         check_extensions(location, &operation.extensions, violations);
