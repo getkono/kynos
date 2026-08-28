@@ -411,6 +411,7 @@ open against a `kynos-otel` that may never be written.
 | --- | --- | --- | --- |
 | reliability | The declared MSRV builds | `mise run msrv:check`, dedicated CI job | `enforced` |
 | reliability | Every crate's published archive builds from a pristine extraction, with every feature | `mise run publish:check` (`cargo package --workspace --all-features`), dedicated CI job | `enforced` |
+| reliability | Nothing a package publishes reads a path outside that package | `mise run containment:check`, resolving every `include_bytes!`, `include_str!` and `CARGO_MANIFEST_DIR` path literal against the package that holds it, and exempting only what the manifest's `exclude` names | `enforced`. `publish:check` cannot see this: its verify step builds the library, not the test targets, so a file the archive omits and a test target names resolves in the working tree and nowhere else |
 | compatibility | A release reports whether its API broke | `cargo-semver-checks` via release-plz, verdict in the release pull request body | `partial`: default features only, and fail-open — it is evidence for the reviewer, not a gate. See the tooling gap below |
 | reliability | Every reachable feature combination compiles | `mise run features:check` (`cargo hack --feature-powerset`) | `enforced` |
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |

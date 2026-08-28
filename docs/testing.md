@@ -64,7 +64,8 @@ excludes from the published archive. Both read something above the package root
 — the OAI's vendored schemas, and the macro crate's own source — and
 `cargo package` carries a package directory and nothing beside it, so an archive
 holding either would hold a test that could only fail. Each is a property of the
-workspace, and stays where the workspace is.
+workspace, and stays where the workspace is; `containment:check` fails a build
+where any *published* file reaches out the same way.
 
 `crates/kynos-openapi/tests/` holds four more: `properties.rs` and
 `templates.rs` for the document and path-template properties, `wire.rs` for the
