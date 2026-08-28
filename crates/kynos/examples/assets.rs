@@ -98,7 +98,7 @@ async fn main() -> kynos::Result<()> {
 
     // What a resumable download looks like in the description: four statuses on
     // one `paths` key, none of them chosen at run time.
-    let stylesheet = document.paths.0["/static/css/app.css"]
+    let stylesheet = document.paths.items["/static/css/app.css"]
         .get
         .as_ref()
         .expect("a GET");

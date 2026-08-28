@@ -350,7 +350,7 @@ fn the_description_names_what_a_delivery_reads_and_sends() {
         .openapi()
         .expect("a describable router");
 
-    let operation = document.paths.0["/recordings/current"]
+    let operation = document.paths.items["/recordings/current"]
         .get
         .as_ref()
         .expect("a GET");

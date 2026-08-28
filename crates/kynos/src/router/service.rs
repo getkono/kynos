@@ -45,7 +45,7 @@ impl<C> Service<C> {
     pub(crate) fn mark_opaque(&mut self, reason: kynos_openapi::OpaqueReason) {
         let marker = kynos_openapi::Opaque::new(reason);
 
-        for item in self.document.paths.0.values_mut() {
+        for item in self.document.paths.items.values_mut() {
             let slots: Vec<&mut Option<Box<kynos_openapi::Operation>>> = vec![
                 &mut item.get,
                 &mut item.put,

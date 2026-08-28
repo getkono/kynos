@@ -6,7 +6,7 @@
 //! that rides that status — `Retry-After` on a 503 — is described by the same
 //! type that sets it, rather than by a separate entry keyed on the status.
 
-use std::{sync::Arc, time::Duration};
+use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 
 use bytes::{Bytes, BytesMut};
 use http_body_util::BodyExt;
@@ -272,6 +272,7 @@ pub struct Timeout {
 
 impl Timeout {
     /// Limits handlers to `limit`.
+    #[must_use]
     pub fn new(limit: std::time::Duration) -> Self {
         Self { limit }
     }
@@ -349,10 +350,31 @@ impl Responses for AtCapacity {
 /// Cloning shares the permits, so one limit stays one limit however many copies
 /// the router holds — and mounting a *separate* instance on each endpoint is
 /// how one cap per endpoint is spelled.
+///
+/// # A limit of zero is not a limit
+///
+/// It is a service that answers 503 to everything, for ever, without saying so
+/// anywhere. The limit is therefore a [`NonZeroUsize`], which is the same
+/// spelling [`Server::max_connections`](crate::server::Server::max_connections)
+/// uses for the same concept:
+///
+/// ```
+/// # use std::num::NonZeroUsize;
+/// # use kynos::middleware::limits::Concurrency;
+/// let concurrency = Concurrency::new(NonZeroUsize::new(64).expect("nonzero"));
+/// assert_eq!(concurrency.limit.get(), 64);
+/// ```
+///
+/// Zero has no `NonZeroUsize` to be, so the mistake does not compile:
+///
+/// ```compile_fail
+/// # use kynos::middleware::limits::Concurrency;
+/// let concurrency = Concurrency::new(0);
+/// ```
 #[derive(Clone, Debug)]
 pub struct Concurrency {
     /// The maximum number of requests in flight at once.
-    pub limit: usize,
+    pub limit: NonZeroUsize,
     slots: Arc<Semaphore>,
     queue_for: Duration,
     retry_after: Option<Duration>,
@@ -361,10 +383,10 @@ pub struct Concurrency {
 impl Concurrency {
     /// Limits in-flight requests to `limit`.
     #[must_use]
-    pub fn new(limit: usize) -> Self {
+    pub fn new(limit: NonZeroUsize) -> Self {
         Self {
             limit,
-            slots: Arc::new(Semaphore::new(limit)),
+            slots: Arc::new(Semaphore::new(limit.get())),
             queue_for: Duration::ZERO,
             retry_after: None,
         }

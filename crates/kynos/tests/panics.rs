@@ -174,7 +174,7 @@ fn a_recovered_operation_declares_the_status_recovery_produces() {
         .expect("a describable router");
 
     let declares_500 = |document: &kynos::openapi::Document| {
-        document.paths.0["/fine"]
+        document.paths.items["/fine"]
             .get
             .as_ref()
             .expect("a GET operation")

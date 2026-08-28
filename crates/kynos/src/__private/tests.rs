@@ -3,14 +3,16 @@ use crate::{
         path::path_parameter_names_match,
         uri::{decode_path_value, encode_ext_value, endpoint_uri_with_path},
     },
-    extract::params::path::PathParams,
+    extract::params::path::{EncodePath, PathParams},
 };
 
 struct Params;
 
 impl PathParams for Params {
     const NAMES: &'static [&'static str] = &["name"];
+}
 
+impl EncodePath for Params {
     fn encode(&self) -> Vec<(&'static str, String)> {
         vec![("name", "sales/2026 report".to_owned())]
     }

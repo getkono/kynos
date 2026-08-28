@@ -547,6 +547,14 @@ mod security_scheme {
                 ),
                 "openapi32",
             ),
+            case(
+                "a deprecation, which only 3.2 has a field for",
+                quote::quote!(
+                    #[security(http(scheme = "bearer"), deprecated)]
+                    struct Legacy;
+                ),
+                "openapi32",
+            ),
         ]
     }
 
@@ -557,8 +565,8 @@ mod security_scheme {
 
     /// How many diagnostics this build cannot provoke.
     ///
-    /// Two, under `openapi32`: the constructs they refuse are legal there.
-    const UNREACHABLE_HERE: usize = if cfg!(feature = "openapi32") { 2 } else { 0 };
+    /// Three, under `openapi32`: the constructs they refuse are legal there.
+    const UNREACHABLE_HERE: usize = if cfg!(feature = "openapi32") { 3 } else { 0 };
 
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
@@ -688,5 +696,72 @@ mod headers {
     #[test]
     fn every_headers_diagnostic_has_a_case() {
         every_diagnostic_has_a_case("headers.rs", include_str!("headers.rs"), ledger().len());
+    }
+}
+
+mod tag {
+    use super::{Case, each_case_is_refused, every_diagnostic_has_a_case};
+    use crate::derive::tag::expand_inner;
+
+    /// The 3.2-only members, which a 3.1 build refuses.
+    ///
+    /// Empty under `openapi32`, where all three are legal — the same shape
+    /// [`super::security_scheme`] uses, and for the same reason: a diagnostic
+    /// that only one build can provoke still has to be counted in both.
+    #[cfg(not(feature = "openapi32"))]
+    fn version_gated_ledger() -> Vec<Case> {
+        use super::case;
+
+        vec![
+            case(
+                "a summary, which only 3.2 gives a tag",
+                quote::quote!(
+                    #[tag(summary = "Everything about orders")]
+                    struct Orders;
+                ),
+                "openapi32",
+            ),
+            case(
+                "a kind, which only 3.2 gives a tag",
+                quote::quote!(
+                    #[tag(kind = "nav")]
+                    struct Orders;
+                ),
+                "openapi32",
+            ),
+            case(
+                "a parent, which only 3.2 gives a tag",
+                quote::quote!(
+                    #[tag(parent = Catalogue)]
+                    struct Orders;
+                ),
+                "openapi32",
+            ),
+        ]
+    }
+
+    #[cfg(feature = "openapi32")]
+    fn version_gated_ledger() -> Vec<Case> {
+        Vec::new()
+    }
+
+    /// How many diagnostics this build cannot provoke.
+    ///
+    /// One, under `openapi32`: the three members share a single site, and what
+    /// it refuses is legal there.
+    const UNREACHABLE_HERE: usize = if cfg!(feature = "openapi32") { 1 } else { 0 };
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(version_gated_ledger(), expand_inner);
+    }
+
+    #[test]
+    fn every_tag_diagnostic_has_a_case() {
+        // The three members are refused from one `syn::Error::new`, so the
+        // ledger's three cases meet one site. Counting the *site* is the point:
+        // a fourth 3.2 member added without a case fails here.
+        let covered = usize::from(!version_gated_ledger().is_empty()) + UNREACHABLE_HERE;
+        every_diagnostic_has_a_case("tag.rs", include_str!("tag.rs"), covered);
     }
 }

@@ -11,8 +11,8 @@
 
 use kynos::{
     extract::params::{
-        path::{Path, PathParams},
-        query::{Query, QueryParams},
+        path::{DecodePath, EncodePath, Path, PathParams},
+        query::{DecodeQuery, EncodeQuery, Query, QueryParams},
     },
     openapi::{
         self,
@@ -33,9 +33,23 @@ impl Schema for ReportPath {
 
 impl PathParams for ReportPath {
     const NAMES: &'static [&'static str] = &["name"];
+}
 
+impl EncodePath for ReportPath {
     fn encode(&self) -> Vec<(&'static str, String)> {
         vec![("name", "annual/2026".to_owned())]
+    }
+}
+
+/// The handler below binds `Path<ReportPath>`, so the group has to decode.
+///
+/// It did not, and nothing said so: `decode` was a defaulted method with an
+/// `unimplemented!()` body, so this fixture was mounted as an extractor while
+/// supplying no decoder and would have panicked on the first request to it.
+/// The suite never made one. `DecodePath` is what makes that a compile error.
+impl DecodePath for ReportPath {
+    fn decode(_: &[(&str, &str)]) -> Result<Self, kynos::error::rejection::PathRejection> {
+        Ok(Self)
     }
 }
 
@@ -63,9 +77,18 @@ fn object(member: openapi::Schema, name: &str) -> openapi::Schema {
     }))
 }
 
-impl QueryParams for ReportQuery {
+impl QueryParams for ReportQuery {}
+
+impl EncodeQuery for ReportQuery {
     fn encode(&self) -> String {
         "download=true".to_owned()
+    }
+}
+
+/// As `ReportPath`'s: the handler binds `Query<ReportQuery>`, so it decodes.
+impl DecodeQuery for ReportQuery {
+    fn decode(_: Option<&str>) -> Result<Self, kynos::error::rejection::QueryRejection> {
+        Ok(Self)
     }
 }
 

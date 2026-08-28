@@ -20,7 +20,7 @@ use crate::{
 };
 
 pub(in crate::validate) fn check_opaque(document: &Document, violations: &mut Vec<Violation>) {
-    for (raw, item) in &document.paths.0 {
+    for (raw, item) in &document.paths.items {
         check_item(&format!("#/paths/{}", pointer_token(raw)), item, violations);
     }
     for (name, item) in &document.webhooks {
@@ -85,7 +85,7 @@ fn check_callback(location: &str, callback: &RefOr<Callback>, violations: &mut V
     let Some(callback) = callback.as_item() else {
         return;
     };
-    for (expression, item) in &callback.0 {
+    for (expression, item) in &callback.items {
         if let Some(item) = item.as_item() {
             check_item(
                 &format!("{location}/{}", pointer_token(expression)),

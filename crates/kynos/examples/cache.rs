@@ -110,7 +110,11 @@ struct Cacheable;
 impl kynos::extract::params::header::HeaderParams for Cacheable {
     const NAMES: &'static [&'static str] = &["cache-control"];
     const DESCRIBED: bool = false;
+}
 
+// The writing half is its own trait: this group only ever *adds* a header, so
+// it implements `EncodeHeaders` and never `DecodeHeaders`.
+impl kynos::extract::params::header::EncodeHeaders for Cacheable {
     fn encode(&self) -> Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)> {
         vec![(
             kynos::http::header::CACHE_CONTROL,

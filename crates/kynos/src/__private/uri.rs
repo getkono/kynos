@@ -2,7 +2,7 @@
 //! and the percent-encoding the rest of the crate reaches through it.
 
 use crate::{
-    extract::params::{path::PathParams, query::QueryParams},
+    extract::params::{path::EncodePath, query::EncodeQuery},
     http::Uri,
 };
 
@@ -80,14 +80,14 @@ pub fn endpoint_uri(template: &str) -> Uri {
 }
 
 /// Builds a URI for a generated endpoint with path parameters.
-pub fn endpoint_uri_with_path<P: PathParams>(template: &str, path: &P) -> Uri {
+pub fn endpoint_uri_with_path<P: EncodePath>(template: &str, path: &P) -> Uri {
     render_endpoint_path(template, path)
         .parse()
         .expect("derived path parameters produce a valid URI")
 }
 
 /// Builds a URI for a generated endpoint with query parameters.
-pub fn endpoint_uri_with_query<Q: QueryParams>(template: &str, query: &Q) -> Uri {
+pub fn endpoint_uri_with_query<Q: EncodeQuery>(template: &str, query: &Q) -> Uri {
     let query = query.encode();
     let uri = if query.is_empty() {
         template.to_owned()
@@ -99,7 +99,7 @@ pub fn endpoint_uri_with_query<Q: QueryParams>(template: &str, query: &Q) -> Uri
 }
 
 /// Builds a URI for a generated endpoint with path and query parameters.
-pub fn endpoint_uri_with_path_and_query<P: PathParams, Q: QueryParams>(
+pub fn endpoint_uri_with_path_and_query<P: EncodePath, Q: EncodeQuery>(
     template: &str,
     path: &P,
     query: &Q,
@@ -115,7 +115,7 @@ pub fn endpoint_uri_with_path_and_query<P: PathParams, Q: QueryParams>(
         .expect("derived endpoint parameters produce a valid URI")
 }
 
-fn render_endpoint_path<P: PathParams>(template: &str, path: &P) -> String {
+fn render_endpoint_path<P: EncodePath>(template: &str, path: &P) -> String {
     let values = path.encode();
     assert_eq!(
         values.len(),

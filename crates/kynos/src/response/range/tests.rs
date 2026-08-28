@@ -6,7 +6,11 @@ use super::{
 };
 use crate::{
     error::rejection::RangeRejection,
-    extract::{body::binary::Binary, media::OctetStream, params::header::HeaderParams},
+    extract::{
+        body::binary::Binary,
+        media::OctetStream,
+        params::header::{EncodeHeaders, HeaderParams},
+    },
     http::{HeaderMap, HeaderName, HeaderValue, Method, Response, StatusCode, header},
     response::{IntoResponse, Responses},
     schema::registry::Registry,

@@ -58,6 +58,104 @@ fn duplicate_operation_ids_are_rejected() {
     ));
 }
 
+/// Every operation the document describes is validated, not only `paths`.
+///
+/// `references/3.1.2.md:979` and `references/3.2.0.md:680` say an
+/// `operationId` "MUST be unique among **all operations described in the
+/// API**". A webhook, a reusable path item and a callback all describe
+/// operations, and `check_paths` iterated `document.paths` alone — so every
+/// operation-level rule stopped at that boundary. `rules/opaque.rs` already
+/// walks all four containers, so this was an oversight in one walk rather than
+/// a position the crate had taken.
+///
+/// One case per container, and one per rule would be the wrong axis: what was
+/// broken is the *route to* the operation, not any individual rule.
+#[test]
+fn an_operation_outside_paths_is_validated_too() {
+    use crate::model::{callback::Callback, reference::RefOr};
+
+    let duplicate = || {
+        PathItem::new().with_operation(
+            Method::Get,
+            Operation::new("shared").with_responses(ok_responses()),
+        )
+    };
+
+    // The one in `paths` is the first sighting; each case below adds a second
+    // somewhere the walk did not reach.
+    let with_second = |place: &dyn Fn(&mut Document)| {
+        let mut document = document_with(&[("/users", duplicate())]);
+        place(&mut document);
+        errors(&document)
+    };
+
+    let webhooks = with_second(&|document| {
+        document
+            .webhooks
+            .insert("orderPlaced".to_owned(), duplicate());
+    });
+    assert!(
+        webhooks
+            .iter()
+            .any(|error| matches!(error, SpecError::DuplicateOperationId { .. })),
+        "a webhook describes an operation; got {webhooks:?}"
+    );
+
+    let components = with_second(&|document| {
+        document
+            .components
+            .path_items
+            .insert("Shared".to_owned(), duplicate());
+    });
+    assert!(
+        components
+            .iter()
+            .any(|error| matches!(error, SpecError::DuplicateOperationId { .. })),
+        "a reusable path item describes an operation; got {components:?}"
+    );
+
+    let callbacks = with_second(&|document| {
+        document.components.callbacks.insert(
+            "onData".to_owned(),
+            RefOr::Item(Callback::new().with("{$request.body#/url}", duplicate())),
+        );
+    });
+    assert!(
+        callbacks
+            .iter()
+            .any(|error| matches!(error, SpecError::DuplicateOperationId { .. })),
+        "a callback describes an operation; got {callbacks:?}"
+    );
+}
+
+/// An operation with no responses is reported wherever it is written.
+///
+/// The companion to the case above, and a different rule on purpose: it shows
+/// the walk carries *every* operation-level rule rather than the one that
+/// happens to be keyed on a document-wide map.
+#[test]
+fn a_responseless_operation_outside_paths_is_reported() {
+    let mut document = document_with(&[(
+        "/users",
+        PathItem::new().with_operation(
+            Method::Get,
+            Operation::new("listUsers").with_responses(ok_responses()),
+        ),
+    )]);
+    document.webhooks.insert(
+        "orderPlaced".to_owned(),
+        PathItem::new().with_operation(Method::Post, Operation::new("onOrderPlaced")),
+    );
+
+    let found = errors(&document);
+    assert!(
+        found
+            .iter()
+            .any(|error| matches!(error, SpecError::NoResponses)),
+        "got {found:?}"
+    );
+}
+
 #[test]
 fn paths_differing_only_in_variable_name_are_the_same_path() {
     let make = |id: &str| {
@@ -289,11 +387,181 @@ fn an_encoding_header_named_content_type_is_reported() {
     );
 }
 
+/// Every component section's keys are checked, not five of them.
+///
+/// `references/3.1.2.md:593`: "**All** the fixed fields declared above are
+/// objects that MUST use keys that match `^[a-zA-Z0-9\.\-_]+$`". The check
+/// covered `schemas`, `responses`, `parameters`, `requestBodies` and
+/// `securitySchemes`, so a key in any of the other five — six under 3.2 —
+/// passed whatever it was.
+///
+/// One case per section rather than one representative, because what is under
+/// test is the *set* of sections consulted; a representative section is the
+/// thing that was already passing.
+#[test]
+fn every_component_section_checks_its_keys() {
+    use crate::model::{
+        callback::Callback, example::Example, link::Link, parameter::header::Header,
+        paths::item::PathItem, reference::RefOr, schema::Schema,
+    };
+
+    const BAD: &str = "not a name";
+
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("listUsers").with_responses(ok_responses()),
+    );
+    let mut document = document_with(&[("/users", item)]);
+    let components = &mut document.components;
+    components
+        .schemas
+        .insert(BAD.to_owned(), Schema::of_type(SchemaType::String));
+    components
+        .responses
+        .insert(BAD.to_owned(), RefOr::Item(Response::new("ok")));
+    components.parameters.insert(
+        BAD.to_owned(),
+        RefOr::Item(Parameter::query("q", Schema::of_type(SchemaType::String))),
+    );
+    components.examples.insert(
+        BAD.to_owned(),
+        RefOr::Item(Example::new(serde_json::json!("x"))),
+    );
+    components.request_bodies.insert(
+        BAD.to_owned(),
+        RefOr::Item(crate::model::body::RequestBody::default()),
+    );
+    components.headers.insert(
+        BAD.to_owned(),
+        RefOr::Item(Header::new(Schema::of_type(SchemaType::String))),
+    );
+    components.security_schemes.insert(
+        BAD.to_owned(),
+        RefOr::Item(crate::model::security::SecurityScheme::basic()),
+    );
+    components
+        .links
+        .insert(BAD.to_owned(), RefOr::Item(Link::to_operation("listUsers")));
+    components
+        .callbacks
+        .insert(BAD.to_owned(), RefOr::Item(Callback::new()));
+    components
+        .path_items
+        .insert(BAD.to_owned(), PathItem::new());
+    #[cfg(feature = "openapi32")]
+    components.media_types.insert(
+        BAD.to_owned(),
+        RefOr::Item(crate::model::body::media_type::MediaType::new(
+            Schema::of_type(SchemaType::String),
+        )),
+    );
+
+    let reported: Vec<String> = violations(&document)
+        .into_iter()
+        .filter(|v| matches!(v.error, SpecError::InvalidComponentName { .. }))
+        .map(|v| v.location)
+        .collect();
+
+    let expected = [
+        "schemas",
+        "responses",
+        "parameters",
+        "examples",
+        "requestBodies",
+        "headers",
+        "securitySchemes",
+        "links",
+        "callbacks",
+        "pathItems",
+        #[cfg(feature = "openapi32")]
+        "mediaTypes",
+    ];
+
+    for section in expected {
+        assert!(
+            reported
+                .iter()
+                .any(|location| location.starts_with(&format!("#/components/{section}/"))),
+            "`components.{section}` accepted `{BAD}` as a key; reported: {reported:?}"
+        );
+    }
+}
+
 #[test]
 fn an_operation_must_declare_a_response() {
     let item = PathItem::new().with_operation(Method::Get, Operation::new("listUsers"));
     let found = errors(&document_with(&[("/users", item)]));
     assert!(matches!(found.as_slice(), [SpecError::NoResponses]));
+}
+
+/// An extension is not a response code.
+///
+/// `references/3.2.0.md:2109`: "The Responses Object MUST contain at least one
+/// response code". `Responses::is_empty` deliberately counts extensions, and
+/// argues for it: a Responses Object holding only `x-` fields is skipped whole
+/// on serialization, so ignoring them there would drop it from a round trip.
+/// That is right for the *predicate* and wrong for this *rule*, which reused
+/// it — so `{"x-poll-interval": 30}` as a whole Responses Object satisfied a
+/// requirement it plainly does not meet.
+#[test]
+fn extensions_alone_do_not_satisfy_the_response_requirement() {
+    let mut responses = Responses::new();
+    responses.extensions.insert("x-poll-interval", 30);
+
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("listUsers").with_responses(responses),
+    );
+
+    let found = errors(&document_with(&[("/users", item)]));
+    assert!(
+        found
+            .iter()
+            .any(|error| matches!(error, SpecError::NoResponses)),
+        "got {found:?}"
+    );
+}
+
+/// 3.1 requires a response description; 3.2 does not.
+///
+/// `references/3.1.2.md:2010` marks `description` **REQUIRED** and
+/// `references/3.2.0.md:2161` does not. The requirement used to live in the
+/// type, as `description: String`, which enforced it on 3.2 as well and made a
+/// legal 3.2 document unparseable. It lives here now, where it is checked
+/// against the version the document claims rather than against every version at
+/// once.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_response_without_a_description_is_a_three_one_violation() {
+    let summarised = Response {
+        summary: Some("The order".to_owned()),
+        ..Response::default()
+    };
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("getOrder").with_responses(Responses::new().with(200, summarised)),
+    );
+    let document = document_with(&[("/orders", item)]);
+
+    assert!(
+        errors(&document)
+            .iter()
+            .any(|error| matches!(error, SpecError::MissingResponseDescription)),
+        "3.1 requires one"
+    );
+
+    let under_three_two: Vec<SpecError> = Validator::new(SpecVersion::V3_2)
+        .validate(&document)
+        .into_iter()
+        .filter(|v| v.severity == super::Severity::Error)
+        .map(|v| v.error)
+        .collect();
+    assert!(
+        !under_three_two
+            .iter()
+            .any(|error| matches!(error, SpecError::MissingResponseDescription)),
+        "3.2 does not"
+    );
 }
 
 #[test]
@@ -310,6 +578,61 @@ fn security_requirements_must_name_a_declared_scheme() {
         found.as_slice(),
         [SpecError::UnknownSecurityScheme { name }] if name == "Bearer"
     ));
+}
+
+/// 3.2 lets a requirement name a scheme by URI; 3.1 does not.
+///
+/// `references/3.2.0.md:4685`: the name "MUST **either** correspond to a
+/// security scheme declared in the Security Schemes … **or be the URI of a
+/// Security Scheme Object**". `references/3.1.2.md:4129` has only the first
+/// half, and the rule was written to it and never gated — so a valid 3.2
+/// document naming `./foo` is reported as an error.
+///
+/// A bare undeclared name stays an error under both. It is a legal relative
+/// URI reference in the abstract, but 3.2 says a name matching a component
+/// name is a component name and that referencing by single-segment relative
+/// URI is spelled `./foo` — so the bare form is the typo the rule exists to
+/// catch, and reading it as a URI would make the check vacuous.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_three_two_requirement_may_name_a_scheme_by_uri() {
+    let requiring = |name: &str| {
+        let item = PathItem::new().with_operation(
+            Method::Get,
+            Operation::new("listUsers")
+                .with_responses(ok_responses())
+                .with_security(SecurityRequirement::scheme(name)),
+        );
+        document_with(&[("/users", item)])
+    };
+    let unknown_schemes = |document: &Document, version: SpecVersion| {
+        Validator::new(version)
+            .validate(document)
+            .into_iter()
+            .filter(|v| matches!(v.error, SpecError::UnknownSecurityScheme { .. }))
+            .count()
+    };
+
+    for name in ["./foo", "https://example.com/schemes#/Bearer"] {
+        let document = requiring(name);
+        assert_eq!(
+            unknown_schemes(&document, SpecVersion::V3_2),
+            0,
+            "3.2 permits `{name}`"
+        );
+        assert_eq!(
+            unknown_schemes(&document, SpecVersion::V3_1),
+            1,
+            "3.1 does not permit `{name}`"
+        );
+    }
+
+    let bare = requiring("Bearer");
+    assert_eq!(
+        unknown_schemes(&bare, SpecVersion::V3_2),
+        1,
+        "a bare undeclared name is a typo under either version"
+    );
 }
 
 #[test]
@@ -464,7 +787,7 @@ fn an_opaque_route_is_reported_without_inventing_a_paths_entry() {
         matches!(&v.error, SpecError::OpaqueRoute { pattern } if pattern == "/assets/{*path}")
     }));
     // The route is recorded, and `paths` is untouched by it.
-    assert_eq!(document.paths.0.len(), 1);
+    assert_eq!(document.paths.items.len(), 1);
 }
 
 #[test]
@@ -627,6 +950,9 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::IgnoredHeaderParameter { .. } => "IgnoredHeaderParameter",
         SpecError::IgnoredHeader { .. } => "IgnoredHeader",
         SpecError::NoResponses => "NoResponses",
+        SpecError::MissingResponseDescription => "MissingResponseDescription",
+        #[cfg(feature = "openapi32")]
+        SpecError::ConflictingEncoding => "ConflictingEncoding",
         SpecError::InvalidComponentName { .. } => "InvalidComponentName",
         SpecError::DuplicateTag { .. } => "DuplicateTag",
         SpecError::UnknownTagParent { .. } => "UnknownTagParent",
@@ -664,6 +990,10 @@ const RAISED_ELSEWHERE: &[&str] = &[
     // one does, and carries a ledger case below.
     #[cfg(not(feature = "openapi32"))]
     "RequiresV3_2",
+    // The same: `encoding` conflicts with `prefixEncoding` and `itemEncoding`,
+    // neither of which a 3.1 build has.
+    #[cfg(not(feature = "openapi32"))]
+    "ConflictingEncoding",
     // `kynos`'s `short_circuit_mismatch` compares an interceptor's declared
     // statuses against the responses it describes. No document reaches it, and
     // `crates/kynos/src/response/mod.rs` covers it where it lives.
@@ -809,6 +1139,37 @@ fn ledger_parameters() -> Vec<(&'static str, SpecVersion, Document)> {
         "NoResponses",
         document_with(&[("/users", get(Operation::new("listUsers")))]),
     );
+    // A response with no description at all, which is the whole of what this
+    // rule is about. `summary` would make it a *useful* 3.2 document, and is
+    // 3.2-only — so naming it here would leave the variant with no case at
+    // baseline features, where the rule fires just the same.
+    push(
+        "MissingResponseDescription",
+        document_with(&[(
+            "/users",
+            get(Operation::new("listUsers")
+                .with_responses(Responses::new().with(200, Response::default()))),
+        )]),
+    );
+    // 3.2 only: `prefixEncoding` is what `encoding` conflicts with, and it does
+    // not exist under 3.1, so neither does the conflict.
+    #[cfg(feature = "openapi32")]
+    push("ConflictingEncoding", {
+        use crate::model::body::{RequestBody, encoding::Encoding, media_type::MediaType};
+
+        let mut content = MediaType::new(Schema::of_type(SchemaType::Object));
+        content
+            .encoding
+            .insert("part".to_owned(), Encoding::new("text/plain"));
+        content.prefix_encoding = Some(vec![Encoding::new("text/plain")]);
+
+        document_with(&[(
+            "/uploads",
+            get(Operation::new("upload")
+                .with_request_body(RequestBody::new("multipart/mixed", content))
+                .with_responses(ok_responses())),
+        )])
+    });
     cases
 }
 

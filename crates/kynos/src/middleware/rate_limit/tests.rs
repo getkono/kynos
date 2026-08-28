@@ -5,7 +5,7 @@ use super::{
     headers::{RateLimitFields, RateLimitHeaders},
     quota::{estimate, recovers_in},
 };
-use crate::extract::params::header::HeaderParams;
+use crate::extract::params::header::{EncodeHeaders, HeaderParams};
 
 /// A window of one second, for readability.
 const WINDOW: Duration = Duration::from_secs(1);
@@ -137,7 +137,7 @@ fn policies() -> Vec<QuotaPolicy> {
 }
 
 /// The field text a client actually parses.
-fn rendered<G: HeaderParams>(group: &G) -> Vec<(String, String)> {
+fn rendered<G: EncodeHeaders>(group: &G) -> Vec<(String, String)> {
     group
         .encode()
         .into_iter()

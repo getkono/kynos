@@ -20,7 +20,7 @@ use crate::{
 ///
 /// The router records what a match captured, and this is the only reader of
 /// that record. Each value is percent-decoded before it reaches
-/// [`PathParams::decode`], so a variable holding `%2F` arrives as `/` rather
+/// [`DecodePath::decode`], so a variable holding `%2F` arrives as `/` rather
 /// than as the two segments it was encoded to avoid becoming.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Path<T>(pub T);
@@ -91,48 +91,28 @@ fn decode_capture(value: &str) -> Result<Cow<'_, str>, Utf8Error> {
     crate::__private::uri::decode_path_value(value)
 }
 
-/// A group of path parameters.
+/// A group of path parameters, as the description sees it.
 ///
-/// Derived, never implemented by hand. [`NAMES`](PathParams::NAMES) is what the
-/// route attribute compares against the path template.
+/// [`NAMES`](PathParams::NAMES) is what the route attribute compares against
+/// the path template.
 ///
-/// The two value-shaped methods have panicking defaults, because a group that
-/// has not said how its fields are spelled cannot be decoded or encoded on its
-/// behalf. They are defaults rather than requirements so that a group written
-/// out by hand for one direction — a typed URI needs only
-/// [`encode`](PathParams::encode) — need not write the other.
+/// # Why the directions are separate traits
+///
+/// A group is read on the way in and written on the way out, and a given one
+/// may only ever do one: a typed URI needs only [`EncodePath`], and an
+/// extracted group needs only [`DecodePath`]. Both used to be defaulted methods
+/// here with `unimplemented!()` bodies, so a hand-written group that supplied
+/// neither satisfied this trait and panicked on its first request.
+///
+/// Splitting them keeps the one-direction case — that is the whole reason the
+/// defaults existed — and moves the failure to where the framework's other
+/// bounds put theirs. `AssetHeaders` and `FileHeaders` are the in-tree proof:
+/// both are response-side header groups that never decode, and both carried a
+/// reachable panic until [`HeaderParams`](super::header::HeaderParams) was
+/// split the same way.
 pub trait PathParams: Sized {
     /// The parameter names, in declaration order.
     const NAMES: &'static [&'static str];
-
-    /// Decodes the named captures from a matched route.
-    ///
-    /// # Panics
-    ///
-    /// The default panics. Derive `PathParams`, or write this by hand, before
-    /// extracting the group.
-    fn decode(values: &[(&str, &str)]) -> Result<Self, PathRejection> {
-        let _ = values;
-        unimplemented!(
-            "`{}` does not decode path parameters: derive `PathParams` on it, or implement \
-             `decode` by hand",
-            std::any::type_name::<Self>()
-        )
-    }
-
-    /// Encodes this value for a typed endpoint URI.
-    ///
-    /// # Panics
-    ///
-    /// The default panics, for the reason [`decode`](PathParams::decode)'s
-    /// does.
-    fn encode(&self) -> Vec<(&'static str, String)> {
-        unimplemented!(
-            "`{}` does not encode path parameters: derive `PathParams` on it, or implement \
-             `encode` by hand",
-            std::any::type_name::<Self>()
-        )
-    }
 
     /// Describes each captured value as an OpenAPI path parameter.
     ///
@@ -154,7 +134,70 @@ pub trait PathParams: Sized {
     }
 }
 
-impl<C: Sync, T: PathParams + Send> FromRequestParts<C> for Path<T> {
+/// Reading a path parameter group from a matched route.
+///
+/// `#[derive(PathParams)]` writes this. Implement it by hand only for a group
+/// that is extracted; one that only ever appears in a typed URI implements
+/// [`EncodePath`] instead.
+///
+/// A group that encodes but does not decode cannot be extracted. That is the
+/// whole of what this split buys — it used to compile and panic on the first
+/// request:
+///
+/// ```compile_fail
+/// # use kynos::extract::params::path::{EncodePath, Path, PathParams};
+/// struct Report;
+///
+/// impl PathParams for Report {
+///     const NAMES: &'static [&'static str] = &["name"];
+/// }
+///
+/// impl EncodePath for Report {
+///     fn encode(&self) -> Vec<(&'static str, String)> {
+///         vec![("name", "annual".to_owned())]
+///     }
+/// }
+///
+/// fn extracted<T: kynos::extract::FromRequestParts<()>>() {}
+/// extracted::<Path<Report>>();
+/// ```
+///
+/// Its control: the same group with a decoder, which is what a derive writes.
+///
+/// ```
+/// # use kynos::{
+/// #     error::rejection::PathRejection,
+/// #     extract::params::path::{DecodePath, Path, PathParams},
+/// # };
+/// struct Report;
+///
+/// impl PathParams for Report {
+///     const NAMES: &'static [&'static str] = &["name"];
+/// }
+///
+/// impl DecodePath for Report {
+///     fn decode(_: &[(&str, &str)]) -> Result<Self, PathRejection> {
+///         Ok(Self)
+///     }
+/// }
+///
+/// fn extracted<T: kynos::extract::FromRequestParts<()>>() {}
+/// extracted::<Path<Report>>();
+/// ```
+pub trait DecodePath: PathParams {
+    /// Decodes the named captures from a matched route.
+    fn decode(values: &[(&str, &str)]) -> Result<Self, PathRejection>;
+}
+
+/// Writing a path parameter group into a typed endpoint URI.
+///
+/// The counterpart to [`DecodePath`]; see that trait for why the two are apart.
+pub trait EncodePath: PathParams {
+    /// Encodes this value for a typed endpoint URI.
+    fn encode(&self) -> Vec<(&'static str, String)>;
+}
+
+impl<C: Sync, T: DecodePath + Send> FromRequestParts<C> for Path<T> {
     type Rejection = PathRejection;
 
     async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
@@ -195,7 +238,7 @@ impl<T: PathParams + Schema> Describe for Path<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Path, PathCaptures, PathParams, decode_capture};
+    use super::{DecodePath, Path, PathCaptures, PathParams, decode_capture};
     use crate::{
         error::rejection::PathRejection,
         extract::FromRequestParts,
@@ -213,7 +256,9 @@ mod tests {
 
     impl PathParams for Named {
         const NAMES: &'static [&'static str] = &["name"];
+    }
 
+    impl DecodePath for Named {
         fn decode(values: &[(&str, &str)]) -> Result<Self, PathRejection> {
             Ok(Self(values[0].1.to_owned()))
         }
@@ -225,18 +270,12 @@ mod tests {
 
     impl PathParams for Absent {
         const NAMES: &'static [&'static str] = &["missing"];
+    }
 
+    impl DecodePath for Absent {
         fn decode(values: &[(&str, &str)]) -> Result<Self, PathRejection> {
             Ok(Self(values[0].1.to_owned()))
         }
-    }
-
-    /// A group that has said nothing about how it is spelled.
-    #[derive(Debug)]
-    struct Undecodable;
-
-    impl PathParams for Undecodable {
-        const NAMES: &'static [&'static str] = &["name"];
     }
 
     /// Builds a request whose extensions hold what a match would have captured.
@@ -258,7 +297,7 @@ mod tests {
         request
     }
 
-    async fn extract<T: PathParams + Send>(request: Request) -> Result<T, PathRejection> {
+    async fn extract<T: DecodePath + Send>(request: Request) -> Result<T, PathRejection> {
         let (mut parts, _) = request.into_parts();
         Path::<T>::from_request_parts(&mut parts, &())
             .await
@@ -317,30 +356,20 @@ mod tests {
         );
     }
 
-    /// The decoding half of the trait panics by default, so a group written for
-    /// one direction only says so rather than silently decoding to nothing.
-    #[test]
-    #[should_panic(expected = "does not decode path parameters")]
-    fn a_group_that_declares_no_decoder_says_so() {
-        let _ = Undecodable::decode(&[("name", "ada")]);
-    }
-
-    /// Its control: a group that *does* declare one is not touched by the
-    /// default. Without this the case above would pass against a trait whose
-    /// every method panicked.
+    /// A group that declares a decoder uses it.
+    ///
+    /// This used to be the control for two `#[should_panic]` cases asserting
+    /// that a group declaring *neither* direction said so at run time. Those
+    /// are gone with the defaults that made them possible: `DecodePath` and
+    /// `EncodePath` are separate traits now, so a group missing the one it is
+    /// used for does not compile, and the guarantee is stated as a
+    /// `compile_fail` doctest on `DecodePath` rather than as a panic here.
     #[test]
     fn a_group_that_declares_a_decoder_uses_it() {
         assert_eq!(
             Named::decode(&[("name", "ada")]).expect("a decoded group"),
             Named("ada".to_owned())
         );
-    }
-
-    /// The other direction has the same default, and the same control.
-    #[test]
-    #[should_panic(expected = "does not encode path parameters")]
-    fn a_group_that_declares_no_encoder_says_so() {
-        let _ = Undecodable.encode();
     }
 
     /// A capture with nothing to decode is handed back untouched, which is what

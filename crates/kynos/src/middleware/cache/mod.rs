@@ -35,7 +35,7 @@ use kynos_openapi::model::schema::types::SchemaType;
 pub use store::{CacheStore, PrimaryKey, StoredResponse};
 
 use crate::{
-    extract::params::header::HeaderParams,
+    extract::params::header::{EncodeHeaders, HeaderParams},
     http::{self, HeaderMap, HeaderValue, header},
     middleware::{Continued, Interceptor, Next},
     schema::registry::Registry,
@@ -55,7 +55,7 @@ mod sealed {
 /// every covered operation declares.
 pub trait CacheTagging: sealed::Sealed + Send + Sync + 'static {
     /// The group a served response carries.
-    type Headers: HeaderParams;
+    type Headers: EncodeHeaders;
 
     /// Whether a tag is derived.
     const DERIVES: bool;
@@ -90,7 +90,26 @@ pub struct CacheHeaders<const TAGGED: bool = false> {
 impl<const TAGGED: bool> HeaderParams for CacheHeaders<TAGGED> {
     const NAMES: &'static [&'static str] = if TAGGED { &["age", "etag"] } else { &["age"] };
     const DESCRIBED: bool = TAGGED;
+    /// Only `ETag`, and only where one is derived.
+    fn response_headers(
+        registry: &mut Registry,
+    ) -> kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>> {
+        let _ = registry;
+        let mut headers = kynos_openapi::Map::new();
+        if TAGGED {
+            headers.insert(
+                "ETag".to_owned(),
+                kynos_openapi::RefOr::Item(
+                    kynos_openapi::Header::new(kynos_openapi::Schema::of_type(SchemaType::String))
+                        .with_description("The entity tag of this representation"),
+                ),
+            );
+        }
+        headers
+    }
+}
 
+impl<const TAGGED: bool> EncodeHeaders for CacheHeaders<TAGGED> {
     fn encode(&self) -> Vec<(http::HeaderName, HeaderValue)> {
         let mut fields = Vec::with_capacity(2);
 
@@ -108,25 +127,6 @@ impl<const TAGGED: bool> HeaderParams for CacheHeaders<TAGGED> {
         }
 
         fields
-    }
-
-    /// Only `ETag`, and only where one is derived.
-    fn response_headers(
-        registry: &mut Registry,
-    ) -> kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>> {
-        let _ = registry;
-
-        let mut headers = kynos_openapi::Map::new();
-        if TAGGED {
-            headers.insert(
-                "ETag".to_owned(),
-                kynos_openapi::RefOr::Item(
-                    kynos_openapi::Header::new(kynos_openapi::Schema::of_type(SchemaType::String))
-                        .with_description("The entity tag of this representation"),
-                ),
-            );
-        }
-        headers
     }
 }
 

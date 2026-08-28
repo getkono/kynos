@@ -7,6 +7,7 @@ use crate::{
     model::{
         paths::{item::PathItem, operation::Operation, template::PathTemplate},
         reference::RefOr,
+        response::Response,
     },
     validate::{
         Validator,
@@ -21,11 +22,28 @@ use crate::{
 };
 
 impl Validator {
+    /// Whether `name` is a Security Scheme Object's URI rather than a
+    /// component name.
+    ///
+    /// 3.2 admits both (`references/3.2.0.md:4685`); 3.1 admits only a
+    /// component name, so this is always `false` there.
+    ///
+    /// A *bare* single-segment name is not read as a URI even though one would
+    /// be a legal relative reference. 3.2 says a name matching a component
+    /// name is a component name, and that referencing by single-segment
+    /// relative URI is spelled `./foo` — so `Bearer` with nothing declared is
+    /// the misspelling this rule exists to catch, and accepting it would leave
+    /// the rule with nothing to reject.
+    fn names_a_scheme_by_uri(self, name: &str) -> bool {
+        self.version.supports_3_2()
+            && (name.contains('/') || name.contains(':') || name.contains('#'))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(in crate::validate) fn check_operation<'doc>(
         self,
         location: &str,
-        template: &PathTemplate,
+        template: Option<&PathTemplate>,
         item: &PathItem,
         operation: &'doc Operation,
         declared_schemes: &HashSet<&str>,
@@ -45,8 +63,33 @@ impl Validator {
             }
         }
 
-        if operation.responses.is_empty() {
+        if !operation.responses.declares_a_response() {
             violations.push(Violation::error(location, SpecError::NoResponses));
+        }
+
+        // 3.1 marks a response's `description` REQUIRED and 3.2 does not, so
+        // the model holds an `Option` and this is where the requirement is
+        // applied — against the version the document claims, rather than
+        // against both at once.
+        if !self.version.supports_3_2() {
+            let mut require_description = |status: &str, response: &RefOr<Response>| {
+                if response
+                    .as_item()
+                    .is_some_and(|response| response.description.is_none())
+                {
+                    violations.push(Violation::error(
+                        format!("{location}/responses/{status}"),
+                        SpecError::MissingResponseDescription,
+                    ));
+                }
+            };
+
+            for (status, response) in &operation.responses.responses {
+                require_description(status, response);
+            }
+            if let Some(default) = &operation.responses.default_response {
+                require_description("default", default);
+            }
         }
 
         for tag in &operation.tags {
@@ -60,7 +103,9 @@ impl Validator {
 
         for requirement in operation.security.iter().flatten() {
             for name in requirement.0.keys() {
-                if !declared_schemes.contains(name.as_str()) {
+                if !declared_schemes.contains(name.as_str())
+                    && !self.names_a_scheme_by_uri(name.as_str())
+                {
                     violations.push(Violation::error(
                         location,
                         SpecError::UnknownSecurityScheme { name: name.clone() },
@@ -70,7 +115,9 @@ impl Validator {
         }
 
         check_parameter_list(location, &operation.parameters, violations);
-        check_path_correspondence(location, template, item, operation, violations);
+        if let Some(template) = template {
+            check_path_correspondence(location, template, item, operation, violations);
+        }
         check_operation_content(location, operation, violations);
 
         check_extensions(location, &operation.extensions, violations);

@@ -579,7 +579,7 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     /// a method OpenAPI has a field for can be served: one it does not is
     /// neither routed nor claimed, and the record says which were dropped.
     #[must_use]
-    pub fn route_unchecked<M, H>(mut self, methods: M, pattern: &'static str, handler: H) -> Self
+    pub fn route_unchecked<M, H>(mut self, methods: M, pattern: &str, handler: H) -> Self
     where
         C: Sync + 'static,
         M: IntoIterator<Item = crate::http::Method>,
@@ -668,7 +668,7 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     ///
     /// [RFC 9110]: https://www.rfc-editor.org/rfc/rfc9110
     #[must_use]
-    pub fn upgrade_unchecked<H>(mut self, path: &'static str, handler: H) -> Self
+    pub fn upgrade_unchecked<H>(mut self, path: &str, handler: H) -> Self
     where
         C: Sync + 'static,
         H: UncheckedHandler<C>,

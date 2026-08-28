@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::model::extensions::Extensions;
+
 /// Metadata describing the XML representation of a schema.
 ///
 /// Kynos does not emit XML today; this exists so that descriptions parsed from
@@ -42,4 +44,8 @@ pub struct Xml {
     /// must not be combined with it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wrapped: Option<bool>,
+
+    /// Specification extensions.
+    #[serde(flatten)]
+    pub extensions: Extensions,
 }

@@ -56,7 +56,7 @@
 use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
-    extract::params::header::HeaderParams,
+    extract::params::header::{EncodeHeaders, HeaderParams},
     http::{HeaderName, HeaderValue, header},
     schema::registry::Registry,
 };
@@ -134,11 +134,13 @@ impl Disposition {
 ///
 /// # This group is written, not read
 ///
-/// [`decode`](HeaderParams::decode) is left at its panicking default, which the
-/// trait sanctions for a response-direction group and which
-/// `RateLimitHeaders` does the same with. The consequence is worth stating
-/// plainly: `Headers<ContentDisposition>` as a *handler argument* panics. It is
-/// a response header; ask for it in a return type.
+/// It implements `EncodeHeaders` and not `DecodeHeaders`, which
+/// `RateLimitHeaders` also does. The consequence is worth stating plainly:
+/// `Headers<ContentDisposition>` as a *handler argument* does not compile. It
+/// is a response header; ask for it in a return type.
+///
+/// That used to be a panic on the first request, because both directions were
+/// defaulted methods on one trait.
 ///
 /// # This group can grow
 ///
@@ -264,17 +266,6 @@ fn ascii_fallback(filename: &str) -> String {
 impl HeaderParams for ContentDisposition {
     const NAMES: &'static [&'static str] = &["content-disposition"];
 
-    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-        let value = self.field_value();
-        vec![(
-            header::CONTENT_DISPOSITION,
-            // Infallible by construction: `field_value` emits a token, the
-            // `qdtext` `ascii_fallback` admits, and `attr-char` and percent
-            // triplets — every one of which is printable ASCII.
-            HeaderValue::from_str(&value).expect("a field value of printable ASCII"),
-        )]
-    }
-
     fn response_headers(
         registry: &mut Registry,
     ) -> kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>> {
@@ -299,11 +290,24 @@ impl HeaderParams for ContentDisposition {
     }
 }
 
+impl EncodeHeaders for ContentDisposition {
+    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+        let value = self.field_value();
+        vec![(
+            header::CONTENT_DISPOSITION,
+            // Infallible by construction: `field_value` emits a token, the
+            // `qdtext` `ascii_fallback` admits, and `attr-char` and percent
+            // triplets — every one of which is printable ASCII.
+            HeaderValue::from_str(&value).expect("a field value of printable ASCII"),
+        )]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use kynos_openapi::model::schema::types::SchemaType;
 
-    use super::{ContentDisposition, Disposition};
+    use super::{ContentDisposition, Disposition, EncodeHeaders};
     use crate::{
         extract::params::header::HeaderParams,
         extract::{body::binary::Binary, media::Pdf},

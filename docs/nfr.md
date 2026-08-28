@@ -59,7 +59,7 @@ disabled, or passes trivially and hides the regression it was meant to catch.
 | --- | --- | --- | --- |
 | compatibility | Public API surface is diffed on every change; an addition requires explicit budget approval, a removal fails the build | `cargo-public-api` | `needs-tooling` |
 | compatibility | Every release tag is gated on semantic-version correctness | `cargo-semver-checks` | `needs-tooling` |
-| correctness | The IR round-trips through serialization losslessly | `proptest` over generated IR values | `enforced`, with two exclusions below, each characterized |
+| correctness | The IR round-trips through serialization losslessly | `proptest` over generated IR values | `enforced`, with one exclusion below, characterized |
 | correctness | Every model type emits the field names and nesting the specification gives it | One exact-JSON case per type in `tests/wire.rs`, counted against the type list | `enforced` |
 | correctness | The corpus a downstream generator is built against is the one this build emits | [`tests/conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs), comparing every committed document against a freshly emitted one | `enforced` |
 | correctness | Emitted documents validate against both 3.1 and 3.2 validators | [`tests/metaschema.rs`](../crates/kynos/tests/metaschema.rs), checking a fixture app's 3.1 and 3.2 emissions and the committed corpus against the OAI's own vendored schemas, with a control asserting the 3.1 file rejects a 3.2-only root field | `enforced`, for the structure; the Schema Object is out of its reach, below |
@@ -87,24 +87,31 @@ refuses those. Neither check subsumes the other, which is why both run: the
 schema knows the structure the emitter does not restate, and the emitter knows
 the vocabulary the schema deliberately leaves open.
 
-Two shapes are excluded from the round-trip property, and both are real gaps
-rather than test convenience:
+One shape is excluded from the round-trip property, and it is a real gap rather
+than test convenience:
 
-- **A JSON `null` example does not survive.** The loss is on the way in rather
-  than the way out: `Some(Value::Null)` writes `null` faithfully, and
-  `Option<Value>` then folds that `null` back into `None` when it is read. It
-  costs a parameter's `example`, a schema's `const` and `default`, and the
-  other `Option<Value>` fields alike. JSON `null` is a legal example and a
-  legal default, so a description that uses one is silently changed. The remedy
-  is a double-`Option` deserializer at each site.
 - **A `PathItem` carrying both `$ref` and sibling fields loses the siblings.**
   It reads back as a `RefOr::Ref`. Kynos never emits one, but the type permits
   constructing it, so the model can hold a value it cannot write down.
 
-Each is excluded in `tests/support/` so the property stays honest, and asserted
+It is excluded in `tests/support/` so the property stays honest, and asserted
 in `tests/wire.rs` so the behaviour is on the record. Without the second half an
 exclusion is indistinguishable from an oversight, and closing the gap would turn
 no test red — which is the wrong signal for work that fixes something.
+
+**A JSON `null` used to be the second, and is closed.** The loss was on the way
+in rather than the way out: `Some(Value::Null)` wrote `null` faithfully, and
+`Option<Value>` folded that `null` back into `None` when it was read, which cost
+a parameter's `example`, a schema's `const` and `default`, and every other
+`Option<Value>` field alike. JSON `null` is a legal example and a legal default,
+so a description using one was silently changed. Each of the eight sites now
+carries the `#[serde(default, deserialize_with = ...)]` pair that
+[`model::nullable`](../crates/kynos-openapi/src/model/nullable.rs) exists for,
+`arb_present_json` is gone, and the generators draw the outermost `null` the
+property was written to avoid.
+
+The row above stays worth reading for what it kept: closing the gap turned the
+recorded case red, exactly as this section said it would.
 
 The `dx` row currently holds by construction — the crate has no runtime
 dependency at all, which is deliberate — but nothing prevents that from

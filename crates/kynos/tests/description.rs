@@ -52,7 +52,7 @@ async fn gamma() -> NoContent {
 fn declaring(document: &Document, status: &str) -> BTreeSet<String> {
     document
         .paths
-        .0
+        .items
         .iter()
         .filter(|(_, item)| {
             item.operations()
@@ -227,7 +227,7 @@ async fn preview_recording(range: Range<Binary<OctetStream>>) -> Binary<OctetStr
 
 /// The one operation under `path`.
 fn operation(document: &Document, path: &str) -> kynos::openapi::Operation {
-    let item = document.paths.0.get(path).expect("a described path");
+    let item = document.paths.items.get(path).expect("a described path");
     let (_, operation) = item.operations().next().expect("one operation");
     operation.clone()
 }

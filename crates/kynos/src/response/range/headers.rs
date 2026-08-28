@@ -43,7 +43,7 @@ use kynos_openapi::{
 };
 
 use crate::{
-    extract::params::header::HeaderParams,
+    extract::params::header::{EncodeHeaders, HeaderParams},
     http::{HeaderName, HeaderValue, header},
     schema::registry::Registry,
 };
@@ -95,21 +95,14 @@ fn described(pattern: &str, description: &str) -> Header {
 ///
 /// # This group is written, not read
 ///
-/// [`decode`](HeaderParams::decode) is left at its panicking default, which the
-/// trait sanctions for a response-direction group. `Headers<AcceptRanges>` as a
-/// handler argument therefore panics; it is a response header.
+/// It implements `EncodeHeaders` and not `DecodeHeaders`, so
+/// `Headers<AcceptRanges>` as a handler argument does not compile; it is a
+/// response header. That used to be a panic on the first request.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AcceptRanges;
 
 impl HeaderParams for AcceptRanges {
     const NAMES: &'static [&'static str] = &["accept-ranges"];
-
-    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-        vec![(
-            header::ACCEPT_RANGES,
-            HeaderValue::from_static(super::spec::UNIT),
-        )]
-    }
 
     fn response_headers(registry: &mut Registry) -> kynos_openapi::Map<RefOr<Header>> {
         let _ = registry;
@@ -126,6 +119,15 @@ impl HeaderParams for AcceptRanges {
     }
 }
 
+impl EncodeHeaders for AcceptRanges {
+    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+        vec![(
+            header::ACCEPT_RANGES,
+            HeaderValue::from_static(super::spec::UNIT),
+        )]
+    }
+}
+
 /// Which part of a representation a response carries, or how long the whole of
 /// it is.
 ///
@@ -138,8 +140,7 @@ impl HeaderParams for AcceptRanges {
 ///
 /// # This group is written, not read
 ///
-/// As with [`AcceptRanges`]: [`decode`](HeaderParams::decode) stays at its
-/// panicking default.
+/// As with [`AcceptRanges`]: it encodes and does not decode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ContentRange {
     /// `range-resp`: the part enclosed, and the complete length it came from.
@@ -205,14 +206,6 @@ impl ContentRange {
 impl HeaderParams for ContentRange {
     const NAMES: &'static [&'static str] = &["content-range"];
 
-    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-        // Infallible by construction: the value is `bytes`, a space, digits and
-        // three punctuation characters, every one of them printable ASCII.
-        let value =
-            HeaderValue::from_str(&self.field_value()).expect("a field value of printable ASCII");
-        vec![(header::CONTENT_RANGE, value)]
-    }
-
     /// The 206 shape.
     ///
     /// `response_headers` describes a group without reference to a status, and
@@ -230,5 +223,15 @@ impl HeaderParams for ContentRange {
             RefOr::Item(Self::satisfied_header()),
         );
         headers
+    }
+}
+
+impl EncodeHeaders for ContentRange {
+    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+        // Infallible by construction: the value is `bytes`, a space, digits and
+        // three punctuation characters, every one of them printable ASCII.
+        let value =
+            HeaderValue::from_str(&self.field_value()).expect("a field value of printable ASCII");
+        vec![(header::CONTENT_RANGE, value)]
     }
 }

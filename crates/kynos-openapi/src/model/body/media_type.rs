@@ -192,7 +192,11 @@ struct RawMediaType {
     )]
     item_schema: Option<Schema>,
 
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "crate::model::nullable::some",
+        skip_serializing_if = "Option::is_none"
+    )]
     example: Option<Value>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]

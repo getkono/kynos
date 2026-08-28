@@ -502,6 +502,10 @@ mod blockers {
     /// field declaration; its wire name is its `rename` where it has one and
     /// its identifier otherwise. Gates introducing an enum variant, a match
     /// arm, an `impl` or a function are skipped -- they are not wire names.
+    // Long because it is a scanner: each rule it applies is a nested helper
+    // stated where it is used, which reads better here than four private
+    // functions at module scope with nothing else calling them.
+    #[expect(clippy::too_many_lines)]
     fn gated_wire_names() -> BTreeSet<String> {
         const GATE: &str = "#[cfg(feature = \"openapi32\")]";
 
@@ -551,9 +555,40 @@ mod blockers {
                     continue;
                 };
 
+                // A field only carries its own identifier to the wire when
+                // serde drives the type declaring it. `ExampleValue` is the
+                // model's one exception: it is a domain enum with no serde
+                // derive, converted through `RawExample`, so its `data` field
+                // is written as `dataValue` and looking for `data` would ask
+                // the downgrade for a name no document ever contains.
+                if !declared_in_a_serde_item(&lines, index) {
+                    continue;
+                }
+
                 let attributes = lines[index + 1..cursor].join(" ");
                 names.insert(rename_in(&attributes).unwrap_or_else(|| camel_case(&identifier)));
             }
+        }
+
+        /// Whether the type enclosing the gate at `gate` is serde-derived.
+        ///
+        /// The enclosing type is the nearest `struct` or `enum` header above
+        /// the gate, and its derives are the attribute run directly above that
+        /// header.
+        fn declared_in_a_serde_item(lines: &[&str], gate: usize) -> bool {
+            let header = lines[..gate].iter().rposition(|line| {
+                let declaration = line.strip_prefix("pub ").unwrap_or(line);
+                declaration.starts_with("enum ") || declaration.starts_with("struct ")
+            });
+            let Some(header) = header else {
+                return false;
+            };
+
+            lines[..header]
+                .iter()
+                .rev()
+                .take_while(|line| line.starts_with("#[") || line.starts_with("//"))
+                .any(|line| line.contains("Serialize"))
         }
 
         /// The identifier of `line` when it *declares* a field.
@@ -634,26 +669,35 @@ mod blockers {
     /// Names are matched against the string literals `downgrade.rs` builds its
     /// locations from, rather than against its source text, so an identifier
     /// that merely happens to share a field's spelling does not satisfy it.
+    ///
+    /// A name has to be a whole *segment* of some literal, not a substring of
+    /// one. Substring matching is how `Server.name` passed this test while
+    /// three of the four positions a Server Object hangs in went unread: `name`
+    /// is a substring of `#/servers/{index}/name`, so the shortest field names
+    /// — `name`, `kind`, `query`, `encoding` — were satisfied by any literal
+    /// that happened to contain them. Splitting on `/` costs nothing and makes
+    /// the check say what it always meant.
     #[test]
     fn every_three_two_field_is_reported() {
         const REPORTER: &str = include_str!("downgrade.rs");
 
-        let literals: String = REPORTER
+        let segments: BTreeSet<&str> = REPORTER
             .split('"')
             .skip(1)
             .step_by(2)
-            .collect::<Vec<_>>()
-            .join("\u{1f}");
+            .flat_map(|literal| literal.split('/'))
+            .collect();
 
         let unreported: Vec<String> = gated_wire_names()
             .into_iter()
-            .filter(|name| !literals.contains(name.as_str()))
+            .filter(|name| !segments.contains(name.as_str()))
             .collect();
 
         assert!(
             unreported.is_empty(),
             "the model gates {unreported:?} behind `openapi32` and the downgrade names \
-             none of them, so a document carrying one emits as 3.1 with no complaint"
+             none of them as a location segment, so a document carrying one emits as 3.1 \
+             with no complaint"
         );
     }
 
@@ -836,7 +880,7 @@ mod reach {
             {
                 let mut document = document();
                 let mut callback = Callback::new();
-                callback.0.insert(
+                callback.items.insert(
                     "{$request.body#/url}".to_owned(),
                     RefOr::Item(item_with_summarised_response()),
                 );
@@ -875,7 +919,7 @@ mod reach {
             {
                 let mut document = document();
                 let mut callback = Callback::new();
-                callback.0.insert(
+                callback.items.insert(
                     "{$request.body#/url}".to_owned(),
                     RefOr::Item(item_with_summarised_response()),
                 );
@@ -934,6 +978,147 @@ mod reach {
     fn a_construct_in_any_container_refuses_to_emit_as_three_one() {
         for (container, document, _) in cases() {
             document.emit(SpecVersion::V3_1).expect_err(container);
+        }
+    }
+}
+
+/// Every position a 3.2 *field* can occupy is one the downgrade reads.
+///
+/// `reach` above plants one construct per container and proves the walk
+/// arrives; this fixes the container and varies the *position within it*. The
+/// two fail differently, and the second is invisible to the first: a walk can
+/// reach an object and still never read the field, because reading it is a
+/// separate line from arriving at it.
+///
+/// `Server.name` is the field that shows the difference. A Server Object hangs
+/// in four places — the document root, a Path Item, an Operation and a Link —
+/// and only the first was read, so a `name` written in any of the other three
+/// emitted under `openapi: 3.1.2` carrying a field 3.1 does not define. The
+/// 3.1 meta-schema sets `unevaluatedProperties: false` on `$defs/server`, so
+/// what came out was not merely over-described; it was invalid.
+///
+/// `every_three_two_field_is_reported` could not see this. It asks whether a
+/// gated wire name appears among `downgrade.rs`'s string literals, and `name`
+/// is a substring of `#/servers/{index}/name` — so the field counted as
+/// reported on the strength of the one position that did read it.
+#[cfg(feature = "openapi32")]
+mod positions {
+    use super::document;
+    use crate::model::{
+        document::{Document, SpecVersion},
+        link::Link,
+        paths::{item::PathItem, method::Method, operation::Operation, template::PathTemplate},
+        reference::RefOr,
+        response::{Response, Responses},
+        server::Server,
+    };
+
+    /// A server carrying the 3.2 `name`, and nothing else 3.2.
+    fn named() -> Server {
+        Server {
+            name: Some("production".to_owned()),
+            ..Server::new("https://api.example.com")
+        }
+    }
+
+    /// One case per position, written out rather than generated: the count of
+    /// them is the coverage, as it is in `reach`.
+    fn cases() -> Vec<(&'static str, Document, String)> {
+        let orders = PathTemplate::parse("/orders").expect("a valid template");
+        let mut cases = Vec::new();
+
+        cases.push((
+            "the document root",
+            {
+                let mut document = document();
+                document.servers.push(named());
+                document
+            },
+            "#/servers/0/name".to_owned(),
+        ));
+
+        cases.push((
+            "a path item",
+            {
+                let mut document = document();
+                document.paths.insert(
+                    &orders,
+                    PathItem {
+                        servers: vec![named()],
+                        ..PathItem::new()
+                    },
+                );
+                document
+            },
+            "#/paths/~1orders/servers/0/name".to_owned(),
+        ));
+
+        cases.push((
+            "an operation",
+            {
+                let mut document = document();
+                document.paths.insert(
+                    &orders,
+                    PathItem::new().with_operation(
+                        Method::Get,
+                        Operation {
+                            servers: vec![named()],
+                            ..Operation::default()
+                        },
+                    ),
+                );
+                document
+            },
+            "#/paths/~1orders/get/servers/0/name".to_owned(),
+        ));
+
+        cases.push((
+            "a link on a response",
+            {
+                let mut document = document();
+                // `Link::target` is private, so the update syntax the other
+                // cases use is unavailable; `server` is a public field.
+                let mut link = Link::to_operation("getOrder");
+                link.server = Some(named());
+                let response = Response {
+                    links: [("next".to_owned(), RefOr::Item(link))]
+                        .into_iter()
+                        .collect(),
+                    ..Response::new("ok")
+                };
+                document.paths.insert(
+                    &orders,
+                    PathItem::new().with_operation(
+                        Method::Get,
+                        Operation {
+                            responses: Responses::new().with(200, response),
+                            ..Operation::default()
+                        },
+                    ),
+                );
+                document
+            },
+            "#/paths/~1orders/get/responses/200/links/next/server/name".to_owned(),
+        ));
+
+        cases
+    }
+
+    #[test]
+    fn every_position_a_server_hangs_in_is_read() {
+        for (position, document, expected) in cases() {
+            assert_eq!(
+                crate::emit::downgrade::three_two_only_constructs(&document),
+                vec![expected],
+                "a 3.2 `Server.name` in {position} must be found and reported there"
+            );
+        }
+    }
+
+    #[test]
+    fn a_named_server_in_any_position_refuses_to_emit_as_three_one() {
+        for (position, document, _) in cases() {
+            document.emit(SpecVersion::V3_1).expect_err(position);
         }
     }
 }

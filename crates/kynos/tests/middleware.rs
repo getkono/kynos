@@ -286,7 +286,9 @@ mod partial {
     impl kynos::extract::params::header::HeaderParams for StatedLength {
         const NAMES: &'static [&'static str] = &["content-length"];
         const DESCRIBED: bool = false;
+    }
 
+    impl kynos::extract::params::header::EncodeHeaders for StatedLength {
         fn encode(&self) -> Vec<(kynos::http::HeaderName, kynos::http::HeaderValue)> {
             vec![(
                 header::CONTENT_LENGTH,
@@ -885,7 +887,7 @@ mod decompression {
         Router,
         extract::{
             body::text::Text,
-            params::header::{HeaderParams, Headers},
+            params::header::{DecodeHeaders, EncodeHeaders, HeaderParams, Headers},
         },
         http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
         middleware::{compression::Compression, decompression::Decompression},
@@ -926,7 +928,9 @@ mod decompression {
     impl HeaderParams for CodedForm {
         const NAMES: &'static [&'static str] =
             &["content-encoding", "content-length", "content-digest"];
+    }
 
+    impl DecodeHeaders for CodedForm {
         fn decode(headers: &HeaderMap) -> Result<Self, kynos::error::rejection::HeaderRejection> {
             let read = |name: &str| {
                 headers
@@ -941,7 +945,9 @@ mod decompression {
                 digest: read("content-digest"),
             })
         }
+    }
 
+    impl EncodeHeaders for CodedForm {
         fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
             Vec::new()
         }

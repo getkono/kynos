@@ -34,7 +34,7 @@ pub(super) fn conformance(document: &Document, record: &Observed) -> Vec<String>
     };
     let Some(operation) = document
         .paths
-        .0
+        .items
         .get(template)
         .and_then(|item| item.operation(method))
     else {
@@ -173,7 +173,7 @@ pub(super) fn matched_template<'d>(document: &'d Document, path: &str) -> Option
     let path = path.split(['?', '#']).next().unwrap_or(path);
 
     let mut best: Option<(&'d String, usize)> = None;
-    for template in document.paths.0.keys() {
+    for template in document.paths.items.keys() {
         if !template_matches(template, path) {
             continue;
         }
@@ -458,7 +458,7 @@ mod tests {
             kynos_openapi::Info::new("Fixture", "1.0.0"),
         );
         for template in templates {
-            document.paths.0.insert(
+            document.paths.items.insert(
                 (*template).to_owned(),
                 PathItem {
                     get: Some(Box::new(Operation::default())),

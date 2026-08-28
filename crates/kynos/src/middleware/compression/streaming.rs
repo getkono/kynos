@@ -29,6 +29,12 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 /// Only meaningful for a body being produced as it goes. A response whose
 /// length is already known is encoded in one pass, and there is nothing to
 /// trade.
+///
+/// `#[non_exhaustive]`, for the reason
+/// [`Encoding`](crate::middleware::compression::policy::Encoding)'s is: the set
+/// is Kynos's, and a third mode — a size threshold, say — is a decision this
+/// crate may take without it being a breaking change downstream.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LatencyMode {
     /// Flush after every frame the handler produces.

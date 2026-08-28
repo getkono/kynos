@@ -6,7 +6,7 @@
 use std::convert::Infallible;
 
 use kynos::{
-    extract::params::header::HeaderParams,
+    extract::params::header::{EncodeHeaders, HeaderParams},
     http::{HeaderName, HeaderValue, Request},
     middleware::{Continued, Interceptor, Next},
 };
@@ -15,7 +15,9 @@ struct Stamp(HeaderValue);
 
 impl HeaderParams for Stamp {
     const NAMES: &'static [&'static str] = &["x-stamp"];
+}
 
+impl EncodeHeaders for Stamp {
     fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
         vec![(HeaderName::from_static("x-stamp"), self.0.clone())]
     }

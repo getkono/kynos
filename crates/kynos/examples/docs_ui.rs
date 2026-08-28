@@ -124,7 +124,7 @@ async fn main() -> kynos::Result<()> {
     // `cfg!` is a value, so the release build checks that the routes are gone
     // as surely as the debug build checks that they are there.
     let document = router.openapi()?;
-    let described: Vec<&str> = document.paths.0.keys().map(String::as_str).collect();
+    let described: Vec<&str> = document.paths.items.keys().map(String::as_str).collect();
     assert_eq!(
         cfg!(debug_assertions),
         described.contains(&"/docs") && described.contains(&"/openapi.json"),

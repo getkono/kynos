@@ -271,6 +271,16 @@ run = [
 
 [tasks.check]
 description = "Run formatting, linting, and tests"
+# `features:check` and `features:targets` are here because `AGENTS.md` names
+# both this task and that one in consecutive sentences -- "run it whenever a
+# feature flag or a `#[cfg]` changes" and "run `mise run check` before handing
+# off" -- and they pointed at different commands. A contributor following the
+# second was not running the first.
+#
+# They run last, and in this order, because `cargo hack` rewrites member
+# manifests while it works: anything sharing the workspace with it reads a
+# manifest with its dev-dependencies stripped and fails for reasons that have
+# nothing to do with the change under test.
 run = [
   { task = "format:check" },
   { task = "lint" },
@@ -282,6 +292,8 @@ run = [
   { task = "references:verify" },
   { task = "docs:check" },
   { task = "panic:check" },
+  { task = "features:check" },
+  { task = "features:targets" },
 ]
 
 [tasks."commits:message"]

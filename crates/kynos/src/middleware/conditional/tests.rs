@@ -2,7 +2,7 @@ use crate::http::etag::ETag;
 
 use super::{IfNoneMatch, NotModified, Preconditions, matched};
 use crate::{
-    extract::params::header::HeaderParams,
+    extract::params::header::DecodeHeaders,
     http::{HeaderMap, HeaderValue, header},
 };
 
