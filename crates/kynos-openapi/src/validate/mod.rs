@@ -47,13 +47,23 @@ impl Validator {
     pub fn validate(&self, document: &Document) -> Vec<Violation> {
         let mut violations = Vec::new();
 
-        // OpenAPI 3.2 requires a document to declare something; 3.1 does not.
-        if self.version.supports_3_2()
-            && document.paths.is_empty()
-            && document.webhooks.is_empty()
-            && document.components.is_empty()
-        {
-            violations.push(Violation::error("#", SpecError::EmptyDocument));
+        // A document is checked against the version it claims to be. 3.2-only
+        // constructs are `#[cfg]`-gated, so a 3.1-only build cannot hold one --
+        // but a 3.2-capable build can, and being asked to validate such a
+        // document as 3.1 has to say so rather than pass a description 3.1
+        // cannot express. This is the same walk `Document::emit` refuses on,
+        // read here so that validating and emitting agree.
+        //
+        // `EmptyDocument` used to be the only rule this version was consulted
+        // for, and it is raised nowhere now: every version requires a document
+        // to carry at least one of `paths`, `components` or `webhooks`, and
+        // `Document::paths` is always serialized, so the condition is prevented
+        // by construction rather than reported after the fact.
+        if !self.version.supports_3_2() {
+            let blockers = crate::emit::downgrade::three_two_only_constructs(document);
+            if !blockers.is_empty() {
+                violations.push(Violation::error("#", SpecError::RequiresV3_2 { blockers }));
+            }
         }
 
         // A License Object setting both `identifier` and `url` used to be

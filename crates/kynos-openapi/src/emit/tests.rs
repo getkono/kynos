@@ -10,12 +10,19 @@ fn document() -> Document {
     Document::new(SpecVersion::V3_1, Info::new("Orders", "1.0.0"))
 }
 
+/// A document with nothing in it still declares `paths`.
+///
+/// Not a stylistic choice: every version requires at least one of `paths`,
+/// `components` or `webhooks`, so a document that skipped all three violated a
+/// MUST. An empty Paths Object is the honest one of the three to write -- the
+/// specification's "Security Filtering" section gives it the meaning "you are
+/// in the right place and there is nothing here to show you".
 #[test]
-fn a_bare_document_emits_only_the_required_fields() {
+fn a_bare_document_declares_paths_and_nothing_else() {
     let json = document().to_json().expect("serializable");
     assert!(json.contains(r#""openapi": "3.1.2""#));
     assert!(json.contains(r#""title": "Orders""#));
-    assert!(!json.contains("paths"));
+    assert!(json.contains(r#""paths": {}"#));
     assert!(!json.contains("components"));
 }
 

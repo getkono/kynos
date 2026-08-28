@@ -653,8 +653,16 @@ fn variant_name(error: &SpecError) -> &'static str {
 /// what keeps [`every_variant_has_a_case`] a statement about this validator
 /// rather than about the enum.
 const RAISED_ELSEWHERE: &[&str] = &[
-    // `Document::emit` refuses a lossy downgrade. `tests/properties.rs`
-    // asserts the whole of that contract.
+    // Prevented by construction rather than reported: `Document::paths` is
+    // always serialized, so every emitted document carries one of the three
+    // fields the rule asks for. The variant stays because a consumer
+    // validating a description Kynos did not write still needs to name the
+    // failure, and because `paths` being absent and `paths` being present but
+    // empty are the same value here -- only the wire tells them apart.
+    "EmptyDocument",
+    // A 3.1-only build has no 3.2 construct to raise this with. A 3.2-capable
+    // one does, and carries a ledger case below.
+    #[cfg(not(feature = "openapi32"))]
     "RequiresV3_2",
     // `kynos`'s `short_circuit_mismatch` compares an interceptor's declared
     // statuses against the responses it describes. No document reaches it, and
@@ -920,6 +928,15 @@ fn ledger_opacity() -> Vec<(&'static str, SpecVersion, Document)> {
         )])
     });
 
+    // Validating as 3.1 a document only 3.2 can express. The same walk
+    // `Document::emit` refuses on, so the two agree on what 3.1 can carry.
+    #[cfg(feature = "openapi32")]
+    push("RequiresV3_2", {
+        let mut document = document_with(&[("/users", get(operation()))]);
+        document.self_uri = Some("https://example.com/orders".to_owned());
+        document
+    });
+
     // One opaque operation raises three at once: the operation is reported, the
     // document is no longer authoritative, and the stamp saying so is present.
     push("OpaqueOperation", opaque_document());
@@ -951,13 +968,6 @@ fn ledger_opacity() -> Vec<(&'static str, SpecVersion, Document)> {
         );
         document
     });
-
-    // Every version Kynos emits requires a document to declare something, so
-    // this case needs no version of its own.
-    push(
-        "EmptyDocument",
-        Document::new(SpecVersion::V3_1, Info::new("Test", "1.0.0")),
-    );
 
     cases
 }

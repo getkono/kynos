@@ -100,7 +100,16 @@ pub struct Document {
     pub servers: Vec<Server>,
 
     /// The available paths and operations.
-    #[serde(default, skip_serializing_if = "Paths::is_empty")]
+    ///
+    /// Always written, even when empty. Every version Kynos emits requires a
+    /// document to carry at least one of `paths`, `components` or `webhooks`,
+    /// and this is the one of the three that is always true of an API: an
+    /// empty Paths Object says there are no operations to show, which the
+    /// specification's "Security Filtering" section blesses in as many words.
+    /// Skipping it is what let a description of nothing but opaque routes --
+    /// which take no `paths` key by design -- emit as a document declaring
+    /// nothing at all.
+    #[serde(default)]
     pub paths: Paths,
 
     /// Webhooks the API delivers, keyed by a name of the API's choosing.
