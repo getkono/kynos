@@ -219,6 +219,12 @@ name = "cors"
 required-features = ["openapi31", "macros", "json"]
 
 [[example]]
+name = "csrf"
+# No `server`, for the same reason `cors` has none: what this demonstrates is
+# which requests are refused, which is a question about header combinations.
+required-features = ["openapi31", "macros", "json", "cookie"]
+
+[[example]]
 name = "decompression"
 required-features = [
   "openapi31",
