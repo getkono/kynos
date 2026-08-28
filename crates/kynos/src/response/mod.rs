@@ -34,6 +34,7 @@ pub mod codec;
 pub mod cookie;
 pub mod disposition;
 pub mod headers;
+pub mod language;
 pub mod negotiate;
 pub mod range;
 pub mod status;
