@@ -1,7 +1,11 @@
 //! What stands in the way of emitting a document as an earlier version.
 
+// The whole module is 3.2-only, so the gate sits here rather than on each of
+// its eighteen walkers.
+#[cfg(feature = "openapi32")]
 mod walk;
 
+#[cfg(feature = "openapi32")]
 use walk::{collect_components_blockers, collect_path_item_blockers, collect_servers_blockers};
 
 use crate::model::document::Document;

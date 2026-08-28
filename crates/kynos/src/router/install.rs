@@ -8,8 +8,8 @@
 //! Nothing here is public, so the split moves no path.
 
 use super::{
-    Arc, Catch, Document, ErasedInterceptor, Error, FallbackPolicy, HashMap, Info, PanicPolicy,
-    PathEntry, Result, Severity, SpecError, SpecVersion, Violation, dispatch,
+    Arc, Catch, Document, ErasedInterceptor, Error, FallbackPolicy, Info, PanicPolicy, PathEntry,
+    Result, Severity, SpecError, SpecVersion, Violation, dispatch,
 };
 
 /// Adds the routes no path template expresses to the match table.
@@ -22,6 +22,10 @@ use super::{
 /// # Errors
 ///
 /// Returns [`Error::Invalid`] when a pattern collides with one already in the
+// Named only by `install_unchecked`.
+#[cfg(feature = "unchecked")]
+use super::HashMap;
+
 /// table under a different key.
 #[cfg(feature = "unchecked")]
 pub(super) fn install_unchecked<C>(

@@ -5,12 +5,12 @@
 //! operations sharing a prefix, [`operation`] the description being assembled,
 //! [`policy`] the application-wide fallbacks, and [`service`] the built result.
 
-#[cfg(feature = "assets")]
 mod describe;
 mod install;
 
 use install::{catches, error_at, pointer_token, unroutable};
 
+#[cfg(feature = "assets")]
 pub mod assets;
 #[cfg(feature = "docs")]
 pub mod docs;

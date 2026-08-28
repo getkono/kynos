@@ -9,14 +9,20 @@
 //! `mod.rs`, and an inherent `impl` may sit in any module of the crate.
 
 use super::install::{
-    catches, cors_conflict, error_at, highest_version, install_preflight, install_unchecked,
-    invalid, lowest_expressing, placeholder_info, pointer_token, unique_tags,
+    catches, cors_conflict, error_at, highest_version, install_preflight, invalid,
+    lowest_expressing, placeholder_info, pointer_token, unique_tags,
 };
 use super::{
     Arc, Dispatch, Document, EndpointTerminal, Error, HashMap, OperationCx, PanicPolicy, PathEntry,
     PathItem, Paths, Registry, Result, Route, Router, Service, Severity, SpecError, SpecVersion,
-    Violation, dispatch, docs,
+    Violation, dispatch,
 };
+
+// Each behind the feature that provides it, as `mod.rs` had them.
+#[cfg(feature = "docs")]
+use super::docs;
+#[cfg(feature = "unchecked")]
+use super::install::install_unchecked;
 
 impl<C, P: PanicPolicy, I> Router<C, P, I> {
     /// Checks the router without building it.

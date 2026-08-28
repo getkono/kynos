@@ -10,7 +10,6 @@ use super::{
 /// because [`SecurityScheme`] is an enum with the field repeated on every
 /// variant, and a match is what makes a sixth variant a compile error here
 /// rather than a construct this walk silently stops reporting.
-#[cfg(feature = "openapi32")]
 pub(super) fn collect_security_scheme_blockers(
     location: &str,
     scheme: &SecurityScheme,
@@ -46,7 +45,6 @@ pub(super) fn collect_security_scheme_blockers(
 /// authorization *URL* is 3.2's addition to a flow, and can ride on one of the
 /// four flows 3.1 already had. Reporting only the first would let the second
 /// through wherever it does.
-#[cfg(feature = "openapi32")]
 pub(super) fn collect_oauth_flow_blockers(
     location: &str,
     flows: &OAuthFlows,
@@ -77,7 +75,6 @@ pub(super) fn collect_oauth_flow_blockers(
 /// three emit as 3.1 carrying a field 3.1 does not define — and the 3.1
 /// meta-schema sets `unevaluatedProperties: false` on `$defs/server`, so the
 /// result was invalid rather than merely generous.
-#[cfg(feature = "openapi32")]
 pub(super) fn collect_server_blockers(location: &str, server: &Server, blockers: &mut Vec<String>) {
     if server.name.is_some() {
         blockers.push(format!("{location}/name"));
@@ -85,7 +82,6 @@ pub(super) fn collect_server_blockers(location: &str, server: &Server, blockers:
 }
 
 /// The same for a `servers` array, at the index each one sits at.
-#[cfg(feature = "openapi32")]
 pub(super) fn collect_servers_blockers(
     location: &str,
     servers: &[Server],
@@ -97,7 +93,6 @@ pub(super) fn collect_servers_blockers(
 }
 
 /// One Link Object, which is 3.1 apart from the Server Object it may carry.
-#[cfg(feature = "openapi32")]
 pub(super) fn collect_link_blockers(location: &str, link: &Link, blockers: &mut Vec<String>) {
     if let Some(server) = &link.server {
         collect_server_blockers(&format!("{location}/server"), server, blockers);
@@ -109,7 +104,6 @@ pub(super) fn collect_link_blockers(location: &str, link: &Link, blockers: &mut 
 /// `mediaTypes` is the whole map rather than anything within it: the section
 /// itself arrived in 3.2, so its presence is the blocker and descending into it
 /// would name one document twice.
-#[cfg(feature = "openapi32")]
 pub(super) fn collect_components_blockers(
     location: &str,
     components: &Components,
@@ -183,7 +177,6 @@ pub(super) fn collect_components_blockers(
 
 /// One Path Item, wherever it hangs: `paths`, `webhooks`, a component, or a
 /// callback expression.
-#[cfg(feature = "openapi32")]
 pub(super) fn collect_path_item_blockers(
     location: &str,
     item: &PathItem,
@@ -230,7 +223,6 @@ pub(super) fn collect_path_item_blockers(
 }
 
 /// The Path Items a callback expression maps to.
-#[cfg(feature = "openapi32")]
 pub(super) fn collect_callback_blockers(
     location: &str,
     callback: &Callback,
@@ -247,7 +239,6 @@ pub(super) fn collect_callback_blockers(
     }
 }
 
-#[cfg(feature = "openapi32")]
 pub(super) fn collect_operation_blockers(
     location: &str,
     operation: &Operation,
@@ -292,7 +283,6 @@ pub(super) fn collect_operation_blockers(
 ///
 /// The two are separate fields, and walking only the map is what let a 3.2
 /// construct in a `default` response through.
-#[cfg(feature = "openapi32")]
 pub(super) fn collect_responses_blockers(
     location: &str,
     responses: &Responses,
@@ -313,7 +303,6 @@ pub(super) fn collect_responses_blockers(
     }
 }
 
-#[cfg(feature = "openapi32")]
 pub(super) fn collect_response_blockers(
     location: &str,
     response: &Response,
@@ -351,7 +340,6 @@ pub(super) fn collect_response_blockers(
 /// The location is passed in rather than appended here because a parameter is
 /// named by its position under an operation and by its component key under
 /// `components`, and only the caller knows which.
-#[cfg(feature = "openapi32")]
 pub(super) fn collect_parameter_blockers(
     location: &str,
     parameter: &Parameter,
@@ -389,7 +377,6 @@ pub(super) fn collect_parameter_blockers(
     }
 }
 
-#[cfg(feature = "openapi32")]
 pub(super) fn collect_header_blockers(location: &str, header: &Header, blockers: &mut Vec<String>) {
     if let Some((media_type, content)) = header.content() {
         collect_media_type_blockers(
@@ -416,7 +403,6 @@ pub(super) fn collect_header_blockers(location: &str, header: &Header, blockers:
     }
 }
 
-#[cfg(feature = "openapi32")]
 pub(super) fn collect_media_type_blockers(
     location: &str,
     content: &MediaType,
@@ -469,7 +455,6 @@ pub(super) fn collect_media_type_blockers(
 /// Nested encodings are not walked, and that is not an omission: each of these
 /// three *is* the nesting, so reporting the outer field already refuses the
 /// emission and naming what sits beneath it would say the same thing twice.
-#[cfg(feature = "openapi32")]
 pub(super) fn collect_encoding_blockers(
     location: &str,
     encoding: &Encoding,
@@ -490,7 +475,6 @@ pub(super) fn collect_encoding_blockers(
 ///
 /// `externalValue` is a form 3.1 can express, so an external example is not
 /// itself a blocker -- only the `dataValue` that 3.2 lets ride along with it.
-#[cfg(feature = "openapi32")]
 pub(super) fn collect_example_blockers(
     location: &str,
     example: &Example,
@@ -523,7 +507,6 @@ pub(super) fn collect_example_blockers(
 /// not mistaken for an XML Object unless it also carries `nodeType` -- and a
 /// schema that does is refused rather than downgraded, which is the safe way to
 /// be wrong here.
-#[cfg(feature = "openapi32")]
 pub(super) fn collect_schema_blockers(location: &str, schema: &Schema, blockers: &mut Vec<String>) {
     let Ok(value) = serde_json::to_value(schema) else {
         return;
@@ -531,7 +514,6 @@ pub(super) fn collect_schema_blockers(location: &str, schema: &Schema, blockers:
     collect_schema_value_blockers(location, &value, blockers);
 }
 
-#[cfg(feature = "openapi32")]
 pub(super) fn collect_schema_value_blockers(
     location: &str,
     value: &serde_json::Value,
