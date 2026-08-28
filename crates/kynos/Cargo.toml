@@ -19,6 +19,13 @@ name = "assets"
 path = "tests/assets.rs"
 required-features = ["openapi31", "macros", "assets"]
 
+# Reads the vendored meta-schemas, so it needs the JSON Schema validator that
+# `test-util` carries and the 3.2 constructs the corpus pins.
+[[test]]
+name = "metaschema"
+path = "tests/metaschema.rs"
+required-features = ["openapi32", "macros", "json", "test-util"]
+
 [[test]]
 name = "panic-recovery-check"
 path = "tests/compile/panic_recovery.rs"
