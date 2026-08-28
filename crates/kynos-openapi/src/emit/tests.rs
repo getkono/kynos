@@ -669,3 +669,261 @@ mod blockers {
         );
     }
 }
+
+/// Every container a 3.2 construct can sit in is one the downgrade walks.
+///
+/// The ledger beside this proves each construct is *recognised*; this proves
+/// each is *reached*. They are different failures with the same consequence,
+/// and the second is invisible to the first: a construct with a perfectly good
+/// blocker still emits as 3.1 if the walk never arrives at the object holding
+/// it. The walk reached `paths` and `components.securitySchemes` and nothing
+/// else, so a webhook, a reusable component, a hoisted path-item parameter, a
+/// callback and a `default` response were all exempt.
+///
+/// One planted construct per container, chosen for being unambiguous rather
+/// than for being interesting -- what is under test is the route to it.
+#[cfg(feature = "openapi32")]
+mod reach {
+    use super::document;
+    use crate::model::{
+        body::{RequestBody, media_type::MediaType},
+        callback::Callback,
+        components::ComponentName,
+        document::{Document, SpecVersion},
+        example::Example,
+        parameter::{Parameter, ParameterIn, header::Header},
+        paths::{item::PathItem, method::Method, operation::Operation, template::PathTemplate},
+        reference::RefOr,
+        response::{Response, Responses},
+        schema::Schema,
+    };
+
+    /// A component key, which every case below needs and none varies.
+    fn key() -> ComponentName {
+        ComponentName::new("Reused").expect("a legal component key")
+    }
+
+    /// A response carrying the 3.2 `summary` field.
+    fn summarised() -> Response {
+        Response {
+            summary: Some("The order".to_owned()),
+            ..Response::new("ok")
+        }
+    }
+
+    /// A path item whose one operation answers with [`summarised`].
+    fn item_with_summarised_response() -> PathItem {
+        PathItem::new().with_operation(
+            Method::Get,
+            Operation {
+                responses: Responses::new().with(200, summarised()),
+                ..Operation::default()
+            },
+        )
+    }
+
+    /// A media type describing a sequential body, which is 3.2-only.
+    fn sequential() -> MediaType {
+        MediaType::sequential(Schema::any())
+    }
+
+    fn cases() -> Vec<(&'static str, Document, String)> {
+        let mut cases = Vec::new();
+        let orders = PathTemplate::parse("/orders").expect("a valid template");
+
+        cases.push((
+            "webhooks",
+            {
+                let mut document = document();
+                document
+                    .webhooks
+                    .insert("orderPlaced".to_owned(), item_with_summarised_response());
+                document
+            },
+            "#/webhooks/orderPlaced/get/responses/200/summary".to_owned(),
+        ));
+
+        cases.push((
+            "components.pathItems",
+            {
+                let mut document = document();
+                document
+                    .components
+                    .path_items
+                    .insert("Shared".to_owned(), item_with_summarised_response());
+                document
+            },
+            "#/components/pathItems/Shared/get/responses/200/summary".to_owned(),
+        ));
+
+        cases.push((
+            "components.responses",
+            {
+                let mut document = document();
+                document
+                    .components
+                    .responses
+                    .insert(key().to_string(), RefOr::Item(summarised()));
+                document
+            },
+            "#/components/responses/Reused/summary".to_owned(),
+        ));
+
+        cases.push((
+            "components.parameters",
+            {
+                let mut document = document();
+                document.components.parameters.insert(
+                    key().to_string(),
+                    RefOr::Item(Parameter::new("q", ParameterIn::Querystring, Schema::any())),
+                );
+                document
+            },
+            "#/components/parameters/Reused".to_owned(),
+        ));
+
+        cases.push((
+            "components.requestBodies",
+            {
+                let mut document = document();
+                document.components.request_bodies.insert(
+                    key().to_string(),
+                    RefOr::Item(RequestBody::new("application/json", sequential())),
+                );
+                document
+            },
+            "#/components/requestBodies/Reused/content/application~1json/itemSchema".to_owned(),
+        ));
+
+        cases.push((
+            "components.headers",
+            {
+                let mut document = document();
+                document.components.headers.insert(
+                    key().to_string(),
+                    RefOr::Item(Header::with_content("application/json", sequential())),
+                );
+                document
+            },
+            "#/components/headers/Reused/content/application~1json/itemSchema".to_owned(),
+        ));
+
+        cases.push((
+            "components.examples",
+            {
+                let mut document = document();
+                document
+                    .components
+                    .examples
+                    .insert(key().to_string(), RefOr::Item(Example::serialized("id=1")));
+                document
+            },
+            "#/components/examples/Reused/serializedValue".to_owned(),
+        ));
+
+        cases.push((
+            "components.callbacks",
+            {
+                let mut document = document();
+                let mut callback = Callback::new();
+                callback.0.insert(
+                    "{$request.body#/url}".to_owned(),
+                    RefOr::Item(item_with_summarised_response()),
+                );
+                document
+                    .components
+                    .callbacks
+                    .insert(key().to_string(), RefOr::Item(callback));
+                document
+            },
+            "#/components/callbacks/Reused/{$request.body#~1url}/get/responses/200/summary"
+                .to_owned(),
+        ));
+
+        cases.push((
+            "pathItem.parameters",
+            {
+                let mut document = document();
+                document.paths.insert(
+                    &orders,
+                    PathItem {
+                        parameters: vec![RefOr::Item(Parameter::new(
+                            "q",
+                            ParameterIn::Querystring,
+                            Schema::any(),
+                        ))],
+                        ..PathItem::new()
+                    },
+                );
+                document
+            },
+            "#/paths/~1orders/parameters/q".to_owned(),
+        ));
+
+        cases.push((
+            "operation.callbacks",
+            {
+                let mut document = document();
+                let mut callback = Callback::new();
+                callback.0.insert(
+                    "{$request.body#/url}".to_owned(),
+                    RefOr::Item(item_with_summarised_response()),
+                );
+                document.paths.insert(
+                    &orders,
+                    PathItem::new().with_operation(
+                        Method::Get,
+                        Operation {
+                            callbacks: [("onData".to_owned(), RefOr::Item(callback))]
+                                .into_iter()
+                                .collect(),
+                            ..Operation::default()
+                        },
+                    ),
+                );
+                document
+            },
+            "#/paths/~1orders/get/callbacks/onData/{$request.body#~1url}/get/responses/200/summary"
+                .to_owned(),
+        ));
+
+        cases.push((
+            "responses.default",
+            {
+                let mut document = document();
+                document.paths.insert(
+                    &orders,
+                    PathItem::new().with_operation(
+                        Method::Get,
+                        Operation {
+                            responses: Responses::new().with_default(summarised()),
+                            ..Operation::default()
+                        },
+                    ),
+                );
+                document
+            },
+            "#/paths/~1orders/get/responses/default/summary".to_owned(),
+        ));
+
+        cases
+    }
+
+    #[test]
+    fn every_container_is_walked() {
+        for (container, document, expected) in cases() {
+            assert_eq!(
+                crate::emit::downgrade::three_two_only_constructs(&document),
+                vec![expected],
+                "a 3.2 construct in `{container}` must be found and reported there"
+            );
+        }
+    }
+
+    #[test]
+    fn a_construct_in_any_container_refuses_to_emit_as_three_one() {
+        for (container, document, _) in cases() {
+            document.emit(SpecVersion::V3_1).expect_err(container);
+        }
+    }
+}
