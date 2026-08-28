@@ -349,6 +349,27 @@ impl Responses for AtCapacity {
 /// Cloning shares the permits, so one limit stays one limit however many copies
 /// the router holds — and mounting a *separate* instance on each endpoint is
 /// how one cap per endpoint is spelled.
+///
+/// # A limit of zero is not a limit
+///
+/// It is a service that answers 503 to everything, for ever, without saying so
+/// anywhere. The limit is therefore a [`NonZeroUsize`], which is the same
+/// spelling [`Server::max_connections`](crate::server::Server::max_connections)
+/// uses for the same concept:
+///
+/// ```
+/// # use std::num::NonZeroUsize;
+/// # use kynos::middleware::limits::Concurrency;
+/// let concurrency = Concurrency::new(NonZeroUsize::new(64).expect("nonzero"));
+/// assert_eq!(concurrency.limit.get(), 64);
+/// ```
+///
+/// Zero has no `NonZeroUsize` to be, so the mistake does not compile:
+///
+/// ```compile_fail
+/// # use kynos::middleware::limits::Concurrency;
+/// let concurrency = Concurrency::new(0);
+/// ```
 #[derive(Clone, Debug)]
 pub struct Concurrency {
     /// The maximum number of requests in flight at once.
