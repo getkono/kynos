@@ -137,6 +137,7 @@ pub struct QueryString<T, M> {
 #[cfg(feature = "openapi32")]
 impl<T, M> QueryString<T, M> {
     /// Wraps a decoded whole-query-string value with its declared media type.
+    #[must_use]
     pub fn new(value: T) -> Self {
         Self {
             value,

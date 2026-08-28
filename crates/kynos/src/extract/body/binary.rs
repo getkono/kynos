@@ -41,6 +41,7 @@ pub struct Binary<M> {
 
 impl<M> Binary<M> {
     /// Wraps bytes with their compile-time media type.
+    #[must_use]
     pub fn new(bytes: impl Into<bytes::Bytes>) -> Self {
         Self {
             bytes: bytes.into(),

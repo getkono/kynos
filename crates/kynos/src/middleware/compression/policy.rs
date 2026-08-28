@@ -18,6 +18,11 @@ use crate::{
 /// extensions, which is what lets a handler state it without any interceptor
 /// having to declare a header for it. A response carrying none is
 /// [`Automatic`](Encoding::Automatic).
+///
+/// `#[non_exhaustive]`: the set is Kynos's rather than a specification's, so a
+/// fourth policy is a thing this crate may decide on and a downstream `match`
+/// should not have to be rewritten for it.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Encoding {
     /// Negotiate, and encode if there is anything worth encoding to.
@@ -93,6 +98,7 @@ pub struct WithEncoding<T> {
 
 impl<T> WithEncoding<T> {
     /// Attaches `encoding` to `body`.
+    #[must_use]
     pub fn new(body: T, encoding: Encoding) -> Self {
         Self { body, encoding }
     }

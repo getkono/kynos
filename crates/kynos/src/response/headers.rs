@@ -21,6 +21,7 @@ pub struct WithHeaders<T, H> {
 
 impl<T, H> WithHeaders<T, H> {
     /// Attaches a derived header group to a response body.
+    #[must_use]
     pub fn new(body: T, headers: H) -> Self {
         Self { body, headers }
     }

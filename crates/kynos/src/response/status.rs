@@ -97,6 +97,7 @@ impl<T> Created<T> {
     /// Creates a 201 response for a resource at `location`.
     ///
     /// Takes a string, or a route attribute's `relative_uri` directly.
+    #[must_use]
     pub fn at(location: impl Into<Location>, body: T) -> Self {
         Self {
             body,
@@ -114,6 +115,7 @@ pub struct Accepted<T> {
 
 impl<T> Accepted<T> {
     /// Creates a 202 response carrying the accepted work representation.
+    #[must_use]
     pub fn new(body: T) -> Self {
         Self { body }
     }
@@ -139,6 +141,7 @@ impl<const CODE: u16> Redirect<CODE> {
     /// Redirects to `location`.
     ///
     /// Takes a string, or a route attribute's `relative_uri` directly.
+    #[must_use]
     pub fn to(location: impl Into<Location>) -> Self {
         Self {
             location: location.into(),

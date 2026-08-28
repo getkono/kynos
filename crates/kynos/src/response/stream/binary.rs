@@ -32,6 +32,7 @@ pub struct BinaryStream<S, M> {
 
 impl<S, M> BinaryStream<S, M> {
     /// Creates a streamed response from byte chunks.
+    #[must_use]
     pub fn new(stream: S) -> Self {
         Self {
             stream,

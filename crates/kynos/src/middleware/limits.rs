@@ -272,6 +272,7 @@ pub struct Timeout {
 
 impl Timeout {
     /// Limits handlers to `limit`.
+    #[must_use]
     pub fn new(limit: std::time::Duration) -> Self {
         Self { limit }
     }

@@ -69,6 +69,7 @@ pub struct Sse<S> {
 
 impl<S> Sse<S> {
     /// Creates an event stream without keep-alive messages.
+    #[must_use]
     pub fn new(events: S) -> Self {
         Self {
             events,
@@ -93,6 +94,7 @@ pub struct KeepAlive {
 
 impl KeepAlive {
     /// Creates the default keep-alive configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             interval: std::time::Duration::from_secs(15),
@@ -148,6 +150,7 @@ pub struct Event<T> {
 
 impl<T> Event<T> {
     /// Creates an event carrying typed data.
+    #[must_use]
     pub fn new(data: T) -> Self {
         Self {
             data,
