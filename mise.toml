@@ -220,6 +220,28 @@ while read -r digest; do
 done <"$quoted"
 '''
 
+[tasks."containment:check"]
+description = "Verify every crate is named only where its owner allows"
+# `architecture.md` says twice that the count is the check -- once for the
+# runtime allowance table, once for the hand-rolled `Stream` implementations --
+# and until this task existed neither count was held by anything. Both rows read
+# `planned` in `nfr.md` while the allowance table was a row short and still
+# named a path that had become a directory.
+#
+# The script reads those tables rather than restating them, so each rule is
+# stated once and it is the statement a reader consults. Adding a site means
+# adding a row, which is the argument the table exists to force.
+#
+# A script rather than a `grep` pipeline because every one of these rules is
+# discussed in prose somewhere under `src`, so every one of them reports a false
+# positive against a naive grep. Comments, string literals -- which is also what
+# makes the `b"h2"` ALPN identifier a non-event rather than a special case --
+# and `#[cfg(test)]` modules come out before anything is matched. Getting that
+# wrong is not hypothetical: a first cut desynchronised on a char literal in
+# `http/etag.rs` and quietly stopped seeing code at all, reporting that every
+# rule held.
+run = "python3 scripts/containment.py"
+
 [tasks."docs:check"]
 description = "Build documentation with warnings denied"
 # `missing_docs` is denied at the workspace level, so this also enforces that
@@ -341,6 +363,7 @@ run = [
   { task = "test:doc" },
   { task = "ui:check" },
   { task = "references:verify" },
+  { task = "containment:check" },
   { task = "docs:check" },
   { task = "panic:check" },
   { task = "features:check" },

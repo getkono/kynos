@@ -57,19 +57,28 @@ is now an enumeration:
 | --- | --- | --- |
 | `server/{accept,connection,mod}.rs`, `server/tls/` | the five coupling points | — |
 | `middleware/limits.rs` | `tokio::{time::timeout, sync::Semaphore}` | the timer wraps the chain's future, which does not exist until after routing; the permit bounds requests already in it |
-| `middleware/compression.rs` | `tokio::io::{AsyncRead, ReadBuf}` | `async-compression`'s encoders are written against tokio's I/O traits; no byte here crosses a socket |
+| `middleware/compression/` | `tokio::io::{AsyncRead, AsyncWrite, ReadBuf}` | `async-compression`'s encoders are written against tokio's I/O traits; no byte here crosses a socket |
+| `middleware/decompression/` | `tokio::io::{AsyncRead, ReadBuf}` | the same traits for the same reason, in the other direction: a client-compressed request body is decoded before an extractor sees it, which is as far from a socket as the encoders are |
 | `response/stream/sse.rs` | `tokio::time::{Instant, Sleep, sleep}` | a keep-alive is a property of one body, and the connection driver cannot know a body is an event stream |
 | `router/assets/fs/` | `tokio::fs::{metadata, read, File}`, `tokio::io::{AsyncReadExt, AsyncSeekExt}` | which file a request wants is not known until routing has chosen the operation, and the read is the operation; a byte range seeks to what it asked for rather than reading the file and discarding most of it |
 
-**Five rows, and the count is the check.** [`nfr.md`](nfr.md#runtime) states the
+**Six rows, and the count is the check.** [`nfr.md`](nfr.md#runtime) states the
 containment requirement against this table rather than against `server/` alone,
-so a sixth site is a failing build rather than a silently broken sentence.
+so a seventh site is a failing build rather than a silently broken sentence.
+`mise run containment:check` is where that count runs.
 
-The fifth was added deliberately, which is what the table is for. Serving a
-file from disk means reading one, and which file is not known until routing has
-chosen the operation — so there is nowhere in `server/` for it to live. That it
-required an entry here, argued for on its own terms, is the mechanism working
-rather than the mechanism being worked around.
+The last two were added deliberately, which is what the table is for. Serving
+a file from disk means reading one, and which file is not known until routing
+has chosen the operation — so there is nowhere in `server/` for it to live.
+Decompression is the compression row's mirror: a client-compressed body is
+decoded before an extractor sees it, on the same `async-compression` traits and
+at the same distance from a socket. That each required an entry here, argued for
+on its own terms, is the mechanism working rather than the mechanism being
+worked around.
+
+Decompression is also the case that shows why this count had to be wired rather
+than asserted. It was a sixth site while the sentence above said there were
+five, and the row that would have caught it was `planned`.
 
 Moving the SSE timer into `server/` was considered and rejected. `TestClient`
 and `Service::call` drive a built service with no server at all — which is what
@@ -188,7 +197,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | Scalar formats, identifiers | `uuid` | [`schema/impls/identifier.rs`](../crates/kynos/src/schema/impls/identifier.rs) | built |
 | Scalar formats, dates and times | `chrono`, `jiff` | [`schema/impls/temporal/`](../crates/kynos/src/schema/impls/temporal/) | built |
 | Scalar formats, decimals | `rust_decimal`, `bigdecimal` | [`schema/impls/decimal/`](../crates/kynos/src/schema/impls/decimal/) | built |
-| Compression | `async-compression` | [`middleware/compression.rs`](../crates/kynos/src/middleware/compression.rs) | built |
+| Compression | `async-compression` | [`middleware/compression/`](../crates/kynos/src/middleware/compression/) | built |
 | tower interop, outward | `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
 | tower interop, inward | `tower` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
 | Document ordering | `indexmap` | [`kynos-openapi`](../crates/kynos-openapi/src/lib.rs) | built |
