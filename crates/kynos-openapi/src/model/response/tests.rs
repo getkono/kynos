@@ -170,3 +170,28 @@ fn merging_keeps_the_existing_entry_on_conflict() {
     let two_hundred = base.get(200).and_then(RefOr::as_item).expect("present");
     assert_eq!(two_hundred.description, "mine");
 }
+
+/// A 3.2 Response Object stating only a summary parses.
+///
+/// 3.1 marks `description` **REQUIRED** (`references/3.1.2.md:2010`). 3.2 drops
+/// the marker (`references/3.2.0.md:2161`), and its meta-schema's
+/// `$defs/response` carries no `required` array at all — so a response with a
+/// `summary` and nothing else is a legal 3.2 document. `description: String`
+/// makes it unparseable, which is the model refusing to read something the
+/// specification allows.
+///
+/// The requirement does not go away; it moves to where it is true. 3.1 still
+/// demands one, and `validate` is what says so.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_response_stating_only_a_summary_parses() {
+    let parsed: Response =
+        serde_json::from_str(r#"{"summary":"The order"}"#).expect("a legal 3.2 Response Object");
+
+    assert_eq!(parsed.summary.as_deref(), Some("The order"));
+    assert_eq!(
+        serde_json::to_string(&parsed).expect("serializable"),
+        r#"{"summary":"The order"}"#,
+        "and writes back what it read, without inventing a description"
+    );
+}
