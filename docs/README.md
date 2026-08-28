@@ -25,6 +25,7 @@ the framework, and the list of features it deliberately rejects, lives in the
 | [`standards.md`](standards.md) | Working on anything a specification governs: which document and section binds a middleware, where a departure is argued, and what is known not to conform |
 | [`testing.md`](testing.md) | Deciding where a test belongs, or what kind of test a guarantee needs |
 | [`nfr.md`](nfr.md) | Adding a module-level guarantee, or deciding what a change must prove before it lands |
+| [`releasing.md`](releasing.md) | Cutting a release, or setting up the publishing pipeline |
 
 ## The anti-patterns are normative
 
@@ -42,6 +43,10 @@ Sections headed `Policy`, `Invariants` or naming a requirement are normative. A
 section headed `Rationale` is not: it records why a rule exists so the rule can
 be argued with honestly later, rather than merely overturned. Nothing in a
 `Rationale` section is an instruction.
+
+One document is not normative at any heading: [`releasing.md`](releasing.md) is
+a runbook. It records what a person does to cut a release, which is a procedure
+rather than a rule binding the code.
 
 ## Relationship to the code
 

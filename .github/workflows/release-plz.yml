@@ -5,46 +5,125 @@ on:
     branches:
       - master
 
+# Nothing is granted by default; each job asks for exactly what it needs.
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Incremental artifacts only pay off across edits in one working tree. CI has
+  # no such tree.
+  CARGO_INCREMENTAL: 0
+
 jobs:
-  # Release unpublished packages.
-  release-plz-release:
-    name: Release-plz release
+  # Publish the versions crates.io does not have yet, tag them, and cut the
+  # GitHub release. `release_always = false` in `release-plz.toml` means this
+  # does nothing unless the commit that landed is a release-PR merge.
+  #
+  # Deliberately without a `concurrency` block, unlike the job below and unlike
+  # what a reviewer will expect. GitHub keeps at most one *pending* job per
+  # concurrency group and cancels the older when a newer arrives -- even with
+  # `cancel-in-progress: false` -- so grouping this job would let a third push
+  # to master silently discard the release queued by the second. Release-plz
+  # documents the same reasoning. What a group would guard against is instead
+  # handled inside release-plz, which checks the registry before publishing and
+  # the tag before releasing.
+  release:
+    name: Release
+    # A fork's own master must not attempt to publish getkono's crates.
+    if: github.repository_owner == 'getkono'
     runs-on: ubuntu-latest
     permissions:
+      # Release-plz pushes the tags and cuts the GitHub release through the API,
+      # authenticating with the workflow token below.
       contents: write
+      # It reads the release pull request that this merge closed in order to
+      # build the announcement.
       pull-requests: read
+      # Mint the OIDC token crates.io Trusted Publishing exchanges for a
+      # short-lived registry token. Release-plz performs the exchange itself,
+      # reuses one token for every crate in the run, and revokes it when the run
+      # ends, so no registry credential is stored anywhere in this repository.
+      #
+      # Nothing here reads `CARGO_REGISTRY_TOKEN`, deliberately and permanently.
+      # Release-plz skips the OIDC exchange whenever a registry token is present
+      # in the environment, so wiring the secret through -- even as a fallback
+      # for the one publish trusted publishing cannot do, the first -- would
+      # make an empty or forgotten secret able to silently disable it. The first
+      # publish happens from a workstation instead; `docs/releasing.md` has it.
+      #
+      # Trusted Publishing is unaffected by the choice of `GITHUB_TOKEN` below:
+      # the OIDC token is minted from this permission, not from that credential.
+      id-token: write
     steps:
       - &checkout
         name: Checkout repository
         uses: actions/checkout@v6
         with:
+          # Release-plz reads every tag and every commit since the last one.
           fetch-depth: 0
+          # Release-plz uses the API rather than the git CLI, so the runner
+          # never needs a credential on disk. This would have to become `true`
+          # only if tag signing were turned on.
           persist-credentials: false
-      - &install-rust
-        name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      # The repository's own pinned toolchain, not `dtolnay/rust-toolchain`.
+      # `cargo publish` verifies by building the tarball, and
+      # `publish_all_features` makes that an all-features build -- so this job
+      # is a compiler-visible gate like any other, and it was the only one
+      # running a compiler on a toolchain no other job used. See the `package`
+      # job in `ci.yml` for why no cache key is passed.
+      - &setup
+        name: Set up
+        uses: ./.github/actions/setup
       - name: Run release-plz
-        uses: release-plz/action@v0.5
+        # Pinned to a commit rather than to the moving `v0.5` tag, which
+        # upstream repoints at every 0.5.x patch. This is the one step in the
+        # repository that holds a crates.io publishing credential, so a tag
+        # repoint would be an unreviewed rewrite of what publishes Kynos.
+        # Dependabot's `github-actions` ecosystem keeps the pin current.
+        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
         with:
           command: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Create a PR with the new versions and changelog, preparing the next release.
-  release-plz-pr:
-    name: Release-plz PR
+  # Open, or refresh, the release pull request: the version bumps and the
+  # changelogs for everything on master that is not published yet.
+  #
+  # This job authenticates with `secrets.GITHUB_TOKEN`, which carries one cost
+  # worth stating where the decision lives. GitHub does not let a pull request
+  # opened with that token start workflow runs unattended -- the anti-recursion
+  # rule -- so the release pull request arrives with no checks against it, as
+  # release PR #17 has demonstrated since 2026-08-10. Merging it is therefore
+  # the one merge in this repository whose CI a human has to ask for, by
+  # approving the held runs or by closing and reopening the pull request so the
+  # runs are attributed to a person. `docs/releasing.md` makes that a step of
+  # the loop rather than something to remember.
+  #
+  # A GitHub App token is what removes that step, at the cost of an App, two
+  # secrets and their rotation. Repository-wide Actions permission to create
+  # pull requests is *not* an alternative: it grants the right to open the pull
+  # request, not the ability of that pull request to trigger runs.
+  release-pr:
+    name: Release PR
+    if: github.repository_owner == 'getkono'
     runs-on: ubuntu-latest
     permissions:
+      # Push the `release-plz-` branch carrying the version bumps and the
+      # changelogs.
       contents: write
+      # Open the release pull request, and label it `release`.
       pull-requests: write
+    # One release pull request at a time per branch. Unlike the release job, a
+    # superseded run here loses nothing: the next push recomputes the whole
+    # pull request from master.
     concurrency:
       group: release-plz-${{ github.ref }}
       cancel-in-progress: false
     steps:
       - *checkout
-      - *install-rust
+      - *setup
       - name: Run release-plz
-        uses: release-plz/action@v0.5
+        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5.131
         with:
           command: release-pr
         env:

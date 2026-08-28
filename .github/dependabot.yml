@@ -18,8 +18,10 @@ updates:
     labels:
       - chore
     # `prefix` plus `include: scope` yields `chore(deps): bump ...`, which convco
-    # accepts and `.versionrc` files under Other. Majors leave the group and
-    # arrive alone, because that is where the containment table gets consulted.
+    # accepts and `release-plz.toml`'s changelog parsers skip: it changes what a
+    # downstream build resolves, but nothing Kynos itself does. Majors leave the
+    # group and arrive alone, because that is where the containment table gets
+    # consulted.
     commit-message:
       prefix: chore
       prefix-development: chore

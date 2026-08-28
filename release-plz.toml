@@ -1,12 +1,170 @@
+# Release-plz owns the release. It reads the Conventional Commits since the last
+# tag, computes the next version, rewrites the changelogs, opens the release
+# pull request, and -- when that pull request merges -- publishes to crates.io,
+# tags, and cuts the GitHub release. `.github/workflows/release-plz.yml` runs
+# it. The human half, including the one-time setup that cannot be committed, is
+# `docs/releasing.md`.
+#
+# The three crates move together. Every member sets `version.workspace = true`,
+# and release-plz answers that by giving all of them the highest next version it
+# computed for any one of them. That is what this workspace wants: `kynos`
+# re-exports the other two, so a `kynos` that pinned an older `kynos-openapi`
+# would re-export a document model it does not ship.
+#
+# Publish order is not configured here and must not be. Release-plz
+# topologically sorts the publishable packages by their dependency edges and
+# waits for each to appear in the index before starting the next, so
+# `kynos-openapi` -> `kynos-macros` -> `kynos` falls out of the graph.
+
 [workspace]
-changelog_update = true
-git_only = true
-git_release_enable = true
-git_tag_enable = true
+# `cargo publish` runs. This file used to say `git_only = true`, whose
+# documented effect is that "the package will not be published to any cargo
+# registry (`cargo publish` is skipped)". Tagging and the GitHub release would
+# still have happened; publishing never would, which is why none of the three
+# names exists on crates.io. `git_only` and `publish` cannot both be true, so it
+# is deleted rather than contradicted. This is the default, stated because
+# removing the field it contradicts is the point of the line.
+publish = true
+
+# Release when the release pull request merges, not on every push to master.
+# The default publishes a package the moment its commit lands, which would make
+# the release pull request -- and the changelog a human reads before merging it
+# -- ceremony. Release-plz recognises the merge by the `release-plz-` branch
+# prefix, so a hand-made pull request that should trigger a release must use
+# that prefix too.
 release_always = false
+
+# `cargo publish` verifies by building the tarball it just wrote, and by default
+# it builds only the default feature set. Kynos gates roughly thirty features,
+# so a default-features verify compiles a fraction of `src/` and proves almost
+# nothing about the archive's completeness: a file reachable only under `tls` or
+# `assets` could be missing and the publish would still succeed. `lint`, `test`,
+# `test:doc` and `docs:check` all pass `--all-features` for exactly this reason.
+#
+# Not `publish_features = ["full"]`: `full` deliberately excludes `unchecked`
+# and `assets-fs`, whose modules are public API and must be in the archive.
+#
+# `mise run publish:check` runs the same verification on every push, so this is
+# the second of two identical gates rather than the only one.
+publish_all_features = true
+
+# cargo-semver-checks on every release. Kynos is pre-1.0, so an incompatible
+# change is a minor bump rather than a refusal, but the verdict and the list of
+# broken items land in the release pull request body -- which is the evidence a
+# reviewer needs to decide whether the break was the one that was intended. The
+# release-plz action installs cargo-semver-checks itself, so no mise task does.
+#
+# This is the default; it is stated because the two limits below make it worth
+# less than the name suggests, and a reader should meet them here.
+#
+# Two limits, recorded because `docs/nfr.md` must not claim more than this buys.
+# Release-plz invokes it with no feature flags, so only the default feature set
+# is compared; and it reports "compatible" for any failure whose output does not
+# say a new major version is required, so a toolchain problem is
+# indistinguishable from a clean run. It is also inert until 0.1.0 exists on
+# crates.io to compare against.
+semver_check = true
+
+# Only the workspace's own packages are re-pinned in `Cargo.lock`, which is the
+# default, stated for the record: a release pull request that also bumped every
+# transitive dependency would mix "publish the code that was reviewed" with
+# "take whatever upstream shipped this week". The second is Dependabot's job,
+# and it already has it.
+dependencies_update = false
+
+# The one pull request nobody authored. The label is what makes it filterable,
+# and what says on the tin that merging it publishes to crates.io.
+pr_labels = ["release"]
+
+# Tag all three. Release-plz decides "already released" by looking for the tag,
+# and generates each changelog from the commits since the tag before it, so a
+# missing tag would replay the entire history into the next release's notes.
+#
+# Announce one. The three versions are always equal and cut from one commit, so
+# three GitHub releases would be three copies of one announcement. Each crate
+# still keeps its own `CHANGELOG.md`, which ships inside its own `.crate` --
+# crates.io renders only the README, but the file is in the archive a vendoring
+# consumer unpacks, and `kynos-openapi`'s has an audience of its own because
+# that crate is usable without the runtime.
 
 [[package]]
 name = "kynos"
 changelog_path = "crates/kynos/CHANGELOG.md"
 git_tag_name = "kynos-v{{ version }}"
+git_release_enable = true
 git_release_name = "Kynos v{{ version }}"
+
+[[package]]
+name = "kynos-macros"
+changelog_path = "crates/kynos-macros/CHANGELOG.md"
+git_tag_name = "kynos-macros-v{{ version }}"
+git_release_enable = false
+
+[[package]]
+name = "kynos-openapi"
+changelog_path = "crates/kynos-openapi/CHANGELOG.md"
+git_tag_name = "kynos-openapi-v{{ version }}"
+git_release_enable = false
+
+# Without this section the default parser routes everything that is not `feat`
+# or `fix` to a single "Other" heading. Counted on the changelogs already
+# generated for 0.1.0, that is 268 of 486 entries across the three crates --
+# more than half the release notes under one heading that says nothing -- and
+# twelve of those entries are merge commits reproduced verbatim, branch name and
+# all, because pull requests here are merged rather than squashed. The public
+# record of a release is not a git log.
+#
+# A `.versionrc` used to record the same intent for standard-version, a tool
+# this repository never ran; it is deleted. This is that intent expressed in the
+# file release-plz actually reads, with one deliberate departure: `docs` is shown
+# rather than hidden. Rustdoc is this framework's contract surface, so a
+# documentation change to it is user-visible in a way a `test` change is not.
+
+[changelog]
+# A skip rule must never be able to hide a breaking change, and here one would:
+# of the 46 breaking commits in this history, 32 are `refactor!:`, a type
+# skipped below. This is the backstop rather than the mechanism -- git-cliff
+# returns on the first parser that matches, so a protected commit caught by a
+# skip rule keeps its group unset and lands under a heading named after its raw
+# type. The breaking arm in `commit_parsers` is what puts these in "Other"
+# deliberately; this line is what guarantees they appear at all, including under
+# a skip rule someone adds later without thinking about it.
+protect_breaking_commits = true
+
+commit_parsers = [
+  # Merge commits are real commits with no Conventional Commit type. They name
+  # the branch, not the change; the change is already in the commits they merged.
+  { message = "^Merge ", skip = true },
+  # Release-plz's own commit, which describes the release rather than anything
+  # in it.
+  { message = "^chore\\(release\\)", skip = true },
+
+  { message = "^feat", group = "Added" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^revert", group = "Fixed" },
+  { message = "^perf", group = "Performance" },
+  { message = "^docs", group = "Documentation" },
+
+  # Every breaking commit of a type the skip rules below would otherwise catch.
+  # It sits here, after the four groups above, so `feat!` and `fix!` keep
+  # "Added" and "Fixed" and only the rest arrive here. `protect_breaking_commits`
+  # alone would not do this: git-cliff stops at the first matching parser, so a
+  # breaking `refactor!:` matched by the skip rule below is un-skipped but keeps
+  # no group, and surfaces under a "Refactor" heading this list exists to avoid.
+  { message = "^[a-z]+(\\(.*\\))?!", group = "Other" },
+
+  # Real work, none of it observable from outside the crate. `chore` covers
+  # Dependabot's `chore(deps): bump ...`, which changes what a downstream build
+  # resolves but changes nothing Kynos does.
+  { message = "^refactor", skip = true },
+  { message = "^test", skip = true },
+  { message = "^style", skip = true },
+  { message = "^build", skip = true },
+  { message = "^ci", skip = true },
+  { message = "^chore", skip = true },
+
+  # Anything convco accepted that no rule above names. Reaching this arm means a
+  # commit type was introduced without a decision about it, so it is surfaced
+  # rather than silently dropped.
+  { message = "^.*", group = "Other" },
+]
