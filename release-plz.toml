@@ -105,3 +105,66 @@ name = "kynos-openapi"
 changelog_path = "crates/kynos-openapi/CHANGELOG.md"
 git_tag_name = "kynos-openapi-v{{ version }}"
 git_release_enable = false
+
+# Without this section the default parser routes everything that is not `feat`
+# or `fix` to a single "Other" heading. Counted on the changelogs already
+# generated for 0.1.0, that is 268 of 486 entries across the three crates --
+# more than half the release notes under one heading that says nothing -- and
+# twelve of those entries are merge commits reproduced verbatim, branch name and
+# all, because pull requests here are merged rather than squashed. The public
+# record of a release is not a git log.
+#
+# `.versionrc` records the same intent for standard-version, a tool this
+# repository has never run. This is that intent expressed in the file
+# release-plz actually reads, with one deliberate departure: `docs` is shown
+# rather than hidden. Rustdoc is this framework's contract surface, so a
+# documentation change to it is user-visible in a way a `test` change is not.
+
+[changelog]
+# A skip rule must never be able to hide a breaking change, and here one would:
+# of the 46 breaking commits in this history, 32 are `refactor!:`, a type
+# skipped below. This is the backstop rather than the mechanism -- git-cliff
+# returns on the first parser that matches, so a protected commit caught by a
+# skip rule keeps its group unset and lands under a heading named after its raw
+# type. The breaking arm in `commit_parsers` is what puts these in "Other"
+# deliberately; this line is what guarantees they appear at all, including under
+# a skip rule someone adds later without thinking about it.
+protect_breaking_commits = true
+
+commit_parsers = [
+  # Merge commits are real commits with no Conventional Commit type. They name
+  # the branch, not the change; the change is already in the commits they merged.
+  { message = "^Merge ", skip = true },
+  # Release-plz's own commit, which describes the release rather than anything
+  # in it.
+  { message = "^chore\\(release\\)", skip = true },
+
+  { message = "^feat", group = "Added" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^revert", group = "Fixed" },
+  { message = "^perf", group = "Performance" },
+  { message = "^docs", group = "Documentation" },
+
+  # Every breaking commit of a type the skip rules below would otherwise catch.
+  # It sits here, after the four groups above, so `feat!` and `fix!` keep
+  # "Added" and "Fixed" and only the rest arrive here. `protect_breaking_commits`
+  # alone would not do this: git-cliff stops at the first matching parser, so a
+  # breaking `refactor!:` matched by the skip rule below is un-skipped but keeps
+  # no group, and surfaces under a "Refactor" heading this list exists to avoid.
+  { message = "^[a-z]+(\\(.*\\))?!", group = "Other" },
+
+  # Real work, none of it observable from outside the crate. `chore` covers
+  # Dependabot's `chore(deps): bump ...`, which changes what a downstream build
+  # resolves but changes nothing Kynos does.
+  { message = "^refactor", skip = true },
+  { message = "^test", skip = true },
+  { message = "^style", skip = true },
+  { message = "^build", skip = true },
+  { message = "^ci", skip = true },
+  { message = "^chore", skip = true },
+
+  # Anything convco accepted that no rule above names. Reaching this arm means a
+  # commit type was introduced without a decision about it, so it is surfaced
+  # rather than silently dropped.
+  { message = "^.*", group = "Other" },
+]
