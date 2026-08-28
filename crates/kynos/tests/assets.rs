@@ -419,7 +419,7 @@ async fn an_if_range_that_does_not_hold_sends_the_whole_file() {
 fn every_file_is_a_described_operation() {
     let document = served().openapi().expect("a describable router");
 
-    let mut keys: Vec<&str> = document.paths.0.keys().map(String::as_str).collect();
+    let mut keys: Vec<&str> = document.paths.items.keys().map(String::as_str).collect();
     keys.sort_unstable();
 
     assert_eq!(
@@ -443,7 +443,7 @@ fn every_file_is_a_described_operation() {
 #[test]
 fn each_operation_declares_every_status_a_file_can_answer_with() {
     let document = served().openapi().expect("a describable router");
-    let operation = document.paths.0["/static/css/app.css"]
+    let operation = document.paths.items["/static/css/app.css"]
         .get
         .as_ref()
         .expect("a GET");
@@ -509,7 +509,7 @@ fn each_operation_declares_every_status_a_file_can_answer_with() {
 #[test]
 fn each_operation_declares_the_fields_it_reads() {
     let document = served().openapi().expect("a describable router");
-    let operation = document.paths.0["/static/css/app.css"]
+    let operation = document.paths.items["/static/css/app.css"]
         .get
         .as_ref()
         .expect("a GET");
@@ -527,7 +527,7 @@ fn each_operation_declares_the_fields_it_reads() {
         ["Accept-Encoding", "If-None-Match", "If-Range", "Range"]
     );
 
-    let plain = document.paths.0["/static/docs/index.html"]
+    let plain = document.paths.items["/static/docs/index.html"]
         .get
         .as_ref()
         .expect("a GET");
@@ -549,7 +549,7 @@ fn every_operation_has_an_identifier_of_its_own() {
 
     let mut ids: Vec<&str> = document
         .paths
-        .0
+        .items
         .values()
         .filter_map(|item| item.get.as_ref())
         .filter_map(|operation| operation.operation_id.as_deref())
@@ -784,7 +784,7 @@ mod directory {
         let document = served().openapi().expect("a describable router");
 
         assert!(
-            document.paths.0.is_empty(),
+            document.paths.items.is_empty(),
             "a directory took a `paths` key, which is a claim about paths it does not honour"
         );
 

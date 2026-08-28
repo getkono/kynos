@@ -107,7 +107,7 @@ fn a_body_limit_declares_its_status_on_every_operation_it_covers() {
         .openapi()
         .expect("a describable router");
 
-    for (path, item) in &document.paths.0 {
+    for (path, item) in &document.paths.items {
         for (method, operation) in item.operations() {
             assert!(
                 operation.responses.responses.contains_key("413"),
@@ -263,7 +263,7 @@ async fn a_service_with_no_body_limit_accepts_a_body_of_any_size() {
 fn a_service_with_no_body_limit_declares_no_413() {
     let document = support::router().openapi().expect("a describable router");
 
-    for (path, item) in &document.paths.0 {
+    for (path, item) in &document.paths.items {
         for (method, operation) in item.operations() {
             assert!(
                 !operation.responses.responses.contains_key("413"),
@@ -295,7 +295,7 @@ async fn a_timeout_over_a_body_limit_declares_both_statuses() {
     // The chain runs outermost-first, so the timeout is written first. What
     // follows reads the description, not the exchange.
     let document = service.openapi();
-    let operation = document.paths.0["/users"]
+    let operation = document.paths.items["/users"]
         .post
         .as_ref()
         .expect("the operation exists");

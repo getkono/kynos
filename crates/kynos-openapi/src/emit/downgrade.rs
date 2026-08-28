@@ -56,7 +56,7 @@ pub fn three_two_only_constructs(document: &Document) -> Vec<String> {
         }
         collect_components_blockers("#/components", &document.components, &mut blockers);
 
-        for (raw, item) in &document.paths.0 {
+        for (raw, item) in &document.paths.items {
             collect_path_item_blockers(
                 &format!("#/paths/{}", pointer_token(raw)),
                 item,
@@ -324,7 +324,7 @@ fn collect_path_item_blockers(location: &str, item: &PathItem, blockers: &mut Ve
 /// The Path Items a callback expression maps to.
 #[cfg(feature = "openapi32")]
 fn collect_callback_blockers(location: &str, callback: &Callback, blockers: &mut Vec<String>) {
-    for (expression, item) in &callback.0 {
+    for (expression, item) in &callback.items {
         if let RefOr::Item(item) = item {
             collect_path_item_blockers(
                 &format!("{location}/{}", pointer_token(expression)),

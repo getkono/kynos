@@ -167,7 +167,7 @@ fn an_unchecked_route_is_recorded_where_a_generator_cannot_act_on_it() {
     let document = with_catch_all().openapi().expect("a describable router");
 
     assert!(
-        document.paths.0.is_empty(),
+        document.paths.items.is_empty(),
         "a catch-all took a `paths` key, which is a claim about a path it does not honour"
     );
 

@@ -35,7 +35,7 @@ impl Validator {
         let mut operation_ids: HashMap<&str, String> = HashMap::new();
         let mut normalized_paths: HashMap<String, &String> = HashMap::new();
 
-        for (raw, item) in &document.paths.0 {
+        for (raw, item) in &document.paths.items {
             let location = format!("#/paths/{}", pointer_token(raw));
 
             let template = match PathTemplate::parse(raw.clone()) {
@@ -115,7 +115,7 @@ impl Validator {
             let Some(callback) = callback.as_item() else {
                 continue;
             };
-            for (expression, item) in &callback.0 {
+            for (expression, item) in &callback.items {
                 let Some(item) = item.as_item() else { continue };
                 self.check_item(
                     &format!(

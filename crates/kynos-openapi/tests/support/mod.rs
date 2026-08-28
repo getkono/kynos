@@ -46,10 +46,12 @@ pub(crate) const PARAMETER_NAMES: &[&str] = &["id0", "id", "Accept", "x"];
 pub(crate) const MEDIA_TYPE_NAMES: &[&str] = &["application/json", "text/plain", "multipart/mixed"];
 pub(crate) const STATUS_KEYS: &[&str] = &["200", "404", "2XX", "5XX"];
 pub(crate) const EXTENSION_KEYS: &[&str] = &["x-a", "x-b", "x-oai-reserved", "not-prefixed"];
-// The Responses Object rejects any key that is neither `default`, a status
-// pattern, nor `x-` prefixed, so its extensions cannot be drawn from the
-// general pool and still survive a round trip.
-pub(crate) const RESPONSES_EXTENSION_KEYS: &[&str] = &["x-a", "x-b"];
+// Extensions for an object whose extensions share a map with its patterned
+// keys. Responses, Paths and Callback each tell the two apart by the `x-`
+// prefix and nothing else, so a `not-prefixed` key drawn from the general pool
+// would be written out as a *patterned* key and read back as one -- a round
+// trip that fails for a reason about the generator rather than the model.
+pub(crate) const SPLIT_EXTENSION_KEYS: &[&str] = &["x-a", "x-b"];
 pub(crate) const KEYWORD_KEYS: &[&str] = &["x-kynos-unchecked", "x-note", "customKeyword"];
 pub(crate) const CALLBACK_KEYS: &[&str] = &["{$request.body#/url}", "onData"];
 pub(crate) const OPENAPI_VERSIONS: &[&str] = &["3.1.2", "3.2.0", "3.0.4", "nonsense"];
@@ -176,7 +178,7 @@ pub(crate) fn arb_json() -> BoxedStrategy<Value> {
     leaf.prop_recursive(1, 4, 2, |inner| {
         prop_oneof![
             prop::collection::vec(inner.clone(), 0..=2).prop_map(Value::Array),
-            prop::collection::vec((select(RESPONSES_EXTENSION_KEYS), inner), 0..=2).prop_map(
+            prop::collection::vec((select(SPLIT_EXTENSION_KEYS), inner), 0..=2).prop_map(
                 |entries| Value::Object(
                     entries
                         .into_iter()
@@ -371,20 +373,24 @@ pub(crate) fn arb_xml() -> BoxedStrategy<Xml> {
         arb_flag(),
         arb_flag(),
         arb_opt_text(),
+        arb_extensions(EXTENSION_KEYS),
     )
-        .prop_map(|(name, namespace, prefix, attribute, wrapped, node_type)| {
-            #[cfg(not(feature = "openapi32"))]
-            let _ = node_type;
-            Xml {
-                #[cfg(feature = "openapi32")]
-                node_type,
-                name,
-                namespace,
-                prefix,
-                attribute,
-                wrapped,
-            }
-        })
+        .prop_map(
+            |(name, namespace, prefix, attribute, wrapped, node_type, extensions)| {
+                #[cfg(not(feature = "openapi32"))]
+                let _ = node_type;
+                Xml {
+                    #[cfg(feature = "openapi32")]
+                    node_type,
+                    name,
+                    namespace,
+                    prefix,
+                    attribute,
+                    wrapped,
+                    extensions,
+                }
+            },
+        )
         .boxed()
 }
 
@@ -393,8 +399,9 @@ pub(crate) fn arb_discriminator() -> BoxedStrategy<Discriminator> {
         arb_text(),
         arb_map(COMPONENT_KEYS, arb_text(), 2),
         arb_opt_text(),
+        arb_extensions(EXTENSION_KEYS),
     )
-        .prop_map(|(property_name, mapping, default_mapping)| {
+        .prop_map(|(property_name, mapping, default_mapping, extensions)| {
             #[cfg(not(feature = "openapi32"))]
             let _ = default_mapping;
             Discriminator {
@@ -402,6 +409,7 @@ pub(crate) fn arb_discriminator() -> BoxedStrategy<Discriminator> {
                 mapping,
                 #[cfg(feature = "openapi32")]
                 default_mapping,
+                extensions,
             }
         })
         .boxed()
@@ -764,7 +772,7 @@ pub(crate) fn arb_responses() -> BoxedStrategy<Responses> {
     (
         prop::option::of(arb_ref_or(arb_response())),
         arb_map(STATUS_KEYS, arb_ref_or(arb_response()), 2),
-        arb_extensions(RESPONSES_EXTENSION_KEYS),
+        arb_extensions(SPLIT_EXTENSION_KEYS),
     )
         .prop_map(|(default_response, responses, extensions)| {
             // A Responses Object holding nothing but extensions is skipped
@@ -1153,8 +1161,11 @@ pub(crate) fn arb_operation(nested: bool) -> BoxedStrategy<Operation> {
 
 /// A callback, whose path items never carry callbacks of their own.
 pub(crate) fn arb_callback() -> BoxedStrategy<Callback> {
-    arb_map(CALLBACK_KEYS, arb_ref_or(arb_path_item(false, false)), 1)
-        .prop_map(Callback)
+    (
+        arb_map(CALLBACK_KEYS, arb_ref_or(arb_path_item(false, false)), 1),
+        arb_extensions(SPLIT_EXTENSION_KEYS),
+    )
+        .prop_map(|(items, extensions)| Callback { items, extensions })
         .boxed()
 }
 
@@ -1224,8 +1235,14 @@ pub(crate) fn arb_paths() -> BoxedStrategy<Paths> {
         4 => arb_template(),
         1 => arb_malformed_template(),
     ];
-    prop::collection::vec((keys, arb_path_item(true, true)), 0..=2)
-        .prop_map(|entries| Paths(entries.into_iter().collect()))
+    (
+        prop::collection::vec((keys, arb_path_item(true, true)), 0..=2),
+        arb_extensions(SPLIT_EXTENSION_KEYS),
+    )
+        .prop_map(|(entries, extensions)| Paths {
+            items: entries.into_iter().collect(),
+            extensions,
+        })
         .boxed()
 }
 

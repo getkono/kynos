@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::Map;
+use crate::{Map, model::extensions::Extensions};
 
 /// Polymorphism support: which subschema applies, chosen by a payload property.
 ///
@@ -32,6 +32,10 @@ pub struct Discriminator {
         skip_serializing_if = "Option::is_none"
     )]
     pub default_mapping: Option<String>,
+
+    /// Specification extensions.
+    #[serde(flatten)]
+    pub extensions: Extensions,
 }
 
 impl Discriminator {

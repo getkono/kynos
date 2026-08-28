@@ -281,7 +281,7 @@ fn an_opaque_callback_operation_counts() {
         .expect("nothing to conflict with");
 
     let mut callback = Callback::new();
-    callback.0.insert(
+    callback.items.insert(
         "{$request.body#/callbackUrl}".to_owned(),
         RefOr::Item(PathItem::new().with_operation(Method::Post, callback_operation)),
     );

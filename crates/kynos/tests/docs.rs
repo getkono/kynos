@@ -34,7 +34,7 @@ fn both_docs_routes_are_described_where_they_are_mounted() {
     for path in ["/docs", "/openapi.json"] {
         let item = document
             .paths
-            .0
+            .items
             .get(path)
             .unwrap_or_else(|| panic!("{path} is missing from the document"));
         assert!(item.get.is_some(), "{path} declares no GET");
@@ -49,7 +49,7 @@ fn a_router_that_mounts_no_docs_describes_neither_path() {
 
     for path in ["/docs", "/openapi.json"] {
         assert!(
-            !document.paths.0.contains_key(path),
+            !document.paths.items.contains_key(path),
             "{path} is described by a router that mounts no reference",
         );
     }
@@ -66,7 +66,7 @@ fn the_page_is_described_as_html_and_the_description_as_json() {
         ("/docs", "text/html; charset=utf-8"),
         ("/openapi.json", "application/json"),
     ] {
-        let operation = document.paths.0[path].get.as_ref().expect("a GET");
+        let operation = document.paths.items[path].get.as_ref().expect("a GET");
         let ok = operation
             .responses
             .responses

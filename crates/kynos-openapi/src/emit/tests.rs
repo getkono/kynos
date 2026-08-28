@@ -880,7 +880,7 @@ mod reach {
             {
                 let mut document = document();
                 let mut callback = Callback::new();
-                callback.0.insert(
+                callback.items.insert(
                     "{$request.body#/url}".to_owned(),
                     RefOr::Item(item_with_summarised_response()),
                 );
@@ -919,7 +919,7 @@ mod reach {
             {
                 let mut document = document();
                 let mut callback = Callback::new();
-                callback.0.insert(
+                callback.items.insert(
                     "{$request.body#/url}".to_owned(),
                     RefOr::Item(item_with_summarised_response()),
                 );

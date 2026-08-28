@@ -787,7 +787,7 @@ fn an_opaque_route_is_reported_without_inventing_a_paths_entry() {
         matches!(&v.error, SpecError::OpaqueRoute { pattern } if pattern == "/assets/{*path}")
     }));
     // The route is recorded, and `paths` is untouched by it.
-    assert_eq!(document.paths.0.len(), 1);
+    assert_eq!(document.paths.items.len(), 1);
 }
 
 #[test]

@@ -473,6 +473,23 @@ fn wire_types_in_source() -> BTreeSet<String> {
 
             let source = std::fs::read_to_string(&path).expect("readable source");
             let lines: Vec<&str> = source.lines().collect();
+
+            // A hand-written implementation is as much a wire form as a
+            // derived one. Reading only the derive made this depend on prose:
+            // `Responses` was counted because its doc comment happens to say
+            // "Serializes", and `Paths` and `Callback` were not counted at all
+            // once they grew implementations of their own.
+            for line in &lines {
+                let Some(rest) = line.strip_prefix("impl Serialize for ") else {
+                    continue;
+                };
+                found.insert(
+                    rest.chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect(),
+                );
+            }
+
             for (index, line) in lines.iter().enumerate() {
                 let Some(rest) = line
                     .strip_prefix("pub struct ")
