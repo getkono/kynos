@@ -37,7 +37,7 @@ needs more than the defaults. Each file's own header explains why it needs them.
 | [`responses.rs`](responses.rs) | Status in the return type: `Created`, `Accepted`, `Redirect<CODE>`, `Reply`, `WithHeaders`, typed URIs | — |
 | [`negotiation.rs`](negotiation.rs) | Choosing a representation from the client's `Accept` header | — |
 | [`errors.rs`](errors.rs) | `#[derive(ApiError)]`, RFC 9457 problem documents, and every other way a status reaches an operation | — |
-| [`sse.rs`](sse.rs) | Server-Sent Events: discriminated event types, resumption, reconnection advice, keep-alive | `openapi32` |
+| [`sse.rs`](sse.rs) | Server-Sent Events: discriminated event types, resumption, reconnection advice, keep-alive | `openapi32`, `compression` |
 | [`streaming.rs`](streaming.rs) | JSON Lines, JSON text sequences, byte streams, and the whole-query-string parameter | `openapi32` |
 
 ## Structure
@@ -56,9 +56,10 @@ needs more than the defaults. Each file's own header explains why it needs them.
 | [`decompression.rs`](decompression.rs) | Accepting a compressed request body: the direction `Accept-Encoding` says nothing about, and why `BodySize` cannot guard it | `compression` |
 | [`cache.rs`](cache.rs) | A shared response cache over a store Kynos does not ship: what may be stored, what may not, and why `Conditional` goes outside | `cache` |
 | [`rate_limit.rs`](rate_limit.rs) | Named quotas over a counter store Kynos does not ship: a sliding window, several windows at once, and both header spellings | — |
+| [`token_bucket.rs`](token_bucket.rs) | The other half of the pair: replacing the *algorithm* rather than the store, over an injected clock its own tests drive | — |
 | [`cors.rs`](cors.rs) | The two exchanges a browser makes, the preflight nothing declares, and the configuration that is refused | — |
 | [`tracing.rs`](tracing.rs) | Spans reaching a real subscriber, and why an observer declares nothing | — |
-| [`opentelemetry.rs`](opentelemetry.rs) | Distributed tracing that leaves the process: a W3C Trace Context group that is also the propagation carrier, and why this is an example rather than middleware | `trace` |
+| [`opentelemetry.rs`](opentelemetry.rs) | Distributed tracing that leaves the process: a W3C Trace Context group that is also the propagation carrier, and why this is an example rather than middleware | — |
 | [`print_request_response.rs`](print_request_response.rs) | An interceptor buffering both bodies, and what reading them costs the description | — |
 
 ## Security
@@ -66,7 +67,7 @@ needs more than the defaults. Each file's own header explains why it needs them.
 | Example | Shows | Features |
 | --- | --- | --- |
 | [`security_schemes.rs`](security_schemes.rs) | Every kind of security scheme as a type, from `Auth<S>` to the emitted requirement | — |
-| [`jwt.rs`](jwt.rs) | A JWT verifier the framework does not ship: claims as a typed credential, `kid` rotation, scopes, optional auth, and a token endpoint | `json` |
+| [`jwt.rs`](jwt.rs) | A JWT verifier the framework does not ship: claims as a typed credential, `kid` rotation, scopes, optional auth, and a token endpoint | — |
 | [`tls.rs`](tls.rs) | Serving over TLS: client certificates, SNI, and the HTTP/1 and HTTP/2 configs ALPN chooses between | `tls` |
 
 ## Serving
@@ -76,6 +77,7 @@ needs more than the defaults. Each file's own header explains why it needs them.
 | [`graceful_shutdown.rs`](graceful_shutdown.rs) | Every shutdown trigger, the drain deadline, and reading the bound addresses | — |
 | [`auto_reload.rs`](auto_reload.rs) | Inheriting a listening socket so a rebuild does not drop it | — |
 | [`docs_ui.rs`](docs_ui.rs) | A Scalar or Redoc reference mounted in one line, dropped by `--release`, and what mounting it costs the document | `docs` |
+| [`ranged.rs`](ranged.rs) | Ranged delivery over a source that is not a filesystem, which is the case `assets` cannot cover | — |
 
 ## Testing and escape hatches
 

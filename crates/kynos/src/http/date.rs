@@ -6,7 +6,7 @@
 //!
 //! # Why this is code rather than a dependency
 //!
-//! [`architecture.md`](../../../../docs/architecture.md) refuses an HTTP-date
+//! [`architecture.md`](https://github.com/getkono/kynos/blob/master/docs/architecture.md) refuses an HTTP-date
 //! *crate*, and still does. What it refuses is a database that only sampling
 //! can verify; an HTTP-date is a fixed-width grammar with a closed set of
 //! month and day names, which is the shape this project writes down and tests

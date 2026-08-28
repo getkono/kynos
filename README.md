@@ -1,12 +1,92 @@
 # Kynos
 
-> Status: Not for public use yet! Feel free to star. Also we have had enough AI-generated PRs in various repos but contributions with human-oversight would be welcomed.
+[![crates.io](https://img.shields.io/crates/v/kynos.svg)](https://crates.io/crates/kynos)
+[![docs.rs](https://img.shields.io/docsrs/kynos)](https://docs.rs/kynos)
+[![CI](https://github.com/getkono/kynos/actions/workflows/ci.yml/badge.svg)](https://github.com/getkono/kynos/actions/workflows/ci.yml)
+[![MSRV](https://img.shields.io/badge/MSRV-1.85-blue)](#msrv)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+> The API is pre-1.0 and most of it freezes with this release — see [what this
+> release freezes](#what-this-release-freezes) for which parts, and which are
+> still expected to move. Contributions with human oversight are welcome; we
+> have had enough AI-generated pull requests in various repositories.
 
 Kynos is an idiomatic, performance-focused Rust framework for building REST APIs with first-class OpenAPI 3.1 and 3.2 support.
 
 Kynos only lets you build APIs it can fully describe. Every handler input describes itself as a Parameter or Request Body, every handler output describes itself as a Responses Object, and every interceptor declares what it contributes. Anything undescribable does not compile.
 
 The emitted document is therefore not documentation that drifts from the code. It is a checked contract derived from the same types the server runs on.
+
+## Install
+
+```bash
+cargo add kynos
+```
+
+The default features are `openapi31`, `macros`, `server`, `http1`, `http2`,
+`json` and `trace`. Everything else is additive and off; the
+[feature flags](#feature-flags) table says what each one adds.
+
+## Quickstart
+
+```rust
+use std::net::Ipv4Addr;
+
+use kynos::{prelude::*, server::Server};
+use serde::{Deserialize, Serialize};
+
+/// A user of the service.
+#[derive(Schema, Serialize, Deserialize)]
+struct User {
+    /// The user's identifier.
+    id: u64,
+    /// The user's display name.
+    name: String,
+}
+
+/// What `/users/{id}` captures.
+#[derive(Schema, PathParams)]
+struct UserPath {
+    /// The identifier from the path.
+    id: u64,
+}
+
+/// Fetches one user.
+#[kynos::get("/users/{id}")]
+async fn get_user(Path(path): Path<UserPath>) -> Json<User> {
+    Json(User { id: path.id, name: "Ada Lovelace".to_owned() })
+}
+
+#[tokio::main]
+async fn main() -> kynos::Result<()> {
+    let router = Router::<()>::new().mount(kynos::routes![get_user]);
+
+    // The description comes from the same types the server runs on, so it
+    // cannot disagree with what the service does.
+    println!("{}", router.openapi()?.to_json()?);
+
+    Server::new(router.build(())?)
+        .bind((Ipv4Addr::UNSPECIFIED, 3000))
+        .serve()
+        .await
+}
+```
+
+Nothing there restates the signature: the path parameters, the response shape
+and the statuses the operation can produce all come from the types the server
+runs on. `#[kynos::get("/users/{id}")]` also checks at compile time that
+`UserPath`'s fields are exactly the template's variables, in order.
+
+This is a trimmed [`hello.rs`](crates/kynos/examples/hello.rs), one of
+thirty-three examples, each about a page and all listed in
+[their README](crates/kynos/examples/README.md).
+
+## Documentation
+
+- [API reference](https://docs.rs/kynos), built with every feature enabled
+- [Design documentation](docs/README.md) — the decisions, and what binds
+  implementation work
+- [Examples](crates/kynos/examples/README.md)
 
 ## Features
 
@@ -160,8 +240,7 @@ No, it is minimal but strict and opinionated where correctness is in question.
 **Is kynos really faster than the competition?**
 A better way to frame it is we are as fast if not faster in most ways (open an issue if not) and spend effort on optimizations possible due to our API strictness since day-one.
 The concrete claim: there is no JSON Schema interpreter on the hot path. Constraints are declared once on the type, and the emitted document and the request parser are two projections of that one declaration.
-We plan to release our benchmarks in this repo: <https://github.com/getkono/kynos-bench>, which also defines the measurement methodology — what is measured, how, and why each number is worth tracking.
-<!-- TODO: establish this claim. -->
+We plan to release our benchmarks in this repo: <https://github.com/getkono/kynos-bench>, which also defines the measurement methodology — what is measured, how, and why each number is worth tracking. Until those numbers are published, treat the comparative half of this answer as unestablished; the structural claim above it is checkable by reading the code.
 
 **Why code-first and not contract-first?**
 There may be more than one answer but most consumers already expect contracts for REST APIs (usually in the form of OpenAPI specs). Building and extending code that define OpenAPI specs has less friction and enables performance optimizations not possible with an OpenAPI spec that constrains code.

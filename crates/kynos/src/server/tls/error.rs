@@ -6,7 +6,7 @@
 /// Naming the concrete types here would put rustls's semantic version inside
 /// Kynos's, and would name rustls outside `server/tls/` the moment a caller
 /// matched on one. Boxing keeps the cause walkable and the containment rule in
-/// [`nfr.md`](../../../../docs/nfr.md#dependencies) intact.
+/// [`nfr.md`](https://github.com/getkono/kynos/blob/master/docs/nfr.md#dependencies) intact.
 type Cause = Box<dyn std::error::Error + Send + Sync>;
 
 /// A TLS certificate or verifier configuration failure.

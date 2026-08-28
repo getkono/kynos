@@ -55,6 +55,8 @@ attribute outlived its reason and went with it.
 | [`determinism.rs`](../crates/kynos/tests/determinism.rs) | that one API emits one description whatever process emits it, by re-executing the test binary three times and byte-comparing — and that a component is registered after everything it refers to |
 | [`cache.rs`](../crates/kynos/tests/cache.rs) | that a hit is served, that a response stating no lifetime is not, and that a `Conditional` over a `Cache` answers with no body — properties of a *sequence* of requests |
 | [`compile/panic_recovery.rs`](../crates/kynos/tests/compile/panic_recovery.rs) | `catch_panics` refuses to compile under `panic = "abort"` |
+| [`metaschema.rs`](../crates/kynos/tests/metaschema.rs) | that an emitted document validates against the OAI's own published meta-schema, read from `references/` — the one assertion this repository does not write itself |
+| [`src/server/tests.rs`](../crates/kynos/src/server/tests.rs) | the runtime-I/O row's allocation: a real socket, over accept, shutdown, drain and TLS. It is a sibling `tests.rs` rather than an integration target because it reaches internals no public path exposes |
 
 `crates/kynos-openapi/tests/` holds four more: `properties.rs` and
 `templates.rs` for the document and path-template properties, `wire.rs` for the
@@ -117,7 +119,7 @@ specification.
 
 A closed enumeration is checked across the whole set because a sample of it
 reads as the whole set and is not. `the_style_location_table_is_closed` asserted
-five of forty style/location pairs, and `explode_defaults_to_true_only_for_form`
+five of forty style/location pairs, and `explode_defaults_to_true_for_the_two_styles_that_pair_names_with_values`
 asserted two of eight — and the six it skipped included `cookie`, which 3.2
 gives the same `explode` default as `form` and which the model answered `false`
 for. The name claimed closedness; the body sampled.
@@ -271,6 +273,13 @@ the bounds whose diagnostics have no other home.
 Every case in `tests/ui/` obeys the pass-control rule: `tests/ui/pass/` holds
 one control per negative, and a case whose control cannot be written does not land — it goes in
 [`PENDING.md`](../crates/kynos/tests/ui/PENDING.md) with the blocker named.
+
+This rule is upheld by review and by that ledger, not by a counter — which
+makes it the one exhaustiveness claim here that is *intended* rather than
+asserted, against what "exhaustiveness is asserted, not intended" asks of the
+rest. [`tests/ui.rs`](../crates/kynos/tests/ui.rs) says so where it
+counts the schema table. Wiring it means reconciling 79 negatives against 78
+controls first, which is a question about one case rather than about the rule.
 
 That ledger is where the rule earns its keep. `#[kynos::operation]` was
 scheduled for two negatives, both of which produced exactly the right

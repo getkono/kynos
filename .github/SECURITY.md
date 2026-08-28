@@ -15,10 +15,15 @@ an advisory ship together, and you are credited unless you ask otherwise.
 
 ## Supported versions
 
-Nothing is published to crates.io yet, so `master` is the only thing that
-exists and the only thing that gets fixed. Once releases begin, the latest
-published release is supported alongside `master`, and nothing older —
-Kynos is pre-1.0 and the API is explicitly unfrozen.
+The latest published release is supported, alongside `master`. Nothing older
+is: Kynos is pre-1.0, and a fix is issued as a new patch release rather than
+backported.
+
+| Version | Supported |
+| --- | --- |
+| latest `0.x` release | yes |
+| `master` | yes |
+| any earlier release | no |
 
 ## Scope
 

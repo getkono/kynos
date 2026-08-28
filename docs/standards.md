@@ -101,7 +101,6 @@ in [`middleware.md`](middleware.md).
 | `Cache` has no heuristic freshness | RFC 9111 §4.2.2 permits one; every heuristic is a guess that turns a correct origin into an incorrect cache |
 | `Cache` never stores a response setting a cookie | `Vary` cannot protect against it — the cookie is in the response, and nothing in the request selects it |
 | `Conditional` implements `If-None-Match` alone | `If-Match` and `If-Unmodified-Since` must be evaluated before the change, which only a handler can do |
-| No `Last-Modified` / `If-Modified-Since` | Needs an HTTP-date implementation, which the dependency policy in [`architecture.md`](architecture.md) does not admit. Sending neither half is consistent; sending one is not |
 | `RateLimit` keeps the `X-` prefix by default | The unprefixed names belong to a draft that has already replaced them once; squatting them would reach generated clients |
 | No signed or encrypted cookies, no sessions | Arrives with a crypto stack the dependency table has no row for, in a default build no feature gate could contain |
 | No default body cap | Would add 413 to every operation of every application that never asked for one |

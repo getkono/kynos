@@ -203,11 +203,17 @@ pub(crate) fn read(
 ///   condition is true. Otherwise, the condition is false.* So a weak tag on
 ///   either side satisfies nothing — which is not a corner case: the tag
 ///   `router::assets` mints from a `stat` is weak by construction.
-/// * An `HTTP-date` is compared against `Last-Modified`, and Kynos sends none.
-///   *A valid entity-tag can be distinguished from a valid HTTP-date by
-///   examining the first three characters for a DQUOTE* — and a date carries no
-///   DQUOTE anywhere, so it can never equal an `opaque-tag` and the strong
-///   comparison answers `false` for it without a second branch.
+/// * An `HTTP-date` is compared against `Last-Modified`, which Kynos does
+///   send — [`served.rs`] sets it and the conditional middleware replays it.
+///   This condition is still evaluated against the entity-tag alone, and that
+///   is deliberate rather than an omission: *a valid entity-tag can be
+///   distinguished from a valid HTTP-date by examining the first three
+///   characters for a DQUOTE*, so a date can never equal an `opaque-tag` and
+///   the strong comparison answers `false` for it without a second branch. A
+///   `false` here serves the whole representation, which is what section
+///   13.1.5 requires of a recipient that cannot validate the condition.
+///
+///   [`served.rs`]: crate::response::range
 /// * A sender holding no validator can evaluate nothing, which is `false` for
 ///   the same reason: there is nothing for the condition to match.
 fn holds(condition: &HeaderValue, validator: Option<&str>) -> bool {

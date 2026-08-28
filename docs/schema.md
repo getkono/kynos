@@ -178,7 +178,7 @@ Binary is fully in scope. What Kynos never emits is the OAS 3.0 spelling: "the
 Instead, JSON Schema's `contentEncoding` and `contentMediaType` keywords are
 used."
 
-`Binary<M>` is **designed**. Three shapes, and which one applies is decided by
+`Binary<M>` emits one of three shapes, and which one applies is decided by
 where the bytes sit rather than by the type.
 
 | Case | Emitted |

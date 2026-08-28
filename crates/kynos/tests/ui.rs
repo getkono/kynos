@@ -88,7 +88,7 @@ fn compile_fail_cases(directory: &Path) -> usize {
 /// Every trait carrying `#[diagnostic::on_unimplemented]`, against the snapshot
 /// that records what it says.
 ///
-/// [`nfr.md`](../../../docs/nfr.md) marks "no diagnostic names an internal
+/// [`nfr.md`](https://github.com/getkono/kynos/blob/master/docs/nfr.md) marks "no diagnostic names an internal
 /// type" enforced by this suite, and eight of the fourteen guided traits had no
 /// snapshot at all: `Handler`, `Describe`, `RequestContent`, `Alternative`,
 /// `MapKey`, `ShortCircuit`, `EndpointMeta` and `IntoEndpoints`. The attribute

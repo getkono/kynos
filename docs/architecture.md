@@ -337,6 +337,40 @@ by nothing under `src/`, which is the standing `rcgen`, `listenfd` and
 `tracing-subscriber` already have: this table governs what Kynos depends on, not
 what an example demonstrates.
 
+### What each feature gates
+
+The [README](../README.md#feature-flags) says what a flag *adds*, which is what
+someone choosing one needs. This says what it *gates* and which document here
+governs the thing behind it, which is what someone changing one needs. Fourteen
+of these were named nowhere in this directory, and a flag whose module has a
+normative home should be reachable from it.
+
+A gate belongs on the `pub mod` line rather than on each item inside, so the
+module column is also where the `#[cfg]` lives.
+
+| Flag | Gates | Governed by |
+| --- | --- | --- |
+| `openapi31` | the 3.1 object model; the baseline every other flag builds on | [`standards.md`](standards.md) |
+| `openapi32` | the 3.2 superset, `#[cfg]`-gated rather than runtime-optional | [`standards.md`](standards.md), [`routing.md`](routing.md) |
+| `macros` | `kynos-macros`: the route attributes and the derives | [`handlers.md`](handlers.md) |
+| `server` | `server/`, and with it the entire runtime coupling surface | [Runtime policy](#runtime-policy) |
+| `http1`, `http2` | the protocol versions hyper drives; `server` alone is a `compile_error!` | [Runtime policy](#runtime-policy) |
+| `tls` | `server/tls/`, the only place `rustls` may be named | [Runtime policy](#runtime-policy) |
+| `json` | the application JSON codecs. *Not* document emission, which is unconditional | [`handlers.md`](handlers.md) |
+| `form`, `multipart`, `protobuf` | the other request and response codecs, one module each under `extract/body/` and `response/codec/` | [`handlers.md`](handlers.md) |
+| `cookie` | cookie parameters, response cookies and `SetCookies`. Names no crate: Kynos owns the RFC 6265 | [`standards.md`](standards.md) |
+| `compression` | `middleware/compression/` and `middleware/decompression/`, two of the six runtime-allowance rows | [`middleware.md`](middleware.md) |
+| `trace` | the `tracing` facade only; the subscriber stays the application's | [`middleware.md`](middleware.md) |
+| `uuid`, `time-*`, `decimal-*` | one `schema/impls/` module each. `time` and `decimal` are umbrellas that define the shape both backends map onto | [`schema.md`](schema.md#behind-a-feature-flag) |
+| `yaml` | the second document emitter, in `kynos-openapi` and re-exported | [`standards.md`](standards.md) |
+| `test-util` | `test/`, and the JSON Schema validator its conformance assertions need | [`testing.md`](testing.md) |
+| `cache` | `middleware/cache/` and `middleware/conditional/`: the seam, never a store | [`middleware.md`](middleware.md) |
+| `assets` | `assets!` and `router/assets/`: a fixed set, so every path is a literal and nothing is waived | [`routing.md`](routing.md) |
+| `assets-fs` | `router/assets/fs/`. Implies `unchecked`, because a directory's membership is not fixed | [`routing.md`](routing.md) |
+| `docs` | `Router::docs`: the reference page and the description, as two described operations | [`routing.md`](routing.md) |
+| `unchecked` | `unchecked.rs`, the only place `tower` may be named. Documented anti-pattern | [`middleware.md`](middleware.md) |
+| `full` | every flag above except `unchecked` and `assets-fs`. A testing convenience, not a recommended default | — |
+
 ### Scope edges
 
 **HTTP/3 and QUIC are out.** The server contract is HTTP/1 and HTTP/2. If

@@ -32,7 +32,7 @@
 //! # Runtime-free
 //!
 //! Nothing here names tokio, which is what keeps
-//! [`architecture.md`](../../../../docs/architecture.md)'s containment table at
+//! [`architecture.md`](https://github.com/getkono/kynos/blob/master/docs/architecture.md)'s containment table at
 //! the size it states. A source that reads a file names tokio *in the
 //! implementation the application writes*, which is where a runtime belongs.
 
@@ -220,7 +220,7 @@ fn clamped(octets: &Bytes, first: u64, last: u64) -> Bytes {
 /// An [`http_body::Body`] rather than a `Stream`, which is what keeps two
 /// counted things where they were: `futures_core` reaches the tree only through
 /// `openapi32`, and ranged delivery is behind no feature — and
-/// [`architecture.md`](../../../../docs/architecture.md) enumerates every
+/// [`architecture.md`](https://github.com/getkono/kynos/blob/master/docs/architecture.md) enumerates every
 /// hand-rolled `Stream` in the crate, so a fourth would have to be argued for.
 /// A body is what this actually is: `http-body` is already an unconditional
 /// dependency, and `Body::from_body` already exists to erase one.
