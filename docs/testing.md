@@ -83,6 +83,10 @@ own CI step for that reason — and the exclusion belongs on the coverage comman
 rather than on the nextest profile, because a profile-wide filter would remove
 the suite from every job that sets `NEXTEST_PROFILE`.
 
+Both coverage tasks carry it. `coverage:ci` always did; `coverage` did not,
+which mattered because `hooks:pre-push` runs that one — so every push ran the
+suite under exactly the instrumentation this paragraph says perturbs it.
+
 ## The allocation
 
 The taxonomy says what each kind of test proves. This says which kind a module

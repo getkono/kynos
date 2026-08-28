@@ -326,7 +326,14 @@ cargo package --workspace --all-features
 
 [tasks.coverage]
 description = "Run tests with LLVM coverage"
-run = "cargo llvm-cov nextest --workspace --all-targets --all-features"
+# `-E 'not binary(ui)'` for the reason `ui:check` gives at length: trybuild
+# spawns its own `cargo`, and the instrumentation flags reach that child and
+# perturb the exact stderr its snapshots record. `coverage:ci` had the exclusion
+# and this task did not, so `hooks:pre-push` -- which runs *this* one -- put the
+# suite under llvm-cov on every push, where it could only fail spuriously or
+# pass for reasons that comment says are not reliable. The compile-fail suite is
+# covered by `ui:check`, which is in `check`.
+run = "cargo llvm-cov nextest --workspace --all-targets --all-features -E 'not binary(ui)'"
 
 [tasks."ui:check"]
 description = "Run the compile-fail suite"
@@ -392,10 +399,17 @@ fi
 
 [tasks."hooks:pre-push"]
 description = "Run all pre-push checks"
+# `docs:check` and `containment:check` are here because neither is slow --
+# rustdoc over three crates, and a script that compiles nothing -- and both fail
+# on things a push should not carry: an undocumented public item, since
+# `missing_docs` is denied, and a crate named outside the module that owns it.
+# Both were first caught in CI, which is a slower place to learn it.
 run = [
   { task = "format:check" },
   { task = "lint" },
   { task = "lint:baseline" },
   { task = "coverage" },
+  { task = "docs:check" },
+  { task = "containment:check" },
   { task = "commits:check" },
 ]

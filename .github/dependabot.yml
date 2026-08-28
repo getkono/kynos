@@ -34,8 +34,27 @@ updates:
           - minor
           - patch
 
+  # Two entries, because `directory: "/"` reaches `.github/workflows` and a
+  # repository-root `action.yml` and nothing else. The composite action holds
+  # its own pins -- `jdx/mise-action` and `Swatinem/rust-cache` -- and with one
+  # entry they were the two actions in this repository Dependabot never looked
+  # at.
   - package-ecosystem: github-actions
     directory: "/"
+    schedule:
+      interval: weekly
+    labels:
+      - chore
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: "/.github/actions/setup"
     schedule:
       interval: weekly
     labels:
