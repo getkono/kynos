@@ -14,7 +14,7 @@ use kynos::{
     Router,
     extract::body::text::Text,
     http::{StatusCode, header},
-    response::language::{AcceptLanguage, Languages, Localized},
+    response::language::{AcceptLanguage, Localized, offer::Languages},
 };
 
 #[path = "support/mod.rs"]

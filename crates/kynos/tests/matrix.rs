@@ -374,7 +374,7 @@ async fn greeting(
 /// The languages the fixture answers in.
 struct Spoken;
 
-impl kynos::response::language::Languages for Spoken {
+impl kynos::response::language::offer::Languages for Spoken {
     const TAGS: &'static [&'static str] = &["en", "fr"];
 }
 

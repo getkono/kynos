@@ -2,9 +2,9 @@ error[E0080]: evaluation panicked: an offered language is not a well-formed RFC 
  --> $RUST/core/src/panic.rs
   |
   |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<Supported as kynos::response::language::CheckedOffer>::CHECK` failed here
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<Supported as kynos::response::language::offer::CheckedOffer>::CHECK` failed here
   |
- ::: src/response/language/mod.rs
+ ::: src/response/language/offer.rs
   |
   | /             assert!(
   | |                 LanguageTag::is_well_formed(L::TAGS[index]),

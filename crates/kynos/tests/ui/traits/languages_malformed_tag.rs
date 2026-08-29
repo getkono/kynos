@@ -5,7 +5,7 @@
 //! `en_GB` is the readable mistake: an underscore is the POSIX locale spelling,
 //! and RFC 5646 separates subtags with a hyphen.
 
-use kynos::response::language::{AcceptLanguage, Languages};
+use kynos::response::language::{AcceptLanguage, offer::Languages};
 
 struct Supported;
 

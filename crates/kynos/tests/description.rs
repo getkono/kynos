@@ -431,7 +431,7 @@ fn a_deprecated_handler_marks_its_operation() {
 /// Three languages, which is enough for an enumeration to be worth reading.
 struct Supported;
 
-impl kynos::response::language::Languages for Supported {
+impl kynos::response::language::offer::Languages for Supported {
     const TAGS: &'static [&'static str] = &["en", "fr", "de"];
 }
 

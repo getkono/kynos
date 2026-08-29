@@ -3,7 +3,7 @@
 //! enumeration is built from, so a type with no `TAGS` leaves the description
 //! with nothing to say.
 
-use kynos::response::language::{AcceptLanguage, Languages};
+use kynos::response::language::{AcceptLanguage, offer::Languages};
 
 struct Untranslated;
 

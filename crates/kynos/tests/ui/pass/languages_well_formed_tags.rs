@@ -2,7 +2,7 @@
 //! same call, differing only in that the tag is spelled the way RFC 5646 spells
 //! one.
 
-use kynos::response::language::{AcceptLanguage, Languages};
+use kynos::response::language::{AcceptLanguage, offer::Languages};
 
 struct Supported;
 

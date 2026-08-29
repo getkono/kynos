@@ -28,7 +28,7 @@ error[E0599]: the associated function or constant `parse` exists for struct `Acc
    = note: the following trait bounds were not satisfied:
            `Untranslated: Languages`
 note: the trait `Languages` must be implemented
-  --> src/response/language/mod.rs
+  --> src/response/language/offer.rs
    |
    | pub trait Languages {
    | ^^^^^^^^^^^^^^^^^^^

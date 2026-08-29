@@ -1,4 +1,4 @@
-use crate::response::language::tag::{IRREGULAR, LanguageTag, TagDefect};
+use crate::response::language::tag::{LanguageTag, TagDefect, grammar::IRREGULAR};
 
 /// One assembled tag, and the parts it was assembled from.
 ///
@@ -566,7 +566,7 @@ fn a_range_carrying_no_weight_is_read_as_the_strongest_preference() {
 
 // -- the extractor ------------------------------------------------------------
 
-use crate::response::language::{AcceptLanguage, Languages};
+use crate::response::language::{AcceptLanguage, offer::Languages};
 
 struct Supported;
 

@@ -1,7 +1,7 @@
 //! The control for `traits/languages.rs`: the same two calls, differing only in
 //! that the offer names its languages.
 
-use kynos::response::language::{AcceptLanguage, Languages};
+use kynos::response::language::{AcceptLanguage, offer::Languages};
 
 struct Supported;
 
