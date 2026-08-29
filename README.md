@@ -105,7 +105,7 @@ thirty-three examples, each about a page and all listed in
 Permanently out-of-scope
 
 - Support for OpenAPI 3.0 and older: OpenAPI 3.0.x is vastly different from OpenAPI 3.1+ and has technically been superseded for many years.
-- WebSockets: OpenAPI describes HTTP request/response semantics. A socket that stops being either belongs to AsyncAPI, and Kynos would rather point at it than pretend.
+- WebSockets, WebTransport and bidirectional streaming generally: OpenAPI describes HTTP request/response semantics. A stream that stops being either belongs to AsyncAPI, and Kynos would rather point at it than pretend. Server-Sent Events are not an exception to this — an event stream is one ordinary response body, which is why `openapi32` can describe it.
 - Templating and HTML rendering: Kynos is a REST framework, not a web framework.
 - Runtime abstraction: Kynos is tokio-only. There is no executor generic and no feature flag selecting another runtime, because no trait spans readiness-based and completion-based I/O without paying for a copy. See [`docs/architecture.md`](docs/architecture.md#runtime-policy).
 
@@ -173,8 +173,12 @@ the OpenAPI 3.2 JSON stream responses. OpenAPI document serialization and the
 framework's RFC 9457 problem responses remain JSON-based core behavior.
 
 HTTP/3 is not implemented and there is currently no `http3` feature. QUIC and
-HTTP/3 support are on the roadmap, with prioritization based on demonstrated
-user demand.
+HTTP/3 are deferred rather than refused: they carry the same request/response
+semantics Kynos already describes, so the ground is the maintenance cost of a
+second connection driver whose wins mostly belong to an edge hop. It would
+arrive additively, over `h3` and `quinn`, alongside the existing driver. See
+[`docs/architecture.md`](docs/architecture.md#why-http3-is-deferred) for what
+would reopen it.
 
 ## What this release freezes
 

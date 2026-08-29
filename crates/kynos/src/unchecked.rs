@@ -24,9 +24,9 @@
 //!   deployment with no reverse proxy in front.
 //! - A `tower` layer that has no equivalent interceptor yet, and that you have
 //!   satisfied yourself is response-transparent.
-//! - A WebSocket endpoint alongside a REST API. OpenAPI has no vocabulary for
-//!   WebSockets at all — that is `AsyncAPI`'s domain — so this is not a gap Kynos
-//!   can close later.
+//! - A WebSocket or WebTransport endpoint alongside a REST API. OpenAPI has no
+//!   vocabulary for either — that is `AsyncAPI`'s domain — so this is not a gap
+//!   Kynos can close later.
 //!
 //! # When they are not
 //!
@@ -656,10 +656,11 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
 
     /// Adds a route that upgrades the connection away from HTTP.
     ///
-    /// WebSockets, chiefly. This is not a temporary gap: OpenAPI describes HTTP
-    /// request/response semantics, and a socket that stops being either is
-    /// outside what any version of the specification can express. `AsyncAPI`
-    /// covers this ground, and Kynos would rather point at it than pretend.
+    /// WebSockets chiefly, and WebTransport for the same reason. This is not a
+    /// temporary gap: OpenAPI describes HTTP request/response semantics, and a
+    /// stream that stops being either is outside what any version of the
+    /// specification can express. `AsyncAPI` covers this ground, and Kynos
+    /// would rather point at it than pretend.
     ///
     /// Served on `GET`, which is the only method [RFC 9110][] leaves an upgrade
     /// handshake — and the only one RFC 6455 permits — and recorded with

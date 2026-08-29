@@ -12,6 +12,7 @@ doc-valid-idents = [
   "OpenIdConnect",
   "WebSocket",
   "WebSockets",
+  "WebTransport",
 ]
 
 # Kynos targets Rust 1.85; Clippy should not suggest anything newer.

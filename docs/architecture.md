@@ -203,15 +203,18 @@ by naming the row X displaces rather than by arguing that X is good.
 | Document ordering | `indexmap` | [`kynos-openapi`](../crates/kynos-openapi/src/lib.rs) | built |
 | YAML emission | `serde_yaml_ng` | [`kynos-openapi/emit/`](../crates/kynos-openapi/src/emit/), [`error/mod.rs`](../crates/kynos/src/error/mod.rs) | built |
 | Macro parsing | `proc-macro2`, `quote`, `syn` | [`kynos-macros`](../crates/kynos-macros/src/) | built |
-| HTTP/3, QUIC | — | — | out of scope |
+| HTTP/3, QUIC | — | — | deferred |
+| WebSockets, WebTransport | — | — | out of scope |
 
-Three statuses, and the distinction is what keeps the table checkable:
+Five statuses, and the distinction is what keeps the table checkable:
 
 | Status | Meaning |
 | --- | --- |
 | `built` | Reached by code that is implemented |
 | `designed` | Declared by a member crate; the module that owns it is still skeleton |
 | `chosen` | Settled as the answer, declared by nobody. It appears in no manifest and no lockfile |
+| `deferred` | Not implemented, and no dependency chosen. The ground is cost rather than principle, so demonstrated demand reopens it |
+| `out of scope` | Refused on a stated ground, so no dependency will be chosen. Demand does not reopen it; a different argument would have to |
 
 A row whose *Named in* column says `never` or `ambient` is `built` when the
 code that reaches it is implemented; it has no owning module to be a skeleton.
@@ -406,12 +409,24 @@ module column is also where the `#[cfg]` lives.
 
 ### Scope edges
 
-**HTTP/3 and QUIC are out.** The server contract is HTTP/1 and HTTP/2. If
-demand justifies HTTP/3 it arrives as an additive `http3` feature over `h3` and
-`quinn`, alongside the existing driver rather than reshaping it.
+**HTTP/3 and QUIC are deferred, not refused.** The server contract is HTTP/1
+and HTTP/2. Nothing about HTTP/3 is undescribable — it carries the same request
+and response semantics OpenAPI already covers — so the ground here is cost, not
+principle, and the door stays open. See [why HTTP/3 is deferred](#why-http3-is-deferred).
 
 **Custom transports and Unix sockets are out**, for the same reason the runtime
 is: they widen the coupling surface the runtime policy exists to bound.
+
+**WebSockets and WebTransport are out.** Both stop being request/response the
+moment they are established, and OpenAPI describes request/response. This is
+the same refusal for both, and it is a describability one: it does not soften
+with demand, because the document Kynos emits would have nothing to say about
+the stream. A protocol that stops being HTTP request/response belongs to
+AsyncAPI, and Kynos would rather point at it than emit a description that
+covers the upgrade handshake and then goes silent. Server-Sent Events are the
+edge that stays in, and they stay in precisely because they do not cross it:
+an event stream is one ordinary response body, so `openapi32` describes it as
+one.
 
 ### What the table does not yet claim
 
@@ -649,6 +664,42 @@ nodes; a maintained Rust binding that has seen production use; and a profile
 showing TLS is among the top costs. Until then the only thing worth spending is
 the design constraint recorded above — keep the socket and the session
 separable — which costs nothing and keeps the option alive.
+
+### Why HTTP/3 is deferred
+
+HTTP/3 is not a describability question. It carries the same request and
+response semantics as HTTP/1 and HTTP/2, so every operation Kynos emits today
+would describe an HTTP/3 deployment unchanged, and the OpenAPI document would
+not gain or lose a field. What it costs is maintenance, and the cost does not
+buy an origin much.
+
+The connection-level work is where it lands. QUIC moves congestion control,
+loss recovery and TLS into userspace, so an `http3` feature is a second
+connection driver rather than a flag on the existing one: its own accept path,
+its own flow control, its own idle and keep-alive timers, and a TLS
+configuration that is not the one `server/tls/` builds. That doubles the
+surface the runtime policy exists to bound, and it doubles what every
+transport-level test has to cover, for a protocol whose wins are concentrated
+in exactly the conditions an origin behind a load balancer does not see —
+lossy last-mile links, connection migration between networks, and head-of-line
+blocking across many parallel object fetches.
+
+The deployments that benefit most already terminate HTTP/3 at the edge. A CDN
+or reverse proxy speaks HTTP/3 to the client and HTTP/1 or HTTP/2 over a
+stable, low-loss link to the origin, which is the arrangement the loss-recovery
+and migration wins are for. Kynos being reachable over HTTP/3 directly adds
+nothing to that path, and an origin that is *not* behind such a hop is the
+case where the second driver has to be as hardened as the first.
+
+Revisiting is worth it when all of these hold: demonstrated demand from
+deployments that terminate at the origin rather than at an edge; a maintained
+`h3` and `quinn` (or successor) stack that has seen production use at the
+version Kynos would pin; and a benchmark on this workload's shape, not on
+parallel object fetches, showing a win an edge hop would not have delivered.
+Until then the design constraint recorded above is the only thing worth
+spending: keep the protocol configuration per-listener rather than per-server,
+so an `http3` feature is additive to `TransportConfig` rather than a reshaping
+of it.
 
 ### Language features that will reshape the surface
 
