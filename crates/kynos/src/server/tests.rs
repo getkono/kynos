@@ -500,10 +500,9 @@ async fn shutdown_drains_an_active_http2_stream() {
 #[cfg(feature = "tls")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_cancels_an_incomplete_tls_handshake() {
-    const SERVER_CERTIFICATE: &[u8] = include_bytes!("../../tests/fixtures/tls/server.pem");
-    const SERVER_KEY: &[u8] = include_bytes!("../../tests/fixtures/tls/server.key");
-
     use std::{num::NonZeroUsize, sync::Arc};
+
+    let identity = server_identity();
 
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
@@ -521,10 +520,13 @@ async fn shutdown_cancels_an_incomplete_tls_handshake() {
         #[cfg(feature = "http2")]
         http2: super::Http2Config::default(),
         tls: Some(
-            crate::server::tls::TlsConfig::from_pem(SERVER_CERTIFICATE, SERVER_KEY)
-                .expect("TLS identity parses")
-                .build()
-                .expect("TLS config builds"),
+            crate::server::tls::TlsConfig::from_pem(
+                identity.certificate.as_bytes(),
+                identity.key.as_bytes(),
+            )
+            .expect("TLS identity parses")
+            .build()
+            .expect("TLS config builds"),
         ),
         shutdown_timeout: std::time::Duration::from_secs(25),
         max_connections: NonZeroUsize::new(1).expect("one is non-zero"),
@@ -630,17 +632,17 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
         pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject as _},
     };
 
-    const CA: &[u8] = include_bytes!("../../tests/fixtures/tls/ca.pem");
-    const SERVER_CERTIFICATE: &[u8] = include_bytes!("../../tests/fixtures/tls/server.pem");
-    const SERVER_KEY: &[u8] = include_bytes!("../../tests/fixtures/tls/server.key");
-    const CLIENT_CERTIFICATE: &[u8] = include_bytes!("../../tests/fixtures/tls/client.pem");
-    const CLIENT_KEY: &[u8] = include_bytes!("../../tests/fixtures/tls/client.key");
+    let issued = authority();
+    let ca = issued.certificate.as_bytes();
 
     let client_authentication =
-        crate::server::tls::ClientCertificateConfig::from_pem_roots(CA).expect("CA parses");
-    let tls = crate::server::tls::TlsConfig::from_pem(SERVER_CERTIFICATE, SERVER_KEY)
-        .expect("server identity parses")
-        .require_client_certificate(client_authentication);
+        crate::server::tls::ClientCertificateConfig::from_pem_roots(ca).expect("CA parses");
+    let tls = crate::server::tls::TlsConfig::from_pem(
+        issued.server.certificate.as_bytes(),
+        issued.server.key.as_bytes(),
+    )
+    .expect("server identity parses")
+    .require_client_certificate(client_authentication);
     let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
     let bound = crate::server::Server::new(test_service())
         .bind((std::net::Ipv4Addr::LOCALHOST, 0))
@@ -660,7 +662,7 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
     let server = tokio::spawn(bound.serve());
 
     let mut anonymous_roots = RootCertStore::empty();
-    for certificate in CertificateDer::pem_slice_iter(CA) {
+    for certificate in CertificateDer::pem_slice_iter(ca) {
         anonymous_roots
             .add(certificate.expect("CA certificate parses"))
             .expect("CA is a trust anchor");
@@ -697,15 +699,16 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
     }
 
     let mut roots = RootCertStore::empty();
-    for certificate in CertificateDer::pem_slice_iter(CA) {
+    for certificate in CertificateDer::pem_slice_iter(ca) {
         roots
             .add(certificate.expect("CA certificate parses"))
             .expect("CA is a trust anchor");
     }
-    let client_certificates = CertificateDer::pem_slice_iter(CLIENT_CERTIFICATE)
+    let client_certificates = CertificateDer::pem_slice_iter(issued.client.certificate.as_bytes())
         .collect::<std::result::Result<Vec<_>, _>>()
         .expect("client chain parses");
-    let client_key = PrivateKeyDer::from_pem_slice(CLIENT_KEY).expect("client key parses");
+    let client_key =
+        PrivateKeyDer::from_pem_slice(issued.client.key.as_bytes()).expect("client key parses");
     let mut client_config = ClientConfig::builder()
         .with_root_certificates(roots)
         .with_client_auth_cert(client_certificates, client_key)
@@ -754,23 +757,27 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
 #[cfg(feature = "tls")]
 #[test]
 fn tls_rejects_empty_pem_and_zero_handshake_timeouts() {
-    const SERVER_CERTIFICATE: &[u8] = include_bytes!("../../tests/fixtures/tls/server.pem");
-    const SERVER_KEY: &[u8] = include_bytes!("../../tests/fixtures/tls/server.key");
+    let identity = server_identity();
 
     assert!(matches!(
         crate::server::tls::TlsConfig::from_pem(b"", b""),
         Err(crate::server::tls::error::TlsError::EmptyPem { .. })
     ));
 
-    let config = crate::server::tls::TlsConfig::from_pem(SERVER_CERTIFICATE, SERVER_KEY)
-        .expect("server identity parses");
+    let config = crate::server::tls::TlsConfig::from_pem(
+        identity.certificate.as_bytes(),
+        identity.key.as_bytes(),
+    )
+    .expect("server identity parses");
     assert!(matches!(
         config.handshake_timeout(std::time::Duration::ZERO),
         Err(crate::server::tls::error::TlsError::ZeroHandshakeTimeout)
     ));
 
-    let client = crate::server::tls::ClientCertificateConfig::from_pem_roots(SERVER_CERTIFICATE)
-        .expect("certificate parses as a trust anchor");
+    let client = crate::server::tls::ClientCertificateConfig::from_pem_roots(
+        identity.certificate.as_bytes(),
+    )
+    .expect("certificate parses as a trust anchor");
     assert!(matches!(
         client.with_pem_crls(b""),
         Err(crate::server::tls::error::TlsError::EmptyPem { .. })
@@ -801,19 +808,112 @@ fn a_malformed_pem_keeps_its_parser_failure_as_a_cause() {
 #[cfg(feature = "tls")]
 #[test]
 fn tls_rejects_repeated_sni_names() {
-    const SERVER_CERTIFICATE: &[u8] = include_bytes!("../../tests/fixtures/tls/server.pem");
-    const SERVER_KEY: &[u8] = include_bytes!("../../tests/fixtures/tls/server.key");
+    let identity = server_identity();
 
-    let config = crate::server::tls::TlsConfig::from_pem(SERVER_CERTIFICATE, SERVER_KEY)
-        .expect("server identity parses");
+    let config = crate::server::tls::TlsConfig::from_pem(
+        identity.certificate.as_bytes(),
+        identity.key.as_bytes(),
+    )
+    .expect("server identity parses");
     assert!(matches!(
         config.with_server_certificate(
             ["EXAMPLE.COM", "example.com"],
-            SERVER_CERTIFICATE,
-            SERVER_KEY,
+            identity.certificate.as_bytes(),
+            identity.key.as_bytes(),
         ),
         Err(crate::server::tls::error::TlsError::ServerName(name)) if name == "example.com"
     ));
+}
+
+/// A PEM certificate and the key that signs for it.
+///
+/// Minted here rather than committed. A published archive is immutable, so a
+/// private key that reaches one reaches it permanently -- and the argument
+/// `examples/tls.rs` makes for itself applies unchanged to a test: a transport
+/// case that mints its own material runs with nothing prepared, and has no PEM
+/// to expire.
+#[cfg(feature = "tls")]
+struct Identity {
+    certificate: String,
+    key: String,
+}
+
+/// A self-signed server identity for `localhost`, trusted by nothing.
+///
+/// Enough for every case that only has to parse an identity or configure one.
+#[cfg(feature = "tls")]
+fn server_identity() -> Identity {
+    let certified = rcgen::generate_simple_self_signed(["localhost".to_owned()])
+        .expect("a self-signed certificate");
+
+    Identity {
+        certificate: certified.cert.pem(),
+        key: certified.signing_key.serialize_pem(),
+    }
+}
+
+/// A certificate authority and the two identities it issues.
+///
+/// One authority signs both ends, because that is what the mutual case needs:
+/// the client verifies the server against this trust anchor and the server
+/// verifies the client against the same one.
+#[cfg(feature = "tls")]
+struct Authority {
+    /// The trust anchor itself, which both ends are given.
+    certificate: String,
+    server: Identity,
+    client: Identity,
+}
+
+#[cfg(feature = "tls")]
+fn authority() -> Authority {
+    use rcgen::{
+        BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose,
+        IsCa, KeyPair, KeyUsagePurpose,
+    };
+
+    let mut root = CertificateParams::new(Vec::new()).expect("no subject alternative names");
+    root.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    root.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+    root.distinguished_name
+        .push(DnType::CommonName, "Kynos test authority");
+    let issuer = CertifiedIssuer::self_signed(root, KeyPair::generate().expect("a key pair"))
+        .expect("a self-signed authority");
+
+    // A distinct common name per identity, so no leaf shares a subject with the
+    // authority that issued it and chain building has one answer.
+    let leaf = |names: Vec<String>, common: &str, purpose: ExtendedKeyUsagePurpose| {
+        let mut params = CertificateParams::new(names).expect("usable subject alternative names");
+        params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        params.extended_key_usages = vec![purpose];
+        params
+            .distinguished_name
+            .push(DnType::CommonName, common.to_owned());
+
+        let key = KeyPair::generate().expect("a key pair");
+        let certificate = params
+            .signed_by(&key, &issuer)
+            .expect("an issued certificate");
+
+        Identity {
+            certificate: certificate.pem(),
+            key: key.serialize_pem(),
+        }
+    };
+
+    Authority {
+        certificate: issuer.pem(),
+        server: leaf(
+            vec!["localhost".to_owned()],
+            "Kynos test server",
+            ExtendedKeyUsagePurpose::ServerAuth,
+        ),
+        client: leaf(
+            vec!["client.example.test".to_owned()],
+            "Kynos test client",
+            ExtendedKeyUsagePurpose::ClientAuth,
+        ),
+    }
 }
 
 fn test_service() -> crate::router::service::Service<()> {

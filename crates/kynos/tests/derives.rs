@@ -245,49 +245,10 @@ fn an_http_scheme_supplies_its_challenge() {
     assert_eq!(<SessionCookie as SecuritySchemeTrait>::challenge(), None);
 }
 
-/// The derives, counted against the entry points that declare them.
-///
-/// `every_derive_implements_its_trait` witnesses a set someone chose, and
-/// nothing tied that set to the macros the crate actually exports. A derive
-/// added without a witness is one that could expand to anything -- and eight
-/// witnesses against ten entry points is the state this test was written to
-/// end.
-///
-/// A count rather than a mapping, like `every_rejected_schema_type_has_a_case`:
-/// it catches a derive added without a witness, and not a witness renamed to
-/// cover a different one.
-#[test]
-fn every_derive_has_a_witness() {
-    const SOURCE: &str = include_str!("../../kynos-macros/src/lib.rs");
-
-    /// Every derive witnessed in this file. `Provider` is exercised by
-    /// `the_provider_derive_supplies_every_field_it_was_not_told_to_skip`,
-    /// `ApiError` and `Reply` through `implements_responses`,
-    /// `MultipartForm` through `implements_multipart`, and the rest by
-    /// `every_derive_implements_its_trait`.
-    const WITNESSED: &[&str] = &[
-        "ApiError",
-        "CookieParams",
-        "HeaderParams",
-        "MultipartForm",
-        "PathParams",
-        "Provider",
-        "QueryParams",
-        "Reply",
-        "Schema",
-        "SecurityScheme",
-        "Tag",
-    ];
-
-    let declared = SOURCE.matches("#[proc_macro_derive(").count();
-    assert_eq!(
-        declared,
-        WITNESSED.len(),
-        "`kynos-macros` declares {declared} derive(s) and {} are witnessed; a derive added \
-         without one is a derive nothing asks to implement its trait",
-        WITNESSED.len()
-    );
-}
+// The count that ties the witnesses above to the macros `kynos-macros`
+// actually declares lives in `ledger.rs`, which reads the sibling crate's
+// source. That read leaves this package, so the target carrying it is excluded
+// from the published archive rather than shipped unable to run.
 
 // --- `#[deprecated]` reaching the description -------------------------------
 //

@@ -351,21 +351,7 @@ fn each_route_attribute_writes_its_own_method() {
     assert_eq!(<described_thing as EndpointMeta>::METHOD, "GET");
 }
 
-/// The attributes, counted against the entry points that declare them.
-///
-/// Under `openapi32`, because `query` is gated there and the full set only
-/// exists in that build -- which is the one `mise run test` uses.
-#[cfg(feature = "openapi32")]
-#[test]
-fn every_route_attribute_has_a_case() {
-    const SOURCE: &str = include_str!("../../kynos-macros/src/lib.rs");
-    /// The eight ungated attributes, `query`, and `operation`.
-    const WITNESSED: usize = 10;
-
-    let declared = SOURCE.matches("#[proc_macro_attribute]").count();
-    assert_eq!(
-        declared, WITNESSED,
-        "`kynos-macros` declares {declared} attribute(s) and {WITNESSED} are witnessed; an \
-         attribute added without a case is one whose method nothing reads"
-    );
-}
+// The count that ties the cases above to the attributes `kynos-macros`
+// actually declares lives in `ledger.rs`, for the reason stated there: reading
+// the sibling crate's source leaves this package, so the target carrying that
+// read is excluded from the published archive.

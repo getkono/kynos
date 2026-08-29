@@ -10,6 +10,7 @@ matched -- these rules are discussed in prose throughout `src`, and the
 dropped, both inline and as sibling files.
 """
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -220,6 +221,69 @@ elif int(budget.group(1)) != len(oversized):
         "commit; adding one means arguing for it there.\n    "
         + "\n    ".join(oversized)
     )
+
+# --- Nothing a package compiles reaches outside the package ------------------
+# `cargo package` copies a package directory and nothing above it, so a path
+# literal that climbs out of one names a file the archive cannot carry. Two
+# distinct faults of exactly that shape had already reached the tree, and no
+# gate could see either: every other task builds the working tree, where both
+# paths resolve, and `cargo package`'s own verify step does not build test
+# targets.
+#
+# Read from the raw source rather than from `FILES`, whose text has had its
+# string literals stripped, and over every `.rs` file in each package rather
+# than `src/` alone -- a test target is published too.
+# Resolved against the reading file: `include_bytes!` and `include_str!` take a
+# path relative to the source that names them.
+INCLUDED = re.compile(r'include_(?:bytes|str)!\s*\(\s*"([^"]*)"')
+# Resolved against the package: the two spellings of building a path from the
+# manifest directory. Only literals attached directly to it are read -- a path
+# assembled through a variable is beyond a source scan, and every site in this
+# workspace is one expression.
+CONCATENATED = re.compile(r'CARGO_MANIFEST_DIR"\s*\)\s*,\s*"([^"]*)"')
+JOINED = re.compile(r'CARGO_MANIFEST_DIR"\s*\)\s*\)?((?:\s*\.join\(\s*"[^"]*"\s*\))+)')
+JOIN = re.compile(r'\.join\(\s*"([^"]*)"\s*\)')
+# The manifest's own `exclude`, which is what says a file never reaches an
+# archive. A target excluded there is exempt by construction: the rule is that
+# nothing *published* reaches out, and the exemption is the manifest's to grant
+# and to explain.
+EXCLUDED = re.compile(r"^exclude\s*=\s*\[([^\]]*)\]", re.M)
+
+
+def published(package):
+    """Every `.rs` file in `package` that a published archive would carry."""
+    manifest = EXCLUDED.search((package / "Cargo.toml").read_text())
+    exempt = re.findall(r'"([^"]*)"', manifest.group(1)) if manifest else []
+    for source in sorted(package.rglob("*.rs")):
+        relative = source.relative_to(package).as_posix()
+        if "target" in source.relative_to(package).parts:
+            continue
+        if any(relative == entry or relative.startswith(entry.rstrip("/") + "/") for entry in exempt):
+            continue
+        yield source
+
+
+for package in sorted((ROOT / "crates").iterdir()):
+    if not (package / "Cargo.toml").is_file():
+        continue
+    for source in published(package):
+        text = source.read_text()
+        reached = (
+            [(source.parent, literal) for literal in INCLUDED.findall(text)]
+            + [(package, literal.lstrip("/")) for literal in CONCATENATED.findall(text)]
+            + [(package, "/".join(JOIN.findall(chain))) for chain in JOINED.findall(text)]
+        )
+        for base, literal in reached:
+            if Path(os.path.normpath(base / literal)).is_relative_to(package):
+                continue
+            failures.append(
+                f"{source.relative_to(ROOT).as_posix()} reads {literal!r}, which "
+                f"resolves outside {package.relative_to(ROOT).as_posix()}. A "
+                "published archive carries the package directory and nothing "
+                "above it, so this names a file the archive cannot hold: either "
+                "keep what it reads inside the package, or `exclude` the target "
+                "and say in the manifest why the assertion is the repository's"
+            )
 
 # --- Parent re-exports ------------------------------------------------------
 # AGENTS.md: submodules are `pub` with no parent re-exports, so every item has
