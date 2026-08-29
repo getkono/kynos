@@ -36,7 +36,9 @@ needs more than the defaults. Each file's own header explains why it needs them.
 | --- | --- | --- |
 | [`responses.rs`](responses.rs) | Status in the return type: `Created`, `Accepted`, `Redirect<CODE>`, `Reply`, `WithHeaders`, typed URIs | — |
 | [`negotiation.rs`](negotiation.rs) | Choosing a representation from the client's `Accept` header | — |
+| [`localization.rs`](localization.rs) | Choosing a language from `Accept-Language`, and why that field *is* a parameter where `Accept` is not | — |
 | [`errors.rs`](errors.rs) | `#[derive(ApiError)]`, RFC 9457 problem documents, and every other way a status reaches an operation | — |
+| [`localized_errors.rs`](localized_errors.rs) | Translating a problem's `title` from the application's own catalogue, including the rejections Kynos raises | — |
 | [`sse.rs`](sse.rs) | Server-Sent Events: discriminated event types, resumption, reconnection advice, keep-alive | `openapi32`, `compression` |
 | [`streaming.rs`](streaming.rs) | JSON Lines, JSON text sequences, byte streams, and the whole-query-string parameter | `openapi32` |
 

@@ -1,0 +1,264 @@
+//! Matching a language range against the tags a service offers.
+//!
+//! # Which scheme, and why not just one
+//!
+//! RFC 4647 section 3 defines several, and RFC 9110 section 12.5.4 declines to
+//! pick: "Implementations can offer the most appropriate matching scheme for
+//! their requirements." The two that matter here point in opposite directions.
+//!
+//! | Client asks | Service offers | Basic Filtering (3.3.1) | Lookup (3.4) |
+//! | --- | --- | --- | --- |
+//! | `en-GB` | `en` | no match | `en` |
+//! | `en` | `en-GB` | `en-GB` | no match |
+//!
+//! Neither row is rare. RFC 9110 section 12.5.4's closing note is a complaint
+//! about the first — "users might assume that on selecting 'en-gb', they will
+//! be served any kind of English document if British English is not
+//! available" — and the second is the ordinary shape of a catalogue keyed
+//! `en-US`, `pt-BR`, `zh-Hans` answering clients that send bare `en`.
+//!
+//! So Kynos runs Lookup and falls back to Basic Filtering, ranking a Lookup
+//! match above a filtering one. Wherever Lookup has an answer that answer wins,
+//! which is what makes this an extension of section 3.4 rather than a third
+//! scheme: the fallback only decides cases Lookup would have abandoned.
+//!
+//! A range and a tag that diverge mid-way — `en-GB` against `en-US` — match
+//! under neither, and that is the honest answer rather than an oversight. They
+//! are different representations, and a service that wants one served to the
+//! other's clients offers `en` as well.
+
+/// How a range and an offered tag relate.
+///
+/// Ordered deliberately: a greater value is a better relation, so ranking can
+/// compare these directly. `Wildcard` is least because `*` says only "anything
+/// will do", which cannot choose between two tags that both satisfy it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum MatchKind {
+    /// The range was `*`, which RFC 4647 section 3.3.1 matches to any tag.
+    Wildcard,
+    /// The tag extends the range: RFC 4647 section 3.3.1 Basic Filtering.
+    Extends,
+    /// The range truncates to the tag: RFC 4647 section 3.4 Lookup.
+    Truncates,
+    /// The two are the same tag.
+    Exact,
+}
+
+/// How `range` relates to `tag`, and how many subtags they share.
+///
+/// `None` when they do not match under either scheme. Comparison is
+/// case-insensitive, which section 3.3.1 requires and section 2.1.1 of RFC 5646
+/// explains: case carries no meaning in a tag.
+#[must_use]
+pub fn classify(range: &str, tag: &str) -> Option<(MatchKind, usize)> {
+    if range == "*" {
+        return Some((MatchKind::Wildcard, 0));
+    }
+
+    let range_subtags = range.split('-');
+    let tag_subtags = tag.split('-');
+    let range_length = range_subtags.clone().count();
+    let tag_length = tag_subtags.clone().count();
+
+    let shared = range_subtags
+        .zip(tag_subtags)
+        .take_while(|(from_range, from_tag)| from_range.eq_ignore_ascii_case(from_tag))
+        .count();
+
+    // They agreed for as long as the shorter of the two lasted, or they did
+    // not match at all. `en-GB` against `en-US` stops here.
+    if shared != range_length.min(tag_length) {
+        return None;
+    }
+
+    match range_length.cmp(&tag_length) {
+        std::cmp::Ordering::Equal => Some((MatchKind::Exact, shared)),
+
+        // The tag is longer: `de-de` matches `de-DE-1996`. Section 3.3.1.
+        std::cmp::Ordering::Less => Some((MatchKind::Extends, shared)),
+
+        // The range is longer, so truncation may reach the tag -- but only at
+        // the stops section 3.4 actually lands on. Its one subtlety is that a
+        // singleton is "removed at the same time as [its] closest trailing
+        // subtag", so `zh-Hant-CN-x-private1` falls straight to `zh-Hant-CN`
+        // and `zh-Hant-CN-x` is never a stop.
+        //
+        // The walk is the way to say that, not a predicate on the tag. "A tag
+        // ending in a singleton is not a stop" is the tempting shortcut and it
+        // is wrong: `x-x-x` truncates to `x`, because the singleton removed on
+        // the way there is the *middle* subtag rather than the trailing one.
+        std::cmp::Ordering::Greater => {
+            let subtags: Vec<&str> = range.split('-').collect();
+            let mut length = subtags.len();
+
+            while length > tag_length {
+                let dropped = length - 1;
+                length = if dropped > 0 && subtags[dropped - 1].len() == 1 {
+                    dropped - 1
+                } else {
+                    dropped
+                };
+            }
+
+            (length == tag_length).then_some((MatchKind::Truncates, shared))
+        }
+    }
+}
+
+/// Why a range in an `Accept-Language` field was dropped.
+///
+/// Dropped rather than refused: see [`Preference::parse`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum RangeDefect {
+    /// The entry held no range at all.
+    Empty,
+    /// The first subtag was not one to eight letters.
+    PrimarySubtag,
+    /// A later subtag was not one to eight letters or digits.
+    Subtag,
+    /// A `q` parameter was present and was not a qvalue.
+    Weight,
+}
+
+/// One `language-range` from the field, with the weight it was given.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Preference {
+    /// The range, folded to lowercase. `*` for the wildcard.
+    range: String,
+    /// The weight, in thousandths. Absent is 1, which section 12.4.2 defines.
+    quality: u16,
+    /// Where it appeared in the field, which breaks a tie between two ranges
+    /// of equal weight and equal specificity.
+    order: usize,
+}
+
+impl Preference {
+    /// Reads one comma-separated entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the entry is not a weighted range. Every caller *drops* the
+    /// entry rather than refusing the request: see the module documentation on
+    /// [`AcceptLanguage`](super::AcceptLanguage).
+    pub(super) fn parse(entry: &str, order: usize) -> Result<Self, RangeDefect> {
+        let mut segments = entry.trim().split(';');
+        let range = segments.next().unwrap_or_default().trim();
+
+        if range.is_empty() {
+            return Err(RangeDefect::Empty);
+        }
+
+        if range != "*" {
+            // `language-range = (1*8ALPHA *("-" 1*8alphanum)) / "*"`. Note the
+            // first subtag is letters only and may be a single one, which is
+            // looser than a tag's `language` production -- section 2.1 says a
+            // range need not be well-formed, and an ill-formed one "will
+            // probably not match anything" rather than being an error.
+            let mut subtags = range.split('-');
+            let primary = subtags.next().unwrap_or_default();
+            if primary.is_empty()
+                || primary.len() > 8
+                || !primary.bytes().all(|byte| byte.is_ascii_alphabetic())
+            {
+                return Err(RangeDefect::PrimarySubtag);
+            }
+            for subtag in subtags {
+                if subtag.is_empty()
+                    || subtag.len() > 8
+                    || !subtag.bytes().all(|byte| byte.is_ascii_alphanumeric())
+                {
+                    return Err(RangeDefect::Subtag);
+                }
+            }
+        }
+
+        let mut quality = 1_000;
+        for parameter in segments {
+            let Some((name, value)) = parameter.trim().split_once('=') else {
+                return Err(RangeDefect::Weight);
+            };
+            if name.trim().eq_ignore_ascii_case("q") {
+                quality = crate::http::quality::parse(value.trim()).ok_or(RangeDefect::Weight)?;
+            }
+        }
+
+        Ok(Self {
+            range: range.to_ascii_lowercase(),
+            quality,
+            order,
+        })
+    }
+}
+
+/// The offered tag a priority list selects, or `None` when it selects none.
+///
+/// Each offered tag is scored against the *most specific* range that matches
+/// it, and that range's weight is the tag's weight. This is the rule
+/// [`Accept`](crate::response::negotiate::Accept) already applies to media
+/// ranges, and it is what gives `*` the meaning RFC 9110 section 12.4.3
+/// describes: a wildcard "selects unspecified values", so a tag some other
+/// range named is scored by that range rather than by the wildcard.
+///
+/// Ranking is by weight, then by how early the client named the range that set
+/// it, then by how that range matched and how deeply, and last by the order the
+/// offer itself lists them. A tag whose best weight is zero is refused
+/// outright, which is what `q=0` means.
+pub(super) fn select(preferences: &[Preference], offered: &[&str]) -> Option<usize> {
+    offered
+        .iter()
+        .enumerate()
+        .filter_map(|(index, tag)| score(preferences, tag).map(|score| (score, index)))
+        .max_by(|(left, left_index), (right, right_index)| {
+            left.cmp(right).then_with(|| right_index.cmp(left_index))
+        })
+        .map(|(_, index)| index)
+}
+
+/// What one offered tag is worth to this client.
+///
+/// Ordered as the fields are written: the weight first, because section 12.4.2
+/// is normative about what one means; then how early the client named the range
+/// that set it, which is section 3.4's "considered in turn, according to
+/// priority"; then how the range matched and how deeply.
+///
+/// The order matters below the weight and above the match. A client writing
+/// `de, en` has weighted neither, and the only thing that distinguishes them is
+/// that it wrote `de` first — so reading the match quality before the order
+/// would answer `en` whenever the service happened to list `en` first, which is
+/// the service's preference standing in for the client's.
+type Score = (u16, std::cmp::Reverse<usize>, MatchKind, usize);
+
+/// What `tag` is worth, through the most specific range that matches it.
+///
+/// "Most specific" is a property of the *range*, so it is measured on the
+/// range: how it matched first, then how many subtags it names, then how early
+/// it was written. Reading specificity off the shared prefix instead makes
+/// every range that truncates to one tag equally specific — the prefix is then
+/// the tag's own length — which loses the difference between `en-GB` and
+/// `en-US-x-y` when both reach `en`.
+fn score(preferences: &[Preference], tag: &str) -> Option<Score> {
+    preferences
+        .iter()
+        .filter_map(|preference| {
+            classify(&preference.range, tag).map(|(kind, depth)| (kind, depth, preference))
+        })
+        // A more specific range overrides a broader one, which is what lets
+        // `en;q=0.9, en-GB;q=0.1` tell the two apart. The wildcard is
+        // least specific of all, so `fr;q=0.1, *;q=0.9` still scores `fr` at
+        // 0.1 — RFC 9110 section 12.4.3's "selects unspecified values".
+        .max_by_key(|(kind, _, preference)| {
+            (
+                *kind,
+                preference.range.split('-').count(),
+                std::cmp::Reverse(preference.order),
+            )
+        })
+        .and_then(|(kind, depth, preference)| {
+            (preference.quality != 0).then_some((
+                preference.quality,
+                std::cmp::Reverse(preference.order),
+                kind,
+                depth,
+            ))
+        })
+}

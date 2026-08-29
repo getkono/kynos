@@ -12,7 +12,8 @@
 //!
 //! The request and response aliases live here; [`body`] holds the one type
 //! Kynos does define, and the erasure behind it, and [`cookie`] and [`etag`]
-//! the two fields whose grammar needs reading rather than looking up.
+//! the two fields whose grammar needs reading rather than looking up. The
+//! qvalue grammar every `Accept*` field shares is private beside them.
 
 pub mod body;
 pub mod coding;
@@ -20,6 +21,11 @@ pub mod cookie;
 pub mod date;
 pub mod etag;
 pub mod forwarded;
+
+// Not `pub`: a weight reaches a handler already folded into whichever
+// alternative won, so there is no item here for a path to point at. The same
+// standing `middleware::erased` has.
+pub(crate) mod quality;
 
 use crate::http::body::Body;
 

@@ -117,6 +117,14 @@ name = "negotiation"
 required-features = ["openapi31", "macros", "server", "http1", "json"]
 
 [[example]]
+name = "localized_errors"
+required-features = ["openapi31", "macros", "server", "http1", "json"]
+
+[[example]]
+name = "localization"
+required-features = ["openapi31", "macros", "server", "http1"]
+
+[[example]]
 name = "composition"
 required-features = ["openapi31", "macros", "server", "http1"]
 

@@ -348,6 +348,36 @@ async fn visit() -> NoContent {
     NoContent
 }
 
+/// The one operation that negotiates a response language.
+///
+/// At router scope rather than on a group of its own, because `Localized`
+/// declares no status: it adds a required `Content-Language` to the responses
+/// its own body declares and nothing else. That is exactly what
+/// `assert_conformance` is worth driving here -- a required response header the
+/// service failed to send is the shape of defect this file exists to catch, and
+/// no other target checks a declared language against a live exchange.
+#[kynos::get("/greeting")]
+async fn greeting(
+    preferred: kynos::response::language::AcceptLanguage<Spoken>,
+) -> kynos::response::language::Localized<kynos::extract::body::text::Text, Spoken> {
+    preferred.respond_with(|language| {
+        kynos::extract::body::text::Text(
+            match language {
+                "fr" => "Bonjour",
+                _ => "Hello",
+            }
+            .to_owned(),
+        )
+    })
+}
+
+/// The languages the fixture answers in.
+struct Spoken;
+
+impl kynos::response::language::offer::Languages for Spoken {
+    const TAGS: &'static [&'static str] = &["en", "fr"];
+}
+
 /// The one operation behind a conditional guard.
 ///
 /// On a group of its own like every other declaring interceptor: `Conditional`
@@ -418,7 +448,8 @@ fn service() -> kynos::Result<kynos::router::service::Service<App>> {
             moved,
             me,
             feed,
-            usage
+            usage,
+            greeting
         ])
         // Group scope: one operation each, because a declared status is a
         // promise every covered operation has to keep.
@@ -553,6 +584,24 @@ async fn exercise_the_operations(client: &TestClient<App>) {
     client
         .get("/me")
         .header("authorization", "Bearer tok_ok")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+
+    // Both arms of the negotiation, because the declared `Content-Language`
+    // enumerates two tags and `assert_conformance` checks the value against
+    // that schema. The second is the fallback: a language nobody offers is a
+    // 200 rather than a 406, so the document had better not say otherwise.
+    client
+        .get("/greeting")
+        .header("accept-language", "fr-CA")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+
+    client
+        .get("/greeting")
+        .header("accept-language", "ja")
         .send()
         .await
         .assert_status(StatusCode::OK);

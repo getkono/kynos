@@ -73,9 +73,20 @@ enum StoreError {
 | --- | --- | --- |
 | type | `base` | URI prefix; `type` defaults to it plus the kebab-cased variant name |
 | variant | `status` | required, 400–599 |
-| variant | `title` | defaults to the variant name, de-camel-cased |
+| variant | `title` | the problem's `title`, and the response's description. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
 | field | `extension` | serialize this field as an extension member under its own name |
+
+**`title` is read twice, and its absence is answered differently each time.**
+On the wire it is the problem's `title`, and a variant that declares none
+carries `StatusCode::canonical_reason` — RFC 9457 section 4.2.1's own
+recommendation for a problem whose type says nothing. In the description it is
+the response's `description`, and there the variant's doc comment is tried
+before the reason phrase, on the same argument `detail` rests on: the sentence a
+Rust reader already wrote is the sentence an API consumer should receive.
+
+There is no de-camel-casing of variant names anywhere, and this document used to
+say there was.
 
 `detail` comes from `Display`, which is why the derive requires it and why
 `thiserror` is the expected companion: the `#[error("...")]` a Rust reader
@@ -217,6 +228,71 @@ success and failure descriptions meet with no restatement anywhere.
 
 The scoping reason this lives in `Handler::describe` rather than in `Describe`
 is recorded in [`handlers.md`](handlers.md#where-the-rejection-union-happens).
+
+## Localization
+
+RFC 9457 asks for it directly. Section 3.1.3 says a problem's `title` "SHOULD
+NOT change from occurrence to occurrence of the problem, **except for
+localization** (e.g., using proactive content negotiation)", and section 4.2.1
+says the same of the reason phrase an `about:blank` problem carries.
+
+**Kynos negotiates the language and ships no catalogue.**
+[`response::language`](../crates/kynos/src/response/language/mod.rs) chooses the
+tag and writes `Content-Language`; the strings are the application's. That split
+is [`architecture.md`](architecture.md)'s third invariant applied to text, and
+the refusal it rests on is recorded there.
+
+### It is an interceptor, and it has to be
+
+`IntoResponse::into_response(self)` takes no context, and an extraction
+rejection short-circuits to a response before any handler runs. **There is no
+point in the pipeline where a request and a `Problem` coexist.** So localizing
+an error is something done *to* a finished response, and an interceptor is the
+only thing that holds one.
+
+That is a design constraint rather than a preference, and it has a payoff: an
+interceptor reaches every problem the service can produce, because a rejection's
+response travels back up through `Next::run` like any other. One that translates
+an application's own `#[derive(ApiError)]` translates Kynos's 400 for a
+malformed path parameter by the same code, without naming it.
+[`examples/localized_errors.rs`](../crates/kynos/examples/localized_errors.rs)
+is that, in about sixty lines of public API.
+
+The cost is a JSON round trip on the error path — the shape `Compression`
+already has, on a path that is not hot.
+
+### What a catalogue is keyed by
+
+By the problem *type*, which is what section 3.1.3 makes `title` a property of.
+The status belongs in the key too: a variant with no `#[problem(base = ...)]`
+is `about:blank`, so every rejection the framework raises shares one URI and is
+told apart only by its code. An error type that wants a localized title of its
+own therefore needs a `base`, which is the one place that key earns its keep
+beyond tidiness.
+
+A type the catalogue has no entry for keeps the title it already carried, rather
+than losing one. That is what makes adding a language additive.
+
+### Two things the framework will not do
+
+**It ships no translation of its own reason phrases.** `Problem::new` writes
+`StatusCode::canonical_reason`, in English. Translating those is forty-odd
+phrases in however many languages, and no CI job could hold them correct — the
+same objection [`architecture.md`](architecture.md) makes to a media-type
+database, except that a mistranslation cannot be caught by sampling *or* by a
+property test. The downside is asymmetric as well: a wrong title in a language
+a reader trusts misleads them, where an English one merely fails to help. An
+application that wants them replaces them from its own catalogue.
+
+**It does not localize `detail`.** That member comes from `Display`, so
+translating an interpolated sentence means owning argument reordering, plural
+categories and gendered agreement — a message-format model, which is `fluent` or
+`icu` and a row the dependency table does not have. RFC 9457 section 3.1.4
+points the other way regardless: consumers "SHOULD NOT parse the `detail` member
+for information", and the channel that is meant to be read by a machine is
+`type` together with the extension members. An error that needs a localized
+sentence should carry what the sentence is *about* as extensions and let the
+client render it.
 
 ## Rules
 

@@ -115,6 +115,7 @@ fn every_guided_diagnostic_has_a_snapshot() {
         ("Handler", "traits/handler.stderr"),
         ("IntoEndpoints", "traits/into_endpoints.stderr"),
         ("IntoResponse", "antipattern/bare_status_code.stderr"),
+        ("Languages", "traits/languages.stderr"),
         ("MapKey", "traits/map_key.stderr"),
         ("Provides", "antipattern/inject_without_provider.stderr"),
         ("Rangeable", "traits/rangeable.stderr"),

@@ -1,0 +1,34 @@
+error[E0277]: `Untranslated` does not name a set of offered languages
+  --> tests/ui/traits/languages.rs:13:14
+   |
+13 |     offers::<Untranslated>();
+   |              ^^^^^^^^^^^^ not an offered language set
+   |
+help: the trait `Languages` is not implemented for `Untranslated`
+  --> tests/ui/traits/languages.rs:8:1
+   |
+ 8 | struct Untranslated;
+   | ^^^^^^^^^^^^^^^^^^^
+   = note: implement `Languages` on a unit struct: `const TAGS: &'static [&'static str] = &["en", "fr"];`. The first tag is the default, and every one of them is checked for RFC 5646 well-formedness while this crate is compiled
+note: required by a bound in `offers`
+  --> tests/ui/traits/languages.rs:10:14
+   |
+10 | fn offers<L: Languages>() {}
+   |              ^^^^^^^^^ required by this bound in `offers`
+
+error[E0599]: the associated function or constant `parse` exists for struct `AcceptLanguage<Untranslated>`, but its trait bounds were not satisfied
+  --> tests/ui/traits/languages.rs:14:45
+   |
+ 8 | struct Untranslated;
+   | ------------------- doesn't satisfy `Untranslated: Languages`
+...
+14 |     let _ = AcceptLanguage::<Untranslated>::parse("en");
+   |                                             ^^^^^ associated function or constant cannot be called on `AcceptLanguage<Untranslated>` due to unsatisfied trait bounds
+   |
+   = note: the following trait bounds were not satisfied:
+           `Untranslated: Languages`
+note: the trait `Languages` must be implemented
+  --> src/response/language/offer.rs
+   |
+   | pub trait Languages {
+   | ^^^^^^^^^^^^^^^^^^^

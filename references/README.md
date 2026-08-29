@@ -378,10 +378,69 @@ Documents](https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/)
 complete document, including its copyright, authorship and license notices, and
 is distributed under those terms rather than the repository's MIT license.
 
-All of them postdate RFC 5378, so none carries a pre-RFC-5378-material notice —
-which is true of every text in this directory. The same Revised BSD License treatment applies
+All of them postdate RFC 5378, so none carries a pre-RFC-5378-material notice.
+The two texts under [Language Tags](#language-tags) are the only ones here that
+do, and that section says so. The same Revised BSD License treatment applies
 to Code Components extracted from any of them, which includes every ABNF rule an
 implementation is written against.
+
+## Language Tags
+
+[`rfc5646.txt`](rfc5646.txt) is an unmodified, byte-for-byte copy of the RFC
+Editor's official plain-text publication of [RFC 5646, Tags for Identifying
+Languages](https://www.rfc-editor.org/rfc/rfc5646.txt), retrieved on 2026-08-28.
+Its SHA-256 digest is
+`5d9515f053163c80e7294a84d18217dc83471acc7caa9773da2ac40deeec8228`.
+
+[`rfc4647.txt`](rfc4647.txt) is the same for [RFC 4647, Matching of Language
+Tags](https://www.rfc-editor.org/rfc/rfc4647.txt), retrieved on the same date.
+Its SHA-256 digest is
+`999e4e23ca5b8925ac5f154855af0f2948a5d26d14853249c9fc857e469ecb49`.
+
+Consult the RFC Editor information pages for
+[5646](https://www.rfc-editor.org/info/rfc5646) and
+[4647](https://www.rfc-editor.org/info/rfc4647) for current status and errata.
+
+**Neither grammar is in RFC 9110, which is why both are here.** Section 8.5.1
+defines `language-tag` only by reference to RFC 5646 section 2.1, and section
+12.5.4 defines `language-range` only by reference to RFC 4647 section 2.1. A
+reader of RFC 9110 alone cannot tell a well-formed tag from a malformed one.
+
+The two are halves of one BCP. BCP 47 is the pair, not either alone: 5646
+obsoletes RFC 4646 and owns the *tag* — what `Content-Language` carries — while
+4647 obsoletes the matching half of RFC 3066 and owns the *range* and the
+schemes that match one against the other. Section 3.3.1 (Basic Filtering) and
+section 3.4 (Lookup) are the two schemes RFC 9110 leaves an implementation to
+choose between; which one Kynos runs, and where it departs from both, is
+recorded in [`docs/standards.md`](../docs/standards.md) and argued in
+[`response/language`](../crates/kynos/src/response/language/mod.rs).
+
+Read 5646 for section 2.1's ABNF and section 2.1.1's case recommendations, and
+4647 for the two matching schemes. Section 2.2's subtag *registry* is
+deliberately not implemented — see the refusal in
+[`docs/architecture.md`](../docs/architecture.md).
+
+### Licensing
+
+These two are the exception this directory otherwise does not have.
+
+RFC 4647 was published in September 2006, before the IETF Trust's current
+provisions existed at all: it carries the older "Copyright (C) The Internet
+Society (2006)" full-copyright statement and places itself under BCP 78. RFC
+5646 was published in September 2009 and carries the current notice, but also
+the **pre-RFC-5378-material** paragraph, because it draws on RFC 4646 from 2006.
+Every other text in this directory postdates RFC 5378 and carries neither.
+
+What those notices restrict is *modification* of the pre-2008 material without a
+licence from whoever controls its copyright. This directory modifies nothing: both
+files are preserved complete and byte-for-byte, including their copyright,
+authorship and licence notices, which is what TLP 5.0 section 3.c.i permits for
+an IETF document copied in full. They are distributed under those terms rather
+than the repository's MIT licence.
+
+The Revised BSD License treatment for Code Components applies to both, which
+here means the ABNF in RFC 5646 section 2.1 and the matching algorithms in RFC
+4647 section 3 — the text an implementation is written against.
 
 ## Living standards
 

@@ -265,6 +265,58 @@ fn duplicate_name_and_location_pairs_are_rejected() {
     ));
 }
 
+/// Two spellings of one header field are one parameter, not two.
+///
+/// RFC 9110 section 5.1 makes field names case-insensitive, and
+/// [`is_ignored_header_parameter`](crate::model::parameter::header::is_ignored_header_parameter)
+/// already folds case "matching HTTP header semantics" -- so a uniqueness key
+/// that does not fold makes this rule disagree with the one beside it, and lets
+/// a document naming one field twice through.
+#[test]
+fn two_cases_of_one_header_name_are_one_parameter() {
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("listUsers")
+            .with_parameter(Parameter::header(
+                "Accept-Language",
+                Schema::of_type(SchemaType::String),
+            ))
+            .with_parameter(Parameter::header(
+                "accept-language",
+                Schema::of_type(SchemaType::String),
+            ))
+            .with_responses(ok_responses()),
+    );
+
+    let found = errors(&document_with(&[("/users", item)]));
+    assert!(
+        found
+            .iter()
+            .any(|error| matches!(error, SpecError::DuplicateParameter { .. })),
+        "got {found:?}"
+    );
+}
+
+/// And a location where names *are* case-sensitive keeps both.
+#[test]
+fn two_cases_of_one_query_name_are_two_parameters() {
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("listUsers")
+            .with_parameter(Parameter::query(
+                "Page",
+                Schema::of_type(SchemaType::Integer),
+            ))
+            .with_parameter(Parameter::query(
+                "page",
+                Schema::of_type(SchemaType::Integer),
+            ))
+            .with_responses(ok_responses()),
+    );
+
+    assert!(errors(&document_with(&[("/users", item)])).is_empty());
+}
+
 #[test]
 fn the_same_name_in_two_locations_is_fine() {
     let item = PathItem::new().with_operation(
