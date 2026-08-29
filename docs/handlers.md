@@ -126,6 +126,7 @@ for the empty body.
 | --- | --- | --- | --- |
 | request | `Content-Type` | [`OneOf<L, R>`](../crates/kynos/src/extract/body/mod.rs) | [`Alternative<Rhs>`](../crates/kynos/src/extract/body/alternative.rs) |
 | response | `Accept` | [`Negotiated<T>`](../crates/kynos/src/response/negotiate/mod.rs) | `Representations`, sealed |
+| response | `Accept-Language` | [`Localized<T, L>`](../crates/kynos/src/response/language/mod.rs) | `Languages`, open |
 
 `Alternative` is not a blanket trait. It is implemented only for pairs of body
 wrappers whose media types are known to be distinct, so `OneOf<Json<A>,
@@ -133,6 +134,23 @@ Json<B>>` fails to compile instead of making dispatch order observable — no
 description can express "whichever the router tried first". The implementations
 are enumerated per codec pair and each is `#[cfg]`-gated at item level, because
 a cross-codec pair needs both features and no single gate covers a group.
+
+The third row is the counter-case to the second, and the difference is the
+specification's rather than a preference.
+[`AcceptLanguage<L>`](../crates/kynos/src/response/language/mod.rs) *does*
+contribute a parameter: OpenAPI names exactly three fields whose definition
+shall be ignored — `Accept`, `Content-Type`, `Authorization` — and this is not
+one of them. Nor is its trait sealed. The offerable representations are exactly
+the codecs Kynos can describe, so an outside implementation would be one the
+`content` map could not state; a catalogue is the opposite, and only the
+application knows it.
+
+What the two share is that the offer is a type, so the description cannot miss
+an arm. `Localized` has no public constructor, which is what makes the emitted
+`Content-Language` enumeration true: the only tag that reaches the wire is one
+the negotiation chose from `Languages::TAGS`. Neither adds a status — a client
+whose language is missing is served the default with `Content-Language` saying
+so, never a 406.
 
 [`Accept<T>`](../crates/kynos/src/response/negotiate/mod.rs) contributes **no**
 `Accept` parameter, because the specification says a parameter definition for
