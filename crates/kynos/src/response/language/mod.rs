@@ -232,7 +232,12 @@ impl<L: Languages> AcceptLanguage<L> {
 /// #     const TAGS: &'static [&'static str] = &["en"];
 /// # }
 /// // Around it, there is no way to state a language the offer does not hold.
-/// let _ = Localized::<&str, Supported> { body: "Hello", language: "de" };
+/// // Every field is named, so the only thing left to refuse is their privacy.
+/// let _ = Localized::<&str, Supported> {
+///     body: "Hello",
+///     language: "de",
+///     offer: core::marker::PhantomData,
+/// };
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Localized<T, L> {
