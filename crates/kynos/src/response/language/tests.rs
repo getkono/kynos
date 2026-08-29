@@ -430,3 +430,220 @@ fn a_lookup_match_is_ranked_above_a_filtering_one() {
     assert!(MatchKind::Exact > MatchKind::Truncates);
     assert!(MatchKind::Extends > MatchKind::Wildcard);
 }
+
+// -- ranking one offer against a priority list --------------------------------
+
+use crate::response::language::matching::{Preference, RangeDefect, select};
+
+/// Reads a field the way the extractor will, dropping what it cannot read.
+fn preferences(field: &str) -> Vec<Preference> {
+    field
+        .split(',')
+        .enumerate()
+        .filter_map(|(order, entry)| Preference::parse(entry, order).ok())
+        .collect()
+}
+
+fn chosen<'a>(field: &str, tags: &[&'a str]) -> Option<&'a str> {
+    select(&preferences(field), tags).map(|index| tags[index])
+}
+
+#[test]
+fn a_lookup_match_outranks_a_filtering_one_for_the_same_client() {
+    // `en-GB` diverges from `en-US` and matches under neither scheme, so the
+    // only candidate is `en` -- reached by truncation, which is the half plain
+    // Basic Filtering would have abandoned.
+    assert_eq!(chosen("en-US", &["en-GB", "en"]), Some("en"));
+}
+
+#[test]
+fn the_deepest_truncation_wins_among_lookup_matches() {
+    // This is section 3.4's progressive truncation, stated as a ranking: the
+    // range stops at the first tag it reaches, which is the deepest one.
+    assert_eq!(
+        chosen("zh-Hant-TW", &["zh", "zh-Hant"]),
+        Some("zh-Hant")
+    );
+}
+
+#[test]
+fn the_first_offered_tag_breaks_a_tie() {
+    // Both extend `en` by one subtag at the same weight, so nothing the client
+    // said separates them and the service's own order decides.
+    assert_eq!(chosen("en", &["en-GB", "en-US"]), Some("en-GB"));
+}
+
+#[test]
+fn an_exact_match_outranks_a_tag_that_merely_extends_the_range() {
+    assert_eq!(chosen("en", &["en-GB", "en"]), Some("en"));
+}
+
+#[test]
+fn a_more_specific_range_sets_the_quality_a_tag_is_scored_at() {
+    // `en-GB` is named outright at 0.1, so it is scored there rather than at
+    // the 0.9 the broader `en` would have given it -- and `en-AU`, which only
+    // `en` names, keeps 0.9 and wins. The rule `Accept` already applies to
+    // media ranges.
+    assert_eq!(
+        chosen("en;q=0.9, en-GB;q=0.1", &["en-GB", "en-AU"]),
+        Some("en-AU")
+    );
+}
+
+#[test]
+fn a_range_refused_outright_never_selects_the_tag_it_names() {
+    // `q=0` is "not acceptable", and it is the most specific range naming
+    // `en-GB`, so `en-GB` is out even though the broader `en` is welcome.
+    assert_eq!(
+        chosen("en;q=1, en-GB;q=0", &["en-GB", "en-AU"]),
+        Some("en-AU")
+    );
+}
+
+#[test]
+fn the_wildcard_scores_only_the_tags_no_other_range_named() {
+    // RFC 9110 section 12.4.3: a wildcard "selects unspecified values". `fr` is
+    // specified, at 0.1, so the 0.9 wildcard reaches `en` alone -- and `en`
+    // therefore wins despite the client naming `fr` and not `en`.
+    assert_eq!(
+        chosen("fr;q=0.1, *;q=0.9", &["en", "fr"]),
+        Some("en")
+    );
+}
+
+#[test]
+fn a_client_whose_preferences_match_nothing_selects_nothing() {
+    // The caller turns this into the default rather than a 406; see
+    // `AcceptLanguage`.
+    assert_eq!(chosen("ja", &["en", "fr"]), None);
+}
+
+#[test]
+fn a_field_of_nothing_readable_selects_nothing_rather_than_refusing() {
+    assert_eq!(chosen("!!!, ;;;", &["en"]), None);
+}
+
+/// One input per refusal, matched exhaustively.
+#[test]
+fn every_defect_a_range_can_carry_has_a_case() {
+    let cases = [
+        ("", RangeDefect::Empty),
+        ("1en", RangeDefect::PrimarySubtag),
+        ("toolongprimary", RangeDefect::PrimarySubtag),
+        ("en-toolongsubtag", RangeDefect::Subtag),
+        ("en-", RangeDefect::Subtag),
+        ("en;q=1.5", RangeDefect::Weight),
+        ("en;nonsense", RangeDefect::Weight),
+    ];
+
+    for (entry, expected) in cases {
+        assert_eq!(Preference::parse(entry, 0), Err(expected), "{entry:?}");
+    }
+
+    for (_, defect) in cases {
+        match defect {
+            RangeDefect::Empty
+            | RangeDefect::PrimarySubtag
+            | RangeDefect::Subtag
+            | RangeDefect::Weight => {}
+        }
+    }
+
+    let witnessed: std::collections::BTreeSet<_> = cases
+        .iter()
+        .map(|(_, defect)| format!("{defect:?}"))
+        .collect();
+    assert_eq!(witnessed.len(), 4, "a refusal has no case above");
+}
+
+#[test]
+fn an_unreadable_range_is_dropped_and_the_rest_of_the_field_still_counts() {
+    // A field the server can partly read is one it should partly honour. The
+    // same call `http::date` makes, and for the same reason: refusing the whole
+    // request would decline to serve something the specification says to serve.
+    assert_eq!(chosen("!!!, fr", &["en", "fr"]), Some("fr"));
+}
+
+#[test]
+fn a_range_carrying_no_weight_is_read_as_the_strongest_preference() {
+    // Section 12.4.2: "If no 'q' parameter is present, the default weight is 1."
+    assert_eq!(chosen("fr, en;q=0.9", &["en", "fr"]), Some("fr"));
+}
+
+// -- the extractor ------------------------------------------------------------
+
+use crate::response::language::{AcceptLanguage, Languages};
+
+struct Supported;
+
+impl Languages for Supported {
+    const TAGS: &'static [&'static str] = &["en", "fr", "de"];
+}
+
+#[test]
+fn a_client_whose_preferences_match_nothing_is_served_the_first_tag_offered() {
+    // The 406 that is deliberately not raised. RFC 9110 section 15.5.7 defines
+    // that status as the server being *unwilling* to supply a default; Kynos is
+    // willing, and says which language it chose on the way out.
+    assert_eq!(AcceptLanguage::<Supported>::parse("ja").choose(), "en");
+}
+
+#[test]
+fn a_request_carrying_no_field_is_served_the_first_tag_offered() {
+    assert_eq!(AcceptLanguage::<Supported>::parse("").choose(), "en");
+}
+
+#[test]
+fn a_field_of_nothing_readable_is_served_the_default_rather_than_refused() {
+    // The 400 that is deliberately not raised.
+    assert_eq!(
+        AcceptLanguage::<Supported>::parse("!!!, ;;;").choose(),
+        "en"
+    );
+}
+
+#[test]
+fn every_tag_a_client_can_be_served_is_one_the_offer_declares() {
+    // What makes the emitted `Content-Language` enumeration true. Asserted over
+    // the whole space a client can ask for rather than one field, because the
+    // claim is about `choose` and not about any particular request: no input
+    // reaches a tag the description does not list.
+    for field in [
+        "fr-CA",
+        "ja",
+        "",
+        "!!!",
+        "*",
+        "en;q=0",
+        "de-AT, fr;q=0.4",
+        "zh-Hant-TW",
+        "en, fr, de",
+        "*;q=0.1, ja;q=0.9",
+    ] {
+        let chosen = AcceptLanguage::<Supported>::parse(field).choose();
+        assert!(
+            Supported::TAGS.contains(&chosen),
+            "{field:?} was served {chosen:?}, which the offer does not declare"
+        );
+    }
+
+    assert_eq!(AcceptLanguage::<Supported>::parse("fr-CA").choose(), "fr");
+}
+
+#[test]
+fn a_truncated_range_reaches_the_broader_tag_the_service_offers() {
+    // The row plain Basic Filtering loses: the client asked for Canadian
+    // French and the service offers only `fr`.
+    assert_eq!(
+        AcceptLanguage::<Supported>::parse("fr-CA, en;q=0.5").choose(),
+        "fr"
+    );
+}
+
+#[test]
+fn a_weight_orders_the_offer_rather_than_the_field() {
+    assert_eq!(
+        AcceptLanguage::<Supported>::parse("de;q=0.2, fr;q=0.8").choose(),
+        "fr"
+    );
+}

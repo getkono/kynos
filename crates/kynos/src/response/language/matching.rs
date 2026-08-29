@@ -104,3 +104,127 @@ pub fn classify(range: &str, tag: &str) -> Option<(MatchKind, usize)> {
         }
     }
 }
+
+/// Why a range in an `Accept-Language` field was dropped.
+///
+/// Dropped rather than refused: see [`Preference::parse`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum RangeDefect {
+    /// The entry held no range at all.
+    Empty,
+    /// The first subtag was not one to eight letters.
+    PrimarySubtag,
+    /// A later subtag was not one to eight letters or digits.
+    Subtag,
+    /// A `q` parameter was present and was not a qvalue.
+    Weight,
+}
+
+/// One `language-range` from the field, with the weight it was given.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Preference {
+    /// The range, folded to lowercase. `*` for the wildcard.
+    range: String,
+    /// The weight, in thousandths. Absent is 1, which section 12.4.2 defines.
+    quality: u16,
+    /// Where it appeared in the field, which breaks a tie between two ranges
+    /// of equal weight and equal specificity.
+    order: usize,
+}
+
+impl Preference {
+    /// Reads one comma-separated entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the entry is not a weighted range. Every caller *drops* the
+    /// entry rather than refusing the request: see the module documentation on
+    /// [`AcceptLanguage`](super::AcceptLanguage).
+    pub(super) fn parse(entry: &str, order: usize) -> Result<Self, RangeDefect> {
+        let mut segments = entry.trim().split(';');
+        let range = segments.next().unwrap_or_default().trim();
+
+        if range.is_empty() {
+            return Err(RangeDefect::Empty);
+        }
+
+        if range != "*" {
+            // `language-range = (1*8ALPHA *("-" 1*8alphanum)) / "*"`. Note the
+            // first subtag is letters only and may be a single one, which is
+            // looser than a tag's `language` production -- section 2.1 says a
+            // range need not be well-formed, and an ill-formed one "will
+            // probably not match anything" rather than being an error.
+            let mut subtags = range.split('-');
+            let primary = subtags.next().unwrap_or_default();
+            if primary.is_empty()
+                || primary.len() > 8
+                || !primary.bytes().all(|byte| byte.is_ascii_alphabetic())
+            {
+                return Err(RangeDefect::PrimarySubtag);
+            }
+            for subtag in subtags {
+                if subtag.is_empty()
+                    || subtag.len() > 8
+                    || !subtag.bytes().all(|byte| byte.is_ascii_alphanumeric())
+                {
+                    return Err(RangeDefect::Subtag);
+                }
+            }
+        }
+
+        let mut quality = 1_000;
+        for parameter in segments {
+            let Some((name, value)) = parameter.trim().split_once('=') else {
+                return Err(RangeDefect::Weight);
+            };
+            if name.trim().eq_ignore_ascii_case("q") {
+                quality = crate::http::quality::parse(value.trim()).ok_or(RangeDefect::Weight)?;
+            }
+        }
+
+        Ok(Self {
+            range: range.to_ascii_lowercase(),
+            quality,
+            order,
+        })
+    }
+}
+
+/// The offered tag a priority list selects, or `None` when it selects none.
+///
+/// Each offered tag is scored against the *most specific* range that matches
+/// it, and that range's weight is the tag's weight. This is the rule
+/// [`Accept`](crate::response::negotiate::Accept) already applies to media
+/// ranges, and it is what gives `*` the meaning RFC 9110 section 12.4.3
+/// describes: a wildcard "selects unspecified values", so a tag some other
+/// range named is scored by that range rather than by the wildcard.
+///
+/// Ranking is by weight, then by how the range matched, then by how many
+/// subtags agreed, then by the order the offer lists them. A tag whose best
+/// weight is zero is refused outright, which is what `q=0` means.
+pub(super) fn select(preferences: &[Preference], offered: &[&str]) -> Option<usize> {
+    offered
+        .iter()
+        .enumerate()
+        .filter_map(|(index, tag)| score(preferences, tag).map(|score| (score, index)))
+        .max_by(|(left, left_index), (right, right_index)| {
+            left.cmp(right).then_with(|| right_index.cmp(left_index))
+        })
+        .map(|(_, index)| index)
+}
+
+/// The weight, relation and depth `tag` earns from the most specific range
+/// that matches it.
+fn score(preferences: &[Preference], tag: &str) -> Option<(u16, MatchKind, usize)> {
+    preferences
+        .iter()
+        .filter_map(|preference| {
+            classify(&preference.range, tag)
+                .map(|(kind, depth)| (kind, depth, preference.order, preference.quality))
+        })
+        // The most specific range sets the weight, and the earliest of two
+        // equally specific ones wins -- so `en;q=0.9, *;q=0.1` scores `en-GB`
+        // at 0.9 through `en` rather than at 0.1 through the wildcard.
+        .max_by_key(|(kind, depth, order, _)| (*kind, *depth, std::cmp::Reverse(*order)))
+        .and_then(|(kind, depth, _, quality)| (quality != 0).then_some((quality, kind, depth)))
+}
