@@ -1,0 +1,25 @@
+error[E0080]: evaluation panicked: an offer with no languages has no default to serve
+ --> $RUST/core/src/panic.rs
+  |
+  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<Silent as kynos::response::language::offer::CheckedOffer>::CHECK` failed here
+  |
+ ::: src/response/language/offer.rs
+  |
+  | /         assert!(
+  | |             !L::TAGS.is_empty(),
+  | |             "an offer with no languages has no default to serve"
+  | |         );
+  | |_________- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/response/language/mod.rs
+  |
+  |         let () = <L as CheckedOffer>::CHECK;
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn AcceptLanguage::<Silent>::choose`
+  --> tests/ui/traits/languages_empty_offer.rs:16:13
+   |
+16 |     let _ = AcceptLanguage::<Silent>::parse("en").choose();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

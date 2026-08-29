@@ -1,6 +1,6 @@
 //! An offer holding something that is not a language tag does not compile.
 //!
-//! The check is a `const` on a private trait, forced by `choose`, so the build
+//! The check is a `const` on `CheckedOffer`, forced by `choose`, so the build
 //! fails rather than a `Content-Language` no client can read reaching the wire.
 //! `en_GB` is the readable mistake: an underscore is the POSIX locale spelling,
 //! and RFC 5646 separates subtags with a hyphen.

@@ -345,7 +345,7 @@ section 2.1 is a grammar over subtag shapes plus one closed list of seventeen
 tags that predate it, and RFC 4647 section 3 is two matching algorithms over
 subtag boundaries. All three are exactly the shape this section says the project
 prefers to write down and test, and
-[`response/language/tag.rs`](../crates/kynos/src/response/language/tag/mod.rs) is
+[`response/language/tag/`](../crates/kynos/src/response/language/tag/mod.rs) is
 that table: its grammar is swept over every shape the ABNF admits, and its
 matcher over every range-and-tag pair in a closed alphabet.
 
