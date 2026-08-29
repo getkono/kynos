@@ -332,6 +332,39 @@ The ranking is unchanged. Section 8.8.2 gives `Last-Modified` one-second
 resolution, so section 13.1.3 ranks `If-None-Match` above it and a strong entity
 tag stays what Kynos reaches for first.
 
+### The language-tag registry, refused
+
+**No BCP 47 crate**, for the reason the three rows above give and with the same
+split between a grammar and a database.
+
+`unic-langid`, `icu`, `fluent` and `accept-language` would each arrive carrying
+the IANA Language Subtag Registry — the answer to "is `en` a real language",
+which is a table only sampling can verify and one that changes without this
+repository noticing. What `response::language` needs is not that. RFC 5646
+section 2.1 is a grammar over subtag shapes plus one closed list of seventeen
+tags that predate it, and RFC 4647 section 3 is two matching algorithms over
+subtag boundaries. All three are exactly the shape this section says the project
+prefers to write down and test, and
+[`response/language/tag.rs`](../crates/kynos/src/response/language/tag/mod.rs) is
+that table: its grammar is swept over every shape the ABNF admits, and its
+matcher over every range-and-tag pair in a closed alphabet.
+
+So a [`LanguageTag`](../crates/kynos/src/response/language/tag/mod.rs) states that a
+string *could* name a language and never that it does. `zz-Qaaa-QM` parses here
+and names nothing, which costs a client the same default a request for `ja`
+already gets — and closing that gap is the one thing a registry would buy, for
+a dependency that would have to be right about the world rather than about a
+grammar. [`nfr.md`](nfr.md) records it as a gap with the test that characterizes
+it rather than as an omission.
+
+The translation catalogue behind a localized response is a separate refusal and
+a firmer one: it is the third invariant applied directly. A message catalogue,
+its fallback policy and its translation quality are all things a layer above can
+own, and `fluent` or `icu` in the dependency table would be Kynos choosing the
+user's problem for them. Kynos negotiates the language and states which one it
+chose; the strings are the application's, and
+[`errors.md`](errors.md) records what that means for a problem detail.
+
 `moka` and `jsonwebtoken` are a fourth kind. Both are named by one example and
 by nothing under `src/`, which is the standing `rcgen`, `listenfd` and
 `tracing-subscriber` already have: this table governs what Kynos depends on, not
