@@ -425,3 +425,201 @@ fn a_deprecated_handler_marks_its_operation() {
     // saying `false` in every description Kynos emits.
     assert_eq!(operation(&document, "/alpha").deprecated, None);
 }
+
+// -- language negotiation, and the statuses it reaches ------------------------
+
+/// Three languages, which is enough for an enumeration to be worth reading.
+struct Supported;
+
+impl kynos::response::language::Languages for Supported {
+    const TAGS: &'static [&'static str] = &["en", "fr", "de"];
+}
+
+/// A failure with a status of its own, so the success and the error arm can be
+/// told apart in the emitted responses.
+#[derive(Debug, thiserror::Error, kynos::ApiError)]
+#[problem(status = 404, title = "No greeting")]
+#[error("no greeting for that language")]
+struct NoGreeting;
+
+#[kynos::get("/greeting")]
+async fn greeting(
+    preferred: kynos::response::language::AcceptLanguage<Supported>,
+) -> Result<
+    kynos::response::language::Localized<kynos::extract::body::text::Text, Supported>,
+    NoGreeting,
+> {
+    Ok(preferred.respond_with(|language| {
+        kynos::extract::body::text::Text(
+            match language {
+                "fr" => "Bonjour",
+                "de" => "Guten Tag",
+                _ => "Hello",
+            }
+            .to_owned(),
+        )
+    }))
+}
+
+/// The control: the same handler without the negotiation.
+#[kynos::get("/plain")]
+async fn plain() -> kynos::extract::body::text::Text {
+    kynos::extract::body::text::Text("Hello".to_owned())
+}
+
+fn negotiating_document() -> Document {
+    Router::<()>::new()
+        .mount(kynos::routes![greeting, plain])
+        .openapi()
+        .expect("a describable router")
+}
+
+/// `Accept-Language` is a parameter where `Accept` is not, because OpenAPI
+/// ignores a definition for exactly three fields and this is not one of them.
+#[test]
+fn a_localized_operation_declares_the_field_it_reads() {
+    let document = negotiating_document();
+    let localized = operation(&document, "/greeting");
+
+    let declared = localized.parameters.iter().find(|parameter| {
+        matches!(parameter, kynos::openapi::RefOr::Item(item) if item.name == "Accept-Language")
+    });
+    let Some(kynos::openapi::RefOr::Item(parameter)) = declared else {
+        panic!("the `Accept-Language` field is declared, and inline rather than as a `$ref`");
+    };
+
+    assert_eq!(parameter.location, kynos::openapi::ParameterIn::Header);
+    assert_ne!(parameter.required, Some(true));
+
+    let kynos::openapi::Schema::Object(schema) = parameter.schema().expect("a schema") else {
+        panic!("described by a boolean schema");
+    };
+
+    // No enumeration: the value is a priority list, not a tag, so a set of
+    // offered tags would be a claim no client could satisfy.
+    assert!(
+        schema.enumeration.is_none(),
+        "the offer is enumerated on `Content-Language`, not here"
+    );
+    // And no pattern: an unreadable range is dropped rather than refused, so a
+    // pattern would document a rejection the service never makes.
+    assert!(schema.pattern.is_none(), "{:?}", schema.pattern);
+
+    // The control declares no such parameter.
+    assert!(operation(&document, "/plain").parameters.is_empty());
+}
+
+/// The offer is stated where it is true, on the field that carries one tag.
+#[test]
+fn a_localized_operation_enumerates_its_offer_on_the_language_it_answers_in() {
+    let document = negotiating_document();
+    let localized = operation(&document, "/greeting");
+
+    let kynos::openapi::RefOr::Item(response) = localized
+        .responses
+        .responses
+        .get("200")
+        .expect("a described success")
+    else {
+        panic!("the 200 is described as a `$ref`");
+    };
+    let kynos::openapi::RefOr::Item(field) = response
+        .headers
+        .get("Content-Language")
+        .expect("the language is declared on the success")
+    else {
+        panic!("the field is described as a `$ref`");
+    };
+
+    // Required, which is what makes serving a default instead of a 406 honest:
+    // a client that cannot use the fallback can always see what it got.
+    assert_eq!(field.required, Some(true));
+
+    let (_, media) = field.content().expect("a content-described header");
+    let kynos::openapi::Schema::Object(schema) = media.schema.clone().expect("a schema") else {
+        panic!("described by a boolean schema");
+    };
+    let enumerated: Vec<String> = schema
+        .enumeration
+        .expect("the offer is enumerated")
+        .into_iter()
+        .map(|value| value.as_str().expect("a string tag").to_owned())
+        .collect();
+
+    assert_eq!(enumerated, ["en", "fr", "de"]);
+}
+
+/// The field reaches the statuses the body declares and no others.
+#[test]
+fn a_localized_operation_states_its_language_on_the_statuses_that_carry_it() {
+    let document = negotiating_document();
+    let localized = operation(&document, "/greeting");
+
+    // No wildcard entry was minted. A `2XX` beside a declared `200` is a key no
+    // reader of the 200 resolves, and a response the service cannot produce.
+    let statuses: BTreeSet<&str> = localized
+        .responses
+        .responses
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(statuses, BTreeSet::from(["200", "404"]));
+
+    assert_eq!(
+        declared_headers(&localized, "200"),
+        Some(vec!["Content-Language".to_owned()])
+    );
+
+    // The error arm carries none: a problem document is not localized by
+    // `Localized`, and claiming otherwise would be a promise nothing keeps.
+    assert_eq!(declared_headers(&localized, "404"), Some(Vec::new()));
+}
+
+/// Negotiating a language adds no status to an operation.
+#[test]
+fn a_localized_operation_declares_no_status_it_would_not_otherwise_send() {
+    let document = negotiating_document();
+
+    let greeting = operation(&document, "/greeting");
+    let plain = operation(&document, "/plain");
+
+    let negotiated: BTreeSet<&str> = greeting
+        .responses
+        .responses
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let control: BTreeSet<&str> = plain
+        .responses
+        .responses
+        .keys()
+        .map(String::as_str)
+        .collect();
+
+    // The only difference is the error type the handler names, which is the
+    // control's whole job here: no 406 and no 400 came from the negotiation.
+    assert_eq!(
+        negotiated.difference(&control).copied().collect::<Vec<_>>(),
+        ["404"]
+    );
+}
+
+/// `Vary` is merged onto the wire and never described.
+#[test]
+fn a_localized_operation_never_declares_the_field_it_varies_on() {
+    let document = negotiating_document();
+    let localized = operation(&document, "/greeting");
+
+    for (status, response) in &localized.responses.responses {
+        let kynos::openapi::RefOr::Item(response) = response else {
+            panic!("{status} is described as a `$ref`");
+        };
+        assert!(
+            !response
+                .headers
+                .keys()
+                .any(|name| name.eq_ignore_ascii_case("vary")),
+            "{status} describes `Vary`, which a client generator has no use for"
+        );
+    }
+}

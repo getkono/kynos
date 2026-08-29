@@ -460,10 +460,7 @@ fn a_lookup_match_outranks_a_filtering_one_for_the_same_client() {
 fn the_deepest_truncation_wins_among_lookup_matches() {
     // This is section 3.4's progressive truncation, stated as a ranking: the
     // range stops at the first tag it reaches, which is the deepest one.
-    assert_eq!(
-        chosen("zh-Hant-TW", &["zh", "zh-Hant"]),
-        Some("zh-Hant")
-    );
+    assert_eq!(chosen("zh-Hant-TW", &["zh", "zh-Hant"]), Some("zh-Hant"));
 }
 
 #[test]
@@ -505,10 +502,7 @@ fn the_wildcard_scores_only_the_tags_no_other_range_named() {
     // RFC 9110 section 12.4.3: a wildcard "selects unspecified values". `fr` is
     // specified, at 0.1, so the 0.9 wildcard reaches `en` alone -- and `en`
     // therefore wins despite the client naming `fr` and not `en`.
-    assert_eq!(
-        chosen("fr;q=0.1, *;q=0.9", &["en", "fr"]),
-        Some("en")
-    );
+    assert_eq!(chosen("fr;q=0.1, *;q=0.9", &["en", "fr"]), Some("en"));
 }
 
 #[test]
