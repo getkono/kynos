@@ -1,8 +1,8 @@
 # Releasing
 
-Release-plz does the release. This records the parts it cannot: the one-time
-setup, which lives outside the repository, and the first publish of a crate,
-which crates.io does not allow a machine to perform.
+Release-plz does the release. This records the parts it cannot: the loop a human
+drives, and the Trusted Publishing config that lives on crates.io rather than in
+this repository.
 
 This is a runbook. Nothing here is normative for implementation work.
 
@@ -58,91 +58,13 @@ what `cargo publish` will do. CI runs the same task on every push, in the
   `protect_breaking_commits` overrides every skip rule, and it has to, because 32
   of the 46 breaking commits in the history so far are `refactor!:`.
 
-## One-time setup
+## Trusted Publishing
 
-Everything in this section happens outside the repository. Do it in order.
-
-No secret is part of it. `release-plz.yml` authenticates with
-`secrets.GITHUB_TOKEN`, which every run already has, so there is no App to
-create, no key to rotate and no repository secret this pipeline reads. What that
-costs is step 2 of [the loop](#the-loop), where a human asks the release pull
-request for its CI. Closing *that* gap later means a GitHub App or a fine-grained
-personal access token in place of `secrets.GITHUB_TOKEN` in both jobs.
-Repository-wide Actions permission to create pull requests does not close it:
-that setting grants the right to open the pull request, not the ability of the
-pull request to trigger runs — release PR #17 sat with zero checks while the
-setting was on.
-
-### 1. Create the `release` label
-
-`release-plz.toml` labels the release pull request `release`. Create it by hand
-so it gets a colour and a description rather than the arbitrary one the API
-assigns to a label created on first use.
-
-### 2. Delete the abandoned release branches
-
-Eleven `release-plz-*` branches survive from runs whose pull requests were closed
-by hand. Release-plz will not reuse them.
-
-```bash
-git ls-remote --heads origin 'release-plz-*' \
-  | awk '{ print $2 }' \
-  | xargs -r -n1 git push origin --delete
-```
-
-### 3. Publish 0.1.0
-
-crates.io does not accept a *new* crate through Trusted Publishing, so the first
-version of each of the three needs a registry token. This is a crates.io
-limitation, not a release-plz one.
-
-That publish happens from a workstation, not from CI. `release-plz.yml` reads no
-registry token and is not going to: release-plz skips the OIDC exchange whenever
-one is present in the environment, so a secret wired in for this one occasion —
-or left empty, or forgotten afterwards — could silently disable trusted
-publishing for every release after it.
-
-1. **Merge the release pull request first**, so the changelogs are on `master`
-   and ship inside the tarballs. The `Release` job it triggers fails at
-   `cargo publish` with an authentication error. That is expected and harmless:
-   release-plz publishes before it tags, so the failed run leaves no tag behind
-   and nothing to undo.
-2. From a clean checkout of that merge commit, with a crates.io API token scoped
-   to `publish-new` and `publish-update`:
-
-   ```bash
-   CARGO_REGISTRY_TOKEN=… cargo publish --workspace --all-features
-   ```
-
-   `--workspace` handles the ordering and the intra-workspace dependencies, for
-   the same reason `mise run publish:check` uses it. It is not atomic: if the
-   server rejects one crate, the ones already accepted stay published.
-3. Revoke the token.
-4. Push the tags by hand. Release-plz filters out already-published packages
-   before tagging, so it will never create these three:
-
-   ```bash
-   git tag kynos-openapi-v0.1.0
-   git tag kynos-macros-v0.1.0
-   git tag kynos-v0.1.0
-   git push origin kynos-openapi-v0.1.0 kynos-macros-v0.1.0 kynos-v0.1.0
-   ```
-
-   The tags are not cosmetic. Each changelog is generated from the commits since
-   the previous tag, so without them the 0.1.1 notes would replay the entire
-   history.
-
-5. Cut the release page, which release-plz also skipped:
-
-   ```bash
-   gh release create kynos-v0.1.0 --title 'Kynos v0.1.0' \
-     --notes-file <(sed -n '/^## \[0.1.0\]/,/^## \[/p' crates/kynos/CHANGELOG.md)
-   ```
-
-### 4. Configure Trusted Publishing
-
-For each of `kynos`, `kynos-macros` and `kynos-openapi`, on crates.io:
-**Settings → Trusted Publishing → Add**, platform GitHub, then
+Release-plz authenticates to crates.io with a short-lived registry token it
+mints through Trusted Publishing, so no registry credential is stored in this
+repository. The config lives on crates.io rather than here, one entry per crate
+— `kynos`, `kynos-macros` and `kynos-openapi` — under **Settings → Trusted
+Publishing → Add**, platform GitHub:
 
 | Field | Value |
 | --- | --- |
@@ -151,19 +73,65 @@ For each of `kynos`, `kynos-macros` and `kynos-openapi`, on crates.io:
 | Workflow filename | `release-plz.yml` |
 | Environment | *(leave empty)* |
 
-If this is misconfigured, release-plz logs `Failed to use trusted publishing: …
-Proceeding without it.` and the run then fails at `cargo publish` with an
-authentication error. Check the `Release` job's log for that warning before
-suspecting anything else.
+If an entry is missing or misconfigured, release-plz logs `Failed to use
+trusted publishing: … Proceeding without it.` and the run then fails at
+`cargo publish` with `no token found`. Check the `Release` job's log for that
+warning before suspecting anything else. Publishing precedes tagging, so such a
+run leaves no tag behind and is safe to retry once the config is fixed.
 
-### 5. Say that something is published
+A fourth crate would need this done again before its first release, and cannot
+have it done in advance: crates.io does not accept a *new* crate through Trusted
+Publishing, so a name that does not exist on the registry yet has to be published
+once from a workstation. That is a crates.io limitation, not a release-plz one;
+the three crates here were published that way for 0.1.0. Do not wire a registry
+token into CI for the occasion — see below. Instead:
 
-Two statements become false the moment 0.1.0 lands:
+1. **Merge the release pull request first**, so the changelogs are on `master`
+   and ship inside the tarballs, and so the already-published crates the new one
+   depends on are on the index for it to resolve against. The `Release` job that
+   merge triggers fails at `cargo publish`; that is expected, and publishing
+   precedes tagging, so it leaves nothing to undo.
+2. From a clean checkout of that merge commit, with a crates.io token scoped to
+   `publish-new` and `publish-update`:
 
-- [`.github/SECURITY.md`](../.github/SECURITY.md) — "Nothing is published to
-  crates.io yet" becomes the supported-versions policy the same section already
-  describes.
-- [`README.md`](../README.md) — the status line at the top.
+   ```bash
+   CARGO_REGISTRY_TOKEN=… cargo publish --workspace --all-features
+   ```
 
-From 0.1.1 onward, none of this section applies: commits land, the release pull
-request updates, and merging it publishes.
+   `--workspace` handles the ordering and the intra-workspace dependencies, for
+   the same reason `mise run publish:check` uses it. It is not atomic: if the
+   server rejects one crate, the ones already accepted stay published.
+3. Revoke the token, and add the new crate's Trusted Publishing entry.
+4. Push the tags by hand — release-plz filters out already-published packages
+   before tagging, so it creates none of them:
+
+   ```bash
+   git tag kynos-vX.Y.Z && git push origin kynos-vX.Y.Z   # and one per crate
+   ```
+
+   The tags are not cosmetic. Each changelog is generated from the commits since
+   the previous tag, so a missing one replays the entire history into the next
+   release's notes.
+5. Cut the release page, which release-plz also skipped:
+
+   ```bash
+   gh release create kynos-vX.Y.Z --title 'Kynos vX.Y.Z' \
+     --notes-file <(sed -n '/^## \[X.Y.Z\]/,/^## \[/p' crates/kynos/CHANGELOG.md)
+   ```
+
+`release-plz.yml` reads no `CARGO_REGISTRY_TOKEN` and must not be given one.
+Release-plz skips the OIDC exchange whenever a registry token is present in the
+environment, so a secret wired in for an occasion like the one above — or left
+empty, or forgotten afterwards — could silently disable trusted publishing for
+every release after it.
+
+No other secret is part of this pipeline either. `release-plz.yml` authenticates
+with `secrets.GITHUB_TOKEN`, which every run already has, so there is no App to
+create, no key to rotate and no repository secret this pipeline reads. What that
+costs is step 2 of [the loop](#the-loop), where a human asks the release pull
+request for its CI. Closing *that* gap later means a GitHub App or a fine-grained
+personal access token in place of `secrets.GITHUB_TOKEN` in both jobs.
+Repository-wide Actions permission to create pull requests does not close it:
+that setting grants the right to open the pull request, not the ability of the
+pull request to trigger runs — release PR #17 sat with zero checks while the
+setting was on.

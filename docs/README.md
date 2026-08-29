@@ -25,7 +25,7 @@ the framework, and the list of features it deliberately rejects, lives in the
 | [`standards.md`](standards.md) | Working on anything a specification governs: which document and section binds a middleware, where a departure is argued, and what is known not to conform |
 | [`testing.md`](testing.md) | Deciding where a test belongs, or what kind of test a guarantee needs |
 | [`nfr.md`](nfr.md) | Adding a module-level guarantee, or deciding what a change must prove before it lands |
-| [`releasing.md`](releasing.md) | Cutting a release, or setting up the publishing pipeline |
+| [`releasing.md`](releasing.md) | Cutting a release, or diagnosing why one did not publish |
 
 ## The anti-patterns are normative
 
