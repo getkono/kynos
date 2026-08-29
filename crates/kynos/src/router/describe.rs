@@ -15,7 +15,7 @@ use super::install::{
 use super::{
     Arc, Dispatch, Document, EndpointTerminal, Error, HashMap, OperationCx, PanicPolicy, PathEntry,
     PathItem, Paths, Registry, Result, Route, Router, Service, Severity, SpecError, SpecVersion,
-    Violation, dispatch,
+    TrailingSlashPolicy, Violation, dispatch,
 };
 
 // Each behind the feature that provides it, as `mod.rs` had them.
@@ -185,6 +185,10 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
             &mut paths,
             &mut index_of,
         )?;
+
+        if self.trailing_slashes == TrailingSlashPolicy::Lenient {
+            register_flipped_spellings(&mut matcher, &paths);
+        }
 
         for entry in &mut paths {
             let methods: Vec<_> = entry
@@ -430,5 +434,42 @@ impl Described {
     fn into_document(self) -> Result<Document> {
         self.errors()?;
         Ok(self.document)
+    }
+}
+
+/// Registers the other spelling of every declared path against the entry that
+/// declared it, for [`TrailingSlashPolicy::Lenient`].
+///
+/// Registering the flipped spelling in the match table, rather than answering
+/// for it at request time, is what keeps the description exact. It enters the
+/// table and nothing else: `paths` still carries one key per declared route,
+/// and because both spellings share a [`PathEntry`], `MatchedPath` still
+/// reports the declared template, `Allow` is still the one computed from the
+/// declared operations, and the synthesized `OPTIONS` still covers both.
+///
+/// A second pass rather than an insert in the loop above, for two reasons. A
+/// flipped spelling added early would occupy the slot a later declared route
+/// needs, and a declared spelling has to win over a flipped one -- an
+/// application that declares both `/users` and `/users/` keeps two distinct
+/// entries. `insert` failing *is* that collision, so discarding the error is
+/// the whole of the rule rather than a swallowed failure.
+///
+/// Catch-alls are skipped. Only `route_unchecked` can put one in the table, and
+/// `/assets/{*path}` already matches everything below `/assets/`, so a flipped
+/// spelling of it would be redundant at best.
+fn register_flipped_spellings<C>(matcher: &mut matchit::Router<usize>, paths: &[PathEntry<C>]) {
+    let flipped: Vec<(String, usize)> = paths
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| !entry.template.contains("{*"))
+        .filter_map(|(index, entry)| {
+            dispatch::flip_trailing_slash(&entry.template).map(|spelling| (spelling, index))
+        })
+        .collect();
+
+    for (spelling, index) in flipped {
+        // A collision means the application declared that spelling itself, and
+        // what it declared stands.
+        let _ = matcher.insert(spelling, index);
     }
 }

@@ -117,6 +117,155 @@ async fn a_redirect_carries_the_query_it_was_given() {
     );
 }
 
+// --- What `Lenient` accepts, and what it still refuses --------------------
+
+/// A route whose declared spelling carries the trailing slash, which is the
+/// shape `router/assets` registers a directory index under.
+#[kynos::get("/things/")]
+async fn list_things() -> Text {
+    Text("things".to_owned())
+}
+
+/// Two operations declared under both spellings of one path, to prove a
+/// declared spelling is never displaced by a flipped one.
+#[kynos::get("/pair")]
+async fn pair_bare() -> Text {
+    Text("bare".to_owned())
+}
+
+#[kynos::get("/pair/")]
+async fn pair_slashed() -> Text {
+    Text("slashed".to_owned())
+}
+
+/// Echoes the template it matched, to prove a flipped spelling still reports
+/// the declared one.
+#[kynos::get("/label")]
+async fn echo_label(MatchedPath(template): MatchedPath) -> Text {
+    Text(template.to_owned())
+}
+
+/// Under `Lenient` both spellings reach the operation, with no redirect in
+/// between and the same body out of each.
+#[tokio::test]
+async fn both_spellings_reach_the_operation_under_lenient() {
+    let service = support::router()
+        .trailing_slashes(TrailingSlashPolicy::Lenient)
+        .build(App::new())
+        .expect("a describable router");
+
+    let declared = get(&service, "/users/42").call().await;
+    let flipped = get(&service, "/users/42/").call().await;
+
+    assert_eq!(declared.status, StatusCode::OK);
+    assert_eq!(flipped.status, StatusCode::OK);
+    assert!(flipped.field(header::LOCATION.as_str()).is_none());
+    // The capture survives the flipped spelling: `PathCaptures` borrows the
+    // request path, and under `Lenient` that is the path matchit matched.
+    assert_eq!(flipped.json()["id"], 42);
+    assert_eq!(declared.json(), flipped.json());
+}
+
+/// The whole point of registering the flipped spelling in the match table and
+/// nowhere else: the description is the one the router declared.
+#[tokio::test]
+async fn lenient_adds_no_paths_key() {
+    let strict = support::router().openapi().expect("a describable router");
+    let lenient = support::router()
+        .trailing_slashes(TrailingSlashPolicy::Lenient)
+        .openapi()
+        .expect("a describable router");
+
+    let keys: Vec<&String> = lenient.paths.items.keys().collect();
+
+    assert_eq!(
+        keys,
+        strict.paths.items.keys().collect::<Vec<_>>(),
+        "a policy that only chooses what to match changed what is described"
+    );
+    assert!(!keys.iter().any(|key| key.ends_with('/')), "{keys:?}");
+}
+
+/// The direction that motivated this: a path declared *with* a slash is a
+/// 404 under `Strict` when asked for without one.
+#[tokio::test]
+async fn a_route_declared_with_a_slash_is_reachable_without_one() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![list_things])
+        .trailing_slashes(TrailingSlashPolicy::Lenient)
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(get(&service, "/things/").call().await.text(), "things");
+    assert_eq!(get(&service, "/things").call().await.text(), "things");
+}
+
+/// The pass control for the one above, differing in exactly the policy.
+#[tokio::test]
+async fn a_route_declared_with_a_slash_is_a_plain_miss_by_default() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![list_things])
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(get(&service, "/things/").call().await.text(), "things");
+    assert_eq!(
+        get(&service, "/things").call().await.status,
+        StatusCode::NOT_FOUND
+    );
+}
+
+/// An application that declares both spellings keeps both. The flipped
+/// spellings are registered second and collide, and what was declared stands.
+#[tokio::test]
+async fn a_declared_spelling_is_never_displaced_by_a_flipped_one() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![pair_bare, pair_slashed])
+        .trailing_slashes(TrailingSlashPolicy::Lenient)
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(get(&service, "/pair").call().await.text(), "bare");
+    assert_eq!(get(&service, "/pair/").call().await.text(), "slashed");
+}
+
+/// Both spellings share one entry, so the label a metric is built from stays
+/// the declared template rather than becoming one per spelling.
+#[tokio::test]
+async fn a_flipped_spelling_reports_the_declared_template() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![echo_label])
+        .trailing_slashes(TrailingSlashPolicy::Lenient)
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(get(&service, "/label").call().await.text(), "/label");
+    assert_eq!(get(&service, "/label/").call().await.text(), "/label");
+}
+
+/// `Lenient` chooses what a path matches and never what a method may do, so a
+/// flipped spelling reaches the same 405 and the same `Allow`.
+#[tokio::test]
+async fn a_flipped_spelling_still_refuses_a_method_no_operation_declares() {
+    let service = support::router()
+        .trailing_slashes(TrailingSlashPolicy::Lenient)
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = send(&service, Method::PATCH, "/users/42/").call().await;
+
+    assert_eq!(reply.status, StatusCode::METHOD_NOT_ALLOWED);
+
+    // Sorted before comparing, as the declared spelling's own 405 test does:
+    // `Allow` reports a set, and its order is the order operations were
+    // mounted rather than anything a client may rely on.
+    let allow = reply.field(header::ALLOW.as_str()).expect("an Allow field");
+    let mut methods: Vec<&str> = allow.split(", ").collect();
+    methods.sort_unstable();
+
+    assert_eq!(methods, ["DELETE", "GET"]);
+}
+
 // --- What the fallback policies choose -----------------------------------
 
 /// A policy chooses the body shape and never the status. Both fallbacks are
