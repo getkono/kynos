@@ -87,12 +87,27 @@ impl OperationCx<'_> {
     /// declaration of a given pair wins: two inputs describing the same query
     /// parameter contribute one entry, not a duplicate the specification
     /// forbids.
+    ///
+    /// A *header* name is compared case-insensitively, because RFC 9110
+    /// section 5.1 says a field name is — so an operation reading
+    /// `Accept-Language` through the negotiation and `accept-language` through
+    /// a derived group declares one field rather than two spellings of one.
+    /// Every other location is compared as written, since only a field name has
+    /// that property.
     pub fn add_parameter(&mut self, parameter: kynos_openapi::Parameter) {
+        let names_the_same_field = |existing: &kynos_openapi::Parameter| {
+            if parameter.location == kynos_openapi::ParameterIn::Header {
+                existing.name.eq_ignore_ascii_case(&parameter.name)
+            } else {
+                existing.name == parameter.name
+            }
+        };
+
         let declared = self.operation.parameters.iter().any(|existing| {
             matches!(
                 existing,
                 RefOr::Item(item)
-                    if item.name == parameter.name && item.location == parameter.location
+                    if names_the_same_field(item) && item.location == parameter.location
             )
         });
 

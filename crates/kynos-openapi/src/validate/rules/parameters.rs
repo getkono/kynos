@@ -22,6 +22,17 @@ use crate::{
     },
 };
 
+/// The key a parameter is deduplicated under.
+///
+/// Header names are folded, everything else is compared as written.
+fn fold_header_case(parameter: &Parameter) -> String {
+    if parameter.location == ParameterIn::Header {
+        parameter.name.to_ascii_lowercase()
+    } else {
+        parameter.name.clone()
+    }
+}
+
 pub(in crate::validate) fn check_parameter_list(
     location: &str,
     parameters: &[RefOr<Parameter>],
@@ -30,7 +41,10 @@ pub(in crate::validate) fn check_parameter_list(
     let mut seen: HashSet<(String, ParameterIn)> = HashSet::new();
 
     for parameter in parameters.iter().filter_map(RefOr::as_item) {
-        let key = (parameter.name.clone(), parameter.location);
+        // A *field* name is case-insensitive (RFC 9110 section 5.1), which is
+        // the same reading `is_ignored_header_parameter` already takes. A path,
+        // query or cookie name is not, so only a header folds.
+        let key = (fold_header_case(parameter), parameter.location);
         if !seen.insert(key) {
             violations.push(Violation::error(
                 location,
