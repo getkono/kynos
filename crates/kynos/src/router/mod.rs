@@ -325,6 +325,11 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     /// is built. No recovery branch is installed when this method is not
     /// called.
     ///
+    /// Only the policy changes. `I` is carried across, because the
+    /// interceptors mounted before this call cover the operations mounted
+    /// after it just as they did before — so dropping the list here would let
+    /// a later `intercept` be checked against an empty one.
+    ///
     /// # Compile-time requirement
     ///
     /// The final binary must use `panic = "unwind"`. Selecting this policy in
@@ -335,7 +340,7 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     /// # let _ = router;
     /// ```
     #[must_use]
-    pub fn catch_panics(self) -> Router<C, Catch> {
+    pub fn catch_panics(self) -> Router<C, Catch, I> {
         const {
             assert!(
                 cfg!(panic = "unwind"),

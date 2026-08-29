@@ -152,6 +152,9 @@ impl<C, P: PanicPolicy, I> Group<C, P, I> {
     /// endpoints are mounted. No recovery branch is installed when this method
     /// is not called.
     ///
+    /// Only the policy changes; `I` is carried across for the reason
+    /// [`Router::catch_panics`](crate::Router::catch_panics) gives.
+    ///
     /// # Compile-time requirement
     ///
     /// The final binary must use `panic = "unwind"`. Selecting this policy in
@@ -162,7 +165,7 @@ impl<C, P: PanicPolicy, I> Group<C, P, I> {
     /// # let _ = users;
     /// ```
     #[must_use]
-    pub fn catch_panics(self) -> Group<C, Catch> {
+    pub fn catch_panics(self) -> Group<C, Catch, I> {
         const {
             assert!(
                 cfg!(panic = "unwind"),

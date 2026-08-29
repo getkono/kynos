@@ -1,0 +1,32 @@
+error[E0080]: evaluation panicked: two interceptors covering this route add the same response header; mount them at different scopes, or have one of them stop adding it
+ --> $RUST/core/src/panic.rs
+  |
+  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<kynos::middleware::stack::Cons<kynos::middleware::request_id::RequestId, ()> as kynos::middleware::stack::CompatibleWith<kynos::middleware::request_id::RequestId, ()>>::CHECK` failed here
+  |
+ ::: src/middleware/stack.rs
+  |
+  | /         assert!(
+  | |             header_names_disjoint(
+  | |                 <N::Adds as HeaderParams>::NAMES,
+  | |                 <H::Adds as HeaderParams>::NAMES,
+... |
+  | |              mount them at different scopes, or have one of them stop adding it"
+  | |         );
+  | |_________- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/router/mod.rs
+  |
+  |         let () = <I as CompatibleWith<N, C>>::CHECK;
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn kynos::Router::<(), Catch, Cons<RequestId, ()>>::intercept::<RequestId>`
+  --> tests/ui/antipattern/catch_panics_keeps_the_interceptor_stack.rs:17:13
+   |
+17 |       let _ = Router::<()>::new()
+   |  _____________^
+18 | |         .intercept(RequestId::new())
+19 | |         .catch_panics()
+20 | |         .intercept(RequestId::new());
+   | |____________________________________^
