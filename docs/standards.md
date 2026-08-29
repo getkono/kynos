@@ -50,6 +50,7 @@ edit.
 | `Decompression` | RFC 9110 §8.4 (`Content-Encoding`), §15.5.16 (415), RFC 7932 (`br`), RFC 9659 (`zstd`) | [`rfc9110.txt`](../references/rfc9110.txt), [`rfc7932.txt`](../references/rfc7932.txt), [`rfc9659.txt`](../references/rfc9659.txt) |
 | Forwarded addresses | RFC 7239 §5.2 (`for`), §6 (`nodename`), §8.1 (what it is worth) | [`rfc7239.txt`](../references/rfc7239.txt) |
 | Message framing, wherever a body's length changes | RFC 9110 §8.6 (`Content-Length`), RFC 9112 §6 (HTTP/1.1), RFC 9113 §8.1.1 and §8.2.2 (HTTP/2) | [`rfc9112.txt`](../references/rfc9112.txt), [`rfc9113.txt`](../references/rfc9113.txt) |
+| `response::language` | RFC 9110 §12.5.4 (`Accept-Language`), §8.5 (`Content-Language`), §8.5.1 (language tags), §12.4.2 (qvalues), §12.4.3 (wildcards), §12.5.5 (`Vary`), §12.1 and §15.5.7 (serving a default rather than a 406); RFC 4647 §2.1 (language ranges), §3.3.1 (Basic Filtering), §3.4 (Lookup); RFC 5646 §2.1 (the tag grammar), §2.1.1 (casing) | [`rfc9110.txt`](../references/rfc9110.txt), [`rfc4647.txt`](../references/rfc4647.txt), [`rfc5646.txt`](../references/rfc5646.txt) |
 | Problem responses | RFC 9457 | [`rfc9457.txt`](../references/rfc9457.txt) |
 | `response::disposition` | RFC 6266, RFC 8187 | [`rfc6266.txt`](../references/rfc6266.txt), [`rfc8187.txt`](../references/rfc8187.txt) |
 
@@ -104,6 +105,10 @@ in [`middleware.md`](middleware.md).
 | `RateLimit` keeps the `X-` prefix by default | The unprefixed names belong to a draft that has already replaced them once; squatting them would reach generated clients |
 | No signed or encrypted cookies, no sessions | Arrives with a crypto stack the dependency table has no row for, in a default build no feature gate could contain |
 | No default body cap | Would add 413 to every operation of every application that never asked for one |
+| Language negotiation runs Lookup, and falls back to Basic Filtering | RFC 9110 §12.5.4 declines to choose — "implementations can offer the most appropriate matching scheme" — and neither scheme is right alone. Basic Filtering serves `en-GB` nothing when only `en` is offered, which §12.5.4's own closing note complains about; Lookup serves a client asking for `en` nothing when the catalogue is keyed `en-US`. Lookup wins wherever it has an answer, so the fallback only decides what §3.4 would have abandoned |
+| `Accept-Language: *` is honoured rather than discarded | RFC 4647 §3.4 says the wildcard "does not convey enough information by itself" to run Lookup. RFC 9110 §12.4.3 admits it in the field and gives it a meaning — it "selects unspecified values" — so it scores every tag no other range named, and refusing to honour a client that explicitly said "anything" would default it away for nothing |
+| A language nobody offers is answered with the default, never a 406 | RFC 9110 §12.1 lets an origin decide a non-conforming response beats a 406, and §15.5.7 defines that status as the server being *unwilling* to supply a default. The exposure is asymmetric: a browser sends `*/*` and reaches `Accept`'s 406 almost never, but sends a narrow `Accept-Language` on every request. `Content-Language` is what keeps the fallback honest, which is why it is `required` |
+| `Content-Language` states one tag, never the list §8.5 permits | §8.5 allows several for content "intended for multiple audiences". A negotiated response has one, and stating one is what lets the emitted schema enumerate the offer truthfully. A representation genuinely aimed at several audiences is not something this negotiation produces |
 
 ## Known non-conformances
 
