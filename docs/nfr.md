@@ -65,7 +65,7 @@ disabled, or passes trivially and hides the regression it was meant to catch.
 | correctness | The IR round-trips through serialization losslessly | `proptest` over generated IR values | `enforced`, with one exclusion below, characterized |
 | correctness | Every model type emits the field names and nesting the specification gives it | One exact-JSON case per type in `tests/wire.rs`, counted against the type list | `enforced` |
 | correctness | The corpus a downstream generator is built against is the one this build emits | [`tests/conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs), comparing every committed document against a freshly emitted one | `enforced` |
-| correctness | Emitted documents validate against both 3.1 and 3.2 validators | [`tests/metaschema.rs`](../crates/kynos/tests/metaschema.rs), checking a fixture app's 3.1 and 3.2 emissions and the committed corpus against the OAI's own vendored schemas, with a control asserting the 3.1 file rejects a 3.2-only root field | `enforced`, for the structure; the Schema Object is out of its reach, below |
+| correctness | Emitted documents validate against both 3.1 and 3.2 validators | [`tests/metaschema.rs`](../crates/kynos/tests/metaschema.rs), checking a fixture app's 3.1 and 3.2 emissions and the committed corpus against the OAI's own vendored schemas, with a control asserting the 3.1 file rejects a 3.2-only root field | `enforced` in the repository, for the structure; the Schema Object is out of its reach, below, and the vendored schemas are above the package root so the target is excluded from the published archive rather than shipped unable to run |
 | correctness | Emitted documents are byte-deterministic across runs | [`tests/determinism.rs`](../crates/kynos/tests/determinism.rs), emitting one fixture description in three separate processes and byte-comparing | `enforced` |
 | correctness | Emitted documents are byte-deterministic across platforms | A cross-OS CI job, which does not exist: every job runs on `ubuntu-latest` | `planned` |
 | dx | No public item exposes `Pin`, `BoxFuture` or a tokio type | `cargo-public-api` assertion | `needs-tooling` |
@@ -310,28 +310,32 @@ where someone mounting a cap will meet it.
 
 ### The module-size budget
 
-AGENTS.md: *"A module becomes a directory once it holds two independently-changing
-concerns or exceeds ~400 lines excluding tests."* Twenty-nine files under
-`crates/*/src` are still over that line, and `containment:check` holds that
-number so it can only move on purpose.
+AGENTS.md: *"A module becomes a directory once it holds two
+independently-changing concerns … Passing ~400 lines excluding tests is when to
+ask that question, not an answer to it."* Twenty-nine files under `crates/*/src`
+are past that line and asked it, and `containment:check` holds that number so it
+can only move on purpose.
 
-It is a budget rather than a gate because the rule interacts with the one
-directly above it in AGENTS.md — *"Submodules are `pub` with no parent
+The line count is a prompt rather than a trigger because the rule interacts with
+the one directly above it in AGENTS.md — *"Submodules are `pub` with no parent
 re-exports"* — in a way worth stating. Splitting a module that declares several
 public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: eight rejection
-types in 644 lines, and splitting it turns `error::rejection::PathRejection`
-into `error::rejection::path::PathRejection`. Around eighteen of the twenty-nine
-are that shape, worth roughly a hundred public paths between them.
+types in 644 lines, and splitting it would turn `error::rejection::PathRejection`
+into `error::rejection::path::PathRejection`. Sixteen of the twenty-nine are that
+shape, worth roughly a hundred public paths between them — and each is one
+cohesive family, which is precisely what the concern test says may stay a file.
+So they stay: a longer path is a worse name, and the rule's first clause already
+permits the shorter one. That was settled before v0.1.0, while the surface could
+still have moved for free.
 
 Splitting a module that declares *one* type and a pile of `impl` blocks costs
 nothing, because the type stays declared where it was and an inherent `impl` may
 sit in any module of the crate. That is why `router/`, `emit/downgrade/` and
-`derive/schema/` were split and the rest were not: the first group is free, and
-the second is a decision about a surface the README marks frozen.
+`derive/schema/` were split and the rest were not.
 
-The budget is the honest record of that. It falls when a module is split, and
-raising it means saying in the same commit why a new module needs the room.
+The budget is the honest record of what stayed. It falls when a module is split,
+and raising it means saying in the same commit why a new module needs the room.
 
 ## Dependencies
 
@@ -414,6 +418,7 @@ open against a `kynos-otel` that may never be written.
 | --- | --- | --- | --- |
 | reliability | The declared MSRV builds | `mise run msrv:check`, dedicated CI job | `enforced` |
 | reliability | Every crate's published archive builds from a pristine extraction, with every feature | `mise run publish:check` (`cargo package --workspace --all-features`), dedicated CI job | `enforced` |
+| reliability | Nothing a package publishes reads a path outside that package | `mise run containment:check`, resolving every `include_bytes!`, `include_str!` and `CARGO_MANIFEST_DIR` path literal against the package that holds it, and exempting only what the manifest's `exclude` names | `enforced`. `publish:check` cannot see this: its verify step builds the library, not the test targets, so a file the archive omits and a test target names resolves in the working tree and nowhere else |
 | compatibility | A release reports whether its API broke | `cargo-semver-checks` via release-plz, verdict in the release pull request body | `partial`: default features only, and fail-open — it is evidence for the reviewer, not a gate. See the tooling gap below |
 | reliability | Every reachable feature combination compiles | `mise run features:check` (`cargo hack --feature-powerset`) | `enforced` |
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
@@ -422,10 +427,21 @@ open against a `kynos-otel` that may never be written.
 | reliability | Panic recovery refuses to compile under `panic = "abort"` | `mise run panic:check` | `enforced` |
 | reliability | Commits follow Conventional Commits | `convco`, via git hook and CI | `enforced` |
 | compatibility | Every hand-rolled `Stream` implementation is private, except the one row in [`architecture.md`](architecture.md#public-api-surface), and there are exactly three of them | `mise run containment:check`, counting `Stream for` against the table and the two private sites its prose names | `enforced` |
+| compatibility | No parent re-exports a submodule, so every public item has exactly one path | `mise run containment:check`, refusing a `pub use` that names `crate`, `self`, `super` or a module the same file declares, outside the `lib.rs` that carries the crate root and the prelude | `enforced` |
+| dx | No item stands in for its implementation with a `todo!()` body | `mise run containment:check`, which sees code only after doc comments are stripped, so the `todo!()` elisions inside doc examples are not candidates | `enforced`, now that the API-skeleton exception has lapsed |
 | dx | Every public item is documented | `missing_docs = "deny"` plus `mise run docs:check` | `enforced` |
 | dx | Every public item has a compiling doc example | Doctests already run via `mise run test:doc`; *presence* of an example per item is unenforced | `planned` |
 | compatibility | Public API item count is tracked as a budget | `cargo-public-api` count with a committed baseline | `needs-tooling` |
 | performance | The benchmark suite runs nightly with regression alerting | `kynos-bench`, so erosion surfaces as a trend rather than at release | `kynos-bench` |
+
+**The re-export row is judged by where a path leads, not by a list of files.**
+A `pub use` of a foreign crate is a facade: `http/mod.rs` republishes
+`http::HeaderMap`, and `HeaderMap` gains no Kynos path by it. A `pub use` naming
+`crate`, `self`, `super` or a module the same file declares is the opposite --
+the item already has a path, and the re-export mints a second one. Writing the
+rule that way means a module that moves does not also have to be moved in this
+document. `pub(crate) use` is out of scope: the rule is about the paths a user
+can write.
 
 ## Tooling gaps
 

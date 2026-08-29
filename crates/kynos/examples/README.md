@@ -60,6 +60,7 @@ needs more than the defaults. Each file's own header explains why it needs them.
 | [`rate_limit.rs`](rate_limit.rs) | Named quotas over a counter store Kynos does not ship: a sliding window, several windows at once, and both header spellings | — |
 | [`token_bucket.rs`](token_bucket.rs) | The other half of the pair: replacing the *algorithm* rather than the store, over an injected clock its own tests drive | — |
 | [`cors.rs`](cors.rs) | The two exchanges a browser makes, the preflight nothing declares, and the configuration that is refused | — |
+| [`csrf.rs`](csrf.rs) | Refusing a forged cross-site write with no token and no session, and the cookie the refusal protects | `cookie` |
 | [`tracing.rs`](tracing.rs) | Spans reaching a real subscriber, and why an observer declares nothing | — |
 | [`opentelemetry.rs`](opentelemetry.rs) | Distributed tracing that leaves the process: a W3C Trace Context group that is also the propagation carrier, and why this is an example rather than middleware | — |
 | [`print_request_response.rs`](print_request_response.rs) | An interceptor buffering both bodies, and what reading them costs the description | — |

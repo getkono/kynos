@@ -15,9 +15,10 @@ these are asked to enforce; this document is about the mechanics.
 | Property | `crates/kynos-openapi/tests/`, over `support/`'s generators | `proptest` | round-tripping, determinism and totality over generated documents | built |
 | Conformance | a harness over a fixture app | `TestClient` over live responses | *emitted ⊇ observable* against a running service | in use |
 
-A module becomes a directory once it holds two independently-changing concerns
-or exceeds ~400 lines, and its tests move to a sibling `tests.rs` at that point.
-That is why unit tests appear at
+Tests move to a sibling `tests.rs` once a module passes ~400 lines, whether or
+not that module also becomes a directory — the two halves of the layout rule are
+separate, and [`nfr.md`](nfr.md#the-module-size-budget) says why the second one
+is a prompt rather than a trigger. That is why unit tests appear at
 [`di/tests.rs`](../crates/kynos/src/di/tests.rs),
 [`schema/tests.rs`](../crates/kynos/src/schema/tests.rs) and
 [`response/negotiate/tests.rs`](../crates/kynos/src/response/negotiate/tests.rs)
@@ -35,7 +36,7 @@ attribute outlived its reason and went with it.
 | File | Asserts |
 | --- | --- |
 | [`pipeline.rs`](../crates/kynos/tests/pipeline.rs) | an `async fn` is a `Handler`, `routes!` collects it, `Endpoints` accepts it, mounting reaches the context that supplies its dependencies, each route attribute writes its own method, and both ends of the arity list typecheck |
-| [`derives.rs`](../crates/kynos/tests/derives.rs) | every derive expands to a well-formed implementation of the trait it claims, counted against the macros the crate exports |
+| [`derives.rs`](../crates/kynos/tests/derives.rs) | every derive expands to a well-formed implementation of the trait it claims |
 | [`errors.rs`](../crates/kynos/tests/errors.rs) | each extractor rejects with the rejection type its signature names |
 | [`reporting.rs`](../crates/kynos/tests/reporting.rs) | every error type a caller can receive is `Error + Send + Sync + 'static` |
 | [`typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) | a route attribute's `relative_uri` percent-encodes its parameters |
@@ -57,7 +58,16 @@ attribute outlived its reason and went with it.
 | [`cache.rs`](../crates/kynos/tests/cache.rs) | that a hit is served, that a response stating no lifetime is not, and that a `Conditional` over a `Cache` answers with no body — properties of a *sequence* of requests |
 | [`compile/panic_recovery.rs`](../crates/kynos/tests/compile/panic_recovery.rs) | `catch_panics` refuses to compile under `panic = "abort"` |
 | [`metaschema.rs`](../crates/kynos/tests/metaschema.rs) | that an emitted document validates against the OAI's own published meta-schema, read from `references/` — the one assertion this repository does not write itself |
+| [`ledger.rs`](../crates/kynos/tests/ledger.rs) | the derives and route attributes `kynos-macros` declares, counted against the sets `derives.rs` and `pipeline.rs` witness |
 | [`src/server/tests.rs`](../crates/kynos/src/server/tests.rs) | the runtime-I/O row's allocation: a real socket, over accept, shutdown, drain and TLS. It is a sibling `tests.rs` rather than an integration target because it reaches internals no public path exposes |
+
+`metaschema.rs` and `ledger.rs` are the two targets `crates/kynos/Cargo.toml`
+excludes from the published archive. Both read something above the package root
+— the OAI's vendored schemas, and the macro crate's own source — and
+`cargo package` carries a package directory and nothing beside it, so an archive
+holding either would hold a test that could only fail. Each is a property of the
+workspace, and stays where the workspace is; `containment:check` fails a build
+where any *published* file reaches out the same way.
 
 `crates/kynos-openapi/tests/` holds four more: `properties.rs` and
 `templates.rs` for the document and path-template properties, `wire.rs` for the

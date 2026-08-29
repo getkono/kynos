@@ -26,23 +26,20 @@ categories = [
   "asynchronous",
 ]
 
-# A published archive is immutable: crates.io does not let a version be replaced
-# or withdrawn, so anything that reaches one reaches it permanently. The TLS
-# suite's fixtures are a key pair and the certificates that go with it, and
-# `client.key` and `server.key` are literal `-----BEGIN PRIVATE KEY-----` PEM.
-# They are throwaway test material rather than a credential to anything, but
-# publishing private keys trips every secret scanner pointed at the registry and
-# cannot be undone afterwards.
+# The two targets whose oracle is not in this package, and so cannot travel
+# with it. `cargo package` copies a package directory and nothing above it:
+# `metaschema.rs` reads the OAI's own schemas from `references/`, vendored above
+# this root and deliberately outside the workspace, and `ledger.rs` reads
+# `kynos-macros/src/lib.rs` to count what that crate declares. Shipping either
+# would ship a test that can only fail, for everyone who runs `cargo test` on
+# the tarball. Excluding them is what makes the archive honest -- each assertion
+# is a property of the workspace, and stays where the workspace is.
 #
-# The whole directory rather than the two `.key` files. A certificate is only
-# useful beside the key that signs for it, so shipping the three `.pem` halves
-# alone would leave the archive carrying material no longer good for anything.
-#
-# This is the narrow fix. The wider one is the argument this manifest already
-# makes for the TLS *example*, which mints its own certificate at startup so
-# that no PEM is committed at all; applying it to the fixtures would remove them
-# from the repository rather than from the archive, and is filed separately.
-exclude = ["tests/fixtures/tls/"]
+# Both are auto-discovered rather than declared. Cargo rejects a `[[test]]`
+# whose `path` is absent, so a declared target and an excluded file cannot both
+# exist; the `required-features` `metaschema`'s declaration carried now sit in
+# the file's own `#![cfg]`, which holds in both trees.
+exclude = ["tests/ledger.rs", "tests/metaschema.rs"]
 
 [[test]]
 name = "ui"
@@ -54,13 +51,6 @@ path = "tests/ui.rs"
 name = "assets"
 path = "tests/assets.rs"
 required-features = ["openapi31", "macros", "assets"]
-
-# Reads the vendored meta-schemas, so it needs the JSON Schema validator that
-# `test-util` carries and the 3.2 constructs the corpus pins.
-[[test]]
-name = "metaschema"
-path = "tests/metaschema.rs"
-required-features = ["openapi32", "macros", "json", "test-util"]
 
 [[test]]
 name = "panic-recovery-check"
@@ -225,6 +215,12 @@ name = "cors"
 # No `server`: this example drives a built `Service` directly, because what it
 # demonstrates is the two exchanges a browser makes rather than a socket.
 required-features = ["openapi31", "macros", "json"]
+
+[[example]]
+name = "csrf"
+# No `server`, for the same reason `cors` has none: what this demonstrates is
+# which requests are refused, which is a question about header combinations.
+required-features = ["openapi31", "macros", "json", "cookie"]
 
 [[example]]
 name = "decompression"

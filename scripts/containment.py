@@ -10,6 +10,7 @@ matched -- these rules are discussed in prose throughout `src`, and the
 dropped, both inline and as sibling files.
 """
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -219,6 +220,125 @@ elif int(budget.group(1)) != len(oversized):
         f"{len(oversized)}. Splitting one means lowering the budget in the same "
         "commit; adding one means arguing for it there.\n    "
         + "\n    ".join(oversized)
+    )
+
+# --- Nothing a package compiles reaches outside the package ------------------
+# `cargo package` copies a package directory and nothing above it, so a path
+# literal that climbs out of one names a file the archive cannot carry. Two
+# distinct faults of exactly that shape had already reached the tree, and no
+# gate could see either: every other task builds the working tree, where both
+# paths resolve, and `cargo package`'s own verify step does not build test
+# targets.
+#
+# Read from the raw source rather than from `FILES`, whose text has had its
+# string literals stripped, and over every `.rs` file in each package rather
+# than `src/` alone -- a test target is published too.
+# Resolved against the reading file: `include_bytes!` and `include_str!` take a
+# path relative to the source that names them.
+INCLUDED = re.compile(r'include_(?:bytes|str)!\s*\(\s*"([^"]*)"')
+# Resolved against the package: the two spellings of building a path from the
+# manifest directory. Only literals attached directly to it are read -- a path
+# assembled through a variable is beyond a source scan, and every site in this
+# workspace is one expression.
+CONCATENATED = re.compile(r'CARGO_MANIFEST_DIR"\s*\)\s*,\s*"([^"]*)"')
+JOINED = re.compile(r'CARGO_MANIFEST_DIR"\s*\)\s*\)?((?:\s*\.join\(\s*"[^"]*"\s*\))+)')
+JOIN = re.compile(r'\.join\(\s*"([^"]*)"\s*\)')
+# The manifest's own `exclude`, which is what says a file never reaches an
+# archive. A target excluded there is exempt by construction: the rule is that
+# nothing *published* reaches out, and the exemption is the manifest's to grant
+# and to explain.
+EXCLUDED = re.compile(r"^exclude\s*=\s*\[([^\]]*)\]", re.M)
+
+
+def published(package):
+    """Every `.rs` file in `package` that a published archive would carry."""
+    manifest = EXCLUDED.search((package / "Cargo.toml").read_text())
+    exempt = re.findall(r'"([^"]*)"', manifest.group(1)) if manifest else []
+    for source in sorted(package.rglob("*.rs")):
+        relative = source.relative_to(package).as_posix()
+        if "target" in source.relative_to(package).parts:
+            continue
+        if any(relative == entry or relative.startswith(entry.rstrip("/") + "/") for entry in exempt):
+            continue
+        yield source
+
+
+for package in sorted((ROOT / "crates").iterdir()):
+    if not (package / "Cargo.toml").is_file():
+        continue
+    for source in published(package):
+        text = source.read_text()
+        reached = (
+            [(source.parent, literal) for literal in INCLUDED.findall(text)]
+            + [(package, literal.lstrip("/")) for literal in CONCATENATED.findall(text)]
+            + [(package, "/".join(JOIN.findall(chain))) for chain in JOINED.findall(text)]
+        )
+        for base, literal in reached:
+            if Path(os.path.normpath(base / literal)).is_relative_to(package):
+                continue
+            failures.append(
+                f"{source.relative_to(ROOT).as_posix()} reads {literal!r}, which "
+                f"resolves outside {package.relative_to(ROOT).as_posix()}. A "
+                "published archive carries the package directory and nothing "
+                "above it, so this names a file the archive cannot hold: either "
+                "keep what it reads inside the package, or `exclude` the target "
+                "and say in the manifest why the assertion is the repository's"
+            )
+
+# --- Parent re-exports ------------------------------------------------------
+# AGENTS.md: submodules are `pub` with no parent re-exports, so every item has
+# one canonical path, and the crate root and `kynos::prelude` are the only
+# curated shortcuts. Both of those live in `lib.rs`, which is why it is the one
+# file exempt rather than a list of names.
+#
+# What is refused is a *second* path to one of our own items: a `pub use` naming
+# `crate`, `self`, `super`, or a module the same file declares. Re-exporting a
+# foreign crate is a facade rather than a second path -- `http/mod.rs`
+# republishes `http::HeaderMap`, which does not thereby acquire a Kynos path at
+# all -- so the rule is written against where the path leads, not against an
+# allowlist of files that would need editing every time one moved.
+#
+# `pub(crate) use` is left alone. The rule is about the paths a *user* can write,
+# and a crate-visible alias is not one of them.
+DECLARED_MODULE = re.compile(r"\bmod\s+(\w+)\s*[;{]")
+REEXPORT = re.compile(r"^[ \t]*pub\s+use\s+(\w+)", re.MULTILINE)
+
+reexports = []
+for path, text in FILES:
+    if path.endswith("/lib.rs"):
+        continue
+    own = set(DECLARED_MODULE.findall(text)) | {"crate", "self", "super"}
+    reexports += [
+        f"{path}: pub use {head}::..."
+        for head in REEXPORT.findall(text)
+        if head in own
+    ]
+
+if reexports:
+    failures.append(
+        "a `pub use` re-publishes one of our own items, giving it a second path "
+        "where the layout rule allows exactly one:\n    " + "\n    ".join(sorted(reexports))
+    )
+
+# --- Placeholder bodies -----------------------------------------------------
+# AGENTS.md permits a `todo!()` body only during the pre-v1 API-skeleton
+# milestone, where the surface is designed ahead of its implementation so it can
+# be reviewed and frozen as a whole, and says the exception lapses once the
+# skeleton is frozen. `docs/testing.md` records that it has -- "the API-skeleton
+# milestone is over, the bodies landed, and what it deferred has been paid" --
+# and until now nothing held the lapse. That is the failure a spent exception
+# has: it stops being argued for and quietly stays available.
+#
+# No allowlist is needed, which is the whole reason this rule is cheap. Every
+# `todo!()` in the tree is inside a doc example, standing in for an application's
+# own code, and `strip()` has already removed doc comments by the time this runs.
+# The word boundary keeps the rule off a macro that merely ends in `todo!`.
+PLACEHOLDER = re.compile(r"\btodo!")
+
+if placeholders := sorted(path for path, text in FILES if PLACEHOLDER.search(text)):
+    failures.append(
+        "a `todo!()` stands in for a body, and the exception that allowed one "
+        "lapsed when the API-skeleton milestone ended:\n    " + "\n    ".join(placeholders)
     )
 
 # --- Report -----------------------------------------------------------------
