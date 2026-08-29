@@ -188,6 +188,27 @@ pub trait EncodeHeaders: HeaderParams {
 /// one function. They were two, and they did.
 pub(crate) fn write<G: EncodeHeaders>(fields: &mut crate::http::HeaderMap, group: &G) {
     for (name, value) in group.encode() {
+        // A subset rather than an equality: a group legitimately writes fewer
+        // fields than it declares -- `ContentEncoding` with no coding chosen,
+        // `CacheHeaders` without a tag, a `Cors` permitting no origin. What is
+        // refused is the other direction, a field on the wire that
+        // [`NAMES`](HeaderParams::NAMES) never named, because `NAMES` is what
+        // the conflict check compares and a field outside it is one no second
+        // interceptor can be stopped from adding too.
+        //
+        // `debug_assert` because the response path does not panic, for the
+        // reason `vary_on` gives: every group Kynos ships passes, so this only
+        // ever fires on a hand-written one under development, where a debug
+        // build is what the author is running.
+        debug_assert!(
+            G::NAMES
+                .iter()
+                .any(|declared| crate::middleware::stack::header_name_eq(declared, name.as_str())),
+            "`{}` encodes `{}`, which its `NAMES` does not declare",
+            std::any::type_name::<G>(),
+            name.as_str(),
+        );
+
         if G::REPEATABLE {
             fields.append(name, value);
         } else {
@@ -195,6 +216,9 @@ pub(crate) fn write<G: EncodeHeaders>(fields: &mut crate::http::HeaderMap, group
         }
     }
 
+    // Outside the loop, and deliberately not checked above: a `VARIES` name is
+    // not in `NAMES`, because `Vary` is the one field two interceptors may both
+    // contribute to.
     crate::middleware::vary_on(fields, G::VARIES);
 }
 
