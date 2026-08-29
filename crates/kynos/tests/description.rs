@@ -682,3 +682,47 @@ async fn resolved() -> kynos::response::headers::WithHeaders<
         kynos::response::language::headers::ContentLanguage::new(&tag),
     )
 }
+
+/// A header group naming the same field as the negotiation contributes one
+/// parameter, not two spellings of one.
+///
+/// RFC 9110 section 5.1: field names are case-insensitive. OpenAPI requires a
+/// parameter to be unique by name and location, so emitting both
+/// `Accept-Language` and `accept-language` is a document no consumer can read
+/// as one field -- and `is_ignored_header_parameter` already folds case for
+/// exactly this reason.
+#[test]
+fn a_header_named_twice_in_different_cases_is_one_parameter() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![doubly_declared])
+        .openapi()
+        .expect("a describable router");
+
+    let declared = operation(&document, "/doubly-declared");
+    let named: Vec<String> = declared
+        .parameters
+        .iter()
+        .filter_map(|parameter| match parameter {
+            kynos::openapi::RefOr::Item(item) => Some(item.name.clone()),
+            kynos::openapi::RefOr::Ref(_) => None,
+        })
+        .collect();
+
+    assert_eq!(named.len(), 1, "{named:?}");
+}
+
+/// A group spelling the field the way a Rust identifier forces.
+#[derive(kynos::HeaderParams)]
+struct LowercaseNegotiation {
+    /// The natural languages preferred in the response.
+    #[header(rename = "accept-language")]
+    accept_language: Option<String>,
+}
+
+#[kynos::get("/doubly-declared")]
+async fn doubly_declared(
+    _preferred: kynos::response::language::AcceptLanguage<Supported>,
+    _declared: kynos::extract::params::header::Headers<LowercaseNegotiation>,
+) -> kynos::extract::body::text::Text {
+    kynos::extract::body::text::Text("Hello".to_owned())
+}
