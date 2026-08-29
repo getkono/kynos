@@ -1,0 +1,288 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.1.0](https://github.com/getkono/kynos/releases/tag/kynos-v0.1.0) - 2026-08-29
+
+### Added
+
+- *(examples)* demonstrate the two interceptors nothing showed
+- *(openapi)* convert between a described method and an HTTP one
+- *(openapi)* check an emitted document against the OAI's own schema
+- *(openapi)* [**breaking**] keep `openapi32` additive for a downstream `match`
+- *(middleware)* decode a request body the client compressed
+- *(middleware)* report the response the client never received
+- *(compression)* [**breaking**] encode a streamed body, and let a handler overrule the negotiation
+- *(compression)* choose each algorithm's level in its own units
+- *(compression)* [**breaking**] honour a refusal with 406, and clamp what a qvalue may be
+- *(middleware)* refuse a cross-site unsafe request without a token
+- *(http)* resolve the client address through a stated trust policy
+- *(kynos)* demonstrate a multi-part download in the streaming example
+- *(kynos)* answer a multi-range request with every part it asked for
+- *(kynos)* read only the part of a served file a range asked for
+- *(kynos)* serve a byte range of an embedded file
+- *(kynos)* demonstrate a resumable download in the responses example
+- *(kynos)* answer a byte range request with the part it asked for
+- *(kynos)* ingest streamed JSON in the streaming example
+- *(kynos)* let a streamed JSON body be an alternative to every other codec
+- *(kynos)* read a sequential JSON request body one record at a time
+- *(kynos)* demonstrate a described download in the responses example
+- *(kynos)* declare a content disposition as a response header group
+- *(kynos)* encode a header parameter as RFC 8187 requires
+- *(kynos)* cache a response the operation already declares
+- *(kynos)* serve a directory, and record it where a generator cannot act
+- *(kynos)* compile a directory into the binary as described operations
+- *(middleware)* set cookies on a response, and drop the crate that did not
+- *(rate-limit)* ship the algorithm, and leave the store to the application
+- *(rate-limit)* [**breaking**] report every quota a policy enforced, in either spelling
+- *(limits)* shed after a bounded wait, and let a deployment name the delay
+- *(extract)* [**breaking**] write a header group through one function on both paths
+- *(kynos)* demonstrate a JWT verifier the framework does not ship
+- *(kynos)* [**breaking**] let a scheme say where its credential is carried
+- *(kynos)* compare a shared secret without returning on the first difference
+- *(kynos)* demonstrate a predicate allow-list in the CORS example
+- *(kynos)* let CORS expose every response header
+- *(kynos)* let a CORS allow-list be decided by a predicate
+- *(kynos)* demonstrate the rate limit alongside the other interceptors
+- *(kynos)* let a rate limit declare the headers it sets
+- *(kynos)* demonstrate cross-origin sharing end to end
+- *(kynos)* register a preflight on every path CORS covers
+- *(kynos)* let a CORS configuration answer a preflight
+- *(kynos)* let the router read an interceptor's value
+- *(kynos)* let CORS vary on the origin it answered
+- *(kynos)* let a header group declare what a response varies on
+- *(kynos)* check a response against the description that declared it
+- *(kynos)* [**breaking**] let a multipart form travel in both directions
+- *(macros)* expand the Reply derive into a response
+- *(macros)* expand the ApiError derive into its problem
+- *(unchecked)* mark every operation the escape hatches reach
+- *(router)* build one endpoint from its handler
+- *(router)* route a request to the operation that answers it
+- *(router)* describe one operation as it is mounted
+- *(security)* describe each scheme and check its credential
+- *(middleware)* refuse a request past the configured rate
+- *(middleware)* record each request as it is served
+- *(middleware)* give every request an id
+- *(middleware)* compress a response the client accepts
+- *(middleware)* mark a cross-origin response with what it permits
+- *(middleware)* enforce the timeout and the concurrency cap
+- *(middleware)* let an interceptor chain run and describe itself
+- *(response)* stream a body as it is produced
+- *(response)* offer every representation at one status
+- *(response)* let a status and a header wrapper set what they name
+- *(response)* write every codec's representation
+- *(extract)* decode every body an operation can declare
+- *(extract)* answer from what the connection already knows
+- *(extract)* read a cookie parameter from the request
+- *(extract)* read a header parameter and describe it
+- *(extract)* read a query parameter from the request target
+- *(extract)* read a path parameter from what the route captured
+- *(kynos)* give every rejection its problem document
+- *(kynos)* let a problem detail reach the wire
+- *(schema)* let a constraint narrow the schema it applies to
+- *(schema)* let a registry name each type once
+- *(kynos)* give the Reply derive a reply to expand into
+- *(kynos)* let a captured value be decoded where it is read
+- *(kynos)* let a body be produced from a stream
+- *(kynos)* [**breaking**] let conflicting interceptors fail to compile
+- *(kynos)* let a short circuit name the statuses it answers with
+- *(kynos)* let a limit name the response it answers with
+- *(kynos)* give the protocol configs builders
+- *(kynos)* let a tls failure convert in one hop
+- *(kynos)* let a yaml emission failure become a build failure
+- *(kynos)* [**breaking**] give a location its own type
+- *(macros)* parse and validate the reply attribute
+- *(macros)* [**breaking**] reject a format annotation on a field
+- *(kynos)* describe an arbitrary-precision decimal
+- *(kynos)* describe a fixed-precision decimal
+- *(kynos)* describe jiff's dates, times and spans
+- *(kynos)* describe chrono's dates and times
+- *(kynos)* describe a uuid
+- *(kynos)* [**breaking**] make an async fn mountable
+- *(macros)* derive one Provides implementation per context field
+- *(kynos)* tell users what to do when a bound is not satisfied
+- *(macros)* expand every derive to a placeholder implementation
+- *(kynos)* implement Schema for the standard library
+- *(server)* implement production transport infrastructure
+- *(codec)* support eight representation alternatives
+- *(unchecked)* add tower service integration
+- *(router)* add canonical trailing-slash redirects
+- *(macros)* generate typed endpoint uris
+- *(codec)* add protobuf bodies
+- *(response)* add SSE keep-alive configuration
+- *(response)* add streaming and multipart bodies
+- *(response)* add typed response header contracts
+- *(extract)* support optional and alternative request bodies
+- gate JSON codecs behind a default feature
+- make panic recovery a static policy
+- *(macros)* add the procedural macro surface
+- add unchecked escape hatches behind a feature
+- add the in-process test client behind test-util
+- add the public API surface of the framework
+- *(openapi)* add the OpenAPI 3.1 and 3.2 document model
+
+### Documentation
+
+- correct what a v0.1.0 reader would be misled by
+- correct six claims the code does not support
+- *(examples)* name the status the timeout now contributes
+- *(examples)* wire OpenTelemetry over the seams rather than into the crate
+- *(limits)* name the constraint that keeps BodySize buffering
+- *(kynos)* stop claiming a cache refusal reaches tracing
+- *(kynos)* say that tracing emits two events rather than a span
+- *(kynos)* link the ordering rule from the interceptors it binds
+- *(kynos)* say which intercept call is the outer one
+- *(kynos)* import the streamed JSON body from the module that defines it
+- *(kynos)* say where a multipart body does copy its octets
+- *(kynos)* drop the doc comment the framing enum left behind
+- *(kynos)* show a file as a resumable download in the assets example
+- *(kynos)* say what the framing enum is before saying why it is a field
+- *(nfr)* record what this work now proves, and admit the fifth allowance row
+- *(nfr)* say which request limits actually apply without being mounted
+- *(state)* settle how the context survives a per-core design
+- *(kynos)* stop saying an extractor body is still todo in the test headers
+- *(kynos)* stop saying a body is still todo
+- *(kynos)* let the testing example drive the service it built
+- *(kynos)* let the testing example prove its own assertions
+- *(kynos)* give the structural examples real handler bodies
+- *(kynos)* give the type-describing examples real handler bodies
+- *(kynos)* give the response examples real handler bodies
+- *(kynos)* give the request examples real handler bodies
+- *(kynos)* let the document example state its metadata at once
+- *(kynos)* say which version a description targets by default
+- *(kynos)* stop two examples teaching the same interceptor
+- *(kynos)* configure both protocols where alpn picks one
+- *(kynos)* let the security example verify something
+- *(kynos)* keep every security scheme in one file
+- *(kynos)* let the middleware example show writing one
+- *(kynos)* index the examples
+- *(kynos)* let the error example name every failure path
+- *(kynos)* show an interceptor reading both bodies
+- *(kynos)* show a socket surviving a rebuild
+- *(kynos)* show a request span reaching a subscriber
+- *(kynos)* give server-sent events their own example
+- *(kynos)* let graceful shutdown show every trigger
+- *(kynos)* demonstrate serving over tls
+- *(kynos)* demonstrate driving a service in-process
+- *(kynos)* demonstrate the escape hatches
+- *(kynos)* demonstrate the interceptors kynos ships
+- *(kynos)* demonstrate every kind of security scheme
+- *(kynos)* demonstrate the emitted document
+- *(kynos)* demonstrate the streamed response types
+- *(kynos)* demonstrate a protobuf body
+- *(kynos)* demonstrate assembling a router from parts
+- *(kynos)* demonstrate response content negotiation
+- *(kynos)* demonstrate everything a handler can return
+- *(kynos)* demonstrate every request body codec
+- *(kynos)* demonstrate every request-head input
+- *(kynos)* demonstrate how a type is described
+- *(kynos)* demonstrate every scalar format at once
+- *(schema)* rewrite every rejection remedy
+- *(kynos)* demonstrate error handling end to end
+- *(kynos)* demonstrate each group of the frozen surface
+- clarify tokio-only runtime policy
+- add architecture, middleware, and NFR design documents
+- *(server)* add graceful shutdown example
+- document HTTP/3 as demand-driven roadmap work
+- add a minimal HTTP/2 server example
+- document the anti-patterns and the feature flags
+
+### Fixed
+
+- *(kynos)* keep the tests the archive cannot run out of the archive
+- *(router)* restore the feature gates the two splits displaced
+- *(kynos)* keep the TLS fixtures out of the published archive
+- *(openapi)* [**breaking**] let every extensible object carry its extensions
+- *(kynos)* [**breaking**] stop renaming the Schema trait in every user's diagnostics
+- *(middleware)* [**breaking**] make a concurrency limit of zero unrepresentable
+- *(openapi)* [**breaking**] put a response's description where the requirement is true
+- *(kynos)* build the tests a feature owns, at that feature
+- *(compression)* state the length the encoded body actually has
+- *(compression)* never encode beneath a strong validator
+- *(csrf)* read the request's authority from the target as well as Host
+- *(http)* believe a scheme only from a sender the policy names
+- *(cache)* invalidate the target a non-error unsafe response changed
+- *(conditional)* mint a 304 only from a 200
+- *(cors)* name authorization beside the wildcard, and stop overstating a preflight
+- *(cookie)* honour the name prefixes, the size limit and the domain grammar
+- *(trace)* redact credential headers and read the correlation name from its group
+- *(kynos)* gate the unchecked-route seam to the feature that calls it
+- *(kynos)* mount the timeout outside the body limit it is meant to bound
+- *(kynos)* mount a conditional outside the cache whose hit it answers
+- *(kynos)* stop compression from encoding a resource that ranges
+- *(kynos)* rewrite a percent sign a filename cannot say unambiguously
+- *(kynos)* send multipart parts in the order the range-spec appeared
+- *(kynos)* compare an asset's entity tag the way the grammar reads one
+- *(kynos)* declare a 416 where a handler can actually produce one
+- *(kynos)* leave a 206 or a 416 uncompressed
+- *(router)* hand an unchecked route what the matcher captured, and a name
+- *(server)* forward the configured HTTP/1 header cap unconditionally
+- *(kynos)* send the charset RFC 7617 asks a basic challenge to name
+- *(macros)* emit the oauth2 flows the attribute declared
+- *(kynos)* give a request the connection it arrived on
+- *(kynos)* [**breaking**] let a request-id header group say what carrying an id means
+- *(kynos)* answer a preflight from the CORS covering the proposed method
+- *(kynos)* write a multipart name its own reader reads back
+- *(router)* declare an interceptor's header where a consumer resolves it
+- *(kynos)* send the keep-alive an event stream was configured with
+- *(kynos)* reject a wildcard origin alongside credentials where the docs say it is
+- *(kynos)* union Vary rather than overwriting it
+- *(kynos)* let an invalid router say what is invalid
+- *(kynos)* let text and raw bytes be alternatives
+- *(kynos)* let a multipart part be described
+- *(kynos)* let an unchecked payload reach the wire
+- *(macros)* stop a route's tag being parsed and discarded
+- *(kynos)* route a contribution conflict into the build error
+- run the compile-fail suite in CI, and stop three signatures freezing wrong
+- *(macros)* let the generic operation attribute keep its own argument
+- *(kynos)* correct the integer formats and the null union
+- *(kynos)* gate the alternative imports on having a codec at all
+- *(server)* complete graceful shutdown lifecycle
+- *(server)* expose the bound server lifecycle
+- *(router)* make runtime endpoints mountable
+- *(security)* connect authenticators to extraction
+- *(middleware)* make built-in policies composable
+- *(response)* make content negotiation request-driven
+- *(extract)* make marker-backed values constructible
+- *(response)* complete typed response contracts
+- *(extract)* complete typed extractor contracts
+
+### Other
+
+- *(kynos)* [**breaking**] give every item exactly one canonical path
+- *(kynos)* [**breaking**] split the parameter groups' two directions into traits
+- *(kynos)* [**breaking**] settle four inconsistencies in the mounting surface
+- *(kynos)* [**breaking**] seal three enums and mark thirteen constructors
+- *(kynos)* [**breaking**] reserve room in the response types a specification leaves open
+- *(kynos)* [**breaking**] let a rate limit hold only the count it reports
+- *(kynos)* [**breaking**] let a rate-limit decision report when its window resets
+- *(kynos)* [**breaking**] close the CORS documentation states
+- *(kynos)* [**breaking**] let a 401 carry the challenge its scheme names
+- *(kynos)* [**breaking**] let the body limit be the only source of a 413
+- *(kynos)* [**breaking**] let a representation be produced only when chosen
+- *(kynos)* [**breaking**] let an interceptor declare only what it does
+- *(kynos)* [**breaking**] let cors decide in the type whether it documents
+- *(kynos)* [**breaking**] let a request id name its header in the type
+- *(openapi)* [**breaking**] let a license name one link
+- *(kynos)* [**breaking**] keep a rustls failure in the cause chain
+- *(kynos)* [**breaking**] make a serialization failure name its emitter
+- *(kynos)* [**breaking**] stop a bare io failure becoming a build failure
+- *(macros)* [**breaking**] name the typed uri for what it renders
+- *(macros)* [**breaking**] name each parameter derive after its trait
+- *(kynos)* [**breaking**] give the negotiation traits a canonical path
+- *(kynos)* [**breaking**] let a media-typed body be unwrapped
+- *(kynos)* [**breaking**] map each integer to its registered format
+- *(kynos)* [**breaking**] stop a problem detail being a handler's return type
+- *(kynos)* [**breaking**] give each extractor its own rejection
+- *(kynos)* [**breaking**] make the escape hatches usable and the schemes describable
+- *(kynos)* [**breaking**] give middleware the operation it is covering
+- *(kynos)* [**breaking**] make the context a type rather than a container
+
+### Performance
+
+- *(kynos)* compare entity tags without allocating a list to hold them
