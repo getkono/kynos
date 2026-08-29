@@ -31,7 +31,8 @@ use crate::response::language::tag::LanguageTag;
 ///
 /// # Why the set is a `const` rather than a value
 ///
-/// [`Describe::describe`] and [`Responses::responses`] are associated functions
+/// [`Describe::describe`](crate::extract::describe::Describe::describe) and
+/// [`Responses::responses`](crate::response::Responses::responses) are associated functions
 /// taking no `self`, so a set held in a value cannot reach the description at
 /// all. A catalogue discovered at startup can still be *loaded* at run time —
 /// what this asks is that the tag *names* be written down, which is what makes
@@ -50,14 +51,14 @@ pub trait Languages {
     ///
     /// **The first is the default.** It is what a request carrying no
     /// `Accept-Language` is served, and what one whose preferences match
-    /// nothing is served — see [`AcceptLanguage`] for why that is not a 406.
+    /// nothing is served — see [`AcceptLanguage`](super::AcceptLanguage) for why that is not a 406.
     ///
     /// Every entry is checked for RFC 5646 well-formedness while the program is
     /// compiled, and an empty set does not compile at all: a set with no
     /// default has nothing to fall back to.
     ///
     /// Written verbatim into the emitted `Content-Language` enumeration, and
-    /// returned verbatim by [`AcceptLanguage::choose`], so the tag on the wire
+    /// returned verbatim by [`AcceptLanguage::choose`](super::AcceptLanguage::choose), so the tag on the wire
     /// and the tag in the description are the same string rather than two
     /// spellings of one.
     const TAGS: &'static [&'static str];
@@ -67,7 +68,7 @@ pub trait Languages {
 ///
 /// Implemented for every [`Languages`]; the obligation lives in [`CHECK`],
 /// which is a `const` that fails to evaluate when a tag is not well-formed or
-/// the offer is empty. [`AcceptLanguage::choose`] forces it, so the error lands
+/// the offer is empty. [`AcceptLanguage::choose`](super::AcceptLanguage::choose) forces it, so the error lands
 /// on the negotiation rather than somewhere in this module.
 ///
 /// Public rather than private for the reason
