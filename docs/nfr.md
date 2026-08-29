@@ -424,10 +424,21 @@ open against a `kynos-otel` that may never be written.
 | reliability | Panic recovery refuses to compile under `panic = "abort"` | `mise run panic:check` | `enforced` |
 | reliability | Commits follow Conventional Commits | `convco`, via git hook and CI | `enforced` |
 | compatibility | Every hand-rolled `Stream` implementation is private, except the one row in [`architecture.md`](architecture.md#public-api-surface), and there are exactly three of them | `mise run containment:check`, counting `Stream for` against the table and the two private sites its prose names | `enforced` |
+| compatibility | No parent re-exports a submodule, so every public item has exactly one path | `mise run containment:check`, refusing a `pub use` that names `crate`, `self`, `super` or a module the same file declares, outside the `lib.rs` that carries the crate root and the prelude | `enforced` |
+| dx | No item stands in for its implementation with a `todo!()` body | `mise run containment:check`, which sees code only after doc comments are stripped, so the `todo!()` elisions inside doc examples are not candidates | `enforced`, now that the API-skeleton exception has lapsed |
 | dx | Every public item is documented | `missing_docs = "deny"` plus `mise run docs:check` | `enforced` |
 | dx | Every public item has a compiling doc example | Doctests already run via `mise run test:doc`; *presence* of an example per item is unenforced | `planned` |
 | compatibility | Public API item count is tracked as a budget | `cargo-public-api` count with a committed baseline | `needs-tooling` |
 | performance | The benchmark suite runs nightly with regression alerting | `kynos-bench`, so erosion surfaces as a trend rather than at release | `kynos-bench` |
+
+**The re-export row is judged by where a path leads, not by a list of files.**
+A `pub use` of a foreign crate is a facade: `http/mod.rs` republishes
+`http::HeaderMap`, and `HeaderMap` gains no Kynos path by it. A `pub use` naming
+`crate`, `self`, `super` or a module the same file declares is the opposite --
+the item already has a path, and the re-export mints a second one. Writing the
+rule that way means a module that moves does not also have to be moved in this
+document. `pub(crate) use` is out of scope: the rule is about the paths a user
+can write.
 
 ## Tooling gaps
 
