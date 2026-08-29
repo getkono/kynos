@@ -518,7 +518,7 @@ where
     }
 }
 
-impl<C, P: PanicPolicy, I> Router<C, P, I> {
+impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// Wraps the router in an arbitrary `tower` layer.
     ///
     /// A `Layer` may change the status, rewrite the body, add headers, or
@@ -757,7 +757,7 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     }
 }
 
-impl<C, P: PanicPolicy, I> Group<C, P, I> {
+impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     /// Wraps this group in an arbitrary `tower` layer.
     ///
     /// Flags exactly this group's operations, and nothing else. One unchecked
