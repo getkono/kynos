@@ -641,3 +641,46 @@ fn a_weight_orders_the_offer_rather_than_the_field() {
         "fr"
     );
 }
+
+/// A priority list is a *priority* list, and its order is what says so.
+///
+/// RFC 4647 section 3.4: "each language range in the language priority list is
+/// considered in turn, according to priority". RFC 9110 section 12.5.4 records
+/// that many user agents list in decreasing order, and section 12.4.2 makes an
+/// absent `q` equal to 1 -- so a client writing `de, en` has stated a
+/// preference that weights alone cannot see.
+#[test]
+fn the_order_a_client_lists_its_ranges_in_is_a_preference() {
+    // The plain case: nothing is weighted, so only the order says anything.
+    assert_eq!(chosen("de, en", &["en", "de"]), Some("de"));
+    assert_eq!(chosen("en, de", &["en", "de"]), Some("en"));
+    assert_eq!(chosen("en, de", &["de", "en"]), Some("en"));
+
+    // And it holds across the matching schemes: a truncated first choice beats
+    // an exact second one, which is section 3.4's "first matching tag found,
+    // according to the user's priority".
+    assert_eq!(chosen("fr-CA, en", &["en", "fr"]), Some("fr"));
+    assert_eq!(chosen("en, fr-CA", &["en", "fr"]), Some("en"));
+}
+
+/// A weight still outranks the order, because section 12.4.2 is normative
+/// about what a weight means and the order is a convention on top of it.
+#[test]
+fn a_weight_outranks_the_order_it_was_written_in() {
+    assert_eq!(chosen("de;q=0.2, en;q=0.8", &["en", "de"]), Some("en"));
+}
+
+/// The more specific of two ranges sets the weight, measured by the range.
+///
+/// Both of these truncate to `en`, so the depth they share says nothing about
+/// which is more specific -- that is a property of the range, and reading it
+/// off the shared prefix made the longer range invisible.
+#[test]
+fn the_longer_of_two_truncating_ranges_is_the_more_specific_one() {
+    // `en` is scored through `en-US-x-y` at 0.9, so it beats an `fr` named at
+    // 0.5 -- where scoring it through the earlier, shorter `en-GB` would not.
+    assert_eq!(
+        chosen("en-GB;q=0.2, en-US-x-y;q=0.9, fr;q=0.5", &["fr", "en"]),
+        Some("en")
+    );
+}
