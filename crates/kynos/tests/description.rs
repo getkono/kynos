@@ -623,3 +623,62 @@ fn a_localized_operation_never_declares_the_field_it_varies_on() {
         );
     }
 }
+
+/// What a catalogue nothing wrote down can still describe.
+///
+/// A record of today's behaviour rather than an endorsement of it, paired with
+/// the gap [`nfr.md`](../../../docs/nfr.md) documents: `Languages::TAGS` is a
+/// `const`, so a catalogue discovered at startup cannot enumerate its offer.
+/// The escape is `WithHeaders<T, ContentLanguage>`, which still states the
+/// field and still varies on the request — it simply describes the value as an
+/// unconstrained string. Closing the gap would turn this assertion red, which
+/// is the point of writing it down.
+#[test]
+fn a_catalogue_no_const_can_name_still_declares_the_field_without_its_offer() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![resolved])
+        .openapi()
+        .expect("a describable router");
+
+    let resolved = operation(&document, "/resolved");
+    let kynos::openapi::RefOr::Item(response) = resolved
+        .responses
+        .responses
+        .get("200")
+        .expect("a described success")
+    else {
+        panic!("the 200 is described as a `$ref`");
+    };
+    let kynos::openapi::RefOr::Item(field) = response
+        .headers
+        .get("Content-Language")
+        .expect("the field is declared")
+    else {
+        panic!("the field is described as a `$ref`");
+    };
+
+    let (_, media) = field.content().expect("a content-described header");
+    let kynos::openapi::Schema::Object(schema) = media.schema.clone().expect("a schema") else {
+        panic!("described by a boolean schema");
+    };
+
+    // The offer is absent, which is exactly the gap: nothing wrote it down.
+    assert!(
+        schema.enumeration.is_none(),
+        "a runtime catalogue cannot state its offer, and this records that"
+    );
+}
+
+/// A handler whose language came from somewhere no `const` can see.
+#[kynos::get("/resolved")]
+async fn resolved() -> kynos::response::headers::WithHeaders<
+    kynos::extract::body::text::Text,
+    kynos::response::language::headers::ContentLanguage,
+> {
+    let tag = kynos::response::language::tag::LanguageTag::parse("fr").expect("well-formed");
+
+    kynos::response::headers::WithHeaders::new(
+        kynos::extract::body::text::Text("Bonjour".to_owned()),
+        kynos::response::language::headers::ContentLanguage::new(&tag),
+    )
+}
