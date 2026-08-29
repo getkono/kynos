@@ -1,0 +1,18 @@
+error[E0599]: no method named `with_headers` found for struct `Continued<Stamp>` in the current scope
+  --> tests/ui/antipattern/interceptor_attaches_an_undeclared_header.rs:52:14
+   |
+48 |            Ok(next
+   |   ____________-
+   |  |____________|
+49 | ||             .run(request)
+50 | ||             .await
+   | ||__________________- method `with_headers` is available on `Continued`
+51 | |              .with_headers(Stamp(HeaderValue::from_static("1")))
+52 | |              .with_headers(()))
+   | |______________-^^^^^^^^^^^^
+   |
+help: there is a method `headers` with a similar name, but with different arguments
+  --> src/middleware/mod.rs
+   |
+   |     pub fn headers(&self) -> &crate::http::HeaderMap {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

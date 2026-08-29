@@ -1,5 +1,8 @@
-use super::{Continued, EncodeHeaders, HeaderParams};
-use crate::http::{HeaderName, HeaderValue, Response, header};
+use super::{Continued, EncodeHeaders};
+use crate::{
+    extract::params::header::HeaderParams,
+    http::{HeaderName, HeaderValue, Response, header},
+};
 
 /// A group that declares no header of its own and varies on `origin` —
 /// the shape `Cors` takes.

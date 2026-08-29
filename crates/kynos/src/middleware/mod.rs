@@ -88,7 +88,7 @@ pub mod trace;
 use std::{future::Future, sync::Arc};
 
 use crate::{
-    extract::params::header::{DecodeHeaders, EncodeHeaders, HeaderParams},
+    extract::params::header::{DecodeHeaders, EncodeHeaders},
     http::{Request, Response},
     middleware::erased::{ErasedInterceptor, ErasedTerminal},
     response::ShortCircuit,
@@ -109,8 +109,10 @@ use crate::{
 /// * [`Adds`](Interceptor::Adds) is the response headers this interceptor
 ///   attaches. [`Next::run`] yields `Continued<()>` and
 ///   [`Continued::with_headers`] is the only way to reach `Continued<H>`, so
-///   declaring headers and never attaching them does not compile, and
-///   attaching undeclared ones has no method to call.
+///   declaring headers and never attaching them does not compile. Attaching
+///   undeclared ones has no method to call either, because `with_headers` is
+///   on `Continued<()>` alone: one group reaches one response, and it is the
+///   group `Adds` names.
 /// * [`Reads`](Interceptor::Reads) is the request headers it consumes, handed
 ///   over already extracted. An interceptor cannot declare a parameter it
 ///   never reads, because reading is how it gets one.
@@ -280,14 +282,20 @@ impl Continued<()> {
             _headers: std::marker::PhantomData,
         }
     }
-}
 
-impl<H: HeaderParams> Continued<H> {
     /// Attaches a declared header group.
     ///
     /// Changes the type, so an interceptor whose `Adds` names a group has to
     /// call this to return at all — and one whose `Adds` is `()` has nothing it
     /// could attach.
+    ///
+    /// On `Continued<()>` alone, which is what makes a response carry the one
+    /// group `Adds` names. [`Next::run`] yields `Continued<()>`, this consumes
+    /// it, and `Continued<G>` has no second call — so there is no way to write
+    /// a group and then relabel back to the declared type with that group's
+    /// fields already on the response. It reached the wire that way, and
+    /// [`CompatibleWith`](stack::CompatibleWith), which compares `Adds::NAMES`,
+    /// never saw the group that put it there.
     // By value so the call reads `.with_headers(Group { .. })`. The group is
     // built for this call and has no second reader, so borrowing it would
     // only ask the caller to write `&` for a value it is done with.
@@ -300,7 +308,12 @@ impl<H: HeaderParams> Continued<H> {
             _headers: std::marker::PhantomData,
         }
     }
+}
 
+// No `H: HeaderParams` bound: what keeps `H` a header group is construction --
+// `new` for `()` and `with_headers` for a `G: EncodeHeaders` -- rather than a
+// bound on an accessor none of these bodies needs.
+impl<H> Continued<H> {
     /// The status the chain produced.
     ///
     /// Readable because logging or metrics may want it; there is deliberately
