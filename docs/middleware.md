@@ -417,6 +417,8 @@ four different answers depending on which layer is asked.
 | Slow body | — | — | — | `Timeout`, *outside* `BodySize` | **no** |
 | Keep-alive idle | `header_read_timeout` covers the wait for the next head | `Http2KeepAlive`, unset | — | — | HTTP/1 only |
 | Handler runtime | — | — | — | `Timeout`, when mounted | **no** |
+| Response body stall | — | — | — | `BodyTimeout::idle`, when mounted | **no** |
+| Response body total time | — | — | — | `BodyTimeout::deadline`, when mounted | **no** |
 | Total connections | — | — | `max_connections`, 10 000 | — | yes |
 | Per-IP connections | — | — | — | — | **no**, and see below |
 | Per-IP request rate | — | — | — | `RateLimit` keyed `ByClientAddress`, with a trust policy set | no |
@@ -427,7 +429,7 @@ four different answers depending on which layer is asked.
 | TLS handshake stall | — | — | `handshake_timeout`, 10 s | — | yes, with `tls` |
 | Decompression bomb | — | — | — | `Decompression`, when mounted | **no** |
 
-Four rows are worth reading twice.
+Five rows are worth reading twice.
 
 **A body cap is not default, and that is a decision.**
 [`nfr.md`](nfr.md#extraction) records the three reasons. The shortest is that a
@@ -455,6 +457,49 @@ asserts only on the emitted document, which is order-insensitive and passes
 either way. Pinning the read needs a client that dribbles a chunked body over a
 real socket, which the harness cannot express today. This paragraph is where a
 reader learns the rule, and nothing below it is checked.
+
+**A response body is bounded by neither of the rows above.** `Timeout` wraps the
+chain's future, and that future completes when the *head* is ready. A handler
+returning a stream — Server-Sent Events, JSON Lines, a large body read from
+elsewhere — returns immediately and emits for as long as it likes, with its
+timer already stopped. `BodyTimeout` is the row that covers it, in two shapes:
+`idle` restarts on every frame and bounds the gap between them, `deadline` never
+restarts and bounds the total. It declares no status, and cannot — the status
+and the headers have already left, so a body that runs out of time is a
+truncated response and an error on the stream rather than a status a client can
+read.
+
+`BodyTimeout` belongs *outside* anything that rewrites a body. An interceptor
+that rewrites one has to read it, and one that buffers — `Compression` below its
+size threshold, `Cache` storing a response — reads to the end before writing
+anything; handed a body that fails part-way it has no partial response to emit
+and falls back to an empty one, so a timeout mounted beneath it reaches the
+client as a complete, zero-length success. Outside, the error is the body's last
+frame and the driver resets the stream. Like the slow-body rule above, the types
+do not enforce this.
+
+An idle limit polls the inner body *before* its clock, which is not an
+optimization. The gap the timer measures is between polls rather than between
+frames, and a driver stops polling a body for reasons that are nothing to do
+with the producer — an HTTP/1 write buffer that is full, an HTTP/2 window that
+is closed, a busy executor. Consulting the clock first would end a body that had
+a frame ready and report a slow *reader* as a stalled *writer*. A deadline does
+consult its clock first, because a body still producing steadily is exactly what
+it exists to end.
+
+A body this timer ends is reported to an `Observer` as a disconnect rather than
+a delivery, which is the only way it is visible: the status and the headers were
+already a success. `a_body_the_timer_ended_is_reported_as_interrupted` in
+[`tests/limits.rs`](../crates/kynos/tests/limits.rs) holds that, with a
+completing body as its control.
+
+A Server-Sent Events keep-alive is a real frame, so it restarts an `idle` clock
+exactly as an event does. An event stream with keep-alive enabled and an
+interval shorter than the limit therefore never trips one. That is the intended
+reading — the connection is demonstrably alive — but it means `idle` bounds the
+transport rather than the application there, and `deadline` is what bounds how
+long such a stream may run at all. Both directions are asserted in
+[`tests/limits.rs`](../crates/kynos/tests/limits.rs).
 
 **A timeout answers 408, and neither status is exact.** RFC 9110 §15.6.5 scopes
 504 to a server "acting as a gateway or proxy" awaiting an upstream — which an

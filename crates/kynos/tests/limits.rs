@@ -536,3 +536,364 @@ async fn an_unsubstituted_timeout_still_answers_408() {
         StatusCode::REQUEST_TIMEOUT
     );
 }
+
+// --- BodyTimeout: what `Timeout` cannot see -------------------------------
+
+/// A stream of `chunks` chunks, each arriving `gap` after the last.
+///
+/// One type covers every case here: a small gap is a healthy stream, a gap
+/// longer than the test is a stalled one.
+#[cfg(feature = "openapi32")]
+struct Trickle {
+    remaining: usize,
+    gap: Duration,
+    timer: std::pin::Pin<Box<tokio::time::Sleep>>,
+}
+
+#[cfg(feature = "openapi32")]
+impl Trickle {
+    fn new(chunks: usize, gap: Duration) -> Self {
+        Self {
+            remaining: chunks,
+            gap,
+            timer: Box::pin(tokio::time::sleep(gap)),
+        }
+    }
+}
+
+#[cfg(feature = "openapi32")]
+impl futures_core::Stream for Trickle {
+    type Item = Result<bytes::Bytes, std::convert::Infallible>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+
+        if this.remaining == 0 {
+            return std::task::Poll::Ready(None);
+        }
+
+        std::task::ready!(this.timer.as_mut().poll(context));
+
+        this.remaining -= 1;
+        let next = tokio::time::Instant::now() + this.gap;
+        this.timer.as_mut().reset(next);
+
+        std::task::Poll::Ready(Some(Ok(bytes::Bytes::from_static(b"chunk"))))
+    }
+}
+
+/// Reads a body to its end, reporting a failure instead of panicking on one.
+///
+/// The shared harness's `call` drains with `expect`, which is right everywhere
+/// else: a body that fails is a defect. Here it is the assertion.
+#[cfg(feature = "openapi32")]
+async fn read_to_end(body: kynos::http::body::Body) -> Result<bytes::Bytes, String> {
+    use http_body_util::BodyExt;
+
+    body.collect()
+        .await
+        .map(http_body_util::Collected::to_bytes)
+        .map_err(|error| error.to_string())
+}
+
+/// Drives one request and hands back the undrained body.
+#[cfg(feature = "openapi32")]
+async fn body_of<C: Send + Sync + 'static>(
+    service: &kynos::router::service::Service<C>,
+    target: &str,
+) -> kynos::http::body::Body {
+    let mut request = kynos::http::Request::new(kynos::http::body::Body::empty());
+    *request.uri_mut() = target.parse().expect("a usable request target");
+
+    service.call(request).await.into_body()
+}
+
+/// Ten chunks 5 ms apart, so about 50 ms in total: a healthy stream, an order
+/// of magnitude inside the idle gap the cases below allow and comfortably past
+/// the deadline one of them sets.
+#[cfg(feature = "openapi32")]
+#[kynos::get("/steady")]
+async fn steady()
+-> kynos::response::stream::binary::BinaryStream<Trickle, kynos::extract::media::OctetStream> {
+    kynos::response::stream::binary::BinaryStream::new(Trickle::new(10, Duration::from_millis(5)))
+}
+
+/// One chunk that never comes: the peer stopped producing.
+#[cfg(feature = "openapi32")]
+#[kynos::get("/stalled")]
+async fn stalled()
+-> kynos::response::stream::binary::BinaryStream<Trickle, kynos::extract::media::OctetStream> {
+    kynos::response::stream::binary::BinaryStream::new(Trickle::new(1, Duration::from_secs(30)))
+}
+
+/// The gap this exists for: `Timeout` returns when the *head* is ready, so a
+/// stalled stream under one runs forever.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn an_idle_body_timeout_ends_a_stalled_stream() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![stalled])
+        .intercept(kynos::middleware::limits::BodyTimeout::idle(
+            Duration::from_millis(100),
+        ))
+        .build(())
+        .expect("a describable router");
+
+    let failure = read_to_end(body_of(&service, "/stalled").await)
+        .await
+        .expect_err("a stalled body outlived its idle limit");
+
+    assert!(failure.contains("did not finish"), "{failure}");
+}
+
+/// The pass control: the same limit over a stream that keeps producing, which
+/// differs in exactly the gap between frames.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn an_idle_body_timeout_leaves_a_steady_stream_alone() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![steady])
+        .intercept(kynos::middleware::limits::BodyTimeout::idle(
+            Duration::from_millis(100),
+        ))
+        .build(())
+        .expect("a describable router");
+
+    let delivered = read_to_end(body_of(&service, "/steady").await)
+        .await
+        .expect("a steady stream is inside its idle limit");
+
+    // Ten chunks arrived whole: the timer reset on each rather than summing.
+    assert_eq!(delivered.len(), "chunk".len() * 10);
+}
+
+/// The difference between the two constructors. `steady` runs about 50 ms and
+/// survives `idle(30ms)` above, because no single gap reaches 30 ms. A deadline
+/// does not care how steadily it arrives.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_deadline_ends_a_stream_that_is_still_producing() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![steady])
+        .intercept(kynos::middleware::limits::BodyTimeout::deadline(
+            Duration::from_millis(20),
+        ))
+        .build(())
+        .expect("a describable router");
+
+    let failure = read_to_end(body_of(&service, "/steady").await)
+        .await
+        .expect_err("a deadline ends a body however steadily it arrives");
+
+    assert!(failure.contains("did not finish"), "{failure}");
+}
+
+/// A body limit describes nothing, because there is nothing left to describe:
+/// the status and the headers went out before the timer could run.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_body_timeout_declares_no_status() {
+    let bounded = Router::<()>::new()
+        .mount(kynos::routes![steady])
+        .intercept(kynos::middleware::limits::BodyTimeout::idle(
+            Duration::from_millis(100),
+        ))
+        .build(())
+        .expect("a describable router");
+
+    let plain = Router::<()>::new()
+        .mount(kynos::routes![steady])
+        .build(())
+        .expect("a describable router");
+
+    let described = |service: &kynos::router::service::Service<()>| {
+        let mut statuses: Vec<String> = service.openapi().paths.items["/steady"]
+            .get
+            .as_ref()
+            .expect("the operation exists")
+            .responses
+            .responses
+            .keys()
+            .cloned()
+            .collect();
+        statuses.sort();
+        statuses
+    };
+
+    assert_eq!(described(&bounded), described(&plain));
+}
+
+/// A keep-alive is a real frame, so it restarts an idle clock exactly as an
+/// event does.
+///
+/// Asserted as "still running when the window closed": the outer timeout
+/// elapsing is the evidence, because a body that had tripped its idle limit
+/// would have returned an error long before.
+#[cfg(all(feature = "openapi32", feature = "json"))]
+struct Silent {
+    timer: std::pin::Pin<Box<tokio::time::Sleep>>,
+}
+
+#[cfg(all(feature = "openapi32", feature = "json"))]
+impl futures_core::Stream for Silent {
+    type Item = Result<kynos::response::stream::sse::Event<String>, std::convert::Infallible>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        // Pending until the timer, which is far outside the window below: an
+        // application with nothing to say, so every frame the client sees is a
+        // keep-alive.
+        std::task::ready!(self.get_mut().timer.as_mut().poll(context));
+
+        std::task::Poll::Ready(None)
+    }
+}
+
+#[cfg(all(feature = "openapi32", feature = "json"))]
+#[kynos::get("/heartbeat")]
+async fn heartbeat() -> kynos::response::stream::sse::Sse<Silent> {
+    kynos::response::stream::sse::Sse::new(Silent {
+        timer: Box::pin(tokio::time::sleep(Duration::from_secs(30))),
+    })
+    .keep_alive(kynos::response::stream::sse::KeepAlive::new().interval(Duration::from_millis(5)))
+}
+
+#[cfg(all(feature = "openapi32", feature = "json"))]
+#[tokio::test]
+async fn a_keep_alive_frame_resets_an_idle_body_timeout() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![heartbeat])
+        .intercept(kynos::middleware::limits::BodyTimeout::idle(
+            Duration::from_millis(100),
+        ))
+        .build(())
+        .expect("a describable router");
+
+    let outcome = tokio::time::timeout(
+        Duration::from_millis(400),
+        read_to_end(body_of(&service, "/heartbeat").await),
+    )
+    .await;
+
+    assert!(
+        outcome.is_err(),
+        "an event stream sending keep-alives every 5 ms tripped a 30 ms idle \
+         limit: {outcome:?}"
+    );
+}
+
+/// Counts how a body ended, which is the only way a timed-out one is visible.
+#[cfg(feature = "openapi32")]
+struct EndCounts {
+    responses: std::sync::atomic::AtomicUsize,
+    disconnects: std::sync::atomic::AtomicUsize,
+}
+
+#[cfg(feature = "openapi32")]
+struct CountingEnds(std::sync::Arc<EndCounts>);
+
+#[cfg(feature = "openapi32")]
+impl kynos::middleware::Observer<()> for CountingEnds {
+    fn on_request(
+        &self,
+        _: &kynos::http::Request,
+        _: Option<kynos::router::operation::Route<'_>>,
+        (): &(),
+    ) {
+    }
+
+    fn on_response(
+        &self,
+        _: &kynos::http::Response,
+        _: Option<kynos::router::operation::Route<'_>>,
+        _: Duration,
+    ) {
+        self.0
+            .responses
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn on_disconnect(&self, _: Option<kynos::router::operation::Route<'_>>, _: Duration) {
+        self.0
+            .disconnects
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// A body the timer destroyed is reported as interrupted, not as delivered.
+///
+/// The one event this interceptor exists to produce is also the one an operator
+/// has to be able to see. `Watched` decides `Complete` against `Interrupted` by
+/// asking the body whether it ended, so a `Bounded` that answered "yes" once
+/// its timer had fired would count every killed response as a success and
+/// `on_disconnect` would never fire. Nothing else in this suite can see that:
+/// the wire behaviour is identical either way.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_body_the_timer_ended_is_reported_as_interrupted() {
+    let counts = std::sync::Arc::new(EndCounts {
+        responses: std::sync::atomic::AtomicUsize::new(0),
+        disconnects: std::sync::atomic::AtomicUsize::new(0),
+    });
+
+    let service = Router::<()>::new()
+        .mount(kynos::routes![stalled])
+        .observe(CountingEnds(std::sync::Arc::clone(&counts)))
+        .intercept(kynos::middleware::limits::BodyTimeout::idle(
+            Duration::from_millis(100),
+        ))
+        .build(())
+        .expect("a describable router");
+
+    let body = body_of(&service, "/stalled").await;
+    read_to_end(body)
+        .await
+        .expect_err("a stalled body outlived its idle limit");
+
+    assert_eq!(
+        counts.responses.load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    assert_eq!(
+        counts.disconnects.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "a response the body timer destroyed was reported as delivered"
+    );
+}
+
+/// The pass control: a body that really did end reports no disconnect, so the
+/// assertion above is about the timer rather than about every response.
+#[cfg(feature = "openapi32")]
+#[tokio::test]
+async fn a_body_that_finished_is_not_reported_as_interrupted() {
+    let counts = std::sync::Arc::new(EndCounts {
+        responses: std::sync::atomic::AtomicUsize::new(0),
+        disconnects: std::sync::atomic::AtomicUsize::new(0),
+    });
+
+    let service = Router::<()>::new()
+        .mount(kynos::routes![steady])
+        .observe(CountingEnds(std::sync::Arc::clone(&counts)))
+        .intercept(kynos::middleware::limits::BodyTimeout::idle(
+            Duration::from_millis(200),
+        ))
+        .build(())
+        .expect("a describable router");
+
+    let body = body_of(&service, "/steady").await;
+    read_to_end(body).await.expect("a steady stream completes");
+
+    assert_eq!(
+        counts.responses.load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    assert_eq!(
+        counts.disconnects.load(std::sync::atomic::Ordering::SeqCst),
+        0
+    );
+}

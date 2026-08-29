@@ -207,6 +207,7 @@ fn every_interceptor_kynos_ships_is_accounted_for() {
     /// declares nothing, so it is not in this set and is named below instead.
     const WITNESSED: &[&str] = &[
         "BodySize",
+        "BodyTimeout",
         "Cache",
         "Compression",
         "Concurrency",
