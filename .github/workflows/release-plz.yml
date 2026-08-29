@@ -47,9 +47,9 @@ jobs:
       # Nothing here reads `CARGO_REGISTRY_TOKEN`, deliberately and permanently.
       # Release-plz skips the OIDC exchange whenever a registry token is present
       # in the environment, so wiring the secret through -- even as a fallback
-      # for the one publish trusted publishing cannot do, the first -- would
-      # make an empty or forgotten secret able to silently disable it. The first
-      # publish happens from a workstation instead; `docs/releasing.md` has it.
+      # for a publish trusted publishing cannot do, a crate's first -- would make
+      # an empty or forgotten secret able to silently disable it. Such a publish
+      # happens from a workstation instead; `docs/releasing.md` has it.
       #
       # Trusted Publishing is unaffected by the choice of `GITHUB_TOKEN` below:
       # the OIDC token is minted from this permission, not from that credential.

@@ -2,8 +2,8 @@
 # tag, computes the next version, rewrites the changelogs, opens the release
 # pull request, and -- when that pull request merges -- publishes to crates.io,
 # tags, and cuts the GitHub release. `.github/workflows/release-plz.yml` runs
-# it. The human half, including the one-time setup that cannot be committed, is
-# `docs/releasing.md`.
+# it. The human half, including the Trusted Publishing config that lives on
+# crates.io rather than in this repository, is `docs/releasing.md`.
 #
 # The three crates move together. Every member sets `version.workspace = true`,
 # and release-plz answers that by giving all of them the highest next version it
@@ -21,8 +21,8 @@
 # documented effect is that "the package will not be published to any cargo
 # registry (`cargo publish` is skipped)". Tagging and the GitHub release would
 # still have happened; publishing never would, which is why none of the three
-# names exists on crates.io. `git_only` and `publish` cannot both be true, so it
-# is deleted rather than contradicted. This is the default, stated because
+# names reached crates.io until 0.1.0. `git_only` and `publish` cannot both be
+# true, so it is deleted rather than contradicted. This is the default, stated because
 # removing the field it contradicts is the point of the line.
 publish = true
 
@@ -61,8 +61,8 @@ publish_all_features = true
 # Release-plz invokes it with no feature flags, so only the default feature set
 # is compared; and it reports "compatible" for any failure whose output does not
 # say a new major version is required, so a toolchain problem is
-# indistinguishable from a clean run. It is also inert until 0.1.0 exists on
-# crates.io to compare against.
+# indistinguishable from a clean run. It compares against the last published
+# version, so it had nothing to say until 0.1.0 existed on crates.io.
 semver_check = true
 
 # Only the workspace's own packages are re-pinned in `Cargo.lock`, which is the
