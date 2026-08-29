@@ -438,3 +438,101 @@ async fn a_slot_is_released_when_a_request_is_abandoned() {
         "the abandoned request's slot was never released"
     );
 }
+
+// --- Timeout: answering with something else ------------------------------
+
+/// What one service answers a timeout with instead of `TimedOut`.
+///
+/// 504 rather than 408 deliberately: it is a status `TimedOut` never sends, so
+/// a client seeing it proves the substitute reached the wire, and a document
+/// carrying it proves `STATUSES` was read off this type rather than off the
+/// default.
+struct TookTooLong {
+    after: Duration,
+}
+
+impl From<Duration> for TookTooLong {
+    fn from(after: Duration) -> Self {
+        Self { after }
+    }
+}
+
+impl kynos::response::IntoResponse for TookTooLong {
+    fn into_response(self) -> kynos::http::Response {
+        let mut response = kynos::http::Response::new(kynos::http::body::Body::from_bytes(
+            bytes::Bytes::from(format!("gave up after {}ms", self.after.as_millis())),
+        ));
+        *response.status_mut() = StatusCode::GATEWAY_TIMEOUT;
+        response
+    }
+}
+
+impl kynos::response::Responses for TookTooLong {
+    fn responses(registry: &mut kynos::schema::registry::Registry) -> kynos::openapi::Responses {
+        let _ = registry;
+        kynos::openapi::Responses::new().with(
+            504,
+            kynos::openapi::Response::new("the handler was abandoned"),
+        )
+    }
+}
+
+impl kynos::response::ShortCircuit for TookTooLong {
+    const STATUSES: &'static [u16] = &[504];
+}
+
+/// A substituted response reaches the client, and the operation describes the
+/// status *that* type declares rather than the default's.
+#[tokio::test]
+async fn a_substituted_timeout_response_reaches_the_client_and_the_document() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![slow, prompt])
+        .intercept(Timeout::new(Duration::from_millis(20)).answer_with::<TookTooLong>())
+        .build(())
+        .expect("a describable router");
+
+    let timed_out = get(&service, "/slow").call().await;
+    assert_eq!(timed_out.status, StatusCode::GATEWAY_TIMEOUT);
+    assert!(timed_out.text().contains("20"), "{}", timed_out.text());
+
+    // The control: a handler inside the limit is untouched by the substitution.
+    assert_eq!(
+        get(&service, "/prompt").call().await.status,
+        StatusCode::NO_CONTENT
+    );
+
+    let operation = service.openapi().paths.items["/slow"]
+        .get
+        .as_ref()
+        .expect("the operation exists");
+
+    assert!(
+        operation.responses.responses.contains_key("504"),
+        "the substituted type's status is what the operation describes"
+    );
+    assert!(
+        !operation.responses.responses.contains_key("408"),
+        "the default's status is described even though nothing can send it"
+    );
+}
+
+/// The pass control for the substitution, and the guard on its inference.
+///
+/// `Timeout::new` has to keep resolving its response without a turbofish. A
+/// default type parameter does not participate in inference from an associated
+/// function, so declaring `new` on the generic type would break every existing
+/// call site -- and would break it here, at compile time, rather than in a
+/// visible assertion.
+#[tokio::test]
+async fn an_unsubstituted_timeout_still_answers_408() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![slow])
+        .intercept(Timeout::new(Duration::from_millis(20)))
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(
+        get(&service, "/slow").call().await.status,
+        StatusCode::REQUEST_TIMEOUT
+    );
+}

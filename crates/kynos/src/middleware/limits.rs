@@ -264,24 +264,121 @@ impl Responses for TimedOut {
 ///
 /// Nothing enforces this. `CompatibleWith` compares sets, and a set has no
 /// positions, so the wrong order compiles and describes itself identically.
-#[derive(Clone, Copy, Debug)]
-pub struct Timeout {
+///
+/// # Answering with something else
+///
+/// The response type is a parameter, defaulting to [`TimedOut`]. Reach for
+/// [`answer_with`](Timeout::answer_with) when a timeout should carry more than
+/// a status and a sentence — a support identifier, a `Retry-After`, a
+/// diagnostic an operator can correlate — or when the whole service answers
+/// timeouts in a house-specific shape.
+///
+/// The substitute is a [`ShortCircuit`], so it still declares the statuses it
+/// can produce and still contributes them to every operation the interceptor
+/// covers. A custom response cannot make the document wrong: whatever it
+/// answers with, `statuses_disjoint` sees the same `STATUSES` the compiler
+/// checks against every other interceptor in the stack.
+///
+/// ```no_run
+/// use std::time::Duration;
+/// # use kynos::{
+/// #     http, middleware::limits::Timeout, response::{IntoResponse, Responses, ShortCircuit},
+/// #     schema::registry::Registry,
+/// # };
+/// /// What this service answers a timeout with.
+/// struct TookTooLong {
+///     after: Duration,
+/// }
+///
+/// impl From<Duration> for TookTooLong {
+///     fn from(after: Duration) -> Self {
+///         // The one place to emit a warning, a metric or a trace event: it
+///         // runs exactly when the handler was abandoned.
+///         eprintln!("abandoned a handler after {after:?}");
+///         Self { after }
+///     }
+/// }
+/// # impl IntoResponse for TookTooLong {
+/// #     fn into_response(self) -> http::Response { todo!() }
+/// # }
+/// # impl Responses for TookTooLong {
+/// #     fn responses(registry: &mut Registry) -> kynos_openapi::Responses { todo!() }
+/// # }
+/// # impl ShortCircuit for TookTooLong { const STATUSES: &'static [u16] = &[408]; }
+/// let timeout = Timeout::new(Duration::from_secs(30)).answer_with::<TookTooLong>();
+/// # let _ = timeout;
+/// ```
+pub struct Timeout<R = TimedOut> {
     /// The maximum handler duration.
     pub limit: std::time::Duration,
+    /// Names the response without holding one.
+    ///
+    /// `fn() -> R` so that `R` decides nothing about this type's auto traits:
+    /// a `Timeout` is `Send` because a `Duration` is.
+    _response: std::marker::PhantomData<fn() -> R>,
 }
 
-impl Timeout {
+impl Timeout<TimedOut> {
     /// Limits handlers to `limit`.
+    ///
+    /// Answers with [`TimedOut`]. Declared on the concrete type rather than on
+    /// the generic one so that this still infers without a turbofish: a default
+    /// type parameter does not participate in inference from an associated
+    /// function.
     #[must_use]
     pub fn new(limit: std::time::Duration) -> Self {
-        Self { limit }
+        Self {
+            limit,
+            _response: std::marker::PhantomData,
+        }
     }
 }
 
-impl<C: Sync + 'static> Interceptor<C> for Timeout {
+impl<R> Timeout<R> {
+    /// Answers timeouts with `S` instead of [`TimedOut`].
+    ///
+    /// `S` is built from the limit that elapsed, so `From<Duration>` is where a
+    /// warning, a metric or a trace event belongs: it runs exactly when a
+    /// handler is abandoned, which is the moment nothing else observes.
+    #[must_use]
+    pub fn answer_with<S>(self) -> Timeout<S>
+    where
+        S: ShortCircuit + From<std::time::Duration> + Send + 'static,
+    {
+        Timeout {
+            limit: self.limit,
+            _response: std::marker::PhantomData,
+        }
+    }
+}
+
+// Hand-written rather than derived: a derive would bound `R: Clone` and
+// `R: Debug`, and `PhantomData<fn() -> R>` needs neither.
+impl<R> Clone for Timeout<R> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<R> Copy for Timeout<R> {}
+
+impl<R> std::fmt::Debug for Timeout<R> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Timeout")
+            .field("limit", &self.limit)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<C, R> Interceptor<C> for Timeout<R>
+where
+    C: Sync + 'static,
+    R: ShortCircuit + From<std::time::Duration> + Send + 'static,
+{
     type Reads = ();
     type Adds = ();
-    type Short = TimedOut;
+    type Short = R;
 
     async fn intercept(
         &self,
@@ -289,7 +386,7 @@ impl<C: Sync + 'static> Interceptor<C> for Timeout {
         reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> Result<Continued<()>, TimedOut> {
+    ) -> Result<Continued<()>, R> {
         let _ = (reads, context);
 
         // The timer is the one thing this cannot do for itself. Dropping the
@@ -297,8 +394,14 @@ impl<C: Sync + 'static> Interceptor<C> for Timeout {
         // abandon work that is already running.
         match tokio::time::timeout(self.limit, next.run(request)).await {
             Ok(continued) => Ok(continued),
-            Err(_elapsed) => Err(TimedOut { after: self.limit }),
+            Err(_elapsed) => Err(R::from(self.limit)),
         }
+    }
+}
+
+impl From<Duration> for TimedOut {
+    fn from(after: Duration) -> Self {
+        Self { after }
     }
 }
 
