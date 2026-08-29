@@ -73,9 +73,20 @@ enum StoreError {
 | --- | --- | --- |
 | type | `base` | URI prefix; `type` defaults to it plus the kebab-cased variant name |
 | variant | `status` | required, 400–599 |
-| variant | `title` | defaults to the variant name, de-camel-cased |
+| variant | `title` | the problem's `title`, and the response's description. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
 | field | `extension` | serialize this field as an extension member under its own name |
+
+**`title` is read twice, and its absence is answered differently each time.**
+On the wire it is the problem's `title`, and a variant that declares none
+carries `StatusCode::canonical_reason` — RFC 9457 section 4.2.1's own
+recommendation for a problem whose type says nothing. In the description it is
+the response's `description`, and there the variant's doc comment is tried
+before the reason phrase, on the same argument `detail` rests on: the sentence a
+Rust reader already wrote is the sentence an API consumer should receive.
+
+There is no de-camel-casing of variant names anywhere, and this document used to
+say there was.
 
 `detail` comes from `Display`, which is why the derive requires it and why
 `thiserror` is the expected companion: the `#[error("...")]` a Rust reader
