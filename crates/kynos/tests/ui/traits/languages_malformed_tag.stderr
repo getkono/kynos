@@ -1,0 +1,25 @@
+error[E0080]: evaluation panicked: an offered language is not a well-formed RFC 5646 tag
+ --> $RUST/core/src/panic.rs
+  |
+  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<Supported as kynos::response::language::CheckedOffer>::CHECK` failed here
+  |
+ ::: src/response/language/mod.rs
+  |
+  | /             assert!(
+  | |                 LanguageTag::is_well_formed(L::TAGS[index]),
+  | |                 "an offered language is not a well-formed RFC 5646 tag"
+  | |             );
+  | |_____________- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/response/language/mod.rs
+  |
+  |         let () = <L as CheckedOffer>::CHECK;
+  |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+note: the above error was encountered while instantiating `fn AcceptLanguage::<Supported>::choose`
+  --> tests/ui/traits/languages_malformed_tag.rs:17:13
+   |
+17 |     let _ = AcceptLanguage::<Supported>::parse("en").choose();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

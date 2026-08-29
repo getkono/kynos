@@ -103,15 +103,24 @@ pub trait Languages {
     const TAGS: &'static [&'static str];
 }
 
-/// The compile-time check on an offer.
+/// An offer whose tags a `Content-Language` could carry.
 ///
-/// A separate private trait rather than a bound, because an associated `const`
-/// is only evaluated where it is *used* — so the forcing line in
-/// [`AcceptLanguage::choose`] is what turns a malformed offer into a build
-/// failure. The idiom is the one `middleware::stack` uses for interceptor
-/// collisions.
-trait CheckedOffer {
+/// Implemented for every [`Languages`]; the obligation lives in [`CHECK`],
+/// which is a `const` that fails to evaluate when a tag is not well-formed or
+/// the offer is empty. [`AcceptLanguage::choose`] forces it, so the error lands
+/// on the negotiation rather than somewhere in this module.
+///
+/// Public rather than private for the reason
+/// [`CompatibleWith`](crate::middleware::stack::CompatibleWith) is: a failing
+/// `const` assertion names the trait it belongs to, and a diagnostic naming a
+/// type the reader cannot look up is one that explains nothing.
+///
+/// [`CHECK`]: CheckedOffer::CHECK
+pub trait CheckedOffer {
     /// Evaluated for its panics.
+    ///
+    /// An empty offer has no default to serve, and a malformed tag would reach
+    /// the wire as a `Content-Language` no client can read.
     const CHECK: ();
 }
 
