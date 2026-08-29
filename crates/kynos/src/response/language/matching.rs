@@ -199,9 +199,10 @@ impl Preference {
 /// describes: a wildcard "selects unspecified values", so a tag some other
 /// range named is scored by that range rather than by the wildcard.
 ///
-/// Ranking is by weight, then by how the range matched, then by how many
-/// subtags agreed, then by the order the offer lists them. A tag whose best
-/// weight is zero is refused outright, which is what `q=0` means.
+/// Ranking is by weight, then by how early the client named the range that set
+/// it, then by how that range matched and how deeply, and last by the order the
+/// offer itself lists them. A tag whose best weight is zero is refused
+/// outright, which is what `q=0` means.
 pub(super) fn select(preferences: &[Preference], offered: &[&str]) -> Option<usize> {
     offered
         .iter()
@@ -213,18 +214,51 @@ pub(super) fn select(preferences: &[Preference], offered: &[&str]) -> Option<usi
         .map(|(_, index)| index)
 }
 
-/// The weight, relation and depth `tag` earns from the most specific range
-/// that matches it.
-fn score(preferences: &[Preference], tag: &str) -> Option<(u16, MatchKind, usize)> {
+/// What one offered tag is worth to this client.
+///
+/// Ordered as the fields are written: the weight first, because section 12.4.2
+/// is normative about what one means; then how early the client named the range
+/// that set it, which is section 3.4's "considered in turn, according to
+/// priority"; then how the range matched and how deeply.
+///
+/// The order matters below the weight and above the match. A client writing
+/// `de, en` has weighted neither, and the only thing that distinguishes them is
+/// that it wrote `de` first — so reading the match quality before the order
+/// would answer `en` whenever the service happened to list `en` first, which is
+/// the service's preference standing in for the client's.
+type Score = (u16, std::cmp::Reverse<usize>, MatchKind, usize);
+
+/// What `tag` is worth, through the most specific range that matches it.
+///
+/// "Most specific" is a property of the *range*, so it is measured on the
+/// range: how it matched first, then how many subtags it names, then how early
+/// it was written. Reading specificity off the shared prefix instead makes
+/// every range that truncates to one tag equally specific — the prefix is then
+/// the tag's own length — which loses the difference between `en-GB` and
+/// `en-US-x-y` when both reach `en`.
+fn score(preferences: &[Preference], tag: &str) -> Option<Score> {
     preferences
         .iter()
         .filter_map(|preference| {
-            classify(&preference.range, tag)
-                .map(|(kind, depth)| (kind, depth, preference.order, preference.quality))
+            classify(&preference.range, tag).map(|(kind, depth)| (kind, depth, preference))
         })
-        // The most specific range sets the weight, and the earliest of two
-        // equally specific ones wins -- so `en;q=0.9, *;q=0.1` scores `en-GB`
-        // at 0.9 through `en` rather than at 0.1 through the wildcard.
-        .max_by_key(|(kind, depth, order, _)| (*kind, *depth, std::cmp::Reverse(*order)))
-        .and_then(|(kind, depth, _, quality)| (quality != 0).then_some((quality, kind, depth)))
+        // A more specific range overrides a broader one, which is what lets
+        // `en;q=0.9, en-GB;q=0.1` tell the two apart. The wildcard is
+        // least specific of all, so `fr;q=0.1, *;q=0.9` still scores `fr` at
+        // 0.1 — RFC 9110 section 12.4.3's "selects unspecified values".
+        .max_by_key(|(kind, _, preference)| {
+            (
+                *kind,
+                preference.range.split('-').count(),
+                std::cmp::Reverse(preference.order),
+            )
+        })
+        .and_then(|(kind, depth, preference)| {
+            (preference.quality != 0).then_some((
+                preference.quality,
+                std::cmp::Reverse(preference.order),
+                kind,
+                depth,
+            ))
+        })
 }
