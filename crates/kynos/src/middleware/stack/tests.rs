@@ -1,4 +1,4 @@
-use super::{header_name_eq, header_names_disjoint, statuses_disjoint};
+use super::{Both, Cons, Flatten, header_name_eq, header_names_disjoint, statuses_disjoint};
 
 #[test]
 fn header_names_compare_without_regard_to_case() {
@@ -34,4 +34,31 @@ fn the_checks_are_usable_in_const_context() {
         assert!(statuses_disjoint(&[413], &[504]));
         assert!(!header_names_disjoint(&["x-a"], &["X-A"]));
     }
+}
+
+/// An empty stack folds away rather than accumulating.
+///
+/// The property `Router::mount` rests on: `routes![a]` carries `()` and
+/// `routes![b, c]` carries `Both<(), ()>`, so mounting operations that hold no
+/// interceptor has to leave the router's type exactly as it was. Asserted by
+/// type equality, which is checked while this compiles -- `flattens_to` has no
+/// body because there is nothing to run.
+#[test]
+fn an_empty_stack_flattens_away() {
+    fn flattens_to<A: Flatten<S, Out = B>, B, S>() {}
+
+    struct Left;
+    struct Right;
+
+    flattens_to::<(), (), ()>();
+    flattens_to::<Both<(), ()>, (), ()>();
+    flattens_to::<Both<Both<(), ()>, ()>, (), ()>();
+
+    // A carried stack survives, and lands in front of what was already there.
+    flattens_to::<Cons<Left, ()>, Cons<Left, ()>, ()>();
+    flattens_to::<Cons<Left, ()>, Cons<Left, Cons<Right, ()>>, Cons<Right, ()>>();
+
+    // `Both` concatenates rather than nesting, so two mounted scopes become
+    // one list for a later interceptor to be compared against.
+    flattens_to::<Both<Cons<Left, ()>, Cons<Right, ()>>, Cons<Left, Cons<Right, ()>>, ()>();
 }
