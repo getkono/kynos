@@ -25,6 +25,7 @@ the framework, and the list of features it deliberately rejects, lives in the
 | [`standards.md`](standards.md) | Working on anything a specification governs: which document and section binds a middleware, where a departure is argued, and what is known not to conform |
 | [`testing.md`](testing.md) | Deciding where a test belongs, or what kind of test a guarantee needs |
 | [`nfr.md`](nfr.md) | Adding a module-level guarantee, or deciding what a change must prove before it lands |
+| [`performance.md`](performance.md) | Deciding what a feature costs the request path, and which measurement that shape of code owes |
 | [`releasing.md`](releasing.md) | Cutting a release, or diagnosing why one did not publish |
 
 ## The anti-patterns are normative
@@ -57,7 +58,14 @@ designed rather than built. [`nfr.md`](nfr.md) is where that ledger is kept:
 it records which guarantees CI actually enforces, and it is worth keeping only
 while it never claims one that CI does not.
 
-Benchmark methodology is not here. It lives with the harness that runs it, in
+Benchmark methodology is not here. A measurement any HTTP server library would
+answer — throughput, tail latency, resident memory at scale — lives with the
+harness that runs it, in
 [`getkono/kynos-bench`](https://github.com/getkono/kynos-bench), because a
 measurement definition is worth little separated from the code that produces the
 measurement.
+
+What a *Kynos* feature costs the request path is a different question, and it is
+here: no comparison answers it, because no other library has the feature.
+[`performance.md`](performance.md) holds the boundary and allocates a counted
+method to each shape of the routing stack.
