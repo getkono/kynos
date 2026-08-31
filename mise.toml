@@ -26,6 +26,7 @@ hk = "1.53.0"
 # nextest tags releases `cargo-nextest-<version>`, so the tag is the version.
 "github:nextest-rs/nextest" = { version = "cargo-nextest-0.9.140", exe = "cargo-nextest" }
 "github:convco/convco" = "0.7.0"
+"github:obi1kenobi/cargo-semver-checks" = "0.50.0"
 
 [tasks.format]
 description = "Format the Rust workspace"
@@ -323,6 +324,43 @@ done
 
 cargo package --workspace --all-features
 '''
+
+[tasks."semver:check"]
+description = "Compare the public API against the last published release"
+# The gate that was missing, and the one a pre-v1 framework needs most: the
+# whole point of not being 0.y.z is that a break is a decision rather than an
+# accident, and until now nothing on `master` could tell the two apart.
+#
+# `cargo-semver-checks` did run -- but only at release, and only through
+# release-plz, whose two limits `release-plz.toml` records: it is invoked with
+# no feature flags, so only the default set is compared, and it reports
+# "compatible" for any failure whose output does not demand a major version.
+# The result is that a break lands, sits on `master`, and surfaces in a release
+# pull request days later beside the changelog, which is the worst place to
+# learn it. Both breaks in the 0.2.0 release pull request are that shape:
+# `Router::group`/`nest`/`merge` each took a third generic parameter, and
+# `Timeout` gained a private field.
+#
+# `--all-features` for the reason `lint`, `test` and `publish:check` have it.
+# Roughly thirty flags gate this crate, so a default-features comparison reads
+# a fraction of the surface: every item behind `tls`, `assets`, `cache` or
+# `unchecked` could change shape and nothing would say so. This is the half
+# release-plz cannot do, which is why the task exists rather than a settings
+# change.
+#
+# `--workspace` because all three crates publish together and move as one
+# version, so a break in `kynos-openapi` is a break `kynos` re-exports.
+#
+# Baseline is the last version on crates.io, resolved by the tool. It has
+# nothing to say until a version is published, which is a fact about a first
+# release rather than a reason to gate on something else.
+#
+# This task exits non-zero on a break, which is what a human running it wants.
+# The CI job is the half that reports rather than blocks, and it does that by
+# reading the verdict rather than by swallowing the exit code -- see the
+# `semver` job in `.github/workflows/ci.yml` for why `continue-on-error` is
+# the wrong tool for it.
+run = "cargo semver-checks check-release --workspace --all-features"
 
 [tasks.coverage]
 description = "Run tests with LLVM coverage"

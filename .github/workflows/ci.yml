@@ -145,6 +145,81 @@ jobs:
       - name: Check the declared MSRV
         run: mise run msrv:check
 
+  semver:
+    name: API compatibility
+    runs-on: ubuntu-latest
+    # Reports the verdict; does not fail the pull request on a break.
+    #
+    # `continue-on-error` is deliberately *not* used here. It keeps the
+    # workflow's own conclusion green but leaves the check run reporting
+    # `failure`, so the pull request still shows a red mark -- which is the
+    # thing this job must not do, because it fails on every pull request today
+    # regardless of what that pull request changed. The baseline is the
+    # published 0.1.0, and `Router::group`/`nest`/`merge` plus `Timeout`'s new
+    # private field are breaks the pending 0.2.0 release exists to express;
+    # pre-1.0 a minor bump *is* how a break is declared. A red mark that means
+    # "the last release has not happened yet" teaches reviewers to ignore the
+    # column.
+    #
+    # So the verdict goes to the job summary, where `coverage:ci` already puts
+    # its own, and the step separates the two outcomes that matter:
+    # semver-checks ran and found breaks (report, pass) from semver-checks
+    # could not run at all (fail). An advisory job that swallows every exit
+    # code cannot tell a clean run from a broken toolchain, which is the
+    # failure `release-plz.toml` records about the release-time copy and the
+    # one this job exists to not repeat.
+    #
+    # When 0.2.0 is published the baseline moves past both breaks. At that
+    # point this becomes a plain `run: mise run semver:check`, and making it
+    # required is a change to the `master` ruleset rather than to this file.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up
+        uses: ./.github/actions/setup
+        with:
+          cargo-cache-key: semver
+      - name: Compare the public API against the last published release
+        run: |
+          set -o pipefail
+          mise run semver:check 2>&1 | tee semver.log || true
+
+          # `CARGO_TERM_COLOR: always` is set for the whole workflow, so
+          # semver-checks colours its verdict -- and puts a reset escape
+          # *between* `Summary` and the words after it. A pattern written
+          # against the plain text matches nothing, silently: the first version
+          # of this step reported "no verdict" for a run that had just printed
+          # two of them. Parse a stripped copy; the live log keeps its colour.
+          sed -r 's/\x1b\[[0-9;]*m//g' semver.log > semver.txt
+
+          if grep -q 'Summary semver requires new major version' semver.txt; then
+            verdict=broken
+          elif grep -q 'Summary no semver update required' semver.txt; then
+            verdict=clean
+          else
+            echo "::error::cargo-semver-checks produced no verdict; treating as a job failure"
+            exit 1
+          fi
+
+          {
+            echo "## API compatibility against the last published release"
+            echo
+            if [ "$verdict" = clean ]; then
+              echo "No break against the published baseline."
+            else
+              echo "Breaks against the published baseline, listed below."
+              echo
+              echo "Pre-1.0, a minor bump is how a break is declared, so this is"
+              echo "evidence for the release review rather than a failure of this"
+              echo "pull request."
+            fi
+            echo
+            echo '```'
+            grep -E '^(--- failure|Failed in:|  [a-z]|[[:space:]]+Summary )' semver.txt \
+              | sed "s#$GITHUB_WORKSPACE/##g"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   package:
     name: Package
     runs-on: ubuntu-latest
