@@ -1050,6 +1050,18 @@ scopes, it did not. `catch_panics` had the same defect on its own, returning
 `Router<C, Catch>` — which is `Router<C, Catch, ()>` — so the policy parameter
 was quietly doing the interceptor list's job too.
 
+**And it had it twice.** Closing the first half left `Router<C, Catch, I>`,
+which is `Router<C, Catch, I, ()>`: correct for `I` and dropping `S`, so a
+`group` before a `catch_panics` before an `intercept` still compiled. The commit
+that introduced `S` widened `Group::catch_panics` to four parameters and left
+the router's at three, and nothing failed, because a return type naming fewer
+parameters than its type has is well-formed — the rest take their defaults, and
+a defaulted phantom list is an empty one. Both halves are now pinned, and
+`every_builder_preserves_the_type_parameters` in
+[`tests/ui.rs`](../crates/kynos/tests/ui.rs) counts the arguments of every
+builder's return type so a third instance is a test failure rather than a
+silent one.
+
 `tests/ui/antipattern/` carries one case per scope that forgot, each with the
 control that fails if the fix over-rejects instead.
 
