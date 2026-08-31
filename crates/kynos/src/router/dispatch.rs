@@ -419,14 +419,26 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
     /// The same path with its final slash added or removed, when that reaches a
     /// declared route.
     fn flipped(&self, path: &str) -> Option<String> {
-        // `/` has no shorter form: stripping its slash leaves no path at all.
-        let candidate = match path.strip_suffix('/') {
-            Some("") => return None,
-            Some(shorter) => shorter.to_owned(),
-            None => format!("{path}/"),
-        };
+        let candidate = flip_trailing_slash(path)?;
 
         self.matcher.at(&candidate).is_ok().then_some(candidate)
+    }
+}
+
+/// The same path with its final slash added or removed.
+///
+/// `None` for `/`, which has no shorter form: stripping its slash would leave
+/// no path at all.
+///
+/// Shared deliberately. [`TrailingSlashPolicy::Redirect`] flips a request
+/// target here at request time and [`TrailingSlashPolicy::Lenient`] flips a
+/// declared template at build time, and the two policies would be incoherent if
+/// they disagreed about what the other spelling of a path is.
+pub(crate) fn flip_trailing_slash(path: &str) -> Option<String> {
+    match path.strip_suffix('/') {
+        Some("") => None,
+        Some(shorter) => Some(shorter.to_owned()),
+        None => Some(format!("{path}/")),
     }
 }
 

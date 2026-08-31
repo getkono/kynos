@@ -215,17 +215,32 @@ the router, and have no per-route form.
 | --- | --- | --- |
 | `not_found` | no route matched | `Problem` (default), `Empty` |
 | `method_not_allowed` | path matched, method did not | `Problem` (default), `Empty` |
-| `trailing_slashes` | a request differing only by a final `/` | `Strict` (default), `Redirect` |
+| `trailing_slashes` | a request differing only by a final `/` | `Strict` (default), `Redirect`, `Lenient` |
 
-Neither adds a `paths` entry. An unmatched path, a wrong method and a
+None of them adds a `paths` entry. An unmatched path, a wrong method and a
 trailing-slash variant are all outside the description, and settling them once
 at the application level is what keeps the paths *in* the description exact.
 
-`Redirect` only adds or removes the final slash to reach an exactly declared
-path. It never changes casing and never normalizes an individual route, and it
-uses 308 so the method and body survive the replay. The `Allow` header on a 405
-is derived from the operations actually declared on that path, so it cannot
-disagree with the document.
+`Redirect` and `Lenient` both accept a second spelling of a path and differ in
+whether the client is told. `Redirect` answers 308, so a client that follows it
+learns the declared form. `Lenient` serves both spellings from the operation the
+declared one names and never mentions the difference — reach for it where the
+extra round trip is not available, such as a client that will not replay a
+non-idempotent method, or a directory-style path genuinely reachable both ways.
+
+Neither adds or removes anything but the final slash. Neither changes casing,
+and neither normalizes an individual route.
+
+`Lenient` registers the flipped spelling in the match table and nowhere else.
+The consequences are all of one piece: `paths` still carries exactly the key
+that was declared, `MatchedPath` still reports the declared template rather than
+becoming one label per spelling, `Allow` is still computed from the declared
+operations, and the synthesized `OPTIONS` still covers both. A route declared
+both ways keeps both entries — the declared spellings are registered first, and
+a flipped spelling that collides with one is discarded.
+
+The `Allow` header on a 405 is derived from the operations actually declared on
+that path, so it cannot disagree with the document.
 
 ## The `matchit` contract
 
