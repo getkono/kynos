@@ -385,9 +385,11 @@ pub struct Levels {
 /// [`header_names_disjoint`](crate::middleware::stack) refuses at the mount
 /// site. Mount the one that varies and leave the rest uncovered.
 ///
-/// Only a response whose length is already known is encoded. A body that cannot
-/// state its length is a stream, and buffering one to compress it would defeat
-/// the reason it is a stream.
+/// A response whose length is already known is collected and encoded in one
+/// pass. One that cannot state its length is a body still being produced, and
+/// it is encoded frame by frame as it arrives rather than being skipped or
+/// buffered whole. `min_size` bounds only the first: it is a statement about a
+/// length the second does not have.
 ///
 /// # A response that ranges is never encoded
 ///
@@ -412,21 +414,28 @@ pub struct Levels {
 /// option it looks like: the range and its `ETag` are settled by the handler or
 /// the asset server before this interceptor is handed the response.
 ///
-/// # A strong validator survives encoding, and should not
+/// # A strong validator stops the encoder too
 ///
-/// The guard above reads `Content-Encoding`, `Accept-Ranges`, `Content-Range`
-/// and the 206/416 statuses. It does not read `ETag`. So a strongly tagged 200
-/// that advertises no ranges *is* encoded, and keeps the validator minted over
-/// its identity octets — one strong validator naming two representations,
-/// against RFC 9110 section 8.8.1. A client can then validate the encoded body
-/// with `If-None-Match`, be answered 304 — which replays `ETag` and `Vary` and
-/// not `Content-Encoding` — and reuse those octets as the identity form.
+/// The guard above reads `ETag` alongside `Content-Encoding`, `Accept-Ranges`,
+/// `Content-Range` and the 206/416 statuses. A response carrying a *strong*
+/// validator is left as it is, even a 200 that advertises no ranges: encoding
+/// it would keep a validator minted over the identity octets on a body that is
+/// no longer those octets — one strong validator naming two representations,
+/// against RFC 9110 section 8.8.1. That is what a client turns into corruption:
+/// validate the encoded body with `If-None-Match`, be answered 304 — which
+/// replays `ETag` and `Vary` and not `Content-Encoding` — and reuse those
+/// octets as the identity form.
 ///
-/// A [`Cache`](crate::middleware::cache::Cache) mounted inside this is the
-/// arrangement that makes it easy to hit, but no cache is needed: a handler
-/// setting its own `ETag` reaches it identically. Filed as
-/// [#29](https://github.com/getkono/kynos/issues/29), which carries both
-/// reproductions and what each candidate fix costs.
+/// A *weak* validator is the one HTTP already allows to name more than one
+/// representation, so it does not stop the encoder and the response still
+/// compresses. Weak is also the right validator for a representation that
+/// exists in several codings.
+///
+/// This covers every way a strong tag arrives. A
+/// [`Cache`](crate::middleware::cache::Cache) mounted inside this is the
+/// arrangement that reaches it most easily — the body is stored and tagged over
+/// identity octets, then handed out here — but no cache is needed, and a
+/// handler setting its own `ETag` is treated identically.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Compression {
     /// The smallest response worth encoding, in bytes.
