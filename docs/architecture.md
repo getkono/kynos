@@ -48,7 +48,7 @@ buffer that consumes much of what it came for.
 The coupling surface inside `server/` is exactly the five points above, and
 that has not changed. What has is the claim that `server/` is the *only* place
 the runtime is named. It was already false at two sites when it was written, and
-a third has since been added deliberately.
+three more have since been added deliberately.
 
 A rule that is false is worth less than a list that is checkable, so the claim
 is now an enumeration:
@@ -88,7 +88,7 @@ test and every tower deployment, and it would add a general mechanism to `Body`
 for one caller.
 
 `crates/kynos-openapi/` still carries no runtime dependency at all. Work that
-would add a fifth row is the work this section exists to reject.
+would add a seventh row is the work this section exists to reject.
 [Dependencies](#dependencies) applies the same containment rule to the rest of
 the graph.
 

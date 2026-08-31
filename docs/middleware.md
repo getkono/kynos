@@ -918,7 +918,7 @@ A response that did not say how long it may be reused is not reused;
 
 `stale-while-revalidate` and `stale-if-error` are absent, and not as an
 oversight: the revalidation is a background task — a `tokio::spawn` outside
-`server/` — which would be a sixth row in the runtime allowance table for a
+`server/` — which would be a seventh row in the runtime allowance table for a
 nicety, and a stale response is one the operation's description has no way to
 mark.
 
