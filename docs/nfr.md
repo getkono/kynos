@@ -19,6 +19,7 @@ and allocates a counted method to each shape of the routing stack. Every
 | `needs-tooling` | Settled, and blocked on installing something. The tool is named |
 | `blocked-on-impl` | The surface the method would assert against does not exist yet |
 | `blocked-on-dependency` | A pinned dependency does not expose what the requirement needs. The dependency and the remedy are named |
+| `absent` | Nothing asserts the requirement, and no method is proposed. It is neither settled enough to be `planned` nor refused, so the row states what is missing and where the reasoning is recorded |
 | `by-design` | The requirement is not met and will not be. The alternative was weighed and refused, and the trade is recorded |
 | `kynos-bench` | A measurement any HTTP server library would answer, owned by [`getkono/kynos-bench`](https://github.com/getkono/kynos-bench) rather than by this repository |
 
