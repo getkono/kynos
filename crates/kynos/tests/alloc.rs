@@ -29,7 +29,10 @@
 use std::alloc::System;
 use std::future::Future;
 use std::pin::pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, Waker};
+use std::thread;
 
 use kynos::{
     Router,
@@ -132,6 +135,59 @@ fn counted(service: &Service<()>, target: &str) -> usize {
 
     drop(response);
     allocations
+}
+
+/// The instrument's own invariant, and the one every number below rests on: a
+/// count is what *this* thread allocated, and nothing else.
+///
+/// The process is never quiet. `libtest` runs a test on a thread it spawns and
+/// keeps its own alive beside it, so a second thread able to allocate is always
+/// there -- one process per test does not make one thread per process. A
+/// counter that adds every thread's work reports that noise as the router's
+/// cost, on whichever microsecond-wide region happens to be open when it lands.
+///
+/// The handshake is two `AtomicBool`s rather than a `Barrier` or a channel,
+/// because the region below has to allocate nothing of its own and a spin on an
+/// atomic is the only rendezvous that is allocation-free by construction. The
+/// other thread's allocation falls strictly between the two, which makes the
+/// reading deterministic in both directions: a process-global counter reads it
+/// every time, and a per-thread counter never does.
+#[test]
+fn work_on_another_thread_is_not_counted() {
+    let go = Arc::new(AtomicBool::new(false));
+    let done = Arc::new(AtomicBool::new(false));
+
+    // Spawned before the region opens: boxing the closure and the join packet
+    // happens on this thread, and is the caller's cost rather than the
+    // measurement's.
+    let other = {
+        let (go, done) = (Arc::clone(&go), Arc::clone(&done));
+        thread::spawn(move || {
+            while !go.load(Ordering::Acquire) {
+                std::hint::spin_loop();
+            }
+
+            drop(std::hint::black_box(Vec::<u8>::with_capacity(1024)));
+            done.store(true, Ordering::Release);
+        })
+    };
+
+    let region = Region::new(ALLOCATOR);
+    go.store(true, Ordering::Release);
+    while !done.load(Ordering::Acquire) {
+        std::hint::spin_loop();
+    }
+    let change = region.change();
+
+    other.join().expect("the other thread to finish");
+
+    let counted = change.allocations + change.reallocations;
+    assert_eq!(
+        counted, 0,
+        "a region open on this thread counted {counted} allocation(s) that \
+         another thread made; a count that carries the rest of the process is \
+         not a measurement of the routing path"
+    );
 }
 
 /// The record. Named so it reads as one: each ceiling is what the path costs
