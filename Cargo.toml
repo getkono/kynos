@@ -15,6 +15,31 @@ publish = true
 kynos-macros = { version = "0.1.0", path = "crates/kynos-macros" }
 kynos-openapi = { version = "0.1.0", path = "crates/kynos-openapi", default-features = false }
 
+# The allocation-count kind in `docs/performance.md` needs a global allocator
+# that reports what a region allocated, and `unsafe_code = "forbid"` below means
+# no crate here can write one: `forbid` is not liftable by an `#[allow]`, so the
+# `unsafe impl GlobalAlloc` a counter requires cannot compile in any crate that
+# inherits these lints, which is all three of them.
+# `alloc_counter` is the counter with the two properties that measurement needs.
+# Its counters are thread-local, so a region reads what the measuring thread
+# allocated rather than what the process did -- `libtest` always has a second
+# thread alive beside the one running a test, and a process-global counter
+# reports its work as the router's. And it installs nothing on its own behalf:
+# the one target that wants it declares `#[global_allocator]` itself, which is
+# what keeps the instrument out of every other test binary in the package.
+# `macros` is off because the attribute form is unused; `std` carries
+# `AllocCounterSystem`, and `pin-utils` rides along for an async helper this
+# tree does not call.
+# It is `0.0.4` and was last published in 2019, which is the trade taken
+# knowingly: it is a dev-dependency of one test target and the surface used is
+# one function.
+# `stats_alloc` was this dependency and counts into process globals, which is
+# the flake it caused. `allocation-counter` counts per thread but declares
+# `#[global_allocator]` inside the library, which would install the instrument
+# in every test binary in the package rather than in the one that asked. `dhat`
+# is a profiler rather than a counter: it captures a backtrace per allocation
+# and carries six crates this tree does not otherwise have.
+alloc_counter = { version = "0.0.4", default-features = false, features = ["std"] }
 async-compression = "0.4.19"
 bigdecimal = { version = "0.4.10", default-features = false }
 bytes = "1.10.1"
@@ -60,19 +85,6 @@ serde = "1.0.219"
 serde_json = "1.0.145"
 serde_urlencoded = "0.7.1"
 serde_yaml_ng = "0.10.0"
-# The allocation-count kind in `docs/performance.md` needs a global allocator
-# that reports what a region allocated, and `unsafe_code = "forbid"` below means
-# no crate here can write one: `forbid` is not liftable by an `#[allow]`, so the
-# `unsafe impl GlobalAlloc` a counter requires cannot compile in any crate that
-# inherits these lints, which is all three of them.
-# `stats_alloc` is the counter with the smallest surface that answers this: it
-# has no dependencies of its own, and it installs nothing on its own behalf --
-# the one target that wants it declares `#[global_allocator]` itself, which is
-# what keeps the instrument out of every other test binary in the package.
-# `dhat` was the maintained alternative and is a profiler rather than a counter:
-# it captures a backtrace per allocation and carries six crates this tree does
-# not otherwise have.
-stats_alloc = "0.1.10"
 syn = "2.0.106"
 thiserror = "2.0.19"
 tokio = "1.53.1"

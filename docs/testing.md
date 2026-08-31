@@ -361,12 +361,17 @@ and both assert they saw its initial value, which is only possible when each
 runs in its own process. They pass under `cargo nextest run` and fail under
 `cargo test`. That converts "we use nextest" from a README claim into a test.
 
-[`alloc.rs`](../crates/kynos/tests/alloc.rs) is what now rests on it.
-`stats_alloc` counts into process globals rather than thread locals, so its
-three tests would contaminate each other as threads of one binary — under
-`cargo test` they do, reporting figures several times the real ones. Nothing in
-that file can assert its own isolation, because a test already contaminated
-cannot notice; `hermeticity.rs` is the assertion standing in for it.
+[`alloc.rs`](../crates/kynos/tests/alloc.rs) used to rest on it and no longer
+does. `stats_alloc` counted into process globals rather than thread locals, so
+its tests contaminated each other as threads of one binary and, worse, were
+contaminated by the harness thread `libtest` keeps alive beside the one running
+a test — one process per test does not make one thread per process, and that
+residue moved a replayed request's count on roughly one request in ten
+thousand. `alloc_counter` counts per thread, so the file is now correct by
+construction and passes as four concurrent threads of one process.
+[`work_on_another_thread_is_not_counted`](../crates/kynos/tests/alloc.rs) is
+the assertion that holds the counter to it, and it is inside the file rather
+than standing in for it from outside.
 
 A flake is an isolation bug. Retrying one hides the bug and keeps the suite
 green, which is why `retries = 0` is in the config rather than left to a flag

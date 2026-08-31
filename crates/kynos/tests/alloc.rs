@@ -7,14 +7,21 @@
 //! `#[global_allocator]` is process-wide: installed in the library's unit-test
 //! binary it would count, and slow, every other unit test in it.
 //!
-//! **The counters are process-global, so this target is correct only under one
-//! process per test.** `stats_alloc` counts into globals rather than into
-//! thread locals, so the three tests below would contaminate each other as
-//! threads of one binary — under `cargo test` they do, and report figures
-//! several times the real ones. `cargo nextest` gives each its own process,
-//! which is what [`hermeticity.rs`](hermeticity.rs) exists to hold, and
-//! `.config/nextest.toml` is where that is configured. Nothing here can assert
-//! it: a test that has already been contaminated cannot notice.
+//! **The counter is per-thread, and that is what makes a reading the routing
+//! path's.** `alloc_counter` counts into thread locals rather than into
+//! globals, so a region reports what the measuring thread allocated and
+//! nothing else. A process-global counter cannot: `libtest` runs a test on a
+//! thread it spawns and keeps its own alive beside it, so a second thread able
+//! to allocate inside a region is always there, and one process per test does
+//! not make one thread per process. `stats_alloc` was the counter here and is
+//! global, which moved a replayed request's count on roughly one request in
+//! ten thousand — read, at the time, as state accumulating on the routing
+//! path. `work_on_another_thread_is_not_counted` is what holds the counter
+//! this file installs to being the other kind.
+//!
+//! One process per test is still the contract this target runs under — see
+//! [`hermeticity.rs`](hermeticity.rs) and `.config/nextest.toml` — but the
+//! numbers below no longer rest on it.
 //!
 //! **These numbers record a requirement that is not met.**
 //! [`nfr.md`](../../../docs/nfr.md#routing) asks for zero allocations on the
@@ -26,11 +33,14 @@
 
 #![cfg(feature = "macros")]
 
-use std::alloc::System;
 use std::future::Future;
 use std::pin::pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, Waker};
+use std::thread;
 
+use alloc_counter::{AllocCounterSystem, count_alloc};
 use kynos::{
     Router,
     extract::params::path::Path,
@@ -39,13 +49,12 @@ use kynos::{
     response::status::NoContent,
     router::service::Service,
 };
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 
-/// Declared here rather than reached for: `stats_alloc` installs nothing on its
-/// own behalf, so this line is the whole of what puts the counter in this
+/// Declared here rather than reached for: `alloc_counter` installs nothing on
+/// its own behalf, so this line is the whole of what puts the counter in this
 /// binary and in no other.
 #[global_allocator]
-static ALLOCATOR: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
+static ALLOCATOR: AllocCounterSystem = AllocCounterSystem;
 
 /// Every shape measured here, with what it costs today.
 ///
@@ -95,14 +104,17 @@ fn service() -> Service<()> {
 /// and the response is dropped after the region closes for the same reason.
 ///
 /// **The future is polled directly rather than driven by a runtime, and that is
-/// what makes the number mean the routing path.** `stats_alloc` counts whatever
-/// the thread allocates while the region is open, so an executor inside it is
-/// counted too — and a scheduler does periodic maintenance that lands on an
-/// arbitrary request. Under `#[tokio::test]` this read four allocations high on
-/// roughly one request in ten thousand, which is a measurement of the runtime
-/// wearing the router's number. There is nothing to schedule here: the fixture
-/// touches no socket, timer or task, so the future is ready on its first poll
-/// and the assertion below says so rather than assuming it.
+/// what makes the number mean the routing path.** What the measuring thread
+/// allocates while the region is open is counted, so an executor driving the
+/// future on that thread is counted with it. There is nothing to schedule here:
+/// the fixture touches no socket, timer or task, so the future is ready on its
+/// first poll and the assertion below says so rather than assuming it.
+///
+/// A runtime was once blamed for the count that moved, and `#[tokio::test]` was
+/// removed on that reading. Its worker threads were an instance of the cause
+/// rather than the cause: the counter was global, so any thread's work landed
+/// in the region. Polling by hand is kept because it is right on its own terms,
+/// not because it was the fix.
 ///
 /// There is no warm-up request. `Router::build` initialises eagerly, so the
 /// first request through a service costs exactly what the thousandth does —
@@ -113,13 +125,13 @@ fn counted(service: &Service<()>, target: &str) -> usize {
     *request.method_mut() = Method::GET;
     *request.uri_mut() = target.parse().expect("a usable request target");
 
-    let region = Region::new(ALLOCATOR);
-    let mut future = pin!(service.call(request));
-    let polled = future
-        .as_mut()
-        .poll(&mut Context::from_waker(Waker::noop()));
-    let change = region.change();
-    let allocations = change.allocations + change.reallocations;
+    let ((allocations, reallocations, _), polled) = count_alloc(|| {
+        let mut future = pin!(service.call(request));
+        future
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+    });
+    let allocations = allocations + reallocations;
 
     let Poll::Ready(response) = polled else {
         panic!(
@@ -132,6 +144,59 @@ fn counted(service: &Service<()>, target: &str) -> usize {
 
     drop(response);
     allocations
+}
+
+/// The instrument's own invariant, and the one every number below rests on: a
+/// count is what *this* thread allocated, and nothing else.
+///
+/// The process is never quiet. `libtest` runs a test on a thread it spawns and
+/// keeps its own alive beside it, so a second thread able to allocate is always
+/// there -- one process per test does not make one thread per process. A
+/// counter that adds every thread's work reports that noise as the router's
+/// cost, on whichever microsecond-wide region happens to be open when it lands.
+///
+/// The handshake is two `AtomicBool`s rather than a `Barrier` or a channel,
+/// because the region below has to allocate nothing of its own and a spin on an
+/// atomic is the only rendezvous that is allocation-free by construction. The
+/// other thread's allocation falls strictly between the two, which makes the
+/// reading deterministic in both directions: a process-global counter reads it
+/// every time, and a per-thread counter never does.
+#[test]
+fn work_on_another_thread_is_not_counted() {
+    let go = Arc::new(AtomicBool::new(false));
+    let done = Arc::new(AtomicBool::new(false));
+
+    // Spawned before the region opens: boxing the closure and the join packet
+    // happens on this thread, and is the caller's cost rather than the
+    // measurement's.
+    let other = {
+        let (go, done) = (Arc::clone(&go), Arc::clone(&done));
+        thread::spawn(move || {
+            while !go.load(Ordering::Acquire) {
+                std::hint::spin_loop();
+            }
+
+            drop(std::hint::black_box(Vec::<u8>::with_capacity(1024)));
+            done.store(true, Ordering::Release);
+        })
+    };
+
+    let ((allocations, reallocations, _), ()) = count_alloc(|| {
+        go.store(true, Ordering::Release);
+        while !done.load(Ordering::Acquire) {
+            std::hint::spin_loop();
+        }
+    });
+
+    other.join().expect("the other thread to finish");
+
+    let counted = allocations + reallocations;
+    assert_eq!(
+        counted, 0,
+        "a region open on this thread counted {counted} allocation(s) that \
+         another thread made; a count that carries the rest of the process is \
+         not a measurement of the routing path"
+    );
 }
 
 /// The record. Named so it reads as one: each ceiling is what the path costs

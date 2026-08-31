@@ -49,7 +49,7 @@ requirement with an allocation one and calling it a refiling would leave the
 latency unmeasured in both repositories while this column claimed otherwise.
 
 Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
-`trybuild`, `proptest`, `stats_alloc`, rustdoc with `missing_docs = "deny"`, and
+`trybuild`, `proptest`, `alloc_counter`, rustdoc with `missing_docs = "deny"`, and
 `cargo-semver-checks` — the last only through release-plz, at default features
 and fail-open, which is why its rows read `partial`. Not yet present:
 `cargo-public-api`, `cargo-fuzz`. `criterion` is not on this list and will not
