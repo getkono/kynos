@@ -337,10 +337,13 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// is built. No recovery branch is installed when this method is not
     /// called.
     ///
-    /// Only the policy changes. `I` is carried across, because the
-    /// interceptors mounted before this call cover the operations mounted
-    /// after it just as they did before — so dropping the list here would let
-    /// a later `intercept` be checked against an empty one.
+    /// Only the policy changes. Both lists are carried across, because what
+    /// they describe covers the operations mounted after this call just as it
+    /// did before — so dropping either here would let a later `intercept` be
+    /// checked against an empty one. `I` is the interceptors mounted on this
+    /// router; `S` is what the scopes mounted into it brought with them, and
+    /// naming three parameters rather than four silently emptied it, since the
+    /// fourth then falls back to its default of `()`.
     ///
     /// # Compile-time requirement
     ///
@@ -352,7 +355,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// # let _ = router;
     /// ```
     #[must_use]
-    pub fn catch_panics(self) -> Router<C, Catch, I> {
+    pub fn catch_panics(self) -> Router<C, Catch, I, S> {
         const {
             assert!(
                 cfg!(panic = "unwind"),
