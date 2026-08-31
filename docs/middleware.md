@@ -71,9 +71,14 @@ answer; `Adds` is both the declaration and the return type. An interceptor that
 declares a 401 it never sends, or a header it never attaches, does not compile.
 
 **Conflicts are a compile error.** Two interceptors covering one route and both
-claiming 429, or both setting `Retry-After`, are rejected by
-`Router::intercept`'s bound rather than by a check at build time. What survives
-in [`ContributionConflict`](../crates/kynos/src/middleware/contribution.rs) is
+claiming 429, or both adding `x-request-id`, are rejected by
+`Router::intercept`'s bound rather than by a check at build time. The bound
+compares declarations — one `Short::STATUSES` against the other, one `Adds`
+group's `NAMES` against the other — so a header written on a short-circuit
+response is outside it, because it is in no `const`. That gap is named under
+[what the framework computes](#what-the-framework-computes-and-what-it-does-not).
+What survives in
+[`ContributionConflict`](../crates/kynos/src/middleware/contribution.rs) is
 the vocabulary for the subtrees where the types are erased and the check cannot
 run — those taken under `layer_unchecked`.
 
