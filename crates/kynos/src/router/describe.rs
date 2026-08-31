@@ -24,7 +24,7 @@ use super::docs;
 #[cfg(feature = "unchecked")]
 use super::install::install_unchecked;
 
-impl<C, P: PanicPolicy, I> Router<C, P, I> {
+impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// Checks the router without building it.
     ///
     /// Returns every violation, including warnings. Worth an integration test:

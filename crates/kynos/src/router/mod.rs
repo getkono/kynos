@@ -38,7 +38,7 @@ use crate::{
         Interceptor, Observer,
         catch_panic::{Catch, PanicPolicy, Propagate},
         erased::ErasedInterceptor,
-        stack::{CompatibleStack, CompatibleWith, Cons},
+        stack::{CompatibleStack, CompatibleWith, Cons, Flatten},
     },
     response::short_circuit_mismatch,
     router::{
@@ -91,7 +91,7 @@ pub(crate) struct Mounted<C> {
 /// container — nothing is registered into it and nothing is looked up — so a
 /// handler asking for something the context does not provide is a compile
 /// error rather than a runtime panic.
-pub struct Router<C, P = Propagate, I = ()> {
+pub struct Router<C, P = Propagate, I = (), S = ()> {
     pub(crate) mounted: Vec<Mounted<C>>,
     pub(crate) interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
     pub(crate) short_circuit_checks: Vec<ShortCircuitCheck>,
@@ -121,14 +121,22 @@ pub struct Router<C, P = Propagate, I = ()> {
     // it at run time -- the chain itself is erased -- but `intercept` and the
     // composition methods bound on it, which is what makes two colliding
     // interceptors a compile error rather than a build-time one.
-    // The lint is measuring the three parameters the type genuinely
+    //
+    // `S` is what the scopes mounted here brought with them: a group's own
+    // interceptors, a nested router's, an endpoint's. Two parameters rather
+    // than one, because the two are checked in opposite directions. `I` covers
+    // every operation, so an incoming sub-stack must clear it. `S` covers
+    // subtrees, so an incoming sub-stack must *not* be compared against it --
+    // two sibling groups may hold one interceptor, since no request reaches
+    // both. Only `intercept`, which covers everything, reads `S`.
+    // The lint is measuring the four parameters the type genuinely
     // has; factoring them into an alias would hide the shape rather
     // than simplify it.
     #[allow(clippy::type_complexity)]
-    _private: PhantomData<fn() -> (C, P, I)>,
+    _private: PhantomData<fn() -> (C, P, I, S)>,
 }
 
-impl<C, P, I> std::fmt::Debug for Router<C, P, I> {
+impl<C, P, I, S> std::fmt::Debug for Router<C, P, I, S> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("Router")
@@ -153,7 +161,7 @@ impl<C> Router<C, Propagate, ()> {
     }
 }
 
-impl<C, P, I> Router<C, P, I> {
+impl<C, P, I, S> Router<C, P, I, S> {
     /// The empty router at any parameterization.
     fn empty() -> Self {
         Self {
@@ -183,7 +191,7 @@ impl<C, P, I> Router<C, P, I> {
     /// `catch_panics` and `intercept` change what the type says without
     /// changing what the value holds, so this is a field-by-field move rather
     /// than a new router.
-    fn retype<Q, J>(self) -> Router<C, Q, J> {
+    fn retype<Q, J, T>(self) -> Router<C, Q, J, T> {
         Router {
             mounted: self.mounted,
             interceptors: self.interceptors,
@@ -254,8 +262,12 @@ impl<C, P, I> Router<C, P, I> {
     }
 
     /// Takes in everything another router holds, under `prefix`.
-    fn absorb_router<Q, J>(&mut self, other: Router<C, Q, J>, prefix: &str, catch_panics: bool)
-    where
+    fn absorb_router<Q, J, T>(
+        &mut self,
+        other: Router<C, Q, J, T>,
+        prefix: &str,
+        catch_panics: bool,
+    ) where
         C: 'static,
     {
         for mut mounted in other.mounted {
@@ -318,12 +330,20 @@ impl<C, P, I> Router<C, P, I> {
     }
 }
 
-impl<C, P: PanicPolicy, I> Router<C, P, I> {
+impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// Converts panics from covered operations into documented 500 responses.
     ///
     /// The policy is carried in the router's type and resolved when the service
     /// is built. No recovery branch is installed when this method is not
     /// called.
+    ///
+    /// Only the policy changes. Both lists are carried across, because what
+    /// they describe covers the operations mounted after this call just as it
+    /// did before — so dropping either here would let a later `intercept` be
+    /// checked against an empty one. `I` is the interceptors mounted on this
+    /// router; `S` is what the scopes mounted into it brought with them, and
+    /// naming three parameters rather than four silently emptied it, since the
+    /// fourth then falls back to its default of `()`.
     ///
     /// # Compile-time requirement
     ///
@@ -335,7 +355,7 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     /// # let _ = router;
     /// ```
     #[must_use]
-    pub fn catch_panics(self) -> Router<C, Catch> {
+    pub fn catch_panics(self) -> Router<C, Catch, I, S> {
         const {
             assert!(
                 cfg!(panic = "unwind"),
@@ -363,18 +383,29 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     }
 
     /// Mounts operations at the router's root.
+    ///
+    /// What the endpoints carry is checked against this router's own
+    /// interceptors and then remembered, so a later [`intercept`] sees it.
+    /// Mounting operations that carry none leaves this type unchanged, because
+    /// [`Flatten`] erases an empty stack — which is what keeps re-assignment
+    /// and a conditional mount compiling.
+    ///
+    /// [`intercept`]: Router::intercept
     #[must_use]
-    pub fn mount<E: IntoEndpoints<C>>(mut self, endpoints: E) -> Self
+    pub fn mount<E: IntoEndpoints<C>>(
+        mut self,
+        endpoints: E,
+    ) -> Router<C, P, I, <E::Stacks as Flatten<S>>::Out>
     where
         C: 'static,
-        E::Stacks: CompatibleStack<I, C>,
+        E::Stacks: CompatibleStack<I, C> + Flatten<S>,
     {
         let () = <E::Stacks as CompatibleStack<I, C>>::CHECK;
 
         let mut sink = endpoint::set::Endpoints::new();
         endpoints.into_endpoints(&mut sink);
         self.absorb(sink.into_inner(), "", &[], &[], false);
-        self
+        self.retype()
     }
 
     /// Mounts an API reference: the page a human opens, and the description it
@@ -429,13 +460,30 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     }
 
     /// Mounts a group.
+    ///
+    /// Both of the group's stacks are checked against this router's own: its
+    /// interceptors, and whatever the endpoints mounted inside it carried. The
+    /// second is what makes a group's endpoint-scoped interceptor visible here
+    /// at all. Both are then remembered, so a later [`intercept`] — which
+    /// covers this group too — is checked against them.
+    ///
+    /// Neither is checked against what an *earlier* `group` left behind. Two
+    /// groups cover different operations, so two of them holding one
+    /// interceptor is not a collision.
+    ///
+    /// [`intercept`]: Router::intercept
     #[must_use]
-    pub fn group<GP: PanicPolicy, GI>(mut self, group: Group<C, GP, GI>) -> Self
+    pub fn group<GP: PanicPolicy, GI, GS>(
+        mut self,
+        group: Group<C, GP, GI, GS>,
+    ) -> Router<C, P, I, <GI as Flatten<<GS as Flatten<S>>::Out>>::Out>
     where
         C: 'static,
-        GI: CompatibleStack<I, C>,
+        GS: CompatibleStack<I, C> + Flatten<S>,
+        GI: CompatibleStack<I, C> + Flatten<<GS as Flatten<S>>::Out>,
     {
         let () = <GI as CompatibleStack<I, C>>::CHECK;
+        let () = <GS as CompatibleStack<I, C>>::CHECK;
 
         let group = group.into_parts();
         self.violations.extend(group.violations);
@@ -460,39 +508,62 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
             mounted.unchecked_layers.clone_from(&group.unchecked_layers);
         }
 
-        self
+        self.retype()
     }
 
     /// Mounts another router beneath a path prefix.
+    ///
+    /// Both of the nested router's stacks are checked and remembered, for the
+    /// reason [`group`](Router::group) gives. `NS` is the load-bearing half:
+    /// without it, a group mounted inside the nested router appears in no type
+    /// this one can see, and its interceptors are compared against nothing in
+    /// either order.
     #[must_use]
-    pub fn nest<NP: PanicPolicy, NI>(mut self, prefix: &str, router: Router<C, NP, NI>) -> Self
+    pub fn nest<NP: PanicPolicy, NI, NS>(
+        mut self,
+        prefix: &str,
+        router: Router<C, NP, NI, NS>,
+    ) -> Router<C, P, I, <NI as Flatten<<NS as Flatten<S>>::Out>>::Out>
     where
         C: 'static,
-        NI: CompatibleStack<I, C>,
+        NS: CompatibleStack<I, C> + Flatten<S>,
+        NI: CompatibleStack<I, C> + Flatten<<NS as Flatten<S>>::Out>,
     {
         let () = <NI as CompatibleStack<I, C>>::CHECK;
+        let () = <NS as CompatibleStack<I, C>>::CHECK;
 
         self.absorb_router(router, prefix, catches::<NP>());
-        self
+        self.retype()
     }
 
     /// Merges another router at the same level.
+    ///
+    /// The same two checks [`nest`](Router::nest) makes, at the same level
+    /// rather than beneath a prefix.
     #[must_use]
-    pub fn merge<OP: PanicPolicy, OI>(mut self, router: Router<C, OP, OI>) -> Self
+    pub fn merge<OP: PanicPolicy, OI, OS>(
+        mut self,
+        router: Router<C, OP, OI, OS>,
+    ) -> Router<C, P, I, <OI as Flatten<<OS as Flatten<S>>::Out>>::Out>
     where
         C: 'static,
-        OI: CompatibleStack<I, C>,
+        OS: CompatibleStack<I, C> + Flatten<S>,
+        OI: CompatibleStack<I, C> + Flatten<<OS as Flatten<S>>::Out>,
     {
         let () = <OI as CompatibleStack<I, C>>::CHECK;
+        let () = <OS as CompatibleStack<I, C>>::CHECK;
 
         self.absorb_router(router, "", catches::<OP>());
-        self
+        self.retype()
     }
 
     /// Declares a security scheme the API can use.
+    // `Scheme` rather than `S`, which the router's own sub-stack parameter now
+    // takes. Turbofish is positional, so no caller spells this name.
     #[must_use]
-    pub fn security_scheme<S: SecurityScheme>(mut self) -> Self {
-        self.security_schemes.push((S::NAME, S::describe()));
+    pub fn security_scheme<Scheme: SecurityScheme>(mut self) -> Self {
+        self.security_schemes
+            .push((Scheme::NAME, Scheme::describe()));
         self
     }
 
@@ -509,17 +580,24 @@ impl<C, P: PanicPolicy, I> Router<C, P, I> {
     /// The first call is the outermost interceptor; see
     /// [the module's ordering rule](crate::middleware#the-order-a-chain-runs-in).
     #[must_use]
-    pub fn intercept<N: Interceptor<C>>(self, interceptor: N) -> Router<C, P, Cons<N, I>>
+    pub fn intercept<N: Interceptor<C>>(self, interceptor: N) -> Router<C, P, Cons<N, I>, S>
     where
         C: Sync + 'static,
         I: CompatibleWith<N, C>,
+        S: CompatibleWith<N, C>,
     {
         // Forcing the const is what puts the error on this call rather than in
         // `middleware::stack`. Two interceptors adding one header, or
         // answering with one status, stop here.
         let () = <I as CompatibleWith<N, C>>::CHECK;
+        // And against the scopes already mounted, which this covers as surely
+        // as it covers what was intercepted here. Without it the check was an
+        // ordering accident: `intercept` before `group` was refused and
+        // `group` before `intercept` was not, though the chain that runs is
+        // the same either way.
+        let () = <S as CompatibleWith<N, C>>::CHECK;
 
-        let mut router: Router<C, P, Cons<N, I>> = self.retype();
+        let mut router: Router<C, P, Cons<N, I>, S> = self.retype();
         router.interceptors.push(Arc::new(interceptor));
         router
             .short_circuit_checks

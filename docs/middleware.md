@@ -14,8 +14,28 @@ cannot describe.
 | Associated type | What it declares | What it obliges |
 | --- | --- | --- |
 | `Short` | the responses it can answer with alone | `Err(Short)` is the only way to answer without the handler |
-| `Adds` | the response headers it attaches | `Continued<Adds>` is the return type, so it must attach them |
+| `Adds` | the response headers it attaches | `Continued<Adds>` is the return type, so it must attach them — and `with_headers` is on `Continued<()>` alone, so it attaches nothing else |
 | `Reads` | the request headers it consumes | it is handed that group, and nothing else |
+
+**One group, once.** `with_headers` writes its group and then relabels the
+`Continued`, so while it was callable on its own result a second call relabelled
+back to the declared type with the first group's fields already on the response.
+An interceptor declaring `Adds = ()` could therefore write anything at all, and
+`Adds::NAMES` — which is what the conflict check compares — never saw it. It is
+on `Continued<()>` alone now: `Next::run` yields one, `with_headers` consumes
+it, and `Continued<G>` has no second call.
+
+An interceptor wanting two groups declares one group naming both fields, the way
+`ContentEncoding` names `content-encoding` beside `content-length`. That is not
+a workaround — it is what makes the pair visible to the check.
+
+**And a group writes only what it named.** `EncodeHeaders::encode` returns
+whatever pairs it likes, so a hand-written group declaring `x-declared` and
+writing `content-encoding` would escape the same way from inside. The single
+writer both paths go through asserts the subset in debug builds. A subset, not
+an equality: a group legitimately writes fewer fields than it declares —
+`ContentEncoding` with no coding chosen, a `Cors` permitting no origin. `VARIES`
+is outside it, since a `Vary` name is deliberately not in `NAMES`.
 
 ## Soundness, not exactness
 
@@ -51,11 +71,27 @@ answer; `Adds` is both the declaration and the return type. An interceptor that
 declares a 401 it never sends, or a header it never attaches, does not compile.
 
 **Conflicts are a compile error.** Two interceptors covering one route and both
-claiming 429, or both setting `Retry-After`, are rejected by
-`Router::intercept`'s bound rather than by a check at build time. What survives
-in [`ContributionConflict`](../crates/kynos/src/middleware/contribution.rs) is
+claiming 429, or both adding `x-request-id`, are rejected by
+`Router::intercept`'s bound rather than by a check at build time. The bound
+compares declarations — one `Short::STATUSES` against the other, one `Adds`
+group's `NAMES` against the other — so a header written on a short-circuit
+response is outside it, because it is in no `const`. That gap is named under
+[what the framework computes](#what-the-framework-computes-and-what-it-does-not).
+What survives in
+[`ContributionConflict`](../crates/kynos/src/middleware/contribution.rs) is
 the vocabulary for the subtrees where the types are erased and the check cannot
 run — those taken under `layer_unchecked`.
+
+*Covering one route* is the whole of it, and it was once read as *mounted on one
+scope*, which is narrower. A router's interceptors cover the operations in every
+group, nested router and endpoint beneath it, so a `Router::intercept` is
+checked against the stacks those scopes brought with them as well as against the
+router's own. That is what the fourth type parameter on `Router` and `Group`
+carries; [Composition](#composition) has the shape.
+
+What it is *not* checked against is a sibling. Two groups covering different
+operations may hold the same interceptor, and refusing that pair would be a
+false positive rather than a stricter check — no request reaches both.
 
 **It applies per-operation, after routing.** An interceptor mounted on a subtree
 covers the operations in that subtree and nothing else. Scope in the document
@@ -343,6 +379,17 @@ One thing worth knowing about the two halves. The 429's headers ride on
 `Responses`; a success's ride on `Adds`. They never co-occur on one response,
 because a short-circuit never calls `with_headers` — so the conflict check,
 which compares `Adds` against `Adds`, is not weakened by the pair.
+
+That comparison does leave one gap, named here rather than left to be found. A
+`Short` response's headers are in no `const`, so an interceptor whose `Adds`
+names `Retry-After` would overwrite the one `RateLimit`'s 429 wrote, and the two
+compile. It is unreachable with anything Kynos ships — `Concurrency` and
+`RateLimit` both write `Retry-After` from their own short circuits, and only one
+short circuit answers a request — and it stays a gap on purpose. Closing it
+needs a `HEADERS` const on `ShortCircuit`, which `#[derive(ApiError)]` could not
+derive from an `IntoResponse` body: it would be a declaration written beside the
+behaviour rather than being it, which is the `contribution` method this document
+refuses.
 
 ### Replacing the algorithm, and why no bucket ships
 
@@ -1011,6 +1058,83 @@ than to an `Endpoints`: a collection cannot say what its members carry, so
 building one would erase the endpoint-scoped interceptors the check needs. Two
 *operations* are never checked against each other, since no request reaches
 both.
+
+### Two lists, not one
+
+`Router` and `Group` carry **two** phantom lists, and the reason is that they
+are checked in opposite directions.
+
+| Parameter | Holds | Obliges |
+| --- | --- | --- |
+| `I` | the interceptors mounted on this scope | covers every operation, so an incoming sub-stack must clear it |
+| `S` | what the scopes mounted here brought | covers subtrees, so an incoming sub-stack must **not** be compared against it |
+
+Only `intercept` reads `S`, because only `intercept` covers everything already
+mounted. `group`, `nest`, `merge` and `mount` check the incoming stack against
+`I` alone and then fold it onto `S`.
+
+Folding the two together would be the obvious simplification and is wrong: a
+group's `Cors` would then be compared against a sibling group's, and a router
+serving two resources that each permit their own origins would stop compiling.
+`tests/cors.rs` mounts that program twice, deliberately.
+
+The fold goes through
+[`Flatten`](../crates/kynos/src/middleware/stack.rs), which erases an empty
+stack — so `routes![a]` carrying `()` and `routes![b, c]` carrying `Both<(),()>`
+both leave a router's type exactly as it was. That is not a nicety: without it,
+`router = router.mount(..)` and a conditional mount would stop compiling, which
+are the two idioms `Router::docs` returns `Self` to preserve.
+
+**This was a hole, and it was the shape of the check rather than a slip.**
+`group`, `nest`, `merge` and `mount` used to check the incoming stack and then
+return `Self`, dropping it. At run time nothing was dropped —
+`describe` concatenates the router's chain with each mounted operation's — so
+the check was an ordering accident: `intercept` before `group` was refused, and
+`group` before `intercept` was not, though the chain that runs is the same
+either way. Across `nest` and `merge` it was worse, since a nested router's
+group-scoped interceptors were in no type the outer router could see and
+neither order refused anything. `BodySize` and `Decompression` both answer 413,
+and [the decompression note](#what-bounds-a-request-before-an-interceptor-runs)
+says outright that `statuses_disjoint` refuses the pair; mounted at different
+scopes, it did not. `catch_panics` had the same defect on its own, returning
+`Router<C, Catch>` — which is `Router<C, Catch, ()>` — so the policy parameter
+was quietly doing the interceptor list's job too.
+
+**And it had it twice.** Closing the first half left `Router<C, Catch, I>`,
+which is `Router<C, Catch, I, ()>`: correct for `I` and dropping `S`, so a
+`group` before a `catch_panics` before an `intercept` still compiled. The commit
+that introduced `S` widened `Group::catch_panics` to four parameters and left
+the router's at three, and nothing failed, because a return type naming fewer
+parameters than its type has is well-formed — the rest take their defaults, and
+a defaulted phantom list is an empty one. Both halves are now pinned, and
+`every_builder_preserves_the_type_parameters` in
+[`tests/ui.rs`](../crates/kynos/tests/ui.rs) counts the arguments of every
+builder's return type so a third instance is a test failure rather than a
+silent one.
+
+`tests/ui/antipattern/` carries one case per scope that forgot, each with the
+control that fails if the fix over-rejects instead.
+
+### What the compile-time check still cannot see
+
+One, and it is the erasure the paragraph above already names.
+[`Endpoints`](../crates/kynos/src/router/endpoint/set.rs) declares
+`Stacks = ()` by construction, so an endpoint-scoped interceptor that reaches a
+router through a collection arrives with nothing to compare, and a router-level
+interceptor adding the same header compiles.
+
+There is no build-time backstop for it, and that is a decision rather than an
+omission. A router's own chain and its groups' are visible where the document is
+assembled, but an endpoint's interceptors live *inside* the endpoint and run
+there — `DynEndpoint` has no way to read them, and giving it one means adding a
+declaration method to the public `Endpoint` trait. That is a method returning a
+description beside a method producing responses, which is the `contribution`
+method [this document opens by refusing](#why-the-declaration-is-the-signature),
+and it would be a declaration a third-party `Endpoint` could get wrong.
+
+So the rule stands as `routes!` already states it: build a collection at run
+time and the endpoint-scoped interceptors inside it stop being checked. Reach
+for `routes!` wherever the set of routes is known when the program is compiled.
 
 What the check compares is `const` data — `HeaderParams::NAMES` and
 `ShortCircuit::STATUSES` — so it costs nothing at run time and nothing in the

@@ -105,6 +105,49 @@ pub const fn statuses_disjoint(left: &[u16], right: &[u16]) -> bool {
     true
 }
 
+/// One stack folded onto another, with the empty stack erased.
+///
+/// What a scope's interceptors become when the scope is mounted: a router
+/// remembers what it has mounted so that an `intercept` written *afterwards*
+/// is checked against it, since those interceptors cover the same operations
+/// at run time whichever order the two calls were written in.
+///
+/// The collapse is the point. `<() as Flatten<S>>::Out` and
+/// `<Both<(), ()> as Flatten<S>>::Out` are both `S`, so mounting
+/// interceptor-free operations leaves a router's type untouched and
+/// re-assignment and conditional mounting keep working. Only mounting
+/// something that carries an interceptor changes the type — which `intercept`
+/// already does.
+///
+/// The result is a `Cons` list, and that is sound because nothing ever
+/// compares two members of one list to each other: [`CompatibleWith`] compares
+/// a newcomer against each member, and [`CompatibleStack`] compares another
+/// stack against each member. Two sibling scopes therefore stay compatible,
+/// correctly — no request reaches both.
+pub trait Flatten<S> {
+    /// The two stacks as one list.
+    type Out;
+}
+
+impl<S> Flatten<S> for () {
+    type Out = S;
+}
+
+impl<H, T, S> Flatten<S> for Cons<H, T>
+where
+    T: Flatten<S>,
+{
+    type Out = Cons<H, <T as Flatten<S>>::Out>;
+}
+
+impl<L, R, S> Flatten<S> for Both<L, R>
+where
+    R: Flatten<S>,
+    L: Flatten<<R as Flatten<S>>::Out>,
+{
+    type Out = <L as Flatten<<R as Flatten<S>>::Out>>::Out;
+}
+
 /// A stack that does not collide with the interceptor `N`.
 ///
 /// Implemented for every stack; the obligation lives in [`CHECK`], which is a

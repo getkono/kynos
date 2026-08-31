@@ -302,7 +302,7 @@ fn refused(status: StatusCode) -> Response {
     response
 }
 
-impl<C: Send + Sync + 'static, P: PanicPolicy, I> Router<C, P, I> {
+impl<C: Send + Sync + 'static, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// Serves a directory from disk, under `prefix`.
     ///
     /// The route is **not** described. It is recorded under

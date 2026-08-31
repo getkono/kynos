@@ -165,3 +165,109 @@ fn guided_traits_in_source(directory: &Path) -> usize {
     }
     found
 }
+
+/// Every `Router` and `Group` builder carries all four type parameters across.
+///
+/// Both types are parameterised by `<C, P, I, S>`, and two of those are the
+/// phantom lists the compile-time conflict check reads: `I`, the interceptors
+/// mounted on this scope, and `S`, what the scopes mounted here brought with
+/// them. A builder naming fewer than four in its return type resets the ones it
+/// omits to their default of `()`, and the check then compares a newcomer
+/// against an empty list and finds nothing to collide with.
+///
+/// This has gone wrong twice. `catch_panics` returned `Router<C, Catch>` and
+/// dropped `I`. That fix landed before `S` existed, and the commit adding `S`
+/// updated the group's half and not the router's, so it returned
+/// `Router<C, Catch, I>` and dropped `S` instead. Both were silent by
+/// construction: the signature is well-formed, every caller still compiles, and
+/// only a program that *should* have been refused shows the difference.
+///
+/// A count of the arguments rather than a mapping of the methods, for the
+/// reason `every_rejected_schema_type_has_a_case` gives: it catches the drift
+/// that actually happens -- a parameter dropped from a return type -- and does
+/// not pretend to check that the parameter carried is the right one. Methods
+/// returning `Self` need no case: every `impl` block declaring one is
+/// `impl<C, P, I, S>`, so `Self` is all four by construction.
+#[test]
+fn every_builder_preserves_the_type_parameters() {
+    const PARAMETERS: usize = 4;
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut checked = 0;
+
+    for relative in ["src/router/mod.rs", "src/router/group.rs"] {
+        let path = root.join(relative);
+        let source = fs::read_to_string(&path).expect("the crate's own source is readable");
+
+        for (number, line) in source.lines().enumerate() {
+            // Comments are skipped so a rustdoc paragraph naming a return type
+            // -- this file's own prose does -- is not read as one.
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+
+            for type_name in ["Router", "Group"] {
+                let opening = format!("-> {type_name}<");
+                let Some(at) = line.find(&opening) else {
+                    continue;
+                };
+
+                let arguments = &line[at + opening.len()..];
+                let count = top_level_arguments(arguments).unwrap_or_else(|| {
+                    panic!(
+                        "{relative}:{} returns `{type_name}<` whose argument list does not close \
+                         on one line; this test reads return types a line at a time",
+                        number + 1
+                    )
+                });
+
+                assert_eq!(
+                    count,
+                    PARAMETERS,
+                    "{relative}:{} returns `{type_name}<` with {count} type argument(s) and \
+                     `{type_name}` has {PARAMETERS}; the omitted one falls back to its default of \
+                     `()`, which silently empties a phantom list the conflict check reads. Name \
+                     all {PARAMETERS}, or return `Self`.",
+                    number + 1
+                );
+
+                checked += 1;
+            }
+        }
+    }
+
+    assert!(
+        checked > 0,
+        "no `-> Router<` or `-> Group<` return type was found; this test is looking in \
+         `src/router/mod.rs` and `src/router/group.rs`, and finding none means it has stopped \
+         checking anything"
+    );
+}
+
+/// The comma-separated arguments of a generic list whose opening `<` is already
+/// consumed, or `None` when it does not close in `text`.
+///
+/// Depth-aware, so `Router<C, P, I, <E::Stacks as Flatten<S>>::Out>` counts
+/// four rather than five: only a comma directly inside the outer list
+/// separates an argument.
+fn top_level_arguments(text: &str) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut separators = 0;
+
+    for character in text.chars() {
+        match character {
+            '<' => depth += 1,
+            '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(separators + 1);
+                }
+            }
+            ',' if depth == 1 => separators += 1,
+            _ => {}
+        }
+    }
+
+    None
+}

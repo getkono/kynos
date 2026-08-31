@@ -1,5 +1,8 @@
-use super::{Continued, EncodeHeaders, HeaderParams};
-use crate::http::{HeaderName, HeaderValue, Response, header};
+use super::{Continued, EncodeHeaders};
+use crate::{
+    extract::params::header::HeaderParams,
+    http::{HeaderName, HeaderValue, Response, header},
+};
 
 /// A group that declares no header of its own and varies on `origin` —
 /// the shape `Cors` takes.
@@ -162,4 +165,61 @@ fn a_group_that_varies_on_nothing_writes_no_vary() {
     }
 
     assert_eq!(vary_after(None, Silent), None);
+}
+
+/// A group encoding a field its `NAMES` never declared fails the build.
+///
+/// `NAMES` is what `CompatibleWith` compares, so a group declaring one field
+/// and writing another puts a header on the wire the conflict check cannot
+/// see -- the same escape `with_headers` allowed, reached from inside a group
+/// rather than from a second call. A derived group cannot drift this way; a
+/// hand-written pair can, and fifteen of them ship.
+///
+/// Debug only, because the guard is a `debug_assert`: the response path does
+/// not panic in release, for the reason `vary_on` gives.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "which its `NAMES` does not declare")]
+fn a_group_encoding_an_undeclared_field_is_refused() {
+    struct Lying;
+
+    impl HeaderParams for Lying {
+        const NAMES: &'static [&'static str] = &["x-declared"];
+    }
+
+    impl EncodeHeaders for Lying {
+        fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+            vec![(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"))]
+        }
+    }
+
+    let _ = Continued::new(Response::new(crate::http::body::Body::empty())).with_headers(Lying);
+}
+
+/// The control: a group encoding exactly what it declared is written.
+///
+/// Without it the case above would pass on any panic at all, including one
+/// from a `Continued` that had stopped working entirely.
+#[test]
+fn a_group_encoding_what_it_declared_is_written() {
+    struct Honest;
+
+    impl HeaderParams for Honest {
+        const NAMES: &'static [&'static str] = &["content-encoding"];
+    }
+
+    impl EncodeHeaders for Honest {
+        fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+            vec![(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"))]
+        }
+    }
+
+    let response = Continued::new(Response::new(crate::http::body::Body::empty()))
+        .with_headers(Honest)
+        .into_response();
+
+    assert_eq!(
+        response.headers().get(header::CONTENT_ENCODING),
+        Some(&HeaderValue::from_static("gzip"))
+    );
 }

@@ -41,8 +41,8 @@ help: the trait `CorrelationHeaders` is implemented for `XRequestId`
    | impl CorrelationHeaders for XRequestId {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = note: required for `RequestId<Counter, TraceId>` to implement `Interceptor<()>`
-note: required by a bound in `kynos::Router::<C, P, I>::intercept`
+note: required by a bound in `kynos::Router::<C, P, I, S>::intercept`
   --> src/router/mod.rs
    |
-   |     pub fn intercept<N: Interceptor<C>>(self, interceptor: N) -> Router<C, P, Cons<N, I>>
-   |                         ^^^^^^^^^^^^^^ required by this bound in `Router::<C, P, I>::intercept`
+   |     pub fn intercept<N: Interceptor<C>>(self, interceptor: N) -> Router<C, P, Cons<N, I>, S>
+   |                         ^^^^^^^^^^^^^^ required by this bound in `Router::<C, P, I, S>::intercept`
