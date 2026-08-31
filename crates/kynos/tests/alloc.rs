@@ -27,6 +27,9 @@
 #![cfg(feature = "macros")]
 
 use std::alloc::System;
+use std::future::Future;
+use std::pin::pin;
+use std::task::{Context, Poll, Waker};
 
 use kynos::{
     Router,
@@ -91,19 +94,41 @@ fn service() -> Service<()> {
 /// a target and boxing a body are the caller's cost rather than the router's,
 /// and the response is dropped after the region closes for the same reason.
 ///
+/// **The future is polled directly rather than driven by a runtime, and that is
+/// what makes the number mean the routing path.** `stats_alloc` counts whatever
+/// the thread allocates while the region is open, so an executor inside it is
+/// counted too — and a scheduler does periodic maintenance that lands on an
+/// arbitrary request. Under `#[tokio::test]` this read four allocations high on
+/// roughly one request in ten thousand, which is a measurement of the runtime
+/// wearing the router's number. There is nothing to schedule here: the fixture
+/// touches no socket, timer or task, so the future is ready on its first poll
+/// and the assertion below says so rather than assuming it.
+///
 /// There is no warm-up request. `Router::build` initialises eagerly, so the
 /// first request through a service costs exactly what the thousandth does —
 /// and a warm-up here would be the one construct able to hide a one-time cost
 /// introduced later.
-async fn counted(service: &Service<()>, target: &str) -> usize {
+fn counted(service: &Service<()>, target: &str) -> usize {
     let mut request = Request::new(Body::empty());
     *request.method_mut() = Method::GET;
     *request.uri_mut() = target.parse().expect("a usable request target");
 
     let region = Region::new(ALLOCATOR);
-    let response = service.call(request).await;
+    let mut future = pin!(service.call(request));
+    let polled = future
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()));
     let change = region.change();
     let allocations = change.allocations + change.reallocations;
+
+    let Poll::Ready(response) = polled else {
+        panic!(
+            "dispatch of {target} was not ready on its first poll; this fixture \
+             reaches no socket, timer or task, so a pending future means \
+             something on the routing path now needs a runtime — and the count \
+             above stopped measuring the whole of one request"
+        );
+    };
 
     drop(response);
     allocations
@@ -111,12 +136,12 @@ async fn counted(service: &Service<()>, target: &str) -> usize {
 
 /// The record. Named so it reads as one: each ceiling is what the path costs
 /// today, and none of them is zero.
-#[tokio::test]
-async fn the_routing_path_allocates_where_the_requirement_asks_for_nothing() {
+#[test]
+fn the_routing_path_allocates_where_the_requirement_asks_for_nothing() {
     let service = service();
 
     for (target, ceiling) in SHAPES {
-        let counted = counted(&service, target).await;
+        let counted = counted(&service, target);
         assert!(
             counted <= ceiling,
             "{target} allocated {counted} times against a recorded {ceiling}; \
@@ -129,13 +154,13 @@ async fn the_routing_path_allocates_where_the_requirement_asks_for_nothing() {
 /// The relation the absolutes are there to hold, and the one that survives a
 /// change to any of them: reading a parameter costs more than the static match
 /// that found it, and a request that matched nothing costs least of all.
-#[tokio::test]
-async fn a_capture_is_what_a_path_parameter_costs() {
+#[test]
+fn a_capture_is_what_a_path_parameter_costs() {
     let service = service();
 
-    let matched = counted(&service, "/ping").await;
-    let captured = counted(&service, "/users/7").await;
-    let missed = counted(&service, "/nope").await;
+    let matched = counted(&service, "/ping");
+    let captured = counted(&service, "/users/7");
+    let missed = counted(&service, "/nope");
 
     assert!(
         captured > matched,
@@ -157,16 +182,16 @@ async fn a_capture_is_what_a_path_parameter_costs() {
 /// Every shape is replayed, not only the parameterised one: a table that
 /// records three numbers and replays one would leave two of them resting on a
 /// single reading.
-#[tokio::test]
-async fn a_replayed_request_costs_what_the_first_one_did() {
+#[test]
+fn a_replayed_request_costs_what_the_first_one_did() {
     let service = service();
 
     for (target, _) in SHAPES {
-        let first = counted(&service, target).await;
+        let first = counted(&service, target);
         let mut moved = Vec::new();
 
         for index in 0..10_000 {
-            let counted = counted(&service, target).await;
+            let counted = counted(&service, target);
             if counted != first {
                 moved.push((index, counted));
             }
