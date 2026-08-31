@@ -27,6 +27,14 @@ rather than inline.
 Each integration file exists for one reason. `hermeticity.rs` and `ui.rs` are
 different kinds of thing and are covered below.
 
+`alloc.rs` is a third: it asserts a cost rather than a behaviour, and the kind
+it belongs to is allocated by [`performance.md`](performance.md#the-taxonomy)
+rather than by the table above. The two documents divide by question — this one
+says what a guarantee owes, that one says what a *feature costs the request
+path* — and `alloc.rs` is filed here as well because the inventory above claims
+to be every integration target, and a claim of completeness is worth only as
+much as its exceptions.
+
 `conformance.rs` runs now that the router and `test/` have landed, and both of
 its assertions pass. `every_declared_response_is_exercised` carried an
 `#[ignore]` naming a 413 that `BodyRejection` no longer declares — one of
@@ -41,6 +49,7 @@ attribute outlived its reason and went with it.
 | [`reporting.rs`](../crates/kynos/tests/reporting.rs) | every error type a caller can receive is `Error + Send + Sync + 'static` |
 | [`typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) | a route attribute's `relative_uri` percent-encodes its parameters |
 | [`size.rs`](../crates/kynos/tests/size.rs) | a build failure does not inline a `Violation`, and a `Result` costs no more than it |
+| [`alloc.rs`](../crates/kynos/tests/alloc.rs) | what the routing path allocates per route shape, and that a replayed request costs what the first one did. It owns a `#[global_allocator]`, which is why it is a target of its own rather than a sibling `tests.rs`: installed in the library's unit-test binary the counter would reach every unit test in it |
 | [`conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs) | that the committed corpus is what this build emits, and that it still carries the 3.2 constructs it exists to pin — asserted against the committed *text*, since what a downstream repository reads is the file |
 | [`conformance.rs`](../crates/kynos/tests/conformance.rs) | that the responses a suite observed match what the document promises, and that every declared response was exercised |
 | [`matrix.rs`](../crates/kynos/tests/matrix.rs) | the same two assertions over every layer Kynos owns, which is the only place a wrong *document* fails a test |
@@ -351,6 +360,13 @@ Tests are hermetic by construction, not by convention.
 and both assert they saw its initial value, which is only possible when each
 runs in its own process. They pass under `cargo nextest run` and fail under
 `cargo test`. That converts "we use nextest" from a README claim into a test.
+
+[`alloc.rs`](../crates/kynos/tests/alloc.rs) is what now rests on it.
+`stats_alloc` counts into process globals rather than thread locals, so its
+three tests would contaminate each other as threads of one binary — under
+`cargo test` they do, reporting figures several times the real ones. Nothing in
+that file can assert its own isolation, because a test already contaminated
+cannot notice; `hermeticity.rs` is the assertion standing in for it.
 
 A flake is an isolation bug. Retrying one hides the bug and keeps the suite
 green, which is why `retries = 0` is in the config rather than left to a flag
