@@ -373,7 +373,7 @@ by nothing under `src/`, which is the standing `rcgen`, `listenfd` and
 `tracing-subscriber` already have: this table governs what Kynos depends on, not
 what an example demonstrates.
 
-`stats_alloc` is a fifth, and the reason it exists is the
+`alloc_counter` is a fifth, and the reason it exists is the
 `unsafe_code = "forbid"` in the root manifest's `[workspace.lints.rust]`. The
 allocation-count kind in [`performance.md`](performance.md#the-taxonomy) needs
 a global allocator that reports what a region allocated, and `forbid` is not
@@ -383,12 +383,24 @@ of them. Taking a vetted one is how the invariant is kept
 rather than bent: the unsafe stays upstream, and this tree keeps a rule it
 would otherwise have had to carve an exception into. It is a dev-dependency
 named by [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) and by nothing
-under `src/`, it carries no dependencies of its own, and it installs no
-allocator on its own behalf — the one target that wants it writes the
-`#[global_allocator]` line itself, which is what keeps the instrument out of
-every other test binary in the package. `dhat` was the maintained alternative
-and is a profiler rather than a counter: a backtrace per allocation, and six
-crates this tree does not otherwise have.
+under `src/`.
+
+Two properties decide which counter, and both are load-bearing. Its counters
+are **thread-local**, so a region reads what the measuring thread allocated
+rather than what the process did — `libtest` runs a test on a thread it spawns
+and keeps its own alive beside it, so a process-global counter reports the
+harness's allocations as the router's, on whichever microsecond-wide region
+happens to be open. And it installs **no allocator on its own behalf**: the one
+target that wants it writes the `#[global_allocator]` line itself, which is
+what keeps the instrument out of every other test binary in the package.
+
+`stats_alloc` held this slot and satisfies only the second, which is a flake
+that read as state accumulating on the routing path. `allocation-counter`
+satisfies only the first: it declares `#[global_allocator]` inside the library,
+so it would install the instrument everywhere. `dhat` is a profiler rather than
+a counter: a backtrace per allocation, and six crates this tree does not
+otherwise have. `alloc_counter` is `0.0.4` and last published in 2019, taken
+knowingly for one function in one test target.
 
 ### What each feature gates
 
