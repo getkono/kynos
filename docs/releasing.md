@@ -55,8 +55,8 @@ what `cargo publish` will do. CI runs the same task on every push, in the
   `partial` for this reason.
 - **The changelog skips `refactor`, `test`, `style`, `build`, `ci` and `chore`.**
   A breaking commit of any of those types is still listed:
-  `protect_breaking_commits` overrides every skip rule, and it has to, because 32
-  of the 46 breaking commits in the history so far are `refactor!:`.
+  `protect_breaking_commits` overrides every skip rule, and it has to, because
+  around two thirds of the breaking commits in this history are `refactor!:`.
 
 ## Trusted Publishing
 
