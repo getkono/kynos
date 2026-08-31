@@ -13,7 +13,7 @@
 //! signature *is* its declaration, and that declaration propagates into every
 //! operation it covers, automatically and correctly.
 //!
-//! Five things are worth noticing:
+//! Six things are worth noticing:
 //!
 //! * **There is nothing to keep in step.** `Short` is the responses an
 //!   interceptor can answer with *and* the only way to answer; `Adds` is the
@@ -34,6 +34,14 @@
 //!   the router covers every operation and appears in every description; one on
 //!   a group covers that group. There is no way to apply one and not document
 //!   it, and no way to document it at a different scope than it runs at.
+//! * **An empty declaration is a declaration.** `BodyTimeout` answers with
+//!   nothing, because by the time a response body is streaming the status and
+//!   the headers have already gone. Saying so in the type is what lets it
+//!   compose with every limit below it — there is no status for
+//!   `statuses_disjoint` to refuse. Where a limit *does* answer, the response
+//!   is a parameter: `Timeout::answer_with` substitutes a type of your own, and
+//!   because that type is a `ShortCircuit` the document still describes exactly
+//!   what the service can send.
 
 use std::{convert::Infallible, net::Ipv4Addr, num::NonZeroUsize, time::Duration};
 
@@ -43,7 +51,7 @@ use kynos::{
         Continued, Interceptor, Next,
         compression::{Compression, levels::GzipLevel},
         cors::Cors,
-        limits::{BodySize, Concurrency, Timeout},
+        limits::{BodySize, BodyTimeout, Concurrency, Timeout},
         rate_limit::{
             RateLimit,
             decision::{Decision, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
@@ -337,6 +345,22 @@ async fn main() -> kynos::Result<()> {
         // encoder's 11, which is for content with a build step rather than a
         // response generated per request.
         //
+        // What `Timeout` cannot see. Its timer stops when the response *head*
+        // is ready, so a handler returning a stream is bounded by nothing from
+        // that point on. `idle` restarts on every frame, which bounds the gap
+        // between them rather than the total -- a long stream that is healthily
+        // producing is not a fault, and a stalled one is.
+        //
+        // It declares no status, and cannot: the status and the headers left
+        // before this could fire. That empty declaration is why it collides
+        // with nothing and composes with everything here.
+        //
+        // Mounted *outside* `Compression`, which is what makes the failure
+        // reach the client. An interceptor that rewrites a body has to read it,
+        // and one that buffers -- `Compression` below a size threshold,
+        // `Cache` -- turns a body that fails mid-read into an empty success. A
+        // body limit belongs outside anything that reads what it bounds.
+        .intercept(BodyTimeout::idle(Duration::from_secs(15)))
         // `GzipLevel::new` and its siblings refuse a number their own format
         // does not define, so a typo is `None` here rather than a runtime
         // surprise in the encoder.
