@@ -5,9 +5,14 @@ measurement a given shape of code owes. [`nfr.md`](nfr.md) records which of
 these run today; this document is about the method.
 
 Every section except [Rationale](#rationale) states a rule that binds
-implementation work. Most of what is allocated below is not wired yet, and the
-[taxonomy](#the-taxonomy)'s last column is where that is admitted rather than
-implied.
+implementation work. One of the five kinds below runs today and the rest do
+not, and the [taxonomy](#the-taxonomy)'s last column is where that is admitted
+rather than implied.
+
+The one that runs has already earned the document: the routing path was
+required to allocate nothing, had never been measured, and allocates seven
+times for a static match. [`nfr.md`](nfr.md#routing) carries the numbers and
+what they do and do not establish.
 
 ## The boundary
 
@@ -41,7 +46,7 @@ What each kind of measurement proves that no other kind does.
 
 | Kind | Lives in | Runs under | Proves | Status |
 | --- | --- | --- | --- | --- |
-| Allocation count | its own integration target | `cargo nextest` | that a path allocates a bounded number of times | `planned` |
+| Allocation count | its own integration target | `cargo nextest`, over `stats_alloc` | that a path allocates a bounded number of times | in use, at [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) |
 | Size guard | [`tests/size.rs`](../crates/kynos/tests/size.rs), or a sibling `tests.rs` | `cargo nextest` | that a type or a future did not grow | in use for types; `planned` for futures |
 | Off-path proof | a sibling `tests.rs` | `cargo nextest` | that a feature is unreachable from the request path | `planned` |
 | Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | `needs-tooling`; `cargo-llvm-lines` is not installed |
@@ -53,6 +58,13 @@ every other unit test in it, so the counter cannot live in a sibling `tests.rs`
 however much the feature it measures does. Nothing else here has that problem:
 a size guard and an off-path proof are ordinary assertions and belong beside
 the code they constrain.
+
+**The counter is a dependency because `unsafe_code = "forbid"` is not liftable
+by an `#[allow]`.** A `GlobalAlloc` implementation is `unsafe impl`, so this
+workspace cannot write one anywhere;
+[`architecture.md`](architecture.md#dependencies) records why taking a vetted
+one keeps that invariant rather than bending it, and why the crate that
+installs no allocator on its own behalf was the one worth taking.
 
 The two sweep kinds are not tests. They build the same fixture at each feature
 and compare artifacts, which no test harness can express, so they are a task

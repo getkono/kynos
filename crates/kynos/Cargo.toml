@@ -496,6 +496,7 @@ hyper = { workspace = true, features = ["client", "http1", "http2"] }
 # Applications derive serde alongside `kynos::Schema`, and the schema derive
 # reads those attributes, so the tests have to be able to write them.
 serde = { workspace = true, features = ["derive"] }
+stats_alloc = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 # The UI suite hands `Router::intercept` a real `tower::Layer`, so the negative
 # and its control differ only in whether the middleware declares itself.

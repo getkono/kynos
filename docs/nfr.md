@@ -41,7 +41,7 @@ stays in `kynos-bench` is what any server answers: syscalls per request, idle
 memory per connection, and the nightly suite itself.
 
 Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
-`trybuild`, `proptest`, rustdoc with `missing_docs = "deny"`, and
+`trybuild`, `proptest`, `stats_alloc`, rustdoc with `missing_docs = "deny"`, and
 `cargo-semver-checks` — the last only through release-plz, at default features
 and fail-open, which is why its rows read `partial`. Not yet present:
 `cargo-public-api`, `cargo-fuzz`. `criterion` is not on this list and will not
@@ -158,7 +158,8 @@ of which anything here would currently catch.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| performance | Zero heap allocations on the routing path | Counting allocator asserting `alloc_count == 0` across a 10k-request replay, over routes of at most three parameters and no static/dynamic sibling overlap | `planned` |
+| performance | Route dispatch allocates a recorded number of times per route shape, and a replayed request costs what the first one did | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), over a handler that allocates nothing, counting fresh allocations and reallocations across a 10k-request replay | `enforced` |
+| performance | Zero heap allocations on the routing path | The same target. Its ceilings are 7 for a static match, 11 for one path parameter and 6 for a request matching no route | `partial`; the count is enforced and the zero is not met — below |
 | performance | Route resolution cost is invariant in the number of registered operations | The counting allocator of the row above, over routers built at 1 and at 1000 operations, asserting the per-request counts are equal | `planned` |
 | reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; [`tests/routing.rs`](../crates/kynos/tests/routing.rs) over `Router::validate` for those only visible once the tree is assembled, each refusal with its pass control | `enforced` |
 | security | A served asset path is enumerated, never joined from request input | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) asserting an embedded set registers only literal `paths` keys, and [`router/assets/fs/tests.rs`](../crates/kynos/src/router/assets/fs/tests.rs) sweeping every escape a resolver must refuse against a control that must not be | `enforced` |
@@ -166,10 +167,32 @@ of which anything here would currently catch.
 | operability | Metric labels derive from operation IDs, never request paths | [`tests/dispatch.rs`](../crates/kynos/tests/dispatch.rs) asserting `MatchedPath` is the template rather than the request target, so two concrete paths under one template produce one label | `enforced` |
 | correctness | The description a service serves is the description it emits | [`tests/docs.rs`](../crates/kynos/tests/docs.rs), byte-comparing the description route's body against `Router::openapi`'s JSON, and asserting a nested mount moves both routes and the page's pointer with them | `enforced` |
 
-The allocation row is scoped rather than absolute because of what the pinned
-router actually guarantees; [`routing.md`](routing.md) records the two cases
-and why they are reachable through ordinary REST shapes. Widening the scope
-later is a measurement, not a rewrite.
+**The zero was never measured, and it is wrong.** The row above asked for
+`alloc_count == 0` and was `planned` for as long as this document has existed;
+wiring it reports seven allocations for a static match, eleven once a path
+parameter is captured, and six for a request that matches no route. The numbers
+are stable to the allocation across a ten-thousand-request replay, so this is a
+property of the path rather than a noisy reading.
+
+Nothing here attributes those seven to the lines that make them, and this
+document does not guess: the candidates a reader will think of first — the
+extension map, the capture vector, the body wrapper that reports a disconnect —
+are the obvious suspects and not evidence. Attribution is the next piece of
+work, and it is what turns a ceiling into a decision about which allocation to
+remove.
+
+The ceilings are recorded rather than the zero because
+[Thresholds](#thresholds) asks for the first measurement rather than the hoped
+figure, and because a requirement asserting a zero the path does not deliver
+fails on every run and gets deleted. Lowering a ceiling is what closing the gap
+looks like; raising one is a change to this document.
+
+The scope is narrower than the path, and deliberately: the requirement is
+written against routes of at most three parameters with no static/dynamic
+sibling overlap, because of what the pinned router actually guarantees.
+[`routing.md`](routing.md) records the two cases and why they are reachable
+through ordinary REST shapes. Widening the scope later is a measurement, not a
+rewrite.
 
 ## Extraction
 

@@ -60,6 +60,18 @@ serde = "1.0.219"
 serde_json = "1.0.145"
 serde_urlencoded = "0.7.1"
 serde_yaml_ng = "0.10.0"
+# The allocation-count kind in `docs/performance.md` needs a global allocator
+# that reports what a region allocated, and `unsafe_code = "forbid"` below means
+# this workspace cannot write one: `forbid` is not liftable by an `#[allow]`, so
+# the `unsafe impl GlobalAlloc` a counter requires cannot compile here at all.
+# `stats_alloc` is the counter with the smallest surface that answers this: it
+# has no dependencies of its own, and it installs nothing on its own behalf --
+# the one target that wants it declares `#[global_allocator]` itself, which is
+# what keeps the instrument out of every other test binary in the package.
+# `dhat` was the maintained alternative and is a profiler rather than a counter:
+# it captures a backtrace per allocation and carries six crates this tree does
+# not otherwise have.
+stats_alloc = "0.1.10"
 syn = "2.0.106"
 thiserror = "2.0.19"
 tokio = "1.53.1"
