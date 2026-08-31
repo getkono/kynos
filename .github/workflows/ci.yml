@@ -145,6 +145,35 @@ jobs:
       - name: Check the declared MSRV
         run: mise run msrv:check
 
+  semver:
+    name: API compatibility
+    runs-on: ubuntu-latest
+    # Reports, does not block. Two things make that the right setting today
+    # rather than a permanent one.
+    #
+    # It is not one of the seven contexts the `master` ruleset requires, and
+    # adding an eighth is a repository-settings change rather than a file
+    # change -- so a failing job here would be advisory in effect anyway, while
+    # showing red on every unrelated pull request.
+    #
+    # And it fails right now for a reason already being handled: the baseline
+    # is the published 0.1.0, and `Router::group`/`nest`/`merge` plus
+    # `Timeout`'s new private field are breaks that the pending 0.2.0 release
+    # exists to express. Pre-1.0, a minor bump *is* how a break is declared, so
+    # the verdict is correct and the release is the answer to it. Once 0.2.0 is
+    # published the baseline moves past both and this goes green, which is the
+    # point to make it required.
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up
+        uses: ./.github/actions/setup
+        with:
+          cargo-cache-key: semver
+      - name: Compare the public API against the last published release
+        run: mise run semver:check
+
   package:
     name: Package
     runs-on: ubuntu-latest

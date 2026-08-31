@@ -52,7 +52,7 @@ publish_all_features = true
 # change is a minor bump rather than a refusal, but the verdict and the list of
 # broken items land in the release pull request body -- which is the evidence a
 # reviewer needs to decide whether the break was the one that was intended. The
-# release-plz action installs cargo-semver-checks itself, so no mise task does.
+# release-plz action installs cargo-semver-checks itself.
 #
 # This is the default; it is stated because the two limits below make it worth
 # less than the name suggests, and a reader should meet them here.
@@ -63,6 +63,11 @@ publish_all_features = true
 # say a new major version is required, so a toolchain problem is
 # indistinguishable from a clean run. It compares against the last published
 # version, so it had nothing to say until 0.1.0 existed on crates.io.
+#
+# `mise run semver:check` is the answer to the first limit and runs per pull
+# request rather than per release: same tool, `--all-features`, so the surface
+# behind the thirty-odd flags is compared too. This setting stays on because
+# the release pull request body is where the verdict is read.
 semver_check = true
 
 # Only the workspace's own packages are re-pinned in `Cargo.lock`, which is the

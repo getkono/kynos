@@ -50,8 +50,8 @@ latency unmeasured in both repositories while this column claimed otherwise.
 
 Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
 `trybuild`, `proptest`, `alloc_counter`, rustdoc with `missing_docs = "deny"`, and
-`cargo-semver-checks` — the last only through release-plz, at default features
-and fail-open, which is why its rows read `partial`. Not yet present:
+`cargo-semver-checks` — the last through both release-plz, at default features
+and fail-open, and `mise run semver:check`, at every feature. Not yet present:
 `cargo-public-api`, `cargo-fuzz`. `criterion` is not on this list and will not
 be: benchmarks live in `kynos-bench`.
 
@@ -86,6 +86,7 @@ disabled, or passes trivially and hides the regression it was meant to catch.
 | --- | --- | --- | --- |
 | compatibility | Public API surface is diffed on every change; an addition requires explicit budget approval, a removal fails the build | `cargo-public-api` | `needs-tooling` |
 | compatibility | Every release reports whether the version bump matches the API change | `cargo-semver-checks`, run by release-plz for every crate | `partial`; the workspace-wide row in [Workspace](#workspace) records what it does and does not buy |
+| compatibility | Every pull request reports whether the public API broke, over every feature | `mise run semver:check` (`cargo semver-checks check-release --workspace --all-features`), dedicated CI job | `partial`: it reports rather than blocks. The row in [Workspace](#workspace) records why |
 | correctness | The IR round-trips through serialization losslessly | `proptest` over generated IR values | `enforced`, with one exclusion below, characterized |
 | correctness | Every model type emits the field names and nesting the specification gives it | One exact-JSON case per type in `tests/wire.rs`, counted against the type list | `enforced` |
 | correctness | The corpus a downstream generator is built against is the one this build emits | [`tests/conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs), comparing every committed document against a freshly emitted one | `enforced` |
@@ -480,7 +481,8 @@ open against a `kynos-otel` that may never be written.
 | reliability | The declared MSRV builds | `mise run msrv:check`, dedicated CI job | `enforced` |
 | reliability | Every crate's published archive builds from a pristine extraction, with every feature | `mise run publish:check` (`cargo package --workspace --all-features`), dedicated CI job | `enforced` |
 | reliability | Nothing a package publishes reads a path outside that package | `mise run containment:check`, resolving every `include_bytes!`, `include_str!` and `CARGO_MANIFEST_DIR` path literal against the package that holds it, and exempting only what the manifest's `exclude` names | `enforced`. `publish:check` cannot see this: its verify step builds the library, not the test targets, so a file the archive omits and a test target names resolves in the working tree and nowhere else |
-| compatibility | A release reports whether its API broke | `cargo-semver-checks` via release-plz, verdict in the release pull request body | `partial`: default features only, and fail-open — it is evidence for the reviewer, not a gate. See the tooling gap below |
+| compatibility | A release reports whether its API broke | `cargo-semver-checks` via release-plz, verdict in the release pull request body | `partial`: default features only, and fail-open — it is evidence for the reviewer, not a gate |
+| compatibility | A pull request reports whether it broke the public API, across every feature | `mise run semver:check`, dedicated CI job, comparing the workspace at `--all-features` against the last published version | `partial`: it reports rather than blocks, because it is not one of the seven contexts the `master` ruleset requires and an eighth is a settings change. It is also failing today, correctly: the baseline is 0.1.0, and `Router::group`/`nest`/`merge` and `Timeout`'s private field are the breaks the pending 0.2.0 release exists to declare. It goes green when that baseline moves, which is when it is worth requiring |
 | reliability | Every reachable feature combination compiles | `mise run features:check` (`cargo hack --feature-powerset`) | `enforced` |
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
 | reliability | Tests are hermetic; no shared state, no ordering dependence, no retries | `cargo-nextest` process isolation, `retries = 0`, guarded by `crates/kynos/tests/hermeticity.rs` | `enforced` |
@@ -516,7 +518,7 @@ what they unblock:
 | `proptest` | IR round-tripping, schema projection, the conformance harness | |
 | `cargo-fuzz` | Extractor panic-freedom | Needs a committed corpus and a nightly job |
 | `cargo-llvm-lines` | The codegen-delta kind in [`performance.md`](performance.md#the-taxonomy), which is what a type-level surface owes | The only measurement in that document with no tool present. A feature sweep can report `.text` deltas without it; attributing them to a monomorphization needs it |
-| `cargo-semver-checks` | The `compatibility` row in [Workspace](#workspace), at full feature coverage | No longer absent: release-plz installs and runs it on every release. Not closed either -- it is invoked with default features only, and it is fail-open, reporting "compatible" for any failure that does not name a required major bump, so a toolchain error is indistinguishable from a clean run. Closing it means a `mise run semver:check` passing `--all-features`, which needs 0.1.0 on crates.io to compare against |
+| `cargo-semver-checks` | The `compatibility` rows in [Workspace](#workspace) | Closed. `mise run semver:check` runs it at `--all-features` on every pull request, against the last published version — which is what this row asked for once 0.1.0 reached crates.io. Release-plz still runs its own default-features, fail-open copy at release time, and that half is unchanged: the two are recorded separately above because they buy different things |
 
 `criterion` is intentionally absent from this list, and stays absent now that
 three performance rows have come home. Timed measurement lives in
