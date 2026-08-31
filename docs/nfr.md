@@ -4,6 +4,11 @@ What each part of Kynos must prove, how it is proven, and whether that proof
 runs today. The last column is the honest one: this document is worth keeping
 only if it never claims a guarantee CI does not actually enforce.
 
+[`performance.md`](performance.md) is the companion for one category: it holds
+the boundary between what this repository measures and what `kynos-bench` does,
+and allocates a counted method to each shape of the routing stack. Every
+`performance` row below is filed by that boundary.
+
 ## Status
 
 | Status | Meaning |
@@ -15,14 +20,25 @@ only if it never claims a guarantee CI does not actually enforce.
 | `blocked-on-impl` | The surface the method would assert against does not exist yet |
 | `blocked-on-dependency` | A pinned dependency does not expose what the requirement needs. The dependency and the remedy are named |
 | `by-design` | The requirement is not met and will not be. The alternative was weighed and refused, and the trade is recorded |
-| `kynos-bench` | Owned by [`getkono/kynos-bench`](https://github.com/getkono/kynos-bench), not by this repository |
+| `kynos-bench` | A measurement any HTTP server library would answer, owned by [`getkono/kynos-bench`](https://github.com/getkono/kynos-bench) rather than by this repository |
 
 `planned` and `needs-tooling` were one status, which made six rows look
 blocked on a purchase they were not — a CI grep needs no tool. And every
 performance row named `criterion` as something this repository would install,
-while the closing section says it deliberately will not; those rows are
-`kynos-bench` now, which is where the harness that gives a threshold meaning
+while the closing section says it deliberately will not; those rows moved to
+`kynos-bench`, which is where the harness that gives a threshold meaning
 already lives.
+
+**That sweep went one row too wide, and three have come back.** It filed by
+*method* — everything that named `criterion` left — when the question is *what
+the requirement names*. Document generation, route resolution at scale and
+per-layer overhead each name something only Kynos has, so no comparative
+harness answers them and sending them away left them measured nowhere. They are
+in-repo again and counted rather than timed, which is why none of the three
+needs `criterion` after all;
+[`performance.md`](performance.md#the-boundary) carries the reasoning. What
+stays in `kynos-bench` is what any server answers: syscalls per request, idle
+memory per connection, and the nightly suite itself.
 
 Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
 `trybuild`, `proptest`, rustdoc with `missing_docs = "deny"`, and
@@ -70,7 +86,7 @@ disabled, or passes trivially and hides the regression it was meant to catch.
 | correctness | Emitted documents are byte-deterministic across platforms | A cross-OS CI job, which does not exist: every job runs on `ubuntu-latest` | `planned` |
 | dx | No public item exposes `Pin`, `BoxFuture` or a tokio type | `cargo-public-api` assertion | `needs-tooling` |
 | operability | `--check` mode exits nonzero on drift from the committed document | A binary target, used as a required gate on the framework's own examples | `blocked-on-impl` |
-| performance | Generation time and output size scale sub-quadratically in operation count | Measured at 10/100/1000 operations with a fitted-slope assertion | `kynos-bench` |
+| performance | Generation allocations and output size scale sub-quadratically in operation count | Counting the allocations and output bytes of one emission at 10/100/1000 operations, with a fitted-slope assertion | `planned` |
 
 The `--check` row's blocker was never a `todo!()` body: the workspace declares no
 binary target at all, and no command-line surface is designed anywhere. It is
@@ -143,7 +159,7 @@ of which anything here would currently catch.
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | performance | Zero heap allocations on the routing path | Counting allocator asserting `alloc_count == 0` across a 10k-request replay, over routes of at most three parameters and no static/dynamic sibling overlap | `planned` |
-| performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `kynos-bench` |
+| performance | Route resolution cost is invariant in the number of registered operations | The counting allocator of the row above, over routers built at 1 and at 1000 operations, asserting the per-request counts are equal | `planned` |
 | reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; [`tests/routing.rs`](../crates/kynos/tests/routing.rs) over `Router::validate` for those only visible once the tree is assembled, each refusal with its pass control | `enforced` |
 | security | A served asset path is enumerated, never joined from request input | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) asserting an embedded set registers only literal `paths` keys, and [`router/assets/fs/tests.rs`](../crates/kynos/src/router/assets/fs/tests.rs) sweeping every escape a resolver must refuse against a control that must not be | `enforced` |
 | correctness | A route with no expressible template is recorded rather than described | [`tests/unchecked.rs`](../crates/kynos/tests/unchecked.rs) asserting a catch-all takes no `paths` key and reaches `x-kynos-opaque-routes` | `enforced` |
@@ -198,7 +214,7 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | Two interceptors covering one operation never write one response header when either writes it from a short circuit | — | `by-design`, and recorded in [`middleware.md`](middleware.md#what-the-framework-computes-and-what-it-does-not): a `Short` response's headers are in no `const`, so `Retry-After` written from a 429 is compared against nothing. A `HEADERS` const on `ShortCircuit` is what would close it, and `#[derive(ApiError)]` could not derive one from an `IntoResponse` body — the `contribution` method the design refuses. Unreachable with what Kynos ships: only one short circuit answers a request |
 | correctness | Contribution composition is order-sensitive and deterministic | Permuted stacks produce differing, stable documents | `planned` for the *document*; the composition **check** is no longer order-sensitive, which is the order-insensitivity row above |
 | reliability | `Opaque` propagates to every affected operation and omits none | Unit test over a synthetic router tree | `planned` |
-| performance | Per-layer added p99 ≤ TBD | `criterion` at stack depth 0/4/8 with a regression gate | `kynos-bench` |
+| performance | Per-layer added allocations and future size ≤ TBD | The counting allocator and `size_of` over one interceptor stack at depth 0/4/8, reported as the marginal cost of a layer | `planned` |
 | correctness | A stored response is never served to a request its stored `Vary` does not select | [`middleware/cache/tests.rs`](../crates/kynos/src/middleware/cache/tests.rs) over the selection rules, plus [`tests/cache.rs`](../crates/kynos/tests/cache.rs) over a live sequence | `enforced` |
 | correctness | A response that stated no freshness is never reused | [`tests/cache.rs`](../crates/kynos/tests/cache.rs) counting handler calls across three requests | `enforced` |
 | correctness | A timeout answers a status the specification defines for an origin server | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) over a live handler past its budget, and [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) against the emitted document | `enforced` |
@@ -452,7 +468,7 @@ can write.
 
 ## Tooling gaps
 
-Five crates stand between this document and its enforcement. Roughly in order of
+Six crates stand between this document and its enforcement. Roughly in order of
 what they unblock:
 
 | Tool | Unblocks | Notes |
@@ -461,9 +477,14 @@ what they unblock:
 | `trybuild` | Compile-fail and UI rows in routing, extraction and macros | Already in `[workspace.dependencies]`; needs only a consumer |
 | `proptest` | IR round-tripping, schema projection, the conformance harness | |
 | `cargo-fuzz` | Extractor panic-freedom | Needs a committed corpus and a nightly job |
+| `cargo-llvm-lines` | The codegen-delta kind in [`performance.md`](performance.md#the-taxonomy), which is what a type-level surface owes | The only measurement in that document with no tool present. A feature sweep can report `.text` deltas without it; attributing them to a monomorphization needs it |
 | `cargo-semver-checks` | The `compatibility` row in [Workspace](#workspace), at full feature coverage | No longer absent: release-plz installs and runs it on every release. Not closed either -- it is invoked with default features only, and it is fail-open, reporting "compatible" for any failure that does not name a required major bump, so a toolchain error is indistinguishable from a clean run. Closing it means a `mise run semver:check` passing `--all-features`, which needs 0.1.0 on crates.io to compare against |
 
-`criterion` is intentionally absent from this list. Benchmarks live in
-[`getkono/kynos-bench`](https://github.com/getkono/kynos-bench) along with the
-methodology defining every performance row above, because a threshold is
-meaningless apart from the harness that produced it.
+`criterion` is intentionally absent from this list, and stays absent now that
+three performance rows have come home. Timed measurement lives in
+[`getkono/kynos-bench`](https://github.com/getkono/kynos-bench), because a
+threshold is meaningless apart from the harness that produced it — and a
+wall-clock ceiling loose enough to survive a shared `ubuntu-latest` runner is a
+guessed ceiling by the standard [Thresholds](#thresholds) already sets. What
+returned is counted instead: allocations, output bytes and `size_of`, each the
+same integer on a loaded machine and an idle one.
