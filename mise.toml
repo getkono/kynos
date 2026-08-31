@@ -355,11 +355,11 @@ description = "Compare the public API against the last published release"
 # nothing to say until a version is published, which is a fact about a first
 # release rather than a reason to gate on something else.
 #
-# This reports rather than blocks: it is not one of the seven contexts the
-# `master` ruleset requires, and adding an eighth is a repository-settings
-# change rather than a file change. The verdict lands in the job log and in the
-# release pull request body, which is what a reviewer needs to decide whether
-# the break was the intended one.
+# This task exits non-zero on a break, which is what a human running it wants.
+# The CI job is the half that reports rather than blocks, and it does that by
+# reading the verdict rather than by swallowing the exit code -- see the
+# `semver` job in `.github/workflows/ci.yml` for why `continue-on-error` is
+# the wrong tool for it.
 run = "cargo semver-checks check-release --workspace --all-features"
 
 [tasks.coverage]
