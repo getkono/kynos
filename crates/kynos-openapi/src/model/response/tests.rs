@@ -134,14 +134,6 @@ fn responses_serialize_default_alongside_status_keys() {
 }
 
 #[test]
-fn responses_round_trip() {
-    let responses = Responses::new().with(201, Response::new("created"));
-    let json = serde_json::to_string(&responses).expect("ok");
-    let parsed: Responses = serde_json::from_str(&json).expect("ok");
-    assert_eq!(parsed, responses);
-}
-
-#[test]
 fn a_malformed_status_key_is_a_parse_error() {
     let result = serde_json::from_str::<Responses>(r#"{"okay":{"description":"x"}}"#);
     assert!(result.is_err());

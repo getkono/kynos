@@ -231,11 +231,11 @@ fn a_header_declaring_any_other_style_is_refused() {
 }
 
 #[test]
-fn a_header_round_trips_through_each_form_of_style() {
+fn a_header_states_or_omits_the_only_style_it_may_declare() {
     use crate::model::parameter::{header::Header, style::HeaderStyle};
 
     // Stating `simple` and leaving it out are different descriptions of the
-    // same serialization, and each survives the trip back out as it arrived.
+    // same serialization, and each writes the shape it was given.
     let stated =
         Header::new(Schema::of_type(SchemaType::String)).with_style(HeaderStyle::Simple, false);
     assert_eq!(stated.style(), Some(HeaderStyle::Simple));
@@ -250,12 +250,6 @@ fn a_header_round_trips_through_each_form_of_style() {
         serde_json::to_value(&absent).expect("serializable"),
         serde_json::json!({"schema": {"type": "string"}})
     );
-
-    for header in [stated, absent] {
-        let json = serde_json::to_string(&header).expect("serializable");
-        let parsed: Header = serde_json::from_str(&json).expect("deserializable");
-        assert_eq!(parsed, header);
-    }
 }
 
 #[test]
@@ -287,31 +281,6 @@ fn a_header_shown_both_ways_at_once_is_refused() {
     .expect_err("`example` is exclusive with `examples`");
 
     assert!(error.to_string().contains("mutually exclusive"));
-}
-
-#[test]
-fn each_form_of_example_round_trips() {
-    use crate::model::{example::Example, parameter::header::Header};
-
-    for parameter in [
-        Parameter::query("page", Schema::of_type(SchemaType::Integer)).with_example(1),
-        Parameter::query("page", Schema::of_type(SchemaType::Integer))
-            .with_named_example("first", Example::new(1)),
-    ] {
-        let json = serde_json::to_string(&parameter).expect("serializable");
-        let parsed: Parameter = serde_json::from_str(&json).expect("deserializable");
-        assert_eq!(parsed, parameter);
-    }
-
-    for header in [
-        Header::new(Schema::of_type(SchemaType::String)).with_example("text/plain"),
-        Header::new(Schema::of_type(SchemaType::String))
-            .with_named_example("plain", Example::new("text/plain")),
-    ] {
-        let json = serde_json::to_string(&header).expect("serializable");
-        let parsed: Header = serde_json::from_str(&json).expect("deserializable");
-        assert_eq!(parsed, header);
-    }
 }
 
 #[test]

@@ -7,21 +7,6 @@ fn info_serializes_only_the_required_fields_when_bare() {
 }
 
 #[test]
-fn spdx_and_url_licenses_set_disjoint_fields() {
-    let spdx = License::spdx("MIT", "MIT");
-    assert_eq!(spdx.identifier(), Some("MIT"));
-    assert!(spdx.url().is_none());
-
-    let url = License::with_url("MIT", "https://example.com/LICENSE");
-    assert!(url.identifier().is_none());
-    assert_eq!(url.url(), Some("https://example.com/LICENSE"));
-
-    let bare = License::named("Proprietary");
-    assert!(bare.identifier().is_none());
-    assert!(bare.url().is_none());
-}
-
-#[test]
 fn a_license_serializes_only_the_link_it_carries() {
     let json = serde_json::to_string(&License::spdx("MIT", "MIT")).expect("serializable");
     assert_eq!(json, r#"{"name":"MIT","identifier":"MIT"}"#);

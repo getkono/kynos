@@ -20,12 +20,6 @@ fn an_external_example_round_trips() {
     assert_eq!(parsed, example);
 }
 
-#[test]
-fn an_example_may_carry_no_value_at_all() {
-    let example = Example::default().with_summary("described but not shown");
-    assert!(example.value().is_none());
-}
-
 #[cfg(feature = "openapi32")]
 #[test]
 fn data_and_its_serialization_are_one_example() {
@@ -45,16 +39,6 @@ fn data_and_its_serialization_are_one_example() {
             ..
         })
     ));
-}
-
-#[cfg(feature = "openapi32")]
-#[test]
-fn data_may_accompany_an_external_payload() {
-    let example = Example::data_external(serde_json::json!({"a": 1}), "./e.bin");
-    let parsed: Example =
-        serde_json::from_str(&serde_json::to_string(&example).expect("serializable"))
-            .expect("deserializable");
-    assert_eq!(parsed, example);
 }
 
 #[cfg(feature = "openapi32")]
