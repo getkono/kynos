@@ -373,7 +373,7 @@ where someone mounting a cap will meet it.
 
 AGENTS.md: *"A module becomes a directory once it holds two
 independently-changing concerns … Passing ~400 lines excluding tests is when to
-ask that question, not an answer to it."* Twenty-nine files under `crates/*/src`
+ask that question, not an answer to it."* Twenty-eight files under `crates/*/src`
 are past that line and asked it, and `containment:check` holds that number so it
 can only move on purpose.
 
@@ -383,7 +383,7 @@ re-exports"* — in a way worth stating. Splitting a module that declares severa
 public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: eight rejection
 types in 644 lines, and splitting it would turn `error::rejection::PathRejection`
-into `error::rejection::path::PathRejection`. Sixteen of the twenty-nine are that
+into `error::rejection::path::PathRejection`. Sixteen of the twenty-eight are that
 shape, worth roughly a hundred public paths between them — and each is one
 cohesive family, which is precisely what the concern test says may stay a file.
 So they stay: a longer path is a worse name, and the rule's first clause already
@@ -484,7 +484,7 @@ open against a `kynos-otel` that may never be written.
 | reliability | Every reachable feature combination compiles | `mise run features:check` (`cargo hack --feature-powerset`) | `enforced` |
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
 | reliability | Tests are hermetic; no shared state, no ordering dependence, no retries | `cargo-nextest` process isolation, `retries = 0`, guarded by `crates/kynos/tests/hermeticity.rs` | `enforced` |
-| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 29 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
+| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 28 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
 | reliability | Panic recovery refuses to compile under `panic = "abort"` | `mise run panic:check` | `enforced` |
 | reliability | Commits follow Conventional Commits | `convco`, via git hook and CI | `enforced` |
 | compatibility | Every hand-rolled `Stream` implementation is private, except the one row in [`architecture.md`](architecture.md#public-api-surface), and there are exactly three of them | `mise run containment:check`, counting `Stream for` against the table and the two private sites its prose names | `enforced` |

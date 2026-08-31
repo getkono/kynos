@@ -204,11 +204,21 @@ if undeclared := sorted(hand_rolled - declared):
 # tests. Files still over that line are a debt, and `nfr.md` writes down how
 # many there are so the number can only move deliberately -- down as one is
 # split, and never up without someone editing the ledger and saying why.
+#
+# "Excluding tests" is satisfied by the layout rule rather than by parsing:
+# `FILES` already drops every `tests.rs`, and the convention puts a module's
+# tests in one. A module keeping an inline `mod tests` would have those lines
+# counted, which is the right pressure -- the same rule says to move them out.
+#
+# Counted with `count("\n")` rather than `len(split("\n"))`: every file here
+# ends in a newline, so splitting yields one empty trailing element and a file
+# of exactly 400 lines would be read as 401 and reported as past a line it has
+# not passed.
 NFR = (ROOT / "docs/nfr.md").read_text()
 oversized = sorted(
     path
     for path, _ in FILES
-    if len((ROOT / path).read_text().split("\n")) > 400
+    if (ROOT / path).read_text().count("\n") > 400
 )
 
 budget = re.search(r"a module-size budget of (\d+) files", NFR)
