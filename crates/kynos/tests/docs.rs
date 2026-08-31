@@ -143,7 +143,10 @@ async fn the_configured_paths_move_the_routes_and_the_pointer_together() {
     );
 
     // A page pointing at a path nothing serves is the failure the two setters
-    // share, so the pointer is checked rather than only the routes.
+    // share, so the pointer is checked rather than only the routes. The control
+    // -- that rendering does not simply append the path to whatever page it was
+    // handed -- is `a_custom_page_naming_no_token_is_served_as_written` in
+    // `src/router/docs/tests.rs`, which states it over `page::render` itself.
     assert!(
         page.text().contains("/v1/openapi.json"),
         "the page still fetches somewhere else",
@@ -191,19 +194,11 @@ async fn nesting_moves_both_routes_and_the_page_follows_them() {
     assert!(paths.contains_key("/api/openapi.json"));
 }
 
-#[tokio::test]
-async fn a_custom_page_is_served_verbatim() {
-    // The control for the two tests above: without it, "the page names the
-    // configured path" passes against an implementation that appends the path
-    // to whatever page it was handed.
-    let written = "<!doctype html><p>hi</p>";
-    let service = served(Docs::custom(written));
-    let reply = get(&service, "/docs").call().await;
-
-    assert_eq!(reply.status, StatusCode::OK);
-    assert_eq!(reply.text(), written);
-}
-
+/// With no title configured, the page carries the document's own.
+///
+/// `render` resolves this against the finished `Document`, so no test of
+/// `page::render` can reach it: `the_defaults_are_the_documented_ones` in
+/// `src/router/docs/tests.rs` proves only that the default is `None`.
 #[tokio::test]
 async fn the_title_defaults_to_the_document_title() {
     let service = served(Docs::scalar());
@@ -218,17 +213,24 @@ async fn the_title_defaults_to_the_document_title() {
     );
 }
 
+/// A configured title replaces the document's rather than joining it.
+///
+/// The negative half is what makes this the other branch of the same
+/// `unwrap_or` rather than a second reading of the sweep in
+/// `src/router/docs/tests.rs`: that one proves a title reaches every shipped
+/// page, and says nothing about which of the two titles a built router picks.
 #[tokio::test]
 async fn a_configured_title_wins_over_the_document() {
     let service = served(Docs::scalar().title("Widgets"));
+    let page = get(&service, "/docs").call().await.text();
 
     assert!(
-        get(&service, "/docs")
-            .call()
-            .await
-            .text()
-            .contains("Widgets"),
+        page.contains("Widgets"),
         "the configured title did not reach the page",
+    );
+    assert!(
+        !page.contains("Example API"),
+        "the document's own title is on the page beside the configured one",
     );
 }
 

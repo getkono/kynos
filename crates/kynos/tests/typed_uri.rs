@@ -1,8 +1,15 @@
 //! Compile and runtime checks for route-generated typed URIs.
 //!
-//! `relative_uri` is named for what it renders: the route attribute's own path
-//! template, filled in. A `Group` or `nest` prefix is applied while the router
-//! is built and is not visible here.
+//! One reason: `relative_uri` is named for what it renders -- the route
+//! attribute's own path template, filled in. A `Group` or `nest` prefix is
+//! applied while the router is built and is not visible here.
+//!
+//! Both parameter types are hand-written, so the fixture is half of what is
+//! under test: a `Schema` that describes something other than what `encode`
+//! writes is a fixture disagreeing with itself, and one that is never executed
+//! cannot disagree with anything. `the_fixture_describes_the_query_it_encodes`
+//! is what holds it to that, and is here rather than anywhere else because the
+//! fixture is.
 
 // The route attribute lives behind `macros`, and the feature powerset check
 // runs with `--no-dev-deps`, so without this gate the build breaks in a
@@ -105,7 +112,10 @@ fn route_attributes_generate_typed_percent_encoded_uris() {
 /// The fixture describes, so `ReportQuery::schema` is a body something runs.
 ///
 /// Without this the schema above would be written and never called, which is
-/// the same unexercised state the `todo!()` it replaced was in.
+/// the same unexercised state the `todo!()` it replaced was in. It asserts
+/// about the fixture rather than about `relative_uri`, which is why the module
+/// documentation above states it as the second half of this file's reason
+/// rather than leaving it looking like a stray document check.
 #[test]
 fn the_fixture_describes_the_query_it_encodes() {
     let document = kynos::Router::<()>::new()

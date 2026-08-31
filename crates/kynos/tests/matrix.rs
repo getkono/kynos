@@ -878,63 +878,6 @@ async fn exercise_the_limits(client: &TestClient<App>) {
         .assert_status(StatusCode::BAD_REQUEST);
 }
 
-/// A response header a group declares is one the conformance check requires,
-/// so this pins that the group above is actually described rather than merely
-/// sent.
-#[test]
-fn a_declared_response_header_reaches_the_description() {
-    let service = service().expect("a describable router");
-    let document = service.openapi();
-
-    let listing = document.paths.items["/users"]
-        .get
-        .as_ref()
-        .expect("a GET operation");
-
-    assert!(
-        listing.responses.responses["200"]
-            .as_item()
-            .expect("an inline response")
-            .headers
-            .contains_key("X-Total-Count"),
-        "a header group with `DESCRIBED = true` was sent and not declared"
-    );
-}
-
-/// An interceptor's response header is declared where a consumer will look for
-/// it.
-///
-/// `ErasedInterceptor::describe` files the header under `StatusPattern::Success`
-/// — the `2XX` key. A consumer resolving an observed 200 takes the *exact* key
-/// first, per the precedence the specification gives, so it reaches the `200`
-/// entry and never sees the header. The operation therefore sends a header its
-/// description declares nowhere a reader will find it, and the `2XX` entry is a
-/// response no service can ever produce.
-///
-/// This is the failure `assert_declared_responses_covered` reports above: nine
-/// `2XX` keys, one per operation, none reachable.
-#[test]
-fn an_interceptors_response_header_is_declared_where_a_consumer_resolves_it() {
-    let service = service().expect("a describable router");
-    let document = service.openapi();
-
-    let listing = document.paths.items["/users/{id}"]
-        .get
-        .as_ref()
-        .expect("a GET operation");
-
-    let success = listing.responses.responses["200"]
-        .as_item()
-        .expect("an inline 200");
-
-    assert!(
-        success.headers.contains_key("X-Request-Id"),
-        "the 200 a consumer resolves declares {:?}, and the header an \
-         interceptor sets is filed under a key nothing resolves to",
-        success.headers.keys().collect::<Vec<_>>()
-    );
-}
-
 /// Both halves of the mounted reference.
 ///
 /// Each declares one status and one media type, so this is the whole of what

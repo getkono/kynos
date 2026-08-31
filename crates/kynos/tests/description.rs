@@ -726,3 +726,118 @@ async fn doubly_declared(
 ) -> kynos::extract::body::text::Text {
     kynos::extract::body::text::Text("Hello".to_owned())
 }
+
+// --- Scope in a status, for a field the handler never writes ----------------
+//
+// The same question from the other side. A response header contributed by a
+// header *group* or by an *interceptor* has to reach the status a consumer
+// resolves an observed response to. OpenAPI resolves an exact key before a
+// wildcard, so a header filed under `2XX` beside a declared `200` is a header
+// no reader of that 200 ever sees — and the `2XX` entry is then a response no
+// service can produce.
+//
+// `tests/matrix.rs` is where that was found: its
+// `assert_declared_responses_covered` reported nine unreachable `2XX` keys, one
+// per operation, on the first run over the whole owned-layer matrix. It remains
+// the guard, because only a live exchange can notice a declared response that
+// never happened; these state the rule where a failure names it, over a fixture
+// small enough to read.
+
+/// A declared response header group, so a `WithHeaders` return has something
+/// the description promises.
+#[derive(kynos::HeaderParams)]
+struct Paging {
+    /// How many records the collection holds.
+    #[header(rename = "X-Total-Count")]
+    total: u64,
+}
+
+/// One operation answering 200, with a group on its response.
+#[kynos::get("/listing")]
+async fn listing() -> kynos::response::headers::WithHeaders<kynos::extract::body::text::Text, Paging>
+{
+    kynos::response::headers::WithHeaders::new(
+        kynos::extract::body::text::Text("[]".to_owned()),
+        Paging { total: 0 },
+    )
+}
+
+/// A response header a group declares is one the conformance check requires, so
+/// this pins that the group is described rather than merely sent.
+#[test]
+fn a_declared_response_header_reaches_the_description() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![listing, alpha])
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(
+        declared_headers(&operation(&document, "/listing"), "200"),
+        Some(vec!["X-Total-Count".to_owned()]),
+        "a header group with `DESCRIBED = true` was sent and not declared"
+    );
+
+    // The control: an operation carrying no group declares the name on none of
+    // its statuses, so the case above is about the group rather than about a
+    // `describe` pass that names `X-Total-Count` everywhere.
+    let control = operation(&document, "/alpha");
+    for status in control.responses.responses.keys() {
+        assert_eq!(
+            declared_headers(&control, status),
+            Some(Vec::new()),
+            "{status}"
+        );
+    }
+}
+
+/// An interceptor's response header is declared where a consumer will look for
+/// it.
+///
+/// `ErasedInterceptor::describe` files the header under `StatusPattern::Success`
+/// — the `2XX` pattern. Spreading it over the statuses already declared is what
+/// makes it reachable: a consumer resolving an observed 200 takes the exact key
+/// first, per the precedence the specification gives, so a header left on a
+/// `2XX` entry is one it never sees.
+#[test]
+fn an_interceptors_response_header_is_declared_where_a_consumer_resolves_it() {
+    let document = Router::<()>::new()
+        .intercept(kynos::middleware::request_id::RequestId::new())
+        .mount(kynos::routes![listing])
+        .openapi()
+        .expect("a describable router");
+
+    let listing = operation(&document, "/listing");
+    let declared = declared_headers(&listing, "200").expect("a described 200");
+
+    assert!(
+        declared.contains(&"X-Request-Id".to_owned()),
+        "the 200 a consumer resolves declares {declared:?}, and the header an \
+         interceptor sets is filed under a key nothing resolves to"
+    );
+
+    // And the wildcard it was filed under is not left behind as a response
+    // nothing can produce.
+    assert!(
+        !listing.responses.responses.contains_key("2XX"),
+        "{:?}",
+        listing.responses.responses.keys().collect::<Vec<_>>()
+    );
+}
+
+/// Setting a cookie means declaring it, on the status that carries it.
+#[cfg(feature = "cookie")]
+#[test]
+fn a_cookie_an_interceptor_sets_is_declared_where_a_consumer_resolves_it() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![listing])
+        .intercept(kynos::middleware::cookies::SetCookies::new(vec![
+            kynos::response::cookie::Cookie::new("locale", "en"),
+        ]))
+        .openapi()
+        .expect("a describable router");
+
+    let declared =
+        declared_headers(&operation(&document, "/listing"), "200").expect("a described 200");
+
+    assert!(declared.contains(&"Set-Cookie".to_owned()), "{declared:?}");
+}
