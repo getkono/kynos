@@ -5,11 +5,11 @@ measurement a given shape of code owes. [`nfr.md`](nfr.md) records which of
 these run today; this document is about the method.
 
 Every section except [Rationale](#rationale) states a rule that binds
-implementation work. One of the five kinds below runs today and the rest do
-not, and the [taxonomy](#the-taxonomy)'s last column is where that is admitted
-rather than implied.
+implementation work. Two of the five kinds below run today, one of them only
+for part of what it covers, and the [taxonomy](#the-taxonomy)'s last column is
+where that is admitted rather than implied.
 
-The one that runs has already earned the document: the routing path was
+The newer of the two has already earned the document: the routing path was
 required to allocate nothing, had never been measured, and allocates seven
 times for a static match. [`nfr.md`](nfr.md#routing) carries the numbers and
 what they do and do not establish.
@@ -127,9 +127,15 @@ cannot show.
 
 | Grade | Owes | Flags |
 | --- | --- | --- |
-| Full battery | everything its shape owes above | `server`, `http1`, `http2`, `tls`, `json`, `form`, `multipart`, `protobuf`, `compression`, `cache`, `cookie`, `assets`, `assets-fs`, `docs`, `unchecked`, `openapi32`, `trace` |
-| Off-path proof | a proof it is unreachable from the request path, and a binary delta | `openapi31`, `macros`, `yaml`, `test-util`, `uuid`, `time`, `time-chrono`, `time-jiff`, `decimal`, `decimal-rust`, `decimal-big` |
+| Full battery | everything its shape owes above | `server`, `http1`, `http2`, `tls`, `json`, `form`, `multipart`, `protobuf`, `compression`, `cache`, `cookie`, `assets`, `assets-fs`, `docs`, `unchecked`, `openapi32`, `trace`, `macros` |
+| Off-path proof | a proof it is unreachable from the request path, and a binary delta | `openapi31`, `yaml`, `test-util`, `uuid`, `time`, `time-chrono`, `time-jiff`, `decimal`, `decimal-rust`, `decimal-big` |
 | Aggregate | nothing of its own; it is the union of what it enables | `default`, `full` |
+
+**`macros` is graded full despite adding no runtime code.** It gates every
+derive, a derive is a type-level surface, and the shape table bills that a
+codegen delta — which is a measurement an off-path proof does not include.
+Grading it off-path would have filed the one flag most able to move
+monomorphized IR under the grade that never looks at it.
 
 **The grading is graded because the batteries cost different amounts.** A
 scalar format whose whole contribution is a JSON Schema `format` cannot reach

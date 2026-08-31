@@ -29,16 +29,24 @@ while the closing section says it deliberately will not; those rows moved to
 `kynos-bench`, which is where the harness that gives a threshold meaning
 already lives.
 
-**That sweep went one row too wide, and three have come back.** It filed by
-*method* — everything that named `criterion` left — when the question is *what
-the requirement names*. Document generation, route resolution at scale and
-per-layer overhead each name something only Kynos has, so no comparative
-harness answers them and sending them away left them measured nowhere. They are
-in-repo again and counted rather than timed, which is why none of the three
-needs `criterion` after all;
-[`performance.md`](performance.md#the-boundary) carries the reasoning. What
-stays in `kynos-bench` is what any server answers: syscalls per request, idle
-memory per connection, and the nightly suite itself.
+**That sweep went one row too wide, and what came back is a counted half
+rather than a whole row.** It filed by *method* — everything that named
+`criterion` left — when the question is *what the requirement names*. Document
+generation, route resolution at scale and per-layer overhead each name
+something only Kynos has, so no comparative harness answers them and sending
+them away left them measured nowhere.
+
+Each is now two requirements rather than one moved requirement, and the split
+is the boundary applied twice. What can be *counted* — allocations, output
+bytes, `size_of` — is specific to Kynos and deterministic, so it is in-repo and
+`planned`. What can only be *timed* stays in `kynos-bench`, because a
+wall-clock ceiling on a shared runner is a guessed ceiling by the standard
+[Thresholds](#thresholds) sets, whatever the requirement names.
+[`performance.md`](performance.md#the-boundary) carries the reasoning.
+
+Nothing was deleted in the split, and that is deliberate: replacing a latency
+requirement with an allocation one and calling it a refiling would leave the
+latency unmeasured in both repositories while this column claimed otherwise.
 
 Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
 `trybuild`, `proptest`, `stats_alloc`, rustdoc with `missing_docs = "deny"`, and
@@ -87,6 +95,7 @@ disabled, or passes trivially and hides the regression it was meant to catch.
 | dx | No public item exposes `Pin`, `BoxFuture` or a tokio type | `cargo-public-api` assertion | `needs-tooling` |
 | operability | `--check` mode exits nonzero on drift from the committed document | A binary target, used as a required gate on the framework's own examples | `blocked-on-impl` |
 | performance | Generation allocations and output size scale sub-quadratically in operation count | Counting the allocations and output bytes of one emission at 10/100/1000 operations, with a fitted-slope assertion | `planned` |
+| performance | Generation time scales sub-quadratically in operation count | Measured at 10/100/1000 operations with a fitted-slope assertion | `kynos-bench` |
 
 The `--check` row's blocker was never a `todo!()` body: the workspace declares no
 binary target at all, and no command-line surface is designed anywhere. It is
@@ -158,9 +167,9 @@ of which anything here would currently catch.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| performance | Route dispatch allocates a recorded number of times per route shape, and a replayed request costs what the first one did | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), over a handler that allocates nothing, counting fresh allocations and reallocations across a 10k-request replay | `enforced` |
-| performance | Zero heap allocations on the routing path | The same target. Its ceilings are 7 for a static match, 11 for one path parameter and 6 for a request matching no route | `partial`; the count is enforced and the zero is not met — below |
-| performance | Route resolution cost is invariant in the number of registered operations | The counting allocator of the row above, over routers built at 1 and at 1000 operations, asserting the per-request counts are equal | `planned` |
+| performance | Route dispatch allocates at most a recorded number of times per route shape, and a replayed request costs what the first one did | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), over a handler that allocates nothing, counting fresh allocations and reallocations across a 10k-request replay | `enforced` |
+| performance | Zero heap allocations on the routing path | — | `absent`. The row above enforces a ceiling, which is the opposite direction; nothing asserts the zero, and the measurement below is why |
+| performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `kynos-bench` |
 | reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; [`tests/routing.rs`](../crates/kynos/tests/routing.rs) over `Router::validate` for those only visible once the tree is assembled, each refusal with its pass control | `enforced` |
 | security | A served asset path is enumerated, never joined from request input | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) asserting an embedded set registers only literal `paths` keys, and [`router/assets/fs/tests.rs`](../crates/kynos/src/router/assets/fs/tests.rs) sweeping every escape a resolver must refuse against a control that must not be | `enforced` |
 | correctness | A route with no expressible template is recorded rather than described | [`tests/unchecked.rs`](../crates/kynos/tests/unchecked.rs) asserting a catch-all takes no `paths` key and reaches `x-kynos-opaque-routes` | `enforced` |
@@ -170,9 +179,14 @@ of which anything here would currently catch.
 **The zero was never measured, and it is wrong.** The row above asked for
 `alloc_count == 0` and was `planned` for as long as this document has existed;
 wiring it reports seven allocations for a static match, eleven once a path
-parameter is captured, and six for a request that matches no route. The numbers
-are stable to the allocation across a ten-thousand-request replay, so this is a
-property of the path rather than a noisy reading.
+parameter is captured and read, and six for a request that matches no route.
+Every one of the three is stable to the allocation across a
+ten-thousand-request replay, so these are properties of the path rather than
+noisy readings.
+
+The eleven is dispatch *and* the `Path` extractor that deserializes the
+capture, so the excess over a static match is not the router's alone. Which of
+the four belongs to which is part of the attribution below.
 
 Nothing here attributes those seven to the lines that make them, and this
 document does not guess: the candidates a reader will think of first — the
@@ -238,6 +252,7 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | Contribution composition is order-sensitive and deterministic | Permuted stacks produce differing, stable documents | `planned` for the *document*; the composition **check** is no longer order-sensitive, which is the order-insensitivity row above |
 | reliability | `Opaque` propagates to every affected operation and omits none | Unit test over a synthetic router tree | `planned` |
 | performance | Per-layer added allocations and future size ≤ TBD | The counting allocator and `size_of` over one interceptor stack at depth 0/4/8, reported as the marginal cost of a layer | `planned` |
+| performance | Per-layer added p99 ≤ TBD | `criterion` at stack depth 0/4/8 with a regression gate | `kynos-bench` |
 | correctness | A stored response is never served to a request its stored `Vary` does not select | [`middleware/cache/tests.rs`](../crates/kynos/src/middleware/cache/tests.rs) over the selection rules, plus [`tests/cache.rs`](../crates/kynos/tests/cache.rs) over a live sequence | `enforced` |
 | correctness | A response that stated no freshness is never reused | [`tests/cache.rs`](../crates/kynos/tests/cache.rs) counting handler calls across three requests | `enforced` |
 | correctness | A timeout answers a status the specification defines for an origin server | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) over a live handler past its budget, and [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) against the emitted document | `enforced` |

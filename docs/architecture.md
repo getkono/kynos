@@ -373,12 +373,13 @@ by nothing under `src/`, which is the standing `rcgen`, `listenfd` and
 `tracing-subscriber` already have: this table governs what Kynos depends on, not
 what an example demonstrates.
 
-`stats_alloc` is a fifth, and the reason it exists is
-[`unsafe_code = "forbid"`](#invariants). The allocation-count kind in
-[`performance.md`](performance.md#the-taxonomy) needs a global allocator that
-reports what a region allocated, and `forbid` is not liftable by an `#[allow]`
-— so the `unsafe impl GlobalAlloc` such a counter requires cannot compile
-anywhere in this workspace. Taking a vetted one is how the invariant is kept
+`stats_alloc` is a fifth, and the reason it exists is the
+`unsafe_code = "forbid"` in the root manifest's `[workspace.lints.rust]`. The
+allocation-count kind in [`performance.md`](performance.md#the-taxonomy) needs
+a global allocator that reports what a region allocated, and `forbid` is not
+liftable by an `#[allow]` — so the `unsafe impl GlobalAlloc` such a counter
+requires cannot compile in any crate inheriting those lints, which is all three
+of them. Taking a vetted one is how the invariant is kept
 rather than bent: the unsafe stays upstream, and this tree keeps a rule it
 would otherwise have had to carve an exception into. It is a dev-dependency
 named by [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) and by nothing

@@ -7,12 +7,21 @@
 //! `#[global_allocator]` is process-wide: installed in the library's unit-test
 //! binary it would count, and slow, every other unit test in it.
 //!
+//! **The counters are process-global, so this target is correct only under one
+//! process per test.** `stats_alloc` counts into globals rather than into
+//! thread locals, so the three tests below would contaminate each other as
+//! threads of one binary — under `cargo test` they do, and report figures
+//! several times the real ones. `cargo nextest` gives each its own process,
+//! which is what [`hermeticity.rs`](hermeticity.rs) exists to hold, and
+//! `.config/nextest.toml` is where that is configured. Nothing here can assert
+//! it: a test that has already been contaminated cannot notice.
+//!
 //! **These numbers record a requirement that is not met.**
 //! [`nfr.md`](../../../docs/nfr.md#routing) asks for zero allocations on the
 //! routing path and the path allocates seven times for a static match. The
-//! ceilings below are the measurement, not the target, as
+//! ceilings are the measurement rather than the target, as
 //! [`nfr.md`](../../../docs/nfr.md#thresholds) requires of a first
-//! measurement — and this file is the characterization the row points at, so
+//! measurement — and this file is the characterization that row points at, so
 //! that closing the gap turns something red rather than nothing.
 
 #![cfg(feature = "macros")]
@@ -35,14 +44,20 @@ use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 #[global_allocator]
 static ALLOCATOR: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
-/// What a static match costs, with no parameter to capture.
-const STATIC_MATCH: usize = 7;
-
-/// What one path parameter costs on top of that.
-const ONE_PARAMETER: usize = 11;
-
-/// What a request matching no route costs.
-const NO_MATCH: usize = 6;
+/// Every shape measured here, with what it costs today.
+///
+/// `/users/{id}` is dispatch *and* the `Path` extractor that reads the capture,
+/// so its excess over `/ping` is not the router's alone. Splitting the two is
+/// the attribution [`nfr.md`](../../../docs/nfr.md#routing) names as the next
+/// piece of work.
+const SHAPES: [(&str, usize); 3] = [
+    // A static match, with no parameter to capture.
+    ("/ping", 7),
+    // One path parameter, captured and deserialized.
+    ("/users/7", 11),
+    // A request matching no route at all.
+    ("/nope", 6),
+];
 
 #[derive(Schema, kynos::PathParams)]
 struct One {
@@ -75,6 +90,11 @@ fn service() -> Service<()> {
 /// pass as free. The request is built before the region opens, because parsing
 /// a target and boxing a body are the caller's cost rather than the router's,
 /// and the response is dropped after the region closes for the same reason.
+///
+/// There is no warm-up request. `Router::build` initialises eagerly, so the
+/// first request through a service costs exactly what the thousandth does —
+/// and a warm-up here would be the one construct able to hide a one-time cost
+/// introduced later.
 async fn counted(service: &Service<()>, target: &str) -> usize {
     let mut request = Request::new(Body::empty());
     *request.method_mut() = Method::GET;
@@ -95,17 +115,7 @@ async fn counted(service: &Service<()>, target: &str) -> usize {
 async fn the_routing_path_allocates_where_the_requirement_asks_for_nothing() {
     let service = service();
 
-    // A first request pays for whatever the service initialises once. The
-    // requirement is about the steady state, so it is not what is counted.
-    for target in ["/ping", "/users/7", "/nope"] {
-        let _ = counted(&service, target).await;
-    }
-
-    for (target, ceiling) in [
-        ("/ping", STATIC_MATCH),
-        ("/users/7", ONE_PARAMETER),
-        ("/nope", NO_MATCH),
-    ] {
+    for (target, ceiling) in SHAPES {
         let counted = counted(&service, target).await;
         assert!(
             counted <= ceiling,
@@ -117,14 +127,11 @@ async fn the_routing_path_allocates_where_the_requirement_asks_for_nothing() {
 }
 
 /// The relation the absolutes are there to hold, and the one that survives a
-/// change to any of them: a capture costs more than the match that found it,
-/// and a request that matched nothing costs least of all.
+/// change to any of them: reading a parameter costs more than the static match
+/// that found it, and a request that matched nothing costs least of all.
 #[tokio::test]
 async fn a_capture_is_what_a_path_parameter_costs() {
     let service = service();
-    for target in ["/ping", "/users/7", "/nope"] {
-        let _ = counted(&service, target).await;
-    }
 
     let matched = counted(&service, "/ping").await;
     let captured = counted(&service, "/users/7").await;
@@ -146,26 +153,33 @@ async fn a_capture_is_what_a_path_parameter_costs() {
 /// request costs, the ten-thousandth costs the same. A count that climbed would
 /// be state accumulating on the routing path, which no single-request
 /// measurement can see.
+///
+/// Every shape is replayed, not only the parameterised one: a table that
+/// records three numbers and replays one would leave two of them resting on a
+/// single reading.
 #[tokio::test]
 async fn a_replayed_request_costs_what_the_first_one_did() {
     let service = service();
-    let _ = counted(&service, "/users/7").await;
 
-    let first = counted(&service, "/users/7").await;
-    let mut moved = Vec::new();
-    for index in 0..10_000 {
-        let counted = counted(&service, "/users/7").await;
-        if counted != first {
-            moved.push((index, counted));
+    for (target, _) in SHAPES {
+        let first = counted(&service, target).await;
+        let mut moved = Vec::new();
+
+        for index in 0..10_000 {
+            let counted = counted(&service, target).await;
+            if counted != first {
+                moved.push((index, counted));
+            }
         }
-    }
 
-    assert!(
-        moved.is_empty(),
-        "dispatch allocated {first} times on one request and differently on \
-         {} of the next ten thousand, starting at {:?}; a count that moves \
-         between identical requests is state accumulating on the routing path",
-        moved.len(),
-        moved.first()
-    );
+        assert!(
+            moved.is_empty(),
+            "{target} allocated {first} times on one request and differently \
+             on {} of the next ten thousand, starting at {:?}; a count that \
+             moves between identical requests is state accumulating on the \
+             routing path",
+            moved.len(),
+            moved.first()
+        );
+    }
 }
