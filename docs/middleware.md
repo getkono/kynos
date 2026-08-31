@@ -455,7 +455,7 @@ four different answers depending on which layer is asked.
 
 | Vector | HTTP/1 | HTTP/2 | Server | Interceptor | Bounded by default? |
 | --- | --- | --- | --- | --- | --- |
-| Request line and URI length | must fit `max_buffer_size` (≈417 KiB) | `max_header_list_size`, 16 KiB | — | — | yes, loosely |
+| Request line and URI length | must fit `max_buffer_size` (408 KiB) | `max_header_list_size`, 16 KiB | — | — | yes, loosely |
 | Header count | `max_headers`, 100 → 431 | by list size rather than count | — | — | yes |
 | Header-list size | `max_buffer_size` | `max_header_list_size` | — | — | yes |
 | Query-string length | subsumed by the URI | subsumed by the list size | — | — | yes, loosely |
