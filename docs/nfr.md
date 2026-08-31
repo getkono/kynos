@@ -384,7 +384,7 @@ the one directly above it in AGENTS.md — *"Submodules are `pub` with no parent
 re-exports"* — in a way worth stating. Splitting a module that declares several
 public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: eight rejection
-types in 644 lines, and splitting it would turn `error::rejection::PathRejection`
+types in 643 lines, and splitting it would turn `error::rejection::PathRejection`
 into `error::rejection::path::PathRejection`. Sixteen of the twenty-eight are that
 shape, worth roughly a hundred public paths between them — and each is one
 cohesive family, which is precisely what the concern test says may stay a file.
