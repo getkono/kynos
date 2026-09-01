@@ -402,6 +402,36 @@ mod typed_uri {
     /// by the type system -- `(Option<_>, Option<_>)` has four inhabitants and
     /// the `match` is exhaustive or it does not compile. An arm that dropped the
     /// documentation is caught here already, by the emptiness assertion.
+    /// How far a line's leading whitespace carries it, in columns.
+    ///
+    /// Counted in columns rather than in characters because a tab is not worth
+    /// one: CommonMark advances it to the next four-column stop, so a single
+    /// leading tab opens the same indented code block that eight spaces did and
+    /// a character count would read it as an indent of one. A sugared `///`
+    /// fragment contributes one leading space of its own, which is why the
+    /// threshold is four columns rather than none.
+    fn indent_columns(line: &str) -> usize {
+        let mut columns = 0;
+        for character in line.chars() {
+            match character {
+                ' ' => columns += 1,
+                '\t' => columns += 4 - columns % 4,
+                _ => break,
+            }
+        }
+        columns
+    }
+
+    /// Whether two whitespace characters stand next to each other.
+    ///
+    /// Any two, not two spaces: a literal re-wrapped without its line breaks
+    /// leaves whatever whitespace the source indentation was made of.
+    fn has_doubled_whitespace(line: &str) -> bool {
+        line.chars()
+            .zip(line.chars().skip(1))
+            .any(|(left, right)| left.is_whitespace() && right.is_whitespace())
+    }
+
     #[test]
     fn every_emitted_doc_line_renders_as_prose() {
         for (description, function, path, variables) in arms() {
@@ -412,13 +442,13 @@ mod typed_uri {
             );
             for line in doc.lines() {
                 assert!(
-                    !line.starts_with("    "),
-                    "{description}: `{line}` is indented four spaces, which Markdown reads as a \
+                    indent_columns(line) < 4,
+                    "{description}: `{line}` is indented four columns, which Markdown reads as a \
                      Rust code block and rustdoc then tries to compile"
                 );
                 assert!(
-                    !line.trim_start().contains("  "),
-                    "{description}: `{line}` carries a run of spaces, which is what a literal \
+                    !has_doubled_whitespace(line.trim_start()),
+                    "{description}: `{line}` carries a run of whitespace, which is what a literal \
                      re-wrapped without its line breaks looks like"
                 );
             }
