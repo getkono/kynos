@@ -27,6 +27,59 @@ fn http2_defaults_are_owned_by_kynos() {
     );
 }
 
+/// `accept.rs` clones the whole `TransportConfig` per accepted socket, so this
+/// is a per-connection cost rather than a per-server one. A ceiling, measured
+/// and rounded up as `docs/nfr.md#thresholds` requires.
+#[cfg(feature = "http1")]
+#[test]
+fn an_http1_config_is_cheap_to_copy_per_connection() {
+    let http1 = size_of::<Http1Config>();
+
+    assert!(
+        http1 <= 64,
+        "Http1Config grew to {http1} bytes; it is copied once per accepted socket"
+    );
+}
+
+/// The same, for the HTTP/2 half. `Http2FlowControl` and `Http2KeepAlive` get no
+/// ceiling of their own: neither is ever held per connection on its own, and
+/// this bound already fails when either of them grows.
+#[cfg(feature = "http2")]
+#[test]
+fn an_http2_config_is_cheap_to_copy_per_connection() {
+    let http2 = size_of::<Http2Config>();
+
+    assert!(
+        http2 <= 128,
+        "Http2Config grew to {http2} bytes; it is copied once per accepted socket"
+    );
+}
+
+/// The relation the two ceilings above only ratchet. `TransportConfig` is the
+/// struct `accept.rs` actually clones per socket, and it should stay smaller
+/// than the smallest read/write buffer it configures — otherwise describing a
+/// connection would cost more than serving one.
+///
+/// Gated on `http1` for the constant, not for `TransportConfig`, which exists
+/// wherever `server` does. Measured with every feature on, which is where
+/// `TransportConfig` is widest: it gains its TLS runtime there.
+#[cfg(feature = "http1")]
+#[test]
+fn the_per_connection_config_is_smaller_than_the_buffer_it_configures() {
+    let config = size_of::<super::TransportConfig>();
+    let floor = crate::server::protocol::MIN_HTTP1_BUFFER_SIZE;
+
+    assert!(
+        config <= 192,
+        "TransportConfig grew to {config} bytes; it is cloned once per accepted socket"
+    );
+    assert!(
+        config < floor,
+        "TransportConfig ({config} bytes) must stay under the smallest transport buffer \
+         it configures ({floor} bytes)"
+    );
+}
+
 #[test]
 fn shutdown_default_leaves_an_orchestrator_margin() {
     assert_eq!(super::DEFAULT_SHUTDOWN_TIMEOUT.as_secs(), 25);
