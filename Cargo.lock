@@ -1152,7 +1152,7 @@ dependencies = [
 
 [[package]]
 name = "kynos"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "alloc_counter",
  "async-compression",
@@ -1200,7 +1200,7 @@ dependencies = [
 
 [[package]]
 name = "kynos-macros"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "kynos-openapi",
  "proc-macro2",
@@ -1210,7 +1210,7 @@ dependencies = [
 
 [[package]]
 name = "kynos-openapi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "http",
  "indexmap",

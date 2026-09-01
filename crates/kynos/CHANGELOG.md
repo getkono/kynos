@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/getkono/kynos/compare/kynos-v0.1.0...kynos-v0.2.0) - 2026-09-01
+
+### Added
+
+- *(kynos)* fold a mounted scope's stack onto the one it was mounted beside
+- *(kynos)* state the language a response is written in
+- *(kynos)* choose a response language from the client's priority list
+- *(kynos)* match a language range against an offer by truncation and by prefix
+- *(kynos)* read a language tag as the grammar RFC 5646 closes
+
+### Documentation
+
+- *(router)* correct add_tag's claim about where a duplicated tag survives
+- *(composition)* let the attribute tag document itself
+- *(nfr)* keep the timed half of every performance row it refiled
+- *(errors)* localize a problem detail from the application's own catalogue
+- *(examples)* serve one resource in three languages
+- *(nfr)* characterize the offer a catalogue on disk cannot state
+
+### Fixed
+
+- *(router)* apply a route attribute's tag to its operation and register its metadata
+- *(kynos)* count allocations on the measuring thread only
+- *(kynos)* keep the runtime out of the region that counts allocations
+- *(kynos)* keep the mounted scopes across catch_panics
+- *(kynos)* [**breaking**] check a later interceptor against the scopes already mounted
+- *(kynos)* [**breaking**] keep the interceptor stack across catch_panics
+- *(kynos)* check an encoded field against the names its group declares
+- *(kynos)* [**breaking**] attach a header group to a continued response exactly once
+- *(openapi)* compare a header parameter's name the way HTTP compares one
+- *(kynos)* make the constructor case fail for the reason it names
+- *(kynos)* rank an offer by the priority the client wrote, not the one it holds
+- *(kynos)* repair the four doc links the module split moved
+
+### Other
+
+- *(kynos)* [**breaking**] split the language module along the two concerns it grew
+
 ## [0.1.0](https://github.com/getkono/kynos/releases/tag/kynos-v0.1.0) - 2026-08-29
 
 ### Added
