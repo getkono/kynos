@@ -5,8 +5,12 @@ use std::time::Duration;
 
 use crate::server::error::ServerError;
 
+/// The smallest per-connection read/write buffer the crate accepts.
+///
+/// `pub(crate)` so per-connection budgets elsewhere can be measured against
+/// it rather than against a figure transcribed from prose, which would drift.
 #[cfg(feature = "http1")]
-const MIN_HTTP1_BUFFER_SIZE: usize = 8_192;
+pub(crate) const MIN_HTTP1_BUFFER_SIZE: usize = 8_192;
 
 /// HTTP/1 tuning.
 ///
