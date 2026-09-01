@@ -61,11 +61,8 @@ impl<'a> Route<'a> {
 pub struct OperationCx<'a> {
     registry: &'a mut Registry,
     operation: kynos_openapi::Operation,
-    /// Every tag that actually landed on the operation, in the order it did.
-    ///
-    /// The operation's own `tags` is a list of names; this is what the names
-    /// came from, so the describe walk can register the metadata for exactly
-    /// the tags that reached it rather than for every tag anyone declared.
+    /// What the operation's `tags` names came from, in the order they landed,
+    /// so the describe walk registers metadata for exactly the tags it carries.
     tags: Vec<DeclaredTag>,
 }
 
@@ -271,7 +268,9 @@ impl OperationCx<'_> {
     ///
     /// Adding a tag the operation already carries is a no-op: `tags` is a set
     /// spelled as an array, and a repeated entry names no further group. A tag
-    /// applied at two scopes therefore appears once, at its innermost position.
+    /// named at two scopes appears once, in the slot of the *first* scope to
+    /// name it — the operation's own if it named it, otherwise the outermost
+    /// enclosing scope. `docs/routing.md` carries the full order.
     ///
     /// A [`DeclaredTag`] rather than a name, so that the metadata documenting
     /// the tag arrives with it. A name on its own is an operation filed under
