@@ -415,7 +415,15 @@ def movers(rows, drifts, recorded, delta):
 
 
 def attribute(label, functions):
-    """The monomorphizations whose IR moved most between a point and baseline.
+    """One point's composition: how its monomorphizations differ from baseline.
+
+    This is the feature's standing cost against `openapi31` in *this* run. It
+    is deliberately not the drift the list above may have ranked by, and the
+    two must not be confused: drift is measured against the recorded baseline,
+    and no per-function drift can be computed because per-function counts are
+    not recorded -- `codegen.tsv` says why, and it is a decision rather than an
+    omission. The heading printed above these blocks says which quantity this
+    is, for that reason.
 
     Report-only, and not recorded: these names churn with every generic
     signature, so a committed file of them would be a diff generator rather
@@ -452,7 +460,16 @@ def section(title, note, rows, recorded, value, delta, unit, functions=None):
     listed = [f"- `{label}` {moved:+}" for label, moved in ranked] or ["- none"]
     out = [f"### {title}", "", note, "", body, "", f"#### {heading}", "", *listed, ""]
     if functions is not None and ranked:
-        out += ["#### Where the IR moved", ""]
+        out += [
+            "#### What those features instantiate, against `openapi31`",
+            "",
+            "Each block is the listed feature's own composition in this run: "
+            "the monomorphizations that differ between it and the `openapi31` "
+            "baseline. Where the ranking above is by drift, this is *not* an "
+            "explanation of that drift — per-function counts are not recorded "
+            "in the baseline, so no per-function drift exists to show.",
+            "",
+        ]
         for label, _ in ranked:
             out += attribute(label, functions)
     return out
