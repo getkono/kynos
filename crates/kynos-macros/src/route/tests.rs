@@ -388,22 +388,6 @@ mod typed_uri {
         ]
     }
 
-    /// Every arm's documentation renders as prose, not as a code block.
-    ///
-    /// Markdown reads four or more leading spaces as an indented code block, and
-    /// rustdoc compiles an unannotated code block as Rust -- so an indented
-    /// paragraph here is one failing doctest per route attribute in every crate
-    /// that writes one, and nothing in this workspace renders this documentation
-    /// to notice. Swept rather than sampled: the emitter matches on
-    /// `(Option<Path<T>>, Option<Query<T>>)`, so these four rows are the set.
-    ///
-    /// No counter stands beside this one, unlike the diagnostics above: that set
-    /// is open and a rule can be added without a case, while this one is closed
-    /// by the type system -- `(Option<_>, Option<_>)` has four inhabitants and
-    /// the `match` is exhaustive or it does not compile. What the type system
-    /// does *not* close is this table's mapping onto those inhabitants, which is
-    /// transcribed; the distinct-builder assertion at the end is what holds it,
-    /// so the exhaustiveness here is asserted rather than intended.
     /// How far a line's leading whitespace carries it, in columns.
     ///
     /// Counted in columns rather than in characters because a tab is not worth
@@ -434,6 +418,22 @@ mod typed_uri {
             .any(|(left, right)| left.is_whitespace() && right.is_whitespace())
     }
 
+    /// Every arm's documentation renders as prose, not as a code block.
+    ///
+    /// Markdown reads four or more leading spaces as an indented code block, and
+    /// rustdoc compiles an unannotated code block as Rust -- so an indented
+    /// paragraph here is one failing doctest per route attribute in every crate
+    /// that writes one, and nothing in this workspace renders this documentation
+    /// to notice. Swept rather than sampled: the emitter matches on
+    /// `(Option<Path<T>>, Option<Query<T>>)`, so these four rows are the set.
+    ///
+    /// No counter stands beside this one, unlike the diagnostics above: that set
+    /// is open and a rule can be added without a case, while this one is closed
+    /// by the type system -- `(Option<_>, Option<_>)` has four inhabitants and
+    /// the `match` is exhaustive or it does not compile. What the type system
+    /// does *not* close is this table's mapping onto those inhabitants, which is
+    /// transcribed; the distinct-builder assertion at the end is what holds it,
+    /// so the exhaustiveness here is asserted rather than intended.
     #[test]
     fn every_emitted_doc_line_renders_as_prose() {
         let mut builders = Vec::new();
