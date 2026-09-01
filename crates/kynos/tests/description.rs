@@ -11,10 +11,16 @@
 //! covered by `limits.rs` and `interceptors.rs`. This is about which operations
 //! the declaration reaches.
 //!
-//! The second half of the file is the same question one level down: which
-//! *statuses* within an operation a declaration reaches. A response field
-//! declared on a status that gives it no meaning is the same silent error as an
-//! interceptor declared on an operation it does not cover.
+//! The second section is the same question one level down: which *statuses*
+//! within an operation a declaration reaches. A response field declared on a
+//! status that gives it no meaning is the same silent error as an interceptor
+//! declared on an operation it does not cover.
+//!
+//! The third is the question on its remaining axis: which of the four tag
+//! scopes reaches the document at all, and whether each one that puts a name on
+//! an operation also puts that tag's metadata in the document's own `tags`. A
+//! scope that pays one half and not the other produces a document that still
+//! validates against everything else here.
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
@@ -30,7 +36,7 @@ use kynos::{
         range::{Range, Ranged},
         status::NoContent,
     },
-    router::group::Group,
+    router::{endpoint::builder::EndpointBuilder, group::Group},
 };
 
 #[kynos::get("/alpha")]
@@ -840,4 +846,217 @@ fn a_cookie_an_interceptor_sets_is_declared_where_a_consumer_resolves_it() {
         declared_headers(&operation(&document, "/listing"), "200").expect("a described 200");
 
     assert!(declared.contains(&"Set-Cookie".to_owned()), "{declared:?}");
+}
+
+// --- Scope in the document's tags -------------------------------------------
+//
+// The same question again, on the axis the sections above do not reach. A tag
+// is applied at four scopes -- `Router::tag`, `Group::tag`,
+// `EndpointBuilder::tag`, and `tag = T` on the route attribute -- and
+// `docs/routing.md` promises they "add rather than override". Each of them owes
+// the document two things: the tag's *name* on every operation it covers, and
+// the tag's *metadata* in the document's own `tags`. A name that arrives
+// without its metadata is an operation filed under a heading no consumer can
+// render, which the validator raises as `UndocumentedTag`; metadata that
+// arrives without the name is a heading with nothing under it.
+//
+// Both halves are asserted for every scope, because a fix for one that forgets
+// the other is a worse document than the silence it replaced.
+
+/// A tag with metadata worth losing, so an assertion can tell a registered tag
+/// from a bare name.
+#[derive(kynos::Tag)]
+#[tag(name = "users", description = "Managing user accounts")]
+struct Users;
+
+#[derive(kynos::Tag)]
+#[tag(name = "ops", description = "Health and readiness")]
+struct Ops;
+
+#[derive(kynos::Tag)]
+#[tag(name = "admin", description = "Restricted to staff")]
+struct Admin;
+
+/// Tagged on the attribute, which is the one scope no builder call supplies.
+#[kynos::get("/tagged", tag = Users)]
+async fn tagged() -> NoContent {
+    NoContent
+}
+
+/// Tagged on the attribute, for the operation that sits under three scopes.
+#[kynos::get("/suspension", tag = Admin)]
+async fn suspension() -> NoContent {
+    NoContent
+}
+
+/// A handler with no attribute, so only a builder can describe it.
+async fn version() -> NoContent {
+    NoContent
+}
+
+/// The `tags` of the one operation under `path`.
+fn tags_on(document: &Document, path: &str) -> Vec<String> {
+    operation(document, path).tags
+}
+
+/// The document's own metadata for `name`, if it declares any.
+fn documented(document: &Document, name: &str) -> Option<kynos::openapi::Tag> {
+    document.tags.iter().find(|tag| tag.name == name).cloned()
+}
+
+/// Every tag name an operation carries that the document never documents.
+fn undocumented_tags(router: &Router<()>) -> Vec<String> {
+    router
+        .validate()
+        .expect("a describable router")
+        .into_iter()
+        .filter_map(|violation| match violation.error {
+            kynos::openapi::SpecError::UndocumentedTag { name } => Some(name),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The innermost scope reaches the operation it is written on.
+///
+/// The attribute is the only scope that is a fact about the operation rather
+/// than about what encloses it, so nothing in the router can supply it and
+/// nothing else in the suite would notice it going missing.
+#[test]
+fn a_route_attribute_tag_reaches_the_operation() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![tagged])
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(tags_on(&document, "/tagged"), ["users"]);
+}
+
+/// And it registers the metadata that makes the name mean something.
+///
+/// The name alone would group the operation under a heading the document never
+/// describes. `#[derive(Tag)]` is what carries the description, so the scope
+/// that names the type is the scope that owes the document its metadata.
+#[test]
+fn a_route_attribute_tag_documents_itself_in_the_document_tags() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![tagged])
+        .openapi()
+        .expect("a describable router");
+
+    let users = documented(&document, "users").expect("`users` in the document `tags`");
+    assert_eq!(users.description.as_deref(), Some("Managing user accounts"));
+    assert_eq!(document.tags.len(), 1, "{:?}", document.tags);
+}
+
+/// The control against the half-fix.
+///
+/// Wiring the attribute's tag onto the operation without registering its
+/// metadata turns a silent drop into a warning on every operation carrying one
+/// — a strictly worse document than the one that dropped the tag. This is the
+/// only assertion in the workspace that would notice, and it is green both
+/// before the fix (nothing is tagged) and after (everything tagged is
+/// documented), which is what makes it a control rather than a red test.
+#[test]
+fn a_route_attribute_tag_raises_no_undocumented_tag_violation() {
+    let router = Router::<()>::new().mount(kynos::routes![tagged]);
+
+    let undocumented = undocumented_tags(&router);
+    assert!(undocumented.is_empty(), "{undocumented:?}");
+}
+
+/// The endpoint scope owes the same two things, and today pays only one.
+///
+/// `EndpointBuilder::tag` pushes a name and nothing else, so a router that
+/// never repeats the tag itself emits an operation grouped under a heading the
+/// document does not declare.
+#[test]
+fn an_endpoint_builder_tag_documents_itself_in_the_document_tags() {
+    let endpoint = EndpointBuilder::new(
+        kynos::openapi::Method::Get,
+        kynos::openapi::PathTemplate::parse("/version").expect("valid path"),
+        version,
+    )
+    .tag::<Ops>();
+
+    let router = Router::<()>::new().mount(endpoint);
+    let document = router.openapi().expect("a describable router");
+
+    assert_eq!(tags_on(&document, "/version"), ["ops"]);
+    let ops = documented(&document, "ops").expect("`ops` in the document `tags`");
+    assert_eq!(ops.description.as_deref(), Some("Health and readiness"));
+
+    let undocumented = undocumented_tags(&router);
+    assert!(undocumented.is_empty(), "{undocumented:?}");
+}
+
+/// Three scopes over one operation, innermost first.
+///
+/// The order is the contract a generator reads: most consumers bucket an
+/// operation by `tags[0]`, so the operation's own claim about itself has to win
+/// the primary bucket over a blanket `Router::tag`.
+#[test]
+fn a_tag_from_each_scope_lands_on_one_operation_innermost_first() {
+    let document = Router::<()>::new()
+        .tag::<Ops>()
+        .group(
+            Group::<()>::new("/admin")
+                .tag::<Users>()
+                .mount(kynos::routes![suspension]),
+        )
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(
+        tags_on(&document, "/admin/suspension"),
+        ["admin", "ops", "users"]
+    );
+
+    for name in ["admin", "ops", "users"] {
+        assert!(documented(&document, name).is_some(), "{name}");
+    }
+}
+
+/// One name declared at two scopes is one entry, in both places it appears.
+///
+/// `tags` is a set spelled as an array, and the document's `tags` keeps the
+/// first claim on a name. Green before and after: the fix must not turn a tag
+/// repeated at an enclosing scope into a duplicate.
+#[test]
+fn a_tag_named_at_two_scopes_appears_once() {
+    let document = Router::<()>::new()
+        .group(
+            Group::<()>::new("/v1")
+                .tag::<Users>()
+                .mount(kynos::routes![tagged]),
+        )
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(tags_on(&document, "/v1/tagged"), ["users"]);
+    assert_eq!(
+        document
+            .tags
+            .iter()
+            .filter(|tag| tag.name == "users")
+            .count(),
+        1,
+        "{:?}",
+        document.tags
+    );
+}
+
+/// The control for all of the above: naming no tag declares none.
+///
+/// Without it every assertion here would pass against an implementation that
+/// tagged every operation with everything it had ever seen.
+#[test]
+fn no_tag_is_declared_when_none_is_named() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![alpha])
+        .openapi()
+        .expect("a describable router");
+
+    assert!(tags_on(&document, "/alpha").is_empty());
+    assert!(document.tags.is_empty(), "{:?}", document.tags);
 }
