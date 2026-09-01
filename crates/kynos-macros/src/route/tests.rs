@@ -400,8 +400,10 @@ mod typed_uri {
     /// No counter stands beside this one, unlike the diagnostics above: that set
     /// is open and a rule can be added without a case, while this one is closed
     /// by the type system -- `(Option<_>, Option<_>)` has four inhabitants and
-    /// the `match` is exhaustive or it does not compile. An arm that dropped the
-    /// documentation is caught here already, by the emptiness assertion.
+    /// the `match` is exhaustive or it does not compile. What the type system
+    /// does *not* close is this table's mapping onto those inhabitants, which is
+    /// transcribed; the distinct-builder assertion at the end is what holds it,
+    /// so the exhaustiveness here is asserted rather than intended.
     /// How far a line's leading whitespace carries it, in columns.
     ///
     /// Counted in columns rather than in characters because a tab is not worth
@@ -434,7 +436,19 @@ mod typed_uri {
 
     #[test]
     fn every_emitted_doc_line_renders_as_prose() {
+        let mut builders = Vec::new();
+
         for (description, function, path, variables) in arms() {
+            // Read the signature beside the documentation, so that the four
+            // rows are held to being four *different* arms. The mapping from
+            // this table onto the emitter's `match` is transcribed rather than
+            // checked by the compiler: an edit to a handler here, or a change
+            // to the extractor spelling `extractor_type` recognises, would
+            // collapse a row onto one already swept and retire an arm from the
+            // sweep silently -- `relative_doc` is shared, so the emptiness
+            // assertion below would still pass.
+            builders.push(emitted(&function, path, variables).builder);
+
             let doc = emitted_doc(&function, path, variables);
             assert!(
                 !doc.is_empty(),
@@ -453,6 +467,15 @@ mod typed_uri {
                 );
             }
         }
+
+        let mut distinct = builders.clone();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(
+            distinct.len(),
+            builders.len(),
+            "the rows must be four different arms, but they emit {builders:?}"
+        );
     }
 
     /// One row per `syn::Error::new` site in `uri.rs`, counted below.
