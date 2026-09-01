@@ -1076,6 +1076,34 @@ fn a_tag_named_at_two_scopes_appears_once() {
     );
 }
 
+/// A tag named at two *enclosing* scopes survives in the outermost one's slot.
+///
+/// `a_tag_named_at_two_scopes_appears_once` above pairs the attribute with a
+/// group, which is the one pair where "innermost" and "first scope to name it"
+/// agree — so it cannot tell the rule from its opposite, and a stale claim that
+/// the innermost position wins survived beside it. This pair can tell them
+/// apart: the router names `Users` before the group does, and `add_tag` keeps
+/// the first insertion, so `users` sits in the router's slot.
+///
+/// `Ops` between the two slots is what makes the difference observable. Without
+/// it both readings emit `["users"]`; with it, keeping the group's instance
+/// instead would emit `["ops", "users"]` and move the primary bucket.
+#[test]
+fn a_tag_named_at_two_enclosing_scopes_survives_at_the_outermost_of_them() {
+    let document = Router::<()>::new()
+        .tag::<Users>()
+        .tag::<Ops>()
+        .group(
+            Group::<()>::new("/v3")
+                .tag::<Users>()
+                .mount(kynos::routes![alpha]),
+        )
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(tags_on(&document, "/v3/alpha"), ["users", "ops"]);
+}
+
 /// The control for all of the above: naming no tag declares none.
 ///
 /// Without it every assertion here would pass against an implementation that
