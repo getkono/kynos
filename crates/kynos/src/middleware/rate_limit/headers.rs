@@ -5,7 +5,7 @@ use std::time::Duration;
 use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
-    error::problem::Problem,
+    error::problem::{Problem, problem_response},
     extract::params::header::{EncodeHeaders, HeaderParams},
     http,
     middleware::rate_limit::decision::{QuotaPolicy, ServiceLimit},
@@ -299,7 +299,8 @@ impl ShortCircuit for RateLimited {
 
 impl Responses for RateLimited {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        described_refusal(RateLimitHeaders::response_headers(registry))
+        let group = RateLimitHeaders::response_headers(registry);
+        described_refusal(registry, group)
     }
 }
 
@@ -335,7 +336,8 @@ impl ShortCircuit for RateLimitedFields {
 
 impl Responses for RateLimitedFields {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        described_refusal(RateLimitFields::response_headers(registry))
+        let group = RateLimitFields::response_headers(registry);
+        described_refusal(registry, group)
     }
 }
 
@@ -348,12 +350,13 @@ fn refusal() -> http::Response {
 
 /// The 429's description, plus whichever header group produced it.
 fn described_refusal(
+    registry: &mut Registry,
     group: kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>>,
 ) -> kynos_openapi::Responses {
     kynos_openapi::Responses::new().with(
         429,
         group.into_iter().fold(
-            kynos_openapi::Response::new("the client has exceeded its request rate")
+            problem_response(registry, "the client has exceeded its request rate")
                 .with_header("Retry-After", retry_after_header()),
             |response, (name, header)| match header {
                 kynos_openapi::RefOr::Item(header) => response.with_header(name, header),

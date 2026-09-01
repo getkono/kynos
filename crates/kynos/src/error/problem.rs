@@ -304,3 +304,23 @@ impl Schema for Problem {
         ComponentName::new("Problem").ok()
     }
 }
+
+/// The description of one response carrying a problem document.
+///
+/// Every error Kynos puts on the wire is an RFC 9457 problem detail, so every
+/// description of one names the same media type and the same component. One
+/// writer, because eight interceptor short circuits each spelling it by hand is
+/// how eight of them came to spell it as nothing at all.
+///
+/// Returns the response rather than a `Responses`, so a caller that also owes a
+/// `Retry-After` or an `Accept-Encoding` chains `with_header` onto it.
+pub(crate) fn problem_response(
+    registry: &mut Registry,
+    description: impl Into<String>,
+) -> kynos_openapi::Response {
+    kynos_openapi::Response::with_content(
+        description,
+        APPLICATION_PROBLEM_JSON,
+        kynos_openapi::MediaType::new(registry.resolve::<Problem>()),
+    )
+}

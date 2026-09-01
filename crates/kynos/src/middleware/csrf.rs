@@ -16,7 +16,7 @@
 use std::borrow::Cow;
 
 use crate::{
-    error::problem::Problem,
+    error::problem::{Problem, problem_response},
     http::{self, HeaderMap},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, ShortCircuit},
@@ -192,10 +192,9 @@ impl ShortCircuit for CrossSite {
 
 impl crate::response::Responses for CrossSite {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        let _ = registry;
         kynos_openapi::Responses::new().with(
             403,
-            kynos_openapi::Response::new("the request came from another site"),
+            problem_response(registry, "the request came from another site"),
         )
     }
 }
