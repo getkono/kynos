@@ -666,7 +666,10 @@ for a defect rather than as an optimization — the metadata was private and
 `#[expect(dead_code)]`, and the extractor that was meant to read it panicked on
 every request — which is why the entry stays here rather than moving to a
 benchmark: the cost was real, and removing it was not what motivated the
-change.
+change. The reference count is now guarded at one pointer wide in
+`crates/kynos/src/extract/connection/tests.rs`, alongside a bound on the state
+behind it: what one accepted socket costs Kynos fits inside the smallest
+per-connection transport buffer the crate accepts.
 
 ### Why kernel TLS is deferred
 
