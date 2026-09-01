@@ -13,13 +13,22 @@ a problem document, and both appear in the operation's `responses` — because
 `Responses` and therefore cannot decline to describe itself.
 
 It covers what middleware refuses, too, and the description owes the same
-account of it. A `ShortCircuit` answers with a problem document, so the response
-it declares names `application/problem+json` and the `Problem` component — one
-writer, `error::problem::problem_response`, rather than a spelling per site.
-Eight of the ten short circuits Kynos ships once described a response with no
-content while sending one; the sweep in
-[`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) is what now
-holds every implementation to it.
+account of it. A `ShortCircuit` that *refuses* answers with a problem document,
+so the response it declares names `application/problem+json` and the `Problem`
+component. `error::problem::problem_response` writes that description for the
+eight interceptor short circuits; `error/rejection.rs`, `router/dispatch.rs` and
+the `ApiError` derive still spell it themselves, so it is one writer for the
+middleware rather than one for the workspace.
+
+Not every short circuit refuses. `NotModified` answers 304 with an empty body
+and rightly declares no content, and `Infallible` declares nothing at all
+because it is uninhabited. What the sweep in
+[`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) holds all ten
+implementations to is therefore *agreement* — the declaration and the exchange
+say the same thing — and not naming a media type. Eight of the ten once
+described a response with no content while sending one, which is the direction
+that failed; declaring content and sending none is a failure the same assertion
+catches going the other way.
 
 [RFC 9457]: ../references/rfc9457.txt
 

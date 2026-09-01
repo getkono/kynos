@@ -290,8 +290,12 @@ document. Eight hand-written cases would have been eight places for a ninth
 implementation to be missing from, which is why the set is asserted and the
 sweep derives what it must drive from it.
 
-The declared side of that pair is read off disk — every `.rs` file under
-`src/middleware/`, walked rather than transcribed. A transcribed list is a third
+The declared side of each of the three is read off disk, walked rather than
+transcribed, over the directory the trait's implementations actually live in:
+`src/middleware/` for the interceptor and observer sets, and the whole of
+`crates/kynos/src` for the `ShortCircuit` set, because `Infallible` implements
+it in `src/response/mod.rs`. Scoping a walk to less than that is this
+paragraph's own cautionary tale one level up. A transcribed list is a third
 place the set is written down, and it went wrong exactly as that predicts: the
 observer counter opened ten files, `compression.rs` was not among them, and an
 `Observer` implemented there would have been counted by nothing while both

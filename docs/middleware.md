@@ -1175,8 +1175,20 @@ of one, so a body or a `Content-Type` arriving under it is reported. Until that
 held, `assert_conformance` read "declares nothing" as "nothing to check", and
 eight short circuits sent a problem document under a description of no content
 without the matrix noticing. That defect was in what an interceptor *declares*
-rather than in what it does, which is the one class of error only this harness
-can see.
+rather than in what it does, which is a class of error no type check reaches.
+
+This harness is not the only instrument for that class, and is not the cheapest.
+`every_short_circuit_declares_the_content_it_sends` in
+[`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) asserts the
+same agreement directly, with no document, no client and no route: it drives
+each short circuit's value and compares what reaches the wire against what
+`Responses` declared. It is also the more exhaustive of the two here — the
+matrix reached five of the eight defective implementations, the sweep covers all
+ten. What the matrix buys instead is reach: it holds anything on a
+live exchange, an application's own short circuit and a handler included, where
+the sweep is total only over the set Kynos ships. Prefer the direct assertion
+for a claim about a type, and reach for the matrix when the claim is about an
+exchange.
 
 What it is not is a property test. The matrix is enumerated, so it covers the
 layers Kynos owns in the arrangements that file names — not every stack a
