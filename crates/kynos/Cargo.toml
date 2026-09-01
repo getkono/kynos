@@ -270,6 +270,20 @@ required-features = ["openapi31", "macros", "json", "test-util"]
 name = "tls"
 required-features = ["openapi31", "server", "http1", "http2", "tls"]
 
+# The fixed fixture the two cost sweeps build. Declared with a `path` rather
+# than dropped in `examples/` because `examples/README.md` is a catalogue of
+# teaching examples and this is an instrument: it is here so it sits beside the
+# baselines it produces, in `cost/`.
+#
+# Deliberately no `required-features`. The sweep builds the *same* program at
+# every feature it visits, so a difference between two builds is attributable
+# to the feature; a target that changed shape with the flag would measure two
+# programs. That also puts it inside `features:targets` (`--all-targets`),
+# which is what keeps it compiling at every feature without a gate of its own.
+[[example]]
+name = "cost_fixture"
+path = "cost/fixture.rs"
+
 [features]
 default = [
   "openapi31",
