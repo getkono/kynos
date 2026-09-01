@@ -28,9 +28,13 @@ fn a_connection_handle_is_one_pointer() {
 /// including a build with no TLS at all, so a field added to the TLS half
 /// widens every plaintext connection too.
 ///
-/// Both bounds are ceilings, not targets: they were measured and rounded up, as
-/// `docs/nfr.md#thresholds` requires, so an unrelated layout change does not
-/// disable the gate.
+/// The measurements these ceilings were set from, since
+/// `docs/nfr.md#thresholds` asks for a recorded one: `Inner` 144 bytes,
+/// `TlsIdentity` 72. Each is rounded up so an unrelated layout change does not
+/// disable the gate — to the next multiple of 64 for `Inner`, but only to the
+/// next multiple of 8 for `TlsIdentity`, where a 64-byte step would be most of
+/// the type again and would absorb two more `Option<String>` fields that every
+/// plaintext connection would pay for.
 #[test]
 fn a_connection_costs_one_small_allocation() {
     let payload = size_of::<Inner>();
@@ -41,7 +45,7 @@ fn a_connection_costs_one_small_allocation() {
         "Inner grew to {payload} bytes; 100k connections multiply this"
     );
     assert!(
-        tls <= 128,
+        tls <= 80,
         "TlsIdentity grew to {tls} bytes, widening every connection including plaintext ones"
     );
 }
@@ -50,12 +54,17 @@ fn a_connection_costs_one_small_allocation() {
 /// per accepted socket fits inside the smallest read/write buffer the transport
 /// will accept — the two `Arc` counts included.
 ///
-/// The anchor is [`MIN_HTTP1_BUFFER_SIZE`](crate::server::protocol), which lives
-/// in code and is enforced by `validate_protocol_config`, rather than the
+/// The anchor is `MIN_HTTP1_BUFFER_SIZE`, which lives in code and is enforced by `validate_protocol_config`, rather than the
 /// roughly 16 KiB per live connection `docs/architecture.md` attributes to hyper
 /// in "Why hyper stays". It is half that prose figure, so holding against it is
 /// the stronger claim, and a number in code cannot drift away from a document
 /// nothing checks it against.
+///
+/// This is a slack gate, deliberately: 160 measured bytes against 8192 is 51x
+/// of headroom, so the ceiling above is what binds in practice. What this
+/// states is the design property — per-connection state stays a small fraction
+/// of a transport buffer rather than a multiple of one — and it fires only if
+/// that stops being true catastrophically rather than incrementally.
 #[cfg(all(feature = "server", feature = "http1"))]
 #[test]
 fn per_connection_state_fits_inside_the_smallest_transport_buffer() {

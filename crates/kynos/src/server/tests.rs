@@ -28,8 +28,9 @@ fn http2_defaults_are_owned_by_kynos() {
 }
 
 /// `accept.rs` clones the whole `TransportConfig` per accepted socket, so this
-/// is a per-connection cost rather than a per-server one. A ceiling, measured
-/// and rounded up as `docs/nfr.md#thresholds` requires.
+/// is a per-connection cost rather than a per-server one. Measured at 40 bytes
+/// and rounded up to the next multiple of 64, since `docs/nfr.md#thresholds`
+/// asks for a recorded measurement rather than a chosen number.
 #[cfg(feature = "http1")]
 #[test]
 fn an_http1_config_is_cheap_to_copy_per_connection() {
@@ -37,13 +38,18 @@ fn an_http1_config_is_cheap_to_copy_per_connection() {
 
     assert!(
         http1 <= 64,
-        "Http1Config grew to {http1} bytes; it is copied once per accepted socket"
+        "Http1Config grew to {http1} bytes from a measured 40; \
+         it is copied once per accepted socket"
     );
 }
 
-/// The same, for the HTTP/2 half. `Http2FlowControl` and `Http2KeepAlive` get no
-/// ceiling of their own: neither is ever held per connection on its own, and
-/// this bound already fails when either of them grows.
+/// The same, for the HTTP/2 half. Measured at 80 bytes, rounded up to 128.
+///
+/// `Http2FlowControl` and `Http2KeepAlive` get no ceiling of their own because
+/// neither is ever held per connection on its own, and a per-field absolute is
+/// what `docs/testing.md` lists as not owed. This bound does not substitute for
+/// one: 80 against 128 leaves 48 bytes of slack, so either could roughly double
+/// before it fires.
 #[cfg(feature = "http2")]
 #[test]
 fn an_http2_config_is_cheap_to_copy_per_connection() {
@@ -51,28 +57,46 @@ fn an_http2_config_is_cheap_to_copy_per_connection() {
 
     assert!(
         http2 <= 128,
-        "Http2Config grew to {http2} bytes; it is copied once per accepted socket"
+        "Http2Config grew to {http2} bytes from a measured 80; \
+         it is copied once per accepted socket"
     );
 }
 
-/// The relation the two ceilings above only ratchet. `TransportConfig` is the
-/// struct `accept.rs` actually clones per socket, and it should stay smaller
-/// than the smallest read/write buffer it configures — otherwise describing a
-/// connection would cost more than serving one.
+/// `TransportConfig` is the struct `accept.rs` actually clones per socket, which
+/// is what makes the two ceilings above per-connection costs at all.
+///
+/// Measured at 168 bytes with every feature on, which is where it is widest --
+/// it gains its TLS runtime there -- and rounded up to 192, so the ceiling holds
+/// at every smaller feature set by construction. Ungated for that reason.
+#[test]
+fn a_transport_config_is_cheap_to_clone_per_connection() {
+    let config = size_of::<super::TransportConfig>();
+
+    assert!(
+        config <= 192,
+        "TransportConfig grew to {config} bytes from a measured 168; \
+         it is cloned once per accepted socket"
+    );
+}
+
+/// The relation the ceiling above only ratchets: the configuration copied per
+/// connection stays smaller than the smallest read/write buffer it configures,
+/// so describing a connection never costs more than serving one.
+///
+/// A slack gate, deliberately -- 168 measured bytes against 8192 -- and the
+/// ceiling above is what binds in practice. It is here to state the design
+/// property rather than to catch incremental growth, and it is the only
+/// assertion in this test so that it cannot be made unreachable by an absolute
+/// sitting in front of it.
 ///
 /// Gated on `http1` for the constant, not for `TransportConfig`, which exists
-/// wherever `server` does. Measured with every feature on, which is where
-/// `TransportConfig` is widest: it gains its TLS runtime there.
+/// wherever `server` does.
 #[cfg(feature = "http1")]
 #[test]
 fn the_per_connection_config_is_smaller_than_the_buffer_it_configures() {
     let config = size_of::<super::TransportConfig>();
     let floor = crate::server::protocol::MIN_HTTP1_BUFFER_SIZE;
 
-    assert!(
-        config <= 192,
-        "TransportConfig grew to {config} bytes; it is cloned once per accepted socket"
-    );
     assert!(
         config < floor,
         "TransportConfig ({config} bytes) must stay under the smallest transport buffer \

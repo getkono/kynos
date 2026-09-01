@@ -668,8 +668,12 @@ every request — which is why the entry stays here rather than moving to a
 benchmark: the cost was real, and removing it was not what motivated the
 change. The reference count is now guarded at one pointer wide in
 `crates/kynos/src/extract/connection/tests.rs`, alongside a bound on the state
-behind it: what one accepted socket costs Kynos fits inside the smallest
-per-connection transport buffer the crate accepts.
+behind it, which fits inside the smallest per-connection transport buffer the
+crate accepts. The protocol configuration cloned per socket is bounded
+separately, in `crates/kynos/src/server/tests.rs`. What one accepted socket
+costs in total is not guarded anywhere: that would have to include the
+connection task's future, the service handle and the semaphore permit, none of
+which is bounded today.
 
 ### Why kernel TLS is deferred
 
