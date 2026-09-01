@@ -61,6 +61,12 @@ impl<'a> Route<'a> {
 pub struct OperationCx<'a> {
     registry: &'a mut Registry,
     operation: kynos_openapi::Operation,
+    /// Every tag that actually landed on the operation, in the order it did.
+    ///
+    /// The operation's own `tags` is a list of names; this is what the names
+    /// came from, so the describe walk can register the metadata for exactly
+    /// the tags that reached it rather than for every tag anyone declared.
+    tags: Vec<DeclaredTag>,
 }
 
 impl<'a> OperationCx<'a> {
@@ -70,6 +76,7 @@ impl<'a> OperationCx<'a> {
         Self {
             registry,
             operation: kynos_openapi::Operation::default(),
+            tags: Vec::new(),
         }
     }
 
@@ -263,11 +270,23 @@ impl OperationCx<'_> {
     /// Adds a tag.
     ///
     /// Adding a tag the operation already carries is a no-op: `tags` is a set
-    /// spelled as an array, and a repeated entry names no further group.
-    pub fn add_tag(&mut self, name: &str) {
-        if !self.operation.tags.iter().any(|tag| tag == name) {
-            self.operation.tags.push(name.to_owned());
+    /// spelled as an array, and a repeated entry names no further group. A tag
+    /// applied at two scopes therefore appears once, at its innermost position.
+    ///
+    /// A [`DeclaredTag`] rather than a name, so that the metadata documenting
+    /// the tag arrives with it. A name on its own is an operation filed under
+    /// a heading the document never declares, which the validator raises as
+    /// [`UndocumentedTag`](kynos_openapi::SpecError::UndocumentedTag).
+    pub fn add_tag(&mut self, tag: DeclaredTag) {
+        if !self.operation.tags.iter().any(|name| name == tag.name()) {
+            self.operation.tags.push(tag.name().to_owned());
+            self.tags.push(tag);
         }
+    }
+
+    /// The tags that landed on this operation, for the document to document.
+    pub(crate) fn declared_tags(&self) -> &[DeclaredTag] {
+        &self.tags
     }
 
     /// The registry, for describing a schema this input needs.
@@ -337,4 +356,45 @@ pub trait Tag {
 
     /// The tag's metadata.
     fn metadata() -> kynos_openapi::Tag;
+}
+
+/// A tag as a scope declared it: its name, and the thunk that documents it.
+///
+/// One value rather than two parallel arrays. A name without its metadata is
+/// an operation carrying a tag the document's `tags` never documents — which
+/// the validator raises as
+/// [`UndocumentedTag`](kynos_openapi::SpecError::UndocumentedTag), and which
+/// two arrays that can differ in length make possible by construction.
+///
+/// [`Copy`] and const-constructible, so a route attribute puts one in an
+/// associated constant and
+/// [`EndpointMeta`](crate::router::endpoint::meta::EndpointMeta) stays
+/// entirely `const`.
+#[derive(Clone, Copy, Debug)]
+pub struct DeclaredTag {
+    name: &'static str,
+    metadata: fn() -> kynos_openapi::Tag,
+}
+
+impl DeclaredTag {
+    /// The declaration of `T`.
+    #[must_use]
+    pub const fn of<T: Tag>() -> Self {
+        Self {
+            name: T::NAME,
+            metadata: T::metadata,
+        }
+    }
+
+    /// The name, as it appears in the operation's `tags`.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        self.name
+    }
+
+    /// The metadata, as it appears in the document's `tags`.
+    #[must_use]
+    pub fn metadata(&self) -> kynos_openapi::Tag {
+        (self.metadata)()
+    }
 }

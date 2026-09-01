@@ -107,6 +107,13 @@ router — it becomes
 attribute names one tag; the enclosing scopes are how an operation acquires the
 rest.
 
+They add innermost first: the operation's own tags — the attribute's, then any
+`EndpointBuilder::tag` — then the router's, then whatever the enclosing group or
+nested router contributed. Most generators bucket an operation by its first tag,
+so the most specific claim anyone made about it wins the primary bucket. Every
+scope registers the tag's metadata alongside its name, so no operation is filed
+under a heading the document does not declare.
+
 Scope in the document matches scope in the router, exactly. A group is the
 recommended unit of API structure — one per resource — because attaching
 authentication to a group documents it on every operation underneath, correctly,

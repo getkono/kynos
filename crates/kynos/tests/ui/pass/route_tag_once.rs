@@ -13,6 +13,7 @@ async fn list() {}
 fn main() {
     use kynos::router::endpoint::meta::EndpointMeta;
 
-    assert_eq!(<list as EndpointMeta>::TAGS, ["Users"]);
+    assert_eq!(<list as EndpointMeta>::TAGS.len(), 1);
+    assert_eq!(<list as EndpointMeta>::TAGS[0].name(), "Users");
     let _ = <Admin as kynos::router::operation::Tag>::NAME;
 }

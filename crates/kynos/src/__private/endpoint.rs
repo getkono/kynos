@@ -44,5 +44,8 @@ where
     if M::DEPRECATED {
         builder = builder.deprecated();
     }
+    for tag in M::TAGS {
+        builder = builder.with_tag(*tag);
+    }
     builder
 }

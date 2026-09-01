@@ -148,8 +148,11 @@ async fn tagged_list() -> NoContent {
 ///
 /// The three builder levels — `Router::tag`, `Group::tag` and
 /// `EndpointBuilder::tag` — apply a tag to whatever they enclose. This is the
-/// fourth, and it is the only one the description can read without building a
-/// router.
+/// fourth, and it is the only one readable *without building a router*, which
+/// is all this asserts. What the description does with it goes through
+/// `from_meta` and the describe walk, and is pinned in `description.rs`: a
+/// constant assertion is what let the attribute's tag reach no document at all
+/// for as long as it did, so nothing further is asserted here.
 #[test]
 fn a_route_tag_reaches_the_endpoint_metadata() {
     use kynos::router::endpoint::meta::EndpointMeta;
@@ -159,7 +162,8 @@ fn a_route_tag_reaches_the_endpoint_metadata() {
     // something unmountable would pass the assertion below unnoticed.
     is_handler::<App, _, _>(tagged_list);
 
-    assert_eq!(<tagged_list as EndpointMeta>::TAGS, ["Users"]);
+    assert_eq!(<tagged_list as EndpointMeta>::TAGS.len(), 1);
+    assert_eq!(<tagged_list as EndpointMeta>::TAGS[0].name(), "Users");
     assert!(<health as EndpointMeta>::TAGS.is_empty());
 }
 
