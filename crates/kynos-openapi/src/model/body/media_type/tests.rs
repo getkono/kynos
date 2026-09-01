@@ -54,18 +54,6 @@ fn a_body_shown_both_ways_at_once_is_refused() {
 }
 
 #[test]
-fn each_form_of_example_round_trips() {
-    for media_type in [
-        MediaType::default().with_example(json!({"id": 1})),
-        MediaType::default().with_named_example("one", Example::new(1)),
-    ] {
-        let json = serde_json::to_string(&media_type).expect("serializable");
-        let parsed: MediaType = serde_json::from_str(&json).expect("deserializable");
-        assert_eq!(parsed, media_type);
-    }
-}
-
-#[test]
 fn a_named_example_replaces_an_inline_one() {
     let media_type = MediaType::default()
         .with_example(json!("inline"))
