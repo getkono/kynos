@@ -30,13 +30,15 @@ hooks {
             // layout rules, and layout is what a commit is reviewed as. It reads
             // committed text and compiles nothing, so it costs a fraction of the
             // Clippy pass above it. The globs are the inputs it actually reads:
-            // the sources, the two documents whose tables it counts against, and
-            // the script itself.
+            // the sources, the crate manifests, the three documents whose tables
+            // it counts against, and the script itself.
             ["containment"] {
                 glob = List(
                     "*.rs",
+                    "crates/*/Cargo.toml",
                     "docs/architecture.md",
                     "docs/nfr.md",
+                    "docs/performance.md",
                     "scripts/containment.py",
                 )
                 check = "mise run containment:check"
