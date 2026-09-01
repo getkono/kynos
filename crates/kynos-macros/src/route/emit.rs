@@ -66,11 +66,13 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenSt
     // A tag is one of the operation's compile-time facts, so it reaches the
     // description through the same constants as the method and the path rather
     // than through a separate assertion that only proved the type was a `Tag`.
-    // Naming `NAME` carries that bound anyway, so one mistake is one
-    // diagnostic.
+    // A `DeclaredTag` carries the name *and* the thunk that documents it, which
+    // is what lets `from_meta` register both from this one constant. Naming
+    // `DeclaredTag::of` carries the `Tag` bound anyway, so one mistake is still
+    // one diagnostic.
     let tags = args.tag.as_ref().map_or_else(
         || quote!(&[]),
-        |tag| quote!(&[<#tag as ::kynos::router::operation::Tag>::NAME]),
+        |tag| quote!(&[::kynos::router::operation::DeclaredTag::of::<#tag>()]),
     );
 
     quote! {
@@ -91,7 +93,7 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> TokenSt
             const SUMMARY: ::core::option::Option<&'static str> = #summary;
             const DESCRIPTION: ::core::option::Option<&'static str> = #description;
             const DEPRECATED: bool = #deprecated;
-            const TAGS: &'static [&'static str] = #tags;
+            const TAGS: &'static [::kynos::router::operation::DeclaredTag] = #tags;
         }
 
         #uri_impl

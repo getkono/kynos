@@ -13,9 +13,9 @@ use super::install::{
     lowest_expressing, placeholder_info, pointer_token, unique_tags,
 };
 use super::{
-    Arc, Dispatch, Document, EndpointTerminal, Error, HashMap, OperationCx, PanicPolicy, PathEntry,
-    PathItem, Paths, Registry, Result, Route, Router, Service, Severity, SpecError, SpecVersion,
-    TrailingSlashPolicy, Violation, dispatch,
+    Arc, DeclaredTag, Dispatch, Document, EndpointTerminal, Error, HashMap, OperationCx,
+    PanicPolicy, PathEntry, PathItem, Paths, Registry, Result, Route, Router, Service, Severity,
+    SpecError, SpecVersion, TrailingSlashPolicy, Violation, dispatch,
 };
 
 // Each behind the feature that provides it, as `mod.rs` had them.
@@ -283,6 +283,14 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
         self.declare_security_schemes(&mut registry, &mut violations);
 
+        // Seeded with what this router and everything it absorbed declared at
+        // their own scope, so a `tag()` call that covers no operation is still
+        // documented; each operation then appends the metadata for the tags
+        // that actually landed on it. `unique_tags` keeps the first claim on a
+        // name, so an enclosing scope's metadata wins over an operation's --
+        // the same rule as before this walk harvested anything.
+        let mut tag_metadata = self.tag_metadata.clone();
+
         let mut paths = Paths::new();
         for mounted in &self.mounted {
             let key = mounted.path.as_str().to_owned();
@@ -312,13 +320,19 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             }
 
             for tag in self.tags.iter().chain(&mounted.tags) {
-                cx.add_tag(tag);
+                cx.add_tag(*tag);
             }
 
             if mounted.catch_panics || catches::<P>() {
                 let responses = dispatch::panic_responses(cx.registry());
                 cx.add_responses(&responses);
             }
+
+            // Every scope contributes through `add_tag`, so this is the one
+            // place that sees what all four of them left on the operation --
+            // and the endpoint's own tags are reachable nowhere else, since
+            // `Endpoints::push` erased the endpoint before this router saw it.
+            tag_metadata.extend(cx.declared_tags().iter().map(DeclaredTag::metadata));
 
             let operation = cx.finish();
 
@@ -371,7 +385,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         );
         document.servers.clone_from(&self.servers);
         document.paths = paths;
-        document.tags = unique_tags(&self.tag_metadata);
+        document.tags = unique_tags(&tag_metadata);
         document.components = registry.into_components();
 
         // The version the description claims follows from what it uses, never

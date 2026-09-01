@@ -1,6 +1,6 @@
 //! The compile-time facts a route attribute knows about an operation.
 
-use crate::middleware::catch_panic::PanicPolicy;
+use crate::{middleware::catch_panic::PanicPolicy, router::operation::DeclaredTag};
 
 /// The compile-time facts a route attribute knows about an operation.
 ///
@@ -64,5 +64,10 @@ pub trait EndpointMeta {
     ///
     /// A slice rather than an `Option`, because the enclosing levels contribute
     /// their own and the Operation Object's `tags` is an array either way.
-    const TAGS: &'static [&'static str];
+    ///
+    /// A [`DeclaredTag`] carries the tag's name *and* the thunk that documents
+    /// it, so reading this constant registers both. Two parallel slices — names
+    /// beside metadata — would let one be shorter than the other, which is the
+    /// same silent drop one layer down.
+    const TAGS: &'static [DeclaredTag];
 }
