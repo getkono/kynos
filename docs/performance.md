@@ -46,7 +46,7 @@ What each kind of measurement proves that no other kind does.
 
 | Kind | Lives in | Runs under | Proves | Status |
 | --- | --- | --- | --- | --- |
-| Allocation count | its own integration target | `cargo nextest`, over `alloc_counter` | that a path allocates a bounded number of times | in use, at [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) |
+| Allocation count | its own integration target | `cargo nextest`, over `alloc_counter` | that a path allocates a bounded number of times | in use, at two targets of that name: [`kynos/tests/alloc.rs`](../crates/kynos/tests/alloc.rs) for the routing path, and [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs) for what producing a description costs at 10, 100 and 1000 operations. Two rather than one because an integration binary cannot be depended on, so each crate that counts installs the `#[global_allocator]` itself |
 | Size guard | [`tests/size.rs`](../crates/kynos/tests/size.rs), or a sibling `tests.rs` | `cargo nextest` | that a type or a future did not grow | in use for types; `planned` for futures |
 | Off-path proof | a sibling `tests.rs` | `cargo nextest` | that a feature is unreachable from the request path | `planned` |
 | Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | `needs-tooling`; `cargo-llvm-lines` is not installed |
