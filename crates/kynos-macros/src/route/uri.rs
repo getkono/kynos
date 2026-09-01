@@ -44,7 +44,12 @@ pub(crate) fn endpoint_uri_impl(
     // what this renders is relative to wherever the route ends up mounted, and
     // calling it `uri` invited a caller to put a path that does not resolve
     // into a `Location` header.
-    let relative_doc = "Builds this endpoint's URI **relative to wherever it is mounted**.\n\n        A route attribute knows only its own path template. A `Group` prefix or a `nest`         prefix is applied while the router is built, so a route under `Group::new(\"/users\")`         renders `/{id}` here and not `/users/{id}`; join the prefix yourself when the route is         not mounted at the router root.";
+    let relative_doc = "Builds this endpoint's URI **relative to wherever it is mounted**.\n\n\
+                        A route attribute knows only its own path template. A `Group` prefix \
+                        or a `nest` prefix is applied while the router is built, so a route \
+                        under `Group::new(\"/users\")` renders `/{id}` here and not \
+                        `/users/{id}`; join the prefix yourself when the route is not mounted \
+                        at the router root.";
 
     let uri = match (path_type, query_type) {
         (None, None) => quote! {

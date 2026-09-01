@@ -143,12 +143,14 @@ scalar format whose whole contribution is a JSON Schema `format` cannot reach
 already implied by its shape. What it still owes is the proof of that, because
 "cannot reach" is a claim about code rather than about intent.
 
-**The table is not yet counted against the manifest.** Exhaustiveness here is
-intended rather than asserted, against what
-[`testing.md`](testing.md#cross-cutting) asks of the rest — a flag added to
-`Cargo.toml` and not to this table fails nothing today. Closing that is a
-[`containment:check`](../scripts/containment.py)-shaped job: read the table,
-read `[features]`, and fail when the two part company.
+**The table is counted against the manifest.**
+[`containment:check`](../scripts/containment.py) reads the rows above and
+`crates/kynos`'s `[features]`, and fails when a flag is declared and ungraded,
+graded and undeclared, or graded in two rows — naming the flag rather than
+reporting that two numbers differ. Both sides are read off disk, so no count is
+stated here: per [`testing.md`](testing.md#cross-cutting) a number would be a
+third place the same set is written down, and it would put two branches each
+adding a flag on the same line where the table puts them on different ones.
 
 ## Thresholds
 
