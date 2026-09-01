@@ -990,13 +990,16 @@ fn an_endpoint_builder_tag_documents_itself_in_the_document_tags() {
     assert!(undocumented.is_empty(), "{undocumented:?}");
 }
 
-/// Three scopes over one operation, innermost first.
+/// Three scopes over one operation: its own tag, then each enclosing scope
+/// outermost first.
 ///
-/// The order is the contract a generator reads: most consumers bucket an
-/// operation by `tags[0]`, so the operation's own claim about itself has to win
-/// the primary bucket over a blanket `Router::tag`.
+/// The order is the contract a generator reads, since most consumers bucket an
+/// operation by `tags[0]`. An operation that tags itself therefore wins its own
+/// primary bucket over a blanket `Router::tag` — which is the whole of the
+/// guarantee, and is why the sibling case below exists to say what happens when
+/// it does not.
 #[test]
-fn a_tag_from_each_scope_lands_on_one_operation_innermost_first() {
+fn an_operation_lists_its_own_tag_first_then_each_enclosing_scope_outermost_first() {
     let document = Router::<()>::new()
         .tag::<Ops>()
         .group(
@@ -1015,6 +1018,33 @@ fn a_tag_from_each_scope_lands_on_one_operation_innermost_first() {
     for name in ["admin", "ops", "users"] {
         assert!(documented(&document, name).is_some(), "{name}");
     }
+}
+
+/// An operation with no tag of its own is filed under its *outermost*
+/// enclosing scope.
+///
+/// The other half of the rule, and the half a reader is most likely to guess
+/// wrong: `describe` walks `self.tags` before `mounted.tags`, so the router's
+/// blanket tag precedes the group's more specific one. A consumer bucketing by
+/// `tags[0]` files this operation under `ops` rather than under `users`.
+///
+/// Pinned rather than merely written down, because "the most specific claim
+/// wins" is the intuitive rule and is not this one. Changing the order would
+/// move the primary bucket of every operation that does not tag itself, which
+/// is a document change no other assertion here would see.
+#[test]
+fn an_operation_with_no_tag_of_its_own_lists_its_enclosing_scopes_outermost_first() {
+    let document = Router::<()>::new()
+        .tag::<Ops>()
+        .group(
+            Group::<()>::new("/v2")
+                .tag::<Users>()
+                .mount(kynos::routes![alpha]),
+        )
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(tags_on(&document, "/v2/alpha"), ["ops", "users"]);
 }
 
 /// One name declared at two scopes is one entry, in both places it appears.
