@@ -222,8 +222,8 @@ document, so the extractor is a piece of work in its own right.
 `kynos-macros` cannot depend on `kynos`, so anything needing the facade — a
 derive's *expansion* compiling, a diagnostic's wording — lives in
 `crates/kynos/tests/`. What stays in the macro crate is what can be checked
-without it: the attribute grammars, the shape checks the derives share, and the
-signature the typed-URI emitter writes.
+without it: the attribute grammars, the shape checks the derives share, and
+both the signature and the documentation the typed-URI emitter writes.
 
 Its diagnostics are held twice on purpose, and the halves do different jobs.
 `derive/tests.rs` asserts *which* rule fired, counted against the
@@ -231,6 +231,24 @@ Its diagnostics are held twice on purpose, and the halves do different jobs.
 `tests/ui/macros/` asserts what that rule *says*. Neither substitutes for the
 other: a count cannot read a message, and a snapshot suite cannot notice a rule
 nobody wrote a case for.
+
+Nothing here renders the documentation that emitter writes, and nothing here
+can: rendering it needs the facade, and this crate cannot depend on it.
+Nothing in `crates/kynos` renders it either, but that is a fact about the tree
+rather than a property of it — route attributes appear in `crates/kynos/src`
+only inside doctest fences, rustdoc does not extract doctests from doctests,
+and `examples/` and `tests/` are never doctested, so `test`, `test:doc` and
+`docs:check` today pass whether or not a macro's emitted rustdoc is
+well-formed. One route attribute on a documented public item would change
+that.
+
+Until one exists, the sweep in `route/tests.rs` stands in for the render by
+asserting the property CommonMark's indented-code-block rule makes
+load-bearing: no emitted line's leading whitespace reaches four columns,
+counting a tab to the next stop as CommonMark does. It is a string check
+rather than a render, so every other way to break emitted documentation — an
+unannotated fenced block, a broken intra-doc link, a `#` colliding with a
+heading — remains unobserved, and it covers the typed-URI emitter alone.
 
 ### Cross-cutting
 
