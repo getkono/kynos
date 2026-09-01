@@ -176,6 +176,38 @@ cargo hack check --workspace --each-feature --all-targets \
   --exclude-features default,server,tls,time,decimal,full
 '''
 
+[tasks."cost:features"]
+description = "Measure what each feature costs a linked artifact"
+# The binary half of what `docs/performance.md` files as a sweep rather than a
+# target: `.text` of a fixed fixture, built at each feature and compared.
+#
+# `cargo hack` is deliberately *not* the driver, though `features:targets` is
+# the shape the feature list copies. cargo-hack has no hook between builds, and
+# every build overwrites `target/release/examples/cost_fixture`, so a sweep it
+# drove could not attribute an artifact to the feature that produced it -- it
+# would measure the last build once per point. Driving the loop in the script
+# also means nothing in this task rewrites a member manifest, which is the
+# hazard `check` records about `features:check` and the reason this must never
+# share that job.
+#
+# A script rather than a shell pipeline, for `containment:check`'s reason: this
+# parses a tool's output, diffs a committed table and emits Markdown, and every
+# one of those is where a pipeline gets it quietly wrong.
+#
+# Not in `check` and not in `hooks:pre-push`. `ci.yml` already recognises a
+# class of tasks too slow to belong there, and `semver:check` set the precedent
+# by being absent from the same list.
+run = "python3 scripts/cost_features.py"
+
+[tasks."cost:record"]
+description = "Record the measured deltas as the committed baseline"
+# The `fixtures:generate` idiom: the sweep compares when told to and writes when
+# told to, so a change in what a feature costs reaches review as a diff of the
+# recorded deltas rather than as a number someone retyped. Recording is a
+# deliberate act, per `docs/nfr.md#thresholds`.
+env = { KYNOS_COST = "overwrite" }
+run = "python3 scripts/cost_features.py"
+
 [tasks."fixtures:generate"]
 description = "Regenerate the conformance-fixture corpus"
 # The `trybuild` idiom: the test writes when told to and compares otherwise, so

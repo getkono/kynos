@@ -28,3 +28,10 @@ coverage-summary.txt
 lcov.info
 # Raw profiles llvm-cov leaves beside the crate it instrumented
 **/*.profraw
+
+# Written by the per-feature cost sweep. The reviewed copies of the two tables
+# are the committed baselines under `crates/kynos/cost/`, which `cost:record`
+# writes deliberately; these are one run's own output.
+cost-report.md
+cost-binary.tsv
+cost-codegen.tsv
