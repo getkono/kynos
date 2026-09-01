@@ -1,4 +1,4 @@
-"""Per-feature cost sweep: what each feature costs a linked artifact.
+"""Per-feature cost sweep: what each feature costs a linked artifact and in IR.
 
 [`performance.md`](../docs/performance.md)'s taxonomy files two sweep kinds --
 a binary delta over `.text` and a codegen delta over monomorphized IR -- and
@@ -9,6 +9,19 @@ answers one question: what does merely enabling F cost a program that does not
 use F? `lib.rs` claims enabling a feature is additive, and this is the first
 thing in the repository that could falsify it.
 
+The two halves run under different profiles, on purpose. The binary half is
+`--release`, because that is the artifact that ships and `lto = "fat",
+codegen-units = 1` gives a build with no cross-CGU nondeterminism. The codegen
+half runs the dev profile, because `cargo llvm-lines` reads pre-link IR and a
+fat-LTO release build deletes the very monomorphizations the codegen delta
+exists to count.
+
+One limit of the codegen half is worth stating rather than discovering:
+`cargo llvm-lines --example` reports the IR of the *example* crate, so it sees
+framework generics as the fixture instantiates them rather than generic-free
+library code compiled into the rlib. That is the intended scope --
+`performance.md` says both kinds build the same fixture.
+
 `cargo hack` is deliberately not the driver, though the feature list copies
 `features:targets`' shape exactly. cargo-hack has no hook between builds and
 every build overwrites `target/release/examples/cost_fixture`, so a sweep it
@@ -18,19 +31,21 @@ in this task rewrites a member manifest, which is why it may share a job with
 neither `features:check` nor anything that follows it.
 
 A script rather than a shell pipeline for `containment.py`'s reason: this
-parses a tool's output, diffs a committed table and emits Markdown, and every
-one of those is where a pipeline gets it quietly wrong.
+parses two tools' output, diffs two committed tables and emits Markdown, and
+every one of those is where a pipeline gets it quietly wrong.
 
 Exit codes follow the `semver` CI job's rule. Zero whenever a measurement was
 made, whatever it says -- no threshold is applied here and none is recorded
 anywhere, per [`nfr.md`](../docs/nfr.md#thresholds), which sets a ceiling from a
 first recorded measurement and never guesses one. Non-zero only when a
 measurement could not be made at all: a build that did not compile, a missing
-`llvm-size`, an ambient `RUSTFLAGS`.
+`llvm-size`, an ambient `RUSTFLAGS`, an output with no `(TOTAL)` in it.
 """
 
+import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -53,6 +68,22 @@ BASELINE = "openapi31"
 # Parenthesised the way `cargo llvm-lines` parenthesises `(TOTAL)`, so a reader
 # of the table cannot mistake it for a feature name.
 ALL_FEATURES = "(all-features)"
+TOP = 5
+
+# `cargo llvm-lines` prints its total as two bare integers and every other row
+# with a share and a running share beside each -- `1608 (3.2%,  3.2%)     1
+# (0.1%,  0.1%)  <matchit::tree::Node<usize>>::insert` -- so both parentheses
+# are optional here. A name may hold spaces, commas and angle brackets, which
+# is why it is taken as the rest of the line rather than as a field.
+LLVM_LINES_ROW = re.compile(
+    r"^\s*(\d+)(?:\s*\([^)]*\))?\s+(\d+)(?:\s*\([^)]*\))?\s+(\S.*?)\s*$"
+)
+# `kynos[a28856ce07048254]::router::describe` -- the bracketed part is the
+# stable crate id, which is a hash of the crate's *enabled features* among
+# other things. It therefore differs between two points of this very sweep, so
+# leaving it in would make every function look new at every feature and
+# attribution would report nothing but noise.
+DISAMBIGUATOR = re.compile(r"\[[0-9a-f]+\]")
 
 BINARY_TSV = "binary.tsv"
 BINARY_HEADER = """\
@@ -76,6 +107,31 @@ BINARY_HEADER = """\
 # baseline: {baseline} bytes
 """
 
+CODEGEN_TSV = "codegen.tsv"
+CODEGEN_HEADER = """\
+# Codegen delta. Monomorphized LLVM IR for the `cost_fixture` example, counted
+# as
+#   cargo llvm-lines --package kynos --example cost_fixture --color never \\
+#     --sort lines --no-default-features --features openapi31[,<feature>]
+# Written by `mise run cost:record`; compared by `mise run cost:features`.
+#
+# The dev profile, not `--release`, and that is not an oversight: `llvm-lines`
+# reads pre-link IR, and a fat-LTO release build deletes the monomorphizations
+# this exists to count.
+#
+# The compared columns are the two deltas, for `binary.tsv`'s reason. Per-
+# function attribution is deliberately not recorded here: monomorphized names
+# churn with every generic signature and a file of them would be a diff
+# generator rather than a baseline. Attribution is report-only, in
+# `cost-report.md`.
+#
+# No ceiling is set here or anywhere else -- see `nfr.md#thresholds`.
+#
+# toolchain: {toolchain}
+# host: {host}
+# baseline: {baseline} lines
+"""
+
 
 def fail(message, code=1):
     """Report that a measurement could not be made, and stop."""
@@ -85,13 +141,17 @@ def fail(message, code=1):
 
 def capture(command, env=None):
     """Run `command`, returning its stdout; a non-zero exit is a failure."""
-    result = subprocess.run(
-        command, cwd=ROOT, env=env, capture_output=True, text=True, check=False
-    )
+    printed = " ".join(str(part) for part in command)
+    try:
+        result = subprocess.run(
+            command, cwd=ROOT, env=env, capture_output=True, text=True, check=False
+        )
+    except FileNotFoundError:
+        return fail(f"`{command[0]}` is not on PATH; run this through mise")
     if result.returncode != 0:
         sys.stderr.write(result.stdout)
         sys.stderr.write(result.stderr)
-        fail(f"`{' '.join(str(part) for part in command)}` exited {result.returncode}")
+        return fail(f"`{printed}` exited {result.returncode}")
     return result.stdout
 
 
@@ -126,9 +186,9 @@ def llvm_size(host):
     """`llvm-size` from the pinned toolchain, never the runner's binutils.
 
     Deliberately no fallback to GNU `size`. The two disagree about what they
-    print and switching instruments partway through a trend is exactly the
-    noise a trend must not have, so an absent tool is a failure that names
-    what to install.
+    print, and switching instruments partway through a trend is exactly the
+    noise a trend must not have, so an absent tool is a failure that names what
+    to install.
     """
     sysroot = capture(["rustc", "--print", "sysroot"]).strip()
     path = Path(sysroot) / "lib" / "rustlib" / host / "bin" / "llvm-size"
@@ -149,7 +209,9 @@ def points():
     feature added to `Cargo.toml` is swept the day it is added rather than the
     day someone remembers this list.
     """
-    metadata = json.loads(capture(["cargo", "metadata", "--no-deps", "--format-version", "1"]))
+    metadata = json.loads(
+        capture(["cargo", "metadata", "--no-deps", "--format-version", "1"])
+    )
     package = next(p for p in metadata["packages"] if p["name"] == "kynos")
     yield BASELINE, ["--no-default-features", "--features", BASELINE]
     for feature in sorted(set(package["features"]) - EXCLUDED):
@@ -165,7 +227,10 @@ def measure_binary(size, flags, env):
     `.rodata` that change when a file is renamed.
     """
     capture(
-        ["cargo", "build", "-p", "kynos", "--release", "--example", "cost_fixture", *flags],
+        [
+            "cargo", "build", "-p", "kynos", "--release",
+            "--example", "cost_fixture", *flags,
+        ],
         env,
     )
     for line in capture([str(size), "-A", str(ARTIFACT)]).splitlines():
@@ -173,6 +238,65 @@ def measure_binary(size, flags, env):
         if len(fields) >= 2 and fields[0] == ".text":
             return int(fields[1])
     return fail(f"llvm-size printed no `.text` section for {ARTIFACT}")
+
+
+def measure_codegen(flags, env):
+    """The fixture's `(TOTAL)` IR lines and copies, and its per-function rows."""
+    output = capture(
+        [
+            "cargo", "llvm-lines", "--package", "kynos",
+            "--example", "cost_fixture", "--color", "never", "--sort", "lines",
+            *flags,
+        ],
+        env,
+    )
+    total, functions = None, {}
+    for line in output.splitlines():
+        row = LLVM_LINES_ROW.match(line)
+        if row is None:
+            continue
+        lines, copies = int(row[1]), int(row[2])
+        name = DISAMBIGUATOR.sub("", row[3])
+        if name == "(TOTAL)":
+            total = (lines, copies)
+        else:
+            functions[name] = (lines, copies)
+    if total is None:
+        return fail("cargo llvm-lines printed no `(TOTAL)` row")
+    return total, functions
+
+
+def sweep_binary(env, host):
+    """`.text` at every point, and each point's delta against the baseline."""
+    size = llvm_size(host)
+    text = {}
+    for label, flags in points():
+        print(f"cost: binary {label}", file=sys.stderr, flush=True)
+        text[label] = measure_binary(size, flags, env)
+    base = text[BASELINE]
+    return {
+        label: {"text": value, "delta": value - base}
+        for label, value in text.items()
+    }
+
+
+def sweep_codegen(env):
+    """IR lines and copies at every point, plus per-point function tables."""
+    totals, functions = {}, {}
+    for label, flags in points():
+        print(f"cost: codegen {label}", file=sys.stderr, flush=True)
+        totals[label], functions[label] = measure_codegen(flags, env)
+    base_lines, base_copies = totals[BASELINE]
+    rows = {
+        label: {
+            "lines": lines,
+            "copies": copies,
+            "delta_lines": lines - base_lines,
+            "delta_copies": copies - base_copies,
+        }
+        for label, (lines, copies) in totals.items()
+    }
+    return rows, functions
 
 
 def read_recorded(path):
@@ -197,114 +321,213 @@ def write_tsv(path, header, names, rows):
     """A baseline file: `#` prose, one header line, one line per point."""
     lines = ["\t".join(["feature", *names])]
     lines += [
-        "\t".join([feature, *(str(values[name]) for name in names)])
-        for feature, values in rows.items()
+        "\t".join([label, *(str(values[name]) for name in names)])
+        for label, values in rows.items()
     ]
     path.write_text(header + "\n".join(lines) + "\n")
 
 
-def deltas(measured):
-    """Each point's difference against the baseline point in the same run."""
-    base = measured[BASELINE]
-    return {feature: value - base for feature, value in measured.items()}
-
-
-def table(rows, recorded, unit):
-    """The per-kind report table, and the drift ranking it is sorted by."""
+def table(rows, recorded, value, delta, unit):
+    """The per-kind report table, and the drift it ranks movers by."""
     lines = [
         f"| feature | {unit} | delta | recorded | drift |",
         "| --- | ---: | ---: | ---: | ---: |",
     ]
     drifts = {}
-    for feature, (value, delta) in rows.items():
-        was = None if recorded is None else recorded.get(feature, {}).get("delta")
+    for label, measured in rows.items():
+        was = None if recorded is None else recorded.get(label, {}).get(delta)
         if was is None:
-            shown, drift = ("—", "—") if recorded is None else ("—", "new")
+            shown, moved = ("—", "—") if recorded is None else ("—", "new")
         else:
-            drifts[feature] = delta - was
-            shown, drift = f"{was:+}", f"{drifts[feature]:+}"
+            drifts[label] = measured[delta] - was
+            shown, moved = f"{was:+}", f"{drifts[label]:+}"
         lines.append(
-            f"| `{feature}` | {value} | {delta:+} | {shown} | {drift} |"
+            f"| `{label}` | {measured[value]} | {measured[delta]:+} "
+            f"| {shown} | {moved} |"
         )
     return "\n".join(lines), drifts
 
 
-def report(measured, recorded, versions):
+def movers(rows, drifts, recorded, delta):
+    """The points to list, ranked, and what the ranking means.
+
+    By drift once there is a recorded baseline to have drifted from, and by raw
+    cost before that -- a first run has no recorded deltas to have moved away
+    from, and ranking it by nothing would print an empty list.
+    """
+    if recorded is None:
+        ranked = [
+            (label, measured[delta])
+            for label, measured in rows.items()
+            if label != BASELINE
+        ]
+        heading = "Largest cost, against the `openapi31` baseline"
+    else:
+        ranked = list(drifts.items())
+        heading = "Largest drift, against the recorded baseline"
+    ranked.sort(key=lambda item: (-abs(item[1]), item[0]))
+    return ranked[:TOP], heading
+
+
+def attribute(label, functions):
+    """The monomorphizations whose IR moved most between a point and baseline.
+
+    Report-only, and not recorded: these names churn with every generic
+    signature, so a committed file of them would be a diff generator rather
+    than a baseline.
+    """
+    base, here = functions[BASELINE], functions[label]
+    # The union of the two name sets, not just this point's. A feature that
+    # *removes* a monomorphization moves the total exactly as much as one that
+    # adds one, and walking only this point's functions would report a total
+    # that changed with nothing under it to explain the change.
+    moved = []
+    for name in set(base) | set(here):
+        lines, copies = here.get(name, (0, 0))
+        was = base.get(name, (0, 0))[0]
+        if lines != was:
+            moved.append((name, lines - was, copies))
+    if not moved:
+        return [f"##### `{label}`", "", "- no monomorphization moved", ""]
+    moved.sort(key=lambda row: (-abs(row[1]), row[0]))
+    listed = []
+    for name, lines, copies in moved[:TOP]:
+        if copies == 0:
+            tally = "not instantiated here"
+        else:
+            tally = f"{copies} " + ("copy" if copies == 1 else "copies")
+        listed.append(f"- `{name}` {lines:+} lines, {tally}")
+    return [f"##### `{label}`", "", *listed, ""]
+
+
+def section(title, note, rows, recorded, value, delta, unit, functions=None):
+    """One kind's table, its ranked movers, and optionally its attribution."""
+    body, drifts = table(rows, recorded, value, delta, unit)
+    ranked, heading = movers(rows, drifts, recorded, delta)
+    listed = [f"- `{label}` {moved:+}" for label, moved in ranked] or ["- none"]
+    out = [f"### {title}", "", note, "", body, "", f"#### {heading}", "", *listed, ""]
+    if functions is not None and ranked:
+        out += ["#### Where the IR moved", ""]
+        for label, _ in ranked:
+            out += attribute(label, functions)
+    return out
+
+
+def report(binary, codegen, functions, recorded, versions):
     """The trend report, as Markdown.
 
     A trend and nothing more: it states what moved and by how much, and passes
     no verdict on whether a number is too large. There is no ceiling to compare
-    against, and `nfr.md#thresholds` says guessing one is worse than having
-    none.
+    against, and `nfr.md#thresholds` holds that guessing one is worse than
+    having none.
     """
-    delta = deltas(measured)
-    rows = {feature: (measured[feature], delta[feature]) for feature in measured}
-    body, drifts = table(rows, recorded, "`.text`")
-
-    # Ranked by drift once there is something to drift from, and by raw cost
-    # before that -- a first run has no recorded deltas to have moved away
-    # from, and ranking it by nothing at all would print an empty list.
-    if recorded is None:
-        movers = [(f, d) for f, d in delta.items() if f != BASELINE]
-        heading = "Largest cost, against the `openapi31` baseline"
-    else:
-        movers = list(drifts.items())
-        heading = "Largest drift, against the recorded baseline"
-    movers.sort(key=lambda item: -abs(item[1]))
-
-    listed = "\n".join(f"- `{f}` {d:+} bytes" for f, d in movers[:5]) or "- none"
-    return "\n".join(
-        [
-            "## Per-feature cost",
-            "",
-            f"Toolchain `{versions[0]}` on `{versions[1]}`. `.text` of "
-            "`crates/kynos/cost/fixture.rs`, built at `--release`.",
-            "",
-            "No ceiling is applied. This reports a trend; a threshold is set "
-            "from a recorded measurement as a change to `docs/nfr.md`.",
-            "",
-            "### Binary delta",
-            "",
-            body,
-            "",
-            f"#### {heading}",
-            "",
-            listed,
-            "",
-        ]
-    )
+    out = [
+        "## Per-feature cost",
+        "",
+        f"Toolchain `{versions[0]}` on `{versions[1]}`, over "
+        "`crates/kynos/cost/fixture.rs` at each feature.",
+        "",
+        "No ceiling is applied. This reports a trend; a threshold is set from a "
+        "recorded measurement as a change to `docs/nfr.md`.",
+        "",
+    ]
+    if binary is not None:
+        out += section(
+            "Binary delta",
+            "`.text` of the linked fixture, built at `--release`.",
+            binary,
+            recorded[BINARY_TSV],
+            "text",
+            "delta",
+            "`.text` bytes",
+        )
+    if codegen is not None:
+        out += section(
+            "Codegen delta",
+            "Monomorphized LLVM IR for the fixture, counted at the dev profile "
+            "because a fat-LTO build deletes what this counts. The attributed "
+            "functions below need not sum to the total: `cargo llvm-lines` "
+            "counts more into `(TOTAL)` than it lists as rows.",
+            codegen,
+            recorded[CODEGEN_TSV],
+            "lines",
+            "delta_lines",
+            "IR lines",
+            functions,
+        )
+    return "\n".join(out) + "\n"
 
 
 def main():
+    parsed = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parsed.add_argument(
+        "--kind",
+        choices=("both", "binary", "codegen"),
+        default="both",
+        help="which half of the sweep to run (default: both)",
+    )
+    kind = parsed.parse_args().kind
+
     env = sweep_env()
     versions = toolchain()
-    size = llvm_size(versions[1])
-
-    measured = {}
-    for label, flags in points():
-        print(f"cost: building {label}", file=sys.stderr, flush=True)
-        measured[label] = measure_binary(size, flags, env)
-
-    recorded = read_recorded(COST / BINARY_TSV)
-    delta = deltas(measured)
-    rows = {
-        feature: {"text": measured[feature], "delta": delta[feature]}
-        for feature in measured
+    recorded = {
+        name: read_recorded(COST / name) for name in (BINARY_TSV, CODEGEN_TSV)
     }
-    header = BINARY_HEADER.format(
-        toolchain=versions[0], host=versions[1], baseline=measured[BASELINE]
+
+    binary = sweep_binary(env, versions[1]) if kind != "codegen" else None
+    codegen, functions = (
+        sweep_codegen(env) if kind != "binary" else (None, None)
     )
 
-    (ROOT / "cost-report.md").write_text(report(measured, recorded, versions))
-    write_tsv(ROOT / "cost-binary.tsv", header, ["text", "delta"], rows)
-    if os.environ.get("KYNOS_COST") == "overwrite":
-        COST.mkdir(parents=True, exist_ok=True)
-        write_tsv(COST / BINARY_TSV, header, ["text", "delta"], rows)
-        print(f"cost: recorded {COST / BINARY_TSV}", file=sys.stderr)
+    written = []
+    if binary is not None:
+        written.append(
+            (
+                BINARY_TSV,
+                "cost-binary.tsv",
+                BINARY_HEADER.format(
+                    toolchain=versions[0],
+                    host=versions[1],
+                    baseline=binary[BASELINE]["text"],
+                ),
+                ["text", "delta"],
+                binary,
+            )
+        )
+    if codegen is not None:
+        written.append(
+            (
+                CODEGEN_TSV,
+                "cost-codegen.tsv",
+                CODEGEN_HEADER.format(
+                    toolchain=versions[0],
+                    host=versions[1],
+                    baseline=codegen[BASELINE]["lines"],
+                ),
+                ["lines", "copies", "delta_lines", "delta_copies"],
+                codegen,
+            )
+        )
 
-    print((ROOT / "cost-report.md").read_text())
-    if recorded is None:
-        print("cost: no baseline recorded; run `mise run cost:record`", file=sys.stderr)
+    text = report(binary, codegen, functions, recorded, versions)
+    (ROOT / "cost-report.md").write_text(text)
+    print(text)
+
+    overwrite = os.environ.get("KYNOS_COST") == "overwrite"
+    for name, generated, header, names, rows in written:
+        write_tsv(ROOT / generated, header, names, rows)
+        if overwrite:
+            COST.mkdir(parents=True, exist_ok=True)
+            write_tsv(COST / name, header, names, rows)
+            print(f"cost: recorded {COST / name}", file=sys.stderr)
+
+    missing = [name for name, _, _, _, _ in written if recorded[name] is None]
+    if missing and not overwrite:
+        print(
+            f"cost: no baseline recorded for {', '.join(missing)}; "
+            "run `mise run cost:record`",
+            file=sys.stderr,
+        )
 
 
 main()

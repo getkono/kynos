@@ -177,9 +177,14 @@ cargo hack check --workspace --each-feature --all-targets \
 '''
 
 [tasks."cost:features"]
-description = "Measure what each feature costs a linked artifact"
-# The binary half of what `docs/performance.md` files as a sweep rather than a
-# target: `.text` of a fixed fixture, built at each feature and compared.
+description = "Measure what each feature costs a linked artifact and monomorphized IR"
+# The two sweep kinds `docs/performance.md` files as tasks rather than targets:
+# `.text` of a fixed fixture, and `cargo llvm-lines` over the same one.
+#
+# The two halves build at different profiles on purpose. `.text` is measured
+# at `--release`, which is the artifact that ships; the IR is counted at the
+# dev profile, because `llvm-lines` reads pre-link IR and a fat-LTO build
+# deletes the monomorphizations the codegen delta exists to count.
 #
 # `cargo hack` is deliberately *not* the driver, though `features:targets` is
 # the shape the feature list copies. cargo-hack has no hook between builds, and
@@ -191,8 +196,8 @@ description = "Measure what each feature costs a linked artifact"
 # share that job.
 #
 # A script rather than a shell pipeline, for `containment:check`'s reason: this
-# parses a tool's output, diffs a committed table and emits Markdown, and every
-# one of those is where a pipeline gets it quietly wrong.
+# parses two tools' output, diffs two committed tables and emits Markdown, and
+# every one of those is where a pipeline gets it quietly wrong.
 #
 # Not in `check` and not in `hooks:pre-push`. `ci.yml` already recognises a
 # class of tasks too slow to belong there, and `semver:check` set the precedent
@@ -206,6 +211,17 @@ description = "Measure what each feature costs a linked artifact"
 # activated for the tasks that measure codegen and for no other.
 tools = { "cargo:cargo-llvm-lines" = "0.4.48" }
 run = "python3 scripts/cost_features.py"
+
+[tasks."cost:codegen"]
+description = "The codegen half of the sweep alone"
+# Separable because it is the half that needs a tool, and because it is the
+# half whose profile is the surprising one -- running it alone is how a reader
+# checks that claim without paying for twenty-five fat-LTO release builds.
+#
+# The `cargo-llvm-lines` pin is task-scoped for the reason given on
+# `cost:features` above.
+tools = { "cargo:cargo-llvm-lines" = "0.4.48" }
+run = "python3 scripts/cost_features.py --kind codegen"
 
 [tasks."cost:record"]
 description = "Record the measured deltas as the committed baseline"
