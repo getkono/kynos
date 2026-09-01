@@ -22,6 +22,20 @@ framework generics as the fixture instantiates them rather than generic-free
 library code compiled into the rlib. That is the intended scope --
 `performance.md` says both kinds build the same fixture.
 
+It also means the sign can invert, which a subset limitation alone would not
+predict, so read a negative row carefully. rustc shares generic instantiations
+out of upstream rlibs, so a feature that enlarges the dependency graph can move
+instantiations off the example crate and *reduce* this number without deleting
+any work at all: **a negative codegen row is a relocation, not a saving**.
+`test-util` is the worked example. It gates one module the fixture never names
+and still reports -3982 lines, because `core::str::pattern::simd_contains` and
+`hashbrown`'s resize paths stop being instantiated here and start being
+instantiated upstream -- neither is Kynos code and neither stopped existing.
+
+Measuring the whole graph instead would need `-Z share-generics=off`, which is
+nightly-only and out of scope here. The `.text` half is the number without this
+confound, which is one reason both halves exist.
+
 `cargo hack` is deliberately not the driver, though the feature list copies
 `features:targets`' shape exactly. cargo-hack has no hook between builds and
 every build overwrites `target/release/examples/cost_fixture`, so a sweep it
