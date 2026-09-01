@@ -31,6 +31,16 @@
 //!   never calls it. Without this stage the target would count a walk that is
 //!   linear by construction and report the other one as unmeasured.
 //!
+//! **Reaching a cost is not the same as detecting it, and the two halves of the
+//! assertion do not divide the way the shape suggests.** Stage two puts the
+//! downgrade walk inside a counted region; what fails when that walk turns
+//! quadratic is the recorded per-size **ceiling**, not the growth relation. The
+//! relation is algebraically blind to an added exactly-quadratic term — see
+//! "What this cannot see" below, which works the cancellation out. So the
+//! ceilings are load-bearing for precisely the defect this file was written to
+//! catch, and dropping them in favour of the relation alone would leave that
+//! defect detected by nothing.
+//!
 //! # What the fixture is, and is not
 //!
 //! One operation per path, one `GET` per Path Item, so the operation count is
@@ -68,8 +78,27 @@
 //!   The output-bytes series covers the sub-case where a blowup reaches the
 //!   wire; a quadratic scratch buffer that never does is invisible.
 //! - **Exponents strictly between 1 and 2.** `n^1.9` satisfies the relation.
-//!   The per-size ceilings are what would catch it, which is why they exist
-//!   alongside the relation rather than instead of it.
+//! - **An added exactly-quadratic term, at any coefficient — including the
+//!   nested walk over `paths` that stage two exists to reach.** This is the
+//!   sharp one, and it is algebra rather than a matter of degree. Write the
+//!   cost as `a(x) = L(x) + c·x²`. The relation asserts `a(n)·m² < a(m)·n²`,
+//!   which expands to `L(n)·m² + c·n²m² < L(m)·n² + c·m²n²` — and the two `c`
+//!   terms are *identical*, so they cancel and leave `L(n)·m² < L(m)·n²`. The
+//!   relation therefore tests the non-quadratic remainder and nothing else. It
+//!   fires on `n^2.0001` and on `n³`; it does not fire at exactly `n²` over a
+//!   linear cost, at any coefficient, over any span of sizes. Concretely: a
+//!   descent in `three_two_only_constructs` allocating one pointer per
+//!   (path, path) pair reads 474, 13 524 and 1 035 024 — 97% of the cost at a
+//!   thousand operations — and *both* decades satisfy the relation.
+//!
+//!   **The per-size ceilings are what catch that case** (474 exceeds the 374
+//!   recorded at ten operations), and they are what catch the sub-quadratic
+//!   exponents above. That is the division of labour, and it is the reverse of
+//!   what a reader expects: the relation is the half that carries no recorded
+//!   number and cannot go stale, and the ceilings are the half that actually
+//!   detects a nested walk. Neither substitutes for the other, and
+//!   [`performance.md`](../../../docs/performance.md) observing that relations
+//!   outlive absolutes is not licence to drop these absolutes.
 //! - **A one-time cost paid at the smallest size,** which would depress the
 //!   first decade's growth factor. Both decades are asserted independently, and
 //!   `a_repeated_emission_costs_what_the_first_one_did` is what says there is no
@@ -98,6 +127,13 @@ static ALLOCATOR: AllocCounterSystem = AllocCounterSystem;
 /// measurement. A margin would be a guess wearing a measurement's clothes, and
 /// raising one of these is a deliberate edit rather than a rounding error
 /// absorbing a regression.
+///
+/// **These are not the softer half of the pair — do not delete them in favour
+/// of the growth relation.** The relation cancels an added exactly-quadratic
+/// term algebraically, so a nested walk over `paths` satisfies it at every
+/// coefficient and every span; these numbers are the only thing in the file
+/// that reads such a walk as a failure. The module documentation works the
+/// cancellation out.
 struct Size {
     /// How many operations the fixture at this point declares.
     operations: usize,
@@ -217,6 +253,15 @@ fn counted_emit(document: &Document) -> usize {
 /// rather than fitted across all three points, because a single fit *averages*
 /// the two decades and a quadratic term still small at 10 operations can hide
 /// inside that average.
+///
+/// **What this cannot see, stated where it is asserted:** an added
+/// exactly-quadratic term cancels on both sides of the cross-multiplication, so
+/// this function tests the non-quadratic remainder alone. `SIZES`'s recorded
+/// ceilings are what fail on a nested walk over `paths`. A per-operation form
+/// — `a(n)/n` non-increasing — would see that term, and is rejected because it
+/// asserts *linearity*: `nfr.md` asks for sub-quadratic, and an emitter that
+/// legitimately reached `n·log n` would fail it. Over-asserting a requirement
+/// is its own defect.
 fn stays_sub_quadratic(measure: &str, readings: &[(usize, usize)]) {
     for pair in readings.windows(2) {
         let (smaller, at_smaller) = pair[0];
