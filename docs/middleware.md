@@ -1169,6 +1169,15 @@ on all of them, and every one would then have to be made to produce it.
 its first run is in
 [`testing.md`](testing.md#what-the-harness-found-on-its-first-run).
 
+A response declaring *no* representation is checked too, which it was not at
+first. Declaring nothing is a claim about the exchange rather than the absence
+of one, so a body or a `Content-Type` arriving under it is reported. Until that
+held, `assert_conformance` read "declares nothing" as "nothing to check", and
+eight short circuits sent a problem document under a description of no content
+without the matrix noticing. That defect was in what an interceptor *declares*
+rather than in what it does, which is the one class of error only this harness
+can see.
+
 What it is not is a property test. The matrix is enumerated, so it covers the
 layers Kynos owns in the arrangements that file names — not every stack a
 reader can assemble. Adding an owned layer means adding it there.

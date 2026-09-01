@@ -12,6 +12,15 @@ a problem document, and both appear in the operation's `responses` — because
 [`FromRequestParts::Rejection`](../crates/kynos/src/extract/mod.rs) is bound by
 `Responses` and therefore cannot decline to describe itself.
 
+It covers what middleware refuses, too, and the description owes the same
+account of it. A `ShortCircuit` answers with a problem document, so the response
+it declares names `application/problem+json` and the `Problem` component — one
+writer, `error::problem::problem_response`, rather than a spelling per site.
+Eight of the ten short circuits Kynos ships once described a response with no
+content while sending one; the sweep in
+[`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) is what now
+holds every implementation to it.
+
 [RFC 9457]: ../references/rfc9457.txt
 
 ## A problem is a representation, not a response

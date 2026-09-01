@@ -283,7 +283,12 @@ same check, and `every_interceptor_kynos_ships_is_accounted_for` in
 difference showed. A count reports that two numbers differ; a set of type names
 reports *which* interceptor nothing accounts for. It also stops two branches
 each adding one from colliding, since an alphabetical insertion puts them on
-different lines where a shared count puts them on the same one.
+different lines where a shared count puts them on the same one. The same file
+now names the `ShortCircuit` set the same way, after eight of its ten members
+were found describing a response with no content while sending a problem
+document. Eight hand-written cases would have been eight places for a ninth
+implementation to be missing from, which is why the set is asserted and the
+sweep derives what it must drive from it.
 
 The declared side of that pair is read off disk — every `.rs` file under
 `src/middleware/`, walked rather than transcribed. A transcribed list is a third
