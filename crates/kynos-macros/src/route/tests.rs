@@ -169,13 +169,15 @@ mod typed_uri {
         checks_names: bool,
     }
 
-    /// Parses the expansion rather than matching its text.
+    /// The expansion, and the constructor inside it.
     ///
-    /// `quote` decides the spacing, so a `contains` over the stringified tokens
-    /// breaks whenever the emitter is reformatted and passes whenever a wrong
-    /// expansion happens to contain the fragment. Reading the parsed signature
-    /// asks what the emitter actually decided.
-    fn emitted(function: &ItemFn, path: &str, variables: &[&str]) -> Emission {
+    /// Shared by the two things read out of one emission: the signature the
+    /// emitter wrote, and the documentation it attached.
+    fn expansion(
+        function: &ItemFn,
+        path: &str,
+        variables: &[&str],
+    ) -> (syn::File, syn::ImplItemFn) {
         let variables: Vec<String> = variables.iter().map(|name| (*name).to_owned()).collect();
         let tokens = endpoint_uri_impl(function, path, &variables).expect("a valid endpoint");
         let file: syn::File = syn::parse2(tokens).expect("the expansion parses as items");
@@ -195,9 +197,46 @@ mod typed_uri {
                 syn::ImplItem::Fn(function) => Some(function),
                 _ => None,
             })
-            .expect("a `relative_uri` constructor");
+            .expect("a `relative_uri` constructor")
+            .clone();
 
         assert_eq!(constructor.sig.ident, "relative_uri");
+
+        (file, constructor)
+    }
+
+    /// The documentation rustdoc will read off the emitted constructor.
+    ///
+    /// Fragments joined the way rustdoc joins them, so a line here is a line of
+    /// the rendered Markdown rather than a fragment of one.
+    fn emitted_doc(function: &ItemFn, path: &str, variables: &[&str]) -> String {
+        let (_, constructor) = expansion(function, path, variables);
+
+        constructor
+            .attrs
+            .iter()
+            .filter_map(|attribute| match &attribute.meta {
+                syn::Meta::NameValue(pair) if pair.path.is_ident("doc") => match &pair.value {
+                    syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(text),
+                        ..
+                    }) => Some(text.value()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect::<Vec<String>>()
+            .join("\n")
+    }
+
+    /// Parses the expansion rather than matching its text.
+    ///
+    /// `quote` decides the spacing, so a `contains` over the stringified tokens
+    /// breaks whenever the emitter is reformatted and passes whenever a wrong
+    /// expansion happens to contain the fragment. Reading the parsed signature
+    /// asks what the emitter actually decided.
+    fn emitted(function: &ItemFn, path: &str, variables: &[&str]) -> Emission {
+        let (file, constructor) = expansion(function, path, variables);
 
         let parameters = constructor
             .sig
@@ -304,6 +343,86 @@ mod typed_uri {
                 checks_names: true,
             }
         );
+    }
+
+    /// The four shapes the emitter matches on, as `(description, handler, path,
+    /// variables)`.
+    fn arms() -> Vec<(&'static str, ItemFn, &'static str, &'static [&'static str])> {
+        vec![
+            (
+                "a route with no extractors",
+                syn::parse_quote!(
+                    async fn report() {}
+                ),
+                "/reports",
+                &[],
+            ),
+            (
+                "a route extracting Path<T> only",
+                syn::parse_quote!(
+                    async fn report(Path(path): Path<ReportPath>) {}
+                ),
+                "/reports/{name}",
+                &["name"],
+            ),
+            (
+                "a route extracting Query<T> only",
+                syn::parse_quote!(
+                    async fn report(Query(query): Query<ReportQuery>) {}
+                ),
+                "/reports",
+                &[],
+            ),
+            (
+                "a route extracting both",
+                syn::parse_quote!(
+                    async fn report(
+                        Path(path): Path<ReportPath>,
+                        Query(query): Query<ReportQuery>,
+                    ) {
+                    }
+                ),
+                "/reports/{name}",
+                &["name"],
+            ),
+        ]
+    }
+
+    /// Every arm's documentation renders as prose, not as a code block.
+    ///
+    /// Markdown reads four or more leading spaces as an indented code block, and
+    /// rustdoc compiles an unannotated code block as Rust -- so an indented
+    /// paragraph here is one failing doctest per route attribute in every crate
+    /// that writes one, and nothing in this workspace renders this documentation
+    /// to notice. Swept rather than sampled: the emitter matches on
+    /// `(Option<Path<T>>, Option<Query<T>>)`, so these four rows are the set.
+    ///
+    /// No counter stands beside this one, unlike the diagnostics above: that set
+    /// is open and a rule can be added without a case, while this one is closed
+    /// by the type system -- `(Option<_>, Option<_>)` has four inhabitants and
+    /// the `match` is exhaustive or it does not compile. An arm that dropped the
+    /// documentation is caught here already, by the emptiness assertion.
+    #[test]
+    fn every_emitted_doc_line_renders_as_prose() {
+        for (description, function, path, variables) in arms() {
+            let doc = emitted_doc(&function, path, variables);
+            assert!(
+                !doc.is_empty(),
+                "{description}: the constructor carries no documentation"
+            );
+            for line in doc.lines() {
+                assert!(
+                    !line.starts_with("    "),
+                    "{description}: `{line}` is indented four spaces, which Markdown reads as a \
+                     Rust code block and rustdoc then tries to compile"
+                );
+                assert!(
+                    !line.trim_start().contains("  "),
+                    "{description}: `{line}` carries a run of spaces, which is what a literal \
+                     re-wrapped without its line breaks looks like"
+                );
+            }
+        }
     }
 
     /// One row per `syn::Error::new` site in `uri.rs`, counted below.
