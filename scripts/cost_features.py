@@ -82,7 +82,21 @@ LLVM_LINES_ROW = re.compile(
 # other things. It therefore differs between two points of this very sweep, so
 # leaving it in would make every function look new at every feature and
 # attribution would report nothing but noise.
-DISAMBIGUATOR = re.compile(r"\[[0-9a-f]+\]")
+#
+# Bounded two ways, because unbounded it also eats a slice of a float type:
+# `[f64]` is entirely hex digits, so `<[f64] as core::fmt::Debug>::fmt` and its
+# `f32` twin would both collapse to `< as core::fmt::Debug>::fmt` and one would
+# silently overwrite the other in the table.
+#
+# The lookbehind is the sharp half: a crate id always follows the crate's name,
+# and a slice bracket never does -- it follows `<`, `&`, `(` or a comma. The
+# length bound is the blunt half. It is a range rather than exactly sixteen
+# because a `StableCrateId` is a 64-bit value printed without leading-zero
+# padding, so it is *usually* sixteen digits and sometimes fewer: one sweep's
+# output holds 9592 of sixteen digits and 2332 of fifteen. Pinning it at
+# sixteen would leave every `alloc` and `hashbrown` id in place, which is the
+# noise the stripping exists to remove.
+DISAMBIGUATOR = re.compile(r"(?<=\w)\[[0-9a-f]{8,16}\]")
 
 BINARY_TSV = "binary.tsv"
 BINARY_HEADER = """\
