@@ -39,7 +39,25 @@ categories = [
 # whose `path` is absent, so a declared target and an excluded file cannot both
 # exist; the `required-features` `metaschema`'s declaration carried now sit in
 # the file's own `#![cfg]`, which holds in both trees.
-exclude = ["tests/ledger.rs", "tests/metaschema.rs"]
+#
+# The two cost baselines go for the same reason, one step further out. Their
+# oracle is `scripts/cost_features.py` and the `cost:*` tasks in `mise.toml`,
+# both above this root, so the instructions printed in each file's own header
+# name commands a tarball does not contain; and what they record is a sweep of
+# *this workspace's* features on a pinned toolchain, which is a property of the
+# workspace rather than of the library someone downloaded. Shipping them would
+# ship a table nobody receiving it can reproduce, compare against or act on.
+#
+# `cost/fixture.rs` stays, and must: it is a declared `[[example]]`, and the
+# rule above applies to it in the other direction -- a declared target whose
+# path is excluded is a manifest error, so the file the sweep measures travels
+# even though the numbers it produced do not.
+exclude = [
+  "cost/binary.tsv",
+  "cost/codegen.tsv",
+  "tests/ledger.rs",
+  "tests/metaschema.rs",
+]
 
 [[test]]
 name = "ui"
