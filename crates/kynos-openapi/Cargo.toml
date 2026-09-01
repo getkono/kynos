@@ -48,6 +48,7 @@ serde_yaml_ng = { workspace = true, optional = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+alloc_counter = { workspace = true }
 proptest = { workspace = true }
 
 [lints]
