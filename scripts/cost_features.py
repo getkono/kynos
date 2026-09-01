@@ -373,8 +373,13 @@ def table(rows, recorded, value, delta, unit):
         if was is None:
             shown, moved = ("—", "—") if recorded is None else ("—", "new")
         else:
-            drifts[label] = measured[delta] - was
-            shown, moved = f"{was:+}", f"{drifts[label]:+}"
+            moved_by = measured[delta] - was
+            # `openapi31` is the point every delta is taken against, so its own
+            # drift is zero by construction. Ranking it would spend one of five
+            # slots saying the baseline is the baseline.
+            if label != BASELINE:
+                drifts[label] = moved_by
+            shown, moved = f"{was:+}", f"{moved_by:+}"
         lines.append(
             f"| `{label}` | {measured[value]} | {measured[delta]:+} "
             f"| {shown} | {moved} |"
@@ -399,6 +404,12 @@ def movers(rows, drifts, recorded, delta):
     else:
         ranked = list(drifts.items())
         heading = "Largest drift, against the recorded baseline"
+    # Only what actually moved. Padding the list to five with rows that did not
+    # move makes the steady state -- nothing drifting at all -- into five lines
+    # of noise that happen to be the alphabetically first features, and a
+    # reader who learns to skip that section skips the run where something did
+    # move. It is also what makes `- none` reachable and true.
+    ranked = [row for row in ranked if row[1] != 0]
     ranked.sort(key=lambda item: (-abs(item[1]), item[0]))
     return ranked[:TOP], heading
 
