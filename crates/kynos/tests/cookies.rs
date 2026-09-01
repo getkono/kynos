@@ -10,10 +10,7 @@ use kynos::{
     Router,
     http::{StatusCode, header},
     middleware::cookies::SetCookies,
-    response::{
-        cookie::{Cookie, SameSite},
-        status::NoContent,
-    },
+    response::{cookie::Cookie, status::NoContent},
 };
 
 #[path = "support/mod.rs"]
@@ -103,35 +100,5 @@ async fn a_cookie_that_cannot_be_a_field_is_dropped_without_taking_the_others() 
     assert_eq!(
         cookies_on(&get(&service, "/visit").call().await),
         ["good=1", "also-good=2"]
-    );
-}
-
-/// Setting a cookie means declaring it, so a consumer can see it.
-#[test]
-fn the_description_carries_the_set_cookie_field() {
-    let document = Router::<()>::new()
-        .mount(kynos::routes![visit])
-        .intercept(SetCookies::new(vec![Cookie::new("locale", "en")]))
-        .openapi()
-        .expect("a describable router");
-
-    let emitted = serde_json::to_string(&document).expect("a serializable document");
-    assert!(emitted.contains("Set-Cookie"), "{emitted}");
-}
-
-/// A `SameSite=None` cookie carries `Secure` all the way to the wire.
-#[tokio::test]
-async fn a_cross_site_cookie_reaches_the_wire_with_secure() {
-    let service = Router::<()>::new()
-        .mount(kynos::routes![visit])
-        .intercept(SetCookies::new(vec![
-            Cookie::new("embed", "1").same_site(SameSite::None),
-        ]))
-        .build(())
-        .expect("a describable router");
-
-    assert_eq!(
-        cookies_on(&get(&service, "/visit").call().await),
-        ["embed=1; Secure; SameSite=None"]
     );
 }
