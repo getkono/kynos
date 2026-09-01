@@ -78,7 +78,7 @@ runs on. `#[kynos::get("/users/{id}")]` also checks at compile time that
 `UserPath`'s fields are exactly the template's variables, in order.
 
 This is a trimmed [`hello.rs`](crates/kynos/examples/hello.rs), one of
-thirty-three examples, each about a page and all listed in
+thirty-six examples, each about a page and all listed in
 [their README](crates/kynos/examples/README.md).
 
 ## Documentation

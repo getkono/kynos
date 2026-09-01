@@ -455,7 +455,7 @@ four different answers depending on which layer is asked.
 
 | Vector | HTTP/1 | HTTP/2 | Server | Interceptor | Bounded by default? |
 | --- | --- | --- | --- | --- | --- |
-| Request line and URI length | must fit `max_buffer_size` (≈417 KiB) | `max_header_list_size`, 16 KiB | — | — | yes, loosely |
+| Request line and URI length | must fit `max_buffer_size` (408 KiB) | `max_header_list_size`, 16 KiB | — | — | yes, loosely |
 | Header count | `max_headers`, 100 → 431 | by list size rather than count | — | — | yes |
 | Header-list size | `max_buffer_size` | `max_header_list_size` | — | — | yes |
 | Query-string length | subsumed by the URI | subsumed by the list size | — | — | yes, loosely |
@@ -918,7 +918,7 @@ A response that did not say how long it may be reused is not reused;
 
 `stale-while-revalidate` and `stale-if-error` are absent, and not as an
 oversight: the revalidation is a background task — a `tokio::spawn` outside
-`server/` — which would be a sixth row in the runtime allowance table for a
+`server/` — which would be a seventh row in the runtime allowance table for a
 nicety, and a stale response is one the operation's description has no way to
 mark.
 

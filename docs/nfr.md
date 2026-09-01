@@ -19,6 +19,7 @@ and allocates a counted method to each shape of the routing stack. Every
 | `needs-tooling` | Settled, and blocked on installing something. The tool is named |
 | `blocked-on-impl` | The surface the method would assert against does not exist yet |
 | `blocked-on-dependency` | A pinned dependency does not expose what the requirement needs. The dependency and the remedy are named |
+| `absent` | Nothing asserts the requirement, and no method is proposed. It is neither settled enough to be `planned` nor refused, so the row states what is missing and where the reasoning is recorded |
 | `by-design` | The requirement is not met and will not be. The alternative was weighed and refused, and the trade is recorded |
 | `kynos-bench` | A measurement any HTTP server library would answer, owned by [`getkono/kynos-bench`](https://github.com/getkono/kynos-bench) rather than by this repository |
 
@@ -261,7 +262,7 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | A Server-Sent Events keep-alive restarts an idle body timer rather than being invisible to it | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) over an event stream whose only frames are keep-alives | `enforced` |
 | security | A credential-bearing header is recorded as present and never by value | [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) sweeping the whole `REDACTED` list, with a control asserting an ordinary header still records its value | `enforced` |
 | security | A `__Host-` or `__Secure-` cookie carries what its prefix promises, or does not render | [`response/cookie/tests.rs`](../crates/kynos/src/response/cookie/tests.rs) over both prefixes, the wrong case, and each refusal with a control | `enforced` |
-| correctness | A preflight permitting any header still names `authorization`, which no wildcard covers | [`cors/preflight_tests.rs`](../crates/kynos/src/middleware/cors/preflight_tests.rs) over the credentialed and uncredentialed answers | `enforced` |
+| correctness | A preflight permitting any header still names `authorization`, which no wildcard covers | [`cors/preflight/tests.rs`](../crates/kynos/src/middleware/cors/preflight/tests.rs) over the credentialed and uncredentialed answers | `enforced` |
 | correctness | A 304 is minted only from a 200, never from another 2xx | [`tests/cache.rs`](../crates/kynos/tests/cache.rs) over a 204 carrying a matching validator | `enforced` |
 | correctness | An `If-None-Match` on an unsafe method answers 412 rather than being ignored | — | `absent`, and recorded in [`middleware.md`](middleware.md): 412 is a status `NotModified` does not declare, and widening `Short` would add it to every covered operation |
 | correctness | A non-error response to an unsafe method drops what was stored for that target | [`tests/cache.rs`](../crates/kynos/tests/cache.rs) over a live store-then-write-then-read sequence, with a control asserting a refused write drops nothing, plus a unit case over the status classes section 4.4 defines | `enforced` |
@@ -383,7 +384,7 @@ the one directly above it in AGENTS.md — *"Submodules are `pub` with no parent
 re-exports"* — in a way worth stating. Splitting a module that declares several
 public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: eight rejection
-types in 644 lines, and splitting it would turn `error::rejection::PathRejection`
+types in 643 lines, and splitting it would turn `error::rejection::PathRejection`
 into `error::rejection::path::PathRejection`. Sixteen of the twenty-eight are that
 shape, worth roughly a hundred public paths between them — and each is one
 cohesive family, which is precisely what the concern test says may stay a file.
