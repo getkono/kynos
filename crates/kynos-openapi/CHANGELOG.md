@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/getkono/kynos/compare/kynos-openapi-v0.1.0...kynos-openapi-v0.2.0) - 2026-09-01
+
+### Fixed
+
+- *(openapi)* compare a header parameter's name the way HTTP compares one
+
 ## [0.1.0](https://github.com/getkono/kynos/releases/tag/kynos-openapi-v0.1.0) - 2026-08-29
 
 ### Added
