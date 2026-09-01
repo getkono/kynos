@@ -84,11 +84,19 @@ holding either would hold a test that could only fail. Each is a property of the
 workspace, and stays where the workspace is; `containment:check` fails a build
 where any *published* file reaches out the same way.
 
-`crates/kynos-openapi/tests/` holds four more: `properties.rs` and
+`crates/kynos-openapi/tests/` holds five more: `properties.rs` and
 `templates.rs` for the document and path-template properties, `wire.rs` for the
-per-type wire shapes, and its own `size.rs`. `support/` beside them is not a
-target — it is the generator module the property files share, included by
-`#[path]` because an integration binary cannot be depended on.
+per-type wire shapes, its own `size.rs`, and its own
+[`alloc.rs`](../crates/kynos-openapi/tests/alloc.rs) — what one `to_json` and
+one `emit` allocate at 10, 100 and 1000 operations, that each decade's growth
+factor is below the quadratic one in allocations and in output bytes alike, and
+that a repeated emission costs what the first one did. It is a target of its
+own for the reason `kynos`'s namesake is: a `#[global_allocator]` is
+process-wide, so a counter installed in the library's unit-test binary would
+reach every unit test in it. Two targets rather than one because an integration
+binary cannot be depended on — each crate that counts installs the counter
+itself. `support/` beside them is not a target — it is the generator module the
+property files share, included by `#[path]` for the same reason.
 
 `crates/kynos/tests/support/` is the same idiom: the fixture app the runtime
 targets drive, and one request builder over the public `Service::call`. Over
