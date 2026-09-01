@@ -81,13 +81,44 @@ pub(super) fn conformance(document: &Document, record: &Observed) -> Vec<String>
 }
 
 /// Whether the body matches the representation declared for it.
+///
+/// # Declaring nothing is a claim too
+///
+/// A response with no `content` says the exchange carried no representation,
+/// which is checked against what was sent rather than taken as nothing to
+/// check. Keyed on the exchange in both directions: octets are a
+/// representation whatever the headers said, and a `Content-Type` names one
+/// whether or not any octets followed.
+///
+/// Every shape Kynos ships that legitimately declares nothing sends neither, so
+/// none of them reaches the report below: `NoContent`'s 204 and every
+/// `Redirect<CODE>` build a `Body::empty()`; the conditional 304 copies a
+/// replayed field list that deliberately omits `Content-Type`; the ranged 304
+/// guards its media type behind the status; the asset 304 writes only `ETag`,
+/// `Cache-Control`, `Content-Encoding` and `Vary`; the CORS preflight 204
+/// writes only `Vary` and `Access-Control-*`; and a HEAD keeps its
+/// `Content-Type` on statuses that *do* declare a representation, so it never
+/// takes this branch.
 fn body_conformance(
     document: &Document,
     response: &kynos_openapi::Response,
     record: &Observed,
 ) -> Vec<String> {
+    let observed = media_type(&record.headers);
+
     if response.content.is_empty() {
-        return Vec::new();
+        if record.body.is_empty() && observed.is_none() {
+            return Vec::new();
+        }
+
+        return vec![format!(
+            "the description declares no content, but {} was sent",
+            match (&observed, record.body.len()) {
+                (Some(media_type), 0) => format!("a `{media_type}` head with no body"),
+                (Some(media_type), len) => format!("a {len}-byte `{media_type}` body"),
+                (None, len) => format!("a {len}-byte body with no `Content-Type`"),
+            }
+        )];
     }
 
     let declared = || {
@@ -99,7 +130,7 @@ fn body_conformance(
             .join(", ")
     };
 
-    let Some(media_type) = media_type(&record.headers) else {
+    let Some(media_type) = observed else {
         return vec![format!(
             "no `Content-Type` was sent, but the description declares {}",
             declared()
