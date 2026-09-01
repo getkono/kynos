@@ -197,6 +197,14 @@ description = "Measure what each feature costs a linked artifact"
 # Not in `check` and not in `hooks:pre-push`. `ci.yml` already recognises a
 # class of tasks too slow to belong there, and `semver:check` set the precedent
 # by being absent from the same list.
+#
+# `cargo-llvm-lines` is pinned *here* rather than in `[tools]` because upstream
+# publishes no release binaries -- every `dtolnay/cargo-llvm-lines` release has
+# zero assets -- so the only backend available is `cargo:`, which compiles from
+# source. The comment on `[tools]` records what that costs: convco alone was
+# over four minutes on every CI job. A task-scoped pin is installed and
+# activated for the tasks that measure codegen and for no other.
+tools = { "cargo:cargo-llvm-lines" = "0.4.48" }
 run = "python3 scripts/cost_features.py"
 
 [tasks."cost:record"]
@@ -205,6 +213,10 @@ description = "Record the measured deltas as the committed baseline"
 # told to, so a change in what a feature costs reaches review as a diff of the
 # recorded deltas rather than as a number someone retyped. Recording is a
 # deliberate act, per `docs/nfr.md#thresholds`.
+#
+# The `cargo-llvm-lines` pin is task-scoped for the reason given on
+# `cost:features` above.
+tools = { "cargo:cargo-llvm-lines" = "0.4.48" }
 env = { KYNOS_COST = "overwrite" }
 run = "python3 scripts/cost_features.py"
 
