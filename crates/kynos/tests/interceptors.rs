@@ -334,7 +334,15 @@ const SHORT_CIRCUITS: &[&str] = &[
     "Undecodable",
 ];
 
-/// The members of `SHORT_CIRCUITS` the sweep cannot drive, and why.
+/// The members of `SHORT_CIRCUITS` that have no value to drive.
+///
+/// Membership is for a type no value of which can exist -- `Infallible` is
+/// uninhabited, so there is nothing to hand `case` and nothing to put on a
+/// wire. It is *not* for a type that is merely awkward to construct: every name
+/// here is one the sweep stops asserting anything about, and nothing checks
+/// that the exclusion was earned. Widening it is how the sweep would be
+/// silenced rather than satisfied, so a type that can be built gets built, even
+/// where building it takes a fixture.
 const UNCONSTRUCTIBLE: &[&str] = &["Infallible"];
 
 /// Every short circuit Kynos ships, named against the set the sweep drives.
@@ -367,6 +375,17 @@ fn every_short_circuit_kynos_ships_is_accounted_for() {
 /// substring would count as a shipped implementation. Requiring the line's code
 /// to *begin* with `impl ` excludes the `/// # ` prefix and still admits
 /// `impl crate::response::ShortCircuit for NotAcceptable`.
+///
+/// # What it requires of an implementation
+///
+/// `impl`, the trait name and `for` must fall on one line. Every implementation
+/// in the tree does, and `ShortCircuit` takes no generic argument to push one
+/// over the width. An `impl<T: Bound> ShortCircuit for Foo<T>` long enough for
+/// rustfmt to wrap after the generic list would be missed here -- and, since
+/// the sweep derives what it must drive from this set, missed by the sweep too.
+/// That is the one failure mode where the mechanism goes quiet rather than red,
+/// so an implementation added later keeps its head on one line, or this learns
+/// to join continuations first.
 fn impls_of(trait_name: &str) -> BTreeSet<String> {
     let mut sources = Vec::new();
     collect_sources(
