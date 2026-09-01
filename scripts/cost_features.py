@@ -54,7 +54,6 @@ from pathlib import Path
 # it by hand from a crate directory sweeps the same tree mise does.
 ROOT = Path(__file__).resolve().parent.parent
 COST = ROOT / "crates/kynos/cost"
-ARTIFACT = ROOT / "target/release/examples/cost_fixture"
 
 # `features:targets`' exclusions, for its reasons: `server` and `tls` need an
 # HTTP protocol, `time` and `decimal` are umbrellas that do not compile alone,
@@ -225,19 +224,40 @@ def measure_binary(size, flags, env):
     `.text` rather than the file size because it excludes the two sections that
     move without the code moving: symbol names, and the panic-message paths in
     `.rodata` that change when a file is renamed.
+    The path comes from cargo rather than from `target/release/examples/`,
+    because that guess is wrong wherever `CARGO_TARGET_DIR` or a
+    `.cargo/config.toml` moves the build. Guessing it is the one way this
+    sweep could report a wrong number as a right one: every build would land
+    elsewhere, `llvm-size` would read one stale binary twenty-five times, and
+    a table of zeroes would exit 0 saying nothing had drifted.
     """
-    capture(
+    built = capture(
         [
             "cargo", "build", "-p", "kynos", "--release",
-            "--example", "cost_fixture", *flags,
+            "--example", "cost_fixture",
+            "--message-format=json-render-diagnostics", *flags,
         ],
         env,
     )
-    for line in capture([str(size), "-A", str(ARTIFACT)]).splitlines():
+    artifact = None
+    for line in built.splitlines():
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if (
+            message.get("reason") == "compiler-artifact"
+            and message.get("executable")
+            and message.get("target", {}).get("name") == "cost_fixture"
+        ):
+            artifact = message["executable"]
+    if artifact is None:
+        return fail("cargo reported no `cost_fixture` executable")
+    for line in capture([str(size), "-A", artifact]).splitlines():
         fields = line.split()
         if len(fields) >= 2 and fields[0] == ".text":
             return int(fields[1])
-    return fail(f"llvm-size printed no `.text` section for {ARTIFACT}")
+    return fail(f"llvm-size printed no `.text` section for {artifact}")
 
 
 def measure_codegen(flags, env):
