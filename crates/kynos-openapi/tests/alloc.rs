@@ -265,7 +265,10 @@ fn counted_emit(document: &Document) -> usize {
 /// **What this cannot see, stated where it is asserted:** an added
 /// exactly-quadratic term cancels on both sides of the cross-multiplication, so
 /// this function tests the non-quadratic remainder alone. `SIZES`'s recorded
-/// ceilings are what fail on a nested walk over `paths`. A per-operation form
+/// ceilings are what fail on a nested walk over `paths`, and
+/// `the_relation_passes_a_nested_walk` below holds both halves of that
+/// statement against one series rather than asserting it in prose. A
+/// per-operation form
 /// — `a(n)/n` non-increasing — would see that term, and is rejected because it
 /// asserts *linearity*: `nfr.md` asks for sub-quadratic, and an emitter that
 /// legitimately reached `n·log n` would fail it. Over-asserting a requirement
@@ -285,6 +288,79 @@ fn stays_sub_quadratic(measure: &str, readings: &[(usize, usize)]) {
     }
 }
 
+/// The policy clause a recorded ceiling carries when it has nothing more
+/// specific to say. Two of the three do; `emit`'s carries a caveat of its own.
+const A_CEILING_MOVES_BY_DECISION: &str =
+    "raising a ceiling is a deliberate edit and lowering one is what an improvement looks like";
+
+/// Asserts one reading is at or below the number recorded beside it.
+///
+/// A function rather than three inline `assert!`s, so that the comparison has
+/// a caller which is not a passing live reading:
+/// `a_recorded_ceiling_rejects_a_nested_walk` drives it with the
+/// counterexample the module documentation works out, and that is what holds
+/// the `<=` the right way round. `note` is what differs between the three
+/// recorded numbers; everything else about the message is shared.
+fn within_recorded(measure: &str, operations: usize, reading: usize, recorded: usize, note: &str) {
+    assert!(
+        reading <= recorded,
+        "{measure} at {operations} operations read {reading} against a recorded {recorded}; {note}"
+    );
+}
+
+/// A nested descent over `paths`, allocating one pointer per (path, path)
+/// pair, as the module documentation reads it off the fixture.
+///
+/// Synthetic on purpose: no emitter in this crate produces it, and writing one
+/// that did would be a change to the code under measurement rather than a
+/// check on the measurement.
+const NESTED_WALK: [(usize, usize); 3] = [(10, 474), (100, 13_524), (1000, 1_035_024)];
+
+/// The claim this file is built around, held as a test rather than as prose:
+/// the walk stage two exists to reach satisfies the relation at every point.
+///
+/// Every other assertion here runs only on live readings that pass, so
+/// `stays_sub_quadratic` collapsing to `true` turns nothing red. This is the
+/// control. Should it ever fail, the relation has become able to see an
+/// exactly-quadratic term — a change to the argument the file makes, not a
+/// regression to paper over.
+#[test]
+fn the_relation_passes_a_nested_walk() {
+    stays_sub_quadratic("a nested walk's allocation count", &NESTED_WALK);
+}
+
+/// ...and the relation can still fail, on a decade that grows by a full cube.
+///
+/// The expected fragment names the interpolated readings rather than the
+/// closing clause, so collapsing the message's three arms into one fixed
+/// string fails here.
+#[test]
+#[should_panic(expected = "at 10 operations a cubic cost was 10 and at 100 it was 10000")]
+fn the_relation_fails_on_a_cubic_series() {
+    stays_sub_quadratic("a cubic cost", &[(10, 10), (100, 10_000)]);
+}
+
+/// The other half of the division of labour, at the point where it is
+/// tightest: 474 against the 374 recorded at ten operations.
+///
+/// With the two above, this is the whole of what
+/// [`nfr.md`](../../../docs/nfr.md#document-model)'s row asserts — that the
+/// recorded ceilings and not the relation are what read a nested walk as a
+/// failure — held where a reader can run it.
+#[test]
+#[should_panic(expected = "read 474 against a recorded 374")]
+fn a_recorded_ceiling_rejects_a_nested_walk() {
+    let (operations, reading) = NESTED_WALK[0];
+
+    within_recorded(
+        "a nested walk's emit allocation count",
+        operations,
+        reading,
+        SIZES[0].emit_allocations,
+        A_CEILING_MOVES_BY_DECISION,
+    );
+}
+
 /// The record: what one emission costs today, at each size and in both stages.
 ///
 /// Recorded rather than merely observed, because the relation below records
@@ -296,22 +372,22 @@ fn one_emission_allocates_what_was_recorded() {
         let document = document(size.operations);
 
         let (json, _) = counted_json(&document);
-        assert!(
-            json <= size.json_allocations,
-            "to_json at {} operations allocated {json} times against a recorded {}; raising a \
-             ceiling is a deliberate edit and lowering one is what an improvement looks like",
+        within_recorded(
+            "one to_json's allocation count",
             size.operations,
-            size.json_allocations
+            json,
+            size.json_allocations,
+            A_CEILING_MOVES_BY_DECISION,
         );
 
         let emitted = counted_emit(&document);
-        assert!(
-            emitted <= size.emit_allocations,
-            "emit at {} operations allocated {emitted} times against a recorded {}; the ceiling \
-             is the `--all-features` reading, so a baseline run is expected to come in under it \
-             rather than at it",
+        within_recorded(
+            "one emit's allocation count",
             size.operations,
-            size.emit_allocations
+            emitted,
+            size.emit_allocations,
+            "the ceiling is the `--all-features` reading, so a baseline run is expected to come \
+             in under it rather than at it",
         );
     }
 }
@@ -364,12 +440,12 @@ fn output_size_grows_sub_quadratically_in_operation_count() {
         .iter()
         .map(|size| {
             let (_, bytes) = counted_json(&document(size.operations));
-            assert!(
-                bytes <= size.output_bytes,
-                "to_json at {} operations emitted {bytes} bytes against a recorded {}; raising a \
-                 ceiling is a deliberate edit and lowering one is what an improvement looks like",
+            within_recorded(
+                "the emitted document's size in bytes",
                 size.operations,
-                size.output_bytes
+                bytes,
+                size.output_bytes,
+                A_CEILING_MOVES_BY_DECISION,
             );
             (size.operations, bytes)
         })
