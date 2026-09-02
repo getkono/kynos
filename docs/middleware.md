@@ -1183,10 +1183,14 @@ This harness is not the only instrument for that class, and is not the cheapest.
 same agreement directly, with no document, no client and no route: it drives
 each short circuit's value and compares what reaches the wire against what
 `Responses` declared. It is also the more exhaustive of the two here — the
-matrix reached five of the eight defective implementations, the sweep covers all
-ten. What the matrix buys instead is reach: it holds anything on a
-live exchange, an application's own short circuit and a handler included, where
-the sweep is total only over the set Kynos ships. Prefer the direct assertion
+matrix reached five of the eight defective implementations and the sweep reached
+all eight. What the sweep covers is every implementation this build compiled a
+value for: nine of the ten with every feature on, six at the default set, with
+`Infallible` excluded because it is uninhabited. The tenth is held by name in
+`every_short_circuit_kynos_ships_is_accounted_for`, which asserts the set rather
+than the agreement. What the matrix buys instead is reach: it holds anything on
+a live exchange, an application's own short circuit and a handler included,
+where the sweep is total only over the set Kynos ships. Prefer the direct assertion
 for a claim about a type, and reach for the matrix when the claim is about an
 exchange.
 

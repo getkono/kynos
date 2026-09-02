@@ -391,15 +391,21 @@ fn a_body_with_no_media_type_under_a_declaration_of_none_is_reported() {
 /// The control: a response that sends nothing under a declaration of nothing
 /// still conforms, and must go on doing so.
 ///
-/// Kynos ships seven shapes that legitimately send neither octets nor a
+/// Kynos ships six shapes that legitimately send neither octets nor a
 /// `Content-Type`: `NoContent`'s 204, every `Redirect<CODE>`, the conditional
 /// 304 whose replayed field list deliberately omits `Content-Type`, the ranged
 /// 304 that guards its media type behind the status, the asset 304 whose header
-/// set is `etag`/`cache-control`/`content-encoding`/`vary`, the CORS preflight
-/// 204, and a HEAD against a status declaring no representation. One case
-/// covers all seven because they differ only in status and in headers the
-/// predicate does not read: in the two facts it does read — no body, no media
-/// type — they are the same exchange.
+/// set is `etag`/`cache-control`/`content-encoding`/`vary`, and a HEAD against
+/// a status declaring no representation. One case covers all six because they
+/// differ only in status and in headers the predicate does not read: in the two
+/// facts it does read — no body, no media type — they are the same exchange.
+///
+/// The CORS preflight 204 was counted here and is not one of them: it sends
+/// neither, but it is never described, so nothing declares the response this
+/// branch reads and the exchange cannot arrive. The HEAD is one of them and is
+/// exercised nowhere else — no test drives a HEAD through
+/// `assert_conformance`, so this case standing in for it is the whole of what
+/// holds it.
 #[test]
 fn a_response_that_sends_nothing_and_declares_nothing_conforms() {
     let document = document_declaring(

@@ -90,15 +90,29 @@ pub(super) fn conformance(document: &Document, record: &Observed) -> Vec<String>
 /// representation whatever the headers said, and a `Content-Type` names one
 /// whether or not any octets followed.
 ///
-/// Every shape Kynos ships that legitimately declares nothing sends neither, so
-/// none of them reaches the report below: `NoContent`'s 204 and every
+/// Six shapes Kynos ships legitimately declare nothing, and every one of them
+/// sends neither, so none reaches the report below: `NoContent`'s 204 and every
 /// `Redirect<CODE>` build a `Body::empty()`; the conditional 304 copies a
 /// replayed field list that deliberately omits `Content-Type`; the ranged 304
 /// guards its media type behind the status; the asset 304 writes only `ETag`,
-/// `Cache-Control`, `Content-Encoding` and `Vary`; the CORS preflight 204
-/// writes only `Vary` and `Access-Control-*`; and a HEAD keeps its
+/// `Cache-Control`, `Content-Encoding` and `Vary`; and a HEAD keeps its
 /// `Content-Type` on statuses that *do* declare a representation, so it never
-/// takes this branch.
+/// takes this branch. The HEAD is the one entry nothing exercises: no test in
+/// the suite drives a HEAD through `assert_conformance`, so what holds it is
+/// this reasoning rather than a run.
+///
+/// The CORS preflight 204 is not among them although it also sends neither. It
+/// is never *described* -- `middleware::cors` answers `OPTIONS` by routing
+/// rather than by intercepting, and an operation that cannot answer a preflight
+/// should not describe one -- so there is no declaration for this branch to
+/// read and no exchange that can arrive at it.
+///
+/// One composition does reach the report, and rightly.
+/// `Created<T>`/`Accepted<T>` carry the body's representation onto the
+/// wrapper's status where the body declares exactly one; where it declares
+/// several and no 200, the wrapper declares nothing while the wire still
+/// carries one of them. That is a disagreement rather than an exemption, and
+/// reporting it is what this branch is for.
 fn body_conformance(
     document: &Document,
     response: &kynos_openapi::Response,

@@ -2,9 +2,12 @@
 
 ## The rule
 
-Every error Kynos puts on the wire is an [RFC 9457] problem detail. There is no
-second envelope and no per-endpoint shape, so a client can handle failures
-generically instead of learning one format per operation.
+Every error Kynos puts a body on the wire for is an [RFC 9457] problem detail.
+There is no second envelope and no per-endpoint shape, so a client can handle
+failures generically instead of learning one format per operation. The one
+error that carries no body is a fallback under `FallbackPolicy::Empty`
+([`routing.md`](routing.md#application-level-policies)), which answers a 404 or
+a 405 with the status alone.
 
 This covers the framework's own failures, not only the application's. A body
 that will not parse and a path parameter that will not deserialize both produce
@@ -24,12 +27,19 @@ workspace.
 Not every short circuit refuses. `NotModified` answers 304 with an empty body
 and rightly declares no content, and `Infallible` declares nothing at all
 because it is uninhabited. What the sweep in
-[`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) holds all ten
-implementations to is therefore *agreement* — the declaration and the exchange
-say the same thing — and not naming a media type. Eight of the ten once
-described a response with no content while sending one, which is the direction
-that failed; declaring content and sending none is a failure the same assertion
-catches going the other way.
+[`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) holds each
+implementation it drives to is therefore *agreement* — the declaration and the
+exchange say the same thing — and not naming a media type. Eight of the ten
+once described a response with no content while sending one, which is the
+direction that failed; declaring content and sending none is a failure the same
+assertion catches going the other way.
+
+It drives nine of the ten with every feature on, and six at the default set:
+`Infallible` has no value to hand it, and `NotAcceptable`, `Undecodable` and
+`NotModified` are not compiled without `compression` and `cache`. All ten are
+reached by `every_short_circuit_kynos_ships_is_accounted_for` in the same file,
+which asserts the *set of names* rather than the agreement — so an
+implementation added without a case fails there whatever the build compiled.
 
 [RFC 9457]: ../references/rfc9457.txt
 
