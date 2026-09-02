@@ -97,11 +97,19 @@ fn the_inline_connection_record_stays_small() {
 /// and a number in code cannot drift away from a document nothing checks it
 /// against.
 ///
-/// This is a slack gate, deliberately: 160 measured bytes against 8192 is 51x
-/// of headroom, so the ceiling above is what binds in practice. What this
-/// states is the design property — per-connection state stays a small fraction
-/// of a transport buffer rather than a multiple of one — and it fires only if
-/// that stops being true catastrophically rather than incrementally.
+/// Its failure set is empty as things stand, and honestly so. The ceiling above
+/// is ungated, so it runs in every binary this test runs in, and `Inner <= 192`
+/// plus two `Arc` counts is under 8192 by construction: nothing can fail here
+/// while that ceiling holds. Splitting the two into separate tests removed the
+/// unreachable-assertion problem, not this one.
+///
+/// It is kept for what it states rather than for what it catches — 160 measured
+/// bytes against 8192 is 51x of headroom, and the design property is that
+/// per-connection state stays a fraction of a transport buffer rather than a
+/// multiple of one. It becomes the binding assertion only if a review ever
+/// raises the ceiling, which is when an outer bound is worth having been
+/// written down already. `docs/architecture.md` records the same in "Why hyper
+/// stays".
 #[cfg(all(feature = "server", feature = "http1"))]
 #[test]
 fn per_connection_state_fits_inside_the_smallest_transport_buffer() {

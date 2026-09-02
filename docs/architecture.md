@@ -645,6 +645,20 @@ hyper's own parser, which uses uninitialized memory for the header array; and
 owning HTTP framing means owning request-smuggling response permanently. The
 resolution is a measurement, not more argument.
 
+That 16 KiB is prose, and nothing gates it against hyper. So the guards on
+Kynos's own per-connection state, which
+[#87](https://github.com/getkono/kynos/issues/87) asked to be stated as a
+relation against this figure, are anchored on `MIN_HTTP1_BUFFER_SIZE` instead —
+8 KiB, the smallest read/write buffer `validate_protocol_config` accepts. It is
+half the number above, so holding against it is the stronger claim, and it moves
+with the code rather than with this sentence. Both relations
+(`crates/kynos/src/extract/connection/tests.rs`,
+`crates/kynos/src/server/tests.rs`) are slack gates: the ungated `size_of`
+ceilings beside them are far below 8 KiB, so neither relation can fail while its
+ceiling holds. They are kept for what they state rather than for what they
+catch — per-connection state is a fraction of a transport buffer, not a multiple
+of one — and they become the binding assertion only if a ceiling is ever raised.
+
 Upstreaming is not a schedule that can be planned on — hyper ranks correctness
 above speed and speed above flexibility, and a seam for supplying a buffer pool
 is exactly the flexibility it declines. Vendoring trades a maintained

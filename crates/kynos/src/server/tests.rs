@@ -83,11 +83,17 @@ fn a_transport_config_is_cheap_to_clone_per_connection() {
 /// connection stays smaller than the smallest read/write buffer it configures,
 /// so describing a connection never costs more than serving one.
 ///
-/// A slack gate, deliberately -- 168 measured bytes against 8192 -- and the
-/// ceiling above is what binds in practice. It is here to state the design
-/// property rather than to catch incremental growth, and it is the only
-/// assertion in this test so that it cannot be made unreachable by an absolute
-/// sitting in front of it.
+/// Its failure set is empty as things stand, and honestly so. The ceiling above
+/// is ungated and `192 < 8192`, so this cannot fail while
+/// `a_transport_config_is_cheap_to_clone_per_connection` passes, and that test
+/// runs wherever this one does. Being the only assertion in its own test is
+/// what keeps it *reachable*; it is not what would give it a failure case.
+///
+/// It is kept for what it states rather than for what it catches -- 168
+/// measured bytes against 8192 -- and it binds only if a review ever raises the
+/// ceiling. `docs/architecture.md` records the same in "Why hyper stays", along
+/// with why the anchor is `MIN_HTTP1_BUFFER_SIZE` rather than the roughly
+/// 16 KiB it attributes to hyper.
 ///
 /// Gated on `http1` for the constant, not for `TransportConfig`, which exists
 /// wherever `server` does.
