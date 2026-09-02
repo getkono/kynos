@@ -668,12 +668,16 @@ every request — which is why the entry stays here rather than moving to a
 benchmark: the cost was real, and removing it was not what motivated the
 change. The reference count is now guarded at one pointer wide in
 `crates/kynos/src/extract/connection/tests.rs`, alongside a bound on the state
-behind it, which fits inside the smallest per-connection transport buffer the
-crate accepts. The protocol configuration cloned per socket is bounded
+behind it. That bound is a `size_of`, so what fits inside the smallest
+per-connection transport buffer the crate accepts is the inline record — the
+addresses, the flags, and the headers of the TLS metadata — and not the bytes
+those headers point at. The protocol configuration cloned per socket is bounded
 separately, in `crates/kynos/src/server/tests.rs`. What one accepted socket
-costs in total is not guarded anywhere: that would have to include the
-connection task's future, the service handle and the semaphore permit, none of
-which is bounded today.
+costs in total is not guarded anywhere: that would have to include the peer
+certificate chain `TlsIdentity` owns, which a `size_of` sees as one
+pointer-width triple and a three-certificate mTLS chain makes roughly 4.6 KiB of
+heap, along with the connection task's future, the service handle and the
+semaphore permit, none of which is bounded today.
 
 ### Why kernel TLS is deferred
 

@@ -23,10 +23,17 @@ fn a_connection_handle_is_one_pointer() {
     );
 }
 
-/// What one accepted socket costs on the heap, guarded as two ceilings rather
-/// than one. `Inner` carries `Option<TlsIdentity>` at every feature set,
-/// including a build with no TLS at all, so a field added to the TLS half
-/// widens every plaintext connection too.
+/// What one accepted socket costs *inline*, guarded as two ceilings rather than
+/// one. `size_of` counts the record and the headers within it, never the bytes
+/// a header points at: `server_name`, `alpn` and `peer_certificates` are three
+/// pointer-width triples here and an unbounded number of kilobytes on the heap,
+/// so a three-certificate mTLS chain — roughly 4.6 KiB of DER — moves none of
+/// these readings. `docs/architecture.md` records that chain among what one
+/// accepted socket costs and nothing bounds.
+///
+/// `Inner` carries `Option<TlsIdentity>` at every feature set, including a build
+/// with no TLS at all, so a field added to the TLS half widens every plaintext
+/// connection too.
 ///
 /// The measurements these ceilings were set from, since
 /// `docs/nfr.md#thresholds` asks for a recorded one: `Inner` 144 bytes,
@@ -36,7 +43,7 @@ fn a_connection_handle_is_one_pointer() {
 /// the type again and would absorb two more `Option<String>` fields that every
 /// plaintext connection would pay for.
 #[test]
-fn a_connection_costs_one_small_allocation() {
+fn the_inline_connection_record_stays_small() {
     let payload = size_of::<Inner>();
     let tls = size_of::<TlsIdentity>();
 
@@ -50,15 +57,17 @@ fn a_connection_costs_one_small_allocation() {
     );
 }
 
-/// The relation the absolutes above only ratchet: everything Kynos itself keeps
+/// The relation the absolutes above only ratchet: the inline record Kynos keeps
 /// per accepted socket fits inside the smallest read/write buffer the transport
-/// will accept — the two `Arc` counts included.
+/// will accept — the two `Arc` counts included, the heap the record points at
+/// excluded.
 ///
-/// The anchor is `MIN_HTTP1_BUFFER_SIZE`, which lives in code and is enforced by `validate_protocol_config`, rather than the
-/// roughly 16 KiB per live connection `docs/architecture.md` attributes to hyper
-/// in "Why hyper stays". It is half that prose figure, so holding against it is
-/// the stronger claim, and a number in code cannot drift away from a document
-/// nothing checks it against.
+/// The anchor is `MIN_HTTP1_BUFFER_SIZE`, which lives in code and is enforced
+/// by `validate_protocol_config`, rather than the roughly 16 KiB per live
+/// connection `docs/architecture.md` attributes to hyper in "Why hyper stays".
+/// It is half that prose figure, so holding against it is the stronger claim,
+/// and a number in code cannot drift away from a document nothing checks it
+/// against.
 ///
 /// This is a slack gate, deliberately: 160 measured bytes against 8192 is 51x
 /// of headroom, so the ceiling above is what binds in practice. What this
