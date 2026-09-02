@@ -1,10 +1,16 @@
+use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::Arc;
+
 use super::{Connection, Inner, TlsIdentity};
 
-/// The clone handed to every request on a connection is a reference-count bump
-/// only because the handle is one pointer. A field added to [`Connection`]
-/// rather than to `Inner` moves that field back onto the per-request path,
-/// where what it copies is a peer certificate chain — the cost
-/// `docs/architecture.md` records as the second of the three cheap wins.
+/// Half of what makes the clone handed to every request a reference-count bump:
+/// the handle is one pointer. A field added to [`Connection`] rather than to
+/// `Inner` moves that field back onto the per-request path, where what it
+/// copies is a peer certificate chain — the cost `docs/architecture.md` records
+/// as the second of the three cheap wins.
+///
+/// The other half is `a_connection_clone_shares_its_payload` below, which is
+/// the assertion that rules out `Box`.
 #[test]
 fn a_connection_handle_is_one_pointer() {
     let handle = size_of::<Connection>();
@@ -20,6 +26,28 @@ fn a_connection_handle_is_one_pointer() {
         handle < payload,
         "Connection ({handle} bytes) should stay smaller than Inner ({payload} bytes); \
          the payload belongs behind the Arc"
+    );
+}
+
+/// The other half: cloning shares the payload rather than copying it.
+///
+/// One pointer wide is necessary and not sufficient. `Connection(Box<Inner>)`
+/// measures the same 8 bytes, satisfies both assertions above, and deep-copies
+/// a peer certificate chain into every request on the connection — which is
+/// precisely the cost `docs/architecture.md` records as taken. Only pointer
+/// identity separates the two shapes.
+#[test]
+fn a_connection_clone_shares_its_payload() {
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, 8080));
+    let connection = Connection::from_peer(address, address);
+
+    let one = connection.clone();
+    let two = connection.clone();
+
+    assert!(
+        Arc::ptr_eq(&one.0, &two.0),
+        "two clones of one Connection must point at the same Inner; \
+         a handle that copies its payload copies a certificate chain per request"
     );
 }
 
