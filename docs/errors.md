@@ -16,9 +16,10 @@ It covers what middleware refuses, too, and the description owes the same
 account of it. A `ShortCircuit` that *refuses* answers with a problem document,
 so the response it declares names `application/problem+json` and the `Problem`
 component. `error::problem::problem_response` writes that description for the
-eight interceptor short circuits; `error/rejection.rs`, `router/dispatch.rs` and
-the `ApiError` derive still spell it themselves, so it is one writer for the
-middleware rather than one for the workspace.
+eight interceptor short circuits and for the 500 a recovered panic contributes;
+`error/rejection.rs` and the `ApiError` derive still spell it themselves, so it
+is one writer for the framework's own refusals rather than one for the
+workspace.
 
 Not every short circuit refuses. `NotModified` answers 304 with an empty body
 and rightly declares no content, and `Infallible` declares nothing at all
