@@ -309,6 +309,12 @@ fn observed(status: u16, content_type: Option<&str>, body: &str) -> crate::test:
 /// `ShortCircuit` implementations put a problem document on the wire under a
 /// description declaring nothing, and the harness read "declares nothing" as
 /// "nothing to check".
+///
+/// The second assertion names the arm rather than the prefix the three arms
+/// share, which sits outside the match: on the prefix alone, collapsing all
+/// three arms into one sentence keeps every case here green, and a report
+/// that cannot say which shape arrived is the half of the diagnostic a reader
+/// acts on.
 #[test]
 fn a_body_sent_under_a_response_declaring_no_content_is_reported() {
     let document = document_declaring(
@@ -324,6 +330,11 @@ fn a_body_sent_under_a_response_declaring_no_content_is_reported() {
 
     assert_eq!(reasons.len(), 1, "{reasons:?}");
     assert!(reasons[0].contains("declares no content"), "{}", reasons[0]);
+    assert!(
+        reasons[0].contains("a 35-byte `application/problem+json` body"),
+        "{}",
+        reasons[0]
+    );
 }
 
 /// The second half of the disjunction: a media type with no octets behind it.
@@ -331,6 +342,9 @@ fn a_body_sent_under_a_response_declaring_no_content_is_reported() {
 /// A `Content-Type` names the representation a client should parse, so a head
 /// carrying one under a declaration of none is the same lie a body would be —
 /// and a length check alone would never reach it.
+///
+/// This is the only one of the three arms that reports no byte count, which is
+/// what tells a reader the octets were the half that never arrived.
 #[test]
 fn a_head_sent_under_a_response_declaring_no_content_is_reported() {
     let document = document_declaring(
@@ -342,12 +356,20 @@ fn a_head_sent_under_a_response_declaring_no_content_is_reported() {
 
     assert_eq!(reasons.len(), 1, "{reasons:?}");
     assert!(reasons[0].contains("declares no content"), "{}", reasons[0]);
+    assert!(
+        reasons[0].contains("a `application/problem+json` head with no body"),
+        "{}",
+        reasons[0]
+    );
 }
 
 /// The first half: octets with no media type at all.
 ///
 /// A media-type comparison would find nothing to compare and pass, so the
 /// predicate reads the body's length as well as the header.
+///
+/// It shares its byte count with the arm above, so the fragment that separates
+/// the two is the missing media type rather than the count.
 #[test]
 fn a_body_with_no_media_type_under_a_declaration_of_none_is_reported() {
     let document = document_declaring(
@@ -359,6 +381,11 @@ fn a_body_with_no_media_type_under_a_declaration_of_none_is_reported() {
 
     assert_eq!(reasons.len(), 1, "{reasons:?}");
     assert!(reasons[0].contains("declares no content"), "{}", reasons[0]);
+    assert!(
+        reasons[0].contains("a 9-byte body with no `Content-Type`"),
+        "{}",
+        reasons[0]
+    );
 }
 
 /// The control: a response that sends nothing under a declaration of nothing
