@@ -233,6 +233,13 @@ pub(in crate::server) fn validate_protocol_config(
             ));
         }
         if http1.max_buffer_size < MIN_HTTP1_BUFFER_SIZE {
+            // `InvalidConfiguration` carries a `&'static str`, so the operator
+            // is told the floor as a literal. This is what stops the two from
+            // parting company when the constant moves.
+            const _: () = assert!(
+                MIN_HTTP1_BUFFER_SIZE == 8_192,
+                "MIN_HTTP1_BUFFER_SIZE moved; the message below still says 8192"
+            );
             return Err(ServerError::InvalidConfiguration(
                 "HTTP/1 max_buffer_size must be at least 8192",
             ));
