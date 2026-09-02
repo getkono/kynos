@@ -231,9 +231,18 @@ fn counted_json(document: &Document) -> (usize, usize) {
 /// Emits once at 3.1 and reports what it allocated.
 ///
 /// This is the stage that walks `paths` per entry when `openapi32` is on. The
-/// fixture is built at 3.1 and carries no 3.2-only construct, so the walk finds
-/// no blocker and the emission succeeds — which is the interesting case: a
-/// blocker found early would short-circuit the very walk being measured.
+/// fixture is built at 3.1 and carries no 3.2-only construct, so the walk
+/// finds no blocker and the emission succeeds — which is what keeps the walk
+/// and the copy that follows it inside one reading.
+///
+/// **A blocker would not shorten the walk.**
+/// `emit::downgrade::three_two_only_constructs` pushes each one it finds and
+/// carries on to the end, so a fixture carrying one is walked exactly as far.
+/// What the blocker skips is [`Document::emit`]'s `self.clone()`, which the
+/// early `Err` return never reaches — the cost the Features note above reads
+/// on its own at baseline, where the walk returns an empty `Vec` and the clone
+/// is all that is left. A blocker-free fixture is chosen for the larger of two
+/// readings, then, rather than for the longer of two walks.
 fn counted_emit(document: &Document) -> usize {
     let ((allocations, reallocations, _), emitted) =
         count_alloc(|| document.emit(SpecVersion::V3_1));
