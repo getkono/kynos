@@ -339,11 +339,47 @@ const SHORT_CIRCUITS: &[&str] = &[
 /// Membership is for a type no value of which can exist -- `Infallible` is
 /// uninhabited, so there is nothing to hand `case` and nothing to put on a
 /// wire. It is *not* for a type that is merely awkward to construct: every name
-/// here is one the sweep stops asserting anything about, and nothing checks
-/// that the exclusion was earned. Widening it is how the sweep would be
-/// silenced rather than satisfied, so a type that can be built gets built, even
-/// where building it takes a fixture.
+/// here is one the sweep stops asserting anything about. Widening it is how the
+/// sweep would be silenced rather than satisfied, so a type that can be built
+/// gets built, even where building it takes a fixture.
 const UNCONSTRUCTIBLE: &[&str] = &["Infallible"];
+
+/// Each excluded name beside the `STATUSES` of the type it stands for.
+///
+/// `UNCONSTRUCTIBLE` is `&[&str]`, and a string cannot be asked what it
+/// declares -- which is why the exclusion went unchecked. This is the join
+/// between the two, written once so that the check below reaches a type rather
+/// than a name.
+const UNCONSTRUCTIBLE_STATUSES: &[(&str, &[u16])] = &[(
+    "Infallible",
+    <std::convert::Infallible as kynos::response::ShortCircuit>::STATUSES,
+)];
+
+/// Every exclusion is earned rather than asserted.
+///
+/// Two halves, and neither alone is the check. The set equality is what makes
+/// a name added to `UNCONSTRUCTIBLE` without an entry here fail, so the
+/// exclusion cannot be widened by editing one list; the emptiness is what the
+/// entry proves, since a type declaring a status the sweep never drives is a
+/// response nothing in the suite ever reads.
+#[test]
+fn every_unconstructible_short_circuit_declares_no_status() {
+    assert_eq!(
+        UNCONSTRUCTIBLE_STATUSES
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<BTreeSet<_>>(),
+        UNCONSTRUCTIBLE.iter().copied().collect::<BTreeSet<_>>(),
+        "a name is excluded from the sweep with nothing here to prove it earned"
+    );
+
+    for (name, statuses) in UNCONSTRUCTIBLE_STATUSES {
+        assert!(
+            statuses.is_empty(),
+            "`{name}` is excluded from the sweep and declares {statuses:?}, which no test reads"
+        );
+    }
+}
 
 /// Every short circuit Kynos ships, named against the set the sweep drives.
 ///
@@ -372,20 +408,41 @@ fn every_short_circuit_kynos_ships_is_accounted_for() {
 /// uses, for two reasons that marker cannot cover: `ShortCircuit` takes no
 /// generic argument to close the match on, and `middleware/limits.rs` writes
 /// `impl ShortCircuit for TookTooLong` inside a doc example, which a bare
-/// substring would count as a shipped implementation. Requiring the line's code
-/// to *begin* with `impl ` excludes the `/// # ` prefix and still admits
-/// `impl crate::response::ShortCircuit for NotAcceptable`.
+/// substring would count as a shipped implementation. Two conditions rather
+/// than one: the line's code *begins* with `impl`, which excludes the `/// # `
+/// that doc example carries, and the trait name begins a path segment, which
+/// admits `impl crate::response::ShortCircuit for NotAcceptable` and refuses a
+/// `MyShortCircuit` that merely ends in the name.
 ///
 /// # What it requires of an implementation
 ///
 /// `impl`, the trait name and `for` must fall on one line. Every implementation
 /// in the tree does, and `ShortCircuit` takes no generic argument to push one
-/// over the width. An `impl<T: Bound> ShortCircuit for Foo<T>` long enough for
-/// rustfmt to wrap after the generic list would be missed here -- and, since
-/// the sweep derives what it must drive from this set, missed by the sweep too.
-/// That is the one failure mode where the mechanism goes quiet rather than red,
-/// so an implementation added later keeps its head on one line, or this learns
-/// to join continuations first.
+/// over the width.
+///
+/// # The two shapes it cannot see
+///
+/// Both go quiet rather than red, and the sweep derives what it must drive
+/// from this set, so a miss here is a miss there too.
+///
+/// The first is a head rustfmt wrapped after a generic list, which puts
+/// `impl<T: Bound>` and `ShortCircuit for Foo<T>` on separate lines with
+/// neither carrying both. The prefix was `impl ` with a space until now, which
+/// made this wider than its own description: `impl<const CODE: u16>` has no
+/// space in that position either, so *every* generic head was invisible,
+/// wrapped or not, and `response/status.rs` already writes that shape for
+/// `Redirect<CODE>`. Dropping the space leaves only the genuinely wrapped head
+/// missed, and an implementation added later keeps its head on one line or
+/// this learns to join continuations first.
+///
+/// The second is a derive, and it is not closable here. `ApiError` emits
+/// `impl ... ShortCircuit for` from `kynos-macros`, so the text exists in the
+/// macro crate and the implementation exists in whichever crate wrote the
+/// type. A walk over `crates/kynos/src` sees neither. That bounds what this
+/// set claims rather than leaving a gap in it: the claim is over the short
+/// circuits Kynos *ships*, and a derived one belongs to the application. What
+/// the sweep would say about it is said instead by the conformance matrix,
+/// which holds an application's own short circuit on a live exchange.
 fn impls_of(trait_name: &str) -> BTreeSet<String> {
     let mut sources = Vec::new();
     collect_sources(
@@ -401,10 +458,15 @@ fn impls_of(trait_name: &str) -> BTreeSet<String> {
         .flat_map(|source| source.lines())
         .filter_map(|line| {
             let code = line.trim_start();
-            if !code.starts_with("impl ") {
+            if !code.starts_with("impl") {
                 return None;
             }
-            let at = code.find(&marker)?;
+            let at = code.match_indices(&marker).map(|(at, _)| at).find(|at| {
+                code[..*at]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|character| !character.is_alphanumeric() && character != '_')
+            })?;
             Some(
                 code[at + marker.len()..]
                     .chars()
