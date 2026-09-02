@@ -76,7 +76,10 @@
 //!   lives in `kynos-bench`.
 //! - **Allocation *size*.** One `Vec::with_capacity(n * n)` is one allocation.
 //!   The output-bytes series covers the sub-case where a blowup reaches the
-//!   wire; a quadratic scratch buffer that never does is invisible.
+//!   wire — and it is the recorded byte ceiling that covers it, not the
+//!   relation over bytes, which cancels an exactly-quadratic term exactly as
+//!   the relation over allocations does. A quadratic scratch buffer that never
+//!   reaches the wire is invisible to both.
 //! - **Exponents strictly between 1 and 2.** `n^1.9` satisfies the relation.
 //! - **An added exactly-quadratic term, at any coefficient — including the
 //!   nested walk over `paths` that stage two exists to reach.** This is the
@@ -121,19 +124,19 @@ static ALLOCATOR: AllocCounterSystem = AllocCounterSystem;
 
 /// One measured point: an operation count, and what emitting at it costs today.
 ///
-/// Both ceilings were transcribed from the first recorded run, verbatim and
-/// with no margin added, as
+/// All three ceilings were transcribed from the first recorded run, verbatim
+/// and with no margin added, as
 /// [`nfr.md`](../../../docs/nfr.md#thresholds) requires of a first
 /// measurement. A margin would be a guess wearing a measurement's clothes, and
 /// raising one of these is a deliberate edit rather than a rounding error
 /// absorbing a regression.
 ///
-/// **These are not the softer half of the pair — do not delete them in favour
+/// **These are not the softer half of the file — do not delete them in favour
 /// of the growth relation.** The relation cancels an added exactly-quadratic
 /// term algebraically, so a nested walk over `paths` satisfies it at every
-/// coefficient and every span; these numbers are the only thing in the file
-/// that reads such a walk as a failure. The module documentation works the
-/// cancellation out.
+/// coefficient and every span, in bytes exactly as in allocations; these
+/// numbers are the only thing in the file that reads such a walk as a failure.
+/// The module documentation works the cancellation out.
 struct Size {
     /// How many operations the fixture at this point declares.
     operations: usize,
@@ -141,6 +144,8 @@ struct Size {
     json_allocations: usize,
     /// What one [`Document::emit`] allocates here, at `--all-features`.
     emit_allocations: usize,
+    /// How many bytes one [`Document::to_json`] writes here.
+    output_bytes: usize,
 }
 
 /// The three points, a decade apart, as the requirement names them.
@@ -149,16 +154,19 @@ const SIZES: [Size; 3] = [
         operations: 10,
         json_allocations: 27,
         emit_allocations: 374,
+        output_bytes: 4675,
     },
     Size {
         operations: 100,
         json_allocations: 210,
         emit_allocations: 3524,
+        output_bytes: 45985,
     },
     Size {
         operations: 1000,
         json_allocations: 2013,
         emit_allocations: 35024,
+        output_bytes: 460_885,
     },
 ];
 
@@ -336,16 +344,33 @@ fn emission_allocations_grow_sub_quadratically_in_operation_count() {
 
 /// The other half of the same requirement, over the bytes that reach a reader.
 ///
-/// No absolute ceiling here, deliberately. A byte count fires on every model
-/// change that adds an always-serialized field, and *what each type writes* is
-/// already `wire.rs`'s question — an absolute here would be a second wire-shape
-/// detector wearing a performance test's name.
+/// **Both a ceiling and the relation, for the reason the module documentation
+/// works out.** The relation cancels an added exactly-quadratic term, so a
+/// `to_json` writing one byte per (path, path) pair satisfies it at every
+/// coefficient and every span — and with the relation alone the output-size
+/// half of the requirement would be caught here by nothing at all. The
+/// recorded ceiling is what reads such a blowup as a failure, exactly as it is
+/// on the allocation side.
+///
+/// It is not a second `wire.rs`, though a model change adding an
+/// always-serialized field does move this number and is seen here. `wire.rs`
+/// asks what each type writes at one fixed size, field name by field name, and
+/// is where such a change is described; this asks how the total scales with
+/// the operation count. Re-recording the number afterwards is the same
+/// deliberate edit the allocation ceilings already ask for.
 #[test]
 fn output_size_grows_sub_quadratically_in_operation_count() {
     let bytes: Vec<(usize, usize)> = SIZES
         .iter()
         .map(|size| {
             let (_, bytes) = counted_json(&document(size.operations));
+            assert!(
+                bytes <= size.output_bytes,
+                "to_json at {} operations emitted {bytes} bytes against a recorded {}; raising a \
+                 ceiling is a deliberate edit and lowering one is what an improvement looks like",
+                size.operations,
+                size.output_bytes
+            );
             (size.operations, bytes)
         })
         .collect();
