@@ -39,11 +39,17 @@ them away left them measured nowhere.
 
 Each is now two requirements rather than one moved requirement, and the split
 is the boundary applied twice. What can be *counted* — allocations, output
-bytes, `size_of` — is specific to Kynos and deterministic, so it is in-repo and
-`planned`. What can only be *timed* stays in `kynos-bench`, because a
-wall-clock ceiling on a shared runner is a guessed ceiling by the standard
+bytes, `size_of` — is specific to Kynos and deterministic, so it is in-repo.
+What can only be *timed* stays in `kynos-bench`, because a wall-clock ceiling
+on a shared runner is a guessed ceiling by the standard
 [Thresholds](#thresholds) sets, whatever the requirement names.
 [`performance.md`](performance.md#the-boundary) carries the reasoning.
+
+The counted halves landed `planned` and are being wired one at a time rather
+than together: generation is `enforced` in
+[Document model](#document-model) below, while the per-layer one in
+[Middleware](#middleware) is still `planned`. This paragraph records the split
+and not a status, so read the status off the row.
 
 Nothing was deleted in the split, and that is deliberate: replacing a latency
 requirement with an allocation one and calling it a refiling would leave the
@@ -96,7 +102,7 @@ disabled, or passes trivially and hides the regression it was meant to catch.
 | correctness | Emitted documents are byte-deterministic across platforms | A cross-OS CI job, which does not exist: every job runs on `ubuntu-latest` | `planned` |
 | dx | No public item exposes `Pin`, `BoxFuture` or a tokio type | `cargo-public-api` assertion | `needs-tooling` |
 | operability | `--check` mode exits nonzero on drift from the committed document | A binary target, used as a required gate on the framework's own examples | `blocked-on-impl` |
-| performance | Generation allocations and output size scale sub-quadratically in operation count | [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs), counting one `to_json` and one `emit` at 10/100/1000 operations: per-size allocation ceilings recorded from the first measurement, and a per-decade integer relation `a(n)·m² < a(m)·n²` over allocations and output bytes alike. **Not** a fitted slope: a pure quadratic fits at exactly 2.0, so a gate there turns on the last bit of a logarithm and any ceiling below it is a number nobody measured, which [Thresholds](#thresholds) refuses | `enforced`, with the division of labour recorded in the file rather than assumed: the relation cancels an added exactly-quadratic term algebraically, so a nested walk over `paths` is caught by the recorded ceilings and not by the relation — deleting them would leave it caught by nothing. Counting allocation *calls* also leaves a quadratic that allocates nothing to the timed twin below |
+| performance | Generation allocations and output size scale sub-quadratically in operation count | [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs), counting one `to_json` and one `emit` at 10/100/1000 operations: per-size ceilings recorded from the first measurement over all three series — one `to_json`'s allocations, one `emit`'s, and the emitted document's size in bytes — and a per-decade integer relation `a(n)·m² < a(m)·n²` over the same three. **Not** a fitted slope: a pure quadratic fits at exactly 2.0, so a gate there turns on the last bit of a logarithm and any ceiling below it is a number nobody measured, which [Thresholds](#thresholds) refuses | `enforced`, with the division of labour recorded in the file and held by a control rather than assumed: the relation cancels an added exactly-quadratic term algebraically, in bytes exactly as in allocations, so a nested walk over `paths` is caught by the recorded ceilings and not by the relation — dropping either set would leave that half of the requirement caught by nothing. A synthetic series drives both halves in the target itself, so an assertion that stops asserting is red. Counting allocation *calls* still leaves a quadratic that allocates nothing to the timed twin below |
 | performance | Generation time scales sub-quadratically in operation count | Measured at 10/100/1000 operations with a fitted-slope assertion | `kynos-bench` |
 
 The `--check` row's blocker was never a `todo!()` body: the workspace declares no

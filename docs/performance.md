@@ -87,7 +87,7 @@ Six shapes account for the routing stack.
 | Per-request path element | it runs inside `Dispatch::serve` for every request | an allocation count over a replay, and a future-size guard | a timing figure |
 | Per-layer element | an `Interceptor` in the erased chain | an allocation and future-size delta at stack depth 0/4/8 | a per-layer latency |
 | Per-connection element | [`server/`](../crates/kynos/src/server/), TLS, the protocol configs | a size guard on per-connection state | per-request attribution; resident memory at scale is `kynos-bench` |
-| Off-path element | the document model, the emitters, the validators, `describe` | a proof it is unreachable from the request path, and a binary delta | any per-request measurement |
+| Off-path element | the document model, the emitters, the validators, `describe` | a proof it is unreachable from the request path, a binary delta, and an allocation count on generation | any per-request measurement |
 | Opt-in payload codec | a body extractor or response codec behind a feature | a binary delta, and an allocation count on an operation that names it | a measurement on a route that never mounts it |
 
 **A type-level surface owes a codegen delta and nothing else, for the same
@@ -111,6 +111,15 @@ What settles it is reachability: the emitted `Document` is built once in
 `Dispatch::serve` touches it. That is checkable, and until it is checked the
 [README](../README.md)'s claim that there is no JSON Schema interpreter on the
 hot path rests on reading the code.
+
+**Off the request path is not the same as free, which is why the shape owes a
+third thing.** Zero per request says nothing about what building the document
+costs the process that builds it, and that cost scales in a dimension no
+per-request measurement has: the number of operations declared.
+[`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs) counts
+one `to_json` and one `emit` at 10, 100 and 1000 of them, against recorded
+ceilings and a per-decade sub-quadratic relation. It is billed here rather than
+under a per-request shape precisely because a request never reaches it.
 
 **An opt-in codec is measured on a route that mounts it.** Measuring `json`
 against an operation with no body would report zero and mean nothing. The
