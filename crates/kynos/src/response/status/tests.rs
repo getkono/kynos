@@ -71,6 +71,20 @@ mod a_wrapper_produces_and_declares_one_status {
             .collect()
     }
 
+    /// The representations a type declares under one status.
+    ///
+    /// The keys alone say which statuses exist and nothing about what each
+    /// carries, so a wrapper that lost the body's representation while
+    /// re-keying it would satisfy every assertion above.
+    fn representations<T: Responses>(status: u16) -> Vec<String> {
+        let mut registry = Registry::new();
+        T::responses(&mut registry)
+            .get(status)
+            .and_then(kynos_openapi::RefOr::as_item)
+            .map(|response| response.content.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
     #[test]
     fn no_content_sends_204_and_no_body() {
         let response = NoContent.into_response();
@@ -96,6 +110,8 @@ mod a_wrapper_produces_and_declares_one_status {
         // leaving the 200 behind would declare a response the type cannot
         // produce.
         assert_eq!(declared::<Created<Text>>(), ["201"]);
+        // Re-keyed with its representation, not merely re-keyed.
+        assert_eq!(representations::<Created<Text>>(201), ["text/plain"]);
     }
 
     #[test]
@@ -107,6 +123,7 @@ mod a_wrapper_produces_and_declares_one_status {
         // nothing yet to point at.
         assert!(response.headers().get(header::LOCATION).is_none());
         assert_eq!(declared::<Accepted<Text>>(), ["202"]);
+        assert_eq!(representations::<Accepted<Text>>(202), ["text/plain"]);
     }
 
     /// Every code the witness admits, over the whole set.
@@ -172,5 +189,126 @@ mod a_wrapper_produces_and_declares_one_status {
                 .headers
                 .contains_key("Location")
         );
+    }
+}
+
+/// What a wrapper declares for a body that never described a 200.
+///
+/// `Created<T>` and `Accepted<T>` overwrite the status on whatever
+/// `T::into_response` produced, so `T`'s representation reaches the wire under
+/// the wrapper's status whichever key `T` filed it under. Declaring nothing
+/// there is a description of an empty response over a body -- exactly what
+/// `assert_conformance` reports as "the description declares no content, but a
+/// 35-byte body was sent".
+///
+/// The bodies here are hand-written rather than derived, because `Responses`
+/// is the whole of what the wrapper reads and a derive would put the macro
+/// crate between the assertion and the rule. The arrangement they stand in for
+/// exists in the tree already: `tests/derives.rs`'s `CreateReply` declares a
+/// 201 carrying a `User` and a 409 carrying nothing, so `Created<CreateReply>`
+/// is a `Created` over a body that never described a 200.
+mod a_wrapper_declares_the_body_it_forwards {
+    use crate::{
+        response::{
+            Responses,
+            status::{Accepted, Created},
+        },
+        schema::registry::Registry,
+    };
+
+    /// The representations a type declares under one status.
+    fn representations<T: Responses>(status: u16) -> Vec<String> {
+        let mut registry = Registry::new();
+        T::responses(&mut registry)
+            .get(status)
+            .and_then(kynos_openapi::RefOr::as_item)
+            .map(|response| response.content.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    fn json(description: &str, registry: &mut Registry) -> kynos_openapi::Response {
+        kynos_openapi::Response::with_content(
+            description,
+            "application/json",
+            kynos_openapi::MediaType::new(registry.resolve::<String>()),
+        )
+    }
+
+    /// One representation, filed under a status of the body's own choosing.
+    ///
+    /// The shape `#[derive(Reply)]` produces for `{201: content, 409: none}`,
+    /// which is the arrangement issue #104's neighbourhood was found in.
+    struct OneRepresentation;
+
+    impl Responses for OneRepresentation {
+        fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+            kynos_openapi::Responses::new()
+                .with(201, json("the resource as stored", registry))
+                .with(409, kynos_openapi::Response::new("it already exists"))
+        }
+    }
+
+    /// Two representations, so which one a wrapper would take is a guess.
+    ///
+    /// The shape `Created<Ranged<Json<T>>>` and `Created<Delivery<M>>` reach:
+    /// several content-bearing statuses, none of them 200.
+    struct TwoRepresentations;
+
+    impl Responses for TwoRepresentations {
+        fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+            kynos_openapi::Responses::new()
+                .with(206, json("a range of it", registry))
+                .with(416, json("the range is unsatisfiable", registry))
+        }
+    }
+
+    /// One inline representation beside a `$ref`, whose content this module
+    /// cannot read.
+    struct OneRepresentationAndAReference;
+
+    impl Responses for OneRepresentationAndAReference {
+        fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+            kynos_openapi::Responses::new()
+                .with(201, json("the resource as stored", registry))
+                .with_pattern(
+                    kynos_openapi::StatusPattern::Code(409),
+                    kynos_openapi::Ref::new("#/components/responses/Conflict").into(),
+                )
+        }
+    }
+
+    #[test]
+    fn created_takes_the_one_representation_the_body_declares() {
+        assert_eq!(
+            representations::<Created<OneRepresentation>>(201),
+            ["application/json"]
+        );
+    }
+
+    #[test]
+    fn accepted_takes_the_one_representation_the_body_declares() {
+        assert_eq!(
+            representations::<Accepted<OneRepresentation>>(202),
+            ["application/json"]
+        );
+    }
+
+    /// The other half of the rule, which is what keeps it from guessing.
+    ///
+    /// Two content-bearing statuses and no 200: any choice between them would
+    /// be the wrapper inventing a representation the body never promised for
+    /// that status, so it declares none and the description stays honest about
+    /// knowing nothing.
+    #[test]
+    fn a_body_declaring_two_representations_leaves_the_wrapper_empty() {
+        assert!(representations::<Created<TwoRepresentations>>(201).is_empty());
+    }
+
+    /// A `$ref` names a response the document holds elsewhere, so whether it
+    /// carries content is not a question this module can answer -- and "exactly
+    /// one" cannot be established over a set with an unreadable member.
+    #[test]
+    fn a_reference_beside_a_representation_leaves_the_wrapper_empty() {
+        assert!(representations::<Created<OneRepresentationAndAReference>>(201).is_empty());
     }
 }
