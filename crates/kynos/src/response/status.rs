@@ -198,12 +198,35 @@ fn location_header(description: &str) -> kynos_openapi::Header {
 /// the description becomes the wrapper's, since what a 201 or a 202 means is
 /// the half of the statement a body was never in a position to make. Anything
 /// the body declared under another status stays where it is — that was not
-/// 200's to re-key — and a body describing no 200 at all leaves the wrapper
-/// describing an empty response, which is what it then produces.
+/// 200's to re-key.
 ///
 /// A `$ref` is left in place rather than re-described, because it names a
 /// response the document holds elsewhere and every other use of it would be
 /// re-described too.
+///
+/// # A body that describes no 200
+///
+/// The wrapper overwrites the status on whatever the body produced, so the
+/// body's representation reaches the wire under 201 or 202 whichever key the
+/// body filed it under. Declaring nothing there would describe an empty
+/// response over a body, which is the disagreement `assert_conformance`
+/// reports.
+///
+/// So the representation is carried over by
+/// [`sole_representation`] — under one condition, which is that there is
+/// nothing to choose between. A body declaring two content-bearing responses
+/// and no 200 leaves the wrapper empty exactly as before, because picking one
+/// of the two would be the wrapper promising a representation the body never
+/// promised for *this* status. `Created<Ranged<Json<T>>>`,
+/// `Created<RangedParts<T>>`, `Created<Delivery<M>>` and
+/// `Created<Result<Json<T>, E>>` are the compositions that reach that branch.
+///
+/// What is *not* addressed here is the leftover entry. A body's 409 stays in
+/// the set while the wrapper re-keys everything it sends to 201, so the
+/// description keeps a status the type cannot produce. That is true of every
+/// leftover under every composition above and predates this fallback, so
+/// removing them is a decision about the wrapper's whole contract rather than
+/// about the missing representation.
 fn body_response(
     description: &str,
     body: &mut kynos_openapi::Responses,
@@ -219,8 +242,46 @@ fn body_response(
             body.responses.insert(key, reference);
             kynos_openapi::Response::new(description)
         }
-        None => kynos_openapi::Response::new(description),
+        None => {
+            let mut response = kynos_openapi::Response::new(description);
+            if let Some(content) = sole_representation(body) {
+                response.content.clone_from(content);
+            }
+            response
+        }
     }
+}
+
+/// The representations a body declares, when exactly one of its responses
+/// carries any.
+///
+/// `None` as soon as a second content-bearing response appears, and as soon as
+/// a `$ref` does: a reference names a response the document holds elsewhere,
+/// so whether it carries content is not a question answerable from here, and
+/// "exactly one" cannot be established over a set with an unreadable member.
+///
+/// The `default` counts, because a fallback response is one more thing the
+/// body can put on the wire under the wrapper's status.
+fn sole_representation(
+    body: &kynos_openapi::Responses,
+) -> Option<&kynos_openapi::Map<kynos_openapi::MediaType>> {
+    let mut sole = None;
+
+    for entry in body.default_response.iter().chain(body.responses.values()) {
+        let kynos_openapi::RefOr::Item(response) = entry else {
+            return None;
+        };
+
+        if response.content.is_empty() {
+            continue;
+        }
+
+        if sole.replace(&response.content).is_some() {
+            return None;
+        }
+    }
+
+    sole
 }
 
 /// What each redirect status tells a client, as RFC 9110 defines it.
