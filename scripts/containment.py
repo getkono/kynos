@@ -246,7 +246,7 @@ def token(cell):
     return re.compile(r"\b(?:" + "|".join(patterns) + r")\b")
 
 
-def sites(cell):
+def allowed_sites(cell):
     """The files one *Named only in* cell allows, resolved against the scope.
 
     A comma-separated list of backticked paths, each of which may brace-expand:
@@ -282,7 +282,7 @@ for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
 
     element, named_by, where, reason = cells
     off_path_rows += 1
-    allowance = sites(where)
+    allowance = allowed_sites(where)
     pattern = token(named_by)
     if pattern is None:
         failures.append(
