@@ -295,6 +295,39 @@ mod a_wrapper_declares_the_body_it_forwards {
         }
     }
 
+    /// One response, carrying nothing.
+    ///
+    /// The shape a `Reply` enum with a single bodiless variant produces, and
+    /// the body a wrapper must not invent a representation for.
+    struct NoRepresentationAtAll;
+
+    impl Responses for NoRepresentationAtAll {
+        fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+            let _ = registry;
+            kynos_openapi::Responses::new().with(204, kynos_openapi::Response::new("it was done"))
+        }
+    }
+
+    /// No response at all, which is what a body declaring nothing hands over.
+    struct NothingDeclared;
+
+    impl Responses for NothingDeclared {
+        fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+            let _ = registry;
+            kynos_openapi::Responses::new()
+        }
+    }
+
+    /// The one response, filed under `default` rather than under a status.
+    struct SoleRepresentationUnderDefault;
+
+    impl Responses for SoleRepresentationUnderDefault {
+        fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+            kynos_openapi::Responses::new()
+                .with_default(json("whatever it answers with", registry))
+        }
+    }
+
     /// One response, and it is a `$ref` whose content this module cannot read.
     struct OnlyAReference;
 
@@ -333,6 +366,30 @@ mod a_wrapper_declares_the_body_it_forwards {
     #[test]
     fn a_body_declaring_two_representations_leaves_the_wrapper_empty() {
         assert!(representations::<Created<TwoRepresentations>>(201).is_empty());
+    }
+
+    /// A body with nothing to carry across leaves the wrapper declaring
+    /// nothing, which is what the wrapper then sends.
+    ///
+    /// Two ways to have nothing: one response carrying no content, and no
+    /// response at all. Both are the honest empty declaration rather than the
+    /// disagreement above, and neither is reached by any composition in the
+    /// tree -- so this is what says the fallback stays out of their way.
+    #[test]
+    fn a_body_with_no_representation_leaves_the_wrapper_empty() {
+        assert!(representations::<Created<NoRepresentationAtAll>>(201).is_empty());
+        assert!(representations::<Created<NothingDeclared>>(201).is_empty());
+    }
+
+    /// A `default` is the body's response for every status it did not name, so
+    /// it is as much a thing the body puts on the wire as a keyed one -- and
+    /// when it is the only one, it is what the wrapper's status sends.
+    #[test]
+    fn a_sole_default_is_the_representation_the_wrapper_takes() {
+        assert_eq!(
+            representations::<Created<SoleRepresentationUnderDefault>>(201),
+            ["application/json"]
+        );
     }
 
     /// A `$ref` names a response the document holds elsewhere, so whether it
