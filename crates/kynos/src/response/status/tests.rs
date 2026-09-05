@@ -283,8 +283,10 @@ mod a_wrapper_declares_the_body_it_forwards {
 
     /// Two representations, so which one a wrapper would take is a guess.
     ///
-    /// The shape `Created<Ranged<Json<T>>>` and `Created<Delivery<M>>` reach:
-    /// several content-bearing statuses, none of them 200.
+    /// The shape a `Reply` enum with two content-bearing variants produces. No
+    /// composition Kynos ships reaches it: `Ranged<T>`, `RangedParts<T>` and
+    /// `Delivery<M>` all declare a 200, so a wrapper over one of them re-keys
+    /// that 200 instead of ever asking what else the body declared.
     struct TwoRepresentations;
 
     impl Responses for TwoRepresentations {

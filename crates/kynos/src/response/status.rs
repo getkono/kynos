@@ -223,14 +223,21 @@ fn location_header(description: &str) -> kynos_openapi::Header {
 /// rather than over the content-bearing ones: `{204: none, 409: content}`
 /// sends both under the wrapper's status, so declaring the 409's
 /// representation would promise it for the values that send nothing.
-/// `Created<Ranged<Json<T>>>`,
-/// `Created<RangedParts<T>>`, `Created<Delivery<M>>` and
-/// `Created<Result<Json<T>, E>>` are the compositions that reach that branch.
+///
+/// No body type Kynos ships reaches any of this. `Ranged<T>`,
+/// `RangedParts<T>` and `Delivery<M>` each declare a 200 — the first two
+/// because the representation they range over does, the third because it
+/// writes one itself — and `Result<T, E>` declares whatever its `Ok` half
+/// does, so every wrapper over them takes the re-keying arm above. What
+/// arrives here is a body naming its own statuses, which is what
+/// `#[derive(Reply)]` writes: one response per variant, and a 200 only where a
+/// variant asked for one. `Created<R>` for a single-variant `R` carrying a
+/// representation is the composition the carry-over is for.
 ///
 /// What is *not* addressed here is the leftover entry. A body's 409 stays in
 /// the set while the wrapper re-keys everything it sends to 201, so the
 /// description keeps a status the type cannot produce. That is true of every
-/// leftover under every composition above and predates this fallback, so
+/// leftover any such body leaves behind and predates this fallback, so
 /// removing them is a decision about the wrapper's whole contract rather than
 /// about the missing representation.
 fn body_response(
