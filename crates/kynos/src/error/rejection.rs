@@ -33,10 +33,8 @@ use std::collections::BTreeMap;
 
 use serde_json::json;
 
-use kynos_openapi::model::body::mime_names::APPLICATION_PROBLEM_JSON;
-
 use crate::{
-    error::problem::{IntoProblem, Problem},
+    error::problem::{IntoProblem, Problem, problem_response},
     http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
@@ -44,9 +42,13 @@ use crate::{
 
 /// One response per declared status, each an `application/problem+json`
 /// document referring to the shared [`Problem`] component.
+///
+/// The description is [`problem_response`]'s, because a rejection's response is
+/// the same problem document every other refusal sends and a second spelling of
+/// the media type is a second place for it to drift. A rejection declaring no
+/// status therefore registers no `Problem` component either, which is right: it
+/// declares no problem.
 fn problem_responses(registry: &mut Registry, statuses: &[StatusCode]) -> kynos_openapi::Responses {
-    let schema = registry.resolve::<Problem>();
-
     statuses
         .iter()
         .fold(kynos_openapi::Responses::new(), |responses, status| {
@@ -55,14 +57,7 @@ fn problem_responses(registry: &mut Registry, statuses: &[StatusCode]) -> kynos_
                 str::to_owned,
             );
 
-            responses.with(
-                status.as_u16(),
-                kynos_openapi::Response::with_content(
-                    description,
-                    APPLICATION_PROBLEM_JSON,
-                    kynos_openapi::MediaType::new(schema.clone()),
-                ),
-            )
+            responses.with(status.as_u16(), problem_response(registry, description))
         })
 }
 
