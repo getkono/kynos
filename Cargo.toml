@@ -25,13 +25,13 @@ kynos-openapi = { version = "0.1.0", path = "crates/kynos-openapi", default-feat
 # allocated rather than what the process did -- `libtest` always has a second
 # thread alive beside the one running a test, and a process-global counter
 # reports its work as the router's. And it installs nothing on its own behalf:
-# the one target that wants it declares `#[global_allocator]` itself, which is
+# each target that wants it declares `#[global_allocator]` itself, which is
 # what keeps the instrument out of every other test binary in the package.
 # `macros` is off because the attribute form is unused; `std` carries
 # `AllocCounterSystem`, and `pin-utils` rides along for an async helper this
 # tree does not call.
 # It is `0.0.4` and was last published in 2019, which is the trade taken
-# knowingly: it is a dev-dependency of one test target and the surface used is
+# knowingly: it is a dev-dependency of two test targets and the surface used is
 # one function.
 # `stats_alloc` was this dependency and counts into process globals, which is
 # the flake it caused. `allocation-counter` counts per thread but declares
