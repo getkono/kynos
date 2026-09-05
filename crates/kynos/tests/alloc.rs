@@ -1,4 +1,5 @@
-//! What the routing path allocates, counted.
+//! What one request costs: what the routing path allocates, what a chain in
+//! front of it adds, and how wide the future a driver holds is.
 //!
 //! The allocation-count kind in
 //! [`performance.md`](../../../docs/performance.md#the-taxonomy), and the
@@ -31,6 +32,14 @@
 //! [`nfr.md`](../../../docs/nfr.md#thresholds) requires of a first
 //! measurement — and this file is the characterization that row points at, so
 //! that closing the gap turns something red rather than nothing.
+//!
+//! The middleware half is recorded the same way and asks nothing of the same
+//! kind: a chain is a slice run head-first, so what is worth pinning is that a
+//! layer costs the same wherever it sits and that the future does not widen
+//! with the stack. Both are measured over an interceptor that allocates
+//! nothing, which is what leaves the excess as the chain's own machinery. The
+//! width guard shares this fixture rather than joining
+//! [`size.rs`](size.rs), which has no service to call.
 
 #![cfg(feature = "macros")]
 
@@ -55,7 +64,7 @@ use kynos::{
 #[path = "support/counting.rs"]
 mod counting;
 
-use counting::counted;
+use counting::{counted, request};
 
 /// Every shape measured here, with what it costs today.
 ///
@@ -174,6 +183,11 @@ const STACKED: &str = "/ping";
 /// eight less seven at depth zero, over eight layers.
 const PER_LAYER: usize = 1;
 
+/// How wide the future a driver holds is allowed to be, measured rather than
+/// chosen, and the same at every stack depth and under every feature
+/// combination this target is built with.
+const FUTURE_BYTES: usize = 280;
+
 /// The record, for the middleware half: what one request costs at each depth,
 /// over interceptors that allocate nothing of their own.
 ///
@@ -253,6 +267,54 @@ fn a_layer_costs_the_same_wherever_it_sits() {
         "a request matching no route cost {missed_0} with no stack and \
          {missed_8} behind eight layers; nothing that never reaches a chain \
          should notice how long one is"
+    );
+}
+
+/// The other half of what a layer costs: the width of the future a driver
+/// holds, and that a chain in front of it adds nothing to that width.
+///
+/// [`Service::call`] is an `async fn` over an erased dispatcher, so the stack
+/// is gone from the type before any driver sees a future: all three depths
+/// produce one future type, which is the only reason the array below compiles.
+/// **That compile is the depth-invariance assertion.** The equality after it
+/// cannot fail while the array stands, and is written out anyway because a
+/// change that made the future carry its stack would have to delete the array
+/// first — and a reader arriving at three separate `size_of_val` calls should
+/// be able to see what was given up.
+///
+/// The ceiling is the half that can fail, and it is a ratchet rather than a
+/// target: a future that widened would cost every in-flight request on the
+/// server, which no allocation count above can see. 280 bytes, at every depth
+/// and at both baseline and every feature. That is also the figure the request
+/// for this guard named, but it is recorded here because it was measured — a
+/// number carried over unmeasured would have pinned whatever it was guessed
+/// at, and been indistinguishable from this one when it was wrong.
+#[test]
+fn a_driver_holds_one_future_whatever_the_chain_is() {
+    let [(_, empty, _), (_, four, _), (_, eight, _)] = STACKS;
+    let (none, four, eight) = (empty(), four(), eight());
+
+    // One array, so the three futures are one type or this does not build.
+    let futures = [
+        none.call(request(STACKED)),
+        four.call(request(STACKED)),
+        eight.call(request(STACKED)),
+    ];
+    let [w0, w4, w8] = futures.map(|future| size_of_val(&future));
+
+    assert_eq!(
+        w4, w0,
+        "four layers widened the dispatch future from {w0} to {w4} bytes"
+    );
+    assert_eq!(
+        w8, w0,
+        "eight layers widened the dispatch future from {w0} to {w8} bytes"
+    );
+    assert!(
+        w0 <= FUTURE_BYTES,
+        "the dispatch future is {w0} bytes against a recorded {FUTURE_BYTES}; \
+         every request in flight carries one, so raising this ceiling is a \
+         change to docs/nfr.md"
     );
 }
 

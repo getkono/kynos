@@ -51,9 +51,7 @@ static ALLOCATOR: AllocCounterSystem = AllocCounterSystem;
 /// and a warm-up here would be the one construct able to hide a one-time cost
 /// introduced later.
 pub(crate) fn counted<C>(service: &Service<C>, target: &str) -> usize {
-    let mut request = Request::new(Body::empty());
-    *request.method_mut() = Method::GET;
-    *request.uri_mut() = target.parse().expect("a usable request target");
+    let request = request(target);
 
     let ((allocations, reallocations, _), polled) = count_alloc(|| {
         let mut future = pin!(service.call(request));
@@ -74,4 +72,16 @@ pub(crate) fn counted<C>(service: &Service<C>, target: &str) -> usize {
 
     drop(response);
     allocations
+}
+
+/// One `GET` against `target`, built.
+///
+/// Its own function so that a measurement which is not a count — the width of
+/// the future a driver holds — reaches the same request [`counted`] measures,
+/// rather than a second one built beside it.
+pub(crate) fn request(target: &str) -> Request {
+    let mut request = Request::new(Body::empty());
+    *request.method_mut() = Method::GET;
+    *request.uri_mut() = target.parse().expect("a usable request target");
+    request
 }
