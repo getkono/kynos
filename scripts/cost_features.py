@@ -288,16 +288,16 @@ def measure_binary(size, flags, env):
     return fail(f"llvm-size printed no `.text` section for {artifact}")
 
 
-def measure_codegen(flags, env):
-    """The fixture's `(TOTAL)` IR lines and copies, and its per-function rows."""
-    output = capture(
-        [
-            "cargo", "llvm-lines", "--package", "kynos",
-            "--example", "cost_fixture", "--color", "never", "--sort", "lines",
-            *flags,
-        ],
-        env,
-    )
+def parse_llvm_lines(output):
+    """`cargo llvm-lines` output as its `(TOTAL)` pair and its function rows.
+
+    Separate from the call that produces it so the two patterns above are
+    reachable from a test: this is the step that turns a tool's text into every
+    number the codegen half reports, and a silent regression in it yields a
+    plausible wrong attribution rather than a failure. `total` is `None` when
+    the output held no `(TOTAL)` row, which the caller reports as a
+    measurement that could not be made.
+    """
     total, functions = None, {}
     for line in output.splitlines():
         row = LLVM_LINES_ROW.match(line)
@@ -309,6 +309,20 @@ def measure_codegen(flags, env):
             total = (lines, copies)
         else:
             functions[name] = (lines, copies)
+    return total, functions
+
+
+def measure_codegen(flags, env):
+    """The fixture's `(TOTAL)` IR lines and copies, and its per-function rows."""
+    output = capture(
+        [
+            "cargo", "llvm-lines", "--package", "kynos",
+            "--example", "cost_fixture", "--color", "never", "--sort", "lines",
+            *flags,
+        ],
+        env,
+    )
+    total, functions = parse_llvm_lines(output)
     if total is None:
         return fail("cargo llvm-lines printed no `(TOTAL)` row")
     return total, functions
@@ -606,4 +620,8 @@ def main():
         )
 
 
-main()
+# Guarded rather than called outright, so that `scripts/cost_features_test.py`
+# can import the pure functions above -- the two parsers, the round-trip and
+# the report's ranking -- without running a fifty-build sweep to reach them.
+if __name__ == "__main__":
+    main()
