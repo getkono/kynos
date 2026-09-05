@@ -34,13 +34,19 @@
 
 #![cfg(feature = "macros")]
 
+use std::convert::Infallible;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 use alloc_counter::count_alloc;
 use kynos::{
-    Router, extract::params::path::Path, prelude::*, response::status::NoContent,
+    Router,
+    extract::params::path::Path,
+    http::Request,
+    middleware::{Continued, Interceptor, Next},
+    prelude::*,
+    response::status::NoContent,
     router::service::Service,
 };
 
@@ -84,11 +90,112 @@ async fn one(Path(path): Path<One>) -> NoContent {
     NoContent
 }
 
+/// The two operations, unmounted, so a stack can be put in front of them.
+fn router() -> Router<()> {
+    Router::<()>::new().mount(kynos::routes![ping, one])
+}
+
 fn service() -> Service<()> {
-    Router::<()>::new()
-        .mount(kynos::routes![ping, one])
+    router().build(()).expect("a describable router")
+}
+
+/// An interceptor that forwards and does nothing else, so that what a stack
+/// costs is the chain's own machinery rather than the work a layer does.
+///
+/// Every associated type is the empty declaration —
+/// [`Reads`](Interceptor::Reads) and [`Adds`](Interceptor::Adds) name no
+/// header and [`Short`](Interceptor::Short) is
+/// [`Infallible`](std::convert::Infallible) — which is also what lets eight
+/// instances of *one* type mount: `CompatibleWith` compares `Adds::NAMES` and
+/// `Short::STATUSES` for disjointness, and two empty sets are disjoint.
+struct Transparent;
+
+impl<C: Sync + 'static> Interceptor<C> for Transparent {
+    type Reads = ();
+    type Adds = ();
+    type Short = Infallible;
+
+    async fn intercept(
+        &self,
+        request: Request,
+        reads: (),
+        context: &C,
+        next: Next<'_, C>,
+    ) -> Result<Continued<()>, Infallible> {
+        let _ = (reads, context);
+        Ok(next.run(request).await)
+    }
+}
+
+/// Four layers. Written out rather than looped because `intercept` returns a
+/// *different* `Router` type each time it is called, so a loop has no type to
+/// iterate at; `build` is what erases the stack back to one `Service<()>`.
+fn depth_4() -> Service<()> {
+    router()
+        .intercept(Transparent)
+        .intercept(Transparent)
+        .intercept(Transparent)
+        .intercept(Transparent)
         .build(())
         .expect("a describable router")
+}
+
+/// Eight, for the same reason.
+fn depth_8() -> Service<()> {
+    router()
+        .intercept(Transparent)
+        .intercept(Transparent)
+        .intercept(Transparent)
+        .intercept(Transparent)
+        .intercept(Transparent)
+        .intercept(Transparent)
+        .intercept(Transparent)
+        .intercept(Transparent)
+        .build(())
+        .expect("a describable router")
+}
+
+/// Every stack depth measured here, with what a request through it costs
+/// today.
+///
+/// The target is the static match, so the excess over depth 0 is the stack's
+/// alone: no capture is deserialized on the way.
+const STACKS: [(usize, fn() -> Service<()>, usize); 3] = [
+    // No stack at all: the same seven a static match costs in `SHAPES`.
+    (0, service, 7),
+    (4, depth_4, 11),
+    (8, depth_8, 15),
+];
+
+/// The target every stack is measured against.
+const STACKED: &str = "/ping";
+
+/// The record, for the middleware half: what one request costs at each depth,
+/// over interceptors that allocate nothing of their own.
+///
+/// Seven allocations at depth 0, eleven at depth 4 and fifteen at depth 8 —
+/// one heap allocation per layer, on top of the seven the routing path costs
+/// with no stack in front of it. That one is the object-safe form of
+/// `Interceptor` boxing the future it returns, which is the price of a
+/// heterogeneous chain fitting in one slice.
+///
+/// Ceilings rather than targets, and measured rather than chosen, as
+/// [`nfr.md`](../../../docs/nfr.md#thresholds) requires of a first
+/// measurement. The relation these hold is
+/// `a_layer_costs_the_same_wherever_it_sits`, which is what survives a change
+/// to any of them.
+#[test]
+fn an_interceptor_stack_allocates_what_is_recorded_here() {
+    for (depth, build, ceiling) in STACKS {
+        let counted = counted(&build(), STACKED);
+        assert!(
+            counted <= ceiling,
+            "a request through {depth} no-op interceptor(s) allocated \
+             {counted} times against a recorded {ceiling}; raising a ceiling is \
+             a change to docs/nfr.md, and lowering one is what making a layer \
+             cheaper looks like"
+        );
+    }
 }
 
 /// The instrument's own invariant, and the one every number below rests on: a
