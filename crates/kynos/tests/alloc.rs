@@ -239,7 +239,7 @@ fn an_interceptor_stack_allocates_what_is_recorded_here() {
 /// chain costing — would read as the same result.
 #[test]
 fn a_layer_costs_the_same_wherever_it_sits() {
-    let [(_, empty, _), (_, four, _), (_, eight, _)] = STACKS;
+    let [(_, empty, _), (_, four, _), (deepest, eight, _)] = STACKS;
     let (d0, d4, d8) = (
         counted(&empty(), STACKED),
         counted(&four(), STACKED),
@@ -264,9 +264,10 @@ fn a_layer_costs_the_same_wherever_it_sits() {
     );
     assert_eq!(
         d8 - d0,
-        8 * PER_LAYER,
-        "eight layers added {} allocation(s) against a recorded {PER_LAYER} \
-         per layer; this is the number docs/nfr.md bills a layer at",
+        deepest * PER_LAYER,
+        "{deepest} layers added {} allocation(s) against a recorded \
+         {PER_LAYER} per layer; this is the number docs/nfr.md bills a layer \
+         at",
         d8 - d0
     );
 
