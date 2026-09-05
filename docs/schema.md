@@ -396,6 +396,7 @@ re-walked. A second call would reuse the same maps and agree with itself.
 | 10 | A description never carries `deprecated: false` | the emitters write `Some(true)` or nothing |
 | 11 | A description is the same bytes in every process that emits it | [`tests/determinism.rs`](../crates/kynos/tests/determinism.rs), emitting one fixture in three processes |
 | 12 | A component is registered after everything it refers to | the same file, over a known nesting chain |
+| 13 | A derived error response narrows `Problem.type` to a `const`, and a status several variants share to a `oneOf` of them | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted `Responses`; the shapes themselves in [`__private/problem.rs`](../crates/kynos/src/__private/problem.rs) |
 
 ## Rationale
 
