@@ -354,32 +354,51 @@ fn a_capture_is_what_a_path_parameter_costs() {
 /// be state accumulating on the routing path, which no single-request
 /// measurement can see.
 ///
-/// Every shape is replayed, not only the parameterised one: a table that
-/// records three numbers and replays one would leave two of them resting on a
-/// single reading.
+/// Every shape and every stack depth is replayed, not only the parameterised
+/// shape: a pair of tables that record six numbers and replay one would leave
+/// five of them resting on a single reading. A chain is where the question is
+/// sharpest — every layer holds an `Arc` and every call boxes a future, so a
+/// clone that outlived its request would show here and nowhere else.
 #[test]
 fn a_replayed_request_costs_what_the_first_one_did() {
     let service = service();
 
     for (target, _) in SHAPES {
-        let first = counted(&service, target);
-        let mut moved = Vec::new();
+        replayed(&service, target, target);
+    }
 
-        for index in 0..10_000 {
-            let counted = counted(&service, target);
-            if counted != first {
-                moved.push((index, counted));
-            }
-        }
-
-        assert!(
-            moved.is_empty(),
-            "{target} allocated {first} times on one request and differently \
-             on {} of the next ten thousand, starting at {:?}; a count that \
-             moves between identical requests is state accumulating on the \
-             routing path",
-            moved.len(),
-            moved.first()
+    for (depth, build, _) in STACKS {
+        replayed(
+            &build(),
+            STACKED,
+            &format!("{STACKED} behind {depth} no-op interceptor(s)"),
         );
     }
+}
+
+/// Ten thousand identical requests, against what the first one cost.
+///
+/// `described` names the case in the failure rather than being derived from
+/// `target`, because the same target is replayed at three stack depths and a
+/// message naming only the path would not say which one moved. Both are built
+/// outside every counted region, so neither costs the measurement anything.
+fn replayed(service: &Service<()>, target: &str, described: &str) {
+    let first = counted(service, target);
+    let mut moved = Vec::new();
+
+    for index in 0..10_000 {
+        let counted = counted(service, target);
+        if counted != first {
+            moved.push((index, counted));
+        }
+    }
+
+    assert!(
+        moved.is_empty(),
+        "{described} allocated {first} times on one request and differently \
+         on {} of the next ten thousand, starting at {:?}; a count that moves \
+         between identical requests is state accumulating on the routing path",
+        moved.len(),
+        moved.first()
+    );
 }
