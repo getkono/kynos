@@ -668,20 +668,23 @@ every request — which is why the entry stays here rather than moving to a
 benchmark: the cost was real, and removing it was not what motivated the
 change.
 
-The other two are measured, and neither costs what the entry above predicted.
-Re-sniffing ALPN costs no read syscall on the one path where ALPN exists.
-hyper-util's `read_version` reads into a 24-byte array and rewinds the head it
-copied out, and on plaintext TCP that cap does force the codec into a second
-`read(2)` — but plaintext negotiates no protocol to discard in the first place.
-Under TLS, `tokio-rustls` reads and decrypts a whole record before it hands any
-plaintext up, and rustls reports no want for a read while that plaintext is
-buffered, so the codec's next read is served out of memory. What is left is one
-24-byte `Vec` and one extra poll through the TLS stack per connection — a
-socket-level per-connection figure, which is `kynos-bench`'s by the boundary
-[`performance.md`](performance.md#the-boundary) sets. It is deferred there and
-filed as [#114](https://github.com/getkono/kynos/issues/114) rather than taken
-here: one allocation per connection is not the syscall per connection the entry
-was written for, and the number is what decides it.
+The other two have their numbers now, and neither costs what the entry above
+predicted. The first is traced through the dependencies it runs on rather than
+measured, which is the whole of what it claims: re-sniffing ALPN costs no read
+syscall on the one path where ALPN exists. hyper-util's `read_version` reads
+into a 24-byte array and rewinds the head it copied out, and on plaintext TCP
+that cap does force the codec into a second `read(2)` — but plaintext
+negotiates no protocol to discard in the first place. Under TLS, `tokio-rustls`
+reads and decrypts a whole record before it hands any plaintext up, and rustls
+reports no want for a read while that plaintext is buffered, so the codec's
+next read is served out of memory. What is left is one heap copy of the head,
+at most 24 bytes, and one extra poll through the TLS stack per connection — a
+socket-level per-connection figure, and so `kynos-bench`'s by the boundary
+[`performance.md`](performance.md#the-boundary) sets. It is deferred there
+rather than taken here, and filed as
+[#114](https://github.com/getkono/kynos/issues/114): one allocation per
+connection is not the syscall per connection the entry was written for, and the
+number is what decides it.
 
 Erasing a body is not on the routing path at all. None of the seven allocations
 [`alloc.rs`](../crates/kynos/tests/alloc.rs) records for a static match is a
