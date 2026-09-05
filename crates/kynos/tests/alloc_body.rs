@@ -13,13 +13,13 @@
 //! erasing every body as a cheap win worth "once per request". It is not one of
 //! the seven [`alloc.rs`](alloc.rs) records: the request body there is built
 //! before the counted region opens, and the response body a `204` sends is
-//! [`Body::empty`](kynos::http::body::Body::empty), which erases a zero-sized
-//! type — and `Box::pin` of a zero-sized value allocates nothing. What the
-//! entry describes is real one step further out, on the server path, where
-//! `Body::from_incoming` erases a `hyper::body::Incoming` that is not
-//! zero-sized. The two `size_of` witnesses below are why the table reads the
-//! way it does, and they are what turns red if either fact stops holding under
-//! a dependency bump.
+//! `Body::empty`, which erases a zero-sized type — and `Box::pin` of a
+//! zero-sized value allocates nothing. What the entry describes is real one
+//! step further out, on the server path, where `Body::from_incoming` erases a
+//! `hyper::body::Incoming` that is not zero-sized. Three `size_of` witnesses
+//! hold those reasons: two say why the table below reads the way it does, and
+//! the third pins the type the server path erases, so a dependency bump that
+//! ends any of the three turns something red.
 //!
 //! Ungated. Nothing here names a derive, a router or a runtime — only
 //! `kynos::http`, which is behind no feature — so the numbers hold at every
