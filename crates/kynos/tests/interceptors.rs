@@ -451,6 +451,16 @@ fn impls_of(trait_name: &str) -> BTreeSet<String> {
     );
     assert!(!sources.is_empty(), "no sources found under `src/`");
 
+    names_implementing(trait_name, &sources)
+}
+
+/// The scan itself, over source it is handed rather than source it reads.
+///
+/// Separate from [`impls_of`] so that the two conditions above can be held
+/// against text: what the walk finds on disk is whatever the tree happens to
+/// contain today, so a condition can only be *asserted* over source chosen to
+/// exercise it.
+fn names_implementing(trait_name: &str, sources: &[String]) -> BTreeSet<String> {
     let marker = format!("{trait_name} for ");
 
     sources
@@ -475,6 +485,40 @@ fn impls_of(trait_name: &str) -> BTreeSet<String> {
             )
         })
         .collect()
+}
+
+/// Each condition the scan applies, held against a line written to break it.
+///
+/// The set the sweep drives is derived from what this finds, so a condition
+/// that stops holding is a short circuit that stops being swept -- silently,
+/// because the walk would simply return a smaller set and every assertion over
+/// it would still pass. What the tree contains cannot say this: it holds no
+/// `MyShortCircuit`, and dropping either condition leaves the walk's own result
+/// unchanged today.
+///
+/// One line per claim the documentation above makes. The generic head is the
+/// shape `impl` without a trailing space exists for; the qualified path is the
+/// spelling `middleware/compression/mod.rs` uses; `MyShortCircuit` is a name
+/// ending in the trait's that implements something else; and the doc-example
+/// line
+/// is the one `middleware/limits.rs` really carries.
+#[test]
+fn the_scan_reads_a_generic_head_and_anchors_the_trait_name() {
+    let sources = [
+        "impl<const CODE: u16> ShortCircuit for Redirected<CODE> {".to_owned(),
+        "impl ShortCircuit for Plain {".to_owned(),
+        "    impl crate::response::ShortCircuit for Qualified {".to_owned(),
+        "impl MyShortCircuit for NotOurs {".to_owned(),
+        "/// # impl ShortCircuit for InADocExample {".to_owned(),
+    ];
+
+    assert_eq!(
+        names_implementing("ShortCircuit", &sources),
+        ["Plain", "Qualified", "Redirected"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>()
+    );
 }
 
 /// One short circuit's wire response, beside the description it declared.
