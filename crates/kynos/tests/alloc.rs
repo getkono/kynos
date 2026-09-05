@@ -73,7 +73,8 @@ use counting::{counted, request};
 /// the attribution [`nfr.md`](../../../docs/nfr.md#routing) names as the next
 /// piece of work.
 const SHAPES: [(&str, usize); 3] = [
-    // A static match, with no parameter to capture.
+    // A static match, with no parameter to capture. Also the row `STACKED`
+    // and the depth-0 stack ceiling are read from.
     ("/ping", 7),
     // One path parameter, captured and deserialized.
     ("/users/7", 11),
@@ -173,20 +174,27 @@ fn depth_8() -> Service<()> {
 /// table as functions.
 type Stack = (usize, fn() -> Service<()>, usize);
 
+/// The target every stack is measured against: the static match, so the excess
+/// over depth 0 is the stack's alone, with no capture deserialized on the way.
+///
+/// Read out of [`SHAPES`] rather than written again, so that the two tables
+/// cannot disagree about which shape is stacked.
+const STACKED: &str = SHAPES[0].0;
+
+/// What that target costs with no stack in front of it, from the same row: the
+/// depth-0 ceiling below *is* the static match's, so re-measuring one moves
+/// both.
+const STACKED_ALONE: usize = SHAPES[0].1;
+
 /// Every stack depth measured here, with what a request through it costs
 /// today.
-///
-/// The target is the static match, so the excess over depth 0 is the stack's
-/// alone: no capture is deserialized on the way.
 const STACKS: [Stack; 3] = [
-    // No stack at all: the same seven a static match costs in `SHAPES`.
-    (0, service, 7),
+    // No stack at all: what the same target costs in `SHAPES`, not a second
+    // recording of it.
+    (0, service, STACKED_ALONE),
     (4, depth_4, 11),
     (8, depth_8, 15),
 ];
-
-/// The target every stack is measured against.
-const STACKED: &str = "/ping";
 
 /// What one layer adds, transcribed from the ceilings above: fifteen at depth
 /// eight less seven at depth zero, over eight layers.
