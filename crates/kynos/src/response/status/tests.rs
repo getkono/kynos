@@ -209,8 +209,9 @@ mod a_wrapper_produces_and_declares_one_status {
 /// is a `Created` over a body that never described a 200.
 mod a_wrapper_declares_the_body_it_forwards {
     use crate::{
+        http::{Response, StatusCode, body::Body, header},
         response::{
-            Responses,
+            IntoResponse, Responses,
             status::{Accepted, Created},
         },
         schema::registry::Registry,
@@ -245,6 +246,34 @@ mod a_wrapper_declares_the_body_it_forwards {
             kynos_openapi::Responses::new()
                 .with(201, json("the resource as stored", registry))
                 .with(409, kynos_openapi::Response::new("it already exists"))
+        }
+    }
+
+    /// A representation beside a status carrying none.
+    ///
+    /// The shape `#[derive(Reply)]` produces for `{204: none, 409: content}`.
+    /// Both variants reach the wire under the wrapper's status, so the two
+    /// entries are two different exchanges under one key -- and only one of
+    /// them carries a representation.
+    struct ARepresentationAndABodilessStatus;
+
+    impl Responses for ARepresentationAndABodilessStatus {
+        fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+            kynos_openapi::Responses::new()
+                .with(204, kynos_openapi::Response::new("it was replaced"))
+                .with(409, json("what is already there", registry))
+        }
+    }
+
+    /// The bodiless half of the type above, which is the half a wrapper's
+    /// declaration has to survive: `Created<T>` overwrites the 204 with 201 and
+    /// forwards this body unchanged, so the exchange is a 201 carrying neither
+    /// octets nor a `Content-Type`.
+    impl IntoResponse for ARepresentationAndABodilessStatus {
+        fn into_response(self) -> Response {
+            let mut response = Response::new(Body::empty());
+            *response.status_mut() = StatusCode::NO_CONTENT;
+            response
         }
     }
 
@@ -310,5 +339,31 @@ mod a_wrapper_declares_the_body_it_forwards {
     #[test]
     fn a_reference_beside_a_representation_leaves_the_wrapper_empty() {
         assert!(representations::<Created<OneRepresentationAndAReference>>(201).is_empty());
+    }
+
+    /// A representation is the wrapper's to declare only where every value it
+    /// wraps sends one.
+    ///
+    /// `{204: none, 409: content}` holds one content-bearing response and no
+    /// 200, so counting content-bearing responses alone finds "nothing to
+    /// choose between" and carries `application/json` onto the 201. The value
+    /// below is the other variant: it reaches the wire as a 201 with no
+    /// `Content-Type` and no octets, under a description promising a JSON
+    /// document. `assert_conformance` reports that pair as "no `Content-Type`
+    /// was sent, but the description declares application/json" -- the
+    /// disagreement in the direction the wrapper is meant to close, not open.
+    #[test]
+    fn a_bodiless_status_beside_a_representation_leaves_the_wrapper_empty() {
+        let sent = Created::at("/things/1", ARepresentationAndABodilessStatus).into_response();
+
+        assert_eq!(sent.status(), StatusCode::CREATED);
+        assert!(
+            sent.headers().get(header::CONTENT_TYPE).is_none(),
+            "the bodiless variant reaches 201 carrying no representation"
+        );
+        assert!(
+            representations::<Created<ARepresentationAndABodilessStatus>>(201).is_empty(),
+            "the wrapper declares a representation the bodiless variant never sends"
+        );
     }
 }
