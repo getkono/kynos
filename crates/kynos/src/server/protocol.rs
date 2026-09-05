@@ -5,8 +5,12 @@ use std::time::Duration;
 
 use crate::server::error::ServerError;
 
+/// The smallest per-connection read/write buffer the crate accepts.
+///
+/// `pub(crate)` so per-connection budgets elsewhere can be measured against
+/// it rather than against a figure transcribed from prose, which would drift.
 #[cfg(feature = "http1")]
-const MIN_HTTP1_BUFFER_SIZE: usize = 8_192;
+pub(crate) const MIN_HTTP1_BUFFER_SIZE: usize = 8_192;
 
 /// HTTP/1 tuning.
 ///
@@ -229,6 +233,13 @@ pub(in crate::server) fn validate_protocol_config(
             ));
         }
         if http1.max_buffer_size < MIN_HTTP1_BUFFER_SIZE {
+            // `InvalidConfiguration` carries a `&'static str`, so the operator
+            // is told the floor as a literal. This is what stops the two from
+            // parting company when the constant moves.
+            const _: () = assert!(
+                MIN_HTTP1_BUFFER_SIZE == 8_192,
+                "MIN_HTTP1_BUFFER_SIZE moved; the message below still says 8192"
+            );
             return Err(ServerError::InvalidConfiguration(
                 "HTTP/1 max_buffer_size must be at least 8192",
             ));

@@ -321,8 +321,18 @@ guarantee. It has already earned its keep twice — see
 | reliability | A streamed request body is decoded as it arrives rather than after it has been collected | [`extract/body/json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) reading a body delivered one frame per byte, and every frame boundary of a fixed body | `enforced` for a body declaring a `Content-Length`; `by-design` under `BodySize` for a chunked one |
 | performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `kynos-bench` |
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `kynos-bench` |
+| performance | The per-connection state Kynos itself holds inline stays within its recorded ceilings, and under the smallest transport buffer the crate accepts | [`extract/connection/tests.rs`](../crates/kynos/src/extract/connection/tests.rs), asserting `Connection` one pointer wide and shared rather than copied on clone, `Inner` ≤ 192 from a measured 144 and `TlsIdentity` ≤ 80 from a measured 72; and [`server/tests.rs`](../crates/kynos/src/server/tests.rs), asserting the configuration cloned per accepted socket — `Http1Config` ≤ 64 from 40, `Http2Config` ≤ 128 from 80, `TransportConfig` ≤ 192 from 168. Every reading is a `size_of`, so what a certificate chain or a server name points at is counted by none of them | `enforced` |
 | compatibility | `Listener::Tokio` is the only public item naming a tokio type | `cargo-public-api` assertion over the framework surface | `needs-tooling` |
 | compatibility | Every `tokio` mention outside `crates/kynos/src/server/` appears in the allowance table in [`architecture.md`](architecture.md#runtime-policy), and the table has exactly six rows | `mise run containment:check`, which reads the table rather than restating it, over source stripped of comments, string literals and `#[cfg(test)]` modules | `enforced` |
+
+The `size_of` row and the idle-memory row above it are two requirements, not one
+measured twice. A `size_of` reads what a type holds inline and nothing a pointer
+in it reaches, so it cannot see a peer certificate chain, a connection task's
+future or hyper's own buffers; resident memory at 100k connections sees all of
+them and no individual type. That is the split
+[`performance.md`](performance.md#the-boundary) draws for the per-connection
+shape, which owes a size guard here and sends resident memory at scale to
+`kynos-bench`. Neither row's status may be read off the other's.
 
 The last two rows are the enforcement of the tokio-only policy in
 [`architecture.md`](architecture.md#runtime-policy). There is no runtime
