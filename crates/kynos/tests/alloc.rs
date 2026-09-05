@@ -170,6 +170,10 @@ const STACKS: [(usize, fn() -> Service<()>, usize); 3] = [
 /// The target every stack is measured against.
 const STACKED: &str = "/ping";
 
+/// What one layer adds, transcribed from the ceilings above: fifteen at depth
+/// eight less seven at depth zero, over eight layers.
+const PER_LAYER: usize = 1;
+
 /// The record, for the middleware half: what one request costs at each depth,
 /// over interceptors that allocate nothing of their own.
 ///
@@ -196,6 +200,60 @@ fn an_interceptor_stack_allocates_what_is_recorded_here() {
              cheaper looks like"
         );
     }
+}
+
+/// The relation the stack ceilings are there to hold, and the one that survives
+/// a change to any of them: a layer costs the same wherever it sits.
+///
+/// `Next::run` takes the head of a slice and awaits it rather than nesting one
+/// chain inside another, so the eighth layer is no more expensive than the
+/// first. Stated as `d8 + d0 == 2 * d4`, which is `d8 - d4 == d4 - d0` written
+/// without a subtraction that could underflow before its message is read.
+///
+/// The control is the request that matched no route: dispatch answers it
+/// before a chain exists to run, so eight layers cost it nothing. Without it a
+/// count that grew with depth everywhere — the fixture leaking rather than the
+/// chain costing — would read as the same result.
+#[test]
+fn a_layer_costs_the_same_wherever_it_sits() {
+    let [(_, empty, _), (_, four, _), (_, eight, _)] = STACKS;
+    let (d0, d4, d8) = (
+        counted(&empty(), STACKED),
+        counted(&four(), STACKED),
+        counted(&eight(), STACKED),
+    );
+
+    assert!(
+        d0 <= d4 && d4 <= d8,
+        "a longer chain cost less than a shorter one (d0 = {d0}, d4 = {d4}, \
+         d8 = {d8}); a saving that appears only as depth grows is a broken \
+         measurement rather than a cheaper layer"
+    );
+    assert_eq!(
+        d8 + d0,
+        2 * d4,
+        "the second four layers added {} allocation(s) where the first four \
+         added {} (d0 = {d0}, d4 = {d4}, d8 = {d8}); a layer whose cost \
+         depends on its depth means a chain nests rather than iterating a \
+         slice",
+        d8 - d4,
+        d4 - d0
+    );
+    assert_eq!(
+        d8 - d0,
+        8 * PER_LAYER,
+        "eight layers added {} allocation(s) against a recorded {PER_LAYER} \
+         per layer; this is the number docs/nfr.md bills a layer at",
+        d8 - d0
+    );
+
+    let (missed_0, missed_8) = (counted(&empty(), "/nope"), counted(&eight(), "/nope"));
+    assert_eq!(
+        missed_0, missed_8,
+        "a request matching no route cost {missed_0} with no stack and \
+         {missed_8} behind eight layers; nothing that never reaches a chain \
+         should notice how long one is"
+    );
 }
 
 /// The instrument's own invariant, and the one every number below rests on: a
