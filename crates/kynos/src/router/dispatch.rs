@@ -500,3 +500,6 @@ pub(crate) fn allow_header(methods: &[Method]) -> HeaderValue {
 pub(crate) fn intern(name: &str) -> &'static str {
     Box::leak(name.to_owned().into_boxed_str())
 }
+
+#[cfg(test)]
+mod tests;

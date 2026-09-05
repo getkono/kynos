@@ -179,6 +179,157 @@ for crates, rule, where, description in [
     if stray:
         failures.append(f"{description}, but it is also named in:\n    " + "\n    ".join(stray))
 
+# --- The off-path elements ---------------------------------------------------
+# `performance.md` grades the document model, the emitters, the validators and
+# `describe` as off-path elements, and an off-path element owes a proof that a
+# request cannot reach it rather than a measurement. This is that proof's outer
+# half, and `testing.md#the-off-path-proof` is where it is argued.
+#
+# Stated negatively, because a request path is not a set of files: the table
+# names each element with the sites allowed to name it, and every other file
+# under the scope is on the request path by default. So the rule needs no list
+# of what serves a request -- which is the list nobody could keep true -- and a
+# new site is a failing build until someone writes a row saying why a request
+# cannot reach it.
+#
+# The declared side is read off disk, as it is everywhere else here: `naming()`
+# computes the real set, and the only hand-written thing in a row is the reason,
+# which is quoted back in the failure. Subset semantics, like the `ONLY_IN`
+# rules above: a site that has stopped naming its element is stale rather than
+# wrong, and only a stray fails.
+#
+# The inner half is not here and cannot be. `Dispatch` hands every request to a
+# trait object, and what sits behind one is declared in a file this rule reads
+# as an allowed site; `router/dispatch/tests.rs` closes that from the other side
+# by destructuring the three types a request travels through.
+TESTING = (ROOT / "docs/testing.md").read_text()
+OFF_PATH_HEADER = "| Element | Named by | Named only in | Why a request cannot reach it |"
+# The one scope a row's sites are resolved against. An element whose home is
+# another crate means changing this, not the row: a site outside the scope would
+# otherwise be compared against files the loop never looks at, and pass.
+OFF_PATH_SCOPE = "crates/kynos/src/"
+
+
+# What one spelling in a *Named by* cell may hold: an identifier, or a path of
+# them. The cell is prose that happens to be code, so the backticks around it
+# are optional here rather than load-bearing.
+NAMED_BY = re.compile(r"`?(\w+(?:\s*::\s*\w+)*)`?")
+
+
+def token(cell):
+    """A regex for what one *Named by* cell names, or `None` if unreadable.
+
+    `None` loudly rather than a pattern that cannot match: a cell this function
+    guesses at compiles to an escaped literal nothing in Rust source contains,
+    and a rule that always passes reports that the elements are off the path
+    when nobody has checked. A new kind of token belongs in `NAMED_BY` and here,
+    not in a fallback.
+
+    `Registry::new` is a path rather than an identifier, and the source may
+    write it spaced or wrapped, so each `::` matches the whitespace a formatter
+    is free to put around it.
+
+    A cell may hold more than one spelling, brace-expanded the way a *Named only
+    in* cell expands a directory of siblings, and the row holds all of them at
+    once. `Registry::{new,default}` is the case that forced it: `new` is
+    `Self::default()` and `Registry` derives `Default`, so a row holding only
+    `new` lets a derived `default()` mint a registry anywhere with the gate
+    green. Two rows would hold the same element under one reason written twice.
+    """
+    patterns = []
+    for spelling in expand(cell.strip()):
+        readable = NAMED_BY.fullmatch(spelling.strip())
+        if readable is None:
+            return None
+        segments = [re.escape(part.strip()) for part in readable.group(1).split("::")]
+        patterns.append(r"\s*::\s*".join(segments))
+    return re.compile(r"\b(?:" + "|".join(patterns) + r")\b")
+
+
+def allowed_sites(cell):
+    """The files one *Named only in* cell allows, resolved against the scope.
+
+    A comma-separated list of backticked paths, each of which may brace-expand:
+    a row naming nine files is one cell, and `router/{describe,install}.rs` is
+    the same shorthand the allowance table above uses.
+    """
+    entries = re.findall(r"`([^`]+)`", cell) or [part for part in cell.split(",") if part.strip()]
+    return {
+        OFF_PATH_SCOPE + site.strip().lstrip("/")
+        for entry in entries
+        for site in expand(entry.strip())
+    }
+
+
+halves = TESTING.split(OFF_PATH_HEADER)
+if len(halves) != 2:
+    failures.append(
+        "testing.md no longer holds exactly one off-path table under the header "
+        "this rule reads, so nothing states which elements a request may not "
+        "reach"
+    )
+
+off_path_rows = 0
+for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
+    if not line.startswith("|"):
+        break
+    # `strip("|")` before the split, so the outer pipes do not yield two empty
+    # cells and shift every column by one.
+    cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+    if len(cells) != 4:
+        failures.append(f"testing.md's off-path table has a malformed row: {line.strip()}")
+        continue
+
+    element, named_by, where, reason = cells
+    off_path_rows += 1
+    allowance = allowed_sites(where)
+    pattern = token(named_by)
+    if pattern is None:
+        failures.append(
+            f"testing.md's off-path table names {element} with {named_by}, "
+            "which this rule cannot read as an identifier or a path of them. "
+            "The row holds nothing until it can: teach the rule the token, or "
+            "write one it already knows"
+        )
+        continue
+
+    named = sorted(
+        path
+        for path, text in FILES
+        if path.startswith(OFF_PATH_SCOPE) and pattern.search(text)
+    )
+    # A readable cell that matches nothing is the same failure as an unreadable
+    # one, arriving later: a renamed element, a typo, or a home that has moved
+    # out of the scope. The row then reports that a request cannot reach an
+    # element no file names, having compared the source against a token nothing
+    # in it contains. Stale *sites* are tolerated, deliberately -- subset
+    # semantics, as above -- but a stale *token* holds nothing at all.
+    if not named:
+        failures.append(
+            f"testing.md's off-path table names {element} with {named_by}, and "
+            f"no file under {OFF_PATH_SCOPE} names it. The row holds nothing: "
+            "either the element was renamed and the cell was not, or it now "
+            "lives outside the one scope this rule reads, which is a change to "
+            "that scope rather than to the row"
+        )
+        continue
+
+    if offenders := [path for path in named if path not in allowance]:
+        failures.append(
+            f"{element} is off the request path, and {named_by} is named at a "
+            "site testing.md's off-path table does not allow. The row says a "
+            f"request cannot reach it because {reason}. Either that reason "
+            "covers the site below and the row should say so, or a request can "
+            "now reach it:\n    " + "\n    ".join(offenders)
+        )
+
+if len(halves) == 2 and not off_path_rows:
+    failures.append(
+        "testing.md's off-path table has no rows, so it holds nothing. An "
+        "element that stopped being off-path is retired by arguing it in "
+        "performance.md's allocation, not by emptying the table"
+    )
+
 # --- Hand-rolled `Stream` implementations -----------------------------------
 # Only the section that enumerates them. Collecting every link in the
 # document would let an unrelated mention anywhere else silently authorise a
@@ -433,4 +584,7 @@ for failure in failures:
     print(f"containment: {failure}", file=sys.stderr)
 if failures:
     sys.exit(1)
-print(f"containment: {len(FILES)} source files, {len(rows)} allowance rows, {len(graded)} graded features, every rule holds")
+print(
+    f"containment: {len(FILES)} source files, {len(rows)} allowance rows, "
+    f"{off_path_rows} off-path rows, {len(graded)} graded features, every rule holds"
+)
