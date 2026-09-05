@@ -73,17 +73,18 @@ enum StoreError {
 | --- | --- | --- |
 | type | `base` | URI prefix; `type` defaults to it plus the kebab-cased variant name |
 | variant | `status` | required, 400–599 |
-| variant | `title` | the problem's `title`, and the response's description. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
+| variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
 | field | `extension` | serialize this field as an extension member under its own name |
 
 **`title` is read twice, and its absence is answered differently each time.**
 On the wire it is the problem's `title`, and a variant that declares none
 carries `StatusCode::canonical_reason` — RFC 9457 section 4.2.1's own
-recommendation for a problem whose type says nothing. In the description it is
-the response's `description`, and there the variant's doc comment is tried
-before the reason phrase, on the same argument `detail` rests on: the sentence a
-Rust reader already wrote is the sentence an API consumer should receive.
+recommendation for a problem whose type says nothing. In the description it
+composes the response's `description`, and there the variant's doc comment is
+tried before the reason phrase, on the same argument `detail` rests on: the
+sentence a Rust reader already wrote is the sentence an API consumer should
+receive.
 
 There is no de-camel-casing of variant names anywhere, and this document used to
 say there was.
@@ -104,6 +105,48 @@ in [`tests/ui/macros`](../crates/kynos/tests/ui/macros). What `base`, `title`,
 `type` and `extension` *do* is checked at run time by the conformance harness,
 which compares each problem document a service produced against what the
 description declared for that operation and status.
+
+### What the declared response narrows to
+
+`type` is the member a client branches on, so the response describing a status
+says which URIs it may carry rather than referring to the shared `Problem`
+component and admitting every problem the service can produce.
+
+One failure answers with the status:
+
+```json
+{ "allOf": [
+    { "$ref": "#/components/schemas/Problem" },
+    { "properties": { "type": { "type": "string",
+                                "const": "https://errors.example.com/email-taken" } } }
+] }
+```
+
+Several share it — the `oneOf` of exactly those, each branch carrying its own
+`title`, which is what RFC 9457 section 3.1.2 makes that member: the summary of
+the problem *type*. The response's description joins the distinct summaries with
+`"; "`, so a shared status names every variant answering with it rather than
+whichever was written first.
+
+Two rules follow from what is actually on the wire:
+
+- **A variant naming no `type` narrows to `const: "about:blank"`**, not to a
+  bare `$ref`. `Problem::new` sets that URI and the serializer writes `type`
+  unconditionally, so the constant is true of every such body — and a bare
+  `$ref` branch inside a `oneOf` would match *every* problem document, costing
+  the keyword its exactly-one rule.
+- **Two variants publishing one URI are one branch.** A `oneOf` repeating a
+  `const` is satisfied twice over, which is the same defect. The summary
+  declared first is the one kept.
+
+**The narrowing survives only on statuses no extractor claims.** An argument's
+rejection is contributed before the return type's responses and
+`Responses::merge_from` keeps the entry already present, so where an extractor
+and the handler's error type name one status, the extractor's generic problem
+response is what the document publishes — see
+[Where the union happens](#where-the-union-happens). Nothing about that is
+specific to the narrowing; it is the union's first-wins rule, and it is what
+makes a handler-only status the place a declared `type` is visible.
 
 ## Rejections
 
