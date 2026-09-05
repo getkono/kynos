@@ -62,6 +62,7 @@ import os
 import re
 import subprocess
 import sys
+from collections import namedtuple
 from pathlib import Path
 
 # From the script's own location rather than the working directory, so running
@@ -111,6 +112,16 @@ LLVM_LINES_ROW = re.compile(
 # sixteen would leave every `alloc` and `hashbrown` id in place, which is the
 # noise the stripping exists to remove.
 DISAMBIGUATOR = re.compile(r"(?<=\w)\[[0-9a-f]{8,16}\]")
+
+# The two header lines `write_tsv` emits that are read back rather than only
+# written: which compiler produced the rows below them. `# baseline:` is not
+# among them, being the absolute this file says it does not compare.
+PROVENANCE = re.compile(r"^#\s*(toolchain|host):\s*(\S.*?)\s*$")
+
+# A committed baseline and the compiler that measured it, kept together
+# because a drift is only a fact about Kynos when both sides of the
+# subtraction came from the same rustc.
+Recorded = namedtuple("Recorded", ("toolchain", "host", "rows"))
 
 BINARY_TSV = "binary.tsv"
 BINARY_HEADER = """\
@@ -362,21 +373,37 @@ def sweep_codegen(env):
 
 
 def read_recorded(path):
-    """A committed baseline keyed by feature, or `None` if none is recorded."""
+    """A committed baseline: its rows and the toolchain that measured them.
+
+    `None` when nothing is recorded. The two header lines `write_tsv` emits for
+    provenance are kept rather than dropped with the rest of the `#` prose. A
+    drift is a difference against these rows, and a difference measured by a
+    different rustc is not the same claim as one measured by this one; while
+    they were dropped the report could not tell a reader which it was holding.
+    """
     if not path.is_file():
         return None
-    rows = [
-        line.split("\t")
-        for line in path.read_text().splitlines()
-        if line and not line.startswith("#")
-    ]
+    stated, rows = {}, []
+    for line in path.read_text().splitlines():
+        if not line:
+            continue
+        if line.startswith("#"):
+            header = PROVENANCE.match(line)
+            if header is not None:
+                stated[header[1]] = header[2]
+            continue
+        rows.append(line.split("\t"))
     if not rows:
         return None
     names, *body = rows
-    return {
-        cells[0]: dict(zip(names[1:], (int(cell) for cell in cells[1:])))
-        for cells in body
-    }
+    return Recorded(
+        stated.get("toolchain"),
+        stated.get("host"),
+        {
+            cells[0]: dict(zip(names[1:], (int(cell) for cell in cells[1:])))
+            for cells in body
+        },
+    )
 
 
 def write_tsv(path, header, names, rows):
@@ -407,7 +434,7 @@ def table(rows, recorded, value, delta, unit):
     ]
     drifts, fresh = {}, {}
     for label, measured in rows.items():
-        was = None if recorded is None else recorded.get(label, {}).get(delta)
+        was = None if recorded is None else recorded.rows.get(label, {}).get(delta)
         if was is None:
             shown, moved = ("—", "—") if recorded is None else ("—", "new")
             # Not on a first run, where `movers` already ranks every point by
@@ -508,12 +535,53 @@ def newcomers(fresh):
     return sorted(fresh.items(), key=lambda item: (-abs(item[1]), item[0]))[:TOP]
 
 
-def section(title, note, rows, recorded, value, delta, unit, functions=None):
+def provenance(recorded, versions):
+    """What compiler the drift column subtracts across, when there is one.
+
+    A drift is a fact about Kynos only when both measurements came from the
+    same rustc; across a toolchain bump it is a fact about rustc, and the two
+    render identically in a table of numbers. `write_tsv` has always written
+    the recording toolchain into the baseline's header -- this is the half that
+    reads it back and says so.
+    """
+    if recorded is None:
+        return []
+    live = f"`{versions[0]}` on `{versions[1]}`"
+    if recorded.toolchain is None or recorded.host is None:
+        return [
+            "The recorded baseline names no toolchain, so the drift column may "
+            f"mix toolchains: this run is {live}.",
+            "",
+        ]
+    was = f"`{recorded.toolchain}` on `{recorded.host}`"
+    if (recorded.toolchain, recorded.host) == tuple(versions):
+        return [f"Drift is against a baseline recorded by {was}, as here.", ""]
+    return [
+        f"**The drift column mixes toolchains.** The baseline was recorded by "
+        f"{was}; this run is {live}. A drift below need not be a change in "
+        "Kynos.",
+        "",
+    ]
+
+
+def section(title, note, rows, recorded, value, delta, unit, versions, functions=None):
     """One kind's table, its ranked points, and optionally its attribution."""
     body, drifts, fresh = table(rows, recorded, value, delta, unit)
     ranked, heading = movers(rows, drifts, recorded, delta)
     listed = [f"- `{label}` {moved:+}" for label, moved in ranked] or ["- none"]
-    out = [f"### {title}", "", note, "", body, "", f"#### {heading}", "", *listed, ""]
+    out = [
+        f"### {title}",
+        "",
+        note,
+        "",
+        *provenance(recorded, versions),
+        body,
+        "",
+        f"#### {heading}",
+        "",
+        *listed,
+        "",
+    ]
     new = newcomers(fresh)
     if new:
         out += [
@@ -556,8 +624,10 @@ def report(binary, codegen, functions, recorded, versions):
     out = [
         "## Per-feature cost",
         "",
-        f"Toolchain `{versions[0]}` on `{versions[1]}`, over "
-        "`crates/kynos/cost/fixture.rs` at each feature.",
+        f"Measured by toolchain `{versions[0]}` on `{versions[1]}`, over "
+        "`crates/kynos/cost/fixture.rs` at each feature. Each section states "
+        "which toolchain recorded the baseline its drift column is taken "
+        "against, which need not be this one.",
         "",
         "No ceiling is applied. This reports a trend; a threshold is set from a "
         "recorded measurement as a change to `docs/nfr.md`.",
@@ -572,6 +642,7 @@ def report(binary, codegen, functions, recorded, versions):
             "text",
             "delta",
             "`.text` bytes",
+            versions,
         )
     if codegen is not None:
         out += section(
@@ -585,6 +656,7 @@ def report(binary, codegen, functions, recorded, versions):
             "lines",
             "delta_lines",
             "IR lines",
+            versions,
             functions,
         )
     return "\n".join(out) + "\n"
