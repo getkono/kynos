@@ -94,9 +94,9 @@ fn erasing_a_body_costs_what_the_table_records() {
 /// dangling pointer and touches the allocator not at all. The type is rebuilt
 /// here rather than named through the library, because the erased type is
 /// private by design and naming it publicly is what this file exists to avoid
-/// asking for. A dependency bump that gives `Empty` a field would leave the
-/// count above unchanged for one release of `alloc_counter`'s tolerance and
-/// break the reason silently; this is what makes it break loudly instead.
+/// asking for. A dependency bump that gives `Empty` a field turns the first row
+/// above red as well — what this adds is *which* fact broke, and it is the
+/// fact `architecture.md`'s verdict is written on rather than the number.
 #[test]
 fn an_empty_body_erases_a_zero_sized_type() {
     let erased = Empty::<Bytes>::new().map_err(|never: Infallible| -> BoxError { match never {} });
