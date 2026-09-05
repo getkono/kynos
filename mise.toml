@@ -201,7 +201,8 @@ description = "Measure what each feature costs a linked artifact and monomorphiz
 #
 # Not in `check` and not in `hooks:pre-push`. `ci.yml` already recognises a
 # class of tasks too slow to belong there, and `semver:check` set the precedent
-# by being absent from the same list.
+# by being absent from the same list. What is in `check` is `cost:test`, which
+# holds the script's parsers and its report and builds nothing.
 #
 # `cargo-llvm-lines` is pinned *here* rather than in `[tools]` because upstream
 # publishes no release binaries -- every `dtolnay/cargo-llvm-lines` release has
@@ -235,6 +236,28 @@ description = "Record the measured deltas as the committed baseline"
 tools = { "cargo:cargo-llvm-lines" = "0.4.48" }
 env = { KYNOS_COST = "overwrite" }
 run = "python3 scripts/cost_features.py"
+
+[tasks."cost:test"]
+description = "Test the cost sweep's parsers and its report"
+# The half of the sweep that compiles nothing, which is why it is in `check`
+# while `cost:features` is not. Every number the sweep reports passes through
+# two regular expressions, a TSV reader and a ranking, and a regression in any
+# of them is silent: the sweep still exits zero and still prints a table, with
+# the wrong function attributed or the wrong quantity compared.
+# `DISAMBIGUATOR` regressed exactly that way once already, in `1cf9bd6`.
+#
+# No `cargo-llvm-lines` pin, deliberately: the tests read captured output of
+# it rather than running it. Adding the pin would make a check that compiles
+# nothing compile a tool from source.
+#
+# `unittest` from the standard library and no test runner. There is no
+# `pytest`, no `tox` and no `requirements.txt` in this repository, and taking
+# a dependency to hold a few pure functions is the worse trade.
+#
+# `-B` because `.gitignore` has no `__pycache__` entry, and a check that
+# leaves an untracked directory behind is a check people learn to work around.
+# The test file sets `sys.dont_write_bytecode` too, for a direct `python3` run.
+run = "python3 -B scripts/cost_features_test.py"
 
 [tasks."fixtures:generate"]
 description = "Regenerate the conformance-fixture corpus"
@@ -469,6 +492,7 @@ run = [
   { task = "ui:check" },
   { task = "references:verify" },
   { task = "containment:check" },
+  { task = "cost:test" },
   { task = "docs:check" },
   { task = "panic:check" },
   { task = "features:check" },
