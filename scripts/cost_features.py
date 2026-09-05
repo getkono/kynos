@@ -6,8 +6,19 @@ says of both that they "build the same fixture at each feature and compare
 artifacts". This is the driver for that, and `crates/kynos/cost/fixture.rs` is
 the fixture. Because that fixture never *uses* an optional feature, each row
 answers one question: what does merely enabling F cost a program that does not
-use F? `lib.rs` claims enabling a feature is additive, and this is the first
-thing in the repository that could falsify it.
+use F?
+
+A zero row is therefore evidence about the linker and the monomorphization
+collector, not about the API: it says that enabling F added nothing that
+survived into `.text`, or nothing that was instantiated here, because nothing
+called it. A non-zero row says the opposite, and says how much.
+
+That is narrower than the additivity `lib.rs` states, and deliberately not the
+same claim. `lib.rs` makes its claim about `openapi32` alone, and makes it
+about *source* compatibility -- the model types it extends are
+`non_exhaustive`, so a `match` over one keeps compiling whether or not the
+feature is enabled. Nothing there is a statement about cost, and nothing
+measured here would falsify it.
 
 The two halves run under different profiles, on purpose. The binary half is
 `--release`, because that is the artifact that ships and `lto = "fat",
