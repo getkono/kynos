@@ -301,13 +301,13 @@ fn a_layer_costs_the_same_wherever_it_sits() {
 #[test]
 fn a_driver_holds_one_future_whatever_the_chain_is() {
     let [(_, empty, _), (_, four, _), (_, eight, _)] = STACKS;
-    let (none, four, eight) = (empty(), four(), eight());
+    let (at_0, at_4, at_8) = (empty(), four(), eight());
 
     // One array, so the three futures are one type or this does not build.
     let futures = [
-        none.call(request(STACKED)),
-        four.call(request(STACKED)),
-        eight.call(request(STACKED)),
+        at_0.call(request(STACKED)),
+        at_4.call(request(STACKED)),
+        at_8.call(request(STACKED)),
     ];
     let [w0, w4, w8] = futures.map(|future| size_of_val(&future));
 
