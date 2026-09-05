@@ -201,8 +201,14 @@ const STACKS: [Stack; 3] = [
 const PER_LAYER: usize = 1;
 
 /// How wide the future a driver holds is allowed to be, measured rather than
-/// chosen, and the same at every stack depth and under every feature
-/// combination this target is built with.
+/// chosen, and the same at every stack depth.
+///
+/// Read at both feature sets this target is built at, by setting the ceiling
+/// to zero and taking the width out of the failure: 280 bytes at baseline
+/// (`cargo nextest run -p kynos --test alloc`) and 280 with `--all-features`.
+/// Only `<=` is asserted per build, so this is where the two readings are
+/// recorded — an equality would fail on the first build whose feature set
+/// makes the future narrower, which is not a regression.
 const FUTURE_BYTES: usize = 280;
 
 /// The record, for the middleware half: what one request costs at each depth,
@@ -302,8 +308,9 @@ fn a_layer_costs_the_same_wherever_it_sits() {
 ///
 /// The ceiling is the half that can fail, and it is a ratchet rather than a
 /// target: a future that widened would cost every in-flight request on the
-/// server, which no allocation count above can see. 280 bytes, at every depth
-/// and at both baseline and every feature. That is also the figure the request
+/// server, which no allocation count above can see. 280 bytes at every depth,
+/// and 280 at each of the two feature sets this target is built at — see
+/// [`FUTURE_BYTES`] for the readings. That is also the figure the request
 /// for this guard named, but it is recorded here because it was measured — a
 /// number carried over unmeasured would have pinned whatever it was guessed
 /// at, and been indistinguishable from this one when it was wrong.
