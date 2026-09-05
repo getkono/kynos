@@ -391,3 +391,133 @@ fn an_all_unit_enum_keeps_the_compact_shape() {
         })
     );
 }
+
+// --- What a derived error response declares ---------------------------------
+//
+// A problem body carries the type URI the declaration named, so the response
+// describing it says which URI, rather than referring to the shared `Problem`
+// component and admitting every problem the service can produce. These pin the
+// emitted shape; `docs/errors.md` states the rule.
+
+/// Two failures answering with one status, one naming its own type and one
+/// taking the prefix the enum declares. A status several variants share has to
+/// publish every type reachable through it.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/")]
+enum LookupError {
+    #[error("no user with that id")]
+    #[problem(
+        status = 404,
+        type = "https://errors.example.com/user-unknown",
+        title = "User unknown"
+    )]
+    UserUnknown,
+
+    #[error("no tenant with that slug")]
+    #[problem(status = 404, title = "Tenant unknown")]
+    TenantUnknown,
+}
+
+/// Neither `type` nor `base`, so `Problem::new` writes `about:blank` and the
+/// description has exactly that to say.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("the store is unavailable")]
+#[problem(status = 503)]
+struct StoreUnavailable;
+
+/// The responses `T` declares, as JSON.
+fn emitted_responses<T: Responses>() -> serde_json::Value {
+    let mut registry = kynos::schema::registry::Registry::new();
+    serde_json::to_value(T::responses(&mut registry)).expect("a set of responses serializes")
+}
+
+/// The problem schema one status declares, as JSON.
+fn declared_problem(responses: &serde_json::Value, status: &str) -> serde_json::Value {
+    responses[status]["content"]["application/problem+json"]["schema"].clone()
+}
+
+/// A status one variant answers with is the shared component *and* the type
+/// that variant publishes, rather than the component alone.
+#[test]
+fn a_derived_error_response_narrows_to_the_type_it_publishes() {
+    let responses = emitted_responses::<StoreError>();
+    let schema = declared_problem(&responses, "409");
+    let branches = schema["allOf"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a narrowed problem response is an `allOf`: {schema}"));
+
+    assert_eq!(branches.len(), 2, "{schema}");
+    assert_eq!(
+        branches[0]["$ref"],
+        serde_json::json!("#/components/schemas/Problem")
+    );
+    assert_eq!(
+        branches[1]["properties"]["type"],
+        serde_json::json!({
+            "type": "string",
+            "const": "https://errors.example.com/email-taken",
+        }),
+        "{schema}"
+    );
+}
+
+/// A status several variants share is a `oneOf` over the types they publish,
+/// each branch naming itself.
+#[test]
+fn a_shared_status_publishes_every_type_that_reaches_it() {
+    let responses = emitted_responses::<LookupError>();
+    let schema = declared_problem(&responses, "404");
+    let branches = schema["oneOf"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a shared status is a `oneOf`: {schema}"));
+
+    let published: Vec<&serde_json::Value> = branches
+        .iter()
+        .map(|branch| &branch["allOf"][1]["properties"]["type"]["const"])
+        .collect();
+    let titles: Vec<&serde_json::Value> = branches.iter().map(|branch| &branch["title"]).collect();
+
+    assert_eq!(
+        published,
+        vec![
+            &serde_json::json!("https://errors.example.com/user-unknown"),
+            &serde_json::json!("https://errors.example.com/tenant-unknown"),
+        ],
+        "{schema}"
+    );
+    assert_eq!(
+        titles,
+        vec![
+            &serde_json::json!("User unknown"),
+            &serde_json::json!("Tenant unknown"),
+        ],
+        "{schema}"
+    );
+}
+
+/// The description of a shared status names every variant answering with it,
+/// not whichever one was declared first.
+#[test]
+fn a_shared_status_description_names_every_variant() {
+    let responses = emitted_responses::<LookupError>();
+
+    assert_eq!(
+        responses["404"]["description"],
+        serde_json::json!("User unknown; Tenant unknown"),
+        "{responses}"
+    );
+}
+
+/// A failure that names no type still narrows: `about:blank` is what the
+/// serializer writes, so it is what the description can state.
+#[test]
+fn an_error_naming_no_type_narrows_to_about_blank() {
+    let responses = emitted_responses::<StoreUnavailable>();
+    let schema = declared_problem(&responses, "503");
+
+    assert_eq!(
+        schema["allOf"][1]["properties"]["type"]["const"],
+        serde_json::json!("about:blank"),
+        "{schema}"
+    );
+}
