@@ -159,6 +159,10 @@ impl<C> TestClient<C> {
     /// validates against the declared schema, and that every declared required
     /// header was sent.
     ///
+    /// A response declaring *no* representation is checked too. Declaring
+    /// nothing is a claim about the exchange rather than the absence of one, so
+    /// a body or a `Content-Type` arriving under it is reported.
+    ///
     /// # Panics
     ///
     /// Panics listing every response that did not conform.

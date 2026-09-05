@@ -198,12 +198,43 @@ fn location_header(description: &str) -> kynos_openapi::Header {
 /// the description becomes the wrapper's, since what a 201 or a 202 means is
 /// the half of the statement a body was never in a position to make. Anything
 /// the body declared under another status stays where it is — that was not
-/// 200's to re-key — and a body describing no 200 at all leaves the wrapper
-/// describing an empty response, which is what it then produces.
+/// 200's to re-key.
 ///
 /// A `$ref` is left in place rather than re-described, because it names a
 /// response the document holds elsewhere and every other use of it would be
 /// re-described too.
+///
+/// # A body that describes no 200
+///
+/// The wrapper overwrites the status on whatever the body produced, so the
+/// body's representation reaches the wire under 201 or 202 whichever key the
+/// body filed it under. Declaring nothing there would describe an empty
+/// response over a body, which is the disagreement `assert_conformance`
+/// reports.
+///
+/// So the representation is carried over by [`sole_representation`], under one
+/// condition: that the body declares exactly one response at all. That response
+/// is the whole of what the body puts on the wire, so re-describing it under the
+/// wrapper's status promises what every value of the body sends. A second
+/// response leaves the wrapper empty as before, bodiless or not: `{204: none,
+/// 409: content}` sends both under the wrapper's status, so declaring the 409's
+/// representation would promise it for the values that send nothing.
+///
+/// No body type Kynos ships reaches any of this: `Ranged<T>` and
+/// `RangedParts<T>` declare the 200 the representation they range over
+/// declares, `Delivery<M>` writes one itself, and `Result<T, E>` declares
+/// whatever its `Ok` half does, so every wrapper over them takes the re-keying
+/// arm above. What arrives here is a body naming its own statuses — one
+/// response per variant, and a 200 only where a variant asked for one, which is
+/// what `#[derive(Reply)]` writes. `Created<R>` over a single-variant `R`
+/// carrying a representation is the composition the carry-over is for.
+///
+/// What is *not* addressed here is the leftover entry. A body's 409 stays in
+/// the set while the wrapper re-keys everything it sends to 201, so the
+/// description keeps a status the type cannot produce. That is true of every
+/// leftover any such body leaves behind and predates this fallback, so
+/// removing them is a decision about the wrapper's whole contract rather than
+/// about the missing representation.
 fn body_response(
     description: &str,
     body: &mut kynos_openapi::Responses,
@@ -219,8 +250,44 @@ fn body_response(
             body.responses.insert(key, reference);
             kynos_openapi::Response::new(description)
         }
-        None => kynos_openapi::Response::new(description),
+        None => {
+            let mut response = kynos_openapi::Response::new(description);
+            if let Some(content) = sole_representation(body) {
+                response.content.clone_from(content);
+            }
+            response
+        }
     }
+}
+
+/// The representations a body declares, when it declares exactly one response
+/// and that response carries any.
+///
+/// One response is the whole of what the body puts on the wire, so it is the
+/// one case where the wrapper re-describing it promises nothing a value of the
+/// body fails to send. `None` for a second response even where only one of the
+/// two carries content: the other reaches the wire under the wrapper's status
+/// as well, and it carries none.
+///
+/// `None` for a `$ref` too — it names a response the document holds elsewhere,
+/// so what it carries is not a question answerable from here.
+///
+/// The `default` counts as that one response, because a fallback response is
+/// as much a thing the body can put on the wire as a keyed one.
+fn sole_representation(
+    body: &kynos_openapi::Responses,
+) -> Option<&kynos_openapi::Map<kynos_openapi::MediaType>> {
+    let mut entries = body.default_response.iter().chain(body.responses.values());
+
+    let kynos_openapi::RefOr::Item(sole) = entries.next()? else {
+        return None;
+    };
+
+    if entries.next().is_some() || sole.content.is_empty() {
+        return None;
+    }
+
+    Some(&sole.content)
 }
 
 /// What each redirect status tells a client, as RFC 9110 defines it.

@@ -316,3 +316,439 @@ fn collect_sources(directory: &std::path::Path, into: &mut Vec<String>) {
         }
     }
 }
+
+// --- The short circuits, and the body each owes its description -----------
+
+/// Sorted. `Infallible` is in the set and has no case in the sweep below: it is
+/// uninhabited, so there is no value to drive and no status to declare.
+const SHORT_CIRCUITS: &[&str] = &[
+    "AtCapacity",
+    "BodySizeExceeded",
+    "CrossSite",
+    "Infallible",
+    "NotAcceptable",
+    "NotModified",
+    "RateLimited",
+    "RateLimitedFields",
+    "TimedOut",
+    "Undecodable",
+];
+
+/// The members of `SHORT_CIRCUITS` that have no value to drive.
+///
+/// Membership is for a type no value of which can exist -- `Infallible` is
+/// uninhabited, so there is nothing to hand `case` and nothing to put on a
+/// wire. It is *not* for a type that is merely awkward to construct: every name
+/// here is one the sweep stops asserting anything about. Widening it is how the
+/// sweep would be silenced rather than satisfied, so a type that can be built
+/// gets built, even where building it takes a fixture.
+const UNCONSTRUCTIBLE: &[&str] = &["Infallible"];
+
+/// Each excluded name beside the `STATUSES` of the type it stands for.
+///
+/// `UNCONSTRUCTIBLE` is `&[&str]`, and a string cannot be asked what it
+/// declares -- which is why the exclusion went unchecked. This is the join
+/// between the two, written once so that the check below reaches a type rather
+/// than a name.
+const UNCONSTRUCTIBLE_STATUSES: &[(&str, &[u16])] = &[(
+    "Infallible",
+    <std::convert::Infallible as kynos::response::ShortCircuit>::STATUSES,
+)];
+
+/// Every exclusion is earned rather than asserted.
+///
+/// Two halves, and neither alone is the check. The set equality is what makes
+/// a name added to `UNCONSTRUCTIBLE` without an entry here fail, so the
+/// exclusion cannot be widened by editing one list; the emptiness is what the
+/// entry proves, since a type declaring a status the sweep never drives is a
+/// response nothing in the suite ever reads.
+#[test]
+fn every_unconstructible_short_circuit_declares_no_status() {
+    assert_eq!(
+        UNCONSTRUCTIBLE_STATUSES
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<BTreeSet<_>>(),
+        UNCONSTRUCTIBLE.iter().copied().collect::<BTreeSet<_>>(),
+        "a name is excluded from the sweep with nothing here to prove it earned"
+    );
+
+    for (name, statuses) in UNCONSTRUCTIBLE_STATUSES {
+        assert!(
+            statuses.is_empty(),
+            "`{name}` is excluded from the sweep and declares {statuses:?}, which no test reads"
+        );
+    }
+}
+
+/// Every short circuit Kynos ships, named against the set the sweep drives.
+///
+/// The same argument as the two sets above, one trait further out: without it a
+/// ninth short circuit is a type the sweep silently does not reach. The walk is
+/// over the whole crate rather than `src/middleware/`, because `Infallible`'s
+/// implementation is in `src/response/mod.rs`.
+#[test]
+fn every_short_circuit_kynos_ships_is_accounted_for() {
+    let declared = impls_of("ShortCircuit");
+
+    assert_eq!(
+        declared,
+        SHORT_CIRCUITS
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect::<BTreeSet<_>>(),
+        "`src/` implements `ShortCircuit` for a different set than the sweep accounts for; a \
+         short circuit added without a case is one whose description nothing reads"
+    );
+}
+
+/// The type names `crates/kynos/src` implements `trait_name` for, read off disk.
+///
+/// Line-oriented rather than the `> Marker for ` substring `implementors_of`
+/// uses, for two reasons that marker cannot cover: `ShortCircuit` takes no
+/// generic argument to close the match on, and `middleware/limits.rs` writes
+/// `impl ShortCircuit for TookTooLong` inside a doc example, which a bare
+/// substring would count as a shipped implementation. Two conditions rather
+/// than one: the line's code *begins* with `impl`, which excludes the `/// # `
+/// that doc example carries, and the trait name begins a path segment, which
+/// admits `impl crate::response::ShortCircuit for NotAcceptable` and refuses a
+/// `MyShortCircuit` that merely ends in the name.
+///
+/// # What it requires of an implementation
+///
+/// `impl`, the trait name and `for` must fall on one line. Every implementation
+/// in the tree does, and `ShortCircuit` takes no generic argument to push one
+/// over the width.
+///
+/// # The two shapes it cannot see
+///
+/// Both go quiet rather than red, and the sweep derives what it must drive
+/// from this set, so a miss here is a miss there too.
+///
+/// The first is a head rustfmt wrapped after a generic list, which puts
+/// `impl<T: Bound>` and `ShortCircuit for Foo<T>` on separate lines with
+/// neither carrying both. The prefix was `impl ` with a space until now, which
+/// made this wider than its own description: `impl<const CODE: u16>` has no
+/// space in that position either, so *every* generic head was invisible,
+/// wrapped or not, and `response/status.rs` already writes that shape for
+/// `Redirect<CODE>`. Dropping the space leaves only the genuinely wrapped head
+/// missed, and an implementation added later keeps its head on one line or
+/// this learns to join continuations first.
+///
+/// The second is a derive, and it is not closable here. `ApiError` emits
+/// `impl ... ShortCircuit for` from `kynos-macros`, so the text exists in the
+/// macro crate and the implementation exists in whichever crate wrote the
+/// type. A walk over `crates/kynos/src` sees neither. That bounds what this
+/// set claims rather than leaving a gap in it: the claim is over the short
+/// circuits Kynos *ships*, and a derived one belongs to the application. What
+/// the sweep would say about it is said instead by the conformance matrix,
+/// which holds an application's own short circuit on a live exchange.
+fn impls_of(trait_name: &str) -> BTreeSet<String> {
+    let mut sources = Vec::new();
+    collect_sources(
+        std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src")),
+        &mut sources,
+    );
+    assert!(!sources.is_empty(), "no sources found under `src/`");
+
+    names_implementing(trait_name, &sources)
+}
+
+/// The scan itself, over source it is handed rather than source it reads.
+///
+/// Separate from [`impls_of`] so that the two conditions above can be held
+/// against text: what the walk finds on disk is whatever the tree happens to
+/// contain today, so a condition can only be *asserted* over source chosen to
+/// exercise it.
+fn names_implementing(trait_name: &str, sources: &[String]) -> BTreeSet<String> {
+    let marker = format!("{trait_name} for ");
+
+    sources
+        .iter()
+        .flat_map(|source| source.lines())
+        .filter_map(|line| {
+            let code = line.trim_start();
+            if !code.starts_with("impl") {
+                return None;
+            }
+            let at = code.match_indices(&marker).map(|(at, _)| at).find(|at| {
+                code[..*at]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|character| !character.is_alphanumeric() && character != '_')
+            })?;
+            Some(
+                code[at + marker.len()..]
+                    .chars()
+                    .take_while(|character| character.is_alphanumeric() || *character == '_')
+                    .collect::<String>(),
+            )
+        })
+        .collect()
+}
+
+/// Each condition the scan applies, held against a line written to break it.
+///
+/// The set the sweep drives is derived from what this finds, so a condition
+/// that stops holding is a short circuit that stops being swept -- silently,
+/// because the walk would simply return a smaller set and every assertion over
+/// it would still pass. What the tree contains cannot say this: it holds no
+/// `MyShortCircuit`, and dropping either condition leaves the walk's own result
+/// unchanged today.
+///
+/// One line per claim the documentation above makes. The generic head is the
+/// shape `impl` without a trailing space exists for; the qualified path is the
+/// spelling `middleware/compression/mod.rs` uses; `MyShortCircuit` is a name
+/// ending in the trait's that implements something else; and the doc-example
+/// line
+/// is the one `middleware/limits.rs` really carries.
+#[test]
+fn the_scan_reads_a_generic_head_and_anchors_the_trait_name() {
+    let sources = [
+        "impl<const CODE: u16> ShortCircuit for Redirected<CODE> {".to_owned(),
+        "impl ShortCircuit for Plain {".to_owned(),
+        "    impl crate::response::ShortCircuit for Qualified {".to_owned(),
+        "impl MyShortCircuit for NotOurs {".to_owned(),
+        "/// # impl ShortCircuit for InADocExample {".to_owned(),
+    ];
+
+    assert_eq!(
+        names_implementing("ShortCircuit", &sources),
+        ["Plain", "Qualified", "Redirected"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>()
+    );
+}
+
+/// One short circuit's wire response, beside the description it declared.
+struct Case {
+    name: &'static str,
+    /// The statuses the implementation claims, so the sweep can assert it drove
+    /// every one of them rather than whichever variant it happened to name.
+    claimed: &'static [u16],
+    /// The status this value answered with. Read from the wire rather than from
+    /// `STATUSES`, because a `STATUSES` list may hold several and one value
+    /// answers with exactly one — `Undecodable` declares three and needs three
+    /// variants driven to reach them.
+    status: u16,
+    media_type: Option<String>,
+    body_len: usize,
+    declared: kynos::openapi::Responses,
+}
+
+/// Drives one short circuit and records both halves of its promise.
+async fn case<S: kynos::response::ShortCircuit>(
+    registry: &mut kynos::schema::registry::Registry,
+    value: S,
+) -> Case {
+    use http_body_util::BodyExt;
+
+    // `responses` and `into_response` resolve through `ShortCircuit`'s
+    // supertraits, so neither trait is imported here.
+    let declared = S::responses(registry);
+    let (parts, body) = value.into_response().into_parts();
+
+    let media_type = parts
+        .headers
+        .get(kynos::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            let (media_type, _) = value.split_once(';').unwrap_or((value, ""));
+            media_type.trim().to_ascii_lowercase()
+        });
+
+    let body = body.collect().await.expect("a readable body").to_bytes();
+
+    Case {
+        name: std::any::type_name::<S>()
+            .rsplit("::")
+            .next()
+            .expect("a type name has a last segment"),
+        claimed: S::STATUSES,
+        status: parts.status.as_u16(),
+        media_type,
+        body_len: body.len(),
+        declared,
+    }
+}
+
+/// One value per short circuit this build compiled, driven against one registry.
+///
+/// Values rather than types, because a description is a claim about what the
+/// wire carries and only a value produces one. `Undecodable` appears three
+/// times: it declares three statuses and one value answers with one of them.
+async fn every_case() -> Vec<Case> {
+    use std::time::Duration;
+
+    use kynos::middleware::{
+        csrf::CrossSite,
+        limits::{AtCapacity, BodySizeExceeded, TimedOut},
+        rate_limit::headers::{RateLimited, RateLimitedFields},
+    };
+
+    let registry = &mut kynos::schema::registry::Registry::new();
+    let mut cases = Vec::new();
+
+    cases.push(case(registry, BodySizeExceeded { limit: 64 }).await);
+    cases.push(
+        case(
+            registry,
+            TimedOut {
+                after: Duration::from_secs(1),
+            },
+        )
+        .await,
+    );
+    cases.push(
+        case(
+            registry,
+            AtCapacity {
+                retry_after: Some(Duration::from_secs(1)),
+            },
+        )
+        .await,
+    );
+    cases.push(case(registry, CrossSite).await);
+    cases.push(
+        case(
+            registry,
+            RateLimited {
+                retry_after: Duration::from_secs(1),
+                limit: 10,
+            },
+        )
+        .await,
+    );
+    cases.push(
+        case(
+            registry,
+            RateLimitedFields {
+                retry_after: Duration::from_secs(1),
+                limits: Vec::new(),
+                policies: Vec::new(),
+            },
+        )
+        .await,
+    );
+
+    #[cfg(feature = "compression")]
+    {
+        use kynos::middleware::{compression::NotAcceptable, decompression::Undecodable};
+
+        cases.push(case(registry, NotAcceptable).await);
+        cases.push(case(registry, Undecodable::UnsupportedCoding).await);
+        cases.push(case(registry, Undecodable::Malformed).await);
+        cases.push(case(registry, Undecodable::TooLarge { limit: 64 }).await);
+    }
+
+    #[cfg(feature = "cache")]
+    {
+        use kynos::{http::HeaderMap, middleware::conditional::NotModified};
+
+        cases.push(case(registry, NotModified::from_headers(&HeaderMap::new())).await);
+    }
+
+    cases
+}
+
+/// The names the sweep must drive, derived from `SHORT_CIRCUITS` rather than
+/// transcribed a second time — so a ninth implementation fails both tests.
+///
+/// A `cfg` per element rather than a second list, so the set stays derived at
+/// every feature combination.
+fn expected_names() -> BTreeSet<&'static str> {
+    /// Whichever members this build did not compile.
+    const ABSENT: &[&str] = &[
+        #[cfg(not(feature = "compression"))]
+        "NotAcceptable",
+        #[cfg(not(feature = "compression"))]
+        "Undecodable",
+        #[cfg(not(feature = "cache"))]
+        "NotModified",
+    ];
+
+    SHORT_CIRCUITS
+        .iter()
+        .copied()
+        .filter(|name| !UNCONSTRUCTIBLE.contains(name) && !ABSENT.contains(name))
+        .collect()
+}
+
+/// Every short circuit's *described* response declares the body its *wire*
+/// response sends.
+///
+/// The defect issue #104 reported, asserted over the whole set rather than at
+/// the site that was noticed: eight of the ten implementations put a problem
+/// document on the wire under a response declaring no content, and
+/// `assert_conformance` read an undeclared content as "nothing to check".
+///
+/// Both directions. `NotModified` sends no body and must go on declaring none,
+/// so this is not "every short circuit declares content" — it is "the
+/// declaration and the exchange agree".
+#[tokio::test]
+async fn every_short_circuit_declares_the_content_it_sends() {
+    let cases = every_case().await;
+
+    let driven: BTreeSet<&str> = cases.iter().map(|case| case.name).collect();
+    assert_eq!(
+        driven,
+        expected_names(),
+        "a short circuit the sweep does not drive"
+    );
+
+    // Every status an implementation claims has a value behind it, so a variant
+    // added to a multi-status short circuit cannot go undriven.
+    for name in &driven {
+        let claimed: BTreeSet<u16> = cases
+            .iter()
+            .find(|case| &case.name == name)
+            .expect("a driven case")
+            .claimed
+            .iter()
+            .copied()
+            .collect();
+        let reached: BTreeSet<u16> = cases
+            .iter()
+            .filter(|case| &case.name == name)
+            .map(|case| case.status)
+            .collect();
+        assert_eq!(
+            reached, claimed,
+            "`{name}` declares statuses the sweep does not drive a value to"
+        );
+    }
+
+    for case in &cases {
+        let key = kynos::openapi::StatusPattern::Code(case.status).to_string();
+        let Some(kynos::openapi::RefOr::Item(declared)) = case.declared.responses.get(&key) else {
+            panic!(
+                "`{}` answers {} and its description declares no such response",
+                case.name, case.status
+            );
+        };
+
+        if let Some(media_type) = case.media_type.as_deref() {
+            assert!(
+                declared.content.contains_key(media_type),
+                "`{}`'s {} sends a `{media_type}` body the description does not declare",
+                case.name,
+                case.status
+            );
+        } else {
+            assert!(
+                case.body_len == 0,
+                "`{}`'s {} sends {} bytes with no `Content-Type`",
+                case.name,
+                case.status,
+                case.body_len
+            );
+            assert!(
+                declared.content.is_empty(),
+                "`{}`'s {} declares content it does not send",
+                case.name,
+                case.status
+            );
+        }
+    }
+}

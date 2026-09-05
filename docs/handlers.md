@@ -92,6 +92,17 @@ There is no way to choose a status at run time.
 | [`Redirect<CODE>`](../crates/kynos/src/response/status.rs) | `CODE` | 301, 302, 303, 307 or 308 only |
 | [`WithHeaders<T, H>`](../crates/kynos/src/response/headers.rs) | `T`'s | `H` implements `HeaderParams`, usually by deriving it, so `Response.headers` is complete |
 
+`Created<T>` and `Accepted<T>` re-key the response `T` describes for itself: a
+body's 200 becomes the wrapper's status and carries its representation across.
+A body describing no 200 — a `Reply` enum naming its own statuses, say — still
+reaches the wire under the wrapper's status, so the wrapper takes that body's
+representation where the body declares exactly one response at all: that one
+response is everything the body sends, and re-describing it promises nothing a
+value of the body withholds. Where the body declares several, the wrapper
+declares no content rather than choosing between promises it did not make —
+including where only one of them carries content, since the others reach the
+same status carrying none.
+
 `Created` and `Redirect` both carry a
 [`Location`](../crates/kynos/src/response/status.rs), which exists because a
 route attribute's `relative_uri` returns an `http::Uri` and neither that type

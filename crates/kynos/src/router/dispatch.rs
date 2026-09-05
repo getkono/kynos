@@ -13,10 +13,10 @@ use std::{
     future::Future, panic::AssertUnwindSafe, pin::Pin, sync::Arc, task::Poll, time::Instant,
 };
 
-use kynos_openapi::{Method, model::body::mime_names::APPLICATION_PROBLEM_JSON};
+use kynos_openapi::Method;
 
 use crate::{
-    error::problem::Problem,
+    error::problem::{Problem, problem_response},
     extract::params::path::PathCaptures,
     http::{
         HeaderValue, Request, Response, StatusCode,
@@ -68,14 +68,11 @@ pub(crate) fn panic_response() -> Response {
 
 /// The 500 a recovery branch contributes to every operation it covers.
 pub(crate) fn panic_responses(registry: &mut Registry) -> kynos_openapi::Responses {
-    let schema = registry.resolve::<Problem>();
-
     kynos_openapi::Responses::new().with(
         500,
-        kynos_openapi::Response::with_content(
+        problem_response(
+            registry,
             "the operation failed unexpectedly and was recovered",
-            APPLICATION_PROBLEM_JSON,
-            kynos_openapi::MediaType::new(schema),
         ),
     )
 }
