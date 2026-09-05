@@ -668,6 +668,36 @@ every request — which is why the entry stays here rather than moving to a
 benchmark: the cost was real, and removing it was not what motivated the
 change.
 
+The other two are measured, and neither costs what the entry above predicted.
+Re-sniffing ALPN costs no read syscall on the one path where ALPN exists.
+hyper-util's `read_version` reads into a 24-byte array and rewinds the head it
+copied out, and on plaintext TCP that cap does force the codec into a second
+`read(2)` — but plaintext negotiates no protocol to discard in the first place.
+Under TLS, `tokio-rustls` reads and decrypts a whole record before it hands any
+plaintext up, and rustls reports no want for a read while that plaintext is
+buffered, so the codec's next read is served out of memory. What is left is one
+24-byte `Vec` and one extra poll through the TLS stack per connection — a
+socket-level per-connection figure, which is `kynos-bench`'s by the boundary
+[`performance.md`](performance.md#the-boundary) sets. It is deferred there and
+filed as [#114](https://github.com/getkono/kynos/issues/114) rather than taken
+here: one allocation per connection is not the syscall per connection the entry
+was written for, and the number is what decides it.
+
+Erasing a body is not on the routing path at all. None of the seven allocations
+[`alloc.rs`](../crates/kynos/tests/alloc.rs) records for a static match is a
+body erasure — the request body there is built before the counted region opens,
+and a `204`'s response body is `Body::empty`, which erases a zero-sized type, so
+the `Box::pin` behind it returns a dangling pointer and never reaches the
+allocator. The mutex is not part of the cost either; it is inline in `Body`. The
+entry is true one step further out, on the server path, where
+`Body::from_incoming` erases a `hyper::body::Incoming` that is not zero-sized:
+one allocation per request that arrives over a socket, and one more for a
+response body that is not empty.
+[`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) counts both constructors
+— zero for `Body::empty`, one for `Body::from_bytes` — and holds the zero-sized
+reason as a witness of its own, so a dependency bump that ends it turns
+something red rather than leaving this paragraph quietly wrong.
+
 ### Why kernel TLS is deferred
 
 Kernel TLS moves record encryption into the kernel once rustls has finished the
