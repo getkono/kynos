@@ -315,17 +315,21 @@ build until someone adds it to a row and says why a request cannot reach it.
 | Element | Named by | Named only in | Why a request cannot reach it |
 | --- | --- | --- | --- |
 | the emitted document | `Document` | `router/describe.rs`, `router/docs/mod.rs`, `router/install.rs`, `router/mod.rs`, `router/service.rs`, `server/mod.rs`, `server/tls/document.rs`, `test/conformance.rs`, `unchecked.rs` | every site builds it, annotates it, or hands it back to the application. `docs::render` serializes it once while the router is built, so the endpoint serving a description holds finished bytes rather than a `Document`, and `Service` reads it back only through `Service::openapi` |
-| the schema registry | `Registry::new` | `router/describe.rs` | the one registry a build mints is consumed by `describe`, which has finished before a service exists to accept a request |
+| the schema registry | `Registry::{new,default}` | `router/describe.rs` | the one registry a build mints is consumed by `describe`, which has finished before a service exists to accept a request |
 | the document validators | `validate::Validator` | `router/describe.rs` | a description is validated where it is built. The build either fails or drops the validator, and nothing on the request path holds one to run |
 | the JSON Schema interpreter | `jsonschema` | `test/conformance.rs` | it is behind `test-util` and exists to check an observed response against the description. The request parser is the other projection of the same declaration and interprets no schema |
 
 Site paths are relative to `crates/kynos/src/`, which is the one scope
 [`containment.py`](../scripts/containment.py) counts a row against. A *Named by*
-cell holds an identifier, or a path of them; it may also come to hold a
-`feature = "…"` gate token, matched over the raw source rather than the stripped
-text, for a flag whose off-path proof is that nothing compiles it. A cell the
-rule cannot read fails the build rather than passing quietly, so teaching it a
-new kind of token is part of writing the row that needs one.
+cell holds an identifier, or a path of them, and brace-expands the way the
+*Named only in* column does when one element has more than one spelling that
+reaches it: `Registry::{new,default}` holds both, because `Registry::new` is
+`Self::default()` and a row holding only `new` would let a derived `default()`
+mint a registry anywhere. A cell may also come to hold a `feature = "…"` gate
+token, matched over the raw source rather than the stripped text, for a flag
+whose off-path proof is that nothing compiles it. A cell the rule cannot read
+fails the build rather than passing quietly, so teaching it a new kind of token
+is part of writing the row that needs one.
 
 `Registry` — the type — is deliberately not a row. `Describe::request_body`
 takes `&mut Registry`, which puts the name in some eighty files by design, and a

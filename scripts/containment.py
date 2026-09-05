@@ -210,9 +210,9 @@ OFF_PATH_HEADER = "| Element | Named by | Named only in | Why a request cannot r
 OFF_PATH_SCOPE = "crates/kynos/src/"
 
 
-# What a *Named by* cell may hold: an identifier, or a path of them. The cell is
-# prose that happens to be code, so the backticks around it are optional here
-# rather than load-bearing.
+# What one spelling in a *Named by* cell may hold: an identifier, or a path of
+# them. The cell is prose that happens to be code, so the backticks around it
+# are optional here rather than load-bearing.
 NAMED_BY = re.compile(r"`?(\w+(?:\s*::\s*\w+)*)`?")
 
 
@@ -228,12 +228,22 @@ def token(cell):
     `Registry::new` is a path rather than an identifier, and the source may
     write it spaced or wrapped, so each `::` matches the whitespace a formatter
     is free to put around it.
+
+    A cell may hold more than one spelling, brace-expanded the way a *Named only
+    in* cell expands a directory of siblings, and the row holds all of them at
+    once. `Registry::{new,default}` is the case that forced it: `new` is
+    `Self::default()` and `Registry` derives `Default`, so a row holding only
+    `new` lets a derived `default()` mint a registry anywhere with the gate
+    green. Two rows would hold the same element under one reason written twice.
     """
-    readable = NAMED_BY.fullmatch(cell.strip())
-    if readable is None:
-        return None
-    segments = [re.escape(part.strip()) for part in readable.group(1).split("::")]
-    return re.compile(r"\b" + r"\s*::\s*".join(segments) + r"\b")
+    patterns = []
+    for spelling in expand(cell.strip()):
+        readable = NAMED_BY.fullmatch(spelling.strip())
+        if readable is None:
+            return None
+        segments = [re.escape(part.strip()) for part in readable.group(1).split("::")]
+        patterns.append(r"\s*::\s*".join(segments))
+    return re.compile(r"\b(?:" + "|".join(patterns) + r")\b")
 
 
 def sites(cell):
