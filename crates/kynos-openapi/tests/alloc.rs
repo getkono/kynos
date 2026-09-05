@@ -182,6 +182,17 @@ const SIZES: [Size; 3] = [
 const REPEATS: usize = 8;
 
 /// The fixture at `operations` operations, built here rather than in a region.
+///
+/// **It asserts its own size, because nothing else in the file can.** Every
+/// live assertion here is satisfied by a fixture that collapsed: the ceilings
+/// are `<=`, so a constant series passes all three; the relation holds over a
+/// constant series at every span; and a repeated emission of the same collapsed
+/// document costs what the first one did. A template that normalized to one
+/// string, or a `Paths::insert` that replaced rather than added, would turn this
+/// whole target green while measuring ten documents of one operation. The count
+/// is taken over the operations rather than over `paths.items`, because the
+/// operation count is the dimension the requirement scales in and a Path Item
+/// can hold up to nine of them.
 fn document(operations: usize) -> Document {
     let mut document = Document::new(SpecVersion::V3_1, Info::new("Fixture", "1.0.0"));
 
@@ -200,6 +211,19 @@ fn document(operations: usize) -> Document {
             PathItem::new().with_operation(Method::Get, operation),
         );
     }
+
+    let declared: usize = document
+        .paths
+        .items
+        .values()
+        .map(|item| item.operations().count())
+        .sum();
+    assert_eq!(
+        declared, operations,
+        "the fixture built for {operations} operations declares {declared} of them; a fixture \
+         that collapses satisfies every ceiling, the growth relation and repeat-invariance alike, \
+         so a size read here is the only thing saying what was measured"
+    );
 
     document
 }
