@@ -390,16 +390,31 @@ def write_tsv(path, header, names, rows):
 
 
 def table(rows, recorded, value, delta, unit):
-    """The per-kind report table, and the drift it ranks movers by."""
+    """The per-kind report table, and the two buckets it ranks points by.
+
+    Two buckets rather than one, because a point the recorded baseline has no
+    row for has no drift: there is nothing for it to have drifted from, and
+    ranking it beside the points that did drift would put two different
+    quantities in one list. It is collected as `fresh` and ranked by what it
+    costs instead. Collecting it nowhere is what made the run that first
+    measures a new feature the one run that ranks and attributes nothing --
+    the row was in the table, and the separately headed sections below it were
+    empty.
+    """
     lines = [
         f"| feature | {unit} | delta | recorded | drift |",
         "| --- | ---: | ---: | ---: | ---: |",
     ]
-    drifts = {}
+    drifts, fresh = {}, {}
     for label, measured in rows.items():
         was = None if recorded is None else recorded.get(label, {}).get(delta)
         if was is None:
             shown, moved = ("—", "—") if recorded is None else ("—", "new")
+            # Not on a first run, where `movers` already ranks every point by
+            # cost, and not for the baseline, which is the point the deltas are
+            # taken against rather than a point with a cost of its own.
+            if recorded is not None and label != BASELINE:
+                fresh[label] = measured[delta]
         else:
             moved_by = measured[delta] - was
             # `openapi31` is the point every delta is taken against, so its own
@@ -412,7 +427,7 @@ def table(rows, recorded, value, delta, unit):
             f"| `{label}` | {measured[value]} | {measured[delta]:+} "
             f"| {shown} | {moved} |"
         )
-    return "\n".join(lines), drifts
+    return "\n".join(lines), drifts, fresh
 
 
 def movers(rows, drifts, recorded, delta):
@@ -481,13 +496,40 @@ def attribute(label, functions):
     return [f"##### `{label}`", "", *listed, ""]
 
 
+def newcomers(fresh):
+    """The points the recorded baseline has no row for, ranked by cost.
+
+    Zero is kept here, unlike in `movers`. There the filter drops rows that did
+    not move, which are noise; here a zero is the finding -- a feature added to
+    `Cargo.toml` that costs a program not using it nothing is exactly what a
+    reader of this section wants told, and dropping it would leave the feature
+    unmentioned in the one run that first measured it.
+    """
+    return sorted(fresh.items(), key=lambda item: (-abs(item[1]), item[0]))[:TOP]
+
+
 def section(title, note, rows, recorded, value, delta, unit, functions=None):
-    """One kind's table, its ranked movers, and optionally its attribution."""
-    body, drifts = table(rows, recorded, value, delta, unit)
+    """One kind's table, its ranked points, and optionally its attribution."""
+    body, drifts, fresh = table(rows, recorded, value, delta, unit)
     ranked, heading = movers(rows, drifts, recorded, delta)
     listed = [f"- `{label}` {moved:+}" for label, moved in ranked] or ["- none"]
     out = [f"### {title}", "", note, "", body, "", f"#### {heading}", "", *listed, ""]
-    if functions is not None and ranked:
+    new = newcomers(fresh)
+    if new:
+        out += [
+            "#### Not in the recorded baseline, ranked by cost against "
+            "`openapi31`",
+            "",
+            "These points have no drift to rank: the recorded baseline has no "
+            "row for them, so there is nothing for them to have drifted from. "
+            "What is ranked is what each costs in this run. Recording the "
+            "baseline is what gives them a drift.",
+            "",
+            *[f"- `{label}` {cost:+}" for label, cost in new],
+            "",
+        ]
+    attributed = [label for label, _ in ranked] + [label for label, _ in new]
+    if functions is not None and attributed:
         out += [
             "#### What those features instantiate, against `openapi31`",
             "",
@@ -498,7 +540,7 @@ def section(title, note, rows, recorded, value, delta, unit, functions=None):
             "in the baseline, so no per-function drift exists to show.",
             "",
         ]
-        for label, _ in ranked:
+        for label in attributed:
             out += attribute(label, functions)
     return out
 
