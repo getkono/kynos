@@ -96,9 +96,12 @@ There is no way to choose a status at run time.
 body's 200 becomes the wrapper's status and carries its representation across.
 A body describing no 200 — a `Reply` enum naming its own statuses, say — still
 reaches the wire under the wrapper's status, so the wrapper takes that body's
-representation when there is exactly one to take. Where the body declares
-several, the wrapper declares no content rather than choosing between promises
-it did not make.
+representation where the body declares exactly one response at all: that one
+response is everything the body sends, and re-describing it promises nothing a
+value of the body withholds. Where the body declares several, the wrapper
+declares no content rather than choosing between promises it did not make —
+including where only one of them carries content, since the others reach the
+same status carrying none.
 
 `Created` and `Redirect` both carry a
 [`Location`](../crates/kynos/src/response/status.rs), which exists because a

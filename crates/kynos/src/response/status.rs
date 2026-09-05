@@ -213,11 +213,17 @@ fn location_header(description: &str) -> kynos_openapi::Header {
 /// reports.
 ///
 /// So the representation is carried over by
-/// [`sole_representation`] — under one condition, which is that there is
-/// nothing to choose between. A body declaring two content-bearing responses
-/// and no 200 leaves the wrapper empty exactly as before, because picking one
-/// of the two would be the wrapper promising a representation the body never
-/// promised for *this* status. `Created<Ranged<Json<T>>>`,
+/// [`sole_representation`] — under one condition, which is that the body
+/// declares exactly one response at all. That one response is then the whole
+/// of what the body can put on the wire, so re-describing it under the
+/// wrapper's status promises what every value of the body sends.
+///
+/// A body declaring a second response leaves the wrapper empty exactly as
+/// before, and a bodiless second response is why the count is over responses
+/// rather than over the content-bearing ones: `{204: none, 409: content}`
+/// sends both under the wrapper's status, so declaring the 409's
+/// representation would promise it for the values that send nothing.
+/// `Created<Ranged<Json<T>>>`,
 /// `Created<RangedParts<T>>`, `Created<Delivery<M>>` and
 /// `Created<Result<Json<T>, E>>` are the compositions that reach that branch.
 ///
@@ -252,36 +258,34 @@ fn body_response(
     }
 }
 
-/// The representations a body declares, when exactly one of its responses
-/// carries any.
+/// The representations a body declares, when it declares exactly one response
+/// and that response carries any.
 ///
-/// `None` as soon as a second content-bearing response appears, and as soon as
-/// a `$ref` does: a reference names a response the document holds elsewhere,
-/// so whether it carries content is not a question answerable from here, and
-/// "exactly one" cannot be established over a set with an unreadable member.
+/// One response is the whole of what the body puts on the wire, so it is the
+/// one case where the wrapper re-describing it promises nothing a value of the
+/// body fails to send. `None` for a second response even where only one of the
+/// two carries content: the other reaches the wire under the wrapper's status
+/// as well, and it carries none.
 ///
-/// The `default` counts, because a fallback response is one more thing the
-/// body can put on the wire under the wrapper's status.
+/// `None` for a `$ref` too — it names a response the document holds elsewhere,
+/// so what it carries is not a question answerable from here.
+///
+/// The `default` counts as that one response, because a fallback response is
+/// as much a thing the body can put on the wire as a keyed one.
 fn sole_representation(
     body: &kynos_openapi::Responses,
 ) -> Option<&kynos_openapi::Map<kynos_openapi::MediaType>> {
-    let mut sole = None;
+    let mut entries = body.default_response.iter().chain(body.responses.values());
 
-    for entry in body.default_response.iter().chain(body.responses.values()) {
-        let kynos_openapi::RefOr::Item(response) = entry else {
-            return None;
-        };
+    let kynos_openapi::RefOr::Item(sole) = entries.next()? else {
+        return None;
+    };
 
-        if response.content.is_empty() {
-            continue;
-        }
-
-        if sole.replace(&response.content).is_some() {
-            return None;
-        }
+    if entries.next().is_some() || sole.content.is_empty() {
+        return None;
     }
 
-    sole
+    Some(&sole.content)
 }
 
 /// What each redirect status tells a client, as RFC 9110 defines it.

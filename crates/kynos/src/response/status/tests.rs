@@ -201,12 +201,17 @@ mod a_wrapper_produces_and_declares_one_status {
 /// `assert_conformance` reports as "the description declares no content, but a
 /// 35-byte body was sent".
 ///
+/// What the wrapper may carry across is bounded by the count: exactly one
+/// response, because one response is the whole of what the body sends and
+/// anything more is several exchanges arriving under a single key.
+///
 /// The bodies here are hand-written rather than derived, because `Responses`
 /// is the whole of what the wrapper reads and a derive would put the macro
 /// crate between the assertion and the rule. The arrangement they stand in for
 /// exists in the tree already: `tests/derives.rs`'s `CreateReply` declares a
 /// 201 carrying a `User` and a 409 carrying nothing, so `Created<CreateReply>`
-/// is a `Created` over a body that never described a 200.
+/// is a `Created` over a body that never described a 200 -- and, with two
+/// responses of which one is bodiless, one the wrapper declares nothing for.
 mod a_wrapper_declares_the_body_it_forwards {
     use crate::{
         http::{Response, StatusCode, body::Body, header},
@@ -235,17 +240,16 @@ mod a_wrapper_declares_the_body_it_forwards {
         )
     }
 
-    /// One representation, filed under a status of the body's own choosing.
+    /// One response, filed under a status of the body's own choosing.
     ///
-    /// The shape `#[derive(Reply)]` produces for `{201: content, 409: none}`,
-    /// which is the arrangement issue #104's neighbourhood was found in.
+    /// The shape `#[derive(Reply)]` produces for a single variant naming its
+    /// own status. One response is the whole of what the body sends, so the
+    /// wrapper re-describing it promises nothing a value of the body withholds.
     struct OneRepresentation;
 
     impl Responses for OneRepresentation {
         fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-            kynos_openapi::Responses::new()
-                .with(201, json("the resource as stored", registry))
-                .with(409, kynos_openapi::Response::new("it already exists"))
+            kynos_openapi::Responses::new().with(201, json("the resource as stored", registry))
         }
     }
 
@@ -291,18 +295,16 @@ mod a_wrapper_declares_the_body_it_forwards {
         }
     }
 
-    /// One inline representation beside a `$ref`, whose content this module
-    /// cannot read.
-    struct OneRepresentationAndAReference;
+    /// One response, and it is a `$ref` whose content this module cannot read.
+    struct OnlyAReference;
 
-    impl Responses for OneRepresentationAndAReference {
+    impl Responses for OnlyAReference {
         fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-            kynos_openapi::Responses::new()
-                .with(201, json("the resource as stored", registry))
-                .with_pattern(
-                    kynos_openapi::StatusPattern::Code(409),
-                    kynos_openapi::Ref::new("#/components/responses/Conflict").into(),
-                )
+            let _ = registry;
+            kynos_openapi::Responses::new().with_pattern(
+                kynos_openapi::StatusPattern::Code(409),
+                kynos_openapi::Ref::new("#/components/responses/Conflict").into(),
+            )
         }
     }
 
@@ -334,11 +336,11 @@ mod a_wrapper_declares_the_body_it_forwards {
     }
 
     /// A `$ref` names a response the document holds elsewhere, so whether it
-    /// carries content is not a question this module can answer -- and "exactly
-    /// one" cannot be established over a set with an unreadable member.
+    /// carries content is not a question this module can answer -- and a
+    /// representation the wrapper cannot read is one it cannot promise.
     #[test]
-    fn a_reference_beside_a_representation_leaves_the_wrapper_empty() {
-        assert!(representations::<Created<OneRepresentationAndAReference>>(201).is_empty());
+    fn a_sole_reference_leaves_the_wrapper_empty() {
+        assert!(representations::<Created<OnlyAReference>>(201).is_empty());
     }
 
     /// A representation is the wrapper's to declare only where every value it
