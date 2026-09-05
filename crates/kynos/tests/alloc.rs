@@ -17,7 +17,8 @@
 //! global, which moved a replayed request's count on roughly one request in
 //! ten thousand — read, at the time, as state accumulating on the routing
 //! path. `work_on_another_thread_is_not_counted` is what holds the counter
-//! this file installs to being the other kind.
+//! this target installs — by including
+//! [`support/counting.rs`](support/counting.rs) — to being the other kind.
 //!
 //! One process per test is still the contract this target runs under — see
 //! [`hermeticity.rs`](hermeticity.rs) and `.config/nextest.toml` — but the
@@ -33,28 +34,22 @@
 
 #![cfg(feature = "macros")]
 
-use std::future::Future;
-use std::pin::pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::task::{Context, Poll, Waker};
 use std::thread;
 
-use alloc_counter::{AllocCounterSystem, count_alloc};
+use alloc_counter::count_alloc;
 use kynos::{
-    Router,
-    extract::params::path::Path,
-    http::{Method, Request, body::Body},
-    prelude::*,
-    response::status::NoContent,
+    Router, extract::params::path::Path, prelude::*, response::status::NoContent,
     router::service::Service,
 };
 
-/// Declared here rather than reached for: `alloc_counter` installs nothing on
-/// its own behalf, so this line is the whole of what puts the counter in this
-/// binary and in no other.
-#[global_allocator]
-static ALLOCATOR: AllocCounterSystem = AllocCounterSystem;
+/// The counter and the driver, shared so that a second counting target does
+/// not copy them. Including this module is what installs the allocator.
+#[path = "support/counting.rs"]
+mod counting;
+
+use counting::counted;
 
 /// Every shape measured here, with what it costs today.
 ///
@@ -94,56 +89,6 @@ fn service() -> Service<()> {
         .mount(kynos::routes![ping, one])
         .build(())
         .expect("a describable router")
-}
-
-/// Drives one request and reports the heap operations dispatch made.
-///
-/// Fresh allocations and reallocations both, so that growing a buffer cannot
-/// pass as free. The request is built before the region opens, because parsing
-/// a target and boxing a body are the caller's cost rather than the router's,
-/// and the response is dropped after the region closes for the same reason.
-///
-/// **The future is polled directly rather than driven by a runtime, and that is
-/// what makes the number mean the routing path.** What the measuring thread
-/// allocates while the region is open is counted, so an executor driving the
-/// future on that thread is counted with it. There is nothing to schedule here:
-/// the fixture touches no socket, timer or task, so the future is ready on its
-/// first poll and the assertion below says so rather than assuming it.
-///
-/// A runtime was once blamed for the count that moved, and `#[tokio::test]` was
-/// removed on that reading. Its worker threads were an instance of the cause
-/// rather than the cause: the counter was global, so any thread's work landed
-/// in the region. Polling by hand is kept because it is right on its own terms,
-/// not because it was the fix.
-///
-/// There is no warm-up request. `Router::build` initialises eagerly, so the
-/// first request through a service costs exactly what the thousandth does —
-/// and a warm-up here would be the one construct able to hide a one-time cost
-/// introduced later.
-fn counted(service: &Service<()>, target: &str) -> usize {
-    let mut request = Request::new(Body::empty());
-    *request.method_mut() = Method::GET;
-    *request.uri_mut() = target.parse().expect("a usable request target");
-
-    let ((allocations, reallocations, _), polled) = count_alloc(|| {
-        let mut future = pin!(service.call(request));
-        future
-            .as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-    });
-    let allocations = allocations + reallocations;
-
-    let Poll::Ready(response) = polled else {
-        panic!(
-            "dispatch of {target} was not ready on its first poll; this fixture \
-             reaches no socket, timer or task, so a pending future means \
-             something on the routing path now needs a runtime — and the count \
-             above stopped measuring the whole of one request"
-        );
-    };
-
-    drop(response);
-    allocations
 }
 
 /// The instrument's own invariant, and the one every number below rests on: a
