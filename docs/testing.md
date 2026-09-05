@@ -316,7 +316,7 @@ build until someone adds it to a row and says why a request cannot reach it.
 | --- | --- | --- | --- |
 | the emitted document | `Document` | `router/describe.rs`, `router/docs/mod.rs`, `router/install.rs`, `router/mod.rs`, `router/service.rs`, `server/mod.rs`, `server/tls/document.rs`, `test/conformance.rs`, `unchecked.rs` | every site builds it, annotates it, or hands it back to the application. `docs::render` serializes it once while the router is built, so the endpoint serving a description holds finished bytes rather than a `Document`, and `Service` reads it back only through `Service::openapi` |
 | the schema registry | `Registry::{new,default}` | `router/describe.rs` | the one registry a build mints is consumed by `describe`, which has finished before a service exists to accept a request |
-| the document validators | `validate::Validator` | `router/describe.rs` | a description is validated where it is built. The build either fails or drops the validator, and nothing on the request path holds one to run |
+| the document validators | `Validator` | `router/describe.rs` | a description is validated where it is built. The build either fails or drops the validator, and nothing on the request path holds one to run |
 | the JSON Schema interpreter | `jsonschema` | `test/conformance.rs` | it is behind `test-util` and exists to check an observed response against the description. The request parser is the other projection of the same declaration and interprets no schema |
 
 Site paths are relative to `crates/kynos/src/`, which is the one scope
@@ -332,6 +332,15 @@ fails the build rather than passing quietly, so teaching it a new kind of token
 is part of writing the row that needs one — and so does a cell it can read that
 names no file in the scope at all, which is a row holding nothing rather than an
 element nothing reaches.
+
+A cell names the shortest spelling that is unique in the workspace, not the
+longest one that is unambiguous. A qualified path is what an import removes:
+`use kynos_openapi::validate::{Validator, Violation};` leaves every later
+mention of the type bare, so a row written `validate::Validator` would match the
+one file that spells the path out and miss the file that imported it. `Validator`
+is the whole token because `kynos_openapi::validate::Validator` is the only type
+of that name in either crate. Where an identifier is not unique, the row names
+what mints one instead.
 
 `Registry` — the type — is deliberately not a row. `Describe::request_body`
 takes `&mut Registry`, which puts the name in some eighty files by design, and a
