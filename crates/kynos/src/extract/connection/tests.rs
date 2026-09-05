@@ -9,23 +9,23 @@ use super::{Connection, Inner, TlsIdentity};
 /// copies is a peer certificate chain — the cost `docs/architecture.md` records
 /// as the second of the three cheap wins.
 ///
+/// Pinning the handle at one pointer is already the statement that it stays
+/// smaller than the payload behind the `Arc`: `Inner` is held at 192 bytes by
+/// `the_inline_connection_record_stays_small` below, so a second assertion that
+/// the handle is the narrower of the two would have an empty failure set while
+/// this pin holds. The property is stated here rather than asserted there.
+///
 /// The other half is `a_connection_clone_shares_its_payload` below, which is
 /// the assertion that rules out `Box`.
 #[test]
 fn a_connection_handle_is_one_pointer() {
     let handle = size_of::<Connection>();
-    let payload = size_of::<Inner>();
 
     assert_eq!(
         handle,
         size_of::<usize>(),
         "Connection ({handle} bytes) must stay one pointer wide; \
          a field added here is copied per request rather than per connection"
-    );
-    assert!(
-        handle < payload,
-        "Connection ({handle} bytes) should stay smaller than Inner ({payload} bytes); \
-         the payload belongs behind the Arc"
     );
 }
 
