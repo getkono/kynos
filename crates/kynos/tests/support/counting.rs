@@ -10,6 +10,11 @@
 //! Why the counter has to be a per-thread one, and what holds it to being
 //! that, is [`alloc.rs`](../alloc.rs).
 
+// Each consumer takes the parts it needs; nothing here is required to be used
+// by all of them. A target that only counts allocations never calls
+// `request`, and would otherwise fail `lint` on a file it did not write.
+#![allow(dead_code)]
+
 use std::future::Future;
 use std::pin::pin;
 use std::task::{Context, Poll, Waker};
