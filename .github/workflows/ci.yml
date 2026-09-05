@@ -28,7 +28,7 @@ env:
   CARGO_INCREMENTAL: 0
   NEXTEST_PROFILE: ci
 
-# Between them these jobs run every task in `mise run check`, plus the four
+# Between them these jobs run every task in `mise run check`, plus the five
 # that are too slow to belong there. Splitting them apart trades one serial
 # runner for parallel ones and gives each its own Cargo cache; keep a task in
 # exactly one job so no two jobs compile the same thing.
@@ -258,3 +258,48 @@ jobs:
         env:
           CONVCO_RANGE: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
         run: mise run commits:check
+
+  cost:
+    name: Cost trend
+    runs-on: ubuntu-latest
+    # Reports what each feature costs; does not fail the pull request on a
+    # delta. Modelled on the `semver` job above, and differing from it in one
+    # place worth naming.
+    #
+    # `continue-on-error` is deliberately not used here, for that job's reason:
+    # it leaves the check run reporting `failure` and the pull request showing a
+    # red mark. But this job needs no `|| true` and no verdict-parsing in YAML
+    # either, because unlike cargo-semver-checks the sweep does not fail by
+    # construction. `cost:features` exits zero whenever it measured something,
+    # whatever the number says, and non-zero only when it could not measure at
+    # all -- a build that did not compile, a missing `llvm-size`, an output with
+    # no `(TOTAL)` in it. That is the same distinction the `semver` step draws
+    # between "ran and found breaks" and "could not run", moved into the task
+    # where it can be exercised locally.
+    #
+    # No threshold is applied. `nfr.md#thresholds` sets a ceiling from the first
+    # recorded measurement and never guesses one, and the first recorded
+    # measurement is what the committed baselines under `crates/kynos/cost/`
+    # are. Until a ceiling is reviewed into that document this is a trend.
+    #
+    # Making this a required check is a change to the `master` ruleset rather
+    # than to this file.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up
+        uses: ./.github/actions/setup
+        with:
+          cargo-cache-key: cost
+      - name: Measure per-feature codegen and binary deltas
+        run: mise run cost:features
+      - name: Add cost summary
+        run: cat cost-report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload cost report
+        uses: actions/upload-artifact@v4
+        with:
+          name: cost-report
+          path: |
+            cost-report.md
+            cost-binary.tsv
+            cost-codegen.tsv

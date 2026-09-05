@@ -176,6 +176,101 @@ cargo hack check --workspace --each-feature --all-targets \
   --exclude-features default,server,tls,time,decimal,full
 '''
 
+[tasks."cost:features"]
+description = "Measure what each feature costs a linked artifact and monomorphized IR"
+# The two sweep kinds `docs/performance.md` files as tasks rather than targets:
+# `.text` of a fixed fixture, and `cargo llvm-lines` over the same one.
+#
+# The two halves build at different profiles on purpose. `.text` is measured
+# at `--release`, which is the artifact that ships; the IR is counted at the
+# dev profile, because `llvm-lines` reads pre-link IR and a fat-LTO build
+# deletes the monomorphizations the codegen delta exists to count.
+#
+# `cargo hack` is deliberately *not* the driver, though `features:targets` is
+# the shape the feature list copies. cargo-hack has no hook between builds, and
+# every build overwrites `target/release/examples/cost_fixture`, so a sweep it
+# drove could not attribute an artifact to the feature that produced it -- it
+# would measure the last build once per point. Driving the loop in the script
+# also means nothing in this task rewrites a member manifest, which is the
+# hazard `check` records about `features:check` and the reason this must never
+# share that job.
+#
+# A script rather than a shell pipeline, for `containment:check`'s reason: this
+# parses two tools' output, diffs two committed tables and emits Markdown, and
+# every one of those is where a pipeline gets it quietly wrong.
+#
+# Not in `check` and not in `hooks:pre-push`. `ci.yml` already recognises a
+# class of tasks too slow to belong there, and `semver:check` set the precedent
+# by being absent from the same list. What is in `check` is `cost:test`, which
+# holds the script's parsers and its report and builds nothing.
+#
+# `cargo-llvm-lines` is pinned *here* rather than in `[tools]` because upstream
+# publishes no release binaries -- every `dtolnay/cargo-llvm-lines` release has
+# zero assets -- so the only backend available is `cargo:`, which compiles from
+# source. The comment on `[tools]` records what that costs: convco alone was
+# over four minutes on every CI job. A task-scoped pin is installed and
+# activated for the tasks that measure codegen and for no other.
+#
+# It is also the one pinned tool with no `mise.lock` entry, and that is what
+# mise does rather than something missed. Installing it -- by running this
+# task, or by `mise install` -- leaves the lockfile byte-identical, because
+# the `cargo:` backend builds from crates.io and there is no release artifact
+# whose URL and checksum a lockfile exists to hold. An explicit `mise lock`
+# does add a stanza for it, and that stanza carries a `version` and a
+# `backend` and nothing else: it would restate the pin on the line below and
+# hold nothing the pin does not. So the version here is the whole of the pin,
+# and a reader comparing this file against `mise.lock` is not looking at a
+# gap. The seven `[tools]` entries are locked because each of them resolves to
+# a downloaded file that a checksum can pin.
+tools = { "cargo:cargo-llvm-lines" = "0.4.48" }
+run = "python3 scripts/cost_features.py"
+
+[tasks."cost:codegen"]
+description = "The codegen half of the sweep alone"
+# Separable because it is the half that needs a tool, and because it is the
+# half whose profile is the surprising one -- running it alone is how a reader
+# checks that claim without paying for twenty-five fat-LTO release builds.
+#
+# The `cargo-llvm-lines` pin is task-scoped for the reason given on
+# `cost:features` above.
+tools = { "cargo:cargo-llvm-lines" = "0.4.48" }
+run = "python3 scripts/cost_features.py --kind codegen"
+
+[tasks."cost:record"]
+description = "Record the measured deltas as the committed baseline"
+# The `fixtures:generate` idiom: the sweep compares when told to and writes when
+# told to, so a change in what a feature costs reaches review as a diff of the
+# recorded deltas rather than as a number someone retyped. Recording is a
+# deliberate act, per `docs/nfr.md#thresholds`.
+#
+# The `cargo-llvm-lines` pin is task-scoped for the reason given on
+# `cost:features` above.
+tools = { "cargo:cargo-llvm-lines" = "0.4.48" }
+env = { KYNOS_COST = "overwrite" }
+run = "python3 scripts/cost_features.py"
+
+[tasks."cost:test"]
+description = "Test the cost sweep's parsers and its report"
+# The half of the sweep that compiles nothing, which is why it is in `check`
+# while `cost:features` is not. Every number the sweep reports passes through
+# two regular expressions, a TSV reader and a ranking, and a regression in any
+# of them is silent: the sweep still exits zero and still prints a table, with
+# the wrong function attributed or the wrong quantity compared.
+# `DISAMBIGUATOR` regressed exactly that way once already, in `1cf9bd6`.
+#
+# No `cargo-llvm-lines` pin, deliberately: the tests read captured output of
+# it rather than running it. Adding the pin would make a check that compiles
+# nothing compile a tool from source.
+#
+# `unittest` from the standard library and no test runner. There is no
+# `pytest`, no `tox` and no `requirements.txt` in this repository, and taking
+# a dependency to hold a few pure functions is the worse trade.
+#
+# `-B` because `.gitignore` has no `__pycache__` entry, and a check that
+# leaves an untracked directory behind is a check people learn to work around.
+# The test file sets `sys.dont_write_bytecode` too, for a direct `python3` run.
+run = "python3 -B scripts/cost_features_test.py"
+
 [tasks."fixtures:generate"]
 description = "Regenerate the conformance-fixture corpus"
 # The `trybuild` idiom: the test writes when told to and compares otherwise, so
@@ -409,6 +504,7 @@ run = [
   { task = "ui:check" },
   { task = "references:verify" },
   { task = "containment:check" },
+  { task = "cost:test" },
   { task = "docs:check" },
   { task = "panic:check" },
   { task = "features:check" },

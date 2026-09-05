@@ -1,0 +1,44 @@
+# Binary delta. `.text` of the `cost_fixture` example, built as
+#   cargo build -p kynos --release --example cost_fixture \
+#     --no-default-features --features openapi31[,<feature>]
+# Written by `mise run cost:record`; compared by `mise run cost:features`.
+#
+# The compared column is `delta`: the difference against the openapi31 build in
+# the same run, never the absolute. `performance.md#thresholds` is the reason --
+# relations outlive absolutes, and an absolute moves on a toolchain bump that
+# changed nothing about Kynos. `text` is recorded beside it as context and is
+# not compared.
+#
+# No ceiling is set here or anywhere else. `nfr.md#thresholds` sets one from a
+# first recorded measurement, reviewed as a change to that document; this file
+# is that first measurement, not the ceiling.
+#
+# toolchain: 1.97.1 (8bab26f4f 2026-07-14)
+# host: x86_64-unknown-linux-gnu
+# baseline: 865004 bytes
+feature	text	delta
+openapi31	865004	0
+assets	865020	16
+assets-fs	892220	27216
+cache	864956	-48
+compression	865164	160
+cookie	865004	0
+decimal-big	865004	0
+decimal-rust	865004	0
+docs	871036	6032
+form	865004	0
+http1	865004	0
+http2	865004	0
+json	865004	0
+macros	865004	0
+multipart	865132	128
+openapi32	940924	75920
+protobuf	865004	0
+test-util	862540	-2464
+time-chrono	865004	0
+time-jiff	865004	0
+trace	865004	0
+unchecked	892044	27040
+uuid	864972	-32
+yaml	871196	6192
+(all-features)	984060	119056

@@ -5,11 +5,11 @@ measurement a given shape of code owes. [`nfr.md`](nfr.md) records which of
 these run today; this document is about the method.
 
 Every section except [Rationale](#rationale) states a rule that binds
-implementation work. Two of the five kinds below run today, one of them only
-for part of what it covers, and the [taxonomy](#the-taxonomy)'s last column is
+implementation work. Four of the five kinds below run today, two of them only
+for part of what they cover, and the [taxonomy](#the-taxonomy)'s last column is
 where that is admitted rather than implied.
 
-The newer of the two has already earned the document: the routing path was
+The allocation count has already earned the document: the routing path was
 required to allocate nothing, had never been measured, and allocates seven
 times for a static match. [`nfr.md`](nfr.md#routing) carries the numbers and
 what they do and do not establish.
@@ -49,8 +49,8 @@ What each kind of measurement proves that no other kind does.
 | Allocation count | its own integration target | `cargo nextest`, over `alloc_counter` | that a path allocates a bounded number of times | in use, at [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) |
 | Size guard | [`tests/size.rs`](../crates/kynos/tests/size.rs), or a sibling `tests.rs` | `cargo nextest` | that a type or a future did not grow | in use for types; `planned` for futures |
 | Off-path proof | a sibling `tests.rs` | `cargo nextest` | that a feature is unreachable from the request path | `planned` |
-| Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | `needs-tooling`; `cargo-llvm-lines` is not installed |
-| Binary delta | a feature sweep | `.text` of a fixed fixture | what a feature costs a linked artifact | `planned` |
+| Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | in use, via `mise run cost:features` over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs); reports a trend and sets no ceiling, and sees the generics that fixture instantiates rather than the whole surface — so a feature that grows the dependency graph can shrink this number by sharing instantiations out of upstream rlibs, and a negative row is a relocation rather than a saving |
+| Binary delta | a feature sweep | `.text` of a fixed fixture | what a feature costs a linked artifact | in use, in the same sweep |
 
 **An allocation count needs its own target because a global allocator is
 process-wide.** Installing one in the library's unit-test binary would perturb
@@ -67,8 +67,12 @@ one keeps that invariant rather than bending it, and why the crate that
 installs no allocator on its own behalf was the one worth taking.
 
 The two sweep kinds are not tests. They build the same fixture at each feature
-and compare artifacts, which no test harness can express, so they are a task
-rather than a target and their baselines are committed files.
+and compare artifacts, which no test harness can express, so they are a task —
+`mise run cost:features`, over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs)
+— rather than a target, and their baselines are the committed
+[`cost/binary.tsv`](../crates/kynos/cost/binary.tsv) and
+[`cost/codegen.tsv`](../crates/kynos/cost/codegen.tsv), which
+`mise run cost:record` writes.
 
 ## The allocation
 

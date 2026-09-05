@@ -1,0 +1,47 @@
+# Codegen delta. Monomorphized LLVM IR for the `cost_fixture` example, counted
+# as
+#   cargo llvm-lines --package kynos --example cost_fixture --color never \
+#     --sort lines --no-default-features --features openapi31[,<feature>]
+# Written by `mise run cost:record`; compared by `mise run cost:features`.
+#
+# The dev profile, not `--release`, and that is not an oversight: `llvm-lines`
+# reads pre-link IR, and a fat-LTO release build deletes the monomorphizations
+# this exists to count.
+#
+# The compared columns are the two deltas, for `binary.tsv`'s reason. Per-
+# function attribution is deliberately not recorded here: monomorphized names
+# churn with every generic signature and a file of them would be a diff
+# generator rather than a baseline. Attribution is report-only, in
+# `cost-report.md`.
+#
+# No ceiling is set here or anywhere else -- see `nfr.md#thresholds`.
+#
+# toolchain: 1.97.1 (8bab26f4f 2026-07-14)
+# host: x86_64-unknown-linux-gnu
+# baseline: 50217 lines
+feature	lines	copies	delta_lines	delta_copies
+openapi31	50217	1590	0	0
+assets	48886	1542	-1331	-48
+assets-fs	50663	1602	446	12
+cache	50217	1590	0	0
+compression	50173	1587	-44	-3
+cookie	50217	1590	0	0
+decimal-big	50181	1587	-36	-3
+decimal-rust	50217	1590	0	0
+docs	51502	1635	1285	45
+form	50217	1590	0	0
+http1	50217	1590	0	0
+http2	50217	1590	0	0
+json	50217	1590	0	0
+macros	50217	1590	0	0
+multipart	50114	1584	-103	-6
+openapi32	50318	1590	101	0
+protobuf	50217	1590	0	0
+test-util	46235	1510	-3982	-80
+time-chrono	50114	1584	-103	-6
+time-jiff	50151	1586	-66	-4
+trace	50217	1590	0	0
+unchecked	51994	1650	1777	60
+uuid	50217	1590	0	0
+yaml	50189	1590	-28	0
+(all-features)	48649	1574	-1568	-16

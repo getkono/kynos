@@ -50,11 +50,11 @@ requirement with an allocation one and calling it a refiling would leave the
 latency unmeasured in both repositories while this column claimed otherwise.
 
 Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
-`trybuild`, `proptest`, `alloc_counter`, rustdoc with `missing_docs = "deny"`, and
-`cargo-semver-checks` — the last through both release-plz, at default features
-and fail-open, and `mise run semver:check`, at every feature. Not yet present:
-`cargo-public-api`, `cargo-fuzz`. `criterion` is not on this list and will not
-be: benchmarks live in `kynos-bench`.
+`trybuild`, `proptest`, `alloc_counter`, `cargo-llvm-lines`, rustdoc with
+`missing_docs = "deny"`, and `cargo-semver-checks` — the last through both
+release-plz, at default features and fail-open, and `mise run semver:check`, at
+every feature. Not yet present: `cargo-public-api`, `cargo-fuzz`. `criterion` is
+not on this list and will not be: benchmarks live in `kynos-bench`.
 
 ## Thresholds
 
@@ -498,6 +498,7 @@ open against a `kynos-otel` that may never be written.
 | dx | Every public item has a compiling doc example | Doctests already run via `mise run test:doc`; *presence* of an example per item is unenforced | `planned` |
 | compatibility | Public API item count is tracked as a budget | `cargo-public-api` count with a committed baseline | `needs-tooling` |
 | performance | The benchmark suite runs nightly with regression alerting | `kynos-bench`, so erosion surfaces as a trend rather than at release | `kynos-bench` |
+| performance | What each feature costs a linked artifact and in monomorphized IR | `mise run cost:features` over a fixed fixture at each feature, dedicated CI job, deltas against a committed baseline | `partial`: the trend goes to the job summary rather than failing the pull request, and no ceiling is set — one is set from a first recorded measurement, which is what the committed baselines are |
 
 **The re-export row is judged by where a path leads, not by a list of files.**
 A `pub use` of a foreign crate is a facade: `http/mod.rs` republishes
@@ -519,7 +520,7 @@ what they unblock:
 | `trybuild` | Compile-fail and UI rows in routing, extraction and macros | Already in `[workspace.dependencies]`; needs only a consumer |
 | `proptest` | IR round-tripping, schema projection, the conformance harness | |
 | `cargo-fuzz` | Extractor panic-freedom | Needs a committed corpus and a nightly job |
-| `cargo-llvm-lines` | The codegen-delta kind in [`performance.md`](performance.md#the-taxonomy), which is what a type-level surface owes | The only measurement in that document with no tool present. A feature sweep can report `.text` deltas without it; attributing them to a monomorphization needs it |
+| `cargo-llvm-lines` | The codegen-delta kind in [`performance.md`](performance.md#the-taxonomy), which is what a type-level surface owes | Closed. `mise run cost:features` runs it at each feature over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs), in the dev profile because a fat-LTO build deletes the monomorphizations this counts. It counts the example crate's own instantiations, so a feature that grows the dependency graph can shrink the number by sharing generics out of upstream rlibs — a negative row is a relocation, not a saving. It lists, for the features that moved, which monomorphizations that feature instantiates beyond the baseline — its composition in that run, not a per-function drift, which the baseline deliberately does not record. The `.text` half of the same sweep answers the binary-delta row beside it. Neither sets a ceiling — see [Thresholds](#thresholds) |
 | `cargo-semver-checks` | The `compatibility` rows in [Workspace](#workspace) | Closed. `mise run semver:check` runs it at `--all-features` on every pull request, against the last published version — which is what this row asked for once 0.1.0 reached crates.io. Release-plz still runs its own default-features, fail-open copy at release time, and that half is unchanged: the two are recorded separately above because they buy different things |
 
 `criterion` is intentionally absent from this list, and stays absent now that
