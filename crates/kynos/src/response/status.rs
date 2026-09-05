@@ -212,27 +212,22 @@ fn location_header(description: &str) -> kynos_openapi::Header {
 /// response over a body, which is the disagreement `assert_conformance`
 /// reports.
 ///
-/// So the representation is carried over by
-/// [`sole_representation`] — under one condition, which is that the body
-/// declares exactly one response at all. That one response is then the whole
-/// of what the body can put on the wire, so re-describing it under the
-/// wrapper's status promises what every value of the body sends.
-///
-/// A body declaring a second response leaves the wrapper empty exactly as
-/// before, and a bodiless second response is why the count is over responses
-/// rather than over the content-bearing ones: `{204: none, 409: content}`
-/// sends both under the wrapper's status, so declaring the 409's
+/// So the representation is carried over by [`sole_representation`], under one
+/// condition: that the body declares exactly one response at all. That response
+/// is the whole of what the body puts on the wire, so re-describing it under the
+/// wrapper's status promises what every value of the body sends. A second
+/// response leaves the wrapper empty as before, bodiless or not: `{204: none,
+/// 409: content}` sends both under the wrapper's status, so declaring the 409's
 /// representation would promise it for the values that send nothing.
 ///
-/// No body type Kynos ships reaches any of this. `Ranged<T>`,
-/// `RangedParts<T>` and `Delivery<M>` each declare a 200 — the first two
-/// because the representation they range over does, the third because it
-/// writes one itself — and `Result<T, E>` declares whatever its `Ok` half
-/// does, so every wrapper over them takes the re-keying arm above. What
-/// arrives here is a body naming its own statuses, which is what
-/// `#[derive(Reply)]` writes: one response per variant, and a 200 only where a
-/// variant asked for one. `Created<R>` for a single-variant `R` carrying a
-/// representation is the composition the carry-over is for.
+/// No body type Kynos ships reaches any of this: `Ranged<T>` and
+/// `RangedParts<T>` declare the 200 the representation they range over
+/// declares, `Delivery<M>` writes one itself, and `Result<T, E>` declares
+/// whatever its `Ok` half does, so every wrapper over them takes the re-keying
+/// arm above. What arrives here is a body naming its own statuses — one
+/// response per variant, and a 200 only where a variant asked for one, which is
+/// what `#[derive(Reply)]` writes. `Created<R>` over a single-variant `R`
+/// carrying a representation is the composition the carry-over is for.
 ///
 /// What is *not* addressed here is the leftover entry. A body's 409 stays in
 /// the set while the wrapper re-keys everything it sends to 201, so the
