@@ -1,6 +1,9 @@
+use serde_json::Value;
+
 use crate::{
     __private::{
         path::path_parameter_names_match,
+        problem,
         uri::{decode_path_value, encode_ext_value, endpoint_uri_with_path},
     },
     extract::params::path::{EncodePath, PathParams},
@@ -118,4 +121,63 @@ fn an_extended_parameter_value_decodes_back_to_what_it_encoded() {
             fixture
         );
     }
+}
+
+// --- What one status declares ------------------------------------------------
+//
+// The shapes a declared status takes -- the `allOf` and the `oneOf` -- are
+// asserted through the derive in `crates/kynos/tests/derives.rs`, which is
+// where a reader meets them. What is left here is what no declaration can
+// reach: two failures publishing one type, and a status whose failures gave no
+// summary at all.
+
+/// The `Problem` component, as `Registry::resolve` hands it over.
+fn component() -> kynos_openapi::Schema {
+    kynos_openapi::Schema::component("Problem")
+}
+
+/// The schema one status declares, as JSON.
+fn declared(status: u16, branches: &[(Option<&'static str>, Option<&'static str>)]) -> Value {
+    let response = problem::response(&component(), status, branches);
+    serde_json::to_value(response).expect("a response serializes")
+}
+
+/// A `oneOf` whose branches repeat a `const` is satisfied by two of them at
+/// once, which is exactly what `oneOf` forbids. Two failures publishing one
+/// type therefore declare one branch, keeping the summary declared first.
+#[test]
+fn two_failures_publishing_one_type_declare_one_branch() {
+    let response = declared(
+        404,
+        &[
+            (Some("https://errors.example.com/unknown"), Some("Unknown")),
+            (
+                Some("https://errors.example.com/unknown"),
+                Some("Also unknown"),
+            ),
+        ],
+    );
+    let schema = &response["content"]["application/problem+json"]["schema"];
+
+    assert_eq!(schema.get("oneOf"), None, "{schema}");
+    assert_eq!(
+        schema["allOf"][1]["properties"]["type"]["const"],
+        serde_json::json!("https://errors.example.com/unknown"),
+        "{schema}"
+    );
+    assert_eq!(response["description"], serde_json::json!("Unknown"));
+}
+
+/// With no summary anywhere the description falls back to the status code's own
+/// reason phrase, and to a sentence where the code has none.
+#[test]
+fn a_status_no_failure_summarized_describes_itself() {
+    assert_eq!(
+        declared(409, &[(Some("https://errors.example.com/taken"), None)])["description"],
+        serde_json::json!("Conflict")
+    );
+    assert_eq!(
+        declared(599, &[(None, None)])["description"],
+        serde_json::json!("the request failed")
+    );
 }

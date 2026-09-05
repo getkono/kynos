@@ -205,36 +205,30 @@ fn into_problem(failures: &[Failure]) -> TokenStream2 {
 /// The `responses` body: one response per distinct status.
 ///
 /// Every error response is a problem detail, so the schema is `Problem`'s and
-/// is registered once as a component rather than repeated per operation.
+/// is registered once as a component rather than repeated per operation. What
+/// each status adds to that component — the type URIs its failures publish,
+/// and the summaries they gave — is passed to
+/// `kynos::__private::problem::response`, which is where the shapes are built:
+/// `about:blank` is `Problem`'s own constant, and this crate cannot name it.
 fn responses(failures: &[Failure], statuses: &[u16]) -> TokenStream2 {
     let entries = statuses.iter().map(|status| {
-        // The first failure declaring a status names it. Several may share one
-        // — two 404s that differ in `detail` — and the description carries one
-        // response per status, so the first is the one a reader sees.
-        let description = failures
+        // Every failure declaring this status, in declaration order. Several
+        // may share one — two 404s that differ in the type they publish — and
+        // a response carries one schema, so all of them reach it rather than
+        // whichever was written first.
+        let branches = failures
             .iter()
-            .find(|failure| failure.status == *status)
-            .and_then(|failure| failure.title.clone().or_else(|| failure.doc.clone()))
-            .map_or_else(
-                || {
-                    quote! {
-                        ::kynos::http::StatusCode::from_u16(#status)
-                            .ok()
-                            .and_then(|status| status.canonical_reason())
-                            .unwrap_or("the request failed")
-                    }
-                },
-                |text| quote!(#text),
-            );
+            .filter(|failure| failure.status == *status)
+            .map(|failure| {
+                let uri = optional(failure.type_uri.as_deref());
+                let summary = optional(failure.title.as_deref().or(failure.doc.as_deref()));
+                quote!((#uri, #summary))
+            });
 
         quote! {
             responses = responses.with(
                 #status,
-                ::kynos::openapi::Response::with_content(
-                    #description,
-                    ::kynos::openapi::model::body::mime_names::APPLICATION_PROBLEM_JSON,
-                    ::kynos::openapi::MediaType::new(::core::clone::Clone::clone(&schema)),
-                ),
+                ::kynos::__private::problem::response(&schema, #status, &[#(#branches),*]),
             );
         }
     });
@@ -245,6 +239,15 @@ fn responses(failures: &[Failure], statuses: &[u16]) -> TokenStream2 {
         #(#entries)*
         responses
     }
+}
+
+/// A string the declaration may not have given, as the `Option` the helper
+/// reads it as.
+fn optional(value: Option<&str>) -> TokenStream2 {
+    value.map_or_else(
+        || quote!(::core::option::Option::None),
+        |value| quote!(::core::option::Option::Some(#value)),
+    )
 }
 
 /// The statuses in declaration order, without repeats.
