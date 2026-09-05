@@ -325,8 +325,7 @@ mod a_wrapper_declares_the_body_it_forwards {
 
     impl Responses for SoleRepresentationUnderDefault {
         fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-            kynos_openapi::Responses::new()
-                .with_default(json("whatever it answers with", registry))
+            kynos_openapi::Responses::new().with_default(json("whatever it answers with", registry))
         }
     }
 
