@@ -312,6 +312,15 @@ each element, the identifier that names it, and the sites allowed to name it.
 Every other file is on the request path by default, so a new site is a failing
 build until someone adds it to a row and says why a request cannot reach it.
 
+The table is not yet the whole grading. It holds the document model, the
+validators, the registry that mints their schemas, and the JSON Schema
+interpreter the README's claim is about. The emitters and `describe` are graded
+off-path and held by nothing here: the emitters live in `kynos-openapi`, outside
+the one scope the rule reads, and get a row when
+[#86](https://github.com/getkono/kynos/issues/86) widens it; `describe` is the
+site every row below allows, so a row naming it would be circular — what puts it
+off the path is that `Router::build` has returned before a service exists.
+
 | Element | Named by | Named only in | Why a request cannot reach it |
 | --- | --- | --- | --- |
 | the emitted document | `Document` | `router/describe.rs`, `router/docs/mod.rs`, `router/install.rs`, `router/mod.rs`, `router/service.rs`, `server/mod.rs`, `server/tls/document.rs`, `test/conformance.rs`, `unchecked.rs` | every site builds it, annotates it, or hands it back to the application. `docs::render` serializes it once while the router is built, so the endpoint serving a description holds finished bytes rather than a `Document`, and `Service` reads it back only through `Service::openapi` |
@@ -320,7 +329,10 @@ build until someone adds it to a row and says why a request cannot reach it.
 | the JSON Schema interpreter | `jsonschema` | `test/conformance.rs` | it is behind `test-util` and exists to check an observed response against the description. The request parser is the other projection of the same declaration and interprets no schema |
 
 Site paths are relative to `crates/kynos/src/`, which is the one scope
-[`containment.py`](../scripts/containment.py) counts a row against. A *Named by*
+[`containment.py`](../scripts/containment.py) counts a row against: a file
+outside it is neither an offender nor an allowance, so an element whose home is
+another crate is unheld until the scope moves, which is a change to the rule and
+not to a row. A *Named by*
 cell holds an identifier, or a path of them, and brace-expands the way the
 *Named only in* column does when one element has more than one spelling that
 reaches it: `Registry::{new,default}` holds both, because `Registry::new` is
@@ -362,7 +374,17 @@ other half is a witness fn:
 [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs)
 destructures `Dispatch`, `PathEntry` and `Served` exhaustively, so a field added
 to any of the three stops the crate compiling until someone writes it into the
-pattern. Nothing reaches an erased callee that those three do not carry.
+pattern. Nothing the dispatch table hands to an erased callee is something those
+three do not carry.
+
+That is narrower than "nothing reaches an erased callee", and deliberately.
+`Service` is above the table: it owns the `Document` and hands the request to a
+`dyn ErasedService` built where the document is in scope, so no field of the
+three types witnesses it. That seam is held by the document row instead —
+`router/describe.rs` and `router/service.rs` are two of the sites it allows, and
+the row's reason is the argument for both. The two halves meet there: a witness
+where a field carries something to an erased callee, a row where a file names
+something the witness cannot see.
 
 ## The pass-control rule
 
