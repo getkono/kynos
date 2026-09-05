@@ -91,8 +91,9 @@
 //!   fires on `n^2.0001` and on `n³`; it does not fire at exactly `n²` over a
 //!   linear cost, at any coefficient, over any span of sizes. Concretely: a
 //!   descent in `three_two_only_constructs` allocating one pointer per
-//!   (path, path) pair reads 474, 13 524 and 1 035 024 — 97% of the cost at a
-//!   thousand operations — and *both* decades satisfy the relation.
+//!   (path, path) pair reads 474, 13 524 and 1 035 024 — each recorded ceiling
+//!   plus n², which is how `NESTED_WALK` below derives them, and 97% of the
+//!   cost at a thousand operations — and *both* decades satisfy the relation.
 //!
 //!   **The per-size ceilings are what catch that case** (474 exceeds the 374
 //!   recorded at ten operations), and they are what catch the sub-quadratic
@@ -347,7 +348,33 @@ fn within_recorded(measure: &str, operations: usize, reading: usize, recorded: u
 /// Synthetic on purpose: no emitter in this crate produces it, and writing one
 /// that did would be a change to the code under measurement rather than a
 /// check on the measurement.
-const NESTED_WALK: [(usize, usize); 3] = [(10, 474), (100, 13_524), (1000, 1_035_024)];
+///
+/// **Derived from [`SIZES`] rather than transcribed beside it.** Each point is
+/// that size's recorded `emit_allocations` plus one allocation per (path, path)
+/// pair, which is what the module documentation adds up. Re-recording a
+/// ceiling is the deliberate edit the record above asks for, and a transcribed
+/// counterexample would survive one while describing a cost nothing records any
+/// more — which turns the control below into a check on two stale numbers
+/// agreeing with each other.
+const NESTED_WALK: [(usize, usize); SIZES.len()] = nested_walk();
+
+/// Builds [`NESTED_WALK`], as a `const fn` because a `const` initializer cannot
+/// hold the loop that reads [`SIZES`].
+const fn nested_walk() -> [(usize, usize); SIZES.len()] {
+    let mut walk = [(0, 0); SIZES.len()];
+    let mut index = 0;
+
+    while index < SIZES.len() {
+        let operations = SIZES[index].operations;
+        walk[index] = (
+            operations,
+            SIZES[index].emit_allocations + operations * operations,
+        );
+        index += 1;
+    }
+
+    walk
+}
 
 /// The claim this file is built around, held as a test rather than as prose:
 /// the walk stage two exists to reach satisfies the relation at every point.
@@ -373,24 +400,49 @@ fn the_relation_fails_on_a_cubic_series() {
     stays_sub_quadratic("a cubic cost", &[(10, 10), (100, 10_000)]);
 }
 
-/// The other half of the division of labour, at the point where it is
-/// tightest: 474 against the 374 recorded at ten operations.
+/// The other half of the division of labour, at the smallest size — where the
+/// added pair count is nearest the recorded ceiling and the rejection is
+/// therefore tightest.
 ///
 /// With the two above, this is the whole of what
 /// [`nfr.md`](../../../docs/nfr.md#document-model)'s row asserts — that the
 /// recorded ceilings and not the relation are what read a nested walk as a
 /// failure — held where a reader can run it.
+///
+/// **`catch_unwind` rather than `#[should_panic]`, because the attribute's
+/// `expected` is a string literal.** Writing the fragment there transcribes
+/// both the walk's reading and the record it is refused against, so
+/// re-recording a ceiling would fail this control while the file was correct,
+/// and the failure would point at the control rather than at the edit. Caught
+/// here instead, both halves of the fragment come from the same constants the
+/// live tests read. The caught panic still reaches the default hook, so a
+/// passing run prints one assertion message that nextest captures.
 #[test]
-#[should_panic(expected = "read 474 against a recorded 374")]
 fn a_recorded_ceiling_rejects_a_nested_walk() {
     let (operations, reading) = NESTED_WALK[0];
+    let recorded = SIZES[0].emit_allocations;
 
-    within_recorded(
-        "a nested walk's emit allocation count",
-        operations,
-        reading,
-        SIZES[0].emit_allocations,
-        A_CEILING_MOVES_BY_DECISION,
+    let panic = std::panic::catch_unwind(|| {
+        within_recorded(
+            "a nested walk's emit allocation count",
+            operations,
+            reading,
+            recorded,
+            A_CEILING_MOVES_BY_DECISION,
+        );
+    })
+    .expect_err("a reading above its recorded ceiling is refused");
+
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .expect("a formatted assertion panics with a String");
+    let expected = format!("read {reading} against a recorded {recorded}");
+
+    assert!(
+        message.contains(&expected),
+        "a nested walk at {operations} operations was refused with {message:?}, which does not \
+         name the reading and the record it was refused against ({expected:?})"
     );
 }
 
