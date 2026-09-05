@@ -20,12 +20,15 @@
 //! error here until whoever added it writes it into the pattern -- which is the
 //! moment to argue that a request may reach it, rather than a later moment
 //! nobody arrives at. The pattern is the assertion and the bodies are never
-//! called: `docs/testing.md#the-allocation` allocates a witness fn to a rule
-//! the compiler checks, and says such a rule does not owe running.
+//! called, which is why each carries `#[allow(dead_code)]` rather than a
+//! `#[test]` that would coerce it to a fn pointer and assert nothing:
+//! `docs/testing.md#the-allocation` allocates a witness fn to a rule the
+//! compiler checks, and says such a rule does not owe running.
 
 use super::{Dispatch, PathEntry, Served};
 
 /// Every field the whole route table carries.
+#[allow(dead_code)]
 fn dispatch_fields(dispatch: &Dispatch<()>) {
     let Dispatch {
         matcher,
@@ -51,6 +54,7 @@ fn dispatch_fields(dispatch: &Dispatch<()>) {
 }
 
 /// Every field one `paths` key carries into the request that matched it.
+#[allow(dead_code)]
 fn path_entry_fields(entry: &PathEntry<()>) {
     let PathEntry {
         template,
@@ -69,6 +73,7 @@ fn path_entry_fields(entry: &PathEntry<()>) {
 /// is exhaustive at baseline features as well as under `--all-features`: a
 /// field only one of the two builds checks is a field the other build would not
 /// notice arriving.
+#[allow(dead_code)]
 fn served_fields(served: &Served<()>) {
     let Served {
         method,
@@ -84,19 +89,4 @@ fn served_fields(served: &Served<()>) {
     let _ = unchecked_layers;
 
     let _ = (method, operation_id, terminal, interceptors, catch_panics);
-}
-
-#[test]
-fn the_dispatch_table_carries_only_the_fields_witnessed_here() {
-    let _: fn(&Dispatch<()>) = dispatch_fields;
-}
-
-#[test]
-fn a_matched_path_entry_carries_only_the_fields_witnessed_here() {
-    let _: fn(&PathEntry<()>) = path_entry_fields;
-}
-
-#[test]
-fn a_served_operation_carries_only_the_fields_witnessed_here() {
-    let _: fn(&Served<()>) = served_fields;
 }
