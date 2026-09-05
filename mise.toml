@@ -210,6 +210,18 @@ description = "Measure what each feature costs a linked artifact and monomorphiz
 # source. The comment on `[tools]` records what that costs: convco alone was
 # over four minutes on every CI job. A task-scoped pin is installed and
 # activated for the tasks that measure codegen and for no other.
+#
+# It is also the one pinned tool with no `mise.lock` entry, and that is what
+# mise does rather than something missed. Installing it -- by running this
+# task, or by `mise install` -- leaves the lockfile byte-identical, because
+# the `cargo:` backend builds from crates.io and there is no release artifact
+# whose URL and checksum a lockfile exists to hold. An explicit `mise lock`
+# does add a stanza for it, and that stanza carries a `version` and a
+# `backend` and nothing else: it would restate the pin on the line below and
+# hold nothing the pin does not. So the version here is the whole of the pin,
+# and a reader comparing this file against `mise.lock` is not looking at a
+# gap. The seven `[tools]` entries are locked because each of them resolves to
+# a downloaded file that a checksum can pin.
 tools = { "cargo:cargo-llvm-lines" = "0.4.48" }
 run = "python3 scripts/cost_features.py"
 
