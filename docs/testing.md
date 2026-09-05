@@ -323,7 +323,9 @@ Site paths are relative to `crates/kynos/src/`, which is the one scope
 [`containment.py`](../scripts/containment.py) counts a row against. A *Named by*
 cell holds an identifier, or a path of them; it may also come to hold a
 `feature = "…"` gate token, matched over the raw source rather than the stripped
-text, for a flag whose off-path proof is that nothing compiles it.
+text, for a flag whose off-path proof is that nothing compiles it. A cell the
+rule cannot read fails the build rather than passing quietly, so teaching it a
+new kind of token is part of writing the row that needs one.
 
 `Registry` — the type — is deliberately not a row. `Describe::request_body`
 takes `&mut Registry`, which puts the name in some eighty files by design, and a
@@ -332,10 +334,10 @@ claim and the true one.
 
 The two rules above are the ones this instantiates. **The set is named where the
 set has names**: a failure reports which file names an off-path element, not
-that two counts differ. **The declared side is read off disk**: `naming()`
-computes the real set from the source, so the only hand-written thing in a row
-is the reason — which is exactly what a reviewer is being asked for when a build
-fails here.
+that two counts differ. **The declared side is read off disk**: the rule
+computes the real set of naming files from the stripped source, so the only
+hand-written thing in a row is the reason — which is exactly what a reviewer is
+being asked for when a build fails here.
 
 The rule cannot see the whole path on its own. `Dispatch` hands every request to
 a trait object — `dyn ErasedTerminal`, `dyn ErasedInterceptor`, `dyn Observer`,

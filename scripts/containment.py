@@ -210,15 +210,29 @@ OFF_PATH_HEADER = "| Element | Named by | Named only in | Why a request cannot r
 OFF_PATH_SCOPE = "crates/kynos/src/"
 
 
-def token(cell):
-    """A regex for what one *Named by* cell names.
+# What a *Named by* cell may hold: an identifier, or a path of them. The cell is
+# prose that happens to be code, so the backticks around it are optional here
+# rather than load-bearing.
+NAMED_BY = re.compile(r"`?(\w+(?:\s*::\s*\w+)*)`?")
 
-    The cell is prose that happens to be code, so the backticks around it are
-    optional here rather than load-bearing. `Registry::new` is a path rather
-    than an identifier, and the source may write it spaced or wrapped, so each
-    `::` matches the whitespace a formatter is free to put around it.
+
+def token(cell):
+    """A regex for what one *Named by* cell names, or `None` if unreadable.
+
+    `None` loudly rather than a pattern that cannot match: a cell this function
+    guesses at compiles to an escaped literal nothing in Rust source contains,
+    and a rule that always passes reports that the elements are off the path
+    when nobody has checked. A new kind of token belongs in `NAMED_BY` and here,
+    not in a fallback.
+
+    `Registry::new` is a path rather than an identifier, and the source may
+    write it spaced or wrapped, so each `::` matches the whitespace a formatter
+    is free to put around it.
     """
-    segments = [re.escape(part.strip()) for part in cell.strip().strip("`").split("::")]
+    readable = NAMED_BY.fullmatch(cell.strip())
+    if readable is None:
+        return None
+    segments = [re.escape(part.strip()) for part in readable.group(1).split("::")]
     return re.compile(r"\b" + r"\s*::\s*".join(segments) + r"\b")
 
 
@@ -260,6 +274,15 @@ for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
     off_path_rows += 1
     allowance = sites(where)
     pattern = token(named_by)
+    if pattern is None:
+        failures.append(
+            f"testing.md's off-path table names {element} with {named_by}, "
+            "which this rule cannot read as an identifier or a path of them. "
+            "The row holds nothing until it can: teach the rule the token, or "
+            "write one it already knows"
+        )
+        continue
+
     offenders = sorted(
         path
         for path, text in FILES
