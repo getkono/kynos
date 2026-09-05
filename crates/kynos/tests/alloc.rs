@@ -1,4 +1,5 @@
-//! What the routing path allocates, counted.
+//! What one request costs: what the routing path allocates, what a chain in
+//! front of it adds, and how wide the future a driver holds is.
 //!
 //! The allocation-count kind in
 //! [`performance.md`](../../../docs/performance.md#the-taxonomy), and the
@@ -17,7 +18,8 @@
 //! global, which moved a replayed request's count on roughly one request in
 //! ten thousand — read, at the time, as state accumulating on the routing
 //! path. `work_on_another_thread_is_not_counted` is what holds the counter
-//! this file installs to being the other kind.
+//! this target installs — by including
+//! [`support/counting.rs`](support/counting.rs) — to being the other kind.
 //!
 //! One process per test is still the contract this target runs under — see
 //! [`hermeticity.rs`](hermeticity.rs) and `.config/nextest.toml` — but the
@@ -30,31 +32,39 @@
 //! [`nfr.md`](../../../docs/nfr.md#thresholds) requires of a first
 //! measurement — and this file is the characterization that row points at, so
 //! that closing the gap turns something red rather than nothing.
+//!
+//! The middleware half is recorded the same way and asks nothing of the same
+//! kind: a chain is a slice run head-first, so what is worth pinning is that a
+//! layer costs the same wherever it sits and that the future does not widen
+//! with the stack. Both are measured over an interceptor that allocates
+//! nothing, which is what leaves the excess as the chain's own machinery. The
+//! width guard shares this fixture rather than joining
+//! [`size.rs`](size.rs), which has no service to call.
 
 #![cfg(feature = "macros")]
 
-use std::future::Future;
-use std::pin::pin;
+use std::convert::Infallible;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::task::{Context, Poll, Waker};
 use std::thread;
 
-use alloc_counter::{AllocCounterSystem, count_alloc};
+use alloc_counter::count_alloc;
 use kynos::{
     Router,
     extract::params::path::Path,
-    http::{Method, Request, body::Body},
+    http::Request,
+    middleware::{Continued, Interceptor, Next},
     prelude::*,
     response::status::NoContent,
     router::service::Service,
 };
 
-/// Declared here rather than reached for: `alloc_counter` installs nothing on
-/// its own behalf, so this line is the whole of what puts the counter in this
-/// binary and in no other.
-#[global_allocator]
-static ALLOCATOR: AllocCounterSystem = AllocCounterSystem;
+/// The counter and the driver, shared so that a second counting target does
+/// not copy them. Including this module is what installs the allocator.
+#[path = "support/counting.rs"]
+mod counting;
+
+use counting::{counted, request};
 
 /// Every shape measured here, with what it costs today.
 ///
@@ -63,7 +73,8 @@ static ALLOCATOR: AllocCounterSystem = AllocCounterSystem;
 /// the attribution [`nfr.md`](../../../docs/nfr.md#routing) names as the next
 /// piece of work.
 const SHAPES: [(&str, usize); 3] = [
-    // A static match, with no parameter to capture.
+    // A static match, with no parameter to capture. Also the row `STACKED`
+    // and the depth-0 stack ceiling are read from.
     ("/ping", 7),
     // One path parameter, captured and deserialized.
     ("/users/7", 11),
@@ -89,61 +100,247 @@ async fn one(Path(path): Path<One>) -> NoContent {
     NoContent
 }
 
+/// The two operations, unmounted, so a stack can be put in front of them.
+fn router() -> Router<()> {
+    Router::<()>::new().mount(kynos::routes![ping, one])
+}
+
 fn service() -> Service<()> {
-    Router::<()>::new()
-        .mount(kynos::routes![ping, one])
+    router().build(()).expect("a describable router")
+}
+
+/// An interceptor that forwards and does nothing else, so that what a stack
+/// costs is the chain's own machinery rather than the work a layer does.
+///
+/// Every associated type is the empty declaration —
+/// [`Reads`](Interceptor::Reads) and [`Adds`](Interceptor::Adds) name no
+/// header and [`Short`](Interceptor::Short) is
+/// [`Infallible`](std::convert::Infallible) — which is also what lets eight
+/// instances of *one* type mount: `CompatibleWith` compares `Adds::NAMES` and
+/// `Short::STATUSES` for disjointness, and two empty sets are disjoint.
+struct Transparent;
+
+impl<C: Sync + 'static> Interceptor<C> for Transparent {
+    type Reads = ();
+    type Adds = ();
+    type Short = Infallible;
+
+    async fn intercept(
+        &self,
+        request: Request,
+        reads: (),
+        context: &C,
+        next: Next<'_, C>,
+    ) -> Result<Continued<()>, Infallible> {
+        let _ = (reads, context);
+        Ok(next.run(request).await)
+    }
+}
+
+/// Four layers. Written out rather than looped because `intercept` returns a
+/// *different* `Router` type each time it is called, so a loop has no type to
+/// iterate at; `build` is what erases the stack back to one `Service<()>`.
+fn depth_4() -> Service<()> {
+    router()
+        .intercept(Transparent)
+        .intercept(Transparent)
+        .intercept(Transparent)
+        .intercept(Transparent)
         .build(())
         .expect("a describable router")
 }
 
-/// Drives one request and reports the heap operations dispatch made.
-///
-/// Fresh allocations and reallocations both, so that growing a buffer cannot
-/// pass as free. The request is built before the region opens, because parsing
-/// a target and boxing a body are the caller's cost rather than the router's,
-/// and the response is dropped after the region closes for the same reason.
-///
-/// **The future is polled directly rather than driven by a runtime, and that is
-/// what makes the number mean the routing path.** What the measuring thread
-/// allocates while the region is open is counted, so an executor driving the
-/// future on that thread is counted with it. There is nothing to schedule here:
-/// the fixture touches no socket, timer or task, so the future is ready on its
-/// first poll and the assertion below says so rather than assuming it.
-///
-/// A runtime was once blamed for the count that moved, and `#[tokio::test]` was
-/// removed on that reading. Its worker threads were an instance of the cause
-/// rather than the cause: the counter was global, so any thread's work landed
-/// in the region. Polling by hand is kept because it is right on its own terms,
-/// not because it was the fix.
-///
-/// There is no warm-up request. `Router::build` initialises eagerly, so the
-/// first request through a service costs exactly what the thousandth does —
-/// and a warm-up here would be the one construct able to hide a one-time cost
-/// introduced later.
-fn counted(service: &Service<()>, target: &str) -> usize {
-    let mut request = Request::new(Body::empty());
-    *request.method_mut() = Method::GET;
-    *request.uri_mut() = target.parse().expect("a usable request target");
+/// Eight, for the same reason.
+fn depth_8() -> Service<()> {
+    router()
+        .intercept(Transparent)
+        .intercept(Transparent)
+        .intercept(Transparent)
+        .intercept(Transparent)
+        .intercept(Transparent)
+        .intercept(Transparent)
+        .intercept(Transparent)
+        .intercept(Transparent)
+        .build(())
+        .expect("a describable router")
+}
 
-    let ((allocations, reallocations, _), polled) = count_alloc(|| {
-        let mut future = pin!(service.call(request));
-        future
-            .as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-    });
-    let allocations = allocations + reallocations;
+/// One row of the table below: a depth, the service that mounts that many
+/// layers, and what a request through it costs.
+///
+/// A named row rather than the tuple written inline, which Clippy reads as a
+/// complex type — and it is one, since the builder cannot be a value: each
+/// `intercept` call returns a different `Router` type, so the depths reach the
+/// table as functions.
+type Stack = (usize, fn() -> Service<()>, usize);
 
-    let Poll::Ready(response) = polled else {
-        panic!(
-            "dispatch of {target} was not ready on its first poll; this fixture \
-             reaches no socket, timer or task, so a pending future means \
-             something on the routing path now needs a runtime — and the count \
-             above stopped measuring the whole of one request"
+/// The target every stack is measured against: the static match, so the excess
+/// over depth 0 is the stack's alone, with no capture deserialized on the way.
+///
+/// Read out of [`SHAPES`] rather than written again, so that the two tables
+/// cannot disagree about which shape is stacked.
+const STACKED: &str = SHAPES[0].0;
+
+/// What that target costs with no stack in front of it, from the same row: the
+/// depth-0 ceiling below *is* the static match's, so re-measuring one moves
+/// both.
+const STACKED_ALONE: usize = SHAPES[0].1;
+
+/// Every stack depth measured here, with what a request through it costs
+/// today.
+const STACKS: [Stack; 3] = [
+    // No stack at all: what the same target costs in `SHAPES`, not a second
+    // recording of it.
+    (0, service, STACKED_ALONE),
+    (4, depth_4, 11),
+    (8, depth_8, 15),
+];
+
+/// What one layer adds, transcribed from the ceilings above: fifteen at depth
+/// eight less seven at depth zero, over eight layers.
+const PER_LAYER: usize = 1;
+
+/// How wide the future a driver holds is allowed to be, measured rather than
+/// chosen, and the same at every stack depth.
+///
+/// Read at both feature sets this target is built at, by setting the ceiling
+/// to zero and taking the width out of the failure: 280 bytes at baseline
+/// (`cargo nextest run -p kynos --test alloc`) and 280 with `--all-features`.
+/// Only `<=` is asserted per build, so this is where the two readings are
+/// recorded — an equality would fail on the first build whose feature set
+/// makes the future narrower, which is not a regression.
+const FUTURE_BYTES: usize = 280;
+
+/// The record, for the middleware half: what one request costs at each depth,
+/// over interceptors that allocate nothing of their own.
+///
+/// Seven allocations at depth 0, eleven at depth 4 and fifteen at depth 8 —
+/// one heap allocation per layer, on top of the seven the routing path costs
+/// with no stack in front of it. That one is the object-safe form of
+/// `Interceptor` boxing the future it returns, which is the price of a
+/// heterogeneous chain fitting in one slice.
+///
+/// Ceilings rather than targets, and measured rather than chosen, as
+/// [`nfr.md`](../../../docs/nfr.md#thresholds) requires of a first
+/// measurement. The relation these hold is
+/// `a_layer_costs_the_same_wherever_it_sits`, which is what survives a change
+/// to any of them.
+#[test]
+fn an_interceptor_stack_allocates_what_is_recorded_here() {
+    for (depth, build, ceiling) in STACKS {
+        let counted = counted(&build(), STACKED);
+        assert!(
+            counted <= ceiling,
+            "a request through {depth} no-op interceptor(s) allocated \
+             {counted} times against a recorded {ceiling}; raising a ceiling is \
+             a change to docs/nfr.md, and lowering one is what making a layer \
+             cheaper looks like"
         );
-    };
+    }
+}
 
-    drop(response);
-    allocations
+/// The relation the stack ceilings are there to hold, and the one that survives
+/// a change to any of them: a layer costs the same wherever it sits.
+///
+/// `Next::run` takes the head of a slice and awaits it rather than nesting one
+/// chain inside another, so the eighth layer is no more expensive than the
+/// first. Stated as `d8 + d0 == 2 * d4`, which is `d8 - d4 == d4 - d0` written
+/// without a subtraction that could underflow before its message is read.
+///
+/// The control is the request that matched no route: dispatch answers it
+/// before a chain exists to run, so eight layers cost it nothing. Without it a
+/// count that grew with depth everywhere — the fixture leaking rather than the
+/// chain costing — would read as the same result.
+#[test]
+fn a_layer_costs_the_same_wherever_it_sits() {
+    let [(_, empty, _), (_, four, _), (deepest, eight, _)] = STACKS;
+    let (d0, d4, d8) = (
+        counted(&empty(), STACKED),
+        counted(&four(), STACKED),
+        counted(&eight(), STACKED),
+    );
+
+    assert!(
+        d0 <= d4 && d4 <= d8,
+        "a longer chain cost less than a shorter one (d0 = {d0}, d4 = {d4}, \
+         d8 = {d8}); a saving that appears only as depth grows is a broken \
+         measurement rather than a cheaper layer"
+    );
+    assert_eq!(
+        d8 + d0,
+        2 * d4,
+        "the second four layers added {} allocation(s) where the first four \
+         added {} (d0 = {d0}, d4 = {d4}, d8 = {d8}); a layer whose cost \
+         depends on its depth means a chain nests rather than iterating a \
+         slice",
+        d8 - d4,
+        d4 - d0
+    );
+    assert_eq!(
+        d8 - d0,
+        deepest * PER_LAYER,
+        "{deepest} layers added {} allocation(s) against a recorded \
+         {PER_LAYER} per layer; this is the number docs/nfr.md bills a layer \
+         at",
+        d8 - d0
+    );
+
+    let (missed_0, missed_8) = (counted(&empty(), "/nope"), counted(&eight(), "/nope"));
+    assert_eq!(
+        missed_0, missed_8,
+        "a request matching no route cost {missed_0} with no stack and \
+         {missed_8} behind eight layers; nothing that never reaches a chain \
+         should notice how long one is"
+    );
+}
+
+/// The other half of what a layer costs: the width of the future a driver
+/// holds, and that a chain in front of it adds nothing to that width.
+///
+/// [`Service::call`] is an `async fn` over an erased dispatcher, so the stack
+/// is gone from the type before any driver sees a future: all three depths
+/// produce one future type, which is the only reason the array below compiles.
+/// **That compile is the depth-invariance assertion.** The equality after it
+/// cannot fail while the array stands, and is written out anyway because a
+/// change that made the future carry its stack would have to delete the array
+/// first — and a reader arriving at three separate `size_of_val` calls should
+/// be able to see what was given up.
+///
+/// The ceiling is the half that can fail, and it is a ratchet rather than a
+/// target: a future that widened would cost every in-flight request on the
+/// server, which no allocation count above can see. 280 bytes at every depth,
+/// and 280 at each of the two feature sets this target is built at — see
+/// [`FUTURE_BYTES`] for the readings. That is also the figure the request
+/// for this guard named, but it is recorded here because it was measured — a
+/// number carried over unmeasured would have pinned whatever it was guessed
+/// at, and been indistinguishable from this one when it was wrong.
+#[test]
+fn a_driver_holds_one_future_whatever_the_chain_is() {
+    let [(_, empty, _), (_, four, _), (_, eight, _)] = STACKS;
+    let (at_0, at_4, at_8) = (empty(), four(), eight());
+
+    // One array, so the three futures are one type or this does not build.
+    let futures = [
+        at_0.call(request(STACKED)),
+        at_4.call(request(STACKED)),
+        at_8.call(request(STACKED)),
+    ];
+    let [w0, w4, w8] = futures.map(|future| size_of_val(&future));
+
+    assert_eq!(
+        w4, w0,
+        "four layers widened the dispatch future from {w0} to {w4} bytes"
+    );
+    assert_eq!(
+        w8, w0,
+        "eight layers widened the dispatch future from {w0} to {w8} bytes"
+    );
+    assert!(
+        w0 <= FUTURE_BYTES,
+        "the dispatch future is {w0} bytes against a recorded {FUTURE_BYTES}; \
+         every request in flight carries one, so raising this ceiling is a \
+         change to docs/nfr.md"
+    );
 }
 
 /// The instrument's own invariant, and the one every number below rests on: a
@@ -244,32 +441,51 @@ fn a_capture_is_what_a_path_parameter_costs() {
 /// be state accumulating on the routing path, which no single-request
 /// measurement can see.
 ///
-/// Every shape is replayed, not only the parameterised one: a table that
-/// records three numbers and replays one would leave two of them resting on a
-/// single reading.
+/// Every shape and every stack depth is replayed, not only the parameterised
+/// shape: a pair of tables that record six numbers and replay one would leave
+/// five of them resting on a single reading. A chain is where the question is
+/// sharpest — every layer holds an `Arc` and every call boxes a future, so a
+/// clone that outlived its request would show here and nowhere else.
 #[test]
 fn a_replayed_request_costs_what_the_first_one_did() {
     let service = service();
 
     for (target, _) in SHAPES {
-        let first = counted(&service, target);
-        let mut moved = Vec::new();
+        replayed(&service, target, target);
+    }
 
-        for index in 0..10_000 {
-            let counted = counted(&service, target);
-            if counted != first {
-                moved.push((index, counted));
-            }
-        }
-
-        assert!(
-            moved.is_empty(),
-            "{target} allocated {first} times on one request and differently \
-             on {} of the next ten thousand, starting at {:?}; a count that \
-             moves between identical requests is state accumulating on the \
-             routing path",
-            moved.len(),
-            moved.first()
+    for (depth, build, _) in STACKS {
+        replayed(
+            &build(),
+            STACKED,
+            &format!("{STACKED} behind {depth} no-op interceptor(s)"),
         );
     }
+}
+
+/// Ten thousand identical requests, against what the first one cost.
+///
+/// `described` names the case in the failure rather than being derived from
+/// `target`, because the same target is replayed at three stack depths and a
+/// message naming only the path would not say which one moved. Both are built
+/// outside every counted region, so neither costs the measurement anything.
+fn replayed(service: &Service<()>, target: &str, described: &str) {
+    let first = counted(service, target);
+    let mut moved = Vec::new();
+
+    for index in 0..10_000 {
+        let counted = counted(service, target);
+        if counted != first {
+            moved.push((index, counted));
+        }
+    }
+
+    assert!(
+        moved.is_empty(),
+        "{described} allocated {first} times on one request and differently \
+         on {} of the next ten thousand, starting at {:?}; a count that moves \
+         between identical requests is state accumulating on the routing path",
+        moved.len(),
+        moved.first()
+    );
 }
