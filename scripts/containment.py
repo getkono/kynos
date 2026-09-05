@@ -293,12 +293,28 @@ for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
         )
         continue
 
-    offenders = sorted(
+    named = sorted(
         path
         for path, text in FILES
-        if path.startswith(OFF_PATH_SCOPE) and path not in allowance and pattern.search(text)
+        if path.startswith(OFF_PATH_SCOPE) and pattern.search(text)
     )
-    if offenders:
+    # A readable cell that matches nothing is the same failure as an unreadable
+    # one, arriving later: a renamed element, a typo, or a home that has moved
+    # out of the scope. The row then reports that a request cannot reach an
+    # element no file names, having compared the source against a token nothing
+    # in it contains. Stale *sites* are tolerated, deliberately -- subset
+    # semantics, as above -- but a stale *token* holds nothing at all.
+    if not named:
+        failures.append(
+            f"testing.md's off-path table names {element} with {named_by}, and "
+            f"no file under {OFF_PATH_SCOPE} names it. The row holds nothing: "
+            "either the element was renamed and the cell was not, or it now "
+            "lives outside the one scope this rule reads, which is a change to "
+            "that scope rather than to the row"
+        )
+        continue
+
+    if offenders := [path for path in named if path not in allowance]:
         failures.append(
             f"{element} is off the request path, and {named_by} is named at a "
             "site testing.md's off-path table does not allow. The row says a "

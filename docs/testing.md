@@ -329,7 +329,9 @@ mint a registry anywhere. A cell may also come to hold a `feature = "…"` gate
 token, matched over the raw source rather than the stripped text, for a flag
 whose off-path proof is that nothing compiles it. A cell the rule cannot read
 fails the build rather than passing quietly, so teaching it a new kind of token
-is part of writing the row that needs one.
+is part of writing the row that needs one — and so does a cell it can read that
+names no file in the scope at all, which is a row holding nothing rather than an
+element nothing reaches.
 
 `Registry` — the type — is deliberately not a row. `Describe::request_body`
 takes `&mut Registry`, which puts the name in some eighty files by design, and a
