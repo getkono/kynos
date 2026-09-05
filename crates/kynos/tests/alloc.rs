@@ -164,12 +164,21 @@ fn depth_8() -> Service<()> {
         .expect("a describable router")
 }
 
+/// One row of the table below: a depth, the service that mounts that many
+/// layers, and what a request through it costs.
+///
+/// A named row rather than the tuple written inline, which Clippy reads as a
+/// complex type — and it is one, since the builder cannot be a value: each
+/// `intercept` call returns a different `Router` type, so the depths reach the
+/// table as functions.
+type Stack = (usize, fn() -> Service<()>, usize);
+
 /// Every stack depth measured here, with what a request through it costs
 /// today.
 ///
 /// The target is the static match, so the excess over depth 0 is the stack's
 /// alone: no capture is deserialized on the way.
-const STACKS: [(usize, fn() -> Service<()>, usize); 3] = [
+const STACKS: [Stack; 3] = [
     // No stack at all: the same seven a static match costs in `SHAPES`.
     (0, service, 7),
     (4, depth_4, 11),
