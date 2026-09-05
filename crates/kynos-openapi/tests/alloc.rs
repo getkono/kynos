@@ -193,7 +193,8 @@ const REPEATS: usize = 8;
 /// whole target green while measuring ten documents of one operation. The count
 /// is taken over the operations rather than over `paths.items`, because the
 /// operation count is the dimension the requirement scales in and a Path Item
-/// can hold up to nine of them.
+/// holds one per method — a count of entries would be the same number here only
+/// for as long as the fixture keeps one operation per path.
 fn document(operations: usize) -> Document {
     let mut document = Document::new(SpecVersion::V3_1, Info::new("Fixture", "1.0.0"));
 
