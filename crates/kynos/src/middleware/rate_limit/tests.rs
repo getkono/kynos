@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use super::{
     decision::{QuotaPolicy, QuotaUnit, ServiceLimit},
@@ -439,4 +439,103 @@ async fn an_unnamed_refusal_type_declares_no_example_and_sends_about_blank() {
     .await;
     assert_eq!(declared, None);
     assert_eq!(sent, "about:blank");
+}
+
+// --- The implementations a refusal writes out by hand ----------------------
+
+/// Witnesses that a refusal has all four implementations, whatever names its
+/// problem type.
+///
+/// The bound is the whole point of writing them out: `Throttled` derives
+/// nothing, so a `#[derive]` on `RateLimited` would bound `T` and refuse this
+/// call.
+fn assert_refusal_traits<T: Clone + fmt::Debug + Eq>() {}
+
+/// A refusal survives a clone, in both spellings.
+///
+/// Hand-written rather than derived, so nothing regenerates them when a field
+/// is added: `Clone` that forgot `limit` would hand back a refusal reporting a
+/// ceiling of zero, and no compiler diagnostic would say so.
+#[test]
+fn a_cloned_refusal_carries_everything_the_original_did() {
+    assert_refusal_traits::<RateLimited<Throttled>>();
+    assert_refusal_traits::<RateLimitedFields<Throttled>>();
+
+    let refusal = RateLimited::<Throttled>::new(Duration::from_secs(30), 100);
+    assert_eq!(refusal.clone(), refusal);
+
+    let fields = RateLimitedFields::<Throttled>::new(Duration::from_secs(30), limits(), policies());
+    assert_eq!(fields.clone(), fields);
+}
+
+/// Every field a refusal carries is a field its equality reads.
+///
+/// One case per field rather than one for the struct: an `eq` that compares
+/// three of four members agrees with itself on every value that differs only in
+/// the fourth, so a draw would pass while the omission stood.
+#[test]
+fn two_refusals_differing_in_one_field_are_unequal() {
+    let refusal = RateLimited::<Throttled>::new(Duration::from_secs(30), 100);
+
+    assert_ne!(
+        refusal,
+        RateLimited::new(Duration::from_secs(31), 100),
+        "retry_after is not compared"
+    );
+    assert_ne!(
+        refusal,
+        RateLimited::new(Duration::from_secs(30), 101),
+        "limit is not compared"
+    );
+
+    let fields = RateLimitedFields::<Throttled>::new(Duration::from_secs(30), limits(), policies());
+
+    assert_ne!(
+        fields,
+        RateLimitedFields::new(Duration::from_secs(31), limits(), policies()),
+        "retry_after is not compared"
+    );
+    assert_ne!(
+        fields,
+        RateLimitedFields::new(Duration::from_secs(30), Vec::new(), policies()),
+        "limits is not compared"
+    );
+    assert_ne!(
+        fields,
+        RateLimitedFields::new(Duration::from_secs(30), limits(), Vec::new()),
+        "policies is not compared"
+    );
+}
+
+/// Every field a refusal carries is a field its `Debug` prints.
+///
+/// A refusal is what an operator reads out of a log when a client complains it
+/// was throttled, and a member the formatter skips is one that is simply not
+/// there. The marker is deliberately absent: it is a name rather than a value,
+/// and `PhantomData<fn() -> T>` prints nothing an operator can use.
+#[test]
+fn a_refusal_prints_every_field_it_carries() {
+    assert_eq!(
+        format!(
+            "{:?}",
+            RateLimited::<Throttled>::new(Duration::from_secs(30), 100)
+        ),
+        "RateLimited { retry_after: 30s, limit: 100 }"
+    );
+
+    let printed = format!(
+        "{:?}",
+        RateLimitedFields::<Throttled>::new(Duration::from_secs(30), limits(), policies())
+    );
+
+    assert!(printed.starts_with("RateLimitedFields {"), "{printed}");
+    assert!(printed.contains("retry_after: 30s"), "{printed}");
+    assert!(
+        printed.contains(r#"limits: [ServiceLimit { name: "burst""#),
+        "{printed}"
+    );
+    assert!(
+        printed.contains(r#"policies: [QuotaPolicy { name: "burst""#),
+        "{printed}"
+    );
 }
