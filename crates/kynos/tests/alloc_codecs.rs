@@ -110,6 +110,52 @@ mod harness {
     ))]
     pub(crate) type Measured = (&'static str, fn() -> Request, StatusCode, usize);
 
+    /// The five operations a body codec's module measures, named rather than
+    /// ordered.
+    ///
+    /// The shared bodies below read the rows they need out of one of these. A
+    /// `[Measured; 5]` read by position would do as much and would let a table
+    /// list its transport floor second by accident; naming the rows is what
+    /// makes "the operation this codec's delta is taken against" a thing the
+    /// compiler checks rather than a convention four modules keep.
+    #[cfg(any(
+        feature = "json",
+        feature = "form",
+        feature = "multipart",
+        feature = "protobuf"
+    ))]
+    pub(crate) struct Table {
+        /// Dispatch, with no body extractor at all.
+        pub(crate) bodyless_floor: Measured,
+        /// The same octets the codec is handed, read and dropped undecoded.
+        pub(crate) transport_floor: Measured,
+        /// A status, and no body to write.
+        pub(crate) responding_floor: Measured,
+        /// The operation that names the codec on the way in.
+        pub(crate) decoding: Measured,
+        /// The operation that names it on the way out.
+        pub(crate) encoding: Measured,
+    }
+
+    #[cfg(any(
+        feature = "json",
+        feature = "form",
+        feature = "multipart",
+        feature = "protobuf"
+    ))]
+    impl Table {
+        /// Every row, in the order a failure should read them.
+        fn rows(&self) -> [Measured; 5] {
+            [
+                self.bodyless_floor,
+                self.transport_floor,
+                self.responding_floor,
+                self.decoding,
+                self.encoding,
+            ]
+        }
+    }
+
     /// Builds one request, always outside a counted region.
     ///
     /// Parsing a target, boxing a body and interning a field value are the
@@ -208,17 +254,16 @@ mod harness {
     /// `Content-Encoding`, and every reading the `compression` module takes has
     /// one to assert. A build carrying `compression` alone would otherwise
     /// compile a function nothing calls.
+    ///
+    /// Private, because the four measurements a body codec takes are the four
+    /// below and no module reaches past them.
     #[cfg(any(
         feature = "json",
         feature = "form",
         feature = "multipart",
         feature = "protobuf"
     ))]
-    pub(crate) fn counted<C>(
-        service: &Service<C>,
-        request: Request,
-        expected: StatusCode,
-    ) -> usize {
+    fn counted<C>(service: &Service<C>, request: Request, expected: StatusCode) -> usize {
         let (allocations, response) = driven(service, request, expected);
 
         drop(response);
@@ -257,6 +302,150 @@ mod harness {
         drop(response);
         allocations
     }
+
+    /// The record: what each operation of one codec's service costs today.
+    ///
+    /// Every row is measured before anything is asserted, so a failure reports
+    /// the whole table rather than the first row over its ceiling — which is
+    /// also what makes reading a fresh set of numbers one run rather than five.
+    ///
+    /// One body here rather than one per module. The four body codecs assert
+    /// the same four properties of four different tables, and what
+    /// [`testing.md`](../../../docs/testing.md#the-allocation) says keeps a
+    /// suite affordable is that the same property is not asserted several times
+    /// over. What stays with each codec is what differs between them: its
+    /// service, its table, and the prose that reads the numbers in it.
+    #[cfg(any(
+        feature = "json",
+        feature = "form",
+        feature = "multipart",
+        feature = "protobuf"
+    ))]
+    pub(crate) fn record<C>(service: &Service<C>, table: &Table) {
+        let mut over = Vec::new();
+
+        for (operation, build, expected, ceiling) in table.rows() {
+            let counted = counted(service, build(), expected);
+            if counted > ceiling {
+                over.push(format!(
+                    "{operation} allocated {counted}, recorded {ceiling}"
+                ));
+            }
+        }
+
+        assert!(
+            over.is_empty(),
+            "{over:?}; raising a ceiling is a change to docs/nfr.md, and \
+             lowering one is what a cheaper codec looks like"
+        );
+    }
+
+    /// The leak check: whatever an operation costs, the `replays`th request
+    /// costs the same. A count that climbed would be state accumulating in the
+    /// codec, which no single-request measurement can see.
+    ///
+    /// Every operation is replayed rather than the codec's alone: a table of
+    /// five numbers that replayed one would leave four resting on a single
+    /// reading.
+    #[cfg(any(
+        feature = "json",
+        feature = "form",
+        feature = "multipart",
+        feature = "protobuf"
+    ))]
+    pub(crate) fn replay<C>(service: &Service<C>, table: &Table, replays: usize) {
+        for (operation, build, expected, _) in table.rows() {
+            let first = counted(service, build(), expected);
+            let mut moved = Vec::new();
+
+            for index in 0..replays {
+                let counted = counted(service, build(), expected);
+                if counted != first {
+                    moved.push((index, counted));
+                }
+            }
+
+            assert!(
+                moved.is_empty(),
+                "{operation} allocated {first} times on one request and \
+                 differently on {} of the next {replays}, starting at {:?}; a \
+                 count that moves between identical requests is state \
+                 accumulating in the codec",
+                moved.len(),
+                moved.first()
+            );
+        }
+    }
+
+    /// The relation the request-direction ceilings are there to hold, and the
+    /// one that survives a change to any of them.
+    ///
+    /// Both halves are needed. Costing more than the bodyless floor says the
+    /// operation read a body at all; costing at least what reading the same
+    /// octets undecoded costs says the codec ran on top of that read rather
+    /// than instead of it.
+    ///
+    /// The three counts are handed back, in the order they were taken, so that
+    /// a codec whose currency is owned values can assert the strict form of the
+    /// second half on these readings rather than on three more of its own.
+    #[cfg(any(
+        feature = "json",
+        feature = "form",
+        feature = "multipart",
+        feature = "protobuf"
+    ))]
+    pub(crate) fn decoding_costs_more_than_the_read<C>(
+        service: &Service<C>,
+        table: &Table,
+    ) -> (usize, usize, usize) {
+        let (bodyless_operation, bodyless_request, bodyless_status, _) = table.bodyless_floor;
+        let (transport_operation, transport_request, transport_status, _) = table.transport_floor;
+        let (decoding_operation, decoding_request, decoding_status, _) = table.decoding;
+
+        let bodyless = counted(service, bodyless_request(), bodyless_status);
+        let transport = counted(service, transport_request(), transport_status);
+        let decoding = counted(service, decoding_request(), decoding_status);
+
+        assert!(
+            decoding > bodyless,
+            "{decoding_operation} allocated {decoding}, where the bodyless \
+             operation beside it ({bodyless_operation}) allocated {bodyless}; \
+             an operation that decodes a body should cost more than one that \
+             reads none"
+        );
+        assert!(
+            decoding >= transport,
+            "{decoding_operation} allocated {decoding}, where reading the same \
+             octets undecoded ({transport_operation}) allocated {transport}; a \
+             codec cheaper than the transport under it is a codec that did not \
+             run"
+        );
+
+        (bodyless, transport, decoding)
+    }
+
+    /// The responding half of the same relation.
+    #[cfg(any(
+        feature = "json",
+        feature = "form",
+        feature = "multipart",
+        feature = "protobuf"
+    ))]
+    pub(crate) fn writing_costs_more_than_the_status<C>(service: &Service<C>, table: &Table) {
+        let (floor_operation, floor_request, floor_status, _) = table.responding_floor;
+        let (encoding_operation, encoding_request, encoding_status, _) = table.encoding;
+
+        let floor = counted(service, floor_request(), floor_status);
+        let encoding = counted(service, encoding_request(), encoding_status);
+
+        assert!(
+            encoding > floor,
+            "{encoding_operation} allocated {encoding}, where the bodyless \
+             response beside it ({floor_operation}) allocated {floor}; an \
+             operation that writes a body should cost more than one that writes \
+             none"
+        );
+    }
 }
 
 /// What `application/json` costs the operations that name it, both directions.
@@ -269,7 +458,7 @@ mod json {
         router::service::Service,
     };
 
-    use crate::harness::{Measured, counted, request};
+    use crate::harness::{self, Table, request};
 
     /// The payload both directions carry.
     ///
@@ -376,127 +565,51 @@ mod json {
     /// floor in it would have reported that one allocation as JSON's price.
     /// Writing is the expensive direction: `serde_json` builds the octets in a
     /// buffer of its own before a status is committed.
-    const RECORDED: [Measured; 5] = [
-        ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
-        (
+    const RECORDED: Table = Table {
+        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
+        transport_floor: (
             "POST /floor/bytes",
             transport_request,
             StatusCode::NO_CONTENT,
             8,
         ),
-        (
+        responding_floor: (
             "GET /floor/out",
             responding_floor_request,
             StatusCode::NO_CONTENT,
             7,
         ),
-        ("POST /json", decode_request, StatusCode::NO_CONTENT, 8),
-        ("GET /json/out", encode_request, StatusCode::OK, 12),
-    ];
+        decoding: ("POST /json", decode_request, StatusCode::NO_CONTENT, 8),
+        encoding: ("GET /json/out", encode_request, StatusCode::OK, 12),
+    };
 
     /// The record: what each operation of this service costs today.
-    ///
-    /// Every row is measured before anything is asserted, so a failure reports
-    /// the whole table rather than the first row over its ceiling — which is
-    /// also what makes reading a fresh set of numbers one run rather than five.
     #[test]
     fn the_operations_cost_what_is_recorded() {
-        let service = service();
-        let mut over = Vec::new();
-
-        for (operation, build, expected, ceiling) in RECORDED {
-            let counted = counted(&service, build(), expected);
-            if counted > ceiling {
-                over.push(format!(
-                    "{operation} allocated {counted}, recorded {ceiling}"
-                ));
-            }
-        }
-
-        assert!(
-            over.is_empty(),
-            "{over:?}; raising a ceiling is a change to docs/nfr.md, and \
-             lowering one is what a cheaper codec looks like"
-        );
+        harness::record(&service(), &RECORDED);
     }
 
-    /// The relation the request-direction ceilings are there to hold, and the
-    /// one that survives a change to any of them.
+    /// The relation the request-direction ceilings are there to hold.
     ///
-    /// Both halves are needed. Costing more than the bodyless floor says the
-    /// operation read a body at all; costing at least what reading the same
-    /// octets undecoded costs says the codec ran on top of that read rather
-    /// than instead of it. The two are equal today — `serde` deserializes an
-    /// all-integer struct out of the borrowed octets and owns nothing — so the
-    /// second half is what would catch a codec that started skipping the read.
+    /// The two halves the harness asserts are equal today — `serde`
+    /// deserializes an all-integer struct out of the borrowed octets and owns
+    /// nothing — so the transport half is the one that would catch a codec that
+    /// started skipping the read.
     #[test]
     fn decoding_a_body_costs_more_than_reading_the_same_octets() {
-        let service = service();
-
-        let floor = counted(&service, floor_request(), StatusCode::NO_CONTENT);
-        let transport = counted(&service, transport_request(), StatusCode::NO_CONTENT);
-        let decoding = counted(&service, decode_request(), StatusCode::NO_CONTENT);
-
-        assert!(
-            decoding > floor,
-            "decoding a JSON body ({decoding}) should cost more than the \
-             bodyless operation beside it ({floor})"
-        );
-        assert!(
-            decoding >= transport,
-            "decoding a JSON body ({decoding}) should cost at least what \
-             reading the same octets undecoded costs ({transport}); a codec \
-             cheaper than the transport under it is a codec that did not run"
-        );
+        harness::decoding_costs_more_than_the_read(&service(), &RECORDED);
     }
 
     /// The responding half of the same relation.
     #[test]
     fn writing_a_body_costs_more_than_the_status_alone() {
-        let service = service();
-
-        let floor = counted(&service, responding_floor_request(), StatusCode::NO_CONTENT);
-        let encoding = counted(&service, encode_request(), StatusCode::OK);
-
-        assert!(
-            encoding > floor,
-            "serializing a JSON body ({encoding}) should cost more than the \
-             bodyless response beside it ({floor})"
-        );
+        harness::writing_costs_more_than_the_status(&service(), &RECORDED);
     }
 
-    /// The leak check: whatever an operation costs, the thousandth request
-    /// costs the same. A count that climbed would be state accumulating in the
-    /// codec, which no single-request measurement can see.
-    ///
-    /// Every operation is replayed rather than the codec's alone: a table of
-    /// five numbers that replayed one would leave four resting on a single
-    /// reading.
+    /// The leak check, over every operation this service holds.
     #[test]
     fn a_replayed_request_costs_what_the_first_one_did() {
-        let service = service();
-
-        for (operation, build, expected, _) in RECORDED {
-            let first = counted(&service, build(), expected);
-            let mut moved = Vec::new();
-
-            for index in 0..1_000 {
-                let counted = counted(&service, build(), expected);
-                if counted != first {
-                    moved.push((index, counted));
-                }
-            }
-
-            assert!(
-                moved.is_empty(),
-                "{operation} allocated {first} times on one request and \
-                 differently on {} of the next thousand, starting at {:?}; a \
-                 count that moves between identical requests is state \
-                 accumulating in the codec",
-                moved.len(),
-                moved.first()
-            );
-        }
+        harness::replay(&service(), &RECORDED, 1_000);
     }
 }
 
@@ -514,7 +627,7 @@ mod form {
         router::service::Service,
     };
 
-    use crate::harness::{Measured, counted, request};
+    use crate::harness::{self, Table, request};
 
     /// The payload both directions carry, in the shape the JSON module uses so
     /// the two codecs are compared on the same value rather than on two.
@@ -615,109 +728,46 @@ mod form {
     /// encoder builds a `String` and the response body is then built from it,
     /// where `serde_json` writes into a `Vec<u8>` that becomes the body
     /// directly.
-    const RECORDED: [Measured; 5] = [
-        ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
-        (
+    const RECORDED: Table = Table {
+        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
+        transport_floor: (
             "POST /floor/bytes",
             transport_request,
             StatusCode::NO_CONTENT,
             8,
         ),
-        (
+        responding_floor: (
             "GET /floor/out",
             responding_floor_request,
             StatusCode::NO_CONTENT,
             7,
         ),
-        ("POST /form", decode_request, StatusCode::NO_CONTENT, 8),
-        ("GET /form/out", encode_request, StatusCode::OK, 13),
-    ];
+        decoding: ("POST /form", decode_request, StatusCode::NO_CONTENT, 8),
+        encoding: ("GET /form/out", encode_request, StatusCode::OK, 13),
+    };
 
     /// The record: what each operation of this service costs today.
     #[test]
     fn the_operations_cost_what_is_recorded() {
-        let service = service();
-        let mut over = Vec::new();
-
-        for (operation, build, expected, ceiling) in RECORDED {
-            let counted = counted(&service, build(), expected);
-            if counted > ceiling {
-                over.push(format!(
-                    "{operation} allocated {counted}, recorded {ceiling}"
-                ));
-            }
-        }
-
-        assert!(
-            over.is_empty(),
-            "{over:?}; raising a ceiling is a change to docs/nfr.md, and \
-             lowering one is what a cheaper codec looks like"
-        );
+        harness::record(&service(), &RECORDED);
     }
 
     /// The relation the request-direction ceilings are there to hold.
     #[test]
     fn decoding_a_body_costs_more_than_reading_the_same_octets() {
-        let service = service();
-
-        let floor = counted(&service, floor_request(), StatusCode::NO_CONTENT);
-        let transport = counted(&service, transport_request(), StatusCode::NO_CONTENT);
-        let decoding = counted(&service, decode_request(), StatusCode::NO_CONTENT);
-
-        assert!(
-            decoding > floor,
-            "decoding a form body ({decoding}) should cost more than the \
-             bodyless operation beside it ({floor})"
-        );
-        assert!(
-            decoding >= transport,
-            "decoding a form body ({decoding}) should cost at least what \
-             reading the same octets undecoded costs ({transport}); a codec \
-             cheaper than the transport under it is a codec that did not run"
-        );
+        harness::decoding_costs_more_than_the_read(&service(), &RECORDED);
     }
 
     /// The responding half of the same relation.
     #[test]
     fn writing_a_body_costs_more_than_the_status_alone() {
-        let service = service();
-
-        let floor = counted(&service, responding_floor_request(), StatusCode::NO_CONTENT);
-        let encoding = counted(&service, encode_request(), StatusCode::OK);
-
-        assert!(
-            encoding > floor,
-            "encoding a form body ({encoding}) should cost more than the \
-             bodyless response beside it ({floor})"
-        );
+        harness::writing_costs_more_than_the_status(&service(), &RECORDED);
     }
 
     /// The leak check, over every operation this service holds.
     #[test]
     fn a_replayed_request_costs_what_the_first_one_did() {
-        let service = service();
-
-        for (operation, build, expected, _) in RECORDED {
-            let first = counted(&service, build(), expected);
-            let mut moved = Vec::new();
-
-            for index in 0..1_000 {
-                let counted = counted(&service, build(), expected);
-                if counted != first {
-                    moved.push((index, counted));
-                }
-            }
-
-            assert!(
-                moved.is_empty(),
-                "{operation} allocated {first} times on one request and \
-                 differently on {} of the next thousand, starting at {:?}; a \
-                 count that moves between identical requests is state \
-                 accumulating in the codec",
-                moved.len(),
-                moved.first()
-            );
-        }
+        harness::replay(&service(), &RECORDED, 1_000);
     }
 }
 
@@ -744,7 +794,7 @@ mod multipart {
         router::service::Service,
     };
 
-    use crate::harness::{Measured, counted, request};
+    use crate::harness::{self, Table, request};
 
     /// The payload both directions carry.
     ///
@@ -862,49 +912,33 @@ mod multipart {
     /// field. The responding direction pays a comparable bill for the mirror
     /// of that: a delimiter derived from the parts' octets, a header block
     /// rendered per part, and the framing around them.
-    const RECORDED: [Measured; 5] = [
-        ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
-        (
+    const RECORDED: Table = Table {
+        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
+        transport_floor: (
             "POST /floor/bytes",
             transport_request,
             StatusCode::NO_CONTENT,
             8,
         ),
-        (
+        responding_floor: (
             "GET /floor/out",
             responding_floor_request,
             StatusCode::NO_CONTENT,
             7,
         ),
-        (
+        decoding: (
             "POST /multipart",
             decode_request,
             StatusCode::NO_CONTENT,
             31,
         ),
-        ("GET /multipart/out", encode_request, StatusCode::OK, 26),
-    ];
+        encoding: ("GET /multipart/out", encode_request, StatusCode::OK, 26),
+    };
 
     /// The record: what each operation of this service costs today.
     #[test]
     fn the_operations_cost_what_is_recorded() {
-        let service = service();
-        let mut over = Vec::new();
-
-        for (operation, build, expected, ceiling) in RECORDED {
-            let counted = counted(&service, build(), expected);
-            if counted > ceiling {
-                over.push(format!(
-                    "{operation} allocated {counted}, recorded {ceiling}"
-                ));
-            }
-        }
-
-        assert!(
-            over.is_empty(),
-            "{over:?}; raising a ceiling is a change to docs/nfr.md, and \
-             lowering one is what a cheaper codec looks like"
-        );
+        harness::record(&service(), &RECORDED);
     }
 
     /// The relation the request-direction ceilings are there to hold.
@@ -913,68 +947,35 @@ mod multipart {
     /// walks the octets, one owned `Part` per part and one field conversion per
     /// declared field all sit above the read, so a count that fell to the
     /// transport floor would mean the body was never parsed.
+    ///
+    /// The strict form of that half is asserted here rather than in the
+    /// harness, on the readings the harness took: it is true of this codec's
+    /// currency and of no other's, and the three that deserialize out of the
+    /// borrowed octets cost exactly the read.
     #[test]
     fn decoding_a_body_costs_more_than_reading_the_same_octets() {
-        let service = service();
+        let (_, transport, decoding) =
+            harness::decoding_costs_more_than_the_read(&service(), &RECORDED);
 
-        let floor = counted(&service, floor_request(), StatusCode::NO_CONTENT);
-        let transport = counted(&service, transport_request(), StatusCode::NO_CONTENT);
-        let decoding = counted(&service, decode_request(), StatusCode::NO_CONTENT);
-
-        assert!(
-            decoding > floor,
-            "decoding a multipart body ({decoding}) should cost more than the \
-             bodyless operation beside it ({floor})"
-        );
         assert!(
             decoding > transport,
-            "decoding a multipart body ({decoding}) should cost more than \
-             reading the same octets unparsed ({transport}); every part this \
-             codec produces owns its name"
+            "POST /multipart allocated {decoding}, where reading the same \
+             octets unparsed allocated {transport}; every part this codec \
+             produces owns its name, so there is no body it could decode for \
+             what the read alone costs"
         );
     }
 
     /// The responding half of the same relation.
     #[test]
     fn writing_a_body_costs_more_than_the_status_alone() {
-        let service = service();
-
-        let floor = counted(&service, responding_floor_request(), StatusCode::NO_CONTENT);
-        let encoding = counted(&service, encode_request(), StatusCode::OK);
-
-        assert!(
-            encoding > floor,
-            "rendering a multipart body ({encoding}) should cost more than the \
-             bodyless response beside it ({floor})"
-        );
+        harness::writing_costs_more_than_the_status(&service(), &RECORDED);
     }
 
     /// The leak check, over every operation this service holds.
     #[test]
     fn a_replayed_request_costs_what_the_first_one_did() {
-        let service = service();
-
-        for (operation, build, expected, _) in RECORDED {
-            let first = counted(&service, build(), expected);
-            let mut moved = Vec::new();
-
-            for index in 0..1_000 {
-                let counted = counted(&service, build(), expected);
-                if counted != first {
-                    moved.push((index, counted));
-                }
-            }
-
-            assert!(
-                moved.is_empty(),
-                "{operation} allocated {first} times on one request and \
-                 differently on {} of the next thousand, starting at {:?}; a \
-                 count that moves between identical requests is state \
-                 accumulating in the codec",
-                moved.len(),
-                moved.first()
-            );
-        }
+        harness::replay(&service(), &RECORDED, 1_000);
     }
 }
 
@@ -992,7 +993,7 @@ mod protobuf {
         router::service::Service,
     };
 
-    use crate::harness::{Measured, counted, request};
+    use crate::harness::{self, Table, request};
 
     /// The payload both directions carry, in the shape the JSON and form
     /// modules use so the three codecs are compared on the same value.
@@ -1097,109 +1098,46 @@ mod protobuf {
     /// and encoding is the only one of the three that beats JSON, because
     /// `prost` writes the message into one growable buffer and that buffer
     /// becomes the body.
-    const RECORDED: [Measured; 5] = [
-        ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
-        (
+    const RECORDED: Table = Table {
+        bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
+        transport_floor: (
             "POST /floor/bytes",
             transport_request,
             StatusCode::NO_CONTENT,
             8,
         ),
-        (
+        responding_floor: (
             "GET /floor/out",
             responding_floor_request,
             StatusCode::NO_CONTENT,
             7,
         ),
-        ("POST /protobuf", decode_request, StatusCode::NO_CONTENT, 8),
-        ("GET /protobuf/out", encode_request, StatusCode::OK, 11),
-    ];
+        decoding: ("POST /protobuf", decode_request, StatusCode::NO_CONTENT, 8),
+        encoding: ("GET /protobuf/out", encode_request, StatusCode::OK, 11),
+    };
 
     /// The record: what each operation of this service costs today.
     #[test]
     fn the_operations_cost_what_is_recorded() {
-        let service = service();
-        let mut over = Vec::new();
-
-        for (operation, build, expected, ceiling) in RECORDED {
-            let counted = counted(&service, build(), expected);
-            if counted > ceiling {
-                over.push(format!(
-                    "{operation} allocated {counted}, recorded {ceiling}"
-                ));
-            }
-        }
-
-        assert!(
-            over.is_empty(),
-            "{over:?}; raising a ceiling is a change to docs/nfr.md, and \
-             lowering one is what a cheaper codec looks like"
-        );
+        harness::record(&service(), &RECORDED);
     }
 
     /// The relation the request-direction ceilings are there to hold.
     #[test]
     fn decoding_a_body_costs_more_than_reading_the_same_octets() {
-        let service = service();
-
-        let floor = counted(&service, floor_request(), StatusCode::NO_CONTENT);
-        let transport = counted(&service, transport_request(), StatusCode::NO_CONTENT);
-        let decoding = counted(&service, decode_request(), StatusCode::NO_CONTENT);
-
-        assert!(
-            decoding > floor,
-            "decoding a protobuf body ({decoding}) should cost more than the \
-             bodyless operation beside it ({floor})"
-        );
-        assert!(
-            decoding >= transport,
-            "decoding a protobuf body ({decoding}) should cost at least what \
-             reading the same octets undecoded costs ({transport}); a codec \
-             cheaper than the transport under it is a codec that did not run"
-        );
+        harness::decoding_costs_more_than_the_read(&service(), &RECORDED);
     }
 
     /// The responding half of the same relation.
     #[test]
     fn writing_a_body_costs_more_than_the_status_alone() {
-        let service = service();
-
-        let floor = counted(&service, responding_floor_request(), StatusCode::NO_CONTENT);
-        let encoding = counted(&service, encode_request(), StatusCode::OK);
-
-        assert!(
-            encoding > floor,
-            "encoding a protobuf body ({encoding}) should cost more than the \
-             bodyless response beside it ({floor})"
-        );
+        harness::writing_costs_more_than_the_status(&service(), &RECORDED);
     }
 
     /// The leak check, over every operation this service holds.
     #[test]
     fn a_replayed_request_costs_what_the_first_one_did() {
-        let service = service();
-
-        for (operation, build, expected, _) in RECORDED {
-            let first = counted(&service, build(), expected);
-            let mut moved = Vec::new();
-
-            for index in 0..1_000 {
-                let counted = counted(&service, build(), expected);
-                if counted != first {
-                    moved.push((index, counted));
-                }
-            }
-
-            assert!(
-                moved.is_empty(),
-                "{operation} allocated {first} times on one request and \
-                 differently on {} of the next thousand, starting at {:?}; a \
-                 count that moves between identical requests is state \
-                 accumulating in the codec",
-                moved.len(),
-                moved.first()
-            );
-        }
+        harness::replay(&service(), &RECORDED, 1_000);
     }
 }
 
