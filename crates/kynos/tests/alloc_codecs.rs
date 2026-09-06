@@ -1525,6 +1525,14 @@ mod compression {
     /// identity asked for, so dispatch, the handler and the interceptor's own
     /// indirection all cancel and what is left is the encode.
     ///
+    /// **The subtraction is guarded rather than clamped**, at every size.
+    /// Engaging an encoder cannot cost less than declining to, and a
+    /// `saturating_sub` over a difference that ran backwards would hand these
+    /// relations a zero — which is monotone from below, and under every bound
+    /// the drain sets. The reading the encoder declines to make is the one
+    /// worth catching, so it is asserted where it is taken rather than
+    /// arithmetically erased.
+    ///
     /// **The bound is the drain rather than the body.** `encode` empties its
     /// encoder 8 KiB at a time into a growing `BytesMut`, so growing the body
     /// from one measured size to the next buys the encoder at most
@@ -1546,7 +1554,7 @@ mod compression {
         let service = mounted();
 
         for coding in CODINGS {
-            let deltas = SIZES.map(|(_, target, length, _)| {
+            let deltas = SIZES.map(|(size, target, length, _)| {
                 let engaged = counted_carrying(
                     &service,
                     asking(coding, target),
@@ -1555,7 +1563,17 @@ mod compression {
                 );
                 let alone =
                     counted_carrying(&service, asking("identity", target), StatusCode::OK, None);
-                engaged.saturating_sub(alone)
+
+                assert!(
+                    engaged >= alone,
+                    "{coding} at {size} allocated {engaged}, where the same \
+                     response left alone allocated {alone}; engaging an encoder \
+                     cannot cost less than declining to, so a difference that \
+                     runs backwards is two readings of different things rather \
+                     than a delta"
+                );
+
+                engaged - alone
             });
 
             for pair in deltas.windows(2) {
