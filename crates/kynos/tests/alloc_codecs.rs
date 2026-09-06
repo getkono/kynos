@@ -428,3 +428,224 @@ mod json {
         }
     }
 }
+
+/// What `application/x-www-form-urlencoded` costs the operations that name it,
+/// both directions.
+#[cfg(feature = "form")]
+mod form {
+    use kynos::{
+        extract::{
+            body::{binary::Binary, form::Form},
+            media::OctetStream,
+        },
+        http::{Method, Request, StatusCode},
+        prelude::*,
+        router::service::Service,
+    };
+
+    use crate::harness::{Measured, counted, request};
+
+    /// The payload both directions carry, in the shape the JSON module uses so
+    /// the two codecs are compared on the same value rather than on two.
+    #[derive(Schema, serde::Deserialize, serde::Serialize)]
+    struct Reading {
+        id: u64,
+        value: u64,
+    }
+
+    /// One `Reading`, as the octets a client sends.
+    const BODY: &[u8] = b"id=7&value=11";
+
+    /// The bodyless floor: dispatch, and no body extractor at all.
+    #[kynos::post("/floor")]
+    async fn floor() -> NoContent {
+        NoContent
+    }
+
+    /// The transport floor: the same octets, read and dropped undecoded.
+    #[kynos::post("/floor/bytes")]
+    async fn floor_bytes(body: Binary<OctetStream>) -> NoContent {
+        drop(body.into_inner());
+        NoContent
+    }
+
+    /// The responding floor: a status, and no body to write.
+    #[kynos::get("/floor/out")]
+    async fn floor_out() -> NoContent {
+        NoContent
+    }
+
+    /// The operation that names the codec on the way in.
+    #[kynos::post("/form")]
+    async fn decode(Form(reading): Form<Reading>) -> NoContent {
+        let _ = reading;
+        NoContent
+    }
+
+    /// The operation that names it on the way out.
+    #[kynos::get("/form/out")]
+    async fn encode() -> Form<Reading> {
+        Form(Reading { id: 7, value: 11 })
+    }
+
+    fn service() -> Service<()> {
+        Router::<()>::new()
+            .mount(kynos::routes![
+                floor,
+                floor_bytes,
+                floor_out,
+                decode,
+                encode
+            ])
+            .build(())
+            .expect("a describable router")
+    }
+
+    fn floor_request() -> Request {
+        request(Method::POST, "/floor", None, b"")
+    }
+
+    fn transport_request() -> Request {
+        request(
+            Method::POST,
+            "/floor/bytes",
+            Some("application/octet-stream"),
+            BODY,
+        )
+    }
+
+    fn responding_floor_request() -> Request {
+        request(Method::GET, "/floor/out", None, b"")
+    }
+
+    fn decode_request() -> Request {
+        request(
+            Method::POST,
+            "/form",
+            Some("application/x-www-form-urlencoded"),
+            BODY,
+        )
+    }
+
+    fn encode_request() -> Request {
+        request(Method::GET, "/form/out", None, b"")
+    }
+
+    /// Every operation this service holds, and what one request to it costs
+    /// today.
+    ///
+    /// Read the way the JSON table was read: every ceiling set to zero, the
+    /// target run, the counts the failure reported transcribed.
+    ///
+    /// The request direction reads exactly as JSON's does — `serde_urlencoded`
+    /// deserializes an all-integer struct out of the borrowed octets too, so
+    /// the operation pays the body's collection and nothing more. The
+    /// responding direction costs one allocation more than JSON's: the form
+    /// encoder builds a `String` and the response body is then built from it,
+    /// where `serde_json` writes into a `Vec<u8>` that becomes the body
+    /// directly.
+    const RECORDED: [Measured; 5] = [
+        ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
+        (
+            "POST /floor/bytes",
+            transport_request,
+            StatusCode::NO_CONTENT,
+            8,
+        ),
+        (
+            "GET /floor/out",
+            responding_floor_request,
+            StatusCode::NO_CONTENT,
+            7,
+        ),
+        ("POST /form", decode_request, StatusCode::NO_CONTENT, 8),
+        ("GET /form/out", encode_request, StatusCode::OK, 13),
+    ];
+
+    /// The record: what each operation of this service costs today.
+    #[test]
+    fn the_operations_cost_what_is_recorded() {
+        let service = service();
+        let mut over = Vec::new();
+
+        for (operation, build, expected, ceiling) in RECORDED {
+            let counted = counted(&service, build(), expected);
+            if counted > ceiling {
+                over.push(format!(
+                    "{operation} allocated {counted}, recorded {ceiling}"
+                ));
+            }
+        }
+
+        assert!(
+            over.is_empty(),
+            "{over:?}; raising a ceiling is a change to docs/nfr.md, and \
+             lowering one is what a cheaper codec looks like"
+        );
+    }
+
+    /// The relation the request-direction ceilings are there to hold.
+    #[test]
+    fn decoding_a_body_costs_more_than_reading_the_same_octets() {
+        let service = service();
+
+        let floor = counted(&service, floor_request(), StatusCode::NO_CONTENT);
+        let transport = counted(&service, transport_request(), StatusCode::NO_CONTENT);
+        let decoding = counted(&service, decode_request(), StatusCode::NO_CONTENT);
+
+        assert!(
+            decoding > floor,
+            "decoding a form body ({decoding}) should cost more than the \
+             bodyless operation beside it ({floor})"
+        );
+        assert!(
+            decoding >= transport,
+            "decoding a form body ({decoding}) should cost at least what \
+             reading the same octets undecoded costs ({transport}); a codec \
+             cheaper than the transport under it is a codec that did not run"
+        );
+    }
+
+    /// The responding half of the same relation.
+    #[test]
+    fn writing_a_body_costs_more_than_the_status_alone() {
+        let service = service();
+
+        let floor = counted(&service, responding_floor_request(), StatusCode::NO_CONTENT);
+        let encoding = counted(&service, encode_request(), StatusCode::OK);
+
+        assert!(
+            encoding > floor,
+            "encoding a form body ({encoding}) should cost more than the \
+             bodyless response beside it ({floor})"
+        );
+    }
+
+    /// The leak check, over every operation this service holds.
+    #[test]
+    fn a_replayed_request_costs_what_the_first_one_did() {
+        let service = service();
+
+        for (operation, build, expected, _) in RECORDED {
+            let first = counted(&service, build(), expected);
+            let mut moved = Vec::new();
+
+            for index in 0..1_000 {
+                let counted = counted(&service, build(), expected);
+                if counted != first {
+                    moved.push((index, counted));
+                }
+            }
+
+            assert!(
+                moved.is_empty(),
+                "{operation} allocated {first} times on one request and \
+                 differently on {} of the next thousand, starting at {:?}; a \
+                 count that moves between identical requests is state \
+                 accumulating in the codec",
+                moved.len(),
+                moved.first()
+            );
+        }
+    }
+}
