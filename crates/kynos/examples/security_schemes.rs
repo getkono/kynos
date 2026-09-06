@@ -211,7 +211,7 @@ impl<C: Sync> Authenticator<AccessToken, C> for Tokens {
         {
             Ok(())
         } else {
-            Err(AuthRejection::Forbidden)
+            Err(AuthRejection::forbidden())
         }
     }
 }
@@ -249,7 +249,7 @@ where
         context: &C,
     ) -> Result<(), AuthRejection> {
         let _ = (credential, scopes, context);
-        Err(AuthRejection::Forbidden)
+        Err(AuthRejection::forbidden())
     }
 }
 

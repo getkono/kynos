@@ -188,7 +188,7 @@ impl<C: Sync> Authenticator<ServiceKey, C> for Keys {
             // operation reaches the 403 `Auth<S>` declares. Without it the
             // status would be a promise this fixture could not keep — and
             // `assert_declared_responses_covered` says so.
-            Err(AuthRejection::Forbidden)
+            Err(AuthRejection::forbidden())
         } else {
             Err(AuthRejection::unauthenticated())
         }
