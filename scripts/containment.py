@@ -313,12 +313,12 @@ def allowed_sites(cell):
     reaching into another crate cannot be written without saying so.
     """
     entries = re.findall(r"`([^`]+)`", cell) or [part for part in cell.split(",") if part.strip()]
-    return {
-        site if (site := path.strip()).startswith("crates/")
-        else OFF_PATH_SCOPE + site.lstrip("/")
-        for entry in entries
-        for path in expand(entry.strip())
-    }
+    sites = set()
+    for entry in entries:
+        for path in expand(entry.strip()):
+            path = path.strip()
+            sites.add(path if path.startswith("crates/") else OFF_PATH_SCOPE + path.lstrip("/"))
+    return sites
 
 
 def scanned(allowance):
