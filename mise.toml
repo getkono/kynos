@@ -100,6 +100,20 @@ description = "Lint every reachable feature combination"
 # umbrella that does not compile alone. Their backends imply them, so excluding
 # them costs no coverage -- every combination that can reach the shapes still
 # does.
+# Incremental compilation is off here, and it costs this task nothing. rustc
+# keys an incremental session on the crate's `-C metadata`, and a feature set
+# is part of that, so every combination cargo-hack walks gets a session
+# directory of its own -- written once, then never read again, because no later
+# invocation is ever the same combination. Nothing reclaims them: rustc's
+# garbage collection prunes stale entries *within* a session, not sessions no
+# build will name again. A worktree that had run the matrix a few times held
+# 1280 of them, totalling 14 GiB, and a twelve-combination sweep left 0.21 GiB
+# with this set against 0.57 GiB without.
+# Where a `RUSTC_WRAPPER` is configured it is faster too -- 25s against 38s on
+# that sweep, both runs warm -- because such a cache cannot store an
+# incremental compilation, so incremental was forfeiting a cache that hits to
+# buy one that never does.
+env = { CARGO_INCREMENTAL = "0" }
 run = '''
 cargo hack clippy --workspace --feature-powerset --depth 2 --no-dev-deps \
   --exclude-no-default-features --exclude-all-features \
@@ -170,6 +184,10 @@ description = "Compile every target, not only the library, at each feature"
 # The exclusions are `features:check`'s, for its reasons: `server` and `tls`
 # need an HTTP protocol, `time` and `decimal` are umbrellas that do not compile
 # alone, and `full` would pull in everything and check nothing partial.
+# Incremental compilation is off for the reason `features:check` gives: this
+# task never builds the same feature set twice either, so a session written
+# here is one nothing will read.
+env = { CARGO_INCREMENTAL = "0" }
 run = '''
 cargo hack check --workspace --each-feature --all-targets \
   --features openapi31 \
