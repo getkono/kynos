@@ -561,10 +561,16 @@ async fn case<S: kynos::response::ShortCircuit>(
     let body = body.collect().await.expect("a readable body").to_bytes();
 
     Case {
+        // The last path segment, with any generic argument dropped: the set
+        // this is compared against names types rather than instantiations, and
+        // `RateLimited<()>` is the same short circuit as `RateLimited<Foo>`.
         name: std::any::type_name::<S>()
             .rsplit("::")
             .next()
-            .expect("a type name has a last segment"),
+            .expect("a type name has a last segment")
+            .split('<')
+            .next()
+            .expect("splitting yields a first segment"),
         claimed: S::STATUSES,
         status: parts.status.as_u16(),
         media_type,
@@ -610,24 +616,11 @@ async fn every_case() -> Vec<Case> {
         .await,
     );
     cases.push(case(registry, CrossSite).await);
+    cases.push(case(registry, RateLimited::<()>::new(Duration::from_secs(1), 10)).await);
     cases.push(
         case(
             registry,
-            RateLimited {
-                retry_after: Duration::from_secs(1),
-                limit: 10,
-            },
-        )
-        .await,
-    );
-    cases.push(
-        case(
-            registry,
-            RateLimitedFields {
-                retry_after: Duration::from_secs(1),
-                limits: Vec::new(),
-                policies: Vec::new(),
-            },
+            RateLimitedFields::<()>::new(Duration::from_secs(1), Vec::new(), Vec::new()),
         )
         .await,
     );

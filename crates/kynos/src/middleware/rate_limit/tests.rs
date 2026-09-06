@@ -426,11 +426,12 @@ async fn a_named_refusal_type_is_one_statement_both_halves_read() {
 /// says: `about:blank` on the wire, and no example beside it.
 #[tokio::test]
 async fn an_unnamed_refusal_type_declares_no_example_and_sends_about_blank() {
-    let (declared, sent) = declared_and_sent(RateLimited::new(Duration::from_secs(30), 100)).await;
+    let (declared, sent) =
+        declared_and_sent(RateLimited::<()>::new(Duration::from_secs(30), 100)).await;
     assert_eq!(declared, None);
     assert_eq!(sent, "about:blank");
 
-    let (declared, sent) = declared_and_sent(RateLimitedFields::new(
+    let (declared, sent) = declared_and_sent(RateLimitedFields::<()>::new(
         Duration::from_secs(30),
         limits(),
         policies(),
