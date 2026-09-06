@@ -28,6 +28,13 @@
 //! failed — RFC 9457 §5 is explicit that a problem is not a debugging channel,
 //! and which of several credential checks refused a request is the server's
 //! business.
+//!
+//! One field is not that shape, and is an exception rather than a hole in the
+//! rule: the problem type on [`AuthRejection::Forbidden`]. The request did not
+//! determine it and neither did Kynos — the *application's* authorizer supplies
+//! it, because only the application knows which of its authorization rules
+//! declined. It is still a fact the caller may have: it names a class of
+//! refusal, not the check that produced one.
 
 use std::{borrow::Cow, collections::BTreeMap};
 
@@ -643,10 +650,12 @@ impl AuthRejection {
 
 impl IntoProblem for AuthRejection {
     fn into_problem(self) -> Problem {
-        // Nothing beyond the sentence the variant already carries: which check
-        // refused the request is exactly what an attacker would like to learn,
-        // and a client can act on neither answer differently. The challenge is
-        // not part of it -- RFC 9110 puts that in a header, not in a body.
+        // Nothing Kynos adds beyond the sentence the variant already carries:
+        // which check refused the request is exactly what an attacker would
+        // like to learn, and a client can act on neither answer differently.
+        // The challenge is not part of it -- RFC 9110 puts that in a header,
+        // not in a body. The one thing that does reach the document came from
+        // the application, below.
         let status = self.status();
         let detail = self.to_string();
 
