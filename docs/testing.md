@@ -33,13 +33,13 @@ and it is 110 lines.
 Each integration file exists for one reason. `hermeticity.rs` and `ui.rs` are
 different kinds of thing and are covered below.
 
-`alloc.rs` is a third: it asserts a cost rather than a behaviour, and the kind
-it belongs to is allocated by [`performance.md`](performance.md#the-taxonomy)
-rather than by the table above. The two documents divide by question — this one
-says what a guarantee owes, that one says what a *feature costs the request
-path* — and `alloc.rs` is filed here as well because the inventory above claims
-to be every integration target, and a claim of completeness is worth only as
-much as its exceptions.
+`alloc.rs` and `alloc_codecs.rs` are a third: they assert a cost rather than a
+behaviour, and the kind they belong to is allocated by
+[`performance.md`](performance.md#the-taxonomy) rather than by the table above.
+The two documents divide by question — this one says what a guarantee owes, that
+one says what a *feature costs the request path* — and both are filed here as
+well because the inventory above claims to be every integration target, and a
+claim of completeness is worth only as much as its exceptions.
 
 `conformance.rs` runs now that the router and `test/` have landed, and both of
 its assertions pass. `every_declared_response_is_exercised` carried an
@@ -56,6 +56,7 @@ attribute outlived its reason and went with it.
 | [`typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) | a route attribute's `relative_uri` percent-encodes its parameters, and that the hand-written fixture it encodes with describes what it encodes — a `Schema` body nothing executes cannot disagree with the `encode` beside it |
 | [`size.rs`](../crates/kynos/tests/size.rs) | a build failure does not inline a `Violation`, and a `Result` costs no more than it |
 | [`alloc.rs`](../crates/kynos/tests/alloc.rs) | what the routing path allocates per route shape, and that a replayed request costs what the first one did. It owns a `#[global_allocator]`, which is why it is a target of its own rather than a sibling `tests.rs`: installed in the library's unit-test binary the counter would reach every unit test in it |
+| [`alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) | what each opt-in payload codec adds to an operation that mounts it, against the same service's bodyless and transport floors — and how compression's cost grows with the body it holds. A second target rather than a second module of `alloc.rs` because a `#[global_allocator]` is per process and each integration target is one process. It deliberately does not restate `work_on_another_thread_is_not_counted` |
 | [`conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs) | that the committed corpus is what this build emits, and that it still carries the 3.2 constructs it exists to pin — asserted against the committed *text*, since what a downstream repository reads is the file |
 | [`conformance.rs`](../crates/kynos/tests/conformance.rs) | that the responses a suite observed match what the document promises, and that every declared response was exercised |
 | [`matrix.rs`](../crates/kynos/tests/matrix.rs) | the same two assertions over every layer Kynos owns, which is the only place a wrong *document* fails against responses that actually happened. Static assertions about that document belong in `description.rs` even when the matrix is what found them: the matrix reports which promise went unkept, and the small fixture there says which rule was broken |
