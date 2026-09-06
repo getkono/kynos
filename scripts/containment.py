@@ -86,13 +86,22 @@ def strip(source):
     return text
 
 
-FILES = [
+SOURCES = [
     (path.relative_to(ROOT).as_posix(), strip(path.read_text()))
     for crate in sorted((ROOT / "crates").iterdir())
     if (crate / "src").is_dir()
     for path in sorted((crate / "src").rglob("*.rs"))
-    if path.name != "tests.rs" and not path.name.endswith("_tests.rs")
 ]
+
+
+def under_test(path):
+    name = path.rsplit("/", 1)[-1]
+    return name == "tests.rs" or name.endswith("_tests.rs")
+
+
+# What every rule here is stated over: the code that a request can run. Test
+# modules are dropped, inline by `strip` and as sibling files here.
+FILES = [(path, text) for path, text in SOURCES if not under_test(path)]
 
 
 def naming(*crates):
@@ -217,7 +226,7 @@ NAMED_BY = re.compile(r"`?(\w+(?:\s*::\s*\w+)*)`?")
 
 
 def token(cell):
-    """A regex for what one *Named by* cell names, or `None` if unreadable.
+    """One `(spelling, regex)` per spelling in a *Named by* cell, or `None`.
 
     `None` loudly rather than a pattern that cannot match: a cell this function
     guesses at compiles to an escaped literal nothing in Rust source contains,
@@ -235,15 +244,22 @@ def token(cell):
     `Self::default()` and `Registry` derives `Default`, so a row holding only
     `new` lets a derived `default()` mint a registry anywhere with the gate
     green. Two rows would hold the same element under one reason written twice.
+
+    Each spelling keeps its own pattern rather than joining them into one
+    alternation, so the caller can hold every spelling to naming a file. A
+    union hides a stale spelling behind a live one: `Registry::{new,defualt}`
+    matches wherever `new` is written, and the row goes on reporting that a
+    registry is off the path while `Registry::default()` mints one anywhere.
     """
-    patterns = []
+    spellings = []
     for spelling in expand(cell.strip()):
         readable = NAMED_BY.fullmatch(spelling.strip())
         if readable is None:
             return None
         segments = [re.escape(part.strip()) for part in readable.group(1).split("::")]
-        patterns.append(r"\s*::\s*".join(segments))
-    return re.compile(r"\b(?:" + "|".join(patterns) + r")\b")
+        pattern = r"\s*::\s*".join(segments)
+        spellings.append((readable.group(1), re.compile(r"\b" + pattern + r"\b")))
+    return spellings
 
 
 def allowed_sites(cell):
@@ -283,8 +299,8 @@ for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
     element, named_by, where, reason = cells
     off_path_rows += 1
     allowance = allowed_sites(where)
-    pattern = token(named_by)
-    if pattern is None:
+    spellings = token(named_by)
+    if spellings is None:
         failures.append(
             f"testing.md's off-path table names {element} with {named_by}, "
             "which this rule cannot read as an identifier or a path of them. "
@@ -293,27 +309,48 @@ for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
         )
         continue
 
+    # Every spelling is held to naming something, one at a time rather than as
+    # a union. A union hides a stale spelling behind a live one: with the cell
+    # written `Registry::{new,defualt}`, `new` keeps the row's match set
+    # non-empty and the typo is swallowed, so the row goes on reporting that a
+    # registry is off the request path while `Registry::default()` mints one
+    # anywhere. A spelling is a claim about a name, and a name nothing in the
+    # workspace writes is a rename or a typo rather than an element nothing
+    # reaches. (Stale *sites* stay tolerated, deliberately -- subset semantics,
+    # as above -- because a site claims a location, and locations may empty out
+    # while the claim stays true.)
+    #
+    # Existence is asked of `SOURCES`, not `FILES`: a mint spelling earns its
+    # place in a cell by being reachable, not by being reached, so the row is at
+    # its strongest when no file a request can run writes it at all.
+    # `Registry::default` is that case -- it is written only in test modules,
+    # which is exactly the row holding.
+    stale = [
+        spelling
+        for spelling, pattern in spellings
+        if not any(
+            path.startswith(OFF_PATH_SCOPE) and pattern.search(text)
+            for path, text in SOURCES
+        )
+    ]
+    if stale:
+        for spelling in stale:
+            failures.append(
+                f"testing.md's off-path table names {element} with "
+                f"`{spelling}`, and nothing under {OFF_PATH_SCOPE} writes that "
+                "spelling, tests included. The row holds nothing under it: "
+                "either the element was renamed and the cell was not, or it "
+                "now lives outside the one scope this rule reads, which is a "
+                "change to that scope rather than to the row"
+            )
+        continue
+
     named = sorted(
         path
         for path, text in FILES
-        if path.startswith(OFF_PATH_SCOPE) and pattern.search(text)
+        if path.startswith(OFF_PATH_SCOPE)
+        and any(pattern.search(text) for _, pattern in spellings)
     )
-    # A readable cell that matches nothing is the same failure as an unreadable
-    # one, arriving later: a renamed element, a typo, or a home that has moved
-    # out of the scope. The row then reports that a request cannot reach an
-    # element no file names, having compared the source against a token nothing
-    # in it contains. Stale *sites* are tolerated, deliberately -- subset
-    # semantics, as above -- but a stale *token* holds nothing at all.
-    if not named:
-        failures.append(
-            f"testing.md's off-path table names {element} with {named_by}, and "
-            f"no file under {OFF_PATH_SCOPE} names it. The row holds nothing: "
-            "either the element was renamed and the cell was not, or it now "
-            "lives outside the one scope this rule reads, which is a change to "
-            "that scope rather than to the row"
-        )
-        continue
-
     if offenders := [path for path in named if path not in allowance]:
         failures.append(
             f"{element} is off the request path, and {named_by} is named at a "

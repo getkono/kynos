@@ -341,9 +341,18 @@ mint a registry anywhere. A cell may also come to hold a `feature = "…"` gate
 token, matched over the raw source rather than the stripped text, for a flag
 whose off-path proof is that nothing compiles it. A cell the rule cannot read
 fails the build rather than passing quietly, so teaching it a new kind of token
-is part of writing the row that needs one — and so does a cell it can read that
-names no file in the scope at all, which is a row holding nothing rather than an
-element nothing reaches.
+is part of writing the row that needs one.
+
+Each spelling in a cell is held to naming something, one at a time rather than
+as a union: a cell written `Registry::{new,defualt}` would otherwise pass on the
+strength of `new` while a derived `default()` minted a registry anywhere. What a
+spelling must name is a mention anywhere in the scope, test modules included,
+rather than a site on the request path — a mint spelling earns its row by being
+reachable, not by being reached, and the row is at its strongest when nothing a
+request can run writes it at all. `Registry::default` is that case today. A
+spelling nothing in the scope writes under any `cfg` is a rename or a typo, and
+fails the build: it is a row holding nothing rather than an element nothing
+reaches.
 
 A cell names the shortest spelling that is unique in the workspace, not the
 longest one that is unambiguous. A qualified path is what an import removes:
@@ -352,7 +361,10 @@ mention of the type bare, so a row written `validate::Validator` would match the
 one file that spells the path out and miss the file that imported it. `Validator`
 is the whole token because `kynos_openapi::validate::Validator` is the only type
 of that name in either crate. Where an identifier is not unique, the row names
-what mints one instead.
+what mints one instead. Uniqueness is the writer's judgement and the rule does
+not check it — a spelling that names two types would hold both under one reason.
+What the rule does check is that the spelling still names something, which is
+what catches one that has quietly stopped matching.
 
 `Registry` — the type — is deliberately not a row. `Describe::request_body`
 takes `&mut Registry`, which puts the name in some eighty files by design, and a
