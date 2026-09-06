@@ -1484,13 +1484,21 @@ mod compression {
     /// **The bound is the drain rather than the body.** `encode` empties its
     /// encoder 8 KiB at a time into a growing `BytesMut`, so growing the body
     /// from one measured size to the next buys the encoder at most
-    /// [`drained`]`(larger) - `[`drained`]`(smaller)` further reads, and the
-    /// delta may grow by at most one allocation apiece. Bounding it by the body
-    /// instead — `delta(16N) <= 16 * delta(N)`, which is what stood here — is
-    /// vacuous at these magnitudes: it allowed 208 allocations where 13 were
-    /// measured. The drain allows one between 1 KiB and 16 KiB, because both
-    /// bodies compress into a single chunk, and the growth measured there is
-    /// none.
+    /// [`drained`]`(larger) - 1` further reads, and the delta may grow by at
+    /// most one allocation apiece.
+    ///
+    /// The subtrahend is one rather than [`drained`]`(smaller)`. [`drained`] is
+    /// an upper bound on each side, and a difference of two upper bounds bounds
+    /// nothing: it is smaller than the largest growth the drain permits
+    /// whenever the smaller body drains in fewer reads than its own bound
+    /// allows, which is what compression makes likely. What the smaller size is
+    /// known to spend is its *minimum* — a body of any octets at all is drained
+    /// at least once — so that is what the larger size's bound is measured
+    /// against. Bounding growth by the body instead — `delta(16N) <= 16 *
+    /// delta(N)`, which is what stood here — is vacuous at these magnitudes: it
+    /// allowed 208 allocations where 13 were measured. The drain allows one
+    /// between 1 KiB and 16 KiB, because 16 KiB is emptied in at most two reads
+    /// and 1 KiB in at least one, and the growth measured there is none.
     ///
     /// The step from the declined column is deliberately not bounded this way.
     /// At zero octets the encoder never runs and the drain never happens, so
@@ -1536,7 +1544,7 @@ mod compression {
             // the encoder's setup rather than anything its drain explains.
             for larger in 2..SIZES.len() {
                 let smaller = larger - 1;
-                let allowance = drained(SIZES[larger].2) - drained(SIZES[smaller].2);
+                let allowance = drained(SIZES[larger].2) - 1;
                 let growth = deltas[larger] - deltas[smaller];
 
                 assert!(
