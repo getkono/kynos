@@ -4,8 +4,13 @@ use super::{
     decision::{QuotaPolicy, QuotaUnit, ServiceLimit},
     headers::{RateLimitFields, RateLimitHeaders},
     quota::{estimate, recovers_in},
+    refusal::{RateLimited, RateLimitedFields, RefusalType},
 };
-use crate::extract::params::header::{EncodeHeaders, HeaderParams};
+use crate::{
+    extract::params::header::{EncodeHeaders, HeaderParams},
+    response::ShortCircuit,
+    schema::registry::Registry,
+};
 
 /// A window of one second, for readability.
 const WINDOW: Duration = Duration::from_secs(1);
@@ -339,4 +344,98 @@ fn every_quota_unit_renders_as_a_string() {
             );
         }
     }
+}
+
+// --- The problem type a refusal names -------------------------------------
+
+/// A type an application would name its refusals with.
+struct Throttled;
+
+impl RefusalType for Throttled {
+    const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/rate-limited");
+}
+
+/// What one short circuit declares and what it sends, as the `type` of each.
+///
+/// `None` on the declared side means the media type carries no example at all,
+/// which is what an unnamed type must leave behind.
+async fn declared_and_sent<S: ShortCircuit>(value: S) -> (Option<serde_json::Value>, String) {
+    use http_body_util::BodyExt as _;
+    use kynos_openapi::{RefOr, model::body::mime_names::APPLICATION_PROBLEM_JSON};
+
+    let declared = match S::responses(&mut Registry::new()).get(429) {
+        Some(RefOr::Item(response)) => response
+            .content
+            .get(APPLICATION_PROBLEM_JSON)
+            .and_then(|media_type| media_type.example())
+            .and_then(|example| example.get("type"))
+            .cloned(),
+        _ => panic!("a refusal declares a 429 carrying a problem document"),
+    };
+
+    let body = value
+        .into_response()
+        .into_body()
+        .collect()
+        .await
+        .expect("a readable body")
+        .to_bytes();
+    let sent: serde_json::Value = serde_json::from_slice(&body).expect("a problem document");
+
+    (
+        declared,
+        sent["type"].as_str().expect("a type URI").to_owned(),
+    )
+}
+
+/// One `RefusalType` is read by both halves of a refusal's promise.
+///
+/// Both spellings, because the URI is stated on the limiter rather than on the
+/// spelling and a service choosing the draft's fields must not lose it. And
+/// both *halves*, because a URI reaching only the wire leaves the document
+/// saying `about:blank` about a response that says otherwise -- the
+/// declaration-versus-behaviour defect the short-circuit sweep exists to catch.
+#[tokio::test]
+async fn a_named_refusal_type_is_one_statement_both_halves_read() {
+    let uri = Throttled::TYPE_URI.expect("the marker names a type");
+
+    let (declared, sent) =
+        declared_and_sent(RateLimited::<Throttled>::new(Duration::from_secs(30), 100)).await;
+    assert_eq!(
+        declared.as_ref().and_then(serde_json::Value::as_str),
+        Some(uri)
+    );
+    assert_eq!(sent, uri);
+
+    let (declared, sent) = declared_and_sent(RateLimitedFields::<Throttled>::new(
+        Duration::from_secs(30),
+        limits(),
+        policies(),
+    ))
+    .await;
+    assert_eq!(
+        declared.as_ref().and_then(serde_json::Value::as_str),
+        Some(uri)
+    );
+    assert_eq!(sent, uri);
+}
+
+/// Naming no type leaves both halves exactly as they were.
+///
+/// The default is `()`, so this is what every document Kynos already emits
+/// says: `about:blank` on the wire, and no example beside it.
+#[tokio::test]
+async fn an_unnamed_refusal_type_declares_no_example_and_sends_about_blank() {
+    let (declared, sent) = declared_and_sent(RateLimited::new(Duration::from_secs(30), 100)).await;
+    assert_eq!(declared, None);
+    assert_eq!(sent, "about:blank");
+
+    let (declared, sent) = declared_and_sent(RateLimitedFields::new(
+        Duration::from_secs(30),
+        limits(),
+        policies(),
+    ))
+    .await;
+    assert_eq!(declared, None);
+    assert_eq!(sent, "about:blank");
 }
