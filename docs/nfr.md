@@ -39,9 +39,9 @@ them away left them measured nowhere.
 
 Each is now two requirements rather than one moved requirement, and the split
 is the boundary applied twice. What can be *counted* — allocations, output
-bytes, `size_of` — is specific to Kynos and deterministic, so it is in-repo and
-`planned`. What can only be *timed* stays in `kynos-bench`, because a
-wall-clock ceiling on a shared runner is a guessed ceiling by the standard
+bytes, `size_of` — is specific to Kynos and deterministic, so it is in-repo.
+What can only be *timed* stays in `kynos-bench`, because a wall-clock ceiling
+on a shared runner is a guessed ceiling by the standard
 [Thresholds](#thresholds) sets, whatever the requirement names.
 [`performance.md`](performance.md#the-boundary) carries the reasoning.
 
@@ -342,7 +342,10 @@ allocation is the object-safe form of `Interceptor` boxing the future it
 returns, which is the price of a heterogeneous chain fitting in one slice. Both
 figures are the measurement rather than the target, per
 [Thresholds](#thresholds), and the relation beside them — that a layer costs the
-same wherever it sits — is what survives a change to either.
+same wherever it sits — is what survives a change to either. This row is where
+the status of the split's counted half is read: the halves are wired one at a
+time, so the prose recording the split in [Status](#status) records the split
+and not a status.
 
 ## Runtime
 
