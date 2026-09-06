@@ -789,11 +789,17 @@ if placeholders := sorted(path for path, text in FILES if PLACEHOLDER.search(tex
     )
 
 # --- Report -----------------------------------------------------------------
-for failure in failures:
-    print(f"containment: {failure}", file=sys.stderr)
-if failures:
-    sys.exit(1)
-print(
-    f"containment: {len(FILES)} source files, {len(rows)} allowance rows, "
-    f"{off_path_rows} off-path rows, {len(graded)} graded features, every rule holds"
-)
+# Under the guard so this module can be imported. `containment_test.py` holds
+# the parsers above to their own cases, and a module that exits on a broken
+# rule would take the test run down with the tree it was reading -- reporting
+# the parsers as untested exactly when a parser is what broke. The rules
+# themselves still run on import, which costs a few file reads and no build.
+if __name__ == "__main__":
+    for failure in failures:
+        print(f"containment: {failure}", file=sys.stderr)
+    if failures:
+        sys.exit(1)
+    print(
+        f"containment: {len(FILES)} source files, {len(rows)} allowance rows, "
+        f"{off_path_rows} off-path rows, {len(graded)} graded features, every rule holds"
+    )
