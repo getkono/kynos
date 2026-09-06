@@ -305,7 +305,8 @@ for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
             f"testing.md's off-path table names {element} with {named_by}, "
             "which this rule cannot read as an identifier or a path of them. "
             "The row holds nothing until it can: teach the rule the token, or "
-            "write one it already knows"
+            "write one it already knows. The row's sites go unchecked "
+            "meanwhile"
         )
         continue
 
@@ -323,8 +324,16 @@ for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
     # Existence is asked of `SOURCES`, not `FILES`: a mint spelling earns its
     # place in a cell by being reachable, not by being reached, so the row is at
     # its strongest when no file a request can run writes it at all.
-    # `Registry::default` is that case -- it is written only in test modules,
-    # which is exactly the row holding.
+    # `Registry::default` is that case -- it is written only in a sibling test
+    # file, which is exactly the row holding.
+    #
+    # Sibling test files, and not every test: `strip()` has already dropped the
+    # inline `#[cfg(test)] mod` bodies from `SOURCES` too, so the corpus this
+    # widens to is exactly the `tests.rs` siblings `under_test` holds out of
+    # `FILES`. That is the layout rule's corpus rather than an approximation of
+    # it -- a module's tests belong in a sibling -- and lifting the inline
+    # removal would re-admit the comment and literal mentions `strip()` exists
+    # to drop.
     stale = [
         spelling
         for spelling, pattern in spellings
@@ -338,11 +347,19 @@ for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
             failures.append(
                 f"testing.md's off-path table names {element} with "
                 f"`{spelling}`, and nothing under {OFF_PATH_SCOPE} writes that "
-                "spelling, tests included. The row holds nothing under it: "
-                "either the element was renamed and the cell was not, or it "
-                "now lives outside the one scope this rule reads, which is a "
-                "change to that scope rather than to the row"
+                "spelling, sibling test files included. The row holds nothing "
+                "under it: either the element was renamed and the cell was not, "
+                "or it now lives outside the one scope this rule reads, which "
+                "is a change to that scope rather than to the row. The row's "
+                "sites go unchecked until the cell is repaired"
             )
+        # One failure per row. A cell this rule has just called untrustworthy
+        # does not also get to render a verdict on the sites: the offender scan
+        # under a stale spelling reports against a match set nobody should
+        # believe, and a reviewer handed two failures repairs the second by
+        # editing the row the first says is already wrong. The message above
+        # says the sites went unchecked, so the skip is stated rather than
+        # inferred from a passing build.
         continue
 
     named = sorted(

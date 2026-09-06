@@ -349,13 +349,23 @@ is part of writing the row that needs one.
 Each spelling in a cell is held to naming something, one at a time rather than
 as a union: a cell written `Registry::{new,defualt}` would otherwise pass on the
 strength of `new` while a derived `default()` minted a registry anywhere. What a
-spelling must name is a mention anywhere in the scope, test modules included,
-rather than a site on the request path — a mint spelling earns its row by being
-reachable, not by being reached, and the row is at its strongest when nothing a
-request can run writes it at all. `Registry::default` is that case today. A
-spelling nothing in the scope writes under any `cfg` is a rename or a typo, and
-fails the build: it is a row holding nothing rather than an element nothing
-reaches.
+spelling must name is a mention anywhere in the scope, sibling test files
+included, rather than a site on the request path — a mint spelling earns its row
+by being reachable, not by being reached, and the row is at its strongest when
+nothing a request can run writes it at all. `Registry::default` is that case
+today. A spelling nothing in the scope writes under any `cfg` is a rename or a
+typo, and fails the build: it is a row holding nothing rather than an element
+nothing reaches.
+
+*Sibling* test files, and not every test: the same strip that drops comments and
+literals drops an inline `#[cfg(test)] mod` body from this corpus too, so what a
+spelling may be found in is the source a request can run plus the `tests.rs`
+siblings beside it. That is the layout rule's own corpus — a module's tests
+belong in a sibling — rather than an approximation of "the tests". A row whose
+cell the rule cannot read, or whose spelling names nothing, reports that one
+failure and stops: its site list goes unchecked until the cell is repaired,
+because an offender scan under a spelling already called untrustworthy would
+render a verdict nobody should act on.
 
 A cell names the shortest spelling that is unique in the workspace, not the
 longest one that is unambiguous. A qualified path is what an import removes:
