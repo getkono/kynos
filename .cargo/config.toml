@@ -12,14 +12,28 @@
 # backtrace still names the file and line in Kynos's own code. It drops the
 # type and variable descriptions a debugger steps through, which is the trade
 # taken -- `nextest` is how this workspace is debugged, and a `gdb` session
-# wanting more can set `CARGO_PROFILE_DEV_DEBUG=2`, since an environment
-# variable overrides this file.
+# wanting more over *these three crates* can set `CARGO_PROFILE_DEV_DEBUG=2`,
+# since an environment variable overrides this file.
 #
 # Dependencies get nothing at all. Their frames are not where a bug in this
 # workspace is, and they are the bulk of the bytes: `*` covers every package
 # that is not a workspace member, so on a plain `cargo build --workspace` the
 # three crates here kept their line tables and the 67 dependency compilations
 # below them kept none.
+#
+# `CARGO_PROFILE_DEV_DEBUG` does not reach them, and the limit is worth stating
+# where the escape hatch is offered rather than leaving it to be discovered
+# under a debugger: that variable spells the key `profile.dev.debug`, and the
+# line below is `profile.dev.package."*".debug`, a different key with no
+# environment spelling at all -- `*` is not a name an environment variable can
+# carry. Restoring a dependency's frames means naming the key:
+#
+#   cargo --config 'profile.dev.package."*".debug=2' test
+#
+# which is the recovery for a panic to be read through `hyper` or `tokio`, and
+# the reason the alternative below is priced rather than dismissed:
+# `line-tables-only` for dependencies too costs 6.68 GiB against this profile's
+# 4.73, and buys a file and a line on every frame of every backtrace.
 #
 # Measured on `cargo build --workspace --all-targets --all-features`:
 #
