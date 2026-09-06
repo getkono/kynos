@@ -214,9 +214,9 @@ response a `204` sends is `Body::empty()`, which erases a zero-sized type, so
 is what the erasure row above records — nothing for an empty body, one
 allocation for a body carrying bytes — held as an equality rather than as a
 ceiling, because a count under either would mean the boxing had stopped
-happening. The cost the entry
-predicted is real one step further out, on the server path, where
-`Body::from_incoming` erases a `hyper::body::Incoming` that is not zero-sized.
+happening. The cost the entry predicted is real one step further out, on the
+server path, where `Body::from_incoming` erases a `hyper::body::Incoming` that
+is not zero-sized.
 
 The ceilings are recorded rather than the zero because
 [Thresholds](#thresholds) asks for the first measurement rather than the hoped
@@ -418,7 +418,8 @@ re-exports"* — in a way worth stating. Splitting a module that declares severa
 public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: eight rejection
 types in one of the twenty-eight, and splitting it would turn
-`error::rejection::PathRejection` into `error::rejection::path::PathRejection`. Sixteen of the twenty-eight are that
+`error::rejection::PathRejection` into
+`error::rejection::path::PathRejection`. Sixteen of the twenty-eight are that
 shape, worth roughly a hundred public paths between them — and each is one
 cohesive family, which is precisely what the concern test says may stay a file.
 So they stay: a longer path is a worse name, and the rule's first clause already
