@@ -198,6 +198,18 @@ the rejection carries that length and writes the field itself, as
 there is no per-operation string for a `Describe` to supply — which is what lets
 the header travel with the status wherever the status is declared from.
 
+`AuthRejection` is the one rejection whose problem `type` is not fixed.
+`AuthRejection::forbidden_as(type_uri)` puts an application's own URI on a 403,
+because only the application knows which of its rules refused; the 401 has no
+counterpart and is not getting one, since which credential check refused is a
+fact a client cannot act on. The argument is a `&'static str` and the
+constructor is a `const fn`, so a URI built from the request cannot be spliced
+in without deliberately leaking it. What the operation *declares* for that 403
+is still the shared `Problem` component: the narrowing above is built from types
+alone, and this URI is a value that arrives at run time. The rest of the
+reasoning is in
+[`security.md`](security.md#a-403-may-name-itself-a-401-may-not).
+
 An extractor that cannot fail says so with `Infallible`, whose `Responses`
 implementation contributes nothing:
 [`Inject<T>`](../crates/kynos/src/di/inject.rs),
@@ -311,10 +323,11 @@ already has, on a path that is not hot.
 
 By the problem *type*, which is what section 3.1.3 makes `title` a property of.
 The status belongs in the key too: a variant with no `#[problem(base = ...)]`
-is `about:blank`, so every rejection the framework raises shares one URI and is
-told apart only by its code. An error type that wants a localized title of its
-own therefore needs a `base`, which is the one place that key earns its keep
-beyond tidiness.
+is `about:blank`, so the rejections the framework raises share one URI and are
+told apart only by their code. The one exception is a 403 an application named
+with `AuthRejection::forbidden_as`, which is keyed by that URI like any other
+type. An error type that wants a localized title of its own therefore needs a
+`base`, which is the one place that key earns its keep beyond tidiness.
 
 A type the catalogue has no entry for keeps the title it already carried, rather
 than losing one. That is what makes adding a language additive.
