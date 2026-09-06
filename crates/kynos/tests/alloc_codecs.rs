@@ -70,10 +70,12 @@ static ALLOCATOR: alloc_counter::AllocCounterSystem = alloc_counter::AllocCounte
     feature = "compression"
 ))]
 mod harness {
-    //! The instrument every module below shares: one request builder, and one
-    //! counted poll.
+    //! The instrument every module below shares: one request builder, two
+    //! counted polls — one asserting a status, one a status and the coding the
+    //! response carries — and the four assertion bodies every body codec makes
+    //! about its own table.
     //!
-    //! Two items of its own rather than the `support/` module the behavioural
+    //! Items of its own rather than the `support/` module the behavioural
     //! targets share. `support::Pending::call` is an `async fn` that allocates
     //! per request, so it cannot sit inside a region; and it names `Json`
     //! unconditionally, so it cannot be built with `json` off — which is
@@ -1248,8 +1250,16 @@ mod compression {
         request
     }
 
-    /// The body sizes measured, in the order they grow, each a sixteenth of the
-    /// next, and how many times the leak check replays each.
+    /// The body sizes measured, in the order they grow: an empty body, and then
+    /// a ladder on which each rung is a sixteenth of the next. What target
+    /// serves each, how many octets it is, and how many times the leak check
+    /// replays it.
+    ///
+    /// The empty body is not a rung of that ladder and is not meant to be. It
+    /// is the column where the encoder declines — `worth_encoding` refuses a
+    /// body of no octets even at `min_size` zero — which is why the relation
+    /// that bounds growth by the drain starts at 1 KiB, and why the ladder is
+    /// three sizes rather than four.
     ///
     /// The replay counts fall as the bodies grow because encoding is real CPU
     /// and this target runs under `llvm-cov` as well as plain: a thousand
