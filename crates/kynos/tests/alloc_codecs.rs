@@ -649,3 +649,260 @@ mod form {
         }
     }
 }
+
+/// What `multipart/form-data` costs the operations that name it, both
+/// directions.
+///
+/// The one codec whose floors do not bound it from below in the way the others'
+/// do. Multipart's currency is
+/// [`Part`](kynos::extract::body::multipart::Part), which owns a `String` field
+/// name — and a declared field owns its value, since `FromPart` is implemented
+/// for `String`, `Bytes` and `FilePart` and only the middle one borrows.
+/// Building the parts is therefore the codec's own cost rather than a cost a
+/// cleverer fixture could measure away, and the payload below is the smallest
+/// one the derive accepts: a single field.
+#[cfg(feature = "multipart")]
+mod multipart {
+    use kynos::{
+        extract::{
+            body::{binary::Binary, multipart::MultipartForm},
+            media::OctetStream,
+        },
+        http::{Method, Request, StatusCode},
+        prelude::*,
+        router::service::Service,
+    };
+
+    use crate::harness::{Measured, counted, request};
+
+    /// The payload both directions carry.
+    ///
+    /// One `String` field rather than the all-integer struct the other codecs
+    /// measure, because there is no all-integer multipart payload: a part is
+    /// octets plus a media type, and the three `FromPart` shapes are `String`,
+    /// `Bytes` and `FilePart`. `Bytes` is the one that borrows, and it has no
+    /// `Schema`, so a declared field is an owned one.
+    #[derive(Schema, kynos::MultipartForm)]
+    struct Upload {
+        note: String,
+    }
+
+    /// One `Upload`, as the octets a client sends.
+    ///
+    /// RFC 2046 delimiters around one RFC 7578 part. The transport floor reads
+    /// exactly these octets as `Binary<OctetStream>`, so the difference is the
+    /// parse, the part, and the field conversion.
+    const BODY: &[u8] =
+        b"--kynos\r\nContent-Disposition: form-data; name=\"note\"\r\n\r\nseven\r\n--kynos--\r\n";
+
+    /// The bodyless floor: dispatch, and no body extractor at all.
+    #[kynos::post("/floor")]
+    async fn floor() -> NoContent {
+        NoContent
+    }
+
+    /// The transport floor: the same octets, read and dropped unparsed.
+    #[kynos::post("/floor/bytes")]
+    async fn floor_bytes(body: Binary<OctetStream>) -> NoContent {
+        drop(body.into_inner());
+        NoContent
+    }
+
+    /// The responding floor: a status, and no body to write.
+    #[kynos::get("/floor/out")]
+    async fn floor_out() -> NoContent {
+        NoContent
+    }
+
+    /// The operation that names the codec on the way in.
+    #[kynos::post("/multipart")]
+    async fn decode(MultipartForm(upload): MultipartForm<Upload>) -> NoContent {
+        drop(upload);
+        NoContent
+    }
+
+    /// The operation that names it on the way out.
+    ///
+    /// The `String` is built inside the measured region and counted with the
+    /// codec, because a `MultipartForm<T>` that owns nothing does not exist —
+    /// see this module's own note.
+    #[kynos::get("/multipart/out")]
+    async fn encode() -> MultipartForm<Upload> {
+        MultipartForm(Upload {
+            note: "seven".to_owned(),
+        })
+    }
+
+    fn service() -> Service<()> {
+        Router::<()>::new()
+            .mount(kynos::routes![
+                floor,
+                floor_bytes,
+                floor_out,
+                decode,
+                encode
+            ])
+            .build(())
+            .expect("a describable router")
+    }
+
+    fn floor_request() -> Request {
+        request(Method::POST, "/floor", None, b"")
+    }
+
+    fn transport_request() -> Request {
+        request(
+            Method::POST,
+            "/floor/bytes",
+            Some("application/octet-stream"),
+            BODY,
+        )
+    }
+
+    fn responding_floor_request() -> Request {
+        request(Method::GET, "/floor/out", None, b"")
+    }
+
+    fn decode_request() -> Request {
+        request(
+            Method::POST,
+            "/multipart",
+            Some("multipart/form-data; boundary=kynos"),
+            BODY,
+        )
+    }
+
+    fn encode_request() -> Request {
+        request(Method::GET, "/multipart/out", None, b"")
+    }
+
+    /// Every operation this service holds, and what one request to it costs
+    /// today.
+    ///
+    /// Read the way the JSON table was read: every ceiling set to zero, the
+    /// target run, the counts the failure reported transcribed.
+    ///
+    /// **This is the expensive codec, by roughly an order of magnitude**, and
+    /// on a body carrying one part of five octets. Where JSON and the form
+    /// codec deserialize out of the borrowed body and add nothing to the read,
+    /// multipart walks the octets through a parser holding its own state,
+    /// produces an owned `Part` per part — field name, optional file name,
+    /// optional media type — and then converts each part into its declared
+    /// field. The responding direction pays a comparable bill for the mirror
+    /// of that: a delimiter derived from the parts' octets, a header block
+    /// rendered per part, and the framing around them.
+    const RECORDED: [Measured; 5] = [
+        ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
+        (
+            "POST /floor/bytes",
+            transport_request,
+            StatusCode::NO_CONTENT,
+            8,
+        ),
+        (
+            "GET /floor/out",
+            responding_floor_request,
+            StatusCode::NO_CONTENT,
+            7,
+        ),
+        (
+            "POST /multipart",
+            decode_request,
+            StatusCode::NO_CONTENT,
+            31,
+        ),
+        ("GET /multipart/out", encode_request, StatusCode::OK, 26),
+    ];
+
+    /// The record: what each operation of this service costs today.
+    #[test]
+    fn the_operations_cost_what_is_recorded() {
+        let service = service();
+        let mut over = Vec::new();
+
+        for (operation, build, expected, ceiling) in RECORDED {
+            let counted = counted(&service, build(), expected);
+            if counted > ceiling {
+                over.push(format!(
+                    "{operation} allocated {counted}, recorded {ceiling}"
+                ));
+            }
+        }
+
+        assert!(
+            over.is_empty(),
+            "{over:?}; raising a ceiling is a change to docs/nfr.md, and \
+             lowering one is what a cheaper codec looks like"
+        );
+    }
+
+    /// The relation the request-direction ceilings are there to hold.
+    ///
+    /// Multipart is the codec where the transport floor bites: a parser that
+    /// walks the octets, one owned `Part` per part and one field conversion per
+    /// declared field all sit above the read, so a count that fell to the
+    /// transport floor would mean the body was never parsed.
+    #[test]
+    fn decoding_a_body_costs_more_than_reading_the_same_octets() {
+        let service = service();
+
+        let floor = counted(&service, floor_request(), StatusCode::NO_CONTENT);
+        let transport = counted(&service, transport_request(), StatusCode::NO_CONTENT);
+        let decoding = counted(&service, decode_request(), StatusCode::NO_CONTENT);
+
+        assert!(
+            decoding > floor,
+            "decoding a multipart body ({decoding}) should cost more than the \
+             bodyless operation beside it ({floor})"
+        );
+        assert!(
+            decoding > transport,
+            "decoding a multipart body ({decoding}) should cost more than \
+             reading the same octets unparsed ({transport}); every part this \
+             codec produces owns its name"
+        );
+    }
+
+    /// The responding half of the same relation.
+    #[test]
+    fn writing_a_body_costs_more_than_the_status_alone() {
+        let service = service();
+
+        let floor = counted(&service, responding_floor_request(), StatusCode::NO_CONTENT);
+        let encoding = counted(&service, encode_request(), StatusCode::OK);
+
+        assert!(
+            encoding > floor,
+            "rendering a multipart body ({encoding}) should cost more than the \
+             bodyless response beside it ({floor})"
+        );
+    }
+
+    /// The leak check, over every operation this service holds.
+    #[test]
+    fn a_replayed_request_costs_what_the_first_one_did() {
+        let service = service();
+
+        for (operation, build, expected, _) in RECORDED {
+            let first = counted(&service, build(), expected);
+            let mut moved = Vec::new();
+
+            for index in 0..1_000 {
+                let counted = counted(&service, build(), expected);
+                if counted != first {
+                    moved.push((index, counted));
+                }
+            }
+
+            assert!(
+                moved.is_empty(),
+                "{operation} allocated {first} times on one request and \
+                 differently on {} of the next thousand, starting at {:?}; a \
+                 count that moves between identical requests is state \
+                 accumulating in the codec",
+                moved.len(),
+                moved.first()
+            );
+        }
+    }
+}
