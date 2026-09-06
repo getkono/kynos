@@ -258,11 +258,19 @@ fn a_cookie_rejection_is_a_bad_request() {
 /// Which authorization rule refused is the application's to say, and only the
 /// application knows it — so the URI is a value the rejection carries rather
 /// than something Kynos could name for it.
+///
+/// The rejection is built in a `const` item on purpose. `forbidden_as` takes a
+/// `&'static str` and is a `const fn`, which is what makes a named refusal a
+/// constant an application declares once rather than a string it formats per
+/// request — the compiler, not prose, is what keeps a caller's identifier out
+/// of a URI that names a *class* of refusal. This item stops compiling the day
+/// either property is dropped.
 #[test]
 fn an_authorizer_names_the_problem_type_of_its_own_403() {
     const BANNED: &str = "https://example.test/problems/account-banned";
+    const REFUSED: AuthRejection = AuthRejection::forbidden_as(BANNED);
 
-    let named = AuthRejection::forbidden_as(BANNED).into_problem();
+    let named = REFUSED.into_problem();
 
     assert_eq!(named.type_uri, BANNED);
     // The title stays the canonical reason: RFC 9457 section 3.1.3 makes it a

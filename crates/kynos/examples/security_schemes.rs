@@ -161,6 +161,14 @@ struct Tokens {
     issued: HashMap<&'static str, Claims>,
 }
 
+/// The problem type `Tokens` gives a scope refusal.
+///
+/// A constant, because that is the only thing `forbidden_as` accepts: it takes
+/// a `&'static str`, so the URI names a *class* of refusal — "a scope was
+/// missing" — and cannot have the missing scope, or the caller, formatted into
+/// it.
+const INSUFFICIENT_SCOPE: &str = "https://errors.example.com/insufficient-scope";
+
 impl Tokens {
     /// Two callers, one of whom may read reports.
     fn seeded() -> Self {
@@ -216,17 +224,13 @@ impl<C: Sync> Authenticator<AccessToken, C> for Tokens {
         // And named, which is the half only an application can write. A client
         // reading `about:blank` learns the status it already has; a client
         // reading this one learns which refusal it met and what to do about it.
-        // The URI names a class of refusal — "a scope was missing" — and not
-        // which scope, because the string reaches the caller verbatim.
         if scopes
             .iter()
             .all(|demanded| credential.scopes.iter().any(|held| held == demanded))
         {
             Ok(())
         } else {
-            Err(AuthRejection::forbidden_as(
-                "https://errors.example.com/insufficient-scope",
-            ))
+            Err(AuthRejection::forbidden_as(INSUFFICIENT_SCOPE))
         }
     }
 }

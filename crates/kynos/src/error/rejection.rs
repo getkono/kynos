@@ -36,7 +36,7 @@
 //! declined. It is still a fact the caller may have: it names a class of
 //! refusal, not the check that produced one.
 
-use std::{borrow::Cow, collections::BTreeMap};
+use std::collections::BTreeMap;
 
 use serde_json::json;
 
@@ -557,10 +557,14 @@ pub enum AuthRejection {
         /// rather than one Kynos could name for it.
         ///
         /// Set it with [`AuthRejection::forbidden_as`] and leave it unset with
-        /// [`AuthRejection::forbidden`]. It reaches the client verbatim and is
-        /// not validated, so it names a class of refusal and never a fact about
-        /// the caller.
-        type_uri: Option<Cow<'static, str>>,
+        /// [`AuthRejection::forbidden`]. `&'static str` rather than an owned
+        /// string is the guarantee, not a micro-optimisation: the URI reaches
+        /// the client verbatim and is not validated, and a type that cannot
+        /// hold a formatted string is one that cannot splice a caller's
+        /// identifier into a name meant for a *class* of refusal. It is the
+        /// same bound `Unauthenticated`'s `challenge` carries one variant
+        /// above.
+        type_uri: Option<&'static str>,
     },
 }
 
@@ -595,18 +599,23 @@ impl AuthRejection {
     /// application wanting its own title has `#[derive(ApiError)]`.
     ///
     /// The URI is not validated and reaches the client verbatim, so it names a
-    /// class of refusal rather than a fact about the caller.
+    /// class of refusal rather than a fact about the caller. `&'static str` is
+    /// what holds an author to that: a URI assembled from the request would
+    /// have to be leaked to be passed here, which is friction in exactly the
+    /// right place. A `const` refusal is the ordinary case.
     ///
     /// ```
-    /// use kynos::error::rejection::AuthRejection;
+    /// use kynos::{error::rejection::AuthRejection, http::StatusCode};
     ///
-    /// let refused =
+    /// const SUSPENDED: AuthRejection =
     ///     AuthRejection::forbidden_as("https://errors.example.com/account-suspended");
+    ///
+    /// assert_eq!(SUSPENDED.status(), StatusCode::FORBIDDEN);
     /// ```
     #[must_use]
-    pub fn forbidden_as(type_uri: impl Into<Cow<'static, str>>) -> Self {
+    pub const fn forbidden_as(type_uri: &'static str) -> Self {
         Self::Forbidden {
-            type_uri: Some(type_uri.into()),
+            type_uri: Some(type_uri),
         }
     }
 

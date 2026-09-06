@@ -68,7 +68,7 @@ document is not a debugging channel. An *authorization* rule is the opposite:
 caller is already authenticated, and only the application knows which of its
 rules declined.
 
-Two things follow, both deliberate:
+Three things follow, all deliberate:
 
 - **The title stays `Forbidden`.** RFC 9457 section 3.1.3 makes a title a
   property of the type, so Kynos has none to offer for a URI it has never seen.
@@ -77,6 +77,11 @@ Two things follow, both deliberate:
   *class* of refusal — `…/insufficient-scope`, `…/account-suspended` — and never
   a fact about the caller. Refusing a malformed one would put a second failure
   mode on the path already reporting the first.
+- **The URI is a `&'static str`, and `forbidden_as` is a `const fn`.** That is
+  the previous point moved from prose into the type: a URI with the caller's
+  account id formatted into it does not have a `'static` lifetime and cannot be
+  passed without deliberately leaking it. A named refusal is a `const` an
+  application declares once, the same bound the 401's challenge already carries.
 
 What an operation *declares* is a separate question. `Auth<S>`, `MaybeAuth<S>`
 and `Scoped<S, R>` describe themselves from the scheme type alone, so the
