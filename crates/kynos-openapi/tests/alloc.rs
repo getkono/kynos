@@ -190,11 +190,7 @@ const REPEATS: usize = 8;
 /// constant series at every span; and a repeated emission of the same collapsed
 /// document costs what the first one did. A template that normalized to one
 /// string, or a `Paths::insert` that replaced rather than added, would turn this
-/// whole target green while measuring ten documents of one operation. The count
-/// is taken over the operations rather than over `paths.items`, because the
-/// operation count is the dimension the requirement scales in and a Path Item
-/// holds one per method — a count of entries would be the same number here only
-/// for as long as the fixture keeps one operation per path.
+/// whole target green while measuring ten documents of one operation.
 fn document(operations: usize) -> Document {
     let mut document = Document::new(SpecVersion::V3_1, Info::new("Fixture", "1.0.0"));
 
@@ -214,12 +210,7 @@ fn document(operations: usize) -> Document {
         );
     }
 
-    let declared: usize = document
-        .paths
-        .items
-        .values()
-        .map(|item| item.operations().count())
-        .sum();
+    let declared = declared_operations(&document);
     assert_eq!(
         declared, operations,
         "the fixture built for {operations} operations declares {declared} of them; a fixture \
@@ -228,6 +219,30 @@ fn document(operations: usize) -> Document {
     );
 
     document
+}
+
+/// How many operations a document declares, summed over its Path Items.
+///
+/// A function rather than the loop [`document`] used to hold inline, for the
+/// reason [`within_recorded`] is one: the comparison above it runs only on a
+/// fixture that passes, so a count that had collapsed to the number of *entries*
+/// — or to anything else agreeing with the loop bound — would turn nothing red.
+/// `a_collapsed_document_declares_fewer_operations_than_were_inserted` drives
+/// this with a document built to collapse, and that is what holds the size
+/// guard the right way round.
+///
+/// The count is taken over the operations rather than over `paths.items`,
+/// because the operation count is the dimension the requirement scales in and a
+/// Path Item holds one per method — a count of entries would be the same number
+/// in [`document`]'s fixture only for as long as it keeps one operation per
+/// path.
+fn declared_operations(document: &Document) -> usize {
+    document
+        .paths
+        .items
+        .values()
+        .map(|item| item.operations().count())
+        .sum()
 }
 
 /// Widens a count for the cross-multiplication below.
@@ -444,6 +459,50 @@ fn a_recorded_ceiling_rejects_a_nested_walk() {
         message.contains(&expected),
         "a nested walk at {operations} operations was refused with {message:?}, which does not \
          name the reading and the record it was refused against ({expected:?})"
+    );
+}
+
+/// ...and a document that collapsed is read as smaller than it was built.
+///
+/// Two inserts of one template, each Path Item declaring a `GET` and a `POST`:
+/// `Paths::insert` replaces the entry for a template rather than adding to it,
+/// so four operations go in and one Path Item holding two of them survives.
+/// That is a size no degenerate count reports — a count that repeated the
+/// number its caller built would say four, and a count of `paths.items` would
+/// say one — so both halves are asserted here rather than the equality alone,
+/// which would say which number is right without saying what is wrong with the
+/// other two. Built by hand rather than through [`document`], which asserts the
+/// size it is about to be denied.
+#[test]
+fn a_collapsed_document_declares_fewer_operations_than_were_inserted() {
+    let template = PathTemplate::parse("/resources/{id}").expect("a fixture template parses");
+    let mut collapsed = Document::new(SpecVersion::V3_1, Info::new("Collapsed", "1.0.0"));
+    let mut inserted = 0;
+
+    for index in 0..2 {
+        collapsed.paths.insert(
+            &template,
+            PathItem::new()
+                .with_operation(Method::Get, Operation::new(format!("getItem{index}")))
+                .with_operation(Method::Post, Operation::new(format!("addItem{index}"))),
+        );
+        inserted += 2;
+    }
+
+    let declared = declared_operations(&collapsed);
+    let entries = collapsed.paths.items.len();
+
+    assert!(
+        declared < inserted,
+        "{inserted} operations were inserted under one template and the document declares \
+         {declared}; a count reporting the number it was asked to build sees no collapse at all, \
+         which is the whole of what the size guard in `document` is for"
+    );
+    assert!(
+        declared > entries,
+        "the collapsed document holds {entries} Path Items declaring {declared} operations; a \
+         count of entries reads a Path Item's second method as nothing at all, and would agree \
+         with the guard only while the fixture kept one operation per path"
     );
 }
 
