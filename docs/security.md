@@ -54,6 +54,35 @@ of the description learns that the credential is *honoured* rather than
 That is a different thing from a middleware configured not to reject, which
 appears in no document at all.
 
+### A 403 may name itself; a 401 may not
+
+`AuthRejection::forbidden_as(uri)` puts an application's own problem `type` on
+the 403 an authorizer returns. `AuthRejection::forbidden()` leaves it
+`about:blank`, which is what every 403 was before it.
+
+The 401 has no such constructor and is not getting one. Which credential check
+refused — expired, wrong issuer, unknown key — is a fact a client cannot act on
+and an attacker would like to have, and RFC 9457 section 5 says a problem
+document is not a debugging channel. An *authorization* rule is the opposite:
+"this account is suspended" is a class of refusal with a next step in it, the
+caller is already authenticated, and only the application knows which of its
+rules declined.
+
+Two things follow, both deliberate:
+
+- **The title stays `Forbidden`.** RFC 9457 section 3.1.3 makes a title a
+  property of the type, so Kynos has none to offer for a URI it has never seen.
+  An error wanting its own title is `#[derive(ApiError)]`, not this.
+- **The URI is not validated.** It reaches the client verbatim, so it names a
+  *class* of refusal — `…/insufficient-scope`, `…/account-suspended` — and never
+  a fact about the caller. Refusing a malformed one would put a second failure
+  mode on the path already reporting the first.
+
+What an operation *declares* is a separate question. `Auth<S>`, `MaybeAuth<S>`
+and `Scoped<S, R>` describe themselves from the scheme type alone, so the
+authenticator is unreachable while the document is built: the declared 403 still
+refers to the shared `Problem` component and narrows nothing.
+
 ### What Kynos does not verify
 
 No JWT verifier, no session store, no password hasher. Each is application
@@ -71,6 +100,7 @@ What Kynos *does* ship is the part that is the same for everyone:
 | [`constant_time_eq`](../crates/kynos/src/security/mod.rs) | `==` on a shared secret says how much of a guess was right |
 | The `WWW-Authenticate` challenge | It is part of what the 401 *is*, and it has to match the description |
 | 401 and 403 on the operation | A guard that did not declare them would make the document wrong |
+| The `type` seam on a 403 | Which authorization rule refused is the application's to say, and nothing but the authorizer can say it |
 
 ### Two carriers are refused, deliberately
 
