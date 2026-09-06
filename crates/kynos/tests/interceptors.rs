@@ -584,7 +584,7 @@ async fn every_case() -> Vec<Case> {
     use kynos::middleware::{
         csrf::CrossSite,
         limits::{AtCapacity, BodySizeExceeded, TimedOut},
-        rate_limit::headers::{RateLimited, RateLimitedFields},
+        rate_limit::refusal::{RateLimited, RateLimitedFields},
     };
 
     let registry = &mut kynos::schema::registry::Registry::new();

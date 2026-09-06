@@ -9,20 +9,22 @@
 //!
 //! [`decision`] is what a policy reports, [`store`] is where counters live,
 //! [`key`] is what a request counts against, [`quota`] is the algorithm over the
-//! three, and [`headers`] is what any of it says on the wire. The interceptor
-//! itself is here.
+//! three, [`headers`] is what an allowed exchange says on the wire and
+//! [`refusal`] is what a denied one says. The interceptor itself is here.
 
 pub mod decision;
 pub mod headers;
 pub mod key;
 pub mod quota;
+pub mod refusal;
 pub mod store;
 
 use std::marker::PhantomData;
 
 use crate::middleware::rate_limit::{
     decision::{Decision, QuotaPolicy, RateLimitPolicy, ServiceLimit},
-    headers::{RateLimitFields, RateLimitHeaders, RateLimited, RateLimitedFields},
+    headers::{RateLimitFields, RateLimitHeaders},
+    refusal::{RateLimited, RateLimitedFields},
 };
 use crate::{
     extract::params::header::EncodeHeaders,
