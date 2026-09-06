@@ -43,6 +43,13 @@
 //! The challenge is declared on the scheme rather than on the authenticator, so
 //! the `WWW-Authenticate` a client receives and the one the description
 //! advertises are one string.
+//!
+//! `Tokens::authorize` refuses with `AuthRejection::forbidden_as`, and `Rejects`
+//! with the plain `AuthRejection::forbidden()`. That is the whole of the
+//! asymmetry: a 403 is the one refusal here whose *meaning* is the
+//! application's, so it is the one an authenticator may name. A 401 carries no
+//! type at all, because which credential check refused is a fact a caller
+//! cannot act on and an attacker would like to have.
 
 use std::{collections::HashMap, net::Ipv4Addr};
 
@@ -205,13 +212,21 @@ impl<C: Sync> Authenticator<AccessToken, C> for Tokens {
 
         // Every demanded scope must be granted. `Forbidden` and not
         // `Unauthenticated`: the credential was valid, it just does not reach.
+        //
+        // And named, which is the half only an application can write. A client
+        // reading `about:blank` learns the status it already has; a client
+        // reading this one learns which refusal it met and what to do about it.
+        // The URI names a class of refusal — "a scope was missing" — and not
+        // which scope, because the string reaches the caller verbatim.
         if scopes
             .iter()
             .all(|demanded| credential.scopes.iter().any(|held| held == demanded))
         {
             Ok(())
         } else {
-            Err(AuthRejection::forbidden())
+            Err(AuthRejection::forbidden_as(
+                "https://errors.example.com/insufficient-scope",
+            ))
         }
     }
 }
