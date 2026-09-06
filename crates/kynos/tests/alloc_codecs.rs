@@ -1131,3 +1131,332 @@ mod protobuf {
         }
     }
 }
+
+/// How `Compression`'s cost grows with the body it holds.
+///
+/// The one module here that is not a body codec. It is measured under the same
+/// shape because [`performance.md`](../../../docs/performance.md#the-taxonomy)
+/// grades it under the same one: an opt-in payload codec owes an allocation
+/// count on an operation that names it, and an encoder is a codec that names
+/// itself in `Content-Encoding` rather than in `Content-Type`.
+///
+/// **The axis that matters here is body size, which no other module has.** A
+/// body extractor's cost is settled by the shape of the payload; an encoder's
+/// is settled by how much of it there is, because the encoder drains its output
+/// 8 KiB at a time into a growing buffer. So the table below is codings by
+/// sizes, and the relations are about growth rather than about a floor.
+///
+/// All three codings are measured rather than gzip alone: `encode` boxes
+/// brotli's future because its encoder state is kilobytes, so what is counted
+/// differs between them in exactly the way a single-coding table would hide.
+#[cfg(feature = "compression")]
+mod compression {
+    use std::sync::LazyLock;
+
+    use kynos::{
+        extract::{body::binary::Binary, media::OctetStream},
+        http::{HeaderValue, Method, Request, StatusCode, header},
+        middleware::compression::Compression,
+        prelude::*,
+        router::service::Service,
+    };
+
+    use crate::harness::{counted, request};
+
+    /// The octets the fixture serves, one buffer per size.
+    ///
+    /// Built once and forced before every region, so a handler's whole cost is
+    /// a `Bytes` clone — a refcount bump, and no allocation. Structured rather
+    /// than constant, for the reason `middleware.rs`'s level fixture gives: a
+    /// repeated byte compresses to nearly nothing at every size, and the growth
+    /// this module measures would flatten into noise.
+    static BODIES: LazyLock<[bytes::Bytes; 4]> =
+        LazyLock::new(|| [0, 1024, 16 * 1024, 256 * 1024].map(octets));
+
+    fn octets(length: usize) -> bytes::Bytes {
+        let mut octets = Vec::with_capacity(length);
+        let mut index = 0_u32;
+
+        while octets.len() < length {
+            octets.extend_from_slice(
+                format!("{index:x} the quick brown fox {}\n", index % 97).as_bytes(),
+            );
+            index += 1;
+        }
+
+        octets.truncate(length);
+        bytes::Bytes::from(octets)
+    }
+
+    #[kynos::get("/bytes/0")]
+    async fn empty() -> Binary<OctetStream> {
+        Binary::new(BODIES[0].clone())
+    }
+
+    #[kynos::get("/bytes/1k")]
+    async fn small() -> Binary<OctetStream> {
+        Binary::new(BODIES[1].clone())
+    }
+
+    #[kynos::get("/bytes/16k")]
+    async fn medium() -> Binary<OctetStream> {
+        Binary::new(BODIES[2].clone())
+    }
+
+    #[kynos::get("/bytes/256k")]
+    async fn large() -> Binary<OctetStream> {
+        Binary::new(BODIES[3].clone())
+    }
+
+    /// The four operations with `Compression` over them.
+    fn mounted() -> Service<()> {
+        Router::<()>::new()
+            .mount(kynos::routes![empty, small, medium, large])
+            .intercept(Compression::new())
+            .build(())
+            .expect("a describable router")
+    }
+
+    /// The same four with nothing over them: the literal operation without it.
+    fn unmounted() -> Service<()> {
+        Router::<()>::new()
+            .mount(kynos::routes![empty, small, medium, large])
+            .build(())
+            .expect("a describable router")
+    }
+
+    /// One request, asking for `accept`.
+    ///
+    /// The field is written before the region opens, like every other part of
+    /// building a request here.
+    fn asking(accept: &'static str, target: &str) -> Request {
+        let mut request = request(Method::GET, target, None, b"");
+        request
+            .headers_mut()
+            .insert(header::ACCEPT_ENCODING, HeaderValue::from_static(accept));
+        request
+    }
+
+    /// The body sizes measured, in the order they grow, each a sixteenth of the
+    /// next, and how many times the leak check replays each.
+    ///
+    /// The replay counts fall as the bodies grow because encoding is real CPU
+    /// and this target runs under `llvm-cov` as well as plain: a thousand
+    /// brotli passes over 256 KiB would put the file against nextest's
+    /// 30-second slow bound rather than against anything it measures. What the
+    /// replay is looking for — a count that climbs between identical requests
+    /// — is a property of the encoder's state across calls rather than of the
+    /// body's size, so it is visible at every size and cheapest at the small
+    /// ones.
+    const SIZES: [(&str, &str, usize); 4] = [
+        ("0", "/bytes/0", 1_000),
+        ("1 KiB", "/bytes/1k", 1_000),
+        ("16 KiB", "/bytes/16k", 200),
+        ("256 KiB", "/bytes/256k", 25),
+    ];
+
+    /// The three codings, spelled as `Accept-Encoding` spells them.
+    const CODINGS: [&str; 3] = ["gzip", "br", "zstd"];
+
+    /// What one request costs on the service `Compression` is mounted on, by
+    /// what the request asked for and by how large the body is.
+    ///
+    /// The columns are [`SIZES`] in order. The `identity` row is the same
+    /// operation with the encoder declining to run: it is what each engaged row
+    /// is a delta *from*, and the reason the deltas below are of the encoder
+    /// rather than of the interceptor's own indirection.
+    ///
+    /// Read the way every other table here was read: each ceiling set to zero,
+    /// the target run, the counts the failure reported transcribed.
+    ///
+    /// Three readings are worth naming.
+    ///
+    /// **A zero-length body costs what identity costs, in every coding.**
+    /// `worth_encoding` refuses a body of no octets even at `min_size` zero, so
+    /// the encoder never runs and the column is the identity row.
+    ///
+    /// **1 KiB and 16 KiB cost the same in every coding.** The encoder drains
+    /// its output 8 KiB at a time into a `BytesMut` that grows by doubling, and
+    /// neither body's *encoded* form crosses enough of those boundaries to
+    /// differ. The delta only moves again at 256 KiB — which is the shape the
+    /// growth relation below asserts, and the reason four sizes are measured
+    /// rather than two.
+    ///
+    /// **Brotli is roughly twice gzip and four times zstd.** Its encoder state
+    /// is kilobytes, which is why `encode` boxes its future at all; the same
+    /// fact shows up here as the allocations that state costs.
+    const RECORDED: [(&str, [usize; 4]); 4] = [
+        ("identity", [14, 14, 14, 14]),
+        ("gzip", [14, 27, 27, 31]),
+        ("br", [14, 42, 42, 48]),
+        ("zstd", [14, 21, 21, 24]),
+    ];
+
+    /// The same operation at 16 KiB with no `Compression` mounted at all.
+    ///
+    /// The difference between this and the `identity` row is what the erased
+    /// interceptor chain costs an operation that carries it, with the encoder
+    /// declining to run — a cost `alloc.rs` does not reach and this file
+    /// records only in passing, since the per-layer measurement at depth 0/4/8
+    /// is its own piece of work.
+    const UNMOUNTED: usize = 10;
+
+    /// The record: what each request against this fixture costs today.
+    #[test]
+    fn the_operations_cost_what_is_recorded() {
+        LazyLock::force(&BODIES);
+        let service = mounted();
+        let mut over = Vec::new();
+
+        for (accept, ceilings) in RECORDED {
+            for ((size, target, _), ceiling) in SIZES.into_iter().zip(ceilings) {
+                let counted = counted(&service, asking(accept, target), StatusCode::OK);
+                if counted > ceiling {
+                    over.push(format!(
+                        "{accept} at {size} allocated {counted}, recorded {ceiling}"
+                    ));
+                }
+            }
+        }
+
+        let counted = counted(&unmounted(), asking("gzip", "/bytes/16k"), StatusCode::OK);
+        if counted > UNMOUNTED {
+            over.push(format!(
+                "unmounted at 16 KiB allocated {counted}, recorded {UNMOUNTED}"
+            ));
+        }
+
+        assert!(
+            over.is_empty(),
+            "{over:?}; raising a ceiling is a change to docs/nfr.md, and \
+             lowering one is what a cheaper encoder looks like"
+        );
+    }
+
+    /// What mounting the interceptor costs the operation that carries it.
+    ///
+    /// The one reading here that is not a delta within one service, and the
+    /// only one that answers "what does the feature cost an operation that
+    /// mounts it" in the literal sense the taxonomy asks for. It is one size
+    /// rather than four because what it measures — the erased chain around the
+    /// handler — does not depend on the body.
+    #[test]
+    fn mounting_compression_costs_the_operation_that_carries_it() {
+        LazyLock::force(&BODIES);
+
+        let with = counted(&mounted(), asking("gzip", "/bytes/16k"), StatusCode::OK);
+        let without = counted(&unmounted(), asking("gzip", "/bytes/16k"), StatusCode::OK);
+
+        assert!(
+            with > without,
+            "an operation under Compression ({with}) should cost more than the \
+             same operation without it ({without})"
+        );
+    }
+
+    /// A body the encoder declines costs less than one it encodes.
+    ///
+    /// Both ways of declining are asserted, because they leave by different
+    /// doors: negotiation refuses before the chain runs, and `worth_encoding`
+    /// refuses after the response is in hand.
+    #[test]
+    fn a_body_left_alone_costs_less_than_one_encoded() {
+        LazyLock::force(&BODIES);
+        let service = mounted();
+
+        let declined = counted(&service, asking("identity", "/bytes/16k"), StatusCode::OK);
+
+        for coding in CODINGS {
+            let encoded = counted(&service, asking(coding, "/bytes/16k"), StatusCode::OK);
+            let empty = counted(&service, asking(coding, "/bytes/0"), StatusCode::OK);
+
+            assert!(
+                encoded > declined,
+                "{coding} on 16 KiB ({encoded}) should cost more than the same \
+                 response the client asked for as identity ({declined})"
+            );
+            assert!(
+                encoded > empty,
+                "{coding} on 16 KiB ({encoded}) should cost more than {coding} \
+                 on a body too small to be worth encoding ({empty})"
+            );
+        }
+    }
+
+    /// The relation the table exists to hold: the encoder's delta grows with
+    /// the body, and no faster than the body does.
+    ///
+    /// A delta is taken against the same operation at the same size with
+    /// identity asked for, so dispatch, the handler and the interceptor's own
+    /// indirection all cancel and what is left is the encode.
+    ///
+    /// Each size is a sixteenth of the next, so "at most linear" is
+    /// `delta(16N) <= 16 * delta(N)`. That is the shape a buffer drained in
+    /// fixed-size chunks has; a delta that outgrew it would be a buffer growing
+    /// by doubling from nothing on every response, or state kept per octet.
+    #[test]
+    fn the_encoders_delta_grows_with_the_body_and_no_faster() {
+        LazyLock::force(&BODIES);
+        let service = mounted();
+
+        for coding in CODINGS {
+            let deltas = SIZES.map(|(_, target, _)| {
+                let engaged = counted(&service, asking(coding, target), StatusCode::OK);
+                let alone = counted(&service, asking("identity", target), StatusCode::OK);
+                engaged.saturating_sub(alone)
+            });
+
+            for pair in deltas.windows(2) {
+                assert!(
+                    pair[0] <= pair[1],
+                    "{coding} allocated {deltas:?} over {SIZES:?}; a delta that \
+                     falls as the body grows is a measurement of something else"
+                );
+            }
+
+            for (smaller, larger) in deltas.iter().skip(1).zip(deltas.iter().skip(2)) {
+                assert!(
+                    *larger <= 16 * *smaller,
+                    "{coding} allocated {deltas:?} over {SIZES:?}; a sixteenfold \
+                     body should not cost more than sixteen times the \
+                     allocations"
+                );
+            }
+        }
+    }
+
+    /// The leak check, over every coding at every size.
+    ///
+    /// An encoder is where accumulating state would be easiest to introduce and
+    /// hardest to see: a dictionary kept between responses, or a buffer reused
+    /// and grown, would leave every count but the first one different.
+    #[test]
+    fn a_replayed_request_costs_what_the_first_one_did() {
+        LazyLock::force(&BODIES);
+        let service = mounted();
+
+        for (accept, _) in RECORDED {
+            for (size, target, replays) in SIZES {
+                let first = counted(&service, asking(accept, target), StatusCode::OK);
+                let mut moved = Vec::new();
+
+                for index in 0..replays {
+                    let counted = counted(&service, asking(accept, target), StatusCode::OK);
+                    if counted != first {
+                        moved.push((index, counted));
+                    }
+                }
+
+                assert!(
+                    moved.is_empty(),
+                    "{accept} at {size} allocated {first} times on one request \
+                     and differently on {} of the next {replays}, starting at \
+                     {:?}; a count that moves between identical requests is \
+                     state accumulating in the encoder",
+                    moved.len(),
+                    moved.first()
+                );
+            }
+        }
+    }
+}
