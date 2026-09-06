@@ -317,9 +317,12 @@ validators, the registry that mints their schemas, and the JSON Schema
 interpreter the README's claim is about. The emitters and `describe` are graded
 off-path and held by nothing here: the emitters live in `kynos-openapi`, outside
 the one scope the rule reads, and get a row when
-[#86](https://github.com/getkono/kynos/issues/86) widens it; `describe` is the
-site every row below allows, so a row naming it would be circular — what puts it
-off the path is that `Router::build` has returned before a service exists.
+[#86](https://github.com/getkono/kynos/issues/86) widens it; and `describe` is
+the site allowed by each of the three rows below whose element it builds, so a
+row naming it would be circular — what puts it off the path is that
+`Router::build` has returned before a service exists. The fourth row, the JSON
+Schema interpreter, allows `test/conformance.rs` alone: `describe` does not
+build it, and nothing on either side of that row names the other.
 
 | Element | Named by | Named only in | Why a request cannot reach it |
 | --- | --- | --- | --- |
