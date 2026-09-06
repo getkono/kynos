@@ -172,6 +172,7 @@ of which anything here would currently catch.
 | performance | Route dispatch allocates at most a recorded number of times per route shape, and a replayed request costs what the first one did | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), over a handler that allocates nothing, counting fresh allocations and reallocations across a 10k-request replay | `enforced` |
 | performance | Zero heap allocations on the routing path | — | `absent`. The row above enforces a ceiling, which is the opposite direction; nothing asserts the zero, and the measurement below is why |
 | performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `kynos-bench` |
+| performance | Erasing a body through the boxed trait object costs a recorded number of allocations per construction | [`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs), counting `Body::empty` and `Body::from_bytes` | `enforced` |
 | reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; [`tests/routing.rs`](../crates/kynos/tests/routing.rs) over `Router::validate` for those only visible once the tree is assembled, each refusal with its pass control | `enforced` |
 | security | A served asset path is enumerated, never joined from request input | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) asserting an embedded set registers only literal `paths` keys, and [`router/assets/fs/tests.rs`](../crates/kynos/src/router/assets/fs/tests.rs) sweeping every escape a resolver must refuse against a control that must not be | `enforced` |
 | correctness | A route with no expressible template is recorded rather than described | [`tests/unchecked.rs`](../crates/kynos/tests/unchecked.rs) asserting a catch-all takes no `paths` key and reaches `x-kynos-opaque-routes` | `enforced` |
@@ -192,10 +193,21 @@ the four belongs to which is part of the attribution below.
 
 Nothing here attributes those seven to the lines that make them, and this
 document does not guess: the candidates a reader will think of first — the
-extension map, the capture vector, the body wrapper that reports a disconnect —
-are the obvious suspects and not evidence. Attribution is the next piece of
-work, and it is what turns a ceiling into a decision about which allocation to
-remove.
+extension map, the capture vector — are the obvious suspects and not evidence.
+Attribution is the next piece of work, and it is what turns a ceiling into a
+decision about which allocation to remove.
+
+**One suspect is off the list rather than unconvicted.** The body wrapper that
+reports a disconnect was the third name here, and erasing a body is none of the
+seven: the request body is built before the counted region opens, and the
+response a `204` sends is `Body::empty()`, which erases a zero-sized type, so
+`Box::pin` never reaches the allocator. What erasure costs where it is not free
+is what the erasure row above records — nothing for an empty body, one
+allocation for a body carrying bytes — held as an equality rather than as a
+ceiling, because a count under either would mean the boxing had stopped
+happening. The cost the entry
+predicted is real one step further out, on the server path, where
+`Body::from_incoming` erases a `hyper::body::Incoming` that is not zero-sized.
 
 The ceilings are recorded rather than the zero because
 [Thresholds](#thresholds) asks for the first measurement rather than the hoped
