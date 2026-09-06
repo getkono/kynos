@@ -1431,38 +1431,55 @@ mod compression {
     /// Both ways of declining are asserted, because they leave by different
     /// doors: negotiation refuses before the chain runs, and `worth_encoding`
     /// refuses after the response is in hand.
+    ///
+    /// **Every rung of the ladder, rather than 16 KiB alone.** The relation
+    /// below guards `engaged >= alone` at every size before it subtracts, which
+    /// is the weak half of this same pair; asserted at one size only, the
+    /// strict half left 1 KiB and 256 KiB unable to tell an encoder that costs
+    /// what declining costs from one that runs. The readings are the ones the
+    /// table beside it already takes, so the sweep buys that for nothing.
+    ///
+    /// The empty column is the *baseline* of the second assertion rather than a
+    /// rung of the first. At no octets `worth_encoding` refuses whatever the
+    /// request asked for, so the encoder declines on both sides and the two
+    /// costs are equal by construction — which is the reading the second
+    /// assertion is made against.
     #[test]
     fn a_body_left_alone_costs_less_than_one_encoded() {
         LazyLock::force(&BODIES);
         let service = mounted();
-
-        let declined = counted_carrying(
-            &service,
-            asking("identity", "/bytes/16k"),
-            StatusCode::OK,
-            None,
-        );
+        let (_, empty_target, empty_length, _) = SIZES[0];
 
         for coding in CODINGS {
-            let encoded = counted_carrying(
+            let empty = counted_carrying(
                 &service,
-                asking(coding, "/bytes/16k"),
+                asking(coding, empty_target),
                 StatusCode::OK,
-                Some(coding),
+                carried(coding, empty_length),
             );
-            let empty =
-                counted_carrying(&service, asking(coding, "/bytes/0"), StatusCode::OK, None);
 
-            assert!(
-                encoded > declined,
-                "{coding} on 16 KiB ({encoded}) should cost more than the same \
-                 response the client asked for as identity ({declined})"
-            );
-            assert!(
-                encoded > empty,
-                "{coding} on 16 KiB ({encoded}) should cost more than {coding} \
-                 on a body too small to be worth encoding ({empty})"
-            );
+            for (size, target, length, _) in SIZES.into_iter().skip(1) {
+                let declined =
+                    counted_carrying(&service, asking("identity", target), StatusCode::OK, None);
+                let encoded = counted_carrying(
+                    &service,
+                    asking(coding, target),
+                    StatusCode::OK,
+                    carried(coding, length),
+                );
+
+                assert!(
+                    encoded > declined,
+                    "{coding} on {size} ({encoded}) should cost more than the \
+                     same response the client asked for as identity ({declined})"
+                );
+                assert!(
+                    encoded > empty,
+                    "{coding} on {size} ({encoded}) should cost more than \
+                     {coding} on a body too small to be worth encoding \
+                     ({empty})"
+                );
+            }
         }
     }
 
