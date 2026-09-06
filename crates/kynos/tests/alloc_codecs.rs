@@ -1303,13 +1303,15 @@ mod compression {
         ("zstd", [14, 21, 21, 24]),
     ];
 
-    /// The same operation at 16 KiB with no `Compression` mounted at all.
+    /// The same operation at 16 KiB, asked for as `identity`, with no
+    /// `Compression` mounted at all.
     ///
     /// The difference between this and the `identity` row is what the erased
     /// interceptor chain costs an operation that carries it, with the encoder
     /// declining to run — a cost `alloc.rs` does not reach and this file
     /// records only in passing, since the per-layer measurement at depth 0/4/8
-    /// is its own piece of work.
+    /// is its own piece of work. It is measured under the same request as that
+    /// row so that the chain is the only thing between the two numbers.
     const UNMOUNTED: usize = 10;
 
     /// The record: what each request against this fixture costs today.
@@ -1330,7 +1332,11 @@ mod compression {
             }
         }
 
-        let counted = counted(&unmounted(), asking("gzip", "/bytes/16k"), StatusCode::OK);
+        let counted = counted(
+            &unmounted(),
+            asking("identity", "/bytes/16k"),
+            StatusCode::OK,
+        );
         if counted > UNMOUNTED {
             over.push(format!(
                 "unmounted at 16 KiB allocated {counted}, recorded {UNMOUNTED}"
@@ -1351,17 +1357,28 @@ mod compression {
     /// mounts it" in the literal sense the taxonomy asks for. It is one size
     /// rather than four because what it measures — the erased chain around the
     /// handler — does not depend on the body.
+    ///
+    /// **Both sides ask for `identity`**, so the encoder declines on the
+    /// mounted one and the difference is the chain and nothing else. Asking for
+    /// a coding the mounted side would encode makes this an assertion that
+    /// encoding costs more than not encoding — true, measured twice over by the
+    /// table above, and not what this test's name claims.
     #[test]
     fn mounting_compression_costs_the_operation_that_carries_it() {
         LazyLock::force(&BODIES);
 
-        let with = counted(&mounted(), asking("gzip", "/bytes/16k"), StatusCode::OK);
-        let without = counted(&unmounted(), asking("gzip", "/bytes/16k"), StatusCode::OK);
+        let with = counted(&mounted(), asking("identity", "/bytes/16k"), StatusCode::OK);
+        let without = counted(
+            &unmounted(),
+            asking("identity", "/bytes/16k"),
+            StatusCode::OK,
+        );
 
         assert!(
             with > without,
             "an operation under Compression ({with}) should cost more than the \
-             same operation without it ({without})"
+             same operation without it ({without}), with the encoder declining \
+             on both sides"
         );
     }
 
