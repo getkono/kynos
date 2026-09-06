@@ -425,6 +425,54 @@ ship and reads what came back, with `Retry-After` and the `RateLimit` field's
 from the `Denial` and one from the `ServiceLimit`, and a wiring that read either
 from the other would fail there.
 
+### Naming the problem type a refusal carries
+
+A 429's RFC 9457 `type` was `about:blank`, which says *the status code is the
+whole story*. That is true of a generic refusal and false of a service that
+distinguishes a burst limit from a spent monthly allowance — a client branches on
+`type`, and there was nothing to branch on.
+
+```rust,ignore
+struct Throttled;
+
+impl RefusalType for Throttled {
+    const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/rate-limited");
+}
+
+RateLimit::new(policy).refusal_type::<Throttled>()
+```
+
+**It is a type-state, not a field on `Denial`.** What an interceptor declares is
+read from its associated types and never from a value it returned — that is the
+whole of why there is no `contribution` method. A URI carried on a `Denial`
+would reach the wire and nothing else, leaving the declared 429 saying
+`about:blank` about a response that says otherwise. That is the
+declaration-versus-behaviour defect the short-circuit sweep exists to catch, and
+adding a hook that produces it is not a feature. Stated as a type, the same
+`const` is read by `into_response` and by `Responses`, from one function.
+
+**Nor a `const` on `RateLimitPolicy`.** The trait is implemented by the
+application for a custom algorithm, but the shipped algorithm is `Quotas`, which
+is Kynos's type: a const there is a hook a `Quotas` user cannot reach without
+wrapping it. Naming it on the limiter covers both, and it is the same shape
+`standard_fields` already has — a decision that changes what every covered
+operation declares changes the type.
+
+**What the document can say today.** The declared 429 carries the URI as the
+`application/problem+json` media type's `example`, serialized from the same
+`Problem` value the wire renders. It is machine-readable and it is not a
+*constraint*: nothing rejects a body whose `type` differs from an example. The
+constraint needs `type` narrowed to a `const` in the schema, and `Problem`'s
+schema is shared by every error Kynos describes — narrowing it there would
+narrow it for all of them. That is [#103]'s mechanism; when it lands the 429's
+`Problem.type` narrows to `RefusalType::TYPE_URI` and the conformance harness
+starts failing a refusal whose body disagrees with its declaration.
+
+Naming no type is still the default, and it declares no example and sends
+`about:blank`, so a service that does not care carries nothing new.
+
+[#103]: https://github.com/getkono/kynos/issues/103
+
 ## The order a chain runs in
 
 **The first `intercept` call is the outermost interceptor.** A chain is a slice
