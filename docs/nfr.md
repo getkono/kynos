@@ -66,6 +66,15 @@ Numeric ceilings are written `TBD` until they are measured.
 A guessed ceiling is worse than no ceiling: it either fails constantly and gets
 disabled, or passes trivially and hides the regression it was meant to catch.
 
+Four ceilings below stay `TBD` because the measurement that would set one is
+`kynos-bench`'s: route resolution p99 at a thousand registered operations,
+per-layer added p99, syscalls per request, and idle memory per connection at
+100k connections. A counted figure taken beside one of them does not set it — a
+`size_of` on per-connection state is not a resident-memory reading at scale, and
+an allocation count at stack depth 0/4/8 is not a latency — which is why the
+counted half and the timed half are separate rows, and only the timed one
+carries the `TBD`.
+
 ## Modules
 
 | Requirement group | Location |
@@ -462,6 +471,13 @@ surface baseline is recorded against a surface that has stopped moving.
 Compile time needs a trend line rather than a spot check: it is the failure mode
 that kills macro-heavy type-level frameworks, and it degrades gradually enough
 that no single change ever looks responsible.
+
+The incremental-rebuild ceiling stays `TBD`, and stays that way until something
+measures one. Nothing here builds a hundred operations and times the rebuild
+after a one-line handler edit, so there is no first measurement to set it from,
+and [Thresholds](#thresholds) rules out the alternative. `planned` is the
+honest status rather than `needs-tooling`: `cargo build --timings` ships with
+the toolchain, so the row is waiting on wiring rather than on an installation.
 
 ## Observability
 
