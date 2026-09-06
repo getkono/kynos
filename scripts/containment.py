@@ -8,6 +8,12 @@ Source is stripped of comments and string literals before anything is
 matched -- these rules are discussed in prose throughout `src`, and the
 `b"h2"` ALPN identifier is a literal -- and `#[cfg(test)]` modules are
 dropped, both inline and as sibling files.
+
+One rule needs the literals back: a `#[cfg(feature = "x")]` gate writes the
+flag name as a string, so it is matched over a second corpus that keeps
+literals and drops everything else the first drops. Comments go from both.
+A rule matched over genuinely raw text reads a renamed flag off a stale
+comment and reports the row as holding.
 """
 
 import os
@@ -27,17 +33,25 @@ failures = []
 CHAR_LITERAL = re.compile(r"'(\\.|[^\\'])'")
 
 
-def strip(source):
-    """Drop comments, literals and `#[cfg(test)]` modules.
+def strip(source, literals=True):
+    """Drop comments and `#[cfg(test)]` modules, and literals unless asked.
 
     A hand-rolled scanner rather than a set of regexes, because the three
     constructs nest: `"//"` is not a comment, `'"'` is not a string, and
     Rust's block comments nest inside each other. Getting any of those
     wrong desynchronises the scan and silently inverts what survives.
+
+    `literals=False` keeps every literal and drops the rest, which is the
+    corpus a `#[cfg(feature = "x")]` gate is read against: the flag name is a
+    string, so a rule that dropped literals would find no gate anywhere, and
+    one matched over raw text would find one in a comment. The scanner still
+    walks each literal rather than skipping the branch -- what makes a literal
+    unreadable is that a `//` inside it is not a comment, and that is true
+    whether or not the text is kept.
     """
     out, i, n = [], 0, len(source)
     while i < n:
-        pair = source[i : i + 2]
+        pair, start = source[i : i + 2], i
         if pair == "//":
             j = source.find("\n", i)
             i = n if j < 0 else j
@@ -58,15 +72,21 @@ def strip(source):
             close = '"' + m.group(1)
             j = source.find(close, i + m.end())
             i = n if j < 0 else j + len(close)
+            if not literals:
+                out.append(source[start:i])
         elif source[i] == '"':
             i += 1
             while i < n and source[i] != '"':
                 i += 2 if source[i] == "\\" else 1
             i += 1
+            if not literals:
+                out.append(source[start:i])
         elif source[i] == "'" and CHAR_LITERAL.match(source, i):
             # A char literal. A bare `'` that does not close is a lifetime,
             # which is ordinary code and falls through to the branch below.
             i = CHAR_LITERAL.match(source, i).end()
+            if not literals:
+                out.append(source[start:i])
         else:
             out.append(source[i])
             i += 1
@@ -105,12 +125,24 @@ def under_test(path):
 # modules are dropped, inline by `strip` and as sibling files here.
 FILES = [(path, text) for path, text in SOURCES if not under_test(path)]
 
-# The same two corpora before `strip()` ran. Almost nothing here wants them: a
-# rule matched over raw text sees every mention in a comment and every rule
-# discussed in prose, which is the false-positive class `strip()` exists to
-# remove. A `#[cfg(feature = "x")]` gate is the exception that has to have them,
-# because the flag name is a string literal and `strip()` deletes every one.
-RAW_FILES = [(path, text) for path, text in RAW_SOURCES if not under_test(path)]
+# The same two corpora for the one rule that needs a string literal back. A
+# `#[cfg(feature = "x")]` gate writes the flag name as a literal, so the corpus
+# above cannot see one at all; raw text can, but it also sees the flag named in
+# every comment, every rustdoc example and every `#[cfg(test)]` module beside
+# the code -- and a gate found in one of those holds a row up on a mention no
+# build reads, which is the false-positive class `strip()` exists to remove. So
+# this pair drops exactly what the pair above drops, minus the literals.
+GATE_SOURCES = [(path, strip(text, literals=False)) for path, text in RAW_SOURCES]
+
+GATE_FILES = [(path, text) for path, text in GATE_SOURCES if not under_test(path)]
+
+# What a failure says a spelling was looked for in, keyed by whether it is a
+# gate. Two corpora are two claims, and a message naming neither leaves a
+# reviewer guessing which text the rule read.
+CORPUS = {
+    False: "with comments, string literals and inline `#[cfg(test)]` modules removed",
+    True: "with comments and inline `#[cfg(test)]` modules removed and string literals kept",
+}
 
 
 def naming(*crates):
@@ -243,7 +275,7 @@ GATE = re.compile(r'`?feature\s*=\s*"([\w-]+)"`?')
 
 
 def token(cell):
-    """One `(spelling, regex, raw)` per spelling in a *Named by* cell, or `None`.
+    """One `(spelling, regex, gate)` per spelling in a *Named by* cell, or `None`.
 
     `None` loudly rather than a pattern that cannot match: a cell this function
     guesses at compiles to an escaped literal nothing in Rust source contains,
@@ -266,11 +298,14 @@ def token(cell):
     and `` `uuid`, `feature = "uuid"` `` is one element with two names, not two
     elements sharing a reason written twice.
 
-    A gate spelling is matched over raw source and an identifier over stripped
-    source, which is `raw` in each triple. `strip()` deletes every string
-    literal, and a flag name is one, so a gate matched over the stripped text
-    would name nothing anywhere -- the rule would read every `#[cfg]` in the
-    workspace as absent and every feature row as vacuously held.
+    Which corpus a spelling is matched over is `gate` in each triple: an
+    identifier over `SOURCES`, a gate over `GATE_SOURCES`. The two differ in
+    the literals alone. A gate matched over the stripped text would name
+    nothing anywhere, since a flag name is a literal and the rule would read
+    every `#[cfg]` in the workspace as absent and every feature row as
+    vacuously held; a gate matched over raw text would be satisfied by the
+    flag named in a comment, a rustdoc example or an inline test module, and a
+    renamed flag would go on reporting that its row holds.
 
     Each spelling keeps its own pattern rather than joining them into one
     alternation, so the caller can hold every spelling to naming a file. A
@@ -402,34 +437,36 @@ for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
     # file, which is exactly the row holding.
     #
     # Sibling test files, and not every test: `strip()` has already dropped the
-    # inline `#[cfg(test)] mod` bodies from `SOURCES` too, so the corpus this
-    # widens to is exactly the `tests.rs` siblings `under_test` holds out of
-    # `FILES`. That is the layout rule's corpus rather than an approximation of
-    # it -- a module's tests belong in a sibling -- and lifting the inline
-    # removal would re-admit the comment and literal mentions `strip()` exists
-    # to drop.
+    # inline `#[cfg(test)] mod` bodies from `SOURCES` and from `GATE_SOURCES`
+    # alike, so the corpus this widens to is exactly the `tests.rs` siblings
+    # `under_test` holds out of `FILES`. That is the layout rule's corpus rather
+    # than an approximation of it -- a module's tests belong in a sibling -- and
+    # lifting the inline removal would re-admit the comment and literal mentions
+    # `strip()` exists to drop.
     #
-    # A gate spelling is asked of `RAW_SOURCES` for the reason `token` gives:
-    # `strip()` deletes the string literal the flag name is, so a gate is
-    # invisible in the stripped text and every feature row would read as stale.
+    # A gate spelling is asked of `GATE_SOURCES` for the reason `token` gives:
+    # the flag name is a string literal, invisible in the stripped text, so
+    # that corpus is the same source with its literals kept. Its comments and
+    # inline test modules go all the same -- a gate is a claim about code a
+    # build compiles, and a flag named in a comment is not one.
     stale = [
-        spelling
-        for spelling, pattern, raw in spellings
+        (spelling, gate)
+        for spelling, pattern, gate in spellings
         if not any(
             any(path.startswith(tree) for tree in trees) and pattern.search(text)
-            for path, text in (RAW_SOURCES if raw else SOURCES)
+            for path, text in (GATE_SOURCES if gate else SOURCES)
         )
     ]
     if stale:
-        for spelling in stale:
+        for spelling, gate in stale:
             failures.append(
                 f"testing.md's off-path table names {element} with "
-                f"`{spelling}`, and nothing under {scope} writes that "
-                "spelling, sibling test files included. The row holds nothing "
-                "under it: either the element was renamed and the cell was not, "
-                "or it now lives outside the scope this row's own sites reach, "
-                "which is a site to add rather than a spelling to keep. The "
-                "row's sites go unchecked until the cell is repaired"
+                f"`{spelling}`, and nothing under {scope} writes that spelling "
+                f"{CORPUS[gate]}, sibling test files included. The row holds "
+                "nothing under it: either the element was renamed and the cell "
+                "was not, or it now lives outside the scope this row's own "
+                "sites reach, which is a site to add rather than a spelling to "
+                "keep. The row's sites go unchecked until the cell is repaired"
             )
         # One failure per row. A cell this rule has just called untrustworthy
         # does not also get to render a verdict on the sites: the offender scan
@@ -441,15 +478,15 @@ for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
         continue
 
     # The offender scan, over the request-runnable half of each corpus a
-    # spelling asked for. A file counts as naming the element if any one
-    # spelling matches it, in that spelling's own text: the row's claim is that
-    # the element is named nowhere else, and where the name is written as a
-    # `#[cfg]` string that is a claim about the raw file.
+    # spelling asked for -- the same corpus its existence was asked of, so a
+    # row cannot be held up by a mention the offender scan would not have
+    # counted. A file counts as naming the element if any one spelling matches
+    # it, in that spelling's own text.
     named = sorted(
         {
             path
-            for _, pattern, raw in spellings
-            for path, text in (RAW_FILES if raw else FILES)
+            for _, pattern, gate in spellings
+            for path, text in (GATE_FILES if gate else FILES)
             if any(path.startswith(tree) for tree in trees) and pattern.search(text)
         }
     )

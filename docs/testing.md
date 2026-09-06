@@ -391,13 +391,18 @@ does when one element has more than one spelling that reaches it:
 mint a registry anywhere. The second is a `feature = "…"` gate, written as the
 `#[cfg]` attribute writes it, for an element whose whole contribution is what a
 gate compiles — a flag is not a Rust name, so there is nothing else to name it
-by. The two are matched over different text: an identifier over the stripped
-source, a gate over the raw source, because the flag name is a string literal
-and stripping deletes every one. A feature row usually carries both — the code
-its gate compiles, and the crate that code calls — as in
-`` `uuid`, `feature = "uuid"` ``. A cell the rule cannot read fails the build
-rather than passing quietly, so teaching it a new kind of token is part of
-writing the row that needs one.
+by. The two are matched over different text, and the string literals are the
+whole of the difference: an identifier over source with its comments, its
+literals and its inline `#[cfg(test)]` modules removed, a gate over the same
+source with the literals kept, because the flag name is one. Comments go from
+both corpora. A gate written in a comment or a rustdoc example is a mention no
+build compiles, and a rule reading one would report a row as holding on the
+strength of a sentence about it — a renamed flag staying green off a stale
+comment is the failure a naming rule is least able to survive. A feature row
+usually carries both — the code its gate compiles, and the crate that code
+calls — as in `` `uuid`, `feature = "uuid"` ``. A cell the rule cannot read
+fails the build rather than passing quietly, so teaching it a new kind of token
+is part of writing the row that needs one.
 
 Each spelling in a cell is held to naming something, one at a time rather than
 as a union: a cell written `Registry::{new,defualt}` would otherwise pass on the
@@ -410,15 +415,18 @@ today. A spelling nothing in the scope writes under any `cfg` is a rename or a
 typo, and fails the build: it is a row holding nothing rather than an element
 nothing reaches.
 
-*Sibling* test files, and not every test: the same strip that drops comments and
-literals drops an inline `#[cfg(test)] mod` body from this corpus too, so what a
-spelling may be found in is the source a request can run plus the `tests.rs`
-siblings beside it. That is the layout rule's own corpus — a module's tests
-belong in a sibling — rather than an approximation of "the tests". A row whose
-cell the rule cannot read, or whose spelling names nothing, reports that one
-failure and stops: its site list goes unchecked until the cell is repaired,
-because an offender scan under a spelling already called untrustworthy would
-render a verdict nobody should act on.
+*Sibling* test files, and not every test: the same strip drops an inline
+`#[cfg(test)] mod` body from either corpus, so what a spelling may be found in
+is the source a request can run plus the `tests.rs` siblings beside it. That is
+the layout rule's own corpus — a module's tests belong in a sibling — rather
+than an approximation of "the tests", and it holds for a gate as much as for an
+identifier: an inline test module is the other place a gate can sit that no
+build outside `cfg(test)` compiles. A failure names which of the two corpora it
+read, so a row that has stopped holding says what text it was held against. A
+row whose cell the rule cannot read, or whose spelling names nothing, reports
+that one failure and stops: its site list goes unchecked until the cell is
+repaired, because an offender scan under a spelling already called
+untrustworthy would render a verdict nobody should act on.
 
 A cell names the shortest spelling that is unique in the workspace, not the
 longest one that is unambiguous. A qualified path is what an import removes:
@@ -440,9 +448,10 @@ claim and the true one.
 The two rules above are the ones this instantiates. **The set is named where the
 set has names**: a failure reports which file names an off-path element, not
 that two counts differ. **The declared side is read off disk**: the rule
-computes the real set of naming files from the stripped source, so the only
-hand-written thing in a row is the reason — which is exactly what a reviewer is
-being asked for when a build fails here.
+computes the real set of naming files from the stripped source — whichever of
+the two strippings the token kind asks for — so the only hand-written thing in
+a row is the reason, which is exactly what a reviewer is being asked for when a
+build fails here.
 
 The rule cannot see the whole path on its own. `Dispatch` hands every request to
 a trait object — `dyn ErasedTerminal`, `dyn ErasedInterceptor`, `dyn Observer`,
