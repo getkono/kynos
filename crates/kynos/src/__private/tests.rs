@@ -127,9 +127,10 @@ fn an_extended_parameter_value_decodes_back_to_what_it_encoded() {
 //
 // The shapes a declared status takes -- the `allOf` and the `oneOf` -- are
 // asserted through the derive in `crates/kynos/tests/derives.rs`, which is
-// where a reader meets them. What is left here is what no declaration can
-// reach: two failures publishing one type, and a status whose failures gave no
-// summary at all.
+// where a reader meets them. What is left here is what no declaration reaches
+// as readably: two failures publishing one type, two sharing one summary, a
+// status whose failures gave no summary at all, and a status with no failure
+// answering it -- which the derive cannot emit and this refuses.
 
 /// The `Problem` component, as `Registry::resolve` hands it over.
 fn component() -> kynos_openapi::Schema {
@@ -184,4 +185,43 @@ fn a_status_no_failure_summarized_describes_itself() {
         declared(599, &[(None, None)])["description"],
         serde_json::json!("the request failed")
     );
+}
+
+/// Two failures may be summarized identically -- one sentence covering a 404
+/// raised for two different resources. The schema keeps a branch per type,
+/// because the types differ; the description writes the sentence once, because
+/// repeating it word for word tells a reader nothing.
+#[test]
+fn one_summary_two_failures_share_is_written_once() {
+    let response = declared(
+        404,
+        &[
+            (
+                Some("https://errors.example.com/user-unknown"),
+                Some("Not found"),
+            ),
+            (
+                Some("https://errors.example.com/tenant-unknown"),
+                Some("Not found"),
+            ),
+        ],
+    );
+    let schema = &response["content"]["application/problem+json"]["schema"];
+
+    assert_eq!(
+        schema["oneOf"].as_array().map(Vec::len),
+        Some(2),
+        "{schema}"
+    );
+    assert_eq!(response["description"], serde_json::json!("Not found"));
+}
+
+/// A status with no failure answering it is not a narrowing of anything, and
+/// the derive -- the only caller -- cannot produce one. A caller that does is
+/// told, rather than handed the unnarrowed component and left to read it as a
+/// narrowed one.
+#[test]
+#[should_panic(expected = "never passes an empty branch list")]
+fn a_status_no_failure_answers_is_refused() {
+    let _ = declared(404, &[]);
 }

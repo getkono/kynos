@@ -33,6 +33,9 @@ type Branch = (Option<&'static str>, Option<&'static str>);
 /// [`Problem::new`] sets and what the serializer writes. The alternative — a
 /// bare `$ref` — would match every problem document and cost a `oneOf` its
 /// exactly-one rule.
+///
+/// `branches` is never empty: a status no failure answers with is not a
+/// narrowing of anything, and passing one panics.
 #[must_use]
 pub fn response(problem: &OpenApiSchema, status: u16, branches: &[Branch]) -> Response {
     // Composed from every branch, not from what survives the URI dedup: the
@@ -41,10 +44,14 @@ pub fn response(problem: &OpenApiSchema, status: u16, branches: &[Branch]) -> Re
     let distinct = distinct(status, branches);
 
     let schema = match distinct.as_slice() {
-        // Unreachable through the derive, which builds this list from the
-        // failures that named the status. Answered with the unnarrowed
-        // component rather than a panic, since a schema is what this returns.
-        [] => problem.clone(),
+        // The derive is the only caller and builds this list from the failures
+        // that named the status, so it is never empty. A future caller that
+        // passes nothing is told so, rather than handed the unnarrowed
+        // component back and left to believe it narrowed something.
+        [] => unreachable!(
+            "a status narrows to the failures answering with it: the derive is the only \
+             caller and never passes an empty branch list"
+        ),
         // One branch, so a `title` would repeat what the description already
         // says about the only type this status publishes.
         [(uri, _)] => narrowed(problem, uri, None),
