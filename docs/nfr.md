@@ -422,8 +422,8 @@ The line count is a prompt rather than a trigger because the rule interacts with
 the one directly above it in AGENTS.md — *"Submodules are `pub` with no parent
 re-exports"* — in a way worth stating. Splitting a module that declares several
 public types lengthens every one of their paths, because no re-export may
-preserve the old one. `error/rejection.rs` is the clearest case: eight rejection
-types in one of the twenty-eight, and splitting it would turn
+preserve the old one. `error/rejection.rs` is the clearest case: it is one of
+them, it declares eight rejection types, and splitting it would turn
 `error::rejection::PathRejection` into
 `error::rejection::path::PathRejection`. Sixteen of the twenty-eight are that
 shape, worth roughly a hundred public paths between them — and each is one
