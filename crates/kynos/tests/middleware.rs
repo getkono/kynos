@@ -279,6 +279,69 @@ async fn a_named_refusal_type_reaches_the_wire_and_the_document_it_declares() {
     );
 }
 
+/// Naming the type and taking the draft's fields are two decisions, in either
+/// order.
+///
+/// `standard_fields` was widened to preserve `T` rather than resetting it to
+/// `()`, and nothing else mounts it at `T != ()`: narrowing it back to
+/// `RateLimit<P, Legacy, ()>` would reinstate the rule that the type must be
+/// named last, and every other test would stay green while it did. This one
+/// stops compiling.
+///
+/// Both halves again, because the pair is what the widening put at risk: the
+/// wire could keep the URI while the description that a `Structured` refusal
+/// declares lost it.
+#[tokio::test]
+async fn a_named_refusal_type_survives_taking_the_standard_fields() {
+    const URI: &str = "https://errors.example.com/rate-limited";
+
+    let service = support::router()
+        .intercept(
+            RateLimit::new(AlwaysDenies::new())
+                .refusal_type::<Throttled>()
+                .standard_fields(),
+        )
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = get(&service, "/users/1").call().await;
+
+    assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(reply.json()["type"], URI);
+
+    // The spelling survived the naming, so this really is the composition and
+    // not the legacy limiter under another name.
+    assert_eq!(
+        reply.field("ratelimit").as_deref(),
+        Some(r#""default";r=0;t=30"#)
+    );
+    assert!(reply.field("x-ratelimit-limit").is_none());
+
+    let declared = serde_json::to_value(
+        support::router()
+            .intercept(
+                RateLimit::new(AlwaysDenies::new())
+                    .refusal_type::<Throttled>()
+                    .standard_fields(),
+            )
+            .openapi()
+            .expect("a describable router"),
+    )
+    .expect("a serializable document");
+
+    let operation = &declared["paths"]["/users/{id}"]["get"];
+
+    assert_eq!(
+        operation["responses"]["429"]["content"]["application/problem+json"]["example"]["type"],
+        URI,
+        "the standard spelling's description does not carry the type the wire sent: {declared}"
+    );
+    assert!(
+        operation["responses"]["429"]["headers"]["RateLimit"].is_object(),
+        "the standard spelling was lost on the way through: {declared}"
+    );
+}
+
 /// Compression must not re-encode anything a byte range is calculated against.
 ///
 /// Two rules, one reason. RFC 9110 section 14.1.2: when a content coding is
