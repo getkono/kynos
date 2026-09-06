@@ -120,9 +120,9 @@ convincingly — a replay that never exercised the feature also counts nothing.
 What settles it is reachability: the emitted `Document` is built once in
 `Router::build` and read back only through `Service::openapi`, so nothing in
 `Dispatch::serve` touches it. That is checked. `containment:check` holds four
-elements — the emitted `Document`, `Registry::new`, `validate::Validator` and
-`jsonschema` — to the sites [`testing.md`](testing.md#the-off-path-proof)
-allows them, and a witness in
+elements — the emitted `Document`, `Registry::{new,default}`,
+`validate::Validator` and `jsonschema` — to the sites
+[`testing.md`](testing.md#the-off-path-proof) allows them, and a witness in
 [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs) pins
 every field a request reaches through the dispatch table, so a new one is a
 compile failure until someone argues for it.
@@ -159,15 +159,15 @@ already implied by its shape. What it still owes is the proof of that, because
 "cannot reach" is a claim about code rather than about intent.
 
 **Both halves of the off-path grade now run.**
-[`testing.md`](testing.md#the-off-path-proof)'s table holds each of the ten
-flags to the files that write its gate and call its crate, and
+[`testing.md`](testing.md#the-off-path-proof)'s table holds every off-path
+flag to the files that write its gate and, usually, call its crate, and
 `containment:check` fails a flag graded off-path here with no row there — so
 the two documents cannot drift apart in the direction that loses a proof.
 [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv) records a `.text` delta
-for eight of the ten: `yaml` at +6192 bytes, `test-util` at −2464, `uuid` at
-−32, and `openapi31` with the four `time` and `decimal` backends at 0. `time`
-and `decimal` have no row of their own because neither compiles alone, which
-`features:check` already probes.
+for each flag that compiles alone: `yaml` at +6192 bytes, `test-util` at
+−2464, `uuid` at −32, and `openapi31` with the four `time` and `decimal`
+backends at 0. `time` and `decimal` have no row of their own because neither
+compiles alone, which `features:check` already probes.
 
 **The table is counted against the manifest.**
 [`containment:check`](../scripts/containment.py) reads the rows above and
