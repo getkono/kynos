@@ -253,7 +253,7 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | Two interceptors covering one operation never write one response header when either writes it from a short circuit | — | `by-design`, and recorded in [`middleware.md`](middleware.md#what-the-framework-computes-and-what-it-does-not): a `Short` response's headers are in no `const`, so `Retry-After` written from a 429 is compared against nothing. A `HEADERS` const on `ShortCircuit` is what would close it, and `#[derive(ApiError)]` could not derive one from an `IntoResponse` body — the `contribution` method the design refuses. Unreachable with what Kynos ships: only one short circuit answers a request |
 | correctness | Contribution composition is order-sensitive and deterministic | Permuted stacks produce differing, stable documents | `planned` for the *document*; the composition **check** is no longer order-sensitive, which is the order-insensitivity row above |
 | reliability | `Opaque` propagates to every affected operation and omits none | Unit test over a synthetic router tree | `planned` |
-| performance | Per-layer added allocations and future size ≤ TBD | The counting allocator and `size_of` over one interceptor stack at depth 0/4/8, reported as the marginal cost of a layer | `planned` |
+| performance | Per-layer added allocations ≤ 1 per layer, and the dispatch future ≤ 280 bytes at any depth | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), counting one request through a no-op interceptor stack at depth 0/4/8 and reporting the marginal cost of a layer, plus a `size_of` ratchet on the future a driver holds | `enforced` |
 | performance | Per-layer added p99 ≤ TBD | `criterion` at stack depth 0/4/8 with a regression gate | `kynos-bench` |
 | correctness | A stored response is never served to a request its stored `Vary` does not select | [`middleware/cache/tests.rs`](../crates/kynos/src/middleware/cache/tests.rs) over the selection rules, plus [`tests/cache.rs`](../crates/kynos/tests/cache.rs) over a live sequence | `enforced` |
 | correctness | A response that stated no freshness is never reused | [`tests/cache.rs`](../crates/kynos/tests/cache.rs) counting handler calls across three requests | `enforced` |
@@ -310,6 +310,16 @@ The first row is the enforcement of [`middleware.md`](middleware.md), and it
 runs: without it the soundness invariant would be an intention rather than a
 guarantee. It has already earned its keep twice — see
 [`testing.md`](testing.md#what-the-harness-found-on-its-first-run).
+
+**A layer costs one heap allocation and no future width.** A static match costs
+seven allocations with no stack in front of it, eleven behind four layers and
+fifteen behind eight; the future a driver holds is 280 bytes at every one of
+those depths, and at both feature sets that target is built at. The one
+allocation is the object-safe form of `Interceptor` boxing the future it
+returns, which is the price of a heterogeneous chain fitting in one slice. Both
+figures are the measurement rather than the target, per
+[Thresholds](#thresholds), and the relation beside them — that a layer costs the
+same wherever it sits — is what survives a change to either.
 
 ## Runtime
 
