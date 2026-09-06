@@ -57,7 +57,9 @@ appears in no document at all.
 ### A 403 may name itself; a 401 may not
 
 `AuthRejection::forbidden_as(uri)` puts an application's own problem `type` on
-the 403 an authorizer returns. `AuthRejection::forbidden()` leaves it
+a 403 — from `Authenticator::authorize` when a scope check fails, and equally
+from `Authenticator::authenticate` when a credential is valid and the
+application declines it anyway. `AuthRejection::forbidden()` leaves it
 `about:blank`, which is what every 403 was before it.
 
 The 401 has no such constructor and is not getting one. Which credential check

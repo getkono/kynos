@@ -140,8 +140,13 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
     /// Checks the credential this request presented.
     ///
     /// Return [`AuthRejection::unauthenticated`] when the credential is invalid
-    /// and [`AuthRejection::forbidden`] when it is valid but insufficient. The
-    /// challenge is left unset: [`Auth`](auth::Auth) attaches
+    /// and [`AuthRejection::forbidden`] when it is valid but the application
+    /// refuses it anyway — a suspended account is a *valid* credential the
+    /// application declines, which is a 403 and not a 401. Such a refusal is
+    /// the application's own, so [`AuthRejection::forbidden_as`] names it where
+    /// there is a problem type for it, exactly as in
+    /// [`authorize`](Authenticator::authorize). The challenge is left unset:
+    /// [`Auth`](auth::Auth) attaches
     /// [`challenge`](SecurityScheme::challenge) on the way out, so the wire and
     /// the description cannot name different ones.
     ///
@@ -159,8 +164,8 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
     /// A refusal is [`AuthRejection::forbidden`], or
     /// [`AuthRejection::forbidden_as`] where the application has a problem type
     /// for the rule that refused. The 403 is the one status here whose meaning
-    /// is the application's — only this method knows which rule declined —
-    /// which is why it is the one Kynos lets an authenticator name.
+    /// is the application's, which is why it is the one Kynos lets an
+    /// authenticator name — from either method.
     fn authorize(
         &self,
         credential: &S::Credential,
