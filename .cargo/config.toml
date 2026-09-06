@@ -1,0 +1,51 @@
+# Debug information is the dominant cost of a development build here, and this
+# workspace pays it more times than a library normally would.
+#
+# A test or example binary is statically linked, so each one carries a private
+# copy of the DWARF for everything it reached. At the default `debug = 2` the
+# `kynos` integration binary measured 167 MiB, of which 144 MiB -- 86% -- was
+# `.debug_*` sections, against 15 MiB of `.text`. There are 37 examples and
+# some three dozen test binaries, so `cargo build --workspace --all-targets
+# --all-features` produced 15.06 GiB.
+#
+# `line-tables-only` keeps what a failing test is read through: a panic
+# backtrace still names the file and line in Kynos's own code. It drops the
+# type and variable descriptions a debugger steps through, which is the trade
+# taken -- `nextest` is how this workspace is debugged, and a `gdb` session
+# wanting more can set `CARGO_PROFILE_DEV_DEBUG=2`, since an environment
+# variable overrides this file.
+#
+# Dependencies get nothing at all. Their frames are not where a bug in this
+# workspace is, and they are the bulk of the bytes: `*` covers every package
+# that is not a workspace member, so on a plain `cargo build --workspace` the
+# three crates here kept their line tables and the 67 dependency compilations
+# below them kept none.
+#
+# Measured on `cargo build --workspace --all-targets --all-features`:
+#
+#   debug = 2 (cargo's default)                15.06 GiB
+#   split-debuginfo = "unpacked"                8.20 GiB
+#   dependencies only, debug = false            8.53 GiB
+#   line-tables-only, everything                6.68 GiB
+#   this profile                                4.73 GiB
+#   debug = 0, everything (the floor)           3.73 GiB
+#
+# This lives in `.cargo/config.toml` rather than in `[profile.dev]` in the root
+# `Cargo.toml`, and that is load-bearing rather than a preference. `trybuild`
+# writes a *standalone* workspace under `target/tests/trybuild/` and runs its
+# own `cargo` there, and the manifest it generates carries no `[profile]`
+# section -- so a profile in this repository's `Cargo.toml` never reaches it,
+# and the compile-fail suite kept building 187 cases at full debug info. Cargo
+# discovers configuration by walking up from the working directory, and that
+# generated project sits inside this repository, so a profile here does reach
+# it: `target/tests` fell from 11 GiB to 2.3 GiB. The same reasoning covers
+# `cargo llvm-cov`, which builds into a third tree at `target/llvm-cov-target/`.
+#
+# Only `dev` is set. `[profile.bench]` in `Cargo.toml` asks for `debug = true`
+# on purpose, so that local profiling has symbols, and it inherits from
+# `release` rather than from here.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
