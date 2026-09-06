@@ -69,11 +69,14 @@ disabled, or passes trivially and hides the regression it was meant to catch.
 Four ceilings below stay `TBD` because the measurement that would set one is
 `kynos-bench`'s: route resolution p99 at a thousand registered operations,
 per-layer added p99, syscalls per request, and idle memory per connection at
-100k connections. A counted figure taken beside one of them does not set it — a
-`size_of` on per-connection state is not a resident-memory reading at scale, and
-an allocation count at stack depth 0/4/8 is not a latency — which is why the
-counted half and the timed half are separate rows, and only the timed one
-carries the `TBD`.
+100k connections. A counted figure taken beside one of them would not set it: a
+`size_of` on per-connection state is the structural reading
+[`performance.md`](performance.md#the-boundary) allocates to this repository,
+not the resident-memory reading at scale the ceiling names, and an allocation
+count at stack depth 0/4/8 is not a latency. Where a ceiling has a counted twin
+here — as route resolution and per-layer overhead do — that is why the counted
+half and the timed half are separate rows, and only the timed one carries the
+`TBD`.
 
 ## Modules
 
