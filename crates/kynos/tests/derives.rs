@@ -418,6 +418,21 @@ enum LookupError {
     TenantUnknown,
 }
 
+/// Two failures answering with one status, neither naming a type and the enum
+/// declaring no `base`, so both publish `about:blank`. The schema is one
+/// branch — a `oneOf` repeating a `const` is satisfied by two at once — but
+/// the status still has two things to say about itself.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum ReadError {
+    #[error("no file at that path")]
+    #[problem(status = 404, title = "File not found")]
+    FileNotFound,
+
+    #[error("the source file is missing")]
+    #[problem(status = 404, title = "Source file missing")]
+    SourceFileMissing,
+}
+
 /// Neither `type` nor `base`, so `Problem::new` writes `about:blank` and the
 /// description has exactly that to say.
 #[derive(Debug, thiserror::Error, ApiError)]
@@ -519,5 +534,26 @@ fn an_error_naming_no_type_narrows_to_about_blank() {
         schema["allOf"][1]["properties"]["type"]["const"],
         serde_json::json!("about:blank"),
         "{schema}"
+    );
+}
+
+/// Untyped variants collapse to one schema branch, because they publish one
+/// URI. The description is not a schema and does not collapse with it: every
+/// variant answering with the status is named there.
+#[test]
+fn untyped_variants_sharing_a_status_are_each_named() {
+    let responses = emitted_responses::<ReadError>();
+    let schema = declared_problem(&responses, "404");
+
+    assert_eq!(schema.get("oneOf"), None, "{schema}");
+    assert_eq!(
+        schema["allOf"][1]["properties"]["type"]["const"],
+        serde_json::json!("about:blank"),
+        "{schema}"
+    );
+    assert_eq!(
+        responses["404"]["description"],
+        serde_json::json!("File not found; Source file missing"),
+        "{responses}"
     );
 }
