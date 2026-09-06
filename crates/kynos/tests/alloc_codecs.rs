@@ -337,8 +337,10 @@ mod harness {
 
         assert!(
             over.is_empty(),
-            "{over:?}; raising a ceiling is a change to docs/nfr.md, and \
-             lowering one is what a cheaper codec looks like"
+            "{over:?}; the ceiling is `RECORDED` in this file, and the \
+             requirement it serves is reviewed in docs/nfr.md — raising one is \
+             a change to both, and lowering one is what a cheaper codec looks \
+             like"
         );
     }
 
@@ -1383,8 +1385,10 @@ mod compression {
 
         assert!(
             over.is_empty(),
-            "{over:?}; raising a ceiling is a change to docs/nfr.md, and \
-             lowering one is what a cheaper encoder looks like"
+            "{over:?}; the ceiling is `RECORDED` in this file, and the \
+             requirement it serves is reviewed in docs/nfr.md — raising one is \
+             a change to both, and lowering one is what a cheaper encoder looks \
+             like"
         );
     }
 

@@ -398,8 +398,8 @@ residue moved a replayed request's count on roughly one request in ten
 thousand. `alloc_counter` counts per thread, so the file is now correct by
 construction and passes as four concurrent threads of one process.
 [`work_on_another_thread_is_not_counted`](../crates/kynos/tests/alloc.rs) is
-the assertion that holds the counter to it, and it is inside the file rather
-than standing in for it from outside.
+the assertion that holds the counter to it, once for both counted targets: the
+property is `alloc_counter`'s rather than any fixture's.
 
 A flake is an isolation bug. Retrying one hides the bug and keeps the suite
 green, which is why `retries = 0` is in the config rather than left to a flag
