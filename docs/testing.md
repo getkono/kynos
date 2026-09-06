@@ -342,6 +342,17 @@ say so, and their real cost is their backends' rows.
 not: it is graded a full battery, because a derive is a type-level surface that
 owes a codegen delta, which an off-path proof does not include.
 
+Which flags belong here is not this document's to decide, and is not
+transcribed. `containment.py` reads the `Off-path proof` row of performance.md's
+grading table and requires every flag in it to appear in an *Element* cell of
+the table below, so regrading a flag into that column is a failing build until
+its row exists. That closes the one drift the grading table cannot see on its
+own: a full battery either runs or does not and an aggregate owes nothing, but a
+proof is an argument, and an argument that was graded and never written reads
+exactly like one that was written and holds. The check is forward only — a row
+for a flag graded elsewhere is not an error, since an element may be worth
+holding under any grade.
+
 | Element | Named by | Named only in | Why a request cannot reach it |
 | --- | --- | --- | --- |
 | the emitted document | `Document` | `router/describe.rs`, `router/docs/mod.rs`, `router/install.rs`, `router/mod.rs`, `router/service.rs`, `server/mod.rs`, `server/tls/document.rs`, `test/conformance.rs`, `unchecked.rs` | every site builds it, annotates it, or hands it back to the application. `docs::render` serializes it once while the router is built, so the endpoint serving a description holds finished bytes rather than a `Document`, and `Service` reads it back only through `Service::openapi` |

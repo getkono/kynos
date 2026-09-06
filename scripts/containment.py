@@ -352,6 +352,11 @@ if len(halves) != 2:
     )
 
 off_path_rows = 0
+# Every backticked token an *Element* cell writes, which is where a row says
+# which flag it is the proof for. Read from the same rows the rest of this loop
+# checks, so a row cannot satisfy the grading below without also being held
+# above: the feature grading compares against this set further down.
+off_path_elements = set()
 for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
     if not line.startswith("|"):
         break
@@ -364,6 +369,7 @@ for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
 
     element, named_by, where, reason = cells
     off_path_rows += 1
+    off_path_elements |= set(re.findall(r"`([^`]+)`", element))
     allowance = allowed_sites(where)
     trees = scanned(allowance)
     scope = ", ".join(trees)
@@ -537,11 +543,44 @@ elif int(budget.group(1)) != len(oversized):
 # can lose one.
 PERFORMANCE = (ROOT / "docs/performance.md").read_text()
 grading = PERFORMANCE[PERFORMANCE.index("| Grade | Owes | Flags |") :]
-graded = []
+# One grade is not self-executing. A full battery is owed to a suite that either
+# runs or does not; an aggregate owes nothing. An off-path proof is an argument,
+# and the failure it has is the one every argument has -- being graded and never
+# written. So the flags in this row are held to appearing in the off-path table
+# above, and regrading a flag into this column is a failing build until its row
+# exists. Forward only: a row for a flag graded elsewhere is not an error, since
+# an element may be worth holding under any grade.
+OFF_PATH_GRADE = "Off-path proof"
+graded, off_path_graded, grades = [], [], []
 for line in grading.split("\n")[2:]:
     if not line.startswith("|"):
         break
-    graded += re.findall(r"`([^`]+)`", line.split("|")[3])
+    cells = line.split("|")
+    flags = re.findall(r"`([^`]+)`", cells[3])
+    graded += flags
+    grades.append(cells[1].strip())
+    if cells[1].strip() == OFF_PATH_GRADE:
+        off_path_graded += flags
+
+# Read by name, so the name has to still be there. Renaming the grade without
+# renaming it here would empty `off_path_graded` and pass every flag in it
+# silently -- a rule about the grade nobody wrote a proof for, itself passing
+# because nobody wrote the grade.
+if OFF_PATH_GRADE not in grades:
+    failures.append(
+        f"performance.md's grading table no longer has a {OFF_PATH_GRADE!r} row, "
+        "so nothing decides which flags owe a proof that a request cannot reach "
+        "them and the off-path table is held to covering nothing"
+    )
+elif unproven := sorted(set(off_path_graded) - off_path_elements):
+    failures.append(
+        f"performance.md grades a flag {OFF_PATH_GRADE}, and no row of "
+        "testing.md's off-path table names it. That grade says the flag's cost "
+        "is nothing because a request cannot reach what it adds, which is an "
+        "argument rather than a measurement, and a graded argument nobody wrote "
+        "reads exactly like one that was written and holds:\n    "
+        + "\n    ".join(unproven)
+    )
 
 manifest = tomllib.loads((ROOT / "crates/kynos/Cargo.toml").read_text())
 flags = set(manifest["features"])
