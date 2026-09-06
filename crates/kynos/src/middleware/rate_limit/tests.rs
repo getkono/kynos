@@ -1,6 +1,7 @@
 use std::{fmt, time::Duration};
 
 use super::{
+    Legacy, RateLimit, Structured,
     decision::{QuotaPolicy, QuotaUnit, ServiceLimit},
     headers::{RateLimitFields, RateLimitHeaders},
     quota::{estimate, recovers_in},
@@ -537,5 +538,39 @@ fn a_refusal_prints_every_field_it_carries() {
     assert!(
         printed.contains(r#"policies: [QuotaPolicy { name: "burst""#),
         "{printed}"
+    );
+}
+
+// --- The implementations a limiter keeps ----------------------------------
+
+/// A policy stand-in. Only the struct's own bounds are under test here, so this
+/// does not have to be a `RateLimitPolicy`.
+#[derive(Clone, Debug)]
+struct Policy;
+
+/// Witnesses that a limiter has both implementations.
+fn assert_clone_and_debug<T: Clone + fmt::Debug>() {}
+
+/// A limiter keeps `Clone` and `Debug` whatever type names its refusal.
+///
+/// `#[derive]` bounds every parameter, so it demanded `T: Clone + Debug` from a
+/// marker that is a name and never a value -- taking both implementations away
+/// from any limiter naming a problem type, which is exactly the cost the
+/// refusal spends eight hand-written implementations to avoid one type down.
+/// `Throttled` derives nothing, so this call is the whole test.
+#[test]
+fn a_limiter_keeps_its_impls_whatever_type_names_its_refusal() {
+    assert_clone_and_debug::<RateLimit<Policy, Legacy, ()>>();
+    assert_clone_and_debug::<RateLimit<Policy, Structured, Throttled>>();
+
+    // And they still say what they said: the spelling and the problem type are
+    // in the type name, so `Debug` has one field to print.
+    let limiter = RateLimit::new(Policy)
+        .refusal_type::<Throttled>()
+        .standard_fields();
+
+    assert_eq!(
+        format!("{:?}", limiter.clone()),
+        "RateLimit { policy: Policy }"
     );
 }

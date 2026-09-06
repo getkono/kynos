@@ -19,7 +19,7 @@ pub mod quota;
 pub mod refusal;
 pub mod store;
 
-use std::marker::PhantomData;
+use std::{fmt, marker::PhantomData};
 
 use crate::middleware::rate_limit::{
     decision::{Decision, QuotaPolicy, RateLimitPolicy, ServiceLimit},
@@ -151,7 +151,6 @@ impl<T: RefusalType> RateLimitSpelling<T> for Structured {
 /// let limit = RateLimit::new(PerClient);
 /// # let _ = limit;
 /// ```
-#[derive(Clone, Debug)]
 pub struct RateLimit<P, D = Legacy, T = ()> {
     policy: P,
     _spelling: PhantomData<fn() -> (D, T)>,
@@ -270,6 +269,33 @@ where
                 .with_headers(D::allow(&allowance.limits, policies))),
             Decision::Deny(denial) => Err(D::deny(denial.retry_after, &denial.limits, policies)),
         }
+    }
+}
+
+// The two derivable implementations, written out. `#[derive]` bounds every
+// parameter, and `D` and `T` are names rather than values here: the struct
+// holds a `PhantomData<fn() -> (D, T)>` and no instance of either. Derived, a
+// limiter naming a problem type would lose `Clone` and `Debug` unless the
+// application's marker derived them too -- undoing, one type down, exactly what
+// [`refusal`]'s eight hand-written implementations buy.
+
+impl<P: Clone, D, T> Clone for RateLimit<P, D, T> {
+    fn clone(&self) -> Self {
+        Self {
+            policy: self.policy.clone(),
+            _spelling: PhantomData,
+        }
+    }
+}
+
+impl<P: fmt::Debug, D, T> fmt::Debug for RateLimit<P, D, T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // One field: the spelling and the problem type are in the type's name,
+        // and `_spelling` holds nothing an operator can read.
+        formatter
+            .debug_struct("RateLimit")
+            .field("policy", &self.policy)
+            .finish()
     }
 }
 
