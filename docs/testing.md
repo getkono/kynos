@@ -315,9 +315,9 @@ build until someone adds it to a row and says why a request cannot reach it.
 The table is not yet the whole grading. It holds the document model, the
 validators, the registry that mints their schemas, and the JSON Schema
 interpreter the README's claim is about. The emitters and `describe` are graded
-off-path and held by nothing here: the emitters live in `kynos-openapi`, outside
-the one scope the rule reads, and get a row when
-[#86](https://github.com/getkono/kynos/issues/86) widens it; and `describe` is
+off-path and held by nothing here: the emitters live in `kynos-openapi`, which
+the rule reaches only for a row that names a file there and no row yet does
+([#86](https://github.com/getkono/kynos/issues/86) writes it); and `describe` is
 the site allowed by each of the three rows below whose element it builds, so a
 row naming it would be circular — what puts it off the path is that
 `Router::build` has returned before a service exists. The fourth row, the JSON
@@ -331,20 +331,34 @@ build it, and nothing on either side of that row names the other.
 | the document validators | `Validator` | `router/describe.rs` | a description is validated where it is built. The build either fails or drops the validator, and nothing on the request path holds one to run |
 | the JSON Schema interpreter | `jsonschema` | `test/conformance.rs` | it is behind `test-util` and exists to check an observed response against the description. The request parser is the other projection of the same declaration and interprets no schema |
 
-Site paths are relative to `crates/kynos/src/`, which is the one scope
-[`containment.py`](../scripts/containment.py) counts a row against: a file
-outside it is neither an offender nor an allowance, so an element whose home is
-another crate is unheld until the scope moves, which is a change to the rule and
-not to a row. A *Named by*
-cell holds an identifier, or a path of them, and brace-expands the way the
-*Named only in* column does when one element has more than one spelling that
-reaches it: `Registry::{new,default}` holds both, because `Registry::new` is
+A site path is relative to `crates/kynos/src/` unless it starts at `crates/`,
+which makes it relative to the repository root and is how a row names a file in
+a sibling crate. The scope [`containment.py`](../scripts/containment.py) counts
+a row against follows from the row's own sites: always `crates/kynos/src/`, plus
+one `crates/<name>/src/` tree per crate-qualified site. So the widening and the
+reason for it are one edit, and a row reaching into another crate cannot be
+written without saying where. Deriving it per row rather than declaring one
+scope for the table is what makes the widening safe: `Document`, `Registry` and
+`Validator` are all *declared* in `kynos-openapi`, and a table-wide scope
+spanning both crates would fail those three rows on sight while proving nothing
+about the crate a request runs in.
+
+A *Named by* cell holds one of two kinds of token, and may hold several of
+either as a comma-separated list of backticked entries. The first is an
+identifier or a path of them, brace-expanding the way the *Named only in* column
+does when one element has more than one spelling that reaches it:
+`Registry::{new,default}` holds both, because `Registry::new` is
 `Self::default()` and a row holding only `new` would let a derived `default()`
-mint a registry anywhere. A cell may also come to hold a `feature = "…"` gate
-token, matched over the raw source rather than the stripped text, for a flag
-whose off-path proof is that nothing compiles it. A cell the rule cannot read
-fails the build rather than passing quietly, so teaching it a new kind of token
-is part of writing the row that needs one.
+mint a registry anywhere. The second is a `feature = "…"` gate, written as the
+`#[cfg]` attribute writes it, for an element whose whole contribution is what a
+gate compiles — a flag is not a Rust name, so there is nothing else to name it
+by. The two are matched over different text: an identifier over the stripped
+source, a gate over the raw source, because the flag name is a string literal
+and stripping deletes every one. A feature row usually carries both — the code
+its gate compiles, and the crate that code calls — as in
+`` `uuid`, `feature = "uuid"` ``. A cell the rule cannot read fails the build
+rather than passing quietly, so teaching it a new kind of token is part of
+writing the row that needs one.
 
 Each spelling in a cell is held to naming something, one at a time rather than
 as a union: a cell written `Registry::{new,defualt}` would otherwise pass on the

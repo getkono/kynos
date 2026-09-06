@@ -86,12 +86,14 @@ def strip(source):
     return text
 
 
-SOURCES = [
-    (path.relative_to(ROOT).as_posix(), strip(path.read_text()))
+RAW_SOURCES = [
+    (path.relative_to(ROOT).as_posix(), path.read_text())
     for crate in sorted((ROOT / "crates").iterdir())
     if (crate / "src").is_dir()
     for path in sorted((crate / "src").rglob("*.rs"))
 ]
+
+SOURCES = [(path, strip(text)) for path, text in RAW_SOURCES]
 
 
 def under_test(path):
@@ -102,6 +104,13 @@ def under_test(path):
 # What every rule here is stated over: the code that a request can run. Test
 # modules are dropped, inline by `strip` and as sibling files here.
 FILES = [(path, text) for path, text in SOURCES if not under_test(path)]
+
+# The same two corpora before `strip()` ran. Almost nothing here wants them: a
+# rule matched over raw text sees every mention in a comment and every rule
+# discussed in prose, which is the false-positive class `strip()` exists to
+# remove. A `#[cfg(feature = "x")]` gate is the exception that has to have them,
+# because the flag name is a string literal and `strip()` deletes every one.
+RAW_FILES = [(path, text) for path, text in RAW_SOURCES if not under_test(path)]
 
 
 def naming(*crates):
@@ -213,9 +222,12 @@ for crates, rule, where, description in [
 # by destructuring the three types a request travels through.
 TESTING = (ROOT / "docs/testing.md").read_text()
 OFF_PATH_HEADER = "| Element | Named by | Named only in | Why a request cannot reach it |"
-# The one scope a row's sites are resolved against. An element whose home is
-# another crate means changing this, not the row: a site outside the scope would
-# otherwise be compared against files the loop never looks at, and pass.
+# The scope every row is read against, and the one a bare site is relative to.
+# A row reaches further by writing a `crates/...` site: the scope it is checked
+# under is derived from its own sites, below, so widening is a property of the
+# row that needs it rather than of the whole table. The alternative -- one scope
+# spanning both crates for every row -- fails the `Document` row on sight, since
+# `kynos-openapi` is where the type is declared.
 OFF_PATH_SCOPE = "crates/kynos/src/"
 
 
@@ -223,10 +235,15 @@ OFF_PATH_SCOPE = "crates/kynos/src/"
 # them. The cell is prose that happens to be code, so the backticks around it
 # are optional here rather than load-bearing.
 NAMED_BY = re.compile(r"`?(\w+(?:\s*::\s*\w+)*)`?")
+# The other kind: a Cargo feature gate, written as the `#[cfg]` attribute writes
+# it. A flag is not an identifier -- `decimal-big` is not even a Rust name -- so
+# an element whose whole contribution is what a gate compiles has no crate or
+# type to be named by, and the gate is the only thing that names it.
+GATE = re.compile(r'`?feature\s*=\s*"([\w-]+)"`?')
 
 
 def token(cell):
-    """One `(spelling, regex)` per spelling in a *Named by* cell, or `None`.
+    """One `(spelling, regex, raw)` per spelling in a *Named by* cell, or `None`.
 
     `None` loudly rather than a pattern that cannot match: a cell this function
     guesses at compiles to an escaped literal nothing in Rust source contains,
@@ -238,12 +255,22 @@ def token(cell):
     write it spaced or wrapped, so each `::` matches the whitespace a formatter
     is free to put around it.
 
-    A cell may hold more than one spelling, brace-expanded the way a *Named only
-    in* cell expands a directory of siblings, and the row holds all of them at
-    once. `Registry::{new,default}` is the case that forced it: `new` is
-    `Self::default()` and `Registry` derives `Default`, so a row holding only
-    `new` lets a derived `default()` mint a registry anywhere with the gate
-    green. Two rows would hold the same element under one reason written twice.
+    A cell may hold more than one spelling -- a comma-separated list of
+    backticked entries, each of which may brace-expand the way a *Named only in*
+    cell expands a directory of siblings -- and the row holds all of them at
+    once. `Registry::{new,default}` is the case that forced the brace form:
+    `new` is `Self::default()` and `Registry` derives `Default`, so a row
+    holding only `new` lets a derived `default()` mint a registry anywhere with
+    the gate green. The comma form is what a feature row needs: a flag's
+    contribution is the code its gate compiles *and* the crate that code calls,
+    and `` `uuid`, `feature = "uuid"` `` is one element with two names, not two
+    elements sharing a reason written twice.
+
+    A gate spelling is matched over raw source and an identifier over stripped
+    source, which is `raw` in each triple. `strip()` deletes every string
+    literal, and a flag name is one, so a gate matched over the stripped text
+    would name nothing anywhere -- the rule would read every `#[cfg]` in the
+    workspace as absent and every feature row as vacuously held.
 
     Each spelling keeps its own pattern rather than joining them into one
     alternation, so the caller can hold every spelling to naming a file. A
@@ -252,29 +279,68 @@ def token(cell):
     registry is off the path while `Registry::default()` mints one anywhere.
     """
     spellings = []
-    for spelling in expand(cell.strip()):
-        readable = NAMED_BY.fullmatch(spelling.strip())
-        if readable is None:
-            return None
-        segments = [re.escape(part.strip()) for part in readable.group(1).split("::")]
-        pattern = r"\s*::\s*".join(segments)
-        spellings.append((readable.group(1), re.compile(r"\b" + pattern + r"\b")))
+    for entry in re.findall(r"`([^`]+)`", cell) or [cell]:
+        for spelling in expand(entry.strip()):
+            spelling = spelling.strip()
+            if gate := GATE.fullmatch(spelling):
+                flag = re.escape(gate.group(1))
+                spellings.append(
+                    (spelling, re.compile(r'feature\s*=\s*"' + flag + r'"'), True)
+                )
+                continue
+            readable = NAMED_BY.fullmatch(spelling)
+            if readable is None:
+                return None
+            segments = [re.escape(part.strip()) for part in readable.group(1).split("::")]
+            pattern = r"\s*::\s*".join(segments)
+            spellings.append(
+                (readable.group(1), re.compile(r"\b" + pattern + r"\b"), False)
+            )
     return spellings
 
 
 def allowed_sites(cell):
-    """The files one *Named only in* cell allows, resolved against the scope.
+    """The files one *Named only in* cell allows.
 
     A comma-separated list of backticked paths, each of which may brace-expand:
     a row naming nine files is one cell, and `router/{describe,install}.rs` is
     the same shorthand the allowance table above uses.
+
+    A path is relative to `OFF_PATH_SCOPE` unless it starts at `crates/`, which
+    makes it relative to the repository root and is how a row names a sibling
+    crate. The prefix is the whole of the distinction on purpose: it is what a
+    reader of the table already has to type to say where the file is, so a row
+    reaching into another crate cannot be written without saying so.
     """
     entries = re.findall(r"`([^`]+)`", cell) or [part for part in cell.split(",") if part.strip()]
     return {
-        OFF_PATH_SCOPE + site.strip().lstrip("/")
+        site if (site := path.strip()).startswith("crates/")
+        else OFF_PATH_SCOPE + site.lstrip("/")
         for entry in entries
-        for site in expand(entry.strip())
+        for path in expand(entry.strip())
     }
+
+
+def scanned(allowance):
+    """The `crates/<name>/src/` trees a row's own sites put it in reach of.
+
+    Always the home scope, plus one tree per crate-qualified site. Derived
+    rather than declared, so the widening and the reason for it are the same
+    edit: a row that names `crates/kynos-openapi/src/emit/mod.rs` has said
+    where its element lives, and a second cell repeating that as a scope could
+    only ever disagree with the first.
+
+    The narrowness is the point. Scanning both crates for every row would fail
+    the `Document`, `Registry` and `Validator` rows immediately -- all three
+    elements are *declared* in `kynos-openapi`, and the claim those rows make
+    is about the crate a request runs in.
+    """
+    trees = {OFF_PATH_SCOPE}
+    for site in allowance:
+        parts = site.split("/")
+        if len(parts) > 3 and parts[0] == "crates" and parts[2] == "src":
+            trees.add("/".join(parts[:3]) + "/")
+    return sorted(trees)
 
 
 halves = TESTING.split(OFF_PATH_HEADER)
@@ -299,6 +365,8 @@ for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
     element, named_by, where, reason = cells
     off_path_rows += 1
     allowance = allowed_sites(where)
+    trees = scanned(allowance)
+    scope = ", ".join(trees)
     spellings = token(named_by)
     if spellings is None:
         failures.append(
@@ -334,24 +402,28 @@ for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
     # it -- a module's tests belong in a sibling -- and lifting the inline
     # removal would re-admit the comment and literal mentions `strip()` exists
     # to drop.
+    #
+    # A gate spelling is asked of `RAW_SOURCES` for the reason `token` gives:
+    # `strip()` deletes the string literal the flag name is, so a gate is
+    # invisible in the stripped text and every feature row would read as stale.
     stale = [
         spelling
-        for spelling, pattern in spellings
+        for spelling, pattern, raw in spellings
         if not any(
-            path.startswith(OFF_PATH_SCOPE) and pattern.search(text)
-            for path, text in SOURCES
+            any(path.startswith(tree) for tree in trees) and pattern.search(text)
+            for path, text in (RAW_SOURCES if raw else SOURCES)
         )
     ]
     if stale:
         for spelling in stale:
             failures.append(
                 f"testing.md's off-path table names {element} with "
-                f"`{spelling}`, and nothing under {OFF_PATH_SCOPE} writes that "
+                f"`{spelling}`, and nothing under {scope} writes that "
                 "spelling, sibling test files included. The row holds nothing "
                 "under it: either the element was renamed and the cell was not, "
-                "or it now lives outside the one scope this rule reads, which "
-                "is a change to that scope rather than to the row. The row's "
-                "sites go unchecked until the cell is repaired"
+                "or it now lives outside the scope this row's own sites reach, "
+                "which is a site to add rather than a spelling to keep. The "
+                "row's sites go unchecked until the cell is repaired"
             )
         # One failure per row. A cell this rule has just called untrustworthy
         # does not also get to render a verdict on the sites: the offender scan
@@ -362,11 +434,18 @@ for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
         # inferred from a passing build.
         continue
 
+    # The offender scan, over the request-runnable half of each corpus a
+    # spelling asked for. A file counts as naming the element if any one
+    # spelling matches it, in that spelling's own text: the row's claim is that
+    # the element is named nowhere else, and where the name is written as a
+    # `#[cfg]` string that is a claim about the raw file.
     named = sorted(
-        path
-        for path, text in FILES
-        if path.startswith(OFF_PATH_SCOPE)
-        and any(pattern.search(text) for _, pattern in spellings)
+        {
+            path
+            for _, pattern, raw in spellings
+            for path, text in (RAW_FILES if raw else FILES)
+            if any(path.startswith(tree) for tree in trees) and pattern.search(text)
+        }
     )
     if offenders := [path for path in named if path not in allowance]:
         failures.append(
