@@ -31,6 +31,78 @@ failures = []
 
 
 CHAR_LITERAL = re.compile(r"'(\\.|[^\\'])'")
+TEST_MODULE = re.compile(r"#\[cfg\(test\)\]\s*mod\s+\w+\s*")
+
+
+def blank(text):
+    """`text` with every character but its newlines replaced by a space.
+
+    What the corpus that drops literals puts in place of one. Blanked rather
+    than deleted so that the two corpora one scan produces stay the same
+    length, character for character: a span found in either is a span in both,
+    which is what lets `#[cfg(test)]` modules be located once. The newlines
+    survive so a blanked literal leaves the lines around it where they were.
+    """
+    return "".join("\n" if char == "\n" else " " for char in text)
+
+
+def literal_end(source, i):
+    """Where the literal starting at `i` ends, or `None` if none starts there.
+
+    Raw strings, ordinary strings and char literals, which the scanner has to
+    walk rather than skip: a `//` inside one is not a comment and a `"` inside
+    a raw string is not its close. A bare `'` that does not close is a lifetime
+    rather than a char literal, and is ordinary code.
+    """
+    if source[i] == "r" and (m := re.match(r'r(#*)"', source[i:])):
+        close = '"' + m.group(1)
+        j = source.find(close, i + m.end())
+        return len(source) if j < 0 else j + len(close)
+    if source[i] == '"':
+        j, n = i + 1, len(source)
+        while j < n and source[j] != '"':
+            j += 2 if source[j] == "\\" else 1
+        return j + 1
+    if m := CHAR_LITERAL.match(source, i):
+        return m.end()
+    return None
+
+
+def test_module_spans(text):
+    """Every inline `#[cfg(test)] mod` in `text`, as `(start, end)` offsets.
+
+    Found once, over the text whose literals are blanked, and applied to both
+    corpora -- which is the whole reason the two are the same length. The end
+    of a braced module is where the braces balance, and a brace inside a string
+    is not a brace: counted over text that keeps its literals, a `"{"` in a
+    test module means the depth never returns to zero and every line after the
+    module is dropped, so a gate written below the tests is invisible; a `"}"`
+    balances one brace early, and the tail of the test module survives into a
+    corpus that is supposed to hold only what a request can run.
+
+    Outermost spans only. A nested module is already inside its parent's, and
+    returning both would have the caller cut one and shift the other.
+    """
+    spans = []
+    for match in TEST_MODULE.finditer(text):
+        if spans and match.start() < spans[-1][1]:
+            continue
+        rest = text[match.end() :]
+        if not rest.startswith("{"):
+            # `mod tests;`, whose body is the sibling file `under_test` holds
+            # out of `FILES` separately.
+            spans.append((match.start(), match.end() + rest.startswith(";")))
+            continue
+        depth, end = 0, len(text)
+        for k, char in enumerate(rest):
+            depth += (char == "{") - (char == "}")
+            if depth == 0:
+                end = match.end() + k + 1
+                break
+        # Braces that never balance are a file that does not compile, and the
+        # module runs to the end of it. A literal can no longer make one.
+        spans.append((match.start(), end))
+    return spans
 
 
 def strip(source, literals=True):
@@ -44,19 +116,21 @@ def strip(source, literals=True):
     `literals=False` keeps every literal and drops the rest, which is the
     corpus a `#[cfg(feature = "x")]` gate is read against: the flag name is a
     string, so a rule that dropped literals would find no gate anywhere, and
-    one matched over raw text would find one in a comment. The scanner still
-    walks each literal rather than skipping the branch -- what makes a literal
-    unreadable is that a `//` inside it is not a comment, and that is true
-    whether or not the text is kept.
+    one matched over raw text would find one in a comment.
+
+    One scan produces both, because the two differ in the literals alone: a
+    literal is kept verbatim in one and blanked to the same width in the other,
+    so the two are the same length and the `#[cfg(test)]` modules `strip` drops
+    are located once, on the text where a brace is only ever a brace.
     """
-    out, i, n = [], 0, len(source)
+    masked, kept, i, n = [], [], 0, len(source)
     while i < n:
-        pair, start = source[i : i + 2], i
+        pair = source[i : i + 2]
         if pair == "//":
             j = source.find("\n", i)
             i = n if j < 0 else j
         elif pair == "/*":
-            depth, i = 0, i
+            depth = 0
             while i < n:
                 if source[i : i + 2] == "/*":
                     depth += 1
@@ -68,41 +142,20 @@ def strip(source, literals=True):
                         break
                 else:
                     i += 1
-        elif source[i] == "r" and (m := re.match(r'r(#*)"', source[i:])):
-            close = '"' + m.group(1)
-            j = source.find(close, i + m.end())
-            i = n if j < 0 else j + len(close)
-            if not literals:
-                out.append(source[start:i])
-        elif source[i] == '"':
-            i += 1
-            while i < n and source[i] != '"':
-                i += 2 if source[i] == "\\" else 1
-            i += 1
-            if not literals:
-                out.append(source[start:i])
-        elif source[i] == "'" and CHAR_LITERAL.match(source, i):
-            # A char literal. A bare `'` that does not close is a lifetime,
-            # which is ordinary code and falls through to the branch below.
-            i = CHAR_LITERAL.match(source, i).end()
-            if not literals:
-                out.append(source[start:i])
+        elif (end := literal_end(source, i)) is not None:
+            literal = source[i:end]
+            masked.append(blank(literal))
+            kept.append(literal)
+            i = end
         else:
-            out.append(source[i])
+            masked.append(source[i])
+            kept.append(source[i])
             i += 1
-    text = "".join(out)
+    masked, kept = "".join(masked), "".join(kept)
 
-    while (m := re.search(r"#\[cfg\(test\)\]\s*mod\s+\w+\s*", text)) is not None:
-        rest = text[m.end() :]
-        if not rest.startswith("{"):
-            text = text[: m.start()] + rest.removeprefix(";")
-            continue
-        depth = 0
-        for k, char in enumerate(rest):
-            depth += (char == "{") - (char == "}")
-            if depth == 0:
-                break
-        text = text[: m.start()] + rest[k + 1 :]
+    text = kept if not literals else masked
+    for start, end in reversed(test_module_spans(masked)):
+        text = text[:start] + text[end:]
     return text
 
 
@@ -264,14 +317,41 @@ OFF_PATH_SCOPE = "crates/kynos/src/"
 
 
 # What one spelling in a *Named by* cell may hold: an identifier, or a path of
-# them. The cell is prose that happens to be code, so the backticks around it
-# are optional here rather than load-bearing.
+# them. The backticks are load-bearing as soon as a cell holds more than one
+# spelling -- they are what separates them, and `backticked` refuses a cell that
+# writes anything but commas outside them -- and are optional here only so that
+# a cell written as a single bare token is still read whole.
 NAMED_BY = re.compile(r"`?(\w+(?:\s*::\s*\w+)*)`?")
 # The other kind: a Cargo feature gate, written as the `#[cfg]` attribute writes
 # it. A flag is not an identifier -- `decimal-big` is not even a Rust name -- so
 # an element whose whole contribution is what a gate compiles has no crate or
 # type to be named by, and the gate is the only thing that names it.
 GATE = re.compile(r'`?feature\s*=\s*"([\w-]+)"`?')
+
+
+BACKTICKED = re.compile(r"`([^`]+)`")
+RESIDUE = re.compile(r"[\s,]*")
+
+
+def backticked(cell):
+    """The backticked entries of one cell, or `None` if anything else is in it.
+
+    Both cells below are comma-separated lists of backticked entries, and both
+    are read by collecting the runs. Collecting them is not enough on its own:
+    a list of two whose second entry lost its backticks collects as a list of
+    one, and every rule downstream then holds a row up by the half of it that
+    still parses. So the residue is checked too -- outside the runs a cell may
+    write commas and whitespace and nothing else.
+
+    A cell with no backticks at all is a different case and is not refused
+    here. `None` means a run was found *and* something outside the runs was;
+    a bare cell returns an empty list, and the caller reads it whole and fails
+    loudly there if it is not a token or a path.
+    """
+    entries = BACKTICKED.findall(cell)
+    if entries and not RESIDUE.fullmatch(BACKTICKED.sub("", cell)):
+        return None
+    return entries
 
 
 def token(cell):
@@ -281,7 +361,10 @@ def token(cell):
     guesses at compiles to an escaped literal nothing in Rust source contains,
     and a rule that always passes reports that the elements are off the path
     when nobody has checked. A new kind of token belongs in `NAMED_BY` and here,
-    not in a fallback.
+    not in a fallback. A cell writing anything but commas outside its backticks
+    is `None` for the same reason and by `backticked`: a spelling silently
+    dropped for having lost its backticks is a claim nobody is holding, and it
+    reads exactly like a row with one spelling that holds.
 
     `Registry::new` is a path rather than an identifier, and the source may
     write it spaced or wrapped, so each `::` matches the whitespace a formatter
@@ -313,8 +396,11 @@ def token(cell):
     matches wherever `new` is written, and the row goes on reporting that a
     registry is off the path while `Registry::default()` mints one anywhere.
     """
+    entries = backticked(cell)
+    if entries is None:
+        return None
     spellings = []
-    for entry in re.findall(r"`([^`]+)`", cell) or [cell]:
+    for entry in entries or [cell]:
         for spelling in expand(entry.strip()):
             spelling = spelling.strip()
             if gate := GATE.fullmatch(spelling):
@@ -346,8 +432,18 @@ def allowed_sites(cell):
     crate. The prefix is the whole of the distinction on purpose: it is what a
     reader of the table already has to type to say where the file is, so a row
     reaching into another crate cannot be written without saying so.
+
+    `None` when the cell writes anything but commas outside its backticks, by
+    `backticked` and for a consequence worse than a lost spelling: the scan
+    scope is derived from these sites, so a `crates/...` site dropped for
+    having lost its backticks does not merely go unchecked -- it takes the
+    sibling crate out of the scan with it, and the row narrows silently back
+    to the home scope where every spelling it names is still written.
     """
-    entries = re.findall(r"`([^`]+)`", cell) or [part for part in cell.split(",") if part.strip()]
+    entries = backticked(cell)
+    if entries is None:
+        return None
+    entries = entries or [part for part in cell.split(",") if part.strip()]
     sites = set()
     for entry in entries:
         for path in expand(entry.strip()):
@@ -406,6 +502,16 @@ for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
     off_path_rows += 1
     off_path_elements |= set(re.findall(r"`([^`]+)`", element))
     allowance = allowed_sites(where)
+    if allowance is None:
+        failures.append(
+            f"testing.md's off-path table allows {element} in {where}, which "
+            "this rule cannot read as a comma-separated list of backticked "
+            "paths. The row holds nothing until it can, and it holds it "
+            "nowhere: the trees this row is scanned in are derived from these "
+            "sites, so an unreadable cell is an unscanned crate rather than an "
+            "unchecked path"
+        )
+        continue
     trees = scanned(allowance)
     scope = ", ".join(trees)
     spellings = token(named_by)
