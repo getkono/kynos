@@ -124,9 +124,10 @@ One failure answers with the status:
 
 Several share it — the `oneOf` of exactly those, each branch carrying its own
 `title`, which is what RFC 9457 section 3.1.2 makes that member: the summary of
-the problem *type*. The response's description joins the distinct summaries with
-`"; "`, so a shared status names every variant answering with it rather than
-whichever was written first.
+the problem *type*. The response's description joins the summaries of every
+variant answering with the status, in declaration order and with `"; "`,
+dropping only a summary already written word for word — so a shared status
+names each of them rather than whichever came first.
 
 Two rules follow from what is actually on the wire:
 
@@ -136,8 +137,10 @@ Two rules follow from what is actually on the wire:
   `$ref` branch inside a `oneOf` would match *every* problem document, costing
   the keyword its exactly-one rule.
 - **Two variants publishing one URI are one branch.** A `oneOf` repeating a
-  `const` is satisfied twice over, which is the same defect. The summary
-  declared first is the one kept.
+  `const` is satisfied twice over, which is the same defect. That collapse is
+  the schema's alone: the branch takes the summary declared first as its
+  `title`, and the description still names every variant, since prose is under
+  no exactly-one rule.
 
 **The narrowing survives only on statuses no extractor claims.** An argument's
 rejection is contributed before the return type's responses and

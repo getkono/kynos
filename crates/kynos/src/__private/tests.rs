@@ -144,7 +144,8 @@ fn declared(status: u16, branches: &[(Option<&'static str>, Option<&'static str>
 
 /// A `oneOf` whose branches repeat a `const` is satisfied by two of them at
 /// once, which is exactly what `oneOf` forbids. Two failures publishing one
-/// type therefore declare one branch, keeping the summary declared first.
+/// type therefore declare one branch — while the description, which is prose
+/// under no such rule, still names both.
 #[test]
 fn two_failures_publishing_one_type_declare_one_branch() {
     let response = declared(
@@ -165,7 +166,10 @@ fn two_failures_publishing_one_type_declare_one_branch() {
         serde_json::json!("https://errors.example.com/unknown"),
         "{schema}"
     );
-    assert_eq!(response["description"], serde_json::json!("Unknown"));
+    assert_eq!(
+        response["description"],
+        serde_json::json!("Unknown; Also unknown")
+    );
 }
 
 /// With no summary anywhere the description falls back to the status code's own

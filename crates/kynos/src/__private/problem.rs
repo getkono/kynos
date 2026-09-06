@@ -35,15 +35,18 @@ type Branch = (Option<&'static str>, Option<&'static str>);
 /// exactly-one rule.
 #[must_use]
 pub fn response(problem: &OpenApiSchema, status: u16, branches: &[Branch]) -> Response {
-    let branches = distinct(status, branches);
+    // Composed from every branch, not from what survives the URI dedup: the
+    // dedup exists to keep a `oneOf` sound, and prose has no such rule.
+    let description = description(status, branches);
+    let distinct = distinct(status, branches);
 
-    let schema = match branches.as_slice() {
+    let schema = match distinct.as_slice() {
         // Unreachable through the derive, which builds this list from the
         // failures that named the status. Answered with the unnarrowed
         // component rather than a panic, since a schema is what this returns.
         [] => problem.clone(),
-        // One failure, so the summary is already the response's description and
-        // a `title` here would only repeat it.
+        // One branch, so a `title` would repeat what the description already
+        // says about the only type this status publishes.
         [(uri, _)] => narrowed(problem, uri, None),
         several => object(SchemaObject {
             one_of: Some(
@@ -57,18 +60,19 @@ pub fn response(problem: &OpenApiSchema, status: u16, branches: &[Branch]) -> Re
     };
 
     Response::with_content(
-        description(status, &branches),
+        description,
         APPLICATION_PROBLEM_JSON,
         MediaType::new(schema),
     )
 }
 
-/// The branches, resolved and deduplicated by URI in declaration order.
+/// The schema's branches: resolved and deduplicated by URI in declaration
+/// order.
 ///
 /// Two failures may publish one type — the same 404 raised from two call sites
 /// — and a `oneOf` repeating a `const` would be satisfied by two branches at
-/// once. The first summary wins, because the first declaration is the one a
-/// reader reaches first.
+/// once. Where that happens the first summary is the one the surviving branch
+/// titles itself with; the description is composed before this and keeps both.
 fn distinct(status: u16, branches: &[Branch]) -> Vec<(String, Option<&'static str>)> {
     let mut distinct: Vec<(String, Option<&'static str>)> = Vec::with_capacity(branches.len());
 
@@ -118,12 +122,17 @@ fn narrowed(problem: &OpenApiSchema, uri: &str, summary: Option<&str>) -> OpenAp
     })
 }
 
-/// The response's description: every distinct summary the status's failures
-/// gave, falling back to the code's own reason phrase.
+/// The response's description: every summary the status's failures gave, in
+/// declaration order and without repeats, falling back to the code's own
+/// reason phrase.
 ///
 /// A join rather than the first summary, because a status several failures
 /// share has several things to say and a response carries one description.
-fn description(status: u16, branches: &[(String, Option<&'static str>)]) -> String {
+/// Composed from the branches as declared: two failures publishing one URI are
+/// one schema branch but remain two failures, and a reader of the description
+/// is owed the name of each. Only an identical summary is dropped, since
+/// repeating a sentence tells no one anything.
+fn description(status: u16, branches: &[Branch]) -> String {
     let mut summaries: Vec<&str> = Vec::with_capacity(branches.len());
     for (_, summary) in branches {
         match summary {
