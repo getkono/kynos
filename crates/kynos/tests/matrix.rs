@@ -116,6 +116,9 @@ struct Caller {
 /// assertion exists to find.
 struct Tokens;
 
+/// The problem type `Tokens` gives its own 403.
+const BANNED: &str = "https://example.test/problems/account-banned";
+
 impl<C: Sync> Authenticator<Bearer<Caller>, C> for Tokens {
     async fn authenticate(&self, presented: BearerToken, _: &C) -> Result<Caller, AuthRejection> {
         // No `strip_prefix("Bearer ")` here, and that is the point: the scheme
@@ -125,7 +128,10 @@ impl<C: Sync> Authenticator<Bearer<Caller>, C> for Tokens {
             "tok_ok" => Ok(Caller {
                 subject: "user-1".to_owned(),
             }),
-            "tok_banned" => Err(AuthRejection::Forbidden),
+            // Named, because only this application knows *which* refusal a
+            // ban is. The type reaches the client verbatim, so it names a
+            // class of refusal and not a fact about the caller.
+            "tok_banned" => Err(AuthRejection::forbidden_as(BANNED)),
             _ => Err(AuthRejection::unauthenticated()),
         }
     }
@@ -721,7 +727,9 @@ async fn exercise_the_rejections(client: &TestClient<App>) {
         .header("authorization", "Bearer tok_banned")
         .send()
         .await
-        .assert_status(StatusCode::FORBIDDEN);
+        .assert_status(StatusCode::FORBIDDEN)
+        // The authorizer named this 403, and the name reaches the wire.
+        .assert_problem_type(BANNED);
 
     // A credential that is present and wrong is a 401 even where the guard is
     // optional: only *absence* is anonymity.

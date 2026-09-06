@@ -150,7 +150,7 @@ fn only_an_unsatisfiable_range_declares_a_complete_length() {
         }
         .into_response(),
         NegotiationRejection::NotAcceptable.into_response(),
-        AuthRejection::Forbidden.into_response(),
+        AuthRejection::forbidden().into_response(),
     ] {
         assert!(!other.headers().contains_key(header::CONTENT_RANGE));
     }
@@ -201,7 +201,7 @@ fn the_declared_416_carries_the_field_it_sends() {
 
 #[test]
 fn authentication_and_authorization_are_different_statuses() {
-    let observed = [AuthRejection::unauthenticated(), AuthRejection::Forbidden];
+    let observed = [AuthRejection::unauthenticated(), AuthRejection::forbidden()];
     let statuses: Vec<_> = observed.iter().map(AuthRejection::status).collect();
 
     assert_eq!(statuses, [StatusCode::UNAUTHORIZED, StatusCode::FORBIDDEN]);
@@ -250,6 +250,69 @@ fn a_cookie_rejection_is_a_bad_request() {
 
     assert_eq!(rejection.status(), StatusCode::BAD_REQUEST);
     assert_eq!(CookieRejection::statuses(), [StatusCode::BAD_REQUEST]);
+}
+
+/// A 403 an authorizer named carries that type on the wire; an unnamed one is
+/// still `about:blank`.
+///
+/// Which authorization rule refused is the application's to say, and only the
+/// application knows it — so the URI is a value the rejection carries rather
+/// than something Kynos could name for it.
+#[test]
+fn an_authorizer_names_the_problem_type_of_its_own_403() {
+    const BANNED: &str = "https://example.test/problems/account-banned";
+
+    let named = AuthRejection::forbidden_as(BANNED).into_problem();
+
+    assert_eq!(named.type_uri, BANNED);
+    // The title stays the canonical reason: RFC 9457 section 3.1.3 makes it a
+    // property of the type, and an application wanting its own has `ApiError`.
+    assert_eq!(named.title, "Forbidden");
+    assert_eq!(named.status, StatusCode::FORBIDDEN);
+    assert_eq!(named.detail.as_deref(), Some("access is not permitted"));
+
+    // An unnamed 403 is what a 403 has always been, to the byte.
+    let unnamed = AuthRejection::forbidden().into_problem();
+
+    assert_eq!(unnamed.type_uri, "about:blank");
+    assert_eq!(unnamed.title, named.title);
+    assert_eq!(unnamed.status, named.status);
+    assert_eq!(unnamed.detail, named.detail);
+}
+
+/// Naming a 403 neither survives into a challenge nor is lost to one.
+///
+/// `with_challenge` rebuilds the rejection, which is the one place a field
+/// added to `Forbidden` would be dropped without a word. The 401 is the
+/// contrast: it has no field to carry a type, deliberately — saying which
+/// credential check refused tells an attacker something a client cannot act
+/// on.
+#[test]
+fn a_named_403_survives_the_challenge_pass_and_still_sends_none() {
+    use crate::{http::header, response::IntoResponse};
+
+    const BANNED: &str = "https://example.test/problems/account-banned";
+    const CHALLENGE: &str = "Bearer realm=\"api\"";
+
+    let challenged = AuthRejection::forbidden_as(BANNED).with_challenge(Some(CHALLENGE));
+
+    assert_eq!(challenged.status(), StatusCode::FORBIDDEN);
+    assert_eq!(challenged.challenge(), None);
+    assert_eq!(challenged.into_problem().type_uri, BANNED);
+
+    let response = AuthRejection::forbidden_as(BANNED)
+        .with_challenge(Some(CHALLENGE))
+        .into_response();
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(!response.headers().contains_key(header::WWW_AUTHENTICATE));
+
+    let unauthenticated = AuthRejection::unauthenticated()
+        .with_challenge(Some(CHALLENGE))
+        .into_problem();
+
+    assert_eq!(unauthenticated.type_uri, "about:blank");
+    assert_eq!(unauthenticated.status, StatusCode::UNAUTHORIZED);
 }
 
 // --- The closed set --------------------------------------------------------
@@ -350,7 +413,7 @@ fn ledger() -> Vec<(&'static str, StatusCode, &'static [StatusCode])> {
     fn auth(rejection: &AuthRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
         let name = match rejection {
             AuthRejection::Unauthenticated { .. } => "AuthRejection::Unauthenticated",
-            AuthRejection::Forbidden => "AuthRejection::Forbidden",
+            AuthRejection::Forbidden { .. } => "AuthRejection::Forbidden",
         };
         (name, rejection.status(), AuthRejection::statuses())
     }
@@ -389,7 +452,7 @@ fn ledger() -> Vec<(&'static str, StatusCode, &'static [StatusCode])> {
             complete_length: 1234,
         }),
         auth(&AuthRejection::unauthenticated()),
-        auth(&AuthRejection::Forbidden),
+        auth(&AuthRejection::forbidden()),
     ]
 }
 
