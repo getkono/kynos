@@ -1343,6 +1343,16 @@ mod compression {
         (accept != "identity" && length > 0).then_some(accept)
     }
 
+    /// How many 8 KiB reads `encode`'s drain takes over a body of `length`
+    /// octets, at most.
+    ///
+    /// An upper bound rather than a count: what is drained is the encoded form,
+    /// and every body here compresses, so the encoder is emptied in no more
+    /// reads than the identity octets would take.
+    fn drained(length: usize) -> usize {
+        length.div_ceil(8 * 1024)
+    }
+
     /// What one request costs on the service `Compression` is mounted on, by
     /// what the request asked for and by how large the body is.
     ///
@@ -1509,16 +1519,27 @@ mod compression {
     }
 
     /// The relation the table exists to hold: the encoder's delta grows with
-    /// the body, and no faster than the body does.
+    /// the body, and no faster than the drain that produces it.
     ///
     /// A delta is taken against the same operation at the same size with
     /// identity asked for, so dispatch, the handler and the interceptor's own
     /// indirection all cancel and what is left is the encode.
     ///
-    /// Each size is a sixteenth of the next, so "at most linear" is
-    /// `delta(16N) <= 16 * delta(N)`. That is the shape a buffer drained in
-    /// fixed-size chunks has; a delta that outgrew it would be a buffer growing
-    /// by doubling from nothing on every response, or state kept per octet.
+    /// **The bound is the drain rather than the body.** `encode` empties its
+    /// encoder 8 KiB at a time into a growing `BytesMut`, so growing the body
+    /// from one measured size to the next buys the encoder at most
+    /// [`drained`]`(larger) - `[`drained`]`(smaller)` further reads, and the
+    /// delta may grow by at most one allocation apiece. Bounding it by the body
+    /// instead — `delta(16N) <= 16 * delta(N)`, which is what stood here — is
+    /// vacuous at these magnitudes: it allowed 208 allocations where 13 were
+    /// measured. The drain allows one between 1 KiB and 16 KiB, because both
+    /// bodies compress into a single chunk, and the growth measured there is
+    /// none.
+    ///
+    /// The step from the declined column is deliberately not bounded this way.
+    /// At zero octets the encoder never runs and the drain never happens, so
+    /// what separates that column from 1 KiB is the encoder's own setup — a
+    /// constant per response, which the two relations here are not about.
     #[test]
     fn the_encoders_delta_grows_with_the_body_and_no_faster() {
         LazyLock::force(&BODIES);
@@ -1545,12 +1566,22 @@ mod compression {
                 );
             }
 
-            for (smaller, larger) in deltas.iter().skip(1).zip(deltas.iter().skip(2)) {
+            // From the second size on: the step out of the declined column is
+            // the encoder's setup rather than anything its drain explains.
+            for larger in 2..SIZES.len() {
+                let smaller = larger - 1;
+                let allowance = drained(SIZES[larger].2) - drained(SIZES[smaller].2);
+                let growth = deltas[larger] - deltas[smaller];
+
                 assert!(
-                    *larger <= 16 * *smaller,
-                    "{coding} allocated {deltas:?} over {SIZES:?}; a sixteenfold \
-                     body should not cost more than sixteen times the \
-                     allocations"
+                    growth <= allowance,
+                    "{coding} allocated {deltas:?} over {SIZES:?}; the delta grew \
+                     by {growth} from {} to {}, where the drain that produces it \
+                     takes at most {allowance} further 8 KiB reads — a delta \
+                     outgrowing its drain is a buffer growing by doubling from \
+                     nothing on every response, or state kept per octet",
+                    SIZES[smaller].0,
+                    SIZES[larger].0
                 );
             }
         }
