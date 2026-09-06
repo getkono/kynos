@@ -15,8 +15,13 @@ hooks {
                 check = "mise run format:check"
                 fix = "mise run format"
             }
+            // `.cargo/config.toml` is in the glob for the reason `Cargo.toml`
+            // is: it decides how the workspace builds. Its `[profile.dev]`
+            // keys override the manifest's, so a typo'd key or an invalid
+            // value there breaks every build on the branch while matching
+            // none of the other steps' globs.
             ["lint"] {
-                glob = List("*.rs", "Cargo.toml", "Cargo.lock")
+                glob = List("*.rs", "Cargo.toml", "Cargo.lock", ".cargo/config.toml")
                 check_first = true
                 check = "mise run lint"
                 fix = "mise run lint:fix"
