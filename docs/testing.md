@@ -313,30 +313,39 @@ Every other file is on the request path by default, so a new site is a failing
 build until someone adds it to a row and says why a request cannot reach it.
 
 Two things are graded off-path and each gets rows here. The first four rows are
-the *elements* [`performance.md`](performance.md#the-allocation) names in its
-shape table: the document model, the validators, the registry that mints their
-schemas, and — through the `yaml` row's emitter site — the emitters. `describe`
-is the one shape no row holds, and cannot be: it is the site allowed by each of
-the three rows whose element it builds, so a row naming it would be circular.
-What puts it off the path is that `Router::build` has returned before a service
-exists. The JSON Schema interpreter row is the one the README's claim is about,
-and allows `test/conformance.rs` alone: `describe` does not build it, and
-nothing on either side of that row names the other.
+*elements*: the document model, the registry that mints its schemas, the
+validators, and the JSON Schema interpreter.
+[`performance.md`](performance.md#the-allocation) names four in its shape table
+and this is not that list. Three of its four are here — the document model, the
+validators and, held by the `yaml` row's emitter site further down rather than
+by one of these four, the emitters. The fourth, `describe`, is the one shape no
+row holds and cannot be: it is the site allowed by each of the rows whose
+element it builds, so a row naming it would be circular. What puts it off the
+path is that `Router::build` has returned before a service exists. Going the
+other way, the registry is in no shape-table row — it is here because it is what
+mints a schema, and the mint site is the stronger claim — and neither is the
+JSON Schema interpreter, whose row is the one the README's claim is about and
+allows `test/conformance.rs` alone: `describe` does not build it, and nothing on
+either side of that row names the other.
 
 The ten rows after those are the *flags*
 [`performance.md`](performance.md#the-feature-grading) grades `Off-path proof`,
 which owe the same argument one at a time. A flag is a weaker thing to hold than
-an element — it names no type, and four of the ten (`openapi31`, `test-util`,
-`time`, `decimal`) add no code of their own at all — so what the row holds is
-where the flag is *written*: the crate its gated code calls, and the
-`#[cfg(feature = "…")]` that compiles it. That is enough for the claim being
-made. Every one of these flags contributes either a `Schema` implementation,
-which needs the `&mut Registry` only `describe` mints, or an emitter method on a
-document a request never holds; a gate appearing anywhere else is the first
-sight of that stopping being true, and it fails the build. `time` and `decimal`
-carry no code at all — each is a `compile_error!` without a backend, which
+an element — it names no type — so what a row holds is where the flag is
+*written*: the crate its gated code calls, and the `#[cfg(feature = "…")]` that
+compiles it. That is enough for the claim being made, and the ten fall into four
+kinds. Six compile the code the proof has to keep a request away from: `uuid`
+and the four `time`/`decimal` backends contribute `Schema`
+implementations, which need the `&mut Registry` only `describe` mints, and
+`yaml` contributes an emitter method on a document a request never holds.
+`test-util` compiles the conformance harness behind one gate on `pub mod test`,
+whose interpreter is the `jsonschema` row above. `time` and `decimal` compile
+nothing on their own — each is a `compile_error!` without a backend, which
 [`features:check`](../mise.toml) probes — so their rows hold the two files that
-say so, and their real cost is their backends' rows.
+say so, and their real cost is their backends' rows. `openapi31` compiles
+nothing conditionally at all, which its row states. In every case a gate written
+outside the sites its row allows is the first sight of that stopping being true,
+and it fails the build.
 
 `macros` is the eleventh flag performance.md could have graded here and does
 not: it is graded a full battery, because a derive is a type-level surface that
@@ -359,7 +368,7 @@ holding under any grade.
 | the schema registry | `Registry::{new,default}` | `router/describe.rs` | the one registry a build mints is consumed by `describe`, which has finished before a service exists to accept a request |
 | the document validators | `Validator` | `router/describe.rs` | a description is validated where it is built. The build either fails or drops the validator, and nothing on the request path holds one to run |
 | the JSON Schema interpreter | `jsonschema` | `test/conformance.rs` | it is behind `test-util` and exists to check an observed response against the description. The request parser is the other projection of the same declaration and interprets no schema |
-| the `openapi31` feature | `feature = "openapi31"` | `lib.rs`, `crates/kynos-openapi/src/lib.rs` | it selects the object model at each crate root and gates nothing else. What the model then does is held by the document, registry and validator rows above, and a request reaches none of the three |
+| the `openapi31` feature | `feature = "openapi31"` | `lib.rs`, `crates/kynos-openapi/src/lib.rs` | nothing is conditional on it. Both sites are the `#[cfg(not(feature = "openapi31"))] compile_error!` that refuses a build without it, and the 3.1 object model it names is compiled unconditionally. What that model does is held by the document, registry and validator rows above, and a request reaches none of the three |
 | the `yaml` feature | `serde_yaml_ng`, `feature = "yaml"` | `crates/kynos-openapi/src/emit/mod.rs`, `error/mod.rs` | `Document::to_yaml` is a method on the emitted document, reached only through `Service::openapi` after the build has finished. `Error::Yaml` carries a failure that emitter produced and is constructible nowhere else |
 | the `test-util` feature | `feature = "test-util"` | `lib.rs` | one gate, on `pub mod test`. What it compiles is the conformance harness, whose interpreter is the `jsonschema` row above |
 | the `uuid` feature | `uuid`, `feature = "uuid"` | `schema/impls/{mod,identifier}.rs` | its whole contribution is `impl Schema for Uuid`, and `Schema::schema` takes the `&mut Registry` that only `describe` mints |
