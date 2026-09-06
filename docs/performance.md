@@ -48,7 +48,7 @@ What each kind of measurement proves that no other kind does.
 | --- | --- | --- | --- | --- |
 | Allocation count | its own integration target | `cargo nextest`, over `alloc_counter` | that a path allocates a bounded number of times | in use, at [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) |
 | Size guard | [`tests/size.rs`](../crates/kynos/tests/size.rs), or a sibling `tests.rs`, or beside the count that shares its fixture | `cargo nextest` | that a type or a future did not grow | in use for types, and for the dispatch future at [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) |
-| Off-path proof | a sibling `tests.rs` | `cargo nextest` | that a feature is unreachable from the request path | `planned` |
+| Off-path proof | a sibling `tests.rs`, and a table [`containment:check`](../scripts/containment.py) reads | `python3 scripts/containment.py`, `cargo nextest` | that a feature is unreachable from the request path | in use, for the document, the registry, the validators and `jsonschema` |
 | Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | `needs-tooling`; `cargo-llvm-lines` is not installed |
 | Binary delta | a feature sweep | `.text` of a fixed fixture | what a feature costs a linked artifact | `planned` |
 
@@ -56,8 +56,19 @@ What each kind of measurement proves that no other kind does.
 process-wide.** Installing one in the library's unit-test binary would perturb
 every other unit test in it, so the counter cannot live in a sibling `tests.rs`
 however much the feature it measures does. Nothing else here has that problem:
-a size guard and an off-path proof are ordinary assertions and belong beside
-the code they constrain.
+a size guard and an off-path proof's field witness are ordinary assertions and
+belong beside the code they constrain.
+
+**An off-path proof has two halves, because a request path is not a set of
+files.** The witness sits beside the code and pins what a request can reach
+through the dispatch table, so a new field is a compile failure until someone
+argues for it. The naming rule in [`containment.py`](../scripts/containment.py)
+reads [`testing.md`](testing.md#the-off-path-proof)'s table off disk and counts
+it against the source, so a site that names an off-path element and is in no
+row is a failing build until someone adds it and says why a request cannot
+reach it. Neither half carries the proof alone: the witness cannot see a
+mention of the document model in a file it never names, and the rule cannot see
+past an erased `dyn` boundary into the callee behind it.
 
 **The counter is a dependency because `unsafe_code = "forbid"` is not liftable
 by an `#[allow]`.** A `GlobalAlloc` implementation is `unsafe impl`, so this
@@ -108,9 +119,13 @@ that the cost is zero, and zero is not something a counter can report
 convincingly — a replay that never exercised the feature also counts nothing.
 What settles it is reachability: the emitted `Document` is built once in
 `Router::build` and read back only through `Service::openapi`, so nothing in
-`Dispatch::serve` touches it. That is checkable, and until it is checked the
-[README](../README.md)'s claim that there is no JSON Schema interpreter on the
-hot path rests on reading the code.
+`Dispatch::serve` touches it. That is checked. `containment:check` holds four
+elements — the emitted `Document`, `Registry::new`, `validate::Validator` and
+`jsonschema` — to the sites [`testing.md`](testing.md#the-off-path-proof)
+allows them, and a witness in
+[`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs) pins
+every field a request reaches through the dispatch table, so a new one is a
+compile failure until someone argues for it.
 
 **An opt-in codec is measured on a route that mounts it.** Measuring `json`
 against an operation with no body would report zero and mean nothing. The
