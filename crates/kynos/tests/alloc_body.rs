@@ -21,6 +21,15 @@
 //! the third pins the type the server path erases, so a dependency bump that
 //! ends any of the three turns something red.
 //!
+//! **Both rows are held exactly, and neither of them is a ceiling.**
+//! [`alloc.rs`](alloc.rs)'s numbers are ceilings because they record a
+//! requirement that is not met and are meant to fall. These two are not going
+//! anywhere: zero is the floor and the reason for it is a zero-sized type, and
+//! the one is the whole of what erasing a body that is not empty does. A count
+//! that came in *under* either row would mean the boxing had stopped happening,
+//! which contradicts the verdict exactly as much as a count over it does, so
+//! both are asserted with `==`.
+//!
 //! Ungated. Nothing here names a derive, a router or a runtime — only
 //! `kynos::http`, which is behind no feature — so the numbers hold at every
 //! feature set `features:targets` builds.
@@ -45,13 +54,15 @@ type BoxError = Box<dyn StdError + Send + Sync>;
 
 /// Every constructor measured here, with what it costs today.
 ///
-/// The ceilings are the measurement rather than the target, as
-/// [`nfr.md`](../../../docs/nfr.md#thresholds) requires of a first measurement.
-/// Lowering one is not on the table — zero is already the floor for the first
-/// and a `Box::pin` of a non-zero-sized body is unavoidable for the second —
-/// so what these hold is the other direction: erasing an empty body must stay
-/// free, and erasing a body that is not empty must stay a single allocation.
-const CEILINGS: [(&str, usize); 2] = [("Body::empty()", 0), ("Body::from_bytes(..)", 1)];
+/// Each number is the measurement rather than a target, as
+/// [`nfr.md`](../../../docs/nfr.md#thresholds) requires of a first measurement
+/// — and each is held as an equality, because neither is a threshold with room
+/// underneath it. Erasing an empty body must stay free, and erasing a body that
+/// is not empty must stay a single allocation: the second is the structural
+/// claim [`architecture.md`](../../../docs/architecture.md#why-hyper-stays)
+/// rests its verdict on, so a count of zero there would falsify the verdict
+/// rather than beat it.
+const RECORDED: [(&str, usize); 2] = [("Body::empty()", 0), ("Body::from_bytes(..)", 1)];
 
 /// Constructs one body and reports the heap operations the construction made.
 ///
@@ -77,12 +88,12 @@ fn erasing_a_body_costs_what_the_table_records() {
         counted(move || Body::from_bytes(payload)),
     ];
 
-    for ((constructor, ceiling), counted) in CEILINGS.into_iter().zip(measured) {
-        assert!(
-            counted <= ceiling,
+    for ((constructor, recorded), counted) in RECORDED.into_iter().zip(measured) {
+        assert_eq!(
+            counted, recorded,
             "{constructor} allocated {counted} time(s) against a recorded \
-             {ceiling}; raising a ceiling is a change to the verdict in \
-             docs/architecture.md, which says what erasing a body costs"
+             {recorded}; a move in either direction is a change to the verdict \
+             in docs/architecture.md, which says what erasing a body costs"
         );
     }
 }
