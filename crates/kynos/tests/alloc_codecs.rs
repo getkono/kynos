@@ -97,6 +97,17 @@ mod harness {
     /// A `fn() -> Request` rather than a built request, because a request is
     /// consumed by the call it drives and every table below is read twice —
     /// once for the record, once for the replay.
+    ///
+    /// Gated more narrowly than the module around it: the four body codecs
+    /// share this shape and `compression` does not, since its table is keyed by
+    /// coding and body size instead. A build carrying `compression` alone would
+    /// otherwise compile an alias nothing names.
+    #[cfg(any(
+        feature = "json",
+        feature = "form",
+        feature = "multipart",
+        feature = "protobuf"
+    ))]
     pub(crate) type Measured = (&'static str, fn() -> Request, StatusCode, usize);
 
     /// Builds one request, always outside a counted region.
@@ -1275,12 +1286,12 @@ mod compression {
     /// `worth_encoding` refuses a body of no octets even at `min_size` zero, so
     /// the encoder never runs and the column is the identity row.
     ///
-    /// **1 KiB and 16 KiB cost the same in every coding.** The encoder drains
-    /// its output 8 KiB at a time into a `BytesMut` that grows by doubling, and
-    /// neither body's *encoded* form crosses enough of those boundaries to
-    /// differ. The delta only moves again at 256 KiB — which is the shape the
-    /// growth relation below asserts, and the reason four sizes are measured
-    /// rather than two.
+    /// **1 KiB and 16 KiB cost the same in every coding.** The encoder's output
+    /// is drained 8 KiB at a time into a growing `BytesMut`, and both bodies
+    /// compress to less than one of those chunks — so the two differ in what
+    /// the encoder reads and not in what the drain allocates. The delta moves
+    /// again at 256 KiB, which is the reason four sizes are measured rather
+    /// than two.
     ///
     /// **Brotli is roughly twice gzip and four times zstd.** Its encoder state
     /// is kilobytes, which is why `encode` boxes its future at all; the same
