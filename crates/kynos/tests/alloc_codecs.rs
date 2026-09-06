@@ -86,7 +86,7 @@ mod harness {
 
     use alloc_counter::count_alloc;
     use kynos::{
-        http::{HeaderValue, Method, Request, StatusCode, body::Body, header},
+        http::{HeaderValue, Method, Request, Response, StatusCode, body::Body, header},
         router::service::Service,
     };
 
@@ -159,11 +159,15 @@ mod harness {
     /// already in memory, and an encoder reads its input through an
     /// `io::Cursor` — so every future here is ready on its first poll, and the
     /// panic below says so rather than assuming it.
-    pub(crate) fn counted<C>(
+    ///
+    /// The response is handed back rather than dropped here, so that a caller
+    /// with more to say about it than its status can say it before the drop —
+    /// which is outside the region either way.
+    fn driven<C>(
         service: &Service<C>,
         request: Request,
         expected: StatusCode,
-    ) -> usize {
+    ) -> (usize, Response) {
         // Before the region: naming the operation is the report's cost, not the
         // operation's.
         let operation = format!("{} {}", request.method(), request.uri().path());
@@ -192,6 +196,62 @@ mod harness {
              is of; a request a codec declined never reached the codec, and its \
              count records the refusal instead",
             response.status()
+        );
+
+        (allocations, response)
+    }
+
+    /// What one request cost, on an operation whose response carries no coding
+    /// to check.
+    ///
+    /// Gated to the body codecs: their services mount nothing that could set a
+    /// `Content-Encoding`, and every reading the `compression` module takes has
+    /// one to assert. A build carrying `compression` alone would otherwise
+    /// compile a function nothing calls.
+    #[cfg(any(
+        feature = "json",
+        feature = "form",
+        feature = "multipart",
+        feature = "protobuf"
+    ))]
+    pub(crate) fn counted<C>(
+        service: &Service<C>,
+        request: Request,
+        expected: StatusCode,
+    ) -> usize {
+        let (allocations, response) = driven(service, request, expected);
+
+        drop(response);
+        allocations
+    }
+
+    /// What one request cost, on an operation whose response has to carry
+    /// `coding` — or, for `None`, no `Content-Encoding` at all.
+    ///
+    /// **The coding is asserted for the same reason the status is.** A count is
+    /// of an encoder only if that encoder ran: a request asking for `br` that
+    /// is answered `gzip`, or answered as it was, is a cheaper reading of a
+    /// different thing, and every ceiling and relation in the `compression`
+    /// module below would go on holding around it.
+    #[cfg(feature = "compression")]
+    pub(crate) fn counted_carrying<C>(
+        service: &Service<C>,
+        request: Request,
+        expected: StatusCode,
+        coding: Option<&str>,
+    ) -> usize {
+        let (allocations, response) = driven(service, request, expected);
+
+        let carried = response
+            .headers()
+            .get(header::CONTENT_ENCODING)
+            .map(|coding| coding.to_str().expect("a coding spelled in ASCII"));
+
+        assert_eq!(
+            carried, coding,
+            "the response carried {carried:?} where this measurement is of \
+             {coding:?}; a coding negotiated down, or declined, is a count of \
+             an encoder that did not run"
         );
 
         drop(response);
@@ -1172,7 +1232,7 @@ mod compression {
         router::service::Service,
     };
 
-    use crate::harness::{counted, request};
+    use crate::harness::{counted_carrying, request};
 
     /// The octets the fixture serves, one buffer per size.
     ///
@@ -1181,8 +1241,10 @@ mod compression {
     /// than constant, for the reason `middleware.rs`'s level fixture gives: a
     /// repeated byte compresses to nearly nothing at every size, and the growth
     /// this module measures would flatten into noise.
+    /// Built from [`SIZES`], so the length a row is named for is the length the
+    /// operation it names serves.
     static BODIES: LazyLock<[bytes::Bytes; 4]> =
-        LazyLock::new(|| [0, 1024, 16 * 1024, 256 * 1024].map(octets));
+        LazyLock::new(|| SIZES.map(|(_, _, length, _)| octets(length)));
 
     fn octets(length: usize) -> bytes::Bytes {
         let mut octets = Vec::with_capacity(length);
@@ -1259,15 +1321,27 @@ mod compression {
     /// — is a property of the encoder's state across calls rather than of the
     /// body's size, so it is visible at every size and cheapest at the small
     /// ones.
-    const SIZES: [(&str, &str, usize); 4] = [
-        ("0", "/bytes/0", 1_000),
-        ("1 KiB", "/bytes/1k", 1_000),
-        ("16 KiB", "/bytes/16k", 200),
-        ("256 KiB", "/bytes/256k", 25),
+    const SIZES: [(&str, &str, usize, usize); 4] = [
+        ("0", "/bytes/0", 0, 1_000),
+        ("1 KiB", "/bytes/1k", 1024, 1_000),
+        ("16 KiB", "/bytes/16k", 16 * 1024, 200),
+        ("256 KiB", "/bytes/256k", 256 * 1024, 25),
     ];
 
     /// The three codings, spelled as `Accept-Encoding` spells them.
     const CODINGS: [&str; 3] = ["gzip", "br", "zstd"];
+
+    /// The coding a response has to carry, given what the request asked for and
+    /// how many octets the operation serves.
+    ///
+    /// `None` twice over: for a request that asked for `identity`, which
+    /// negotiation answers before the chain runs, and for a body of no octets,
+    /// which `worth_encoding` refuses after the response is in hand. Both leave
+    /// the response as the handler produced it, and neither writes a
+    /// `Content-Encoding`.
+    fn carried(accept: &str, length: usize) -> Option<&str> {
+        (accept != "identity" && length > 0).then_some(accept)
+    }
 
     /// What one request costs on the service `Compression` is mounted on, by
     /// what the request asked for and by how large the body is.
@@ -1322,8 +1396,13 @@ mod compression {
         let mut over = Vec::new();
 
         for (accept, ceilings) in RECORDED {
-            for ((size, target, _), ceiling) in SIZES.into_iter().zip(ceilings) {
-                let counted = counted(&service, asking(accept, target), StatusCode::OK);
+            for ((size, target, length, _), ceiling) in SIZES.into_iter().zip(ceilings) {
+                let counted = counted_carrying(
+                    &service,
+                    asking(accept, target),
+                    StatusCode::OK,
+                    carried(accept, length),
+                );
                 if counted > ceiling {
                     over.push(format!(
                         "{accept} at {size} allocated {counted}, recorded {ceiling}"
@@ -1332,10 +1411,11 @@ mod compression {
             }
         }
 
-        let counted = counted(
+        let counted = counted_carrying(
             &unmounted(),
             asking("identity", "/bytes/16k"),
             StatusCode::OK,
+            None,
         );
         if counted > UNMOUNTED {
             over.push(format!(
@@ -1367,11 +1447,17 @@ mod compression {
     fn mounting_compression_costs_the_operation_that_carries_it() {
         LazyLock::force(&BODIES);
 
-        let with = counted(&mounted(), asking("identity", "/bytes/16k"), StatusCode::OK);
-        let without = counted(
+        let with = counted_carrying(
+            &mounted(),
+            asking("identity", "/bytes/16k"),
+            StatusCode::OK,
+            None,
+        );
+        let without = counted_carrying(
             &unmounted(),
             asking("identity", "/bytes/16k"),
             StatusCode::OK,
+            None,
         );
 
         assert!(
@@ -1392,11 +1478,22 @@ mod compression {
         LazyLock::force(&BODIES);
         let service = mounted();
 
-        let declined = counted(&service, asking("identity", "/bytes/16k"), StatusCode::OK);
+        let declined = counted_carrying(
+            &service,
+            asking("identity", "/bytes/16k"),
+            StatusCode::OK,
+            None,
+        );
 
         for coding in CODINGS {
-            let encoded = counted(&service, asking(coding, "/bytes/16k"), StatusCode::OK);
-            let empty = counted(&service, asking(coding, "/bytes/0"), StatusCode::OK);
+            let encoded = counted_carrying(
+                &service,
+                asking(coding, "/bytes/16k"),
+                StatusCode::OK,
+                Some(coding),
+            );
+            let empty =
+                counted_carrying(&service, asking(coding, "/bytes/0"), StatusCode::OK, None);
 
             assert!(
                 encoded > declined,
@@ -1428,9 +1525,15 @@ mod compression {
         let service = mounted();
 
         for coding in CODINGS {
-            let deltas = SIZES.map(|(_, target, _)| {
-                let engaged = counted(&service, asking(coding, target), StatusCode::OK);
-                let alone = counted(&service, asking("identity", target), StatusCode::OK);
+            let deltas = SIZES.map(|(_, target, length, _)| {
+                let engaged = counted_carrying(
+                    &service,
+                    asking(coding, target),
+                    StatusCode::OK,
+                    carried(coding, length),
+                );
+                let alone =
+                    counted_carrying(&service, asking("identity", target), StatusCode::OK, None);
                 engaged.saturating_sub(alone)
             });
 
@@ -1464,12 +1567,15 @@ mod compression {
         let service = mounted();
 
         for (accept, _) in RECORDED {
-            for (size, target, replays) in SIZES {
-                let first = counted(&service, asking(accept, target), StatusCode::OK);
+            for (size, target, length, replays) in SIZES {
+                let carried = carried(accept, length);
+                let first =
+                    counted_carrying(&service, asking(accept, target), StatusCode::OK, carried);
                 let mut moved = Vec::new();
 
                 for index in 0..replays {
-                    let counted = counted(&service, asking(accept, target), StatusCode::OK);
+                    let counted =
+                        counted_carrying(&service, asking(accept, target), StatusCode::OK, carried);
                     if counted != first {
                         moved.push((index, counted));
                     }
