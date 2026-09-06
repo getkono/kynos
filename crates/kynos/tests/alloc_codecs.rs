@@ -906,3 +906,228 @@ mod multipart {
         }
     }
 }
+
+/// What `application/protobuf` costs the operations that name it, both
+/// directions.
+#[cfg(feature = "protobuf")]
+mod protobuf {
+    use kynos::{
+        extract::{
+            body::{binary::Binary, protobuf::Protobuf},
+            media::OctetStream,
+        },
+        http::{Method, Request, StatusCode},
+        prelude::*,
+        router::service::Service,
+    };
+
+    use crate::harness::{Measured, counted, request};
+
+    /// The payload both directions carry, in the shape the JSON and form
+    /// modules use so the three codecs are compared on the same value.
+    ///
+    /// Derived twice, for the reason `examples/protobuf.rs` gives at length:
+    /// `prost::Message` decides the octets and `Schema` decides what the
+    /// description says they mean, and neither is derivable from the other.
+    #[derive(Clone, PartialEq, prost::Message, Schema)]
+    struct Reading {
+        #[prost(uint64, tag = "1")]
+        id: u64,
+        #[prost(uint64, tag = "2")]
+        value: u64,
+    }
+
+    /// One `Reading`, as the octets a client sends: two tagged varints.
+    const BODY: &[u8] = b"\x08\x07\x10\x0b";
+
+    /// The bodyless floor: dispatch, and no body extractor at all.
+    #[kynos::post("/floor")]
+    async fn floor() -> NoContent {
+        NoContent
+    }
+
+    /// The transport floor: the same octets, read and dropped undecoded.
+    #[kynos::post("/floor/bytes")]
+    async fn floor_bytes(body: Binary<OctetStream>) -> NoContent {
+        drop(body.into_inner());
+        NoContent
+    }
+
+    /// The responding floor: a status, and no body to write.
+    #[kynos::get("/floor/out")]
+    async fn floor_out() -> NoContent {
+        NoContent
+    }
+
+    /// The operation that names the codec on the way in.
+    #[kynos::post("/protobuf")]
+    async fn decode(Protobuf(reading): Protobuf<Reading>) -> NoContent {
+        let _ = reading;
+        NoContent
+    }
+
+    /// The operation that names it on the way out.
+    #[kynos::get("/protobuf/out")]
+    async fn encode() -> Protobuf<Reading> {
+        Protobuf(Reading { id: 7, value: 11 })
+    }
+
+    fn service() -> Service<()> {
+        Router::<()>::new()
+            .mount(kynos::routes![
+                floor,
+                floor_bytes,
+                floor_out,
+                decode,
+                encode
+            ])
+            .build(())
+            .expect("a describable router")
+    }
+
+    fn floor_request() -> Request {
+        request(Method::POST, "/floor", None, b"")
+    }
+
+    fn transport_request() -> Request {
+        request(
+            Method::POST,
+            "/floor/bytes",
+            Some("application/octet-stream"),
+            BODY,
+        )
+    }
+
+    fn responding_floor_request() -> Request {
+        request(Method::GET, "/floor/out", None, b"")
+    }
+
+    fn decode_request() -> Request {
+        request(
+            Method::POST,
+            "/protobuf",
+            Some("application/protobuf"),
+            BODY,
+        )
+    }
+
+    fn encode_request() -> Request {
+        request(Method::GET, "/protobuf/out", None, b"")
+    }
+
+    /// Every operation this service holds, and what one request to it costs
+    /// today.
+    ///
+    /// Read the way the JSON table was read: every ceiling set to zero, the
+    /// target run, the counts the failure reported transcribed.
+    ///
+    /// The cheapest of the four, in both directions. Decoding adds nothing over
+    /// the read, as JSON's and the form codec's do on an all-integer payload;
+    /// and encoding is the only one of the three that beats JSON, because
+    /// `prost` writes the message into one growable buffer and that buffer
+    /// becomes the body.
+    const RECORDED: [Measured; 5] = [
+        ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
+        (
+            "POST /floor/bytes",
+            transport_request,
+            StatusCode::NO_CONTENT,
+            8,
+        ),
+        (
+            "GET /floor/out",
+            responding_floor_request,
+            StatusCode::NO_CONTENT,
+            7,
+        ),
+        ("POST /protobuf", decode_request, StatusCode::NO_CONTENT, 8),
+        ("GET /protobuf/out", encode_request, StatusCode::OK, 11),
+    ];
+
+    /// The record: what each operation of this service costs today.
+    #[test]
+    fn the_operations_cost_what_is_recorded() {
+        let service = service();
+        let mut over = Vec::new();
+
+        for (operation, build, expected, ceiling) in RECORDED {
+            let counted = counted(&service, build(), expected);
+            if counted > ceiling {
+                over.push(format!(
+                    "{operation} allocated {counted}, recorded {ceiling}"
+                ));
+            }
+        }
+
+        assert!(
+            over.is_empty(),
+            "{over:?}; raising a ceiling is a change to docs/nfr.md, and \
+             lowering one is what a cheaper codec looks like"
+        );
+    }
+
+    /// The relation the request-direction ceilings are there to hold.
+    #[test]
+    fn decoding_a_body_costs_more_than_reading_the_same_octets() {
+        let service = service();
+
+        let floor = counted(&service, floor_request(), StatusCode::NO_CONTENT);
+        let transport = counted(&service, transport_request(), StatusCode::NO_CONTENT);
+        let decoding = counted(&service, decode_request(), StatusCode::NO_CONTENT);
+
+        assert!(
+            decoding > floor,
+            "decoding a protobuf body ({decoding}) should cost more than the \
+             bodyless operation beside it ({floor})"
+        );
+        assert!(
+            decoding >= transport,
+            "decoding a protobuf body ({decoding}) should cost at least what \
+             reading the same octets undecoded costs ({transport}); a codec \
+             cheaper than the transport under it is a codec that did not run"
+        );
+    }
+
+    /// The responding half of the same relation.
+    #[test]
+    fn writing_a_body_costs_more_than_the_status_alone() {
+        let service = service();
+
+        let floor = counted(&service, responding_floor_request(), StatusCode::NO_CONTENT);
+        let encoding = counted(&service, encode_request(), StatusCode::OK);
+
+        assert!(
+            encoding > floor,
+            "encoding a protobuf body ({encoding}) should cost more than the \
+             bodyless response beside it ({floor})"
+        );
+    }
+
+    /// The leak check, over every operation this service holds.
+    #[test]
+    fn a_replayed_request_costs_what_the_first_one_did() {
+        let service = service();
+
+        for (operation, build, expected, _) in RECORDED {
+            let first = counted(&service, build(), expected);
+            let mut moved = Vec::new();
+
+            for index in 0..1_000 {
+                let counted = counted(&service, build(), expected);
+                if counted != first {
+                    moved.push((index, counted));
+                }
+            }
+
+            assert!(
+                moved.is_empty(),
+                "{operation} allocated {first} times on one request and \
+                 differently on {} of the next thousand, starting at {:?}; a \
+                 count that moves between identical requests is state \
+                 accumulating in the codec",
+                moved.len(),
+                moved.first()
+            );
+        }
+    }
+}
