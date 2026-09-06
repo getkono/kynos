@@ -48,7 +48,7 @@ What each kind of measurement proves that no other kind does.
 | --- | --- | --- | --- | --- |
 | Allocation count | its own integration target | `cargo nextest`, over `alloc_counter` | that a path allocates a bounded number of times | in use, at [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) |
 | Size guard | [`tests/size.rs`](../crates/kynos/tests/size.rs), or a sibling `tests.rs`, or beside the count that shares its fixture | `cargo nextest` | that a type or a future did not grow | in use for types, and for the dispatch future at [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) |
-| Off-path proof | a sibling `tests.rs`, and a table [`containment:check`](../scripts/containment.py) reads | `python3 scripts/containment.py`, `cargo nextest` | that a feature is unreachable from the request path | in use, for the document, the registry, the validators and `jsonschema` |
+| Off-path proof | a sibling `tests.rs`, and a table [`containment:check`](../scripts/containment.py) reads | `python3 scripts/containment.py`, `cargo nextest` | that a feature is unreachable from the request path | in use, for ten off-path flags and for the document, the registry, the validators and `jsonschema`: a table in [`testing.md`](testing.md#the-off-path-proof) held by `mise run containment:check`, plus the field witness in [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs) |
 | Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | `needs-tooling`; `cargo-llvm-lines` is not installed |
 | Binary delta | a feature sweep | `.text` of a fixed fixture | what a feature costs a linked artifact | `planned` |
 
@@ -157,6 +157,17 @@ scalar format whose whole contribution is a JSON Schema `format` cannot reach
 `Dispatch::serve`, and spending an allocation replay on it would buy a zero
 already implied by its shape. What it still owes is the proof of that, because
 "cannot reach" is a claim about code rather than about intent.
+
+**Both halves of the off-path grade now run.**
+[`testing.md`](testing.md#the-off-path-proof)'s table holds each of the ten
+flags to the files that write its gate and call its crate, and
+`containment:check` fails a flag graded off-path here with no row there — so
+the two documents cannot drift apart in the direction that loses a proof.
+[`cost/binary.tsv`](../crates/kynos/cost/binary.tsv) records a `.text` delta
+for eight of the ten: `yaml` at +6192 bytes, `test-util` at −2464, `uuid` at
+−32, and `openapi31` with the four `time` and `decimal` backends at 0. `time`
+and `decimal` have no row of their own because neither compiles alone, which
+`features:check` already probes.
 
 **The table is counted against the manifest.**
 [`containment:check`](../scripts/containment.py) reads the rows above and
