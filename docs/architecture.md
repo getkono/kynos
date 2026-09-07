@@ -696,7 +696,8 @@ allocator. The mutex is not part of the cost either; it is inline in `Body`. The
 entry is true one step further out, on the server path, where
 `Body::from_incoming` erases a `hyper::body::Incoming` that is not zero-sized:
 one allocation per request that arrives over a socket, and one more for a
-response body that is not empty.
+response body that is not empty. That figure is traced rather than counted:
+`Body::from_incoming` is `pub(crate)` and nothing counts it.
 [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) counts both constructors
 — zero for `Body::empty`, one for `Body::from_bytes` — and holds the zero-sized
 reason as a witness of its own, so a dependency bump that ends it turns
