@@ -21,10 +21,14 @@ Run it as `mise run cost:test`, or directly. There is no Python test runner in
 this repository and `unittest` needs none.
 """
 
+import contextlib
+import io
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 # Before the import below, and before anything else can trigger one: a `.pyc`
 # written beside the scripts would be an untracked directory in every working
@@ -349,6 +353,57 @@ class Provenance(unittest.TestCase):
 
     def test_a_drift_within_one_toolchain_is_not_flagged(self):
         self.assertNotIn("mixes toolchains", self.report(LIVE))
+
+
+class Failures(unittest.TestCase):
+    """The refusing half of the exit-code contract.
+
+    `cost:features` exits zero whenever it measured something, whatever the
+    number says, and non-zero only when it could not measure at all -- which
+    is the distinction the `cost` CI job leans on instead of parsing a verdict
+    out of YAML. Every other test here asserts the measuring direction. These
+    assert the refusing one, and each asserts the *code*, because a path that
+    stopped with the wrong one reports a defect in Kynos as a broken runner.
+    """
+
+    def refused(self, call):
+        """`call`'s exit code and what it said, once it has stopped the run.
+
+        The diagnosis is captured rather than printed: it is the half of a
+        refusal a reader acts on, so it is asserted, and a test suite that
+        also emitted it would bury its own failures in it.
+        """
+        with contextlib.redirect_stderr(io.StringIO()) as said:
+            with self.assertRaises(SystemExit) as stopped:
+                call()
+        return stopped.exception.code, said.getvalue()
+
+    def test_an_ambient_rustflags_stops_the_sweep(self):
+        with mock.patch.dict(os.environ, {"RUSTFLAGS": "-Cstrip=symbols"}, clear=True):
+            code, said = self.refused(cost.sweep_env)
+        self.assertEqual(code, 1)
+        self.assertIn("RUSTFLAGS", said)
+
+    def test_a_missing_llvm_size_stops_the_sweep_with_its_own_code(self):
+        with tempfile.TemporaryDirectory() as sysroot:
+            with mock.patch.object(cost, "capture", return_value=f"{sysroot}\n"):
+                code, said = self.refused(lambda: cost.llvm_size(RECORDED_HOST))
+        self.assertEqual(code, 2)
+        self.assertIn("llvm-tools-preview", said)
+
+    def test_output_with_no_total_stops_the_codegen_half(self):
+        headers = "\n".join(LLVM_LINES_SAMPLE.splitlines()[:2]) + "\n"
+        with mock.patch.object(cost, "capture", return_value=headers):
+            code, said = self.refused(lambda: cost.measure_codegen([], {}))
+        self.assertEqual(code, 1)
+        self.assertIn("(TOTAL)", said)
+
+    def test_a_command_that_exits_non_zero_stops_the_sweep(self):
+        code, said = self.refused(
+            lambda: cost.capture([sys.executable, "-c", "raise SystemExit(3)"])
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("exited 3", said)
 
 
 if __name__ == "__main__":
