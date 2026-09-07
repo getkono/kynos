@@ -46,10 +46,9 @@ fn an_http1_config_is_cheap_to_copy_per_connection() {
 /// The same, for the HTTP/2 half. Measured at 80 bytes, rounded up to 128.
 ///
 /// `Http2FlowControl` and `Http2KeepAlive` get no ceiling of their own because
-/// neither is ever held per connection on its own, and a per-field absolute is
-/// what `docs/testing.md` lists as not owed. This bound does not substitute for
-/// one: 80 against 128 leaves 48 bytes of slack, so either could roughly double
-/// before it fires.
+/// neither is ever held per connection on its own. This bound does not
+/// substitute for one: 80 against 128 leaves 48 bytes of slack, so either could
+/// roughly double before it fires.
 #[cfg(feature = "http2")]
 #[test]
 fn an_http2_config_is_cheap_to_copy_per_connection() {
