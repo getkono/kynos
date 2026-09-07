@@ -96,9 +96,9 @@ problem with `Problem::new` and that URI is a fact about it. The 403 is not
 narrowed rather than not narrowable: a body carrying an application's own URI
 would fail a schema constrained to `about:blank`, and a description that
 declares less than the operation sends is the one direction
-[`nfr.md`](nfr.md)'s *emitted ⊇ observable* forbids. Where a handler's own
-error type also names 403, the wide declaration is the one that survives, for
-the same reason.
+[`middleware.md`](middleware.md#soundness-not-exactness)'s *emitted ⊇
+observable* forbids. Where a handler's own error type also names 403, the wide
+declaration is the one that survives, for the same reason.
 
 ### What Kynos does not verify
 
