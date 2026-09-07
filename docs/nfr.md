@@ -325,6 +325,12 @@ guarantee. It has already earned its keep twice — see
 | compatibility | `Listener::Tokio` is the only public item naming a tokio type | `cargo-public-api` assertion over the framework surface | `needs-tooling` |
 | compatibility | Every `tokio` mention outside `crates/kynos/src/server/` appears in the allowance table in [`architecture.md`](architecture.md#runtime-policy), and the table has exactly six rows | `mise run containment:check`, which reads the table rather than restating it, over source stripped of comments, string literals and `#[cfg(test)]` modules | `enforced` |
 
+The last two rows are the enforcement of the tokio-only policy in
+[`architecture.md`](architecture.md#runtime-policy). There is no runtime
+abstraction trait to keep private, so what CI has to check is the opposite:
+that direct tokio use stays where it is allowed, and that it reaches users only
+through the listener handover it is meant to.
+
 The `size_of` row and the idle-memory row above it are two requirements, not one
 measured twice. A `size_of` reads what a type holds inline and nothing a pointer
 in it reaches, so it cannot see a peer certificate chain, a connection task's
@@ -333,12 +339,6 @@ them and no individual type. That is the split
 [`performance.md`](performance.md#the-boundary) draws for the per-connection
 shape, which owes a size guard here and sends resident memory at scale to
 `kynos-bench`. Neither row's status may be read off the other's.
-
-The last two rows are the enforcement of the tokio-only policy in
-[`architecture.md`](architecture.md#runtime-policy). There is no runtime
-abstraction trait to keep private, so what CI has to check is the opposite:
-that direct tokio use stays where it is allowed, and that it reaches users only
-through the listener handover it is meant to.
 
 The containment row is written against an enumerated table rather than against
 `server/` alone, and that is a correction rather than a loosening: the grep as
