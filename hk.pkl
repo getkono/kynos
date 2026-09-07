@@ -43,7 +43,12 @@ hooks {
             // committed text and compiles nothing, so it costs a fraction of the
             // Clippy pass above it. The globs are the inputs it actually reads:
             // the sources, the crate manifests, the four documents whose tables
-            // it counts against, and the script itself.
+            // it counts against, the script itself, and its tests.
+            //
+            // The tests run with the gate rather than in a step of their own.
+            // A parser that breaks is what makes the gate pass over a table it
+            // half read, so a green gate is worth exactly what the parsers
+            // under it are -- and the two are edited in the same commit.
             ["containment"] {
                 glob = List(
                     "*.rs",
@@ -53,8 +58,9 @@ hooks {
                     "docs/performance.md",
                     "docs/testing.md",
                     "scripts/containment.py",
+                    "scripts/containment_test.py",
                 )
-                check = "mise run containment:check"
+                check = "mise run containment:check && mise run containment:test"
             }
         }
     }

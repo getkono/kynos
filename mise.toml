@@ -482,6 +482,11 @@ description = "Run all pre-push checks"
 # on things a push should not carry: an undocumented public item, since
 # `missing_docs` is denied, and a crate named outside the module that owns it.
 # Both were first caught in CI, which is a slower place to learn it.
+#
+# `containment:test` follows `containment:check` wherever it goes. The gate is
+# only as good as the parsers under it, and a parser that breaks is what makes
+# the gate pass silently -- so a push carrying a green gate over a broken parser
+# is exactly what the pair is here to refuse.
 run = [
   { task = "format:check" },
   { task = "lint" },
@@ -489,5 +494,6 @@ run = [
   { task = "coverage" },
   { task = "docs:check" },
   { task = "containment:check" },
+  { task = "containment:test" },
   { task = "commits:check" },
 ]
