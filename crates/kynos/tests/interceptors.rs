@@ -593,7 +593,7 @@ async fn every_case() -> Vec<Case> {
     use kynos::middleware::{
         csrf::CrossSite,
         limits::{AtCapacity, BodySizeExceeded, TimedOut},
-        rate_limit::headers::{RateLimited, RateLimitedFields},
+        rate_limit::refusal::{RateLimited, RateLimitedFields},
     };
 
     let registry = &mut kynos::schema::registry::Registry::new();
@@ -619,24 +619,11 @@ async fn every_case() -> Vec<Case> {
         .await,
     );
     cases.push(case(registry, CrossSite).await);
+    cases.push(case(registry, RateLimited::<()>::new(Duration::from_secs(1), 10)).await);
     cases.push(
         case(
             registry,
-            RateLimited {
-                retry_after: Duration::from_secs(1),
-                limit: 10,
-            },
-        )
-        .await,
-    );
-    cases.push(
-        case(
-            registry,
-            RateLimitedFields {
-                retry_after: Duration::from_secs(1),
-                limits: Vec::new(),
-                policies: Vec::new(),
-            },
+            RateLimitedFields::<()>::new(Duration::from_secs(1), Vec::new(), Vec::new()),
         )
         .await,
     );
