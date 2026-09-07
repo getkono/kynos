@@ -123,8 +123,11 @@ One failure answers with the status:
 ```
 
 Several share it — the `oneOf` of exactly those, each branch carrying its own
-`title`, which is what RFC 9457 section 3.1.2 makes that member: the summary of
-the problem *type*. The response's description joins the summaries of every
+JSON Schema `title`. That keyword labels the branch for whoever reads the
+description; it is not the problem's own `title` member, which is governed by
+[the rule above](#declaring-an-error-type) and is the reason phrase wherever a
+variant declares no `#[problem(title)]`. The response's description joins the
+summaries of every
 variant answering with the status, in declaration order and with `"; "`,
 dropping only a summary already written word for word — so a shared status
 names each of them rather than whichever came first.
@@ -138,9 +141,12 @@ Two rules follow from what is actually on the wire:
   the keyword its exactly-one rule.
 - **Two variants publishing one URI are one branch.** A `oneOf` repeating a
   `const` is satisfied twice over, which is the same defect. That collapse is
-  the schema's alone: the branch takes the summary declared first as its
-  `title`, and the description still names every variant, since prose is under
-  no exactly-one rule.
+  the schema's alone, and the description still names every variant, since
+  prose is under no exactly-one rule. Where two or more distinct URIs survive,
+  the surviving branch takes the summary declared first as its `title`; where
+  the dedup leaves *one*, there is no `oneOf` and the single `allOf` carries no
+  `title` at all — the description already says the only thing that status
+  publishes.
 
 **The narrowing survives only on statuses no extractor claims.** An argument's
 rejection is contributed before the return type's responses and

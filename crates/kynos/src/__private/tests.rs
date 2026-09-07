@@ -225,3 +225,37 @@ fn one_summary_two_failures_share_is_written_once() {
 fn a_status_no_failure_answers_is_refused() {
     let _ = declared(404, &[]);
 }
+
+/// The `oneOf` is sound only because `Problem` requires `type`.
+///
+/// Each branch is `allOf: [$ref Problem, {properties: {type: {const: …}}}]`,
+/// and `properties` says nothing about a member being *present*. A body
+/// omitting `type` would therefore satisfy the `properties` half of every
+/// branch at once, and `oneOf` would refuse a document `Problem` itself calls
+/// valid. What stops that is the `$ref` half: `type` is in `Problem`'s
+/// `required`, so an absent one fails every branch instead of matching them
+/// all.
+///
+/// That coupling is between two files and is what the narrowing rests on, so
+/// it is asserted rather than left to be rediscovered by whoever removes the
+/// entry.
+#[test]
+fn the_one_of_rests_on_problem_requiring_its_type() {
+    use crate::{error::problem::Problem, schema::Schema};
+
+    let mut registry = crate::schema::registry::Registry::new();
+    let schema = <Problem as Schema>::schema(&mut registry);
+    let json = serde_json::to_value(&schema).expect("a schema serializes");
+
+    let required = json
+        .get("required")
+        .and_then(Value::as_array)
+        .expect("Problem declares required members");
+
+    assert!(
+        required.iter().any(|member| member == "type"),
+        "`type` left `Problem`'s required members, so a body omitting it now \
+         matches every `oneOf` branch at once and the narrowing refuses a \
+         document Problem calls valid"
+    );
+}

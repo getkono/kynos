@@ -79,7 +79,9 @@ pub fn response(problem: &OpenApiSchema, status: u16, branches: &[Branch]) -> Re
 /// Two failures may publish one type — the same 404 raised from two call sites
 /// — and a `oneOf` repeating a `const` would be satisfied by two branches at
 /// once. Where that happens the first summary is the one the surviving branch
-/// titles itself with; the description is composed before this and keeps both.
+/// carries, and [`response`] titles the branch with it only when two or more
+/// survive; a single branch is written without a `title`. Either way the
+/// description is composed before this and keeps both.
 fn distinct(status: u16, branches: &[Branch]) -> Vec<(String, Option<&'static str>)> {
     let mut distinct: Vec<(String, Option<&'static str>)> = Vec::with_capacity(branches.len());
 

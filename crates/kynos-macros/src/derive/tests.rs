@@ -286,14 +286,17 @@ mod api_error {
         every_diagnostic_has_a_case("api_error.rs", include_str!("api_error.rs"), ledger().len());
     }
 
-    /// The declared type reaches the *description*, not only the problem the
-    /// conversion builds.
+    /// Every URI a declaration resolves reaches the emitted responses.
     ///
-    /// The expansion is checked here rather than in `crates/kynos/tests`
-    /// because what it must contain is a token sequence: the helper that
-    /// narrows the shared component, called with every URI the declaration
-    /// resolves — an explicit `type`, a slug hung under `base`, and both of
-    /// them again where two variants share one status.
+    /// What is checked here is *resolution*: an explicit `type`, a slug hung
+    /// under `base`, and two variants sharing a status. Whether the narrowing
+    /// is well-formed is `crates/kynos/tests/derives.rs`'s, which reads the
+    /// emitted schema; this reads the tokens, so it names the failing URI
+    /// without a compile.
+    ///
+    /// It deliberately does not assert *which* helper the expansion calls. A
+    /// path is not a behaviour, and pinning one here would redden this test
+    /// for a move that no document could observe.
     #[test]
     fn the_declared_type_reaches_the_emitted_responses() {
         let input: syn::DeriveInput = syn::parse2(quote::quote!(
@@ -315,10 +318,6 @@ mod api_error {
             .expect("a well-formed declaration expands")
             .to_string();
 
-        assert!(
-            expansion.contains("__private :: problem :: response"),
-            "the responses are built without the narrowing helper: {expansion}"
-        );
         for uri in [
             "https://errors.example.com/not-found",
             "https://errors.example.com/tenant-missing",
