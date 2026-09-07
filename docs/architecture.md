@@ -382,30 +382,21 @@ requires cannot compile in any crate inheriting those lints, which is all three
 of them. Taking a vetted one is how the invariant is kept
 rather than bent: the unsafe stays upstream, and this tree keeps a rule it
 would otherwise have had to carve an exception into. It is a dev-dependency
-<<<<<<< HEAD
-named by two test targets and by nothing under `src/`:
+named by three test targets and by nothing under `src/`:
 [`kynos/tests/alloc.rs`](../crates/kynos/tests/alloc.rs) for the routing path,
-and [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs)
-for what producing a description costs at 10, 100 and 1000 operations. Two
+[`kynos/tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) for body
+erasure, and
+[`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs) for
+what producing a description costs at 10, 100 and 1000 operations. Several
 rather than one shared target because an integration binary cannot be depended
-on: each crate that counts installs the counter itself.
-=======
-named by [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) and
-[`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs), and by nothing
-under `src/`.
->>>>>>> origin/master
+on: each target that counts takes the counter itself.
 
 Two properties decide which counter, and both are load-bearing. Its counters
 are **thread-local**, so a region reads what the measuring thread allocated
 rather than what the process did — `libtest` runs a test on a thread it spawns
 and keeps its own alive beside it, so a process-global counter reports the
-<<<<<<< HEAD
 harness's allocations as the measured path's, on whichever microsecond-wide
 region happens to be open. And it installs **no allocator on its own behalf**: each
-=======
-harness's allocations as the router's, on whichever microsecond-wide region
-happens to be open. And it installs **no allocator on its own behalf**: each
->>>>>>> origin/master
 target that wants it writes the `#[global_allocator]` line itself, which is
 what keeps the instrument out of every other test binary in the package.
 
