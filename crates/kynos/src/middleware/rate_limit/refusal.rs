@@ -37,6 +37,11 @@ use crate::{
 /// document saying `about:blank` about a response that says otherwise. Stated
 /// as a type, the same `const` reaches both halves.
 ///
+/// The const has no default. It is the one thing this trait carries, and a
+/// marker that left it unwritten would compile, ship `about:blank`, declare no
+/// example, and produce no diagnostic saying the feature had silently done
+/// nothing.
+///
 /// ```
 /// use kynos::middleware::rate_limit::refusal::RefusalType;
 ///
@@ -48,11 +53,13 @@ use crate::{
 /// ```
 pub trait RefusalType: 'static {
     /// The URI identifying the problem type, or `None` for `about:blank`.
-    const TYPE_URI: Option<&'static str> = None;
+    const TYPE_URI: Option<&'static str>;
 }
 
 /// The default: a 429 whose status code is the whole story.
-impl RefusalType for () {}
+impl RefusalType for () {
+    const TYPE_URI: Option<&'static str> = None;
+}
 
 /// Describes `Retry-After`, which is a delta-seconds count or an HTTP-date.
 fn retry_after_header() -> kynos_openapi::Header {
