@@ -92,12 +92,26 @@ struct Paging {
 }
 
 /// What creating a user can fail with.
+///
+/// `NameRequired` answers with 400, which is a status the body extractor's
+/// rejection already declares on this operation. That is the one case where two
+/// declarations meet on one key, and the reason both arms are driven below: a
+/// client of `POST /users` meets a generic 400 and a named one, and the entry
+/// filed under `400` has to admit each of them.
 #[derive(Debug, thiserror::Error, ApiError)]
 #[problem(base = "https://errors.example.com/")]
 enum StoreError {
     #[error("that name is already taken")]
     #[problem(status = 409, type = "https://errors.example.com/name-taken")]
     NameTaken,
+
+    #[error("a user needs a name")]
+    #[problem(
+        status = 400,
+        type = "https://errors.example.com/name-required",
+        title = "Name required"
+    )]
+    NameRequired,
 }
 
 // --- Authentication -------------------------------------------------------
@@ -294,6 +308,10 @@ async fn list_users(Query(query): Query<UserQuery>) -> WithHeaders<Json<Vec<User
 async fn create_user(Json(user): Json<User>) -> Result<Created<Json<User>>, StoreError> {
     if user.name == "taken" {
         return Err(StoreError::NameTaken);
+    }
+
+    if user.name.is_empty() {
+        return Err(StoreError::NameRequired);
     }
 
     Ok(Created::at(
@@ -679,13 +697,30 @@ async fn exercise_the_rejections(client: &TestClient<App>) {
         .await
         .assert_status(StatusCode::BAD_REQUEST);
 
-    // A body that is not JSON at all.
+    // A body that is not JSON at all: the extractor's half of the 400 this
+    // operation declares, carrying the type a rejection publishes.
     client
         .post("/users")
         .header("content-type", "application/json")
         .send()
         .await
-        .assert_status(StatusCode::BAD_REQUEST);
+        .assert_status(StatusCode::BAD_REQUEST)
+        .assert_problem_type("about:blank");
+
+    // The handler's half of the same 400, carrying the type its declaration
+    // named. Both bodies are checked against the one schema declared under
+    // `400`, which is what makes the union sound rather than merely richer: a
+    // schema narrowed to either type alone fails against the other.
+    client
+        .post("/users")
+        .json(&User {
+            id: 3,
+            name: String::new(),
+        })
+        .send()
+        .await
+        .assert_status(StatusCode::BAD_REQUEST)
+        .assert_problem_type("https://errors.example.com/name-required");
 
     // A media type the operation never claimed.
     client
