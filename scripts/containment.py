@@ -86,13 +86,22 @@ def strip(source):
     return text
 
 
-FILES = [
+SOURCES = [
     (path.relative_to(ROOT).as_posix(), strip(path.read_text()))
     for crate in sorted((ROOT / "crates").iterdir())
     if (crate / "src").is_dir()
     for path in sorted((crate / "src").rglob("*.rs"))
-    if path.name != "tests.rs" and not path.name.endswith("_tests.rs")
 ]
+
+
+def under_test(path):
+    name = path.rsplit("/", 1)[-1]
+    return name == "tests.rs" or name.endswith("_tests.rs")
+
+
+# What every rule here is stated over: the code that a request can run. Test
+# modules are dropped, inline by `strip` and as sibling files here.
+FILES = [(path, text) for path, text in SOURCES if not under_test(path)]
 
 
 def naming(*crates):
@@ -178,6 +187,214 @@ for crates, rule, where, description in [
     stray = sorted(f for f in found if not f.startswith(where)) if rule == UNDER else sorted(found - where)
     if stray:
         failures.append(f"{description}, but it is also named in:\n    " + "\n    ".join(stray))
+
+# --- The off-path elements ---------------------------------------------------
+# `performance.md` grades the document model, the emitters, the validators and
+# `describe` as off-path elements, and an off-path element owes a proof that a
+# request cannot reach it rather than a measurement. This is that proof's outer
+# half, and `testing.md#the-off-path-proof` is where it is argued.
+#
+# Stated negatively, because a request path is not a set of files: the table
+# names each element with the sites allowed to name it, and every other file
+# under the scope is on the request path by default. So the rule needs no list
+# of what serves a request -- which is the list nobody could keep true -- and a
+# new site is a failing build until someone writes a row saying why a request
+# cannot reach it.
+#
+# The declared side is read off disk, as it is everywhere else here: `naming()`
+# computes the real set, and the only hand-written thing in a row is the reason,
+# which is quoted back in the failure. Subset semantics, like the `ONLY_IN`
+# rules above: a site that has stopped naming its element is stale rather than
+# wrong, and only a stray fails.
+#
+# The inner half is not here and cannot be. `Dispatch` hands every request to a
+# trait object, and what sits behind one is declared in a file this rule reads
+# as an allowed site; `router/dispatch/tests.rs` closes that from the other side
+# by destructuring the three types a request travels through.
+TESTING = (ROOT / "docs/testing.md").read_text()
+OFF_PATH_HEADER = "| Element | Named by | Named only in | Why a request cannot reach it |"
+# The one scope a row's sites are resolved against. An element whose home is
+# another crate means changing this, not the row: a site outside the scope would
+# otherwise be compared against files the loop never looks at, and pass.
+OFF_PATH_SCOPE = "crates/kynos/src/"
+
+
+# What one spelling in a *Named by* cell may hold: an identifier, or a path of
+# them. The cell is prose that happens to be code, so the backticks around it
+# are optional here rather than load-bearing.
+NAMED_BY = re.compile(r"`?(\w+(?:\s*::\s*\w+)*)`?")
+
+
+def token(cell):
+    """One `(spelling, regex)` per spelling in a *Named by* cell, or `None`.
+
+    `None` loudly rather than a pattern that cannot match: a cell this function
+    guesses at compiles to an escaped literal nothing in Rust source contains,
+    and a rule that always passes reports that the elements are off the path
+    when nobody has checked. A new kind of token belongs in `NAMED_BY` and here,
+    not in a fallback.
+
+    `Registry::new` is a path rather than an identifier, and the source may
+    write it spaced or wrapped, so each `::` matches the whitespace a formatter
+    is free to put around it.
+
+    A cell may hold more than one spelling, brace-expanded the way a *Named only
+    in* cell expands a directory of siblings, and the row holds all of them at
+    once. `Registry::{new,default}` is the case that forced it: `new` is
+    `Self::default()` and `Registry` derives `Default`, so a row holding only
+    `new` lets a derived `default()` mint a registry anywhere with the gate
+    green. Two rows would hold the same element under one reason written twice.
+
+    Each spelling keeps its own pattern rather than joining them into one
+    alternation, so the caller can hold every spelling to naming a file. A
+    union hides a stale spelling behind a live one: `Registry::{new,defualt}`
+    matches wherever `new` is written, and the row goes on reporting that a
+    registry is off the path while `Registry::default()` mints one anywhere.
+    """
+    spellings = []
+    for spelling in expand(cell.strip()):
+        readable = NAMED_BY.fullmatch(spelling.strip())
+        if readable is None:
+            return None
+        segments = [re.escape(part.strip()) for part in readable.group(1).split("::")]
+        pattern = r"\s*::\s*".join(segments)
+        spellings.append((readable.group(1), re.compile(r"\b" + pattern + r"\b")))
+    return spellings
+
+
+def allowed_sites(cell):
+    """The files one *Named only in* cell allows, resolved against the scope.
+
+    A comma-separated list of backticked paths, each of which may brace-expand:
+    a row naming nine files is one cell, and `router/{describe,install}.rs` is
+    the same shorthand the allowance table above uses.
+    """
+    entries = re.findall(r"`([^`]+)`", cell) or [part for part in cell.split(",") if part.strip()]
+    return {
+        OFF_PATH_SCOPE + site.strip().lstrip("/")
+        for entry in entries
+        for site in expand(entry.strip())
+    }
+
+
+halves = TESTING.split(OFF_PATH_HEADER)
+if len(halves) != 2:
+    failures.append(
+        "testing.md no longer holds exactly one off-path table under the header "
+        "this rule reads, so nothing states which elements a request may not "
+        "reach"
+    )
+
+off_path_rows = 0
+for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
+    if not line.startswith("|"):
+        break
+    # `strip("|")` before the split, so the outer pipes do not yield two empty
+    # cells and shift every column by one.
+    cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+    if len(cells) != 4:
+        failures.append(f"testing.md's off-path table has a malformed row: {line.strip()}")
+        continue
+
+    element, named_by, where, reason = cells
+    off_path_rows += 1
+    allowance = allowed_sites(where)
+    spellings = token(named_by)
+    if spellings is None:
+        failures.append(
+            f"testing.md's off-path table names {element} with {named_by}, "
+            "which this rule cannot read as an identifier or a path of them. "
+            "The row holds nothing until it can: teach the rule the token, or "
+            "write one it already knows"
+        )
+        continue
+
+    # Every spelling is held to naming something, one at a time rather than as
+    # a union. A union hides a stale spelling behind a live one: with the cell
+    # written `Registry::{new,defualt}`, `new` keeps the row's match set
+    # non-empty and the typo is swallowed, so the row goes on reporting that a
+    # registry is off the request path while `Registry::default()` mints one
+    # anywhere. A spelling is a claim about a name, and a name nothing in the
+    # workspace writes is a rename or a typo rather than an element nothing
+    # reaches. (Stale *sites* stay tolerated, deliberately -- subset semantics,
+    # as above -- because a site claims a location, and locations may empty out
+    # while the claim stays true.)
+    #
+    # Existence is asked of `SOURCES`, not `FILES`: a mint spelling earns its
+    # place in a cell by being reachable, not by being reached, so the row is at
+    # its strongest when no file a request can run writes it at all.
+    # `Registry::default` is that case -- it is written only in test modules,
+    # which is exactly the row holding.
+    stale = [
+        spelling
+        for spelling, pattern in spellings
+        if not any(
+            path.startswith(OFF_PATH_SCOPE) and pattern.search(text)
+            for path, text in SOURCES
+        )
+    ]
+    if stale:
+        for spelling in stale:
+            failures.append(
+                f"testing.md's off-path table names {element} with "
+                f"`{spelling}`, and nothing under {OFF_PATH_SCOPE} writes that "
+                "spelling, sibling test files included. The row holds nothing "
+                "under it: either the element was renamed and the cell was "
+                "not, or it now lives outside the one scope this rule reads, "
+                "which is a change to that scope rather than to the row. The "
+                "sites for this row went unchecked, so repair the cell and run "
+                "again before reading this run as clean"
+            )
+        continue
+
+    named = sorted(
+        path
+        for path, text in FILES
+        if path.startswith(OFF_PATH_SCOPE)
+        and any(pattern.search(text) for _, pattern in spellings)
+    )
+    if offenders := [path for path in named if path not in allowance]:
+        failures.append(
+            f"{element} is off the request path, and {named_by} is named at a "
+            "site testing.md's off-path table does not allow. The row says a "
+            f"request cannot reach it because {reason}. Either that reason "
+            "covers the site below and the row should say so, or a request can "
+            "now reach it:\n    " + "\n    ".join(offenders)
+        )
+
+if len(halves) == 2 and not off_path_rows:
+    failures.append(
+        "testing.md's off-path table has no rows, so it holds nothing. An "
+        "element that stopped being off-path is retired by arguing it in "
+        "performance.md's allocation, not by emptying the table"
+    )
+
+# The row *set* needs holding as well as the rows. Every check above runs per
+# row, so a row that is deleted -- or cut off early, which one blank line in
+# the middle of the table does, since the loop breaks on the first line that is
+# not a row -- takes its element out of the gate while the run still reports
+# that every rule holds. `testing.md` states the count for that reason, and
+# this compares it.
+elif len(halves) == 2:
+    stated = re.search(r"\*\*(\w+) rows, and the count is the check\.\*\*", TESTING)
+    if stated is None:
+        failures.append(
+            "testing.md no longer states how many rows its off-path table has, "
+            "so a row can be dropped without failing this gate"
+        )
+    else:
+        expected = NUMBERS.get(stated.group(1).capitalize())
+        if expected is None:
+            failures.append(
+                f"testing.md writes an unreadable off-path row count: "
+                f"{stated.group(1)!r}"
+            )
+        elif expected != off_path_rows:
+            failures.append(
+                f"testing.md claims {expected} off-path rows and the table has "
+                f"{off_path_rows}. Adding an element means saying so there; "
+                "losing one means a row was dropped or the table was cut short"
+            )
 
 # --- Hand-rolled `Stream` implementations -----------------------------------
 # Only the section that enumerates them. Collecting every link in the
@@ -433,4 +650,7 @@ for failure in failures:
     print(f"containment: {failure}", file=sys.stderr)
 if failures:
     sys.exit(1)
-print(f"containment: {len(FILES)} source files, {len(rows)} allowance rows, {len(graded)} graded features, every rule holds")
+print(
+    f"containment: {len(FILES)} source files, {len(rows)} allowance rows, "
+    f"{off_path_rows} off-path rows, {len(graded)} graded features, every rule holds"
+)

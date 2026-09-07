@@ -336,6 +336,139 @@ declares. The sweep asserts nothing about a document: it reads two associated
 items off one value, and it derives what it drives from the `ShortCircuit` set
 asserted a few lines above it in the same file.
 
+## The off-path proof
+
+[`performance.md`](performance.md#the-allocation) grades the document model, the
+emitters, the validators and `describe` as *off-path elements*, and an off-path
+element owes "a proof it is unreachable from the request path" rather than a
+measurement. Zero is not something a counter reports convincingly: a replay that
+never exercised the feature counts nothing either, and reads the same.
+
+The proof is stated negatively, because a request path is not a set of files.
+Walking `crate::` mentions out of `router/dispatch.rs` does not enumerate one:
+`Describe` and `Schema` implementations sit in the same files as the
+`FromRequest` and `IntoResponse` implementations beside them, so a file-level
+closure either drags in the builder — and fails on `describe` itself — or stops
+short and passes vacuously. What is enumerated instead is the off-path side:
+each element, the identifier that names it, and the sites allowed to name it.
+Every other file is on the request path by default, so a new site is a failing
+build until someone adds it to a row and says why a request cannot reach it.
+
+**Four rows, and the count is the check.** A row deleted or truncated away
+would otherwise leave the gate reporting that every rule holds while the
+element it named went unchecked, which is the one failure a gate must not have.
+The count is stated here for the reason `architecture.md` states its allowance
+count: a table nothing sizes is a table a blank line can silently halve.
+
+The table is not yet the whole grading. It holds the document model, the
+validators, the registry that mints their schemas, and the JSON Schema
+interpreter the README's claim is about. The emitters and `describe` are graded
+off-path and held by nothing here: the emitters live in `kynos-openapi`, outside
+the one scope the rule reads, and get a row when
+[#86](https://github.com/getkono/kynos/issues/86) widens it; and `describe` is
+the site allowed by each of the three rows below whose element it builds, so a
+row naming it would be circular — what puts it off the path is that
+`Router::build` has returned before a service exists. The ten *flags*
+`performance.md` grades off-path are unheld here too, and for the same reason
+the emitters are: this table names elements rather than gates, and
+[#86](https://github.com/getkono/kynos/issues/86) is what teaches the rule a
+`feature = "..."` token. The fourth row, the JSON
+Schema interpreter, allows `test/conformance.rs` alone: `describe` does not
+build it, and nothing on either side of that row names the other.
+
+| Element | Named by | Named only in | Why a request cannot reach it |
+| --- | --- | --- | --- |
+| the emitted document | `Document` | `router/describe.rs`, `router/docs/mod.rs`, `router/install.rs`, `router/mod.rs`, `router/service.rs`, `server/mod.rs`, `server/tls/document.rs`, `test/conformance.rs`, `unchecked.rs` | every site builds it, annotates it, or hands it back to the application. `docs::render` serializes it once while the router is built, so the endpoint serving a description holds finished bytes rather than a `Document`, and `Service` reads it back only through `Service::openapi` |
+| the schema registry | `Registry::{new,default}` | `router/describe.rs` | the one registry a build mints is consumed by `describe`, which has finished before a service exists to accept a request |
+| the document validators | `Validator` | `router/describe.rs` | a description is validated where it is built. The build either fails or drops the validator, and nothing on the request path holds one to run |
+| the JSON Schema interpreter | `jsonschema` | `test/conformance.rs` | it is behind `test-util` and exists to check an observed response against the description. The request parser is the other projection of the same declaration and interprets no schema |
+
+Site paths are relative to `crates/kynos/src/`, which is the one scope
+[`containment.py`](../scripts/containment.py) counts a row against: a file
+outside it is neither an offender nor an allowance, so an element whose home is
+another crate is unheld until the scope moves, which is a change to the rule and
+not to a row. A *Named by*
+cell holds an identifier, or a path of them, and brace-expands the way the
+*Named only in* column does when one element has more than one spelling that
+reaches it: `Registry::{new,default}` holds both, because `Registry::new` is
+`Self::default()` and a row holding only `new` would let a derived `default()`
+mint a registry anywhere. A cell may also come to hold a `feature = "…"` gate
+token, matched over the raw source rather than the stripped text, for a flag
+whose off-path proof is that nothing compiles it. A cell the rule cannot read
+fails the build rather than passing quietly, so teaching it a new kind of token
+is part of writing the row that needs one.
+
+Each spelling in a cell is held to naming something, one at a time rather than
+as a union: a cell written `Registry::{new,defualt}` would otherwise pass on the
+strength of `new` while a derived `default()` minted a registry anywhere. What a
+spelling must name is a mention anywhere in the scope, sibling test files
+included,
+rather than a site on the request path — a mint spelling earns its row by being
+reachable, not by being reached, and the row is at its strongest when nothing a
+request can run writes it at all. `Registry::default` is that case today. A
+spelling nothing in the scope writes under any `cfg` is a rename or a typo, and
+fails the build: it is a row holding nothing rather than an element nothing
+reaches.
+
+A cell names the shortest spelling that is unique in the workspace, not the
+longest one that is unambiguous. A qualified path is what an import removes:
+`use kynos_openapi::validate::{Validator, Violation};` leaves every later
+mention of the type bare, so a row written `validate::Validator` would match the
+one file that spells the path out and miss the file that imported it. `Validator`
+is the whole token because `kynos_openapi::validate::Validator` is the only type
+of that name in either crate. Where an identifier is not unique, the row names
+what mints one instead. Uniqueness is the writer's judgement and the rule does
+not check it — a spelling that names two types would hold both under one reason.
+What the rule does check is that the spelling still names something, which is
+what catches one that has quietly stopped matching.
+
+`Registry` — the type — is deliberately not a row. `Describe::request_body`
+takes `&mut Registry`, which puts the name in some eighty files by design, and a
+row admitting all of them would admit anything. The mint site is the stronger
+claim and the true one.
+
+The two rules above are the ones this instantiates. **The set is named where the
+set has names**: a failure reports which file names an off-path element, not
+that two counts differ. **The declared side is read off disk**: the rule
+computes the real set of naming files from the stripped source, so the only
+hand-written thing in a row is the reason — which is exactly what a reviewer is
+being asked for when a build fails here.
+
+The rule cannot see the whole path on its own. `Dispatch` hands every request to
+a trait object — `dyn ErasedTerminal`, `dyn ErasedInterceptor`, `dyn Observer`,
+`dyn ErasedLayer` — and what sits behind one is declared in another file, which
+a naming rule reads as an allowed site rather than as the request path. The
+other half is a witness fn:
+[`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs)
+destructures `Dispatch`, `PathEntry` and `Served` exhaustively, so a field added
+to any of the three stops the crate compiling until someone writes it into the
+pattern. Nothing the dispatch table hands to an erased callee *that it stored
+while the router was built* is something those three do not carry.
+
+The qualifier is load-bearing and the unqualified form is false: `serve` hands
+the callee the `Request`, and an `Observer` is handed a `Duration` and a
+`&Response`, none of which is a field of any of the three. What the witness
+pins is the stored half — the table's own shape — and that is what a new field
+on it would change.
+
+Neither does the pair compose into "a request cannot reach a `Document`". The
+naming rule is per *file*, and three of the sites the document row allows —
+`unchecked.rs`, `server/mod.rs` and `router/docs/mod.rs` — serve requests
+themselves, so a new use of `Document` *inside* one of them is allowed by the
+row and invisible to the witness. Read the two together as what they are: a
+per-file naming rule, plus a ratchet on the dispatch table's fields. Narrowing
+the allowance below file granularity is what would close that, and is filed as
+[#131](https://github.com/getkono/kynos/issues/131).
+
+That is narrower than "nothing reaches an erased callee", and deliberately.
+`Service` is above the table: it owns the `Document` and hands the request to a
+`dyn ErasedService` built where the document is in scope, so no field of the
+three types witnesses it. That seam is held by the document row instead —
+`router/describe.rs` and `router/service.rs` are two of the sites it allows, and
+the row's reason is the argument for both. The two halves meet there: a witness
+where a field carries something to an erased callee, a row where a file names
+something the witness cannot see.
+
 ## The pass-control rule
 
 **Every compile-fail case gets a sibling passing case that differs in exactly
