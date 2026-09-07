@@ -990,6 +990,110 @@ if placeholders := sorted(path for path, text in FILES if PLACEHOLDER.search(tex
         "lapsed when the API-skeleton milestone ended:\n    " + "\n    ".join(placeholders)
     )
 
+# --- The dev build profile ---------------------------------------------------
+# `.cargo/config.toml` is what keeps a worktree's `target/` near the 17 GiB
+# `nfr.md`'s Workspace table records rather than the 44 GiB before it, and until
+# this rule nothing observed it at all. Every task in `mise run check` and every
+# CI job compiles the same code whether the file is there or not -- only slower,
+# and onto four times the disk -- so deleting it, losing it to a merge, or
+# misspelling a key inside it is a change no gate here could see.
+#
+# Cargo will not see it either, which was run rather than assumed. Against a
+# scratch package, a misspelled key is `warning: unused config key
+# profile.dev.debgu` and an exit status of zero, and a misspelled profile
+# *table* -- `[profile.dve]` -- is not reported at all. Both builds finish
+# `unoptimized + debuginfo`. The failure this catches is the one that looks
+# exactly like a passing build.
+#
+# Presence, not value. `debug = 2` written over `line-tables-only` is a
+# one-token diff on a line whose comment prices six alternatives against each
+# other, and a reviewer reads it; a key that has lost a letter is what nobody
+# reads. Pinning the value would also turn the file's own escape hatch --
+# `cargo --config 'profile.dev.package."*".debug=2'`, offered there for reading
+# a panic through `hyper` -- into a setting someone has to argue with a gate
+# about. So the size itself stays unmeasured and the row in `nfr.md` says so:
+# this holds the cause, and `du -sh target` is the effect nothing reads.
+CARGO_CONFIG = ROOT / ".cargo/config.toml"
+# Each key as a path through the parsed document, with the spelling a failure
+# names it by -- `"*"` is a table name rather than an identifier, and the
+# difference is what the file's own comment turns on: `CARGO_PROFILE_DEV_DEBUG`
+# spells the first key and there is no environment spelling of the second.
+FOOTPRINT_KEYS = [
+    (("profile", "dev", "debug"), "profile.dev.debug"),
+    (("profile", "dev", "package", "*", "debug"), 'profile.dev.package."*".debug'),
+]
+# And nothing else at the top level. Cargo consults this file on every
+# invocation anywhere under the repository, so a `[build] rustc-wrapper` or a
+# `[source] replace-with` written here runs on every machine that builds the
+# workspace and in every CI job, with nothing reading it -- while the file's own
+# comment justifies its existence by the dev profile alone. A tool setting
+# belongs in the `env` of the mise task that needs it, where the task names it.
+CONFIG_TABLES = {"profile"}
+
+
+def declares(config, key):
+    """Whether the parsed `config` declares the whole of `key`."""
+    node = config
+    for part in key:
+        if not isinstance(node, dict) or part not in node:
+            return False
+        node = node[part]
+    return True
+
+
+def cargo_config_failures(text):
+    """What is wrong with `.cargo/config.toml`, whose contents are `text`.
+
+    `None` for a file that is not there, which is a case rather than an error:
+    a merge that drops it leaves a tree where every other rule here holds.
+
+    Unparseable TOML is reported rather than raised, for the reason the guard
+    at the foot of this file gives -- a rule that takes the process down takes
+    the test run with it, and reports the parsers as untested exactly when
+    something they read is what broke.
+    """
+    if text is None:
+        return [
+            ".cargo/config.toml is gone, and it is the whole of the dev build "
+            "profile: without it a worktree's `target/` returns to roughly four "
+            "times the size nfr.md's Workspace table records, with every other "
+            "gate here green. Restore it, or move that row in the same commit"
+        ]
+    try:
+        config = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as error:
+        return [f".cargo/config.toml is not readable TOML: {error}"]
+
+    problems = [
+        f".cargo/config.toml no longer declares `{spelling}`, which is one of "
+        "the two keys the dev build footprint nfr.md's Workspace table records "
+        "rests on. Cargo will not say so: an unused key is a warning over a "
+        "build that exits zero, and a misspelled `[profile.<name>]` table is "
+        "not reported at all. Restore the key, or move that row in the same "
+        "commit"
+        for key, spelling in FOOTPRINT_KEYS
+        if not declares(config, key)
+    ]
+
+    if foreign := sorted(set(config) - CONFIG_TABLES):
+        problems.append(
+            "`.cargo/config.toml` declares something other than the dev build "
+            "profile it exists for. Cargo reads this file on every invocation "
+            "under the repository, so what is written here runs on every "
+            "machine and in every CI job and no gate reports it -- which is "
+            "why the file is held to one table rather than reviewed. Put the "
+            "setting in the `env` of the mise.toml task that needs it, or "
+            "widen this rule and say in the same commit what the table is "
+            "for:\n    " + "\n    ".join(foreign)
+        )
+    return problems
+
+
+failures += cargo_config_failures(
+    CARGO_CONFIG.read_text() if CARGO_CONFIG.is_file() else None
+)
+
+
 # --- Report -----------------------------------------------------------------
 # Under the guard so this module can be imported. `containment_test.py` holds
 # the parsers above to their own cases, and a module that exits on a broken
