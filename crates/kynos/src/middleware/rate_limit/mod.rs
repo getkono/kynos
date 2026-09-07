@@ -232,6 +232,41 @@ impl<P, D> RateLimit<P, D, ()> {
     /// let limit = RateLimit::new(PerClient).refusal_type::<Throttled>();
     /// # let _ = limit;
     /// ```
+    ///
+    /// Naming a second one does not compile — the `impl` block is on
+    /// `RateLimit<P, D, ()>`, so the method is simply not there once `T` is a
+    /// type. The block above is this rule's pass control: the two differ only
+    /// in the second call.
+    ///
+    /// ```compile_fail
+    /// # use std::time::Duration;
+    /// # use kynos::{http, middleware::rate_limit::{
+    /// #     RateLimit, decision::{Decision, RateLimitPolicy, ServiceLimit},
+    /// #     refusal::RefusalType,
+    /// # }, router::operation::Route};
+    /// # #[derive(Clone, Debug)] struct PerClient;
+    /// # impl RateLimitPolicy<()> for PerClient {
+    /// #     async fn check(&self, _: &http::Request, _: Route<'_>, _: &()) -> Decision {
+    /// #         Decision::allow(ServiceLimit {
+    /// #             name: "default".into(), quota: 100, remaining: 99,
+    /// #             reset: Duration::from_secs(30),
+    /// #         })
+    /// #     }
+    /// # }
+    /// struct Throttled;
+    /// # impl RefusalType for Throttled {
+    /// #     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/throttled");
+    /// # }
+    /// struct Overdrawn;
+    /// # impl RefusalType for Overdrawn {
+    /// #     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/overdrawn");
+    /// # }
+    ///
+    /// let limit = RateLimit::new(PerClient)
+    ///     .refusal_type::<Throttled>()
+    ///     .refusal_type::<Overdrawn>();
+    /// # let _ = limit;
+    /// ```
     #[must_use]
     pub fn refusal_type<T: RefusalType>(self) -> RateLimit<P, D, T> {
         RateLimit {
