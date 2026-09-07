@@ -22,8 +22,12 @@ component. `error::problem::problem_response` writes that description for the
 eight interceptor short circuits, for the 500 a recovered panic contributes and
 for every extractor rejection; the `ApiError` derive still spells it itself, so
 it is one writer for everything the framework crate emits rather than one for
-the workspace — the derive's copy is emitted by `kynos-macros` and expands in an
-application crate, which a `pub(crate)` writer does not reach.
+the workspace. That second writer is a choice rather than a wall: the derive
+expands in an application crate, which `pub(crate)` does not reach, but
+[`kynos::__private`](../crates/kynos/src/__private/mod.rs) exists for exactly
+that hop and `#[derive(Reply)]` already takes it. Folding the derive onto the
+same writer belongs with the narrowing that rewrites its `Responses` body, so
+it is filed as #116 rather than done here.
 
 Not every short circuit refuses. `NotModified` answers 304 with an empty body
 and rightly declares no content, and `Infallible` declares nothing at all

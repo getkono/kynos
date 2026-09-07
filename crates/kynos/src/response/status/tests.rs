@@ -427,3 +427,175 @@ mod a_wrapper_declares_the_body_it_forwards {
         );
     }
 }
+
+/// A body that already declares the status its wrapper fixes.
+///
+/// The wrapper knows the status and what the status *means*; the body knows
+/// what it sends. Where the two meet on one key the body's half is the one
+/// that cannot be reconstructed, so it is the one that survives -- and the
+/// wrapper adds only what it contributes itself.
+///
+/// The shape is `#[derive(Reply)]`'s: a variant naming 201 beside a variant
+/// naming 409, which is what an operation that either creates or conflicts
+/// writes. `crates/kynos/tests/derives.rs` already declares it.
+mod a_wrapper_keeps_what_the_body_declared_for_its_own_status {
+    use crate::{
+        response::{
+            Responses,
+            status::{Accepted, Created},
+        },
+        schema::registry::Registry,
+    };
+
+    fn declared<T: Responses>(status: u16) -> kynos_openapi::Response {
+        let mut registry = Registry::new();
+        T::responses(&mut registry)
+            .get(status)
+            .and_then(kynos_openapi::RefOr::as_item)
+            .cloned()
+            .unwrap_or_else(|| panic!("a response is declared for {status}"))
+    }
+
+    fn json(description: &str, registry: &mut Registry) -> kynos_openapi::Response {
+        kynos_openapi::Response::with_content(
+            description,
+            "application/json",
+            kynos_openapi::MediaType::new(registry.resolve::<String>()),
+        )
+    }
+
+    /// `{201: content, 409: content}` -- the wrapper's own status, beside one
+    /// the wrapper never touches.
+    struct CreateReply;
+
+    impl Responses for CreateReply {
+        fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+            kynos_openapi::Responses::new()
+                .with(201, json("the user as created", registry))
+                .with(409, json("that email is already registered", registry))
+        }
+    }
+
+    /// The same shape one status along, for `Accepted<T>`.
+    struct AcceptReply;
+
+    impl Responses for AcceptReply {
+        fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+            kynos_openapi::Responses::new()
+                .with(202, json("the job as queued", registry))
+                .with(409, json("a job is already running", registry))
+        }
+    }
+
+    /// One response, under a wildcard rather than a status.
+    ///
+    /// `4XX` is a range, so it is a claim about no single status -- and a
+    /// wrapper that took it would declare an error representation as what its
+    /// 201 sends.
+    struct SoleWildcard;
+
+    impl Responses for SoleWildcard {
+        fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+            kynos_openapi::Responses::new().with_pattern(
+                kynos_openapi::StatusPattern::ClientError,
+                kynos_openapi::RefOr::Item(json("something the client did", registry)),
+            )
+        }
+    }
+
+    /// One response carrying a required header beside its representation.
+    struct SoleResponseWithAHeader;
+
+    impl Responses for SoleResponseWithAHeader {
+        fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+            kynos_openapi::Responses::new().with(
+                409,
+                json("what is already there", registry).with_header(
+                    "X-Trace",
+                    kynos_openapi::Header::new(kynos_openapi::Schema::of_type(
+                        kynos_openapi::model::schema::types::SchemaType::String,
+                    ))
+                    .required(true),
+                ),
+            )
+        }
+    }
+
+    #[test]
+    fn the_representation_the_body_declared_survives() {
+        let created = declared::<Created<CreateReply>>(201);
+
+        assert_eq!(
+            created.content.keys().collect::<Vec<_>>(),
+            ["application/json"],
+            "the body's 201 carried a representation and the wrapper replaced it"
+        );
+    }
+
+    /// The description too, and this is the half a re-key would silently drop:
+    /// "the user as created" is the sentence an author wrote for this exact
+    /// status, and "the resource was created" is the generic one.
+    #[test]
+    fn the_description_the_body_declared_survives() {
+        assert_eq!(
+            declared::<Created<CreateReply>>(201).description.as_deref(),
+            Some("the user as created")
+        );
+    }
+
+    /// What the wrapper does contribute still arrives: `Location` is the
+    /// wrapper's own statement and no body declares it.
+    #[test]
+    fn the_wrappers_own_header_is_added_to_the_kept_entry() {
+        assert!(
+            declared::<Created<CreateReply>>(201)
+                .headers
+                .contains_key("Location")
+        );
+    }
+
+    /// A status the wrapper does not fix was never its to touch.
+    #[test]
+    fn the_bodys_other_status_is_left_alone() {
+        let conflict = declared::<Created<CreateReply>>(409);
+
+        assert_eq!(
+            conflict.content.keys().collect::<Vec<_>>(),
+            ["application/json"]
+        );
+        assert_eq!(
+            conflict.description.as_deref(),
+            Some("that email is already registered")
+        );
+    }
+
+    #[test]
+    fn accepted_keeps_what_the_body_declared_for_202() {
+        let accepted = declared::<Accepted<AcceptReply>>(202);
+
+        assert_eq!(
+            accepted.content.keys().collect::<Vec<_>>(),
+            ["application/json"]
+        );
+        assert_eq!(accepted.description.as_deref(), Some("the job as queued"));
+    }
+
+    /// A wildcard is a range rather than a claim about one status, so there is
+    /// nothing in it the wrapper's single status may borrow.
+    #[test]
+    fn a_sole_wildcard_is_not_a_representation_the_wrapper_takes() {
+        assert!(declared::<Created<SoleWildcard>>(201).content.is_empty());
+    }
+
+    /// The re-key arm carries content, headers and links by reusing the whole
+    /// response; the carry-over arm reached for the content alone, so a header
+    /// the body declares required went undeclared while the body still sent it.
+    #[test]
+    fn a_carried_over_response_brings_its_headers() {
+        assert!(
+            declared::<Created<SoleResponseWithAHeader>>(201)
+                .headers
+                .contains_key("X-Trace")
+        );
+    }
+}

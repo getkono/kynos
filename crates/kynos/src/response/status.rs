@@ -167,6 +167,12 @@ impl ValidRedirectCode<308> for () {}
 /// Changing it is what every wrapper in this module is for.
 const BODY_STATUS: u16 = 200;
 
+/// The status [`Created`] fixes.
+const CREATED: u16 = 201;
+
+/// The status [`Accepted`] fixes.
+const ACCEPTED: u16 = 202;
+
 /// Sets `Location` on `response`, unless the value cannot be a field value.
 ///
 /// The only strings refused here are ones holding a control character, which a
@@ -235,13 +241,39 @@ fn location_header(description: &str) -> kynos_openapi::Header {
 /// leftover any such body leaves behind and predates this fallback, so
 /// removing them is a decision about the wrapper's whole contract rather than
 /// about the missing representation.
+///
+/// # A body that describes the wrapper's own status
+///
+/// That entry, unchanged, so the caller adds only what the wrapper itself
+/// contributes. The body already said what it sends there, and it is the half
+/// that knows: a wrapper knows the status and what the status *means*, and
+/// re-keying a 200 over it would replace a statement with a weaker one.
+/// `Created<R>` over an `R` whose own variant is the 201 is the composition
+/// this covers, and it is the one `#[derive(Reply)]` makes easy to write.
+///
+/// `None` only for a `$ref` there, which names a response the document holds
+/// elsewhere: there is nothing to merge into and nothing this wrapper may
+/// overwrite, so it declares nothing and leaves the reference alone.
 fn body_response(
     description: &str,
+    status: u16,
     body: &mut kynos_openapi::Responses,
-) -> kynos_openapi::Response {
+) -> Option<kynos_openapi::Response> {
+    // Read rather than remove: `Responses::with` replaces an existing key in
+    // place, so leaving the entry where it is keeps the emitted order the body
+    // chose, and `determinism.rs` compares that order byte for byte.
+    match body
+        .responses
+        .get(&kynos_openapi::StatusPattern::Code(status).to_string())
+    {
+        Some(kynos_openapi::RefOr::Item(declared)) => return Some(declared.clone()),
+        Some(kynos_openapi::RefOr::Ref(_)) => return None,
+        None => {}
+    }
+
     let key = kynos_openapi::StatusPattern::Code(BODY_STATUS).to_string();
 
-    match body.responses.shift_remove(&key) {
+    Some(match body.responses.shift_remove(&key) {
         Some(kynos_openapi::RefOr::Item(mut response)) => {
             response.description = Some(description.to_owned());
             response
@@ -252,12 +284,17 @@ fn body_response(
         }
         None => {
             let mut response = kynos_openapi::Response::new(description);
-            if let Some(content) = sole_representation(body) {
-                response.content.clone_from(content);
+            if let Some(sole) = sole_representation(body) {
+                // Headers and links as well as the representation: the re-key
+                // arm above carries all three by reusing the whole `Response`,
+                // and a body that reaches here sends the same three.
+                response.content.clone_from(&sole.content);
+                response.headers.clone_from(&sole.headers);
+                response.links.clone_from(&sole.links);
             }
             response
         }
-    }
+    })
 }
 
 /// The representations a body declares, when it declares exactly one response
@@ -273,21 +310,36 @@ fn body_response(
 /// so what it carries is not a question answerable from here.
 ///
 /// The `default` counts as that one response, because a fallback response is
-/// as much a thing the body can put on the wire as a keyed one.
-fn sole_representation(
-    body: &kynos_openapi::Responses,
-) -> Option<&kynos_openapi::Map<kynos_openapi::MediaType>> {
-    let mut entries = body.default_response.iter().chain(body.responses.values());
+/// as much a thing the body can put on the wire as a keyed one. A *wildcard*
+/// does not: `4XX` is a range rather than a claim about any one status, so
+/// there is nothing in it for the wrapper's single status to borrow, and
+/// carrying it over would declare an error representation as what a 201 sends.
+fn sole_representation(body: &kynos_openapi::Responses) -> Option<&kynos_openapi::Response> {
+    let mut keyed = body.responses.iter();
 
-    let kynos_openapi::RefOr::Item(sole) = entries.next()? else {
-        return None;
+    let sole = match (body.default_response.as_ref(), keyed.next()) {
+        (Some(default), None) => default,
+        (None, Some((key, response))) => {
+            key.parse::<u16>().ok()?;
+            response
+        }
+        // Both, or neither: two responses is not one, and none is nothing.
+        _ => return None,
     };
 
-    if entries.next().is_some() || sole.content.is_empty() {
+    if keyed.next().is_some() {
         return None;
     }
 
-    Some(&sole.content)
+    let kynos_openapi::RefOr::Item(sole) = sole else {
+        return None;
+    };
+
+    if sole.content.is_empty() {
+        return None;
+    }
+
+    Some(sole)
 }
 
 /// What each redirect status tells a client, as RFC 9110 defines it.
@@ -338,12 +390,18 @@ impl<T: IntoResponse> IntoResponse for Created<T> {
 impl<T: Responses> Responses for Created<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let mut responses = T::responses(registry);
-        let created = body_response("the resource was created", &mut responses).with_header(
-            "Location",
-            location_header("Where the created resource lives"),
-        );
+        let Some(created) = body_response("the resource was created", CREATED, &mut responses)
+        else {
+            return responses;
+        };
 
-        responses.with(201, created)
+        responses.with(
+            CREATED,
+            created.with_header(
+                "Location",
+                location_header("Where the created resource lives"),
+            ),
+        )
     }
 }
 
@@ -358,12 +416,15 @@ impl<T: IntoResponse> IntoResponse for Accepted<T> {
 impl<T: Responses> Responses for Accepted<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let mut responses = T::responses(registry);
-        let accepted = body_response(
+        let Some(accepted) = body_response(
             "the request was accepted, and the processing it asked for has not completed",
+            ACCEPTED,
             &mut responses,
-        );
+        ) else {
+            return responses;
+        };
 
-        responses.with(202, accepted)
+        responses.with(ACCEPTED, accepted)
     }
 }
 

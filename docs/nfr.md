@@ -376,7 +376,7 @@ where someone mounting a cap will meet it.
 
 AGENTS.md: *"A module becomes a directory once it holds two
 independently-changing concerns … Passing ~400 lines excluding tests is when to
-ask that question, not an answer to it."* Twenty-eight files under `crates/*/src`
+ask that question, not an answer to it."* Twenty-nine files under `crates/*/src`
 are past that line and asked it, and `containment:check` holds that number so it
 can only move on purpose.
 
@@ -386,8 +386,8 @@ re-exports"* — in a way worth stating. Splitting a module that declares severa
 public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: eight rejection
 types in 643 lines, and splitting it would turn `error::rejection::PathRejection`
-into `error::rejection::path::PathRejection`. Sixteen of the twenty-eight are that
-shape, worth roughly a hundred public paths between them — and each is one
+into `error::rejection::path::PathRejection`. Seventeen of the twenty-nine are
+that shape, worth roughly a hundred public paths between them — and each is one
 cohesive family, which is precisely what the concern test says may stay a file.
 So they stay: a longer path is a worse name, and the rule's first clause already
 permits the shorter one. That was settled before v0.1.0, while the surface could
@@ -400,6 +400,18 @@ sit in any module of the crate. That is why `router/`, `emit/downgrade/` and
 
 The budget is the honest record of what stayed. It falls when a module is split,
 and raising it means saying in the same commit why a new module needs the room.
+
+`response/status.rs` is the twenty-ninth, and it is the shape above rather than
+a new argument. It declares six public types — `Location`, `NoContent`,
+`Created`, `Accepted`, `Redirect` and `ValidRedirectCode` — so splitting it
+would turn `response::status::Created` into
+`response::status::created::Created` and do the same to the other five. What
+pushed it over was the third case in the rule that decides a wrapper's declared
+response: a body may describe no 200, or one, or the wrapper's own status, and
+the last of those is the one whose absence let a `Created<T>` overwrite a
+representation the body had already declared. The case is four lines; the
+account of why the body's half wins is the rest, and it is the half a later
+reader needs.
 
 ## Dependencies
 
@@ -488,7 +500,7 @@ open against a `kynos-otel` that may never be written.
 | reliability | Every reachable feature combination compiles | `mise run features:check` (`cargo hack --feature-powerset`) | `enforced` |
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
 | reliability | Tests are hermetic; no shared state, no ordering dependence, no retries | `cargo-nextest` process isolation, `retries = 0`, guarded by `crates/kynos/tests/hermeticity.rs` | `enforced` |
-| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 28 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
+| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 29 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
 | reliability | Panic recovery refuses to compile under `panic = "abort"` | `mise run panic:check` | `enforced` |
 | reliability | Commits follow Conventional Commits | `convco`, via git hook and CI | `enforced` |
 | compatibility | Every hand-rolled `Stream` implementation is private, except the one row in [`architecture.md`](architecture.md#public-api-surface), and there are exactly three of them | `mise run containment:check`, counting `Stream for` against the table and the two private sites its prose names | `enforced` |
