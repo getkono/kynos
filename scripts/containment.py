@@ -26,7 +26,26 @@ from pathlib import Path
 # running it by hand from a crate directory checks the same tree mise does.
 ROOT = Path(__file__).resolve().parent.parent
 ARCHITECTURE = (ROOT / "docs/architecture.md").read_text()
-NUMBERS = {"Three": 3, "Four": 4, "Five": 5, "Six": 6, "Seven": 7, "Eight": 8}
+# The counts a document may state in words. A count this dict cannot read
+# fails loudly where it is read, rather than skipping the check that holds
+# it, so extending a table past the last word here is part of writing the
+# rows.
+NUMBERS = {
+    "Three": 3,
+    "Four": 4,
+    "Five": 5,
+    "Six": 6,
+    "Seven": 7,
+    "Eight": 8,
+    "Nine": 9,
+    "Ten": 10,
+    "Eleven": 11,
+    "Twelve": 12,
+    "Thirteen": 13,
+    "Fourteen": 14,
+    "Fifteen": 15,
+    "Sixteen": 16,
+}
 failures = []
 
 
@@ -611,6 +630,33 @@ if len(halves) == 2 and not off_path_rows:
         "element that stopped being off-path is retired by arguing it in "
         "performance.md's allocation, not by emptying the table"
     )
+
+# The row *set* needs holding as well as the rows. Every check above runs per
+# row, so a row that is deleted -- or cut off early, which one blank line in
+# the middle of the table does, since the loop breaks on the first line that is
+# not a row -- takes its element out of the gate while the run still reports
+# that every rule holds. `testing.md` states the count for that reason, and
+# this compares it.
+elif len(halves) == 2:
+    stated = re.search(r"\*\*(\w+) rows, and the count is the check\.\*\*", TESTING)
+    if stated is None:
+        failures.append(
+            "testing.md no longer states how many rows its off-path table has, "
+            "so a row can be dropped without failing this gate"
+        )
+    else:
+        expected = NUMBERS.get(stated.group(1).capitalize())
+        if expected is None:
+            failures.append(
+                f"testing.md writes an unreadable off-path row count: "
+                f"{stated.group(1)!r}"
+            )
+        elif expected != off_path_rows:
+            failures.append(
+                f"testing.md claims {expected} off-path rows and the table has "
+                f"{off_path_rows}. Adding an element means saying so there; "
+                "losing one means a row was dropped or the table was cut short"
+            )
 
 # --- Hand-rolled `Stream` implementations -----------------------------------
 # Only the section that enumerates them. Collecting every link in the

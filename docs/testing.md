@@ -362,6 +362,13 @@ exactly like one that was written and holds. The check is forward only — a row
 for a flag graded elsewhere is not an error, since an element may be worth
 holding under any grade.
 
+**Fourteen rows, and the count is the check.** A row deleted or truncated
+away would otherwise leave the gate reporting that every rule holds while the
+element it named went unchecked, which is the one failure a gate must not
+have. The count is stated here for the reason `architecture.md` states its
+allowance count: a table nothing sizes is a table a blank line can silently
+halve.
+
 | Element | Named by | Named only in | Why a request cannot reach it |
 | --- | --- | --- | --- |
 | the emitted document | `Document` | `router/describe.rs`, `router/docs/mod.rs`, `router/install.rs`, `router/mod.rs`, `router/service.rs`, `server/mod.rs`, `server/tls/document.rs`, `test/conformance.rs`, `unchecked.rs` | every site builds it, annotates it, or hands it back to the application. `docs::render` serializes it once while the router is built, so the endpoint serving a description holds finished bytes rather than a `Document`, and `Service` reads it back only through `Service::openapi` |
@@ -470,8 +477,23 @@ other half is a witness fn:
 [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs)
 destructures `Dispatch`, `PathEntry` and `Served` exhaustively, so a field added
 to any of the three stops the crate compiling until someone writes it into the
-pattern. Nothing the dispatch table hands to an erased callee is something those
-three do not carry.
+pattern. Nothing the dispatch table hands to an erased callee *that it stored
+while the router was built* is something those three do not carry.
+
+The qualifier is load-bearing and the unqualified form is false: `serve` hands
+the callee the `Request`, and an `Observer` is handed a `Duration` and a
+`&Response`, none of which is a field of any of the three. What the witness
+pins is the stored half — the table's own shape — and that is what a new field
+on it would change.
+
+Neither does the pair compose into "a request cannot reach a `Document`". The
+naming rule is per *file*, and three of the sites the document row allows —
+`unchecked.rs`, `server/mod.rs` and `router/docs/mod.rs` — serve requests
+themselves, so a new use of `Document` *inside* one of them is allowed by the
+row and invisible to the witness. Read the two together as what they are: a
+per-file naming rule, plus a ratchet on the dispatch table's fields. Narrowing
+the allowance below file granularity is what would close that, and is filed as
+[#131](https://github.com/getkono/kynos/issues/131).
 
 That is narrower than "nothing reaches an erased callee", and deliberately.
 `Service` is above the table: it owns the `Document` and hands the request to a
