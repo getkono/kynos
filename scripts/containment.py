@@ -471,8 +471,9 @@ def allowed_sites(cell):
     return sites
 
 
-def scanned(allowance):
-    """The `crates/<name>/src/` trees a row's own sites put it in reach of.
+def scanned(allowance, exists=None):
+    """The `crates/<name>/src/` trees a row's own sites put it in reach of,
+    paired with the derived trees that are not directories.
 
     Always the home scope, plus one tree per crate-qualified site. Derived
     rather than declared, so the widening and the reason for it are the same
@@ -484,13 +485,29 @@ def scanned(allowance):
     the `Document`, `Registry` and `Validator` rows immediately -- all three
     elements are *declared* in `kynos-openapi`, and the claim those rows make
     is about the crate a request runs in.
+
+    A derived tree is held to existing because the derivation is string
+    surgery over a hand-written cell, and a crate name is not spell-checked by
+    anything else here. `crates/kynos-opanapi/src/emit/mod.rs` is backticked,
+    is `crates/`-prefixed, and reads as a path, so every other check on the
+    cell passes -- and the tree it yields matches no file, which silently
+    narrows the row back to the home scope where the element it names is not
+    written at all. Both halves of the row then pass: the spelling is found in
+    the home crate, and nothing in the sibling crate is scanned for offenders.
+    One transposed letter takes a whole crate out of the gate while the run
+    reports that every rule holds, so the tree is checked rather than trusted.
+
+    `exists` is the directory test, injected so the rule can be exercised
+    against a stated tree set rather than the repository's own.
     """
+    if exists is None:
+        exists = lambda tree: (ROOT / tree).is_dir()
     trees = {OFF_PATH_SCOPE}
     for site in allowance:
         parts = site.split("/")
         if len(parts) > 3 and parts[0] == "crates" and parts[2] == "src":
             trees.add("/".join(parts[:3]) + "/")
-    return sorted(trees)
+    return sorted(trees), sorted(tree for tree in trees if not exists(tree))
 
 
 halves = TESTING.split(OFF_PATH_HEADER)
@@ -531,7 +548,17 @@ for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
             "unchecked path"
         )
         continue
-    trees = scanned(allowance)
+    trees, missing = scanned(allowance)
+    if missing:
+        failures.append(
+            f"testing.md's off-path table allows {element} in a crate that "
+            "does not exist, so the tree derived from that site is scanned for "
+            "nothing and the row narrows back to " + OFF_PATH_SCOPE + " without "
+            "saying so. Either the crate was renamed and the cell was not, or "
+            "the site is a typo. The row's sites go unchecked meanwhile:\n    "
+            + "\n    ".join(missing)
+        )
+        continue
     scope = ", ".join(trees)
     spellings = token(named_by)
     if spellings is None:

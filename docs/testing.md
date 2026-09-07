@@ -396,7 +396,11 @@ written without saying where. Deriving it per row rather than declaring one
 scope for the table is what makes the widening safe: `Document`, `Registry` and
 `Validator` are all *declared* in `kynos-openapi`, and a table-wide scope
 spanning both crates would fail those three rows on sight while proving nothing
-about the crate a request runs in.
+about the crate a request runs in. A derived tree that is not a directory fails
+the row rather than scanning nothing: the derivation is string surgery over a
+crate name nothing else here spell-checks, and a misspelled one reads as a legal
+site while narrowing the row back to the home scope, where every spelling it
+names is still written.
 
 A *Named by* cell holds one of two kinds of token, and may hold several of
 either as a comma-separated list of backticked entries. The first is an
