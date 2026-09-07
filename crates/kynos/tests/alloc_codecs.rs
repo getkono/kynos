@@ -1311,14 +1311,26 @@ mod compression {
         (accept != "identity" && length > 0).then_some(accept)
     }
 
-    /// How many 8 KiB reads `encode`'s drain takes over a body of `length`
-    /// octets, at most.
+    /// The chunk `encode`'s drain reads an encoder in, mirroring
+    /// `middleware/compression/mod.rs`'s `DRAIN_CHUNK`.
+    ///
+    /// A copy rather than the constant itself: it is `pub(crate)` and this is
+    /// an integration target, so the only thing tying the two together is that
+    /// both are named the same. Grep for `DRAIN_CHUNK` before moving either —
+    /// raising the real chunk and leaving this one behind leaves
+    /// [`the_encoders_delta_grows_with_the_body_and_no_faster`] bounding growth
+    /// by an allowance the encoder no longer spends, which is a bound that
+    /// passes through a regression.
+    const DRAIN_CHUNK: usize = 8 * 1024;
+
+    /// How many [`DRAIN_CHUNK`] reads `encode`'s drain takes over a body of
+    /// `length` octets, at most.
     ///
     /// An upper bound rather than a count: what is drained is the encoded form,
     /// and every body here compresses, so the encoder is emptied in no more
     /// reads than the identity octets would take.
     fn drained(length: usize) -> usize {
-        length.div_ceil(8 * 1024)
+        length.div_ceil(DRAIN_CHUNK)
     }
 
     /// What one request costs on the service `Compression` is mounted on, by
@@ -1591,9 +1603,10 @@ mod compression {
                     growth <= allowance,
                     "{coding} allocated {deltas:?} over {SIZES:?}; the delta grew \
                      by {growth} from {} to {}, where the drain that produces it \
-                     takes at most {allowance} further 8 KiB reads — a delta \
-                     outgrowing its drain is a buffer growing by doubling from \
-                     nothing on every response, or state kept per octet",
+                     takes at most {allowance} further reads of {DRAIN_CHUNK} \
+                     octets — a delta outgrowing its drain is a buffer growing \
+                     by doubling from nothing on every response, or state kept \
+                     per octet",
                     SIZES[smaller].0,
                     SIZES[larger].0
                 );
