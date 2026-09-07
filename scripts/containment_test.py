@@ -1,8 +1,15 @@
-"""Tests for the four parsers `containment.py` reads its tables and sources with.
+"""Tests for the parsers `containment.py` reads its tables and sources with, and
+for the one rule stated over them whose own failure is silence.
 
-Everything under test here takes text and returns a corpus, a set of paths or a
-list of patterns. The rules stated over them are not tested: those read the real
-tree, and running them is what `containment:check` is.
+Most of what is under test here takes text and returns a corpus, a set of paths
+or a list of patterns. The rules stated over those are not tested: they read the
+real tree, and running them is what `containment:check` is.
+
+`off_path_coverage` is the exception. It compares two documents and reads a
+grade out of one by name, so a name that has gone empties the compared set
+rather than the table -- the failure mode a parser has, in a rule. Its inputs
+are stated below rather than read off disk, since what is under test is what the
+rule does with a grading and a table and not what this repository's two say.
 
 The parsers are where a regression is silent. A rule that breaks reports a
 failure and exits one; a parser that breaks drops a spelling, a site or a whole
@@ -289,6 +296,39 @@ class Scanned(unittest.TestCase):
     def test_the_real_layout_leaves_every_derived_tree_standing(self):
         sites = gate.allowed_sites("`crates/kynos-openapi/src/emit/mod.rs`")
         self.assertEqual(gate.scanned(sites)[1], [])
+
+
+class OffPathCoverage(unittest.TestCase):
+    """Every flag graded `Off-path proof` owes a row, and the grade owes its name.
+
+    The comparison is between two documents, so its inputs are stated here
+    rather than read: what is under test is what the rule does with a grading
+    and a table, not what this repository's two happen to say today.
+    """
+
+    def test_a_graded_flag_with_a_row_owes_nothing(self):
+        self.assertEqual(
+            gate.off_path_coverage(["uuid"], {"the `uuid` feature", "uuid"}, ["Off-path proof"]),
+            [],
+        )
+
+    def test_a_graded_flag_with_no_row_is_named(self):
+        failures = gate.off_path_coverage(
+            ["uuid", "yaml"], {"uuid"}, ["Full battery", "Off-path proof"]
+        )
+        self.assertEqual(len(failures), 1)
+        self.assertIn("yaml", failures[0])
+        self.assertNotIn("uuid\n", failures[0])
+
+    def test_a_row_for_a_flag_graded_elsewhere_is_not_an_error(self):
+        self.assertEqual(
+            gate.off_path_coverage([], {"docs", "macros"}, ["Off-path proof"]), []
+        )
+
+    def test_a_renamed_grade_fails_rather_than_comparing_an_empty_set(self):
+        failures = gate.off_path_coverage([], {"uuid"}, ["Full battery", "Off-path argument"])
+        self.assertEqual(len(failures), 1)
+        self.assertIn("no longer has a", failures[0])
 
 
 if __name__ == "__main__":
