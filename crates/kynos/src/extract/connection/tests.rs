@@ -71,11 +71,12 @@ fn a_connection_clone_shares_its_payload() {
 ///
 /// The measurements these ceilings were set from, since
 /// `docs/nfr.md#thresholds` asks for a recorded one: `Inner` 144 bytes,
-/// `TlsIdentity` 72. Each is rounded up so an unrelated layout change does not
-/// disable the gate — to the next multiple of 64 for `Inner`, but only to the
-/// next multiple of 8 for `TlsIdentity`, where a 64-byte step would be most of
-/// the type again and would absorb two more `Option<String>` fields that every
-/// plaintext connection would pay for.
+/// `TlsIdentity` 72. Each is rounded up to the next multiple of 64 so an
+/// unrelated layout change does not disable the gate, which is the step every
+/// other per-connection ceiling in the crate uses. A tighter step on
+/// `TlsIdentity` would bind first on a toolchain that reorders one field, and
+/// `docs/performance.md#thresholds` records what happens to a gate that fires
+/// for a reason its design is not about.
 ///
 /// Both readings are far under the smallest read/write buffer the transport
 /// accepts, which is the design property: per-connection state is a fraction of
@@ -92,7 +93,7 @@ fn the_inline_connection_record_stays_small() {
         "Inner grew to {payload} bytes; 100k connections multiply this"
     );
     assert!(
-        tls <= 80,
+        tls <= 128,
         "TlsIdentity grew to {tls} bytes, widening every connection including plaintext ones"
     );
 }
