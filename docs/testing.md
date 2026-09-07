@@ -59,7 +59,7 @@ attribute outlived its reason and went with it.
 | [`reporting.rs`](../crates/kynos/tests/reporting.rs) | every error type a caller can receive is `Error + Send + Sync + 'static` |
 | [`typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) | a route attribute's `relative_uri` percent-encodes its parameters, and that the hand-written fixture it encodes with describes what it encodes — a `Schema` body nothing executes cannot disagree with the `encode` beside it |
 | [`size.rs`](../crates/kynos/tests/size.rs) | a build failure does not inline a `Violation`, a `Result` costs no more than it, and which of the three bodies Kynos erases are zero-sized — the reasons `alloc_body.rs`'s counts read the way they do, filed here because a `size_of` needs no allocator |
-| [`alloc.rs`](../crates/kynos/tests/alloc.rs) | what the routing path allocates per route shape, and that a replayed request costs what the first one did. It owns a `#[global_allocator]`, which is why it is a target of its own rather than a sibling `tests.rs`: installed in the library's unit-test binary the counter would reach every unit test in it |
+| [`alloc.rs`](../crates/kynos/tests/alloc.rs) | what the routing path allocates per route shape, that a replayed request costs what the first one did, and what one interceptor adds to a request, at stack depth 0/4/8, with the width of the future dispatch returns guarded beside it. It owns a `#[global_allocator]`, which is why it is a target of its own rather than a sibling `tests.rs`: installed in the library's unit-test binary the counter would reach every unit test in it. Its counting harness is [`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs), included by `#[path]` so a second counting target can own its own allocator without a second copy of the rationale |
 | [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) | what erasing a body through `UnsyncBoxBody` costs: nothing for an empty body, which erases a zero-sized type, and one allocation for any body that does not. A second `#[global_allocator]` target, for the reason the first one is one; the zero-sized facts behind both numbers are size guards and live in `size.rs` |
 | [`conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs) | that the committed corpus is what this build emits, and that it still carries the 3.2 constructs it exists to pin — asserted against the committed *text*, since what a downstream repository reads is the file |
 | [`conformance.rs`](../crates/kynos/tests/conformance.rs) | that the responses a suite observed match what the document promises, and that every declared response was exercised |
@@ -104,7 +104,10 @@ itself. `support/` beside them is not a target — it is the generator module th
 property files share, included by `#[path]` for the same reason.
 
 `crates/kynos/tests/support/` is the same idiom: the fixture app the runtime
-targets drive, and one request builder over the public `Service::call`. Over
+targets drive, one request builder over the public `Service::call`, and
+`counting.rs`, whose `#[global_allocator]` line a target installs
+process-wide by including it — so that module belongs only to a target that
+wants the counter, and carries its own request builder for the same reason. Over
 `Service::call` rather than [`TestClient`](../crates/kynos/src/test/mod.rs),
 because `test-util` is not a default feature — a target reaching for the client
 compiles to nothing under `mise run test:baseline`, and that task is only a
@@ -340,6 +343,220 @@ assertions about a *document* — which statuses and fields an operation
 declares. The sweep asserts nothing about a document: it reads two associated
 items off one value, and it derives what it drives from the `ShortCircuit` set
 asserted a few lines above it in the same file.
+
+## The off-path proof
+
+[`performance.md`](performance.md#the-allocation) grades the document model, the
+emitters, the validators and `describe` as *off-path elements*, and an off-path
+element owes "a proof it is unreachable from the request path" rather than a
+measurement. Zero is not something a counter reports convincingly: a replay that
+never exercised the feature counts nothing either, and reads the same.
+
+The proof is stated negatively, because a request path is not a set of files.
+Walking `crate::` mentions out of `router/dispatch.rs` does not enumerate one:
+`Describe` and `Schema` implementations sit in the same files as the
+`FromRequest` and `IntoResponse` implementations beside them, so a file-level
+closure either drags in the builder — and fails on `describe` itself — or stops
+short and passes vacuously. What is enumerated instead is the off-path side:
+each element, the identifier that names it, and the sites allowed to name it.
+Every other file is on the request path by default, so a new site is a failing
+build until someone adds it to a row and says why a request cannot reach it.
+
+Two things are graded off-path and each gets rows here. The first four rows are
+*elements*: the document model, the registry that mints its schemas, the
+validators, and the JSON Schema interpreter.
+[`performance.md`](performance.md#the-allocation) names four in its shape table
+and this is not that list. Three of its four are here — the document model, the
+validators and, held by the `yaml` row's emitter site further down rather than
+by one of these four, the emitters. The fourth, `describe`, is the one shape no
+row holds and cannot be: it is the site allowed by each of the rows whose
+element it builds, so a row naming it would be circular. What puts it off the
+path is that `Router::build` has returned before a service exists. Going the
+other way, the registry is in no shape-table row — it is here because it is what
+mints a schema, and the mint site is the stronger claim — and neither is the
+JSON Schema interpreter, whose row is the one the README's claim is about and
+allows `test/conformance.rs` alone: `describe` does not build it, and nothing on
+either side of that row names the other.
+
+The ten rows after those are the *flags*
+[`performance.md`](performance.md#the-feature-grading) grades `Off-path proof`,
+which owe the same argument one at a time. A flag is a weaker thing to hold than
+an element — it names no type — so what a row holds is where the flag is
+*written*: the crate its gated code calls, and the `#[cfg(feature = "…")]` that
+compiles it. That is enough for the claim being made, and the ten fall into four
+kinds. Six compile the code the proof has to keep a request away from: `uuid`
+and the four `time`/`decimal` backends contribute `Schema`
+implementations, which need the `&mut Registry` only `describe` mints, and
+`yaml` contributes an emitter method on a document a request never holds.
+`test-util` compiles the conformance harness behind one gate on `pub mod test`,
+whose interpreter is the `jsonschema` row above. `time` and `decimal` compile
+nothing on their own — each is a `compile_error!` without a backend, which
+[`features:check`](../mise.toml) probes — so their rows hold the two files that
+say so, and their real cost is their backends' rows. `openapi31` compiles
+nothing conditionally at all, which its row states. In every case a gate written
+outside the sites its row allows is the first sight of that stopping being true,
+and it fails the build.
+
+`macros` is the eleventh flag performance.md could have graded here and does
+not: it is graded a full battery, because a derive is a type-level surface that
+owes a codegen delta, which an off-path proof does not include.
+
+Which flags belong here is not this document's to decide, and is not
+transcribed. `containment.py` reads the `Off-path proof` row of performance.md's
+grading table and requires every flag in it to appear in an *Element* cell of
+the table below, so regrading a flag into that column is a failing build until
+its row exists. That closes the one drift the grading table cannot see on its
+own: a full battery either runs or does not and an aggregate owes nothing, but a
+proof is an argument, and an argument that was graded and never written reads
+exactly like one that was written and holds. The check is forward only — a row
+for a flag graded elsewhere is not an error, since an element may be worth
+holding under any grade.
+
+**Fourteen rows, and the count is the check.** A row deleted or truncated
+away would otherwise leave the gate reporting that every rule holds while the
+element it named went unchecked, which is the one failure a gate must not
+have. The count is stated here for the reason `architecture.md` states its
+allowance count: a table nothing sizes is a table a blank line can silently
+halve.
+
+| Element | Named by | Named only in | Why a request cannot reach it |
+| --- | --- | --- | --- |
+| the emitted document | `Document` | `router/describe.rs`, `router/docs/mod.rs`, `router/install.rs`, `router/mod.rs`, `router/service.rs`, `server/mod.rs`, `server/tls/document.rs`, `test/conformance.rs`, `unchecked.rs` | every site builds it, annotates it, or hands it back to the application. `docs::render` serializes it once while the router is built, so the endpoint serving a description holds finished bytes rather than a `Document`, and `Service` reads it back only through `Service::openapi` |
+| the schema registry | `Registry::{new,default}` | `router/describe.rs` | the one registry a build mints is consumed by `describe`, which has finished before a service exists to accept a request |
+| the document validators | `Validator` | `router/describe.rs` | a description is validated where it is built. The build either fails or drops the validator, and nothing on the request path holds one to run |
+| the JSON Schema interpreter | `jsonschema` | `test/conformance.rs` | it is behind `test-util` and exists to check an observed response against the description. The request parser is the other projection of the same declaration and interprets no schema |
+| the `openapi31` feature | `feature = "openapi31"` | `lib.rs`, `crates/kynos-openapi/src/lib.rs` | nothing is conditional on it. Both sites are the `#[cfg(not(feature = "openapi31"))] compile_error!` that refuses a build without it, and the 3.1 object model it names is compiled unconditionally. What that model does is held by the document, registry and validator rows above, and a request reaches none of the three |
+| the `yaml` feature | `serde_yaml_ng`, `feature = "yaml"` | `crates/kynos-openapi/src/emit/mod.rs`, `error/mod.rs` | `Document::to_yaml` is a method on the emitted document, reached only through `Service::openapi` after the build has finished. `Error::Yaml` carries a failure that emitter produced and is constructible nowhere else |
+| the `test-util` feature | `feature = "test-util"` | `lib.rs` | one gate, on `pub mod test`. What it compiles is the conformance harness, whose interpreter is the `jsonschema` row above |
+| the `uuid` feature | `uuid`, `feature = "uuid"` | `schema/impls/{mod,identifier}.rs` | its whole contribution is `impl Schema for Uuid`, and `Schema::schema` takes the `&mut Registry` that only `describe` mints |
+| the `time` feature | `feature = "time"` | `lib.rs`, `schema/impls/mod.rs` | it carries no types: enabled without a backend it is a `compile_error!`, which `features:check` probes. The two sites are the gate that says so and the module it would open; the cost is its backends' rows |
+| the `time-chrono` feature | `chrono`, `feature = "time-chrono"` | `lib.rs`, `schema/impls/temporal/{mod,chrono}.rs` | `Schema` implementations for the crate's date and time types, behind the `&mut Registry` only `describe` mints |
+| the `time-jiff` feature | `jiff`, `feature = "time-jiff"` | `lib.rs`, `schema/impls/temporal/{mod,jiff}.rs` | the same, for the other backend: `Schema` implementations reachable only through a registry a build has already consumed |
+| the `decimal` feature | `feature = "decimal"` | `lib.rs`, `schema/impls/mod.rs` | as `time`: no types of its own, a `compile_error!` without a backend, and the two sites are the gate and the module it opens |
+| the `decimal-rust` feature | `rust_decimal`, `feature = "decimal-rust"` | `lib.rs`, `schema/impls/decimal/{mod,rust_decimal}.rs` | `Schema` implementations for the crate's decimal type, behind the `&mut Registry` only `describe` mints |
+| the `decimal-big` feature | `bigdecimal`, `feature = "decimal-big"` | `lib.rs`, `schema/impls/decimal/{mod,bigdecimal}.rs` | the same, for the other backend |
+
+A site path is relative to `crates/kynos/src/` unless it starts at `crates/`,
+which makes it relative to the repository root and is how a row names a file in
+a sibling crate. The scope [`containment.py`](../scripts/containment.py) counts
+a row against follows from the row's own sites: always `crates/kynos/src/`, plus
+one `crates/<name>/src/` tree per crate-qualified site. So the widening and the
+reason for it are one edit, and a row reaching into another crate cannot be
+written without saying where. Deriving it per row rather than declaring one
+scope for the table is what makes the widening safe: `Document`, `Registry` and
+`Validator` are all *declared* in `kynos-openapi`, and a table-wide scope
+spanning both crates would fail those three rows on sight while proving nothing
+about the crate a request runs in. A derived tree that is not a directory fails
+the row rather than scanning nothing: the derivation is string surgery over a
+crate name nothing else here spell-checks, and a misspelled one reads as a legal
+site while narrowing the row back to the home scope, where every spelling it
+names is still written.
+
+A *Named by* cell holds one of two kinds of token, and may hold several of
+either as a comma-separated list of backticked entries. The first is an
+identifier or a path of them, brace-expanding the way the *Named only in* column
+does when one element has more than one spelling that reaches it:
+`Registry::{new,default}` holds both, because `Registry::new` is
+`Self::default()` and a row holding only `new` would let a derived `default()`
+mint a registry anywhere. The second is a `feature = "…"` gate, written as the
+`#[cfg]` attribute writes it, for an element whose whole contribution is what a
+gate compiles — a flag is not a Rust name, so there is nothing else to name it
+by. The two are matched over different text, and the string literals are the
+whole of the difference: an identifier over source with its comments, its
+literals and its inline `#[cfg(test)]` modules removed, a gate over the same
+source with the literals kept, because the flag name is one. Comments go from
+both corpora. A gate written in a comment or a rustdoc example is a mention no
+build compiles, and a rule reading one would report a row as holding on the
+strength of a sentence about it — a renamed flag staying green off a stale
+comment is the failure a naming rule is least able to survive. A feature row
+usually carries both — the code its gate compiles, and the crate that code
+calls — as in `` `uuid`, `feature = "uuid"` ``. A cell the rule cannot read
+fails the build rather than passing quietly, so teaching it a new kind of token
+is part of writing the row that needs one.
+
+Each spelling in a cell is held to naming something, one at a time rather than
+as a union: a cell written `Registry::{new,defualt}` would otherwise pass on the
+strength of `new` while a derived `default()` minted a registry anywhere. What a
+spelling must name is a mention anywhere in the scope, sibling test files
+included, rather than a site on the request path — a mint spelling earns its row
+by being reachable, not by being reached, and the row is at its strongest when
+nothing a request can run writes it at all. `Registry::default` is that case
+today. A spelling nothing in the scope writes under any `cfg` is a rename or a
+typo, and fails the build: it is a row holding nothing rather than an element
+nothing reaches.
+
+*Sibling* test files, and not every test: the same strip drops an inline
+`#[cfg(test)] mod` body from either corpus, so what a spelling may be found in
+is the source a request can run plus the `tests.rs` siblings beside it. That is
+the layout rule's own corpus — a module's tests belong in a sibling — rather
+than an approximation of "the tests", and it holds for a gate as much as for an
+identifier: an inline test module is the other place a gate can sit that no
+build outside `cfg(test)` compiles. A failure names which of the two corpora it
+read, so a row that has stopped holding says what text it was held against. A
+row whose cell the rule cannot read, or whose spelling names nothing, reports
+that one failure and stops: its site list goes unchecked until the cell is
+repaired, because an offender scan under a spelling already called
+untrustworthy would render a verdict nobody should act on.
+
+A cell names the shortest spelling that is unique in the workspace, not the
+longest one that is unambiguous. A qualified path is what an import removes:
+`use kynos_openapi::validate::{Validator, Violation};` leaves every later
+mention of the type bare, so a row written `validate::Validator` would match the
+one file that spells the path out and miss the file that imported it. `Validator`
+is the whole token because `kynos_openapi::validate::Validator` is the only type
+of that name in either crate. Where an identifier is not unique, the row names
+what mints one instead. Uniqueness is the writer's judgement and the rule does
+not check it — a spelling that names two types would hold both under one reason.
+What the rule does check is that the spelling still names something, which is
+what catches one that has quietly stopped matching.
+
+`Registry` — the type — is deliberately not a row. `Describe::request_body`
+takes `&mut Registry`, which puts the name in some eighty files by design, and a
+row admitting all of them would admit anything. The mint site is the stronger
+claim and the true one.
+
+The two rules above are the ones this instantiates. **The set is named where the
+set has names**: a failure reports which file names an off-path element, not
+that two counts differ. **The declared side is read off disk**: the rule
+computes the real set of naming files from the stripped source — whichever of
+the two strippings the token kind asks for — so the only hand-written thing in
+a row is the reason, which is exactly what a reviewer is being asked for when a
+build fails here.
+
+The rule cannot see the whole path on its own. `Dispatch` hands every request to
+a trait object — `dyn ErasedTerminal`, `dyn ErasedInterceptor`, `dyn Observer`,
+`dyn ErasedLayer` — and what sits behind one is declared in another file, which
+a naming rule reads as an allowed site rather than as the request path. The
+other half is a witness fn:
+[`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs)
+destructures `Dispatch`, `PathEntry` and `Served` exhaustively, so a field added
+to any of the three stops the crate compiling until someone writes it into the
+pattern. Nothing the dispatch table hands to an erased callee *that it stored
+while the router was built* is something those three do not carry.
+
+The qualifier is load-bearing and the unqualified form is false: `serve` hands
+the callee the `Request`, and an `Observer` is handed a `Duration` and a
+`&Response`, none of which is a field of any of the three. What the witness
+pins is the stored half — the table's own shape — and that is what a new field
+on it would change.
+
+Neither does the pair compose into "a request cannot reach a `Document`". The
+naming rule is per *file*, and three of the sites the document row allows —
+`unchecked.rs`, `server/mod.rs` and `router/docs/mod.rs` — serve requests
+themselves, so a new use of `Document` *inside* one of them is allowed by the
+row and invisible to the witness. Read the two together as what they are: a
+per-file naming rule, plus a ratchet on the dispatch table's fields. Narrowing
+the allowance below file granularity is what would close that, and is filed as
+[#131](https://github.com/getkono/kynos/issues/131).
+
+That is narrower than "nothing reaches an erased callee", and deliberately.
+`Service` is above the table: it owns the `Document` and hands the request to a
+`dyn ErasedService` built where the document is in scope, so no field of the
+three types witnesses it. That seam is held by the document row instead —
+`router/describe.rs` and `router/service.rs` are two of the sites it allows, and
+the row's reason is the argument for both. The two halves meet there: a witness
+where a field carries something to an erased callee, a row where a file names
+something the witness cannot see.
 
 ## The pass-control rule
 

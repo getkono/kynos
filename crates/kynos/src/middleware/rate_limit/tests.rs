@@ -1,11 +1,17 @@
-use std::time::Duration;
+use std::{fmt, marker::PhantomData, time::Duration};
 
 use super::{
+    Legacy, RateLimit, Structured,
     decision::{QuotaPolicy, QuotaUnit, ServiceLimit},
     headers::{RateLimitFields, RateLimitHeaders},
     quota::{estimate, recovers_in},
+    refusal::{RateLimited, RateLimitedFields, RefusalType},
 };
-use crate::extract::params::header::{EncodeHeaders, HeaderParams};
+use crate::{
+    extract::params::header::{EncodeHeaders, HeaderParams},
+    response::ShortCircuit,
+    schema::registry::Registry,
+};
 
 /// A window of one second, for readability.
 const WINDOW: Duration = Duration::from_secs(1);
@@ -339,4 +345,279 @@ fn every_quota_unit_renders_as_a_string() {
             );
         }
     }
+}
+
+// --- The problem type a refusal names -------------------------------------
+
+/// A type an application would name its refusals with.
+struct Throttled;
+
+impl RefusalType for Throttled {
+    const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/rate-limited");
+}
+
+/// What one short circuit declares and what it sends: the whole example, and
+/// the `type` the wire carried.
+///
+/// `None` on the declared side means the media type carries no example at all,
+/// which is what an unnamed type must leave behind.
+async fn declared_and_sent<S: ShortCircuit>(value: S) -> (Option<serde_json::Value>, String) {
+    use http_body_util::BodyExt as _;
+    use kynos_openapi::{RefOr, model::body::mime_names::APPLICATION_PROBLEM_JSON};
+
+    let declared = match S::responses(&mut Registry::new()).get(429) {
+        Some(RefOr::Item(response)) => response
+            .content
+            .get(APPLICATION_PROBLEM_JSON)
+            .and_then(|media_type| media_type.example())
+            .cloned(),
+        _ => panic!("a refusal declares a 429 carrying a problem document"),
+    };
+
+    let body = value
+        .into_response()
+        .into_body()
+        .collect()
+        .await
+        .expect("a readable body")
+        .to_bytes();
+    let sent: serde_json::Value = serde_json::from_slice(&body).expect("a problem document");
+
+    (
+        declared,
+        sent["type"].as_str().expect("a type URI").to_owned(),
+    )
+}
+
+/// One `RefusalType` is read by both halves of a refusal's promise.
+///
+/// Both spellings, because the URI is stated on the limiter rather than on the
+/// spelling and a service choosing the draft's fields must not lose it. And
+/// both *halves*, because a URI reaching only the wire leaves the document
+/// saying `about:blank` about a response that says otherwise -- the
+/// declaration-versus-behaviour defect the short-circuit sweep exists to catch.
+#[tokio::test]
+async fn a_named_refusal_type_is_one_statement_both_halves_read() {
+    let uri = Throttled::TYPE_URI.expect("the marker names a type");
+    let expected = serde_json::json!({ "type": uri, "status": 429 });
+
+    let (declared, sent) =
+        declared_and_sent(RateLimited::<Throttled>::new(Duration::from_secs(30), 100)).await;
+    assert_eq!(declared.as_ref(), Some(&expected));
+    assert_eq!(sent, uri);
+
+    let (declared, sent) = declared_and_sent(RateLimitedFields::<Throttled>::new(
+        Duration::from_secs(30),
+        limits(),
+        policies(),
+    ))
+    .await;
+    assert_eq!(declared.as_ref(), Some(&expected));
+    assert_eq!(sent, uri);
+}
+
+/// The example fixes the two members the wire cannot vary, and nothing else.
+///
+/// `title` and `detail` are English prose. A localizing interceptor rewrites
+/// them per request -- `examples/localized_errors.rs` is exactly that -- so an
+/// example serialized from the whole `Problem` would publish `"Too Many
+/// Requests"` about a response that says `"Trop de requetes"`. Nothing catches
+/// that: the conformance harness validates a body against `schema` and never
+/// reads `example`. So the assertion is on the key *set*, which a widened
+/// example fails.
+#[tokio::test]
+async fn a_declared_example_pins_only_what_the_wire_cannot_vary() {
+    let (declared, _) =
+        declared_and_sent(RateLimited::<Throttled>::new(Duration::from_secs(30), 100)).await;
+
+    let example = declared.expect("a named type declares an example");
+    let members = example
+        .as_object()
+        .expect("an example of a problem document is an object")
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+
+    assert_eq!(members, ["status", "type"], "{example}");
+}
+
+/// Naming no type leaves both halves exactly as they were.
+///
+/// The default is `()`, so this is what every document Kynos already emits
+/// says: `about:blank` on the wire, and no example beside it.
+#[tokio::test]
+async fn an_unnamed_refusal_type_declares_no_example_and_sends_about_blank() {
+    let (declared, sent) =
+        declared_and_sent(RateLimited::<()>::new(Duration::from_secs(30), 100)).await;
+    assert_eq!(declared, None);
+    assert_eq!(sent, "about:blank");
+
+    let (declared, sent) = declared_and_sent(RateLimitedFields::<()>::new(
+        Duration::from_secs(30),
+        limits(),
+        policies(),
+    ))
+    .await;
+    assert_eq!(declared, None);
+    assert_eq!(sent, "about:blank");
+}
+
+// --- The implementations a refusal writes out by hand ----------------------
+
+/// Witnesses that a refusal has all four implementations, whatever names its
+/// problem type.
+///
+/// The bound is the whole point of writing them out: `Throttled` derives
+/// nothing, so a `#[derive]` on `RateLimited` would bound `T` and refuse this
+/// call.
+fn assert_refusal_traits<T: Clone + fmt::Debug + Eq>() {}
+
+/// Witnesses that a refusal crosses a task boundary whatever names its type.
+fn assert_send_sync<T: Send + Sync>() {}
+
+/// A marker that is deliberately neither `Send` nor `Sync`.
+///
+/// A raw pointer is the cheapest way to be neither. It is still `'static`, so
+/// it satisfies `RefusalType` and the only thing under test is whether the
+/// refusal's auto traits followed it.
+struct Unsendable(PhantomData<*const ()>);
+
+impl RefusalType for Unsendable {
+    const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/unsendable");
+}
+
+/// A refusal is `Send` and `Sync` whatever marker names its problem type.
+///
+/// The field is `PhantomData<fn() -> T>` rather than `PhantomData<T>` for this
+/// reason and no other: a `PhantomData<T>` inherits `T`'s auto traits, and a
+/// refusal that is not `Send` cannot be returned from an interceptor at all --
+/// a bound failure at every mount site, from a marker the application thought
+/// was only a name.
+#[test]
+fn a_refusal_is_send_and_sync_whatever_marker_names_it() {
+    assert_send_sync::<RateLimited<Unsendable>>();
+    assert_send_sync::<RateLimitedFields<Unsendable>>();
+}
+
+/// A refusal survives a clone, in both spellings.
+///
+/// Hand-written rather than derived, so nothing regenerates them when a field
+/// is added: `Clone` that forgot `limit` would hand back a refusal reporting a
+/// ceiling of zero, and no compiler diagnostic would say so.
+#[test]
+fn a_cloned_refusal_carries_everything_the_original_did() {
+    assert_refusal_traits::<RateLimited<Throttled>>();
+    assert_refusal_traits::<RateLimitedFields<Throttled>>();
+
+    let refusal = RateLimited::<Throttled>::new(Duration::from_secs(30), 100);
+    assert_eq!(refusal.clone(), refusal);
+
+    let fields = RateLimitedFields::<Throttled>::new(Duration::from_secs(30), limits(), policies());
+    assert_eq!(fields.clone(), fields);
+}
+
+/// Every field a refusal carries is a field its equality reads.
+///
+/// One case per field rather than one for the struct: an `eq` that compares
+/// three of four members agrees with itself on every value that differs only in
+/// the fourth, so a draw would pass while the omission stood.
+#[test]
+fn two_refusals_differing_in_one_field_are_unequal() {
+    let refusal = RateLimited::<Throttled>::new(Duration::from_secs(30), 100);
+
+    assert_ne!(
+        refusal,
+        RateLimited::new(Duration::from_secs(31), 100),
+        "retry_after is not compared"
+    );
+    assert_ne!(
+        refusal,
+        RateLimited::new(Duration::from_secs(30), 101),
+        "limit is not compared"
+    );
+
+    let fields = RateLimitedFields::<Throttled>::new(Duration::from_secs(30), limits(), policies());
+
+    assert_ne!(
+        fields,
+        RateLimitedFields::new(Duration::from_secs(31), limits(), policies()),
+        "retry_after is not compared"
+    );
+    assert_ne!(
+        fields,
+        RateLimitedFields::new(Duration::from_secs(30), Vec::new(), policies()),
+        "limits is not compared"
+    );
+    assert_ne!(
+        fields,
+        RateLimitedFields::new(Duration::from_secs(30), limits(), Vec::new()),
+        "policies is not compared"
+    );
+}
+
+/// Every field a refusal carries is a field its `Debug` prints.
+///
+/// A refusal is what an operator reads out of a log when a client complains it
+/// was throttled, and a member the formatter skips is one that is simply not
+/// there. The marker is deliberately absent: it is a name rather than a value,
+/// and `PhantomData<fn() -> T>` prints nothing an operator can use.
+#[test]
+fn a_refusal_prints_every_field_it_carries() {
+    assert_eq!(
+        format!(
+            "{:?}",
+            RateLimited::<Throttled>::new(Duration::from_secs(30), 100)
+        ),
+        "RateLimited { retry_after: 30s, limit: 100 }"
+    );
+
+    let printed = format!(
+        "{:?}",
+        RateLimitedFields::<Throttled>::new(Duration::from_secs(30), limits(), policies())
+    );
+
+    assert!(printed.starts_with("RateLimitedFields {"), "{printed}");
+    assert!(printed.contains("retry_after: 30s"), "{printed}");
+    assert!(
+        printed.contains(r#"limits: [ServiceLimit { name: "burst""#),
+        "{printed}"
+    );
+    assert!(
+        printed.contains(r#"policies: [QuotaPolicy { name: "burst""#),
+        "{printed}"
+    );
+}
+
+// --- The implementations a limiter keeps ----------------------------------
+
+/// A policy stand-in. Only the struct's own bounds are under test here, so this
+/// does not have to be a `RateLimitPolicy`.
+#[derive(Clone, Debug)]
+struct Policy;
+
+/// Witnesses that a limiter has both implementations.
+fn assert_clone_and_debug<T: Clone + fmt::Debug>() {}
+
+/// A limiter keeps `Clone` and `Debug` whatever type names its refusal.
+///
+/// `#[derive]` bounds every parameter, so it demanded `T: Clone + Debug` from a
+/// marker that is a name and never a value -- taking both implementations away
+/// from any limiter naming a problem type, which is exactly the cost the
+/// refusal spends eight hand-written implementations to avoid one type down.
+/// `Throttled` derives nothing, so this call is the whole test.
+#[test]
+fn a_limiter_keeps_its_impls_whatever_type_names_its_refusal() {
+    assert_clone_and_debug::<RateLimit<Policy, Legacy, ()>>();
+    assert_clone_and_debug::<RateLimit<Policy, Structured, Throttled>>();
+
+    // And they still say what they said. One field: `_spelling` holds nothing
+    // an operator can read.
+    let limiter = RateLimit::new(Policy)
+        .refusal_type::<Throttled>()
+        .standard_fields();
+
+    assert_eq!(
+        format!("{:?}", limiter.clone()),
+        "RateLimit { policy: Policy }"
+    );
 }
