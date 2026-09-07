@@ -338,10 +338,12 @@ for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
             failures.append(
                 f"testing.md's off-path table names {element} with "
                 f"`{spelling}`, and nothing under {OFF_PATH_SCOPE} writes that "
-                "spelling, tests included. The row holds nothing under it: "
-                "either the element was renamed and the cell was not, or it "
-                "now lives outside the one scope this rule reads, which is a "
-                "change to that scope rather than to the row"
+                "spelling, sibling test files included. The row holds nothing "
+                "under it: either the element was renamed and the cell was "
+                "not, or it now lives outside the one scope this rule reads, "
+                "which is a change to that scope rather than to the row. The "
+                "sites for this row went unchecked, so repair the cell and run "
+                "again before reading this run as clean"
             )
         continue
 
@@ -366,6 +368,33 @@ if len(halves) == 2 and not off_path_rows:
         "element that stopped being off-path is retired by arguing it in "
         "performance.md's allocation, not by emptying the table"
     )
+
+# The row *set* needs holding as well as the rows. Every check above runs per
+# row, so a row that is deleted -- or cut off early, which one blank line in
+# the middle of the table does, since the loop breaks on the first line that is
+# not a row -- takes its element out of the gate while the run still reports
+# that every rule holds. `testing.md` states the count for that reason, and
+# this compares it.
+elif len(halves) == 2:
+    stated = re.search(r"\*\*(\w+) rows, and the count is the check\.\*\*", TESTING)
+    if stated is None:
+        failures.append(
+            "testing.md no longer states how many rows its off-path table has, "
+            "so a row can be dropped without failing this gate"
+        )
+    else:
+        expected = NUMBERS.get(stated.group(1).capitalize())
+        if expected is None:
+            failures.append(
+                f"testing.md writes an unreadable off-path row count: "
+                f"{stated.group(1)!r}"
+            )
+        elif expected != off_path_rows:
+            failures.append(
+                f"testing.md claims {expected} off-path rows and the table has "
+                f"{off_path_rows}. Adding an element means saying so there; "
+                "losing one means a row was dropped or the table was cut short"
+            )
 
 # --- Hand-rolled `Stream` implementations -----------------------------------
 # Only the section that enumerates them. Collecting every link in the

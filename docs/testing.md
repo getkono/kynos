@@ -312,6 +312,12 @@ each element, the identifier that names it, and the sites allowed to name it.
 Every other file is on the request path by default, so a new site is a failing
 build until someone adds it to a row and says why a request cannot reach it.
 
+**Four rows, and the count is the check.** A row deleted or truncated away
+would otherwise leave the gate reporting that every rule holds while the
+element it named went unchecked, which is the one failure a gate must not have.
+The count is stated here for the reason `architecture.md` states its allowance
+count: a table nothing sizes is a table a blank line can silently halve.
+
 The table is not yet the whole grading. It holds the document model, the
 validators, the registry that mints their schemas, and the JSON Schema
 interpreter the README's claim is about. The emitters and `describe` are graded
@@ -320,7 +326,11 @@ the one scope the rule reads, and get a row when
 [#86](https://github.com/getkono/kynos/issues/86) widens it; and `describe` is
 the site allowed by each of the three rows below whose element it builds, so a
 row naming it would be circular — what puts it off the path is that
-`Router::build` has returned before a service exists. The fourth row, the JSON
+`Router::build` has returned before a service exists. The ten *flags*
+`performance.md` grades off-path are unheld here too, and for the same reason
+the emitters are: this table names elements rather than gates, and
+[#86](https://github.com/getkono/kynos/issues/86) is what teaches the rule a
+`feature = "..."` token. The fourth row, the JSON
 Schema interpreter, allows `test/conformance.rs` alone: `describe` does not
 build it, and nothing on either side of that row names the other.
 
@@ -349,7 +359,8 @@ is part of writing the row that needs one.
 Each spelling in a cell is held to naming something, one at a time rather than
 as a union: a cell written `Registry::{new,defualt}` would otherwise pass on the
 strength of `new` while a derived `default()` minted a registry anywhere. What a
-spelling must name is a mention anywhere in the scope, test modules included,
+spelling must name is a mention anywhere in the scope, sibling test files
+included,
 rather than a site on the request path — a mint spelling earns its row by being
 reachable, not by being reached, and the row is at its strongest when nothing a
 request can run writes it at all. `Registry::default` is that case today. A
@@ -389,8 +400,23 @@ other half is a witness fn:
 [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs)
 destructures `Dispatch`, `PathEntry` and `Served` exhaustively, so a field added
 to any of the three stops the crate compiling until someone writes it into the
-pattern. Nothing the dispatch table hands to an erased callee is something those
-three do not carry.
+pattern. Nothing the dispatch table hands to an erased callee *that it stored
+while the router was built* is something those three do not carry.
+
+The qualifier is load-bearing and the unqualified form is false: `serve` hands
+the callee the `Request`, and an `Observer` is handed a `Duration` and a
+`&Response`, none of which is a field of any of the three. What the witness
+pins is the stored half — the table's own shape — and that is what a new field
+on it would change.
+
+Neither does the pair compose into "a request cannot reach a `Document`". The
+naming rule is per *file*, and three of the sites the document row allows —
+`unchecked.rs`, `server/mod.rs` and `router/docs/mod.rs` — serve requests
+themselves, so a new use of `Document` *inside* one of them is allowed by the
+row and invisible to the witness. Read the two together as what they are: a
+per-file naming rule, plus a ratchet on the dispatch table's fields. Narrowing
+the allowance below file granularity is what would close that, and is filed as
+[#131](https://github.com/getkono/kynos/issues/131).
 
 That is narrower than "nothing reaches an erased callee", and deliberately.
 `Service` is above the table: it owns the `Document` and hands the request to a
