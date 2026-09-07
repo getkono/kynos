@@ -211,15 +211,21 @@ fn described_refusal<T: RefusalType>(
     // can carry today; a `const`-narrowed member is the mechanism that will
     // replace it.
     //
+    // Two members and no more. An example is a promise about the wire, and the
+    // only members this code fixes are the URI and the status -- `title` and
+    // `detail` are English prose an interceptor is free to localize, so
+    // showing them would publish a claim no response is held to. These two are
+    // exactly what a `const`-narrowed `type` will state instead.
+    //
     // Written through the media type `problem_response` already installed,
     // which keeps that function the one writer of this content.
-    if T::TYPE_URI.is_some() {
+    if let Some(uri) = T::TYPE_URI {
         if let Some(media_type) = response.content.get_mut(APPLICATION_PROBLEM_JSON) {
             let described = std::mem::take(media_type);
-            *media_type = described.with_example(
-                serde_json::to_value(refusal_problem::<T>())
-                    .expect("a problem holds strings, a status and JSON values"),
-            );
+            *media_type = described.with_example(serde_json::json!({
+                "type": uri,
+                "status": 429,
+            }));
         }
     }
 

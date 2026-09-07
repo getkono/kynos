@@ -459,9 +459,13 @@ wrapping it. Naming it on the limiter covers both, and it is the same shape
 operation declares changes the type.
 
 **What the document can say today.** The declared 429 carries the URI as the
-`application/problem+json` media type's `example`, serialized from the same
-`Problem` value the wire renders. It is machine-readable and it is not a
-*constraint*: nothing rejects a body whose `type` differs from an example. The
+`application/problem+json` media type's `example` — `{"type": ..., "status":
+429}`, and nothing else. Two members rather than a whole serialized `Problem`,
+because an example is a promise about the wire and only these two are fixed:
+`title` and `detail` are English prose that a localizing interceptor rewrites
+per request, so showing them would publish a claim no response is held to. It is
+machine-readable and it is not a *constraint*: nothing rejects a body whose
+`type` differs from an example. The
 constraint needs `type` narrowed to a `const` in the schema, and `Problem`'s
 schema is shared by every error Kynos describes — narrowing it there would
 narrow it for all of them. That is [#103]'s mechanism; when it lands the 429's
