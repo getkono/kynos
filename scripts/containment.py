@@ -345,6 +345,12 @@ NAMED_BY = re.compile(r"`?(\w+(?:\s*::\s*\w+)*)`?")
 # it. A flag is not an identifier -- `decimal-big` is not even a Rust name -- so
 # an element whose whole contribution is what a gate compiles has no crate or
 # type to be named by, and the gate is the only thing that names it.
+#
+# Matched as text, so it cannot tell a gate from its negation or from a
+# `cfg_attr` that compiles nothing: #134. The `openapi31` row is why that is not
+# a one-line narrowing -- both of its sites are
+# `#[cfg(not(feature = "openapi31"))] compile_error!`, so a pattern that reads
+# only the positive form empties the one row that has nothing else to hold.
 GATE = re.compile(r'`?feature\s*=\s*"([\w-]+)"`?')
 
 
@@ -990,6 +996,13 @@ if placeholders := sorted(path for path, text in FILES if PLACEHOLDER.search(tex
 # rule would take the test run down with the tree it was reading -- reporting
 # the parsers as untested exactly when a parser is what broke. The rules
 # themselves still run on import, which costs a few file reads and no build.
+#
+# Which is only half of what the guard is meant to buy, and #134 is the rest:
+# the three bare `.index()` slices above raise rather than failing, so renaming
+# `| Grade | Owes | Flags |` in `performance.md` kills this script *and* the
+# test run that would have reported it. The fix is a `def main()`, which
+# reindents every rule body and so does not belong on a branch changing what
+# the rules say.
 if __name__ == "__main__":
     for failure in failures:
         print(f"containment: {failure}", file=sys.stderr)
