@@ -5,11 +5,11 @@ measurement a given shape of code owes. [`nfr.md`](nfr.md) records which of
 these run today; this document is about the method.
 
 Every section except [Rationale](#rationale) states a rule that binds
-implementation work. Two of the five kinds below run today, one of them only
-for part of what it covers, and the [taxonomy](#the-taxonomy)'s last column is
+implementation work. All five of the kinds below run today, three of them only
+for part of what they cover, and the [taxonomy](#the-taxonomy)'s last column is
 where that is admitted rather than implied.
 
-The newer of the two has already earned the document: the routing path was
+The allocation count has already earned the document: the routing path was
 required to allocate nothing, had never been measured, and allocates seven
 times for a static match. [`nfr.md`](nfr.md#routing) carries the numbers and
 what they do and do not establish.
