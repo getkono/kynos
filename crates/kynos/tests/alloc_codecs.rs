@@ -52,6 +52,9 @@
 ///
 /// Gated with the harness below, because a build with `macros` on and every
 /// codec off has nothing to count and no reason to carry a counting allocator.
+///
+/// There is a line to reach for once #111 lands — `support/counting.rs` carries
+/// the same static — and folding this one onto it is #133.
 #[cfg(any(
     feature = "json",
     feature = "form",
@@ -75,12 +78,24 @@ mod harness {
     //! response carries — and the four assertion bodies every body codec makes
     //! about its own table.
     //!
-    //! Items of its own rather than the `support/` module the behavioural
-    //! targets share. `support::Pending::call` is an `async fn` that allocates
-    //! per request, so it cannot sit inside a region; and it names `Json`
-    //! unconditionally, so it cannot be built with `json` off — which is
-    //! exactly the build the `form`, `protobuf` and `compression` modules below
-    //! have to be measurable in.
+    //! Items of its own, and `support/mod.rs` is not the reason: its
+    //! `Pending::call` is an `async fn` that allocates per request, so it could
+    //! never sit inside a region, and it names `Json` unconditionally, so it
+    //! could never be built with `json` off — the build the `form`, `protobuf`
+    //! and `compression` modules below have to be measurable in. It was never a
+    //! candidate.
+    //!
+    //! The module this one does overlap is `support/counting.rs`, which #111
+    //! adds for precisely this purpose — a second counting target including it
+    //! with `#[path]` — and which already carries a `#[global_allocator]`, a
+    //! by-hand single-poll driver and a request builder: the three items
+    //! re-declared here. They are re-declared because that file is on another
+    //! branch and these two lanes were cut in parallel, and because the shapes
+    //! have still to be reconciled — `counting::counted` drives a `GET` with no
+    //! body and drops the response, where a codec measurement builds a method,
+    //! a content type and a body, asserts the status the count is of, and reads
+    //! the response back. Whichever of the two lands second folds this module
+    //! onto that one; #133 is where that is recorded.
 
     use std::future::Future;
     use std::pin::pin;
