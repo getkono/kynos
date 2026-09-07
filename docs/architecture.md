@@ -383,8 +383,9 @@ of them. Taking a vetted one is how the invariant is kept
 rather than bent: the unsafe stays upstream, and this tree keeps a rule it
 would otherwise have had to carve an exception into. It is a dev-dependency
 named by
-[`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs) and
-[`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs), and by nothing
+[`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs),
+[`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) and
+[`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs), and by nothing
 under `src/`.
 
 Two properties decide which counter, and both are load-bearing. Its counters
