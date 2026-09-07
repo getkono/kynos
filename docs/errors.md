@@ -2,15 +2,49 @@
 
 ## The rule
 
-Every error Kynos puts on the wire is an [RFC 9457] problem detail. There is no
-second envelope and no per-endpoint shape, so a client can handle failures
-generically instead of learning one format per operation.
+Every error Kynos puts a body on the wire for is an [RFC 9457] problem detail.
+There is no second envelope and no per-endpoint shape, so a client can handle
+failures generically instead of learning one format per operation. The one
+error that carries no body is a fallback under `FallbackPolicy::Empty`
+([`routing.md`](routing.md#application-level-policies)), which answers a 404 or
+a 405 with the status alone.
 
 This covers the framework's own failures, not only the application's. A body
 that will not parse and a path parameter that will not deserialize both produce
 a problem document, and both appear in the operation's `responses` — because
 [`FromRequestParts::Rejection`](../crates/kynos/src/extract/mod.rs) is bound by
 `Responses` and therefore cannot decline to describe itself.
+
+It covers what middleware refuses, too, and the description owes the same
+account of it. A `ShortCircuit` that *refuses* answers with a problem document,
+so the response it declares names `application/problem+json` and the `Problem`
+component. `error::problem::problem_response` writes that description for the
+eight interceptor short circuits, for the 500 a recovered panic contributes and
+for every extractor rejection; the `ApiError` derive still spells it itself, so
+it is one writer for everything the framework crate emits rather than one for
+the workspace. That second writer is a choice rather than a wall: the derive
+expands in an application crate, which `pub(crate)` does not reach, but
+[`kynos::__private`](../crates/kynos/src/__private/mod.rs) exists for exactly
+that hop and `#[derive(Reply)]` already takes it. Folding the derive onto the
+same writer belongs with the narrowing that rewrites its `Responses` body, so
+it is filed as #116 rather than done here.
+
+Not every short circuit refuses. `NotModified` answers 304 with an empty body
+and rightly declares no content, and `Infallible` declares nothing at all
+because it is uninhabited. What the sweep in
+[`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) holds each
+implementation it drives to is therefore *agreement* — the declaration and the
+exchange say the same thing — and not naming a media type. Eight of the ten
+once described a response with no content while sending one, which is the
+direction that failed; declaring content and sending none is a failure the same
+assertion catches going the other way.
+
+It drives nine of the ten with every feature on, and six at the default set:
+`Infallible` has no value to hand it, and `NotAcceptable`, `Undecodable` and
+`NotModified` are not compiled without `compression` and `cache`. All ten are
+reached by `every_short_circuit_kynos_ships_is_accounted_for` in the same file,
+which asserts the *set of names* rather than the agreement — so an
+implementation added without a case fails there whatever the build compiled.
 
 [RFC 9457]: ../references/rfc9457.txt
 
@@ -73,17 +107,18 @@ enum StoreError {
 | --- | --- | --- |
 | type | `base` | URI prefix; `type` defaults to it plus the kebab-cased variant name |
 | variant | `status` | required, 400–599 |
-| variant | `title` | the problem's `title`, and the response's description. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
+| variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
 | field | `extension` | serialize this field as an extension member under its own name |
 
 **`title` is read twice, and its absence is answered differently each time.**
 On the wire it is the problem's `title`, and a variant that declares none
 carries `StatusCode::canonical_reason` — RFC 9457 section 4.2.1's own
-recommendation for a problem whose type says nothing. In the description it is
-the response's `description`, and there the variant's doc comment is tried
-before the reason phrase, on the same argument `detail` rests on: the sentence a
-Rust reader already wrote is the sentence an API consumer should receive.
+recommendation for a problem whose type says nothing. In the description it
+composes the response's `description`, and there the variant's doc comment is
+tried before the reason phrase, on the same argument `detail` rests on: the
+sentence a Rust reader already wrote is the sentence an API consumer should
+receive.
 
 There is no de-camel-casing of variant names anywhere, and this document used to
 say there was.
@@ -104,6 +139,57 @@ in [`tests/ui/macros`](../crates/kynos/tests/ui/macros). What `base`, `title`,
 `type` and `extension` *do* is checked at run time by the conformance harness,
 which compares each problem document a service produced against what the
 description declared for that operation and status.
+
+### What the declared response narrows to
+
+`type` is the member a client branches on, so the response describing a status
+says which URIs it may carry rather than referring to the shared `Problem`
+component and admitting every problem the service can produce.
+
+One failure answers with the status:
+
+```json
+{ "allOf": [
+    { "$ref": "#/components/schemas/Problem" },
+    { "properties": { "type": { "type": "string",
+                                "const": "https://errors.example.com/email-taken" } } }
+] }
+```
+
+Several share it — the `oneOf` of exactly those, each branch carrying its own
+JSON Schema `title`. That keyword labels the branch for whoever reads the
+description; it is not the problem's own `title` member, which is governed by
+[the rule above](#declaring-an-error-type) and is the reason phrase wherever a
+variant declares no `#[problem(title)]`. The response's description joins the
+summaries of every
+variant answering with the status, in declaration order and with `"; "`,
+dropping only a summary already written word for word — so a shared status
+names each of them rather than whichever came first.
+
+Two rules follow from what is actually on the wire:
+
+- **A variant naming no `type` narrows to `const: "about:blank"`**, not to a
+  bare `$ref`. `Problem::new` sets that URI and the serializer writes `type`
+  unconditionally, so the constant is true of every such body — and a bare
+  `$ref` branch inside a `oneOf` would match *every* problem document, costing
+  the keyword its exactly-one rule.
+- **Two variants publishing one URI are one branch.** A `oneOf` repeating a
+  `const` is satisfied twice over, which is the same defect. That collapse is
+  the schema's alone, and the description still names every variant, since
+  prose is under no exactly-one rule. Where two or more distinct URIs survive,
+  the surviving branch takes the summary declared first as its `title`; where
+  the dedup leaves *one*, there is no `oneOf` and the single `allOf` carries no
+  `title` at all — the description already says the only thing that status
+  publishes.
+
+**The narrowing survives only on statuses no extractor claims.** An argument's
+rejection is contributed before the return type's responses and
+`Responses::merge_from` keeps the entry already present, so where an extractor
+and the handler's error type name one status, the extractor's generic problem
+response is what the document publishes — see
+[Where the union happens](#where-the-union-happens). Nothing about that is
+specific to the narrowing; it is the union's first-wins rule, and it is what
+makes a handler-only status the place a declared `type` is visible.
 
 ## Rejections
 
@@ -151,6 +237,18 @@ the rejection carries that length and writes the field itself, as
 *describes* that field, because the `unsatisfied-range` grammar is fixed and
 there is no per-operation string for a `Describe` to supply — which is what lets
 the header travel with the status wherever the status is declared from.
+
+`AuthRejection` is the one rejection whose problem `type` is not fixed.
+`AuthRejection::forbidden_as(type_uri)` puts an application's own URI on a 403,
+because only the application knows which of its rules refused; the 401 has no
+counterpart and is not getting one, since which credential check refused is a
+fact a client cannot act on. The argument is a `&'static str` and the
+constructor is a `const fn`, so a URI built from the request cannot be spliced
+in without deliberately leaking it. What the operation *declares* for that 403
+is still the shared `Problem` component: the narrowing above is built from types
+alone, and this URI is a value that arrives at run time. The rest of the
+reasoning is in
+[`security.md`](security.md#a-403-may-name-itself-a-401-may-not).
 
 An extractor that cannot fail says so with `Infallible`, whose `Responses`
 implementation contributes nothing:
@@ -265,10 +363,11 @@ already has, on a path that is not hot.
 
 By the problem *type*, which is what section 3.1.3 makes `title` a property of.
 The status belongs in the key too: a variant with no `#[problem(base = ...)]`
-is `about:blank`, so every rejection the framework raises shares one URI and is
-told apart only by its code. An error type that wants a localized title of its
-own therefore needs a `base`, which is the one place that key earns its keep
-beyond tidiness.
+is `about:blank`, so the rejections the framework raises share one URI and are
+told apart only by their code. The one exception is a 403 an application named
+with `AuthRejection::forbidden_as`, which is keyed by that URI like any other
+type. An error type that wants a localized title of its own therefore needs a
+`base`, which is the one place that key earns its keep beyond tidiness.
 
 A type the catalogue has no entry for keeps the title it already carried, rather
 than losing one. That is what makes adding a language additive.

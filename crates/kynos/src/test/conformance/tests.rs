@@ -1,6 +1,6 @@
 use kynos_openapi::{Document, Operation, PathItem, PathTemplate};
 
-use super::{declared_response, matched_template, template_matches};
+use super::{conformance, declared_response, matched_template, template_matches};
 
 /// The segments a template may be built from. The variable is a marker
 /// rather than a name: a template may not repeat one, so each is numbered
@@ -262,4 +262,157 @@ fn an_undeclared_media_type_still_does_not_match() {
     let declared = content(&["text/html; charset=utf-8"]);
 
     assert!(super::declared_representation(&declared, "application/json").is_none());
+}
+
+/// A document declaring one `GET /thing` operation with `responses`.
+///
+/// The sibling of [`document`] for the cases that are about what a response
+/// says rather than about which path matched: those need a `Responses` value
+/// under the operation, which `document`'s default `Operation` leaves empty.
+fn document_declaring(responses: kynos_openapi::Responses) -> Document {
+    let mut document = document(&["/thing"]);
+    document
+        .paths
+        .items
+        .get_mut("/thing")
+        .expect("the template just inserted")
+        .get
+        .as_mut()
+        .expect("the operation just inserted")
+        .responses = responses;
+    document
+}
+
+/// One `GET /thing` exchange, as the recorder would have stored it.
+fn observed(status: u16, content_type: Option<&str>, body: &str) -> crate::test::Observed {
+    let mut headers = crate::http::HeaderMap::new();
+    if let Some(content_type) = content_type {
+        headers.insert(
+            crate::http::header::CONTENT_TYPE,
+            crate::http::HeaderValue::from_str(content_type).expect("a media type"),
+        );
+    }
+
+    crate::test::Observed {
+        method: crate::http::Method::GET,
+        path: "/thing".to_owned(),
+        status: crate::http::StatusCode::from_u16(status).expect("a status"),
+        headers,
+        body: bytes::Bytes::copy_from_slice(body.as_bytes()),
+    }
+}
+
+/// A response declaring no content is a claim that none was sent, so a body
+/// arriving under one is a description that lies about the exchange.
+///
+/// This is the defect issue #104 reported at the 429: eight of the ten
+/// `ShortCircuit` implementations put a problem document on the wire under a
+/// description declaring nothing, and the harness read "declares nothing" as
+/// "nothing to check".
+///
+/// The second assertion names the arm rather than the prefix the three arms
+/// share, which sits outside the match: on the prefix alone, collapsing all
+/// three arms into one sentence keeps every case here green, and a report
+/// that cannot say which shape arrived is the half of the diagnostic a reader
+/// acts on.
+#[test]
+fn a_body_sent_under_a_response_declaring_no_content_is_reported() {
+    let document = document_declaring(
+        kynos_openapi::Responses::new().with(429, kynos_openapi::Response::new("rate limited")),
+    );
+    let record = observed(
+        429,
+        Some("application/problem+json"),
+        r#"{"type":"about:blank","status":429}"#,
+    );
+
+    let reasons = conformance(&document, &record);
+
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(reasons[0].contains("declares no content"), "{}", reasons[0]);
+    assert!(
+        reasons[0].contains("a 35-byte `application/problem+json` body"),
+        "{}",
+        reasons[0]
+    );
+}
+
+/// The second half of the disjunction: a media type with no octets behind it.
+///
+/// A `Content-Type` names the representation a client should parse, so a head
+/// carrying one under a declaration of none is the same lie a body would be —
+/// and a length check alone would never reach it.
+///
+/// This is the only one of the three arms that reports no byte count, which is
+/// what tells a reader the octets were the half that never arrived.
+#[test]
+fn a_head_sent_under_a_response_declaring_no_content_is_reported() {
+    let document = document_declaring(
+        kynos_openapi::Responses::new().with(429, kynos_openapi::Response::new("rate limited")),
+    );
+    let record = observed(429, Some("application/problem+json"), "");
+
+    let reasons = conformance(&document, &record);
+
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(reasons[0].contains("declares no content"), "{}", reasons[0]);
+    assert!(
+        reasons[0].contains("a `application/problem+json` head with no body"),
+        "{}",
+        reasons[0]
+    );
+}
+
+/// The first half: octets with no media type at all.
+///
+/// A media-type comparison would find nothing to compare and pass, so the
+/// predicate reads the body's length as well as the header.
+///
+/// It shares its byte count with the arm above, so the fragment that separates
+/// the two is the missing media type rather than the count.
+#[test]
+fn a_body_with_no_media_type_under_a_declaration_of_none_is_reported() {
+    let document = document_declaring(
+        kynos_openapi::Responses::new().with(500, kynos_openapi::Response::new("it went wrong")),
+    );
+    let record = observed(500, None, "something");
+
+    let reasons = conformance(&document, &record);
+
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(reasons[0].contains("declares no content"), "{}", reasons[0]);
+    assert!(
+        reasons[0].contains("a 9-byte body with no `Content-Type`"),
+        "{}",
+        reasons[0]
+    );
+}
+
+/// The control: a response that sends nothing under a declaration of nothing
+/// still conforms, and must go on doing so.
+///
+/// Kynos ships six shapes that legitimately send neither octets nor a
+/// `Content-Type`: `NoContent`'s 204, every `Redirect<CODE>`, the conditional
+/// 304 whose replayed field list deliberately omits `Content-Type`, the ranged
+/// 304 that guards its media type behind the status, the asset 304 whose header
+/// set is `etag`/`cache-control`/`content-encoding`/`vary`, and a HEAD against
+/// a status declaring no representation. One case covers all six because they
+/// differ only in status and in headers the predicate does not read: in the two
+/// facts it does read — no body, no media type — they are the same exchange.
+///
+/// The CORS preflight 204 was counted here and is not one of them: it sends
+/// neither, but it is never described, so nothing declares the response this
+/// branch reads and the exchange cannot arrive. The HEAD is one of them and is
+/// exercised nowhere else — no test drives a HEAD through
+/// `assert_conformance`, so this case standing in for it is the whole of what
+/// holds it.
+#[test]
+fn a_response_that_sends_nothing_and_declares_nothing_conforms() {
+    let document = document_declaring(
+        kynos_openapi::Responses::new()
+            .with(204, kynos_openapi::Response::new("nothing to return")),
+    );
+    let record = observed(204, None, "");
+
+    assert!(conformance(&document, &record).is_empty());
 }

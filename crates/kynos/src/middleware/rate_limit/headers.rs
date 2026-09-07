@@ -1,15 +1,16 @@
 //! What a rate-limited exchange says on the wire, in both spellings.
+//!
+//! The header groups themselves. What a *refusal* answers with is
+//! [`refusal`](super::refusal), which reads these groups to build its 429.
 
 use std::time::Duration;
 
 use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
-    error::problem::Problem,
     extract::params::header::{EncodeHeaders, HeaderParams},
     http,
     middleware::rate_limit::decision::{QuotaPolicy, ServiceLimit},
-    response::{IntoResponse, Responses, ShortCircuit},
     schema::registry::Registry,
 };
 
@@ -20,7 +21,7 @@ use crate::{
 /// into the refusal it just received. Rounding up overstates the wait by under
 /// a second and is a number the service can actually honour, which is the rule
 /// the rest of this module follows.
-fn whole_seconds(delay: Duration) -> u64 {
+pub(super) fn whole_seconds(delay: Duration) -> u64 {
     delay.as_secs() + u64::from(delay.subsec_nanos() > 0)
 }
 
@@ -38,12 +39,6 @@ fn structured(description: &str) -> kynos_openapi::RefOr<kynos_openapi::Header> 
         kynos_openapi::Header::new(kynos_openapi::Schema::of_type(SchemaType::String))
             .with_description(description),
     )
-}
-
-/// Describes `Retry-After`, which is a delta-seconds count or an HTTP-date.
-fn retry_after_header() -> kynos_openapi::Header {
-    kynos_openapi::Header::new(kynos_openapi::Schema::of_type(SchemaType::String))
-        .with_description("How long to wait before retrying, in seconds or as an HTTP-date")
 }
 
 /// The `X-RateLimit-*` triple, in the spelling Kynos emits by default.
@@ -262,119 +257,4 @@ fn sf_string(name: &str) -> Option<String> {
 
     let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
     Some(format!("\"{escaped}\""))
-}
-
-/// What a limiter answers with when a policy refuses, in the `X-` spelling.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RateLimited {
-    /// How long the client should wait before retrying.
-    pub retry_after: Duration,
-    /// The ceiling that was exceeded.
-    pub limit: u64,
-}
-
-impl IntoResponse for RateLimited {
-    fn into_response(self) -> http::Response {
-        let mut response = refusal();
-        set_retry_after(&mut response, self.retry_after);
-
-        // The same three a success carries. A denial's reset *is* its retry
-        // delay, so reporting it lands no new obligation on the policy.
-        write_group(
-            &mut response,
-            &RateLimitHeaders {
-                limit: self.limit,
-                remaining: 0,
-                reset: self.retry_after,
-            },
-        );
-
-        response
-    }
-}
-
-impl ShortCircuit for RateLimited {
-    const STATUSES: &'static [u16] = &[429];
-}
-
-impl Responses for RateLimited {
-    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        described_refusal(RateLimitHeaders::response_headers(registry))
-    }
-}
-
-/// The same, in the draft's spelling.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RateLimitedFields {
-    /// How long the client should wait before retrying.
-    pub retry_after: Duration,
-    /// Where the client stands against each policy.
-    pub limits: Vec<ServiceLimit>,
-    /// What the service enforces.
-    pub policies: Vec<QuotaPolicy>,
-}
-
-impl IntoResponse for RateLimitedFields {
-    fn into_response(self) -> http::Response {
-        let mut response = refusal();
-        set_retry_after(&mut response, self.retry_after);
-        write_group(
-            &mut response,
-            &RateLimitFields {
-                limits: self.limits,
-                policies: self.policies,
-            },
-        );
-        response
-    }
-}
-
-impl ShortCircuit for RateLimitedFields {
-    const STATUSES: &'static [u16] = &[429];
-}
-
-impl Responses for RateLimitedFields {
-    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        described_refusal(RateLimitFields::response_headers(registry))
-    }
-}
-
-/// The 429 both spellings share.
-fn refusal() -> http::Response {
-    Problem::new(http::StatusCode::TOO_MANY_REQUESTS)
-        .with_detail("the client has exceeded its request rate")
-        .into_response()
-}
-
-/// The 429's description, plus whichever header group produced it.
-fn described_refusal(
-    group: kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>>,
-) -> kynos_openapi::Responses {
-    kynos_openapi::Responses::new().with(
-        429,
-        group.into_iter().fold(
-            kynos_openapi::Response::new("the client has exceeded its request rate")
-                .with_header("Retry-After", retry_after_header()),
-            |response, (name, header)| match header {
-                kynos_openapi::RefOr::Item(header) => response.with_header(name, header),
-                kynos_openapi::RefOr::Ref(_) => response,
-            },
-        ),
-    )
-}
-
-fn set_retry_after(response: &mut http::Response, retry_after: Duration) {
-    if let Ok(value) = http::HeaderValue::from_str(&whole_seconds(retry_after).to_string()) {
-        response
-            .headers_mut()
-            .insert(http::header::RETRY_AFTER, value);
-    }
-}
-
-/// Writes a group onto a short-circuit response.
-///
-/// Through the one writer, so a short circuit and a forwarded response spell a
-/// group the same way.
-fn write_group<G: EncodeHeaders>(response: &mut http::Response, group: &G) {
-    crate::extract::params::header::write(response.headers_mut(), group);
 }

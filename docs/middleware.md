@@ -425,6 +425,58 @@ ship and reads what came back, with `Retry-After` and the `RateLimit` field's
 from the `Denial` and one from the `ServiceLimit`, and a wiring that read either
 from the other would fail there.
 
+### Naming the problem type a refusal carries
+
+A 429's RFC 9457 `type` was `about:blank`, which says *the status code is the
+whole story*. That is true of a generic refusal and false of a service that
+distinguishes a burst limit from a spent monthly allowance — a client branches on
+`type`, and there was nothing to branch on.
+
+```rust,ignore
+struct Throttled;
+
+impl RefusalType for Throttled {
+    const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/rate-limited");
+}
+
+RateLimit::new(policy).refusal_type::<Throttled>()
+```
+
+**It is a type-state, not a field on `Denial`.** What an interceptor declares is
+read from its associated types and never from a value it returned — that is the
+whole of why there is no `contribution` method. A URI carried on a `Denial`
+would reach the wire and nothing else, leaving the declared 429 saying
+`about:blank` about a response that says otherwise. That is the
+declaration-versus-behaviour defect the short-circuit sweep exists to catch, and
+adding a hook that produces it is not a feature. Stated as a type, the same
+`const` is read by `into_response` and by `Responses`, from one function.
+
+**Nor a `const` on `RateLimitPolicy`.** The trait is implemented by the
+application for a custom algorithm, but the shipped algorithm is `Quotas`, which
+is Kynos's type: a const there is a hook a `Quotas` user cannot reach without
+wrapping it. Naming it on the limiter covers both, and it is the same shape
+`standard_fields` already has — a decision that changes what every covered
+operation declares changes the type.
+
+**What the document can say today.** The declared 429 carries the URI as the
+`application/problem+json` media type's `example` — `{"type": ..., "status":
+429}`, and nothing else. Two members rather than a whole serialized `Problem`,
+because an example is a promise about the wire and only these two are fixed:
+`title` and `detail` are English prose that a localizing interceptor rewrites
+per request, so showing them would publish a claim no response is held to. It is
+machine-readable and it is not a *constraint*: nothing rejects a body whose
+`type` differs from an example. The
+constraint needs `type` narrowed to a `const` in the schema, and `Problem`'s
+schema is shared by every error Kynos describes — narrowing it there would
+narrow it for all of them. That is [#103]'s mechanism; when it lands the 429's
+`Problem.type` narrows to `RefusalType::TYPE_URI` and the conformance harness
+starts failing a refusal whose body disagrees with its declaration.
+
+Naming no type is still the default, and it declares no example and sends
+`about:blank`, so a service that does not care carries nothing new.
+
+[#103]: https://github.com/getkono/kynos/issues/103
+
 ## The order a chain runs in
 
 **The first `intercept` call is the outermost interceptor.** A chain is a slice
@@ -1168,6 +1220,31 @@ on all of them, and every one would then have to be made to produce it.
 [`nfr.md`](nfr.md#middleware) carries it as `enforced`, and what it caught on
 its first run is in
 [`testing.md`](testing.md#what-the-harness-found-on-its-first-run).
+
+A response declaring *no* representation is checked too, which it was not at
+first. Declaring nothing is a claim about the exchange rather than the absence
+of one, so a body or a `Content-Type` arriving under it is reported. Until that
+held, `assert_conformance` read "declares nothing" as "nothing to check", and
+eight short circuits sent a problem document under a description of no content
+without the matrix noticing. That defect was in what an interceptor *declares*
+rather than in what it does, which is a class of error no type check reaches.
+
+This harness is not the only instrument for that class, and is not the cheapest.
+`every_short_circuit_declares_the_content_it_sends` in
+[`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) asserts the
+same agreement directly, with no document, no client and no route: it drives
+each short circuit's value and compares what reaches the wire against what
+`Responses` declared. It is also the more exhaustive of the two here — the
+matrix reached five of the eight defective implementations and the sweep reached
+all eight. What the sweep covers is every implementation this build compiled a
+value for: nine of the ten with every feature on, six at the default set, with
+`Infallible` excluded because it is uninhabited. The tenth is held by name in
+`every_short_circuit_kynos_ships_is_accounted_for`, which asserts the set rather
+than the agreement. What the matrix buys instead is reach: it holds anything on
+a live exchange, an application's own short circuit and a handler included,
+where the sweep is total only over the set Kynos ships. Prefer the direct assertion
+for a claim about a type, and reach for the matrix when the claim is about an
+exchange.
 
 What it is not is a property test. The matrix is enumerated, so it covers the
 layers Kynos owns in the arrangements that file names — not every stack a

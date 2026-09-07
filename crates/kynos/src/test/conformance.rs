@@ -81,13 +81,58 @@ pub(super) fn conformance(document: &Document, record: &Observed) -> Vec<String>
 }
 
 /// Whether the body matches the representation declared for it.
+///
+/// # Declaring nothing is a claim too
+///
+/// A response with no `content` says the exchange carried no representation,
+/// which is checked against what was sent rather than taken as nothing to
+/// check. Keyed on the exchange in both directions: octets are a
+/// representation whatever the headers said, and a `Content-Type` names one
+/// whether or not any octets followed.
+///
+/// Six shapes Kynos ships legitimately declare nothing, and every one of them
+/// sends neither, so none reaches the report below: `NoContent`'s 204 and every
+/// `Redirect<CODE>` build a `Body::empty()`; the conditional 304 copies a
+/// replayed field list that deliberately omits `Content-Type`; the ranged 304
+/// guards its media type behind the status; the asset 304 writes only `ETag`,
+/// `Cache-Control`, `Content-Encoding` and `Vary`; and a HEAD keeps its
+/// `Content-Type` on statuses that *do* declare a representation, so it never
+/// takes this branch. The HEAD is the one entry nothing exercises: no test in
+/// the suite drives a HEAD through `assert_conformance`, so what holds it is
+/// this reasoning rather than a run.
+///
+/// The CORS preflight 204 is not among them although it also sends neither. It
+/// is never *described* -- `middleware::cors` answers `OPTIONS` by routing
+/// rather than by intercepting, and an operation that cannot answer a preflight
+/// should not describe one -- so there is no declaration for this branch to
+/// read and no exchange that can arrive at it.
+///
+/// One composition does reach the report, and rightly.
+/// `Created<T>`/`Accepted<T>` carry the body's representation onto the
+/// wrapper's status where the body declares exactly one; where it declares
+/// several and no 200, the wrapper declares nothing while the wire still
+/// carries one of them. That is a disagreement rather than an exemption, and
+/// reporting it is what this branch is for.
 fn body_conformance(
     document: &Document,
     response: &kynos_openapi::Response,
     record: &Observed,
 ) -> Vec<String> {
+    let observed = media_type(&record.headers);
+
     if response.content.is_empty() {
-        return Vec::new();
+        if record.body.is_empty() && observed.is_none() {
+            return Vec::new();
+        }
+
+        return vec![format!(
+            "the description declares no content, but {} was sent",
+            match (&observed, record.body.len()) {
+                (Some(media_type), 0) => format!("a `{media_type}` head with no body"),
+                (Some(media_type), len) => format!("a {len}-byte `{media_type}` body"),
+                (None, len) => format!("a {len}-byte body with no `Content-Type`"),
+            }
+        )];
     }
 
     let declared = || {
@@ -99,7 +144,7 @@ fn body_conformance(
             .join(", ")
     };
 
-    let Some(media_type) = media_type(&record.headers) else {
+    let Some(media_type) = observed else {
         return vec![format!(
             "no `Content-Type` was sent, but the description declares {}",
             declared()

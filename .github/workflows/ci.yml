@@ -62,10 +62,16 @@ jobs:
       - name: Verify dependency and runtime containment
         run: mise run containment:check
 
-      # And here for it once more: this one runs the cost sweep's parsers, its
-      # table reader and its ranking over captured output, so it compiles
-      # nothing either. `cost:features` -- the half of the sweep that does
-      # compile, at every feature point -- is the `cost` job below.
+      # And here for it once more: this one runs the parsers that gate reads
+      # its tables and its sources with, over cells and fragments written for
+      # the purpose, so it compiles nothing either.
+      - name: Test the containment gate's parsers
+        run: mise run containment:test
+
+      # And once more again: this one runs the cost sweep's parsers, its table
+      # reader and its ranking over captured output, so it compiles nothing
+      # either. `cost:features` -- the half of the sweep that does compile, at
+      # every feature point -- is the `cost` job below.
       - name: Test the cost sweep's parsers and report
         run: mise run cost:test
 
