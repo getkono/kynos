@@ -285,6 +285,50 @@ mod api_error {
     fn every_api_error_diagnostic_has_a_case() {
         every_diagnostic_has_a_case("api_error.rs", include_str!("api_error.rs"), ledger().len());
     }
+
+    /// Every URI a declaration resolves reaches the emitted responses.
+    ///
+    /// What is checked here is *resolution*: an explicit `type`, a slug hung
+    /// under `base`, and two variants sharing a status. Whether the narrowing
+    /// is well-formed is `crates/kynos/tests/derives.rs`'s, which reads the
+    /// emitted schema; this reads the tokens, so it names the failing URI
+    /// without a compile.
+    ///
+    /// It deliberately does not assert *which* helper the expansion calls. A
+    /// path is not a behaviour, and pinning one here would redden this test
+    /// for a move that no document could observe.
+    #[test]
+    fn the_declared_type_reaches_the_emitted_responses() {
+        let input: syn::DeriveInput = syn::parse2(quote::quote!(
+            #[problem(base = "https://errors.example.com/")]
+            enum StoreError {
+                #[problem(status = 404, title = "User not found")]
+                NotFound,
+
+                #[problem(status = 404)]
+                TenantMissing,
+
+                #[problem(status = 409, type = "https://errors.example.com/email-taken")]
+                Conflict,
+            }
+        ))
+        .expect("the case itself must parse");
+
+        let expansion = expand_inner(&input)
+            .expect("a well-formed declaration expands")
+            .to_string();
+
+        for uri in [
+            "https://errors.example.com/not-found",
+            "https://errors.example.com/tenant-missing",
+            "https://errors.example.com/email-taken",
+        ] {
+            assert!(
+                expansion.contains(uri),
+                "`{uri}` never reached the emitted responses: {expansion}"
+            );
+        }
+    }
 }
 
 mod reply {
