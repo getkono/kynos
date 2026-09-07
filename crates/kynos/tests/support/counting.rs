@@ -82,7 +82,7 @@ pub(crate) fn counted<C>(service: &Service<C>, target: &str) -> usize {
 /// One `GET` against `target`, built.
 ///
 /// Its own function so that a measurement which is not a count — the width of
-/// the future a driver holds — reaches the same request [`counted`] measures,
+/// the future dispatch returns — reaches the same request [`counted`] measures,
 /// rather than a second one built beside it.
 pub(crate) fn request(target: &str) -> Request {
     let mut request = Request::new(Body::empty());
