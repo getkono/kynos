@@ -294,10 +294,17 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+      # No `cargo-cache-key`, for the `package` job's reason above. This
+      # sweep builds the fixture once per feature point -- some fifty builds,
+      # half of them fat-LTO release -- so its target directory is the largest
+      # any job here would save, and `setup` records why saving it is the
+      # wrong trade: a branch's cache entries are readable by nobody else
+      # while still counting against the repository-wide limit, so a save this
+      # size evicts the master entries every other job reads. The cost is
+      # rebuilding each run, which this job pays anyway: a sweep compares
+      # points built in one run, not against a cache.
       - name: Set up
         uses: ./.github/actions/setup
-        with:
-          cargo-cache-key: cost
       - name: Measure per-feature codegen and binary deltas
         run: mise run cost:features
       - name: Add cost summary
