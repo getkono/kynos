@@ -1,6 +1,12 @@
-use crate::model::{
-    reference::RefOr,
-    response::{Response, Responses, status::StatusPattern},
+use crate::{
+    Map,
+    model::{
+        body::media_type::MediaType,
+        parameter::header::Header,
+        reference::RefOr,
+        response::{Response, Responses, status::StatusPattern},
+        schema::{Schema, object::SchemaObject},
+    },
 };
 
 const WILDCARDS: &[StatusPattern] = &[
@@ -185,5 +191,204 @@ fn a_response_stating_only_a_summary_parses() {
         serde_json::to_string(&parsed).expect("serializable"),
         r#"{"summary":"The order"}"#,
         "and writes back what it read, without inventing a description"
+    );
+}
+
+// --- Two problem responses meeting on one status -----------------------------
+//
+// `union_from` is `merge_from` plus one exception, so what is asserted here is
+// the exception and the boundary of it: the shapes it applies to, the shape it
+// produces, and the two ways of not being that shape.
+
+/// The shared component every problem response refers to.
+fn component() -> Schema {
+    Schema::component("Problem")
+}
+
+/// A problem response narrowing `type` to one URI, as the derive emits it.
+fn narrowed(description: &str, uri: &str) -> Response {
+    let mut properties = Map::new();
+    properties.insert(
+        "type".to_owned(),
+        Schema::Object(Box::new(SchemaObject {
+            const_value: Some(serde_json::Value::String(uri.to_owned())),
+            ..SchemaObject::default()
+        })),
+    );
+
+    problem(
+        description,
+        Schema::Object(Box::new(SchemaObject {
+            all_of: Some(vec![
+                component(),
+                Schema::Object(Box::new(SchemaObject {
+                    properties,
+                    ..SchemaObject::default()
+                })),
+            ]),
+            ..SchemaObject::default()
+        })),
+    )
+}
+
+/// A problem response referring to the shared component and narrowing nothing.
+fn unnarrowed(description: &str) -> Response {
+    problem(description, component())
+}
+
+fn problem(description: &str, schema: Schema) -> Response {
+    Response::with_content(
+        description,
+        "application/problem+json",
+        MediaType::new(schema),
+    )
+}
+
+/// The declared problem schema for `status`, as JSON.
+fn declared(responses: &Responses, status: u16) -> serde_json::Value {
+    let response = responses
+        .get(status)
+        .and_then(RefOr::as_item)
+        .expect("a declared status");
+
+    serde_json::to_value(&response.content["application/problem+json"].schema)
+        .expect("a schema serializes")
+}
+
+/// Every URI a branch of `schema` constrains `type` to.
+fn published(schema: &serde_json::Value) -> Vec<String> {
+    let branches = schema["oneOf"]
+        .as_array()
+        .cloned()
+        .unwrap_or_else(|| vec![schema.clone()]);
+
+    branches
+        .iter()
+        .filter_map(|branch| branch["allOf"][1]["properties"]["type"]["const"].as_str())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+/// Two narrowed sides are a choice between what each publishes, and a status
+/// only one side names still arrives.
+#[test]
+fn a_status_two_narrowed_problems_share_publishes_both_of_them() {
+    let mut base = Responses::new().with(400, narrowed("Bad Request", "about:blank"));
+    let other = Responses::new()
+        .with(
+            400,
+            narrowed("Empty review", "https://errors.example.test/empty"),
+        )
+        .with(409, narrowed("Taken", "https://errors.example.test/taken"));
+    base.union_from(&other);
+
+    assert_eq!(
+        published(&declared(&base, 400)),
+        vec![
+            "about:blank".to_owned(),
+            "https://errors.example.test/empty".to_owned()
+        ]
+    );
+    assert!(
+        base.get(409).is_some(),
+        "a status only one side names arrives"
+    );
+}
+
+/// The description says what each side meant, and says it once.
+#[test]
+fn a_unioned_status_describes_both_sides_without_repeating_one() {
+    let mut base = Responses::new().with(400, narrowed("Bad Request", "about:blank"));
+    let other = Responses::new().with(
+        400,
+        narrowed(
+            "Bad Request; Empty review",
+            "https://errors.example.test/empty",
+        ),
+    );
+    base.union_from(&other);
+
+    assert_eq!(
+        base.get(400)
+            .and_then(RefOr::as_item)
+            .and_then(|response| response.description.as_deref()),
+        Some("Bad Request; Empty review")
+    );
+}
+
+/// Two sides publishing one URI are one branch. A `oneOf` repeating a `const`
+/// is satisfied by two branches at once, which is what the keyword forbids —
+/// so the dedup is what keeps the union sound rather than merely shorter.
+#[test]
+fn two_sides_publishing_one_type_declare_one_branch() {
+    let mut base = Responses::new().with(400, narrowed("Bad Request", "about:blank"));
+    let other = Responses::new().with(400, narrowed("Malformed body", "about:blank"));
+    base.union_from(&other);
+
+    let schema = declared(&base, 400);
+    assert_eq!(schema.get("oneOf"), None, "{schema}");
+    assert_eq!(published(&schema), vec!["about:blank".to_owned()]);
+}
+
+/// A bare `$ref` matches every problem document, so it is already the union —
+/// whichever side carries it. Narrowing to the other side would declare less
+/// than the operation can send.
+#[test]
+fn an_unnarrowed_side_is_the_union_from_either_direction() {
+    let narrow = || Responses::new().with(403, narrowed("Forbidden", "about:blank"));
+    let wide = || Responses::new().with(403, unnarrowed("Forbidden"));
+
+    let mut declared_narrow = narrow();
+    declared_narrow.union_from(&wide());
+
+    let mut declared_wide = wide();
+    declared_wide.union_from(&narrow());
+
+    assert_eq!(declared(&declared_narrow, 403), declared(&wide(), 403));
+    assert_eq!(declared(&declared_wide, 403), declared(&wide(), 403));
+}
+
+/// Everything the declared entry carries beyond its schema survives a
+/// contributor arriving after it. A 401 gains its `WWW-Authenticate` from the
+/// scheme rather than from the rejection, so a union that rebuilt the response
+/// would drop the one field RFC 9110 section 11.6.1 requires.
+#[test]
+fn a_union_keeps_what_the_declared_entry_carries() {
+    let mut base = Responses::new().with(
+        401,
+        narrowed("Unauthorized", "about:blank")
+            .with_header("WWW-Authenticate", Header::new(Schema::any())),
+    );
+    base.union_from(&Responses::new().with(
+        401,
+        narrowed("Expired", "https://errors.example.test/expired"),
+    ));
+
+    let response = base
+        .get(401)
+        .and_then(RefOr::as_item)
+        .expect("a declared 401");
+    assert!(response.headers.contains_key("WWW-Authenticate"));
+}
+
+/// Anything that is not two problem documents keeps the entry already
+/// declared, which is `merge_from`'s rule and the reason this is a second
+/// method rather than a change to that one.
+#[test]
+fn two_responses_that_are_not_problems_keep_the_one_declared() {
+    let mut base = Responses::new().with(
+        200,
+        Response::with_content("mine", "application/json", MediaType::new(component())),
+    );
+    base.union_from(&Responses::new().with(
+        200,
+        Response::with_content("theirs", "application/json", MediaType::new(component())),
+    ));
+
+    assert_eq!(
+        base.get(200)
+            .and_then(RefOr::as_item)
+            .and_then(|response| response.description.as_deref()),
+        Some("mine")
     );
 }
