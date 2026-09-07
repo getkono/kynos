@@ -346,9 +346,8 @@ returns, which is the price of a heterogeneous chain fitting in one slice. Both
 figures are the measurement rather than the target, per
 [Thresholds](#thresholds), and the relation beside them — that a layer costs the
 same wherever it sits — is what survives a change to either. This row is where
-the status of the split's counted half is read: the halves are wired one at a
-time, so the prose recording the split in [Status](#status) records the split
-and not a status.
+the status of the split's counted half is read, rather than from the split
+paragraph in [Status](#status).
 
 ## Runtime
 
