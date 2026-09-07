@@ -52,6 +52,82 @@ description = "Lint all workspace targets at baseline features"
 # traded one blind spot for another.
 run = "cargo clippy --workspace --all-targets -- -D warnings"
 
+[tasks."lint:codecs"]
+description = "Lint every kynos target at each codec's own feature set"
+# The six feature sets nothing else in this file builds a *test target* at.
+#
+# `features:check` passes `--no-dev-deps`, so it never builds one at all.
+# `features:targets` is `--each-feature --features openapi31`, which is
+# `openapi31` and exactly one other flag per run -- `macros` and a codec are
+# never in the same build, and with `default` excluded there is no
+# default-features run in it either. `lint`, `test`, `coverage:ci` and
+# `test:doc` pass `--all-features`, so every codec is on at once.
+# `lint:baseline` and `test:baseline` build the default set, where `json` is on,
+# the other four codecs are off, and `server`, `http1`, `http2` and `trace` are
+# on beside them. So `openapi31 + macros + F` for `F` in `form`, `multipart`,
+# `protobuf` and `compression` is compiled by nothing, and the two sets those
+# four are read against -- `macros` alone and `macros + json` -- are compiled in
+# that shape by nothing either.
+#
+# `crates/kynos/tests/alloc_codecs.rs` is the target that made it matter: five
+# `#[cfg]`-gated modules, one codec apiece, over a shared `harness` gated on
+# their disjunction, plus three narrower gates inside it. Every one of those
+# expressions has a set it is the only thing deciding, and until this task each
+# of those sets was a set no build named.
+#
+# What was unguarded is narrower than "a misspelled feature". A name absent from
+# the manifest is already caught wherever the file compiles at all, because
+# `unexpected_cfgs` validates it against the whole feature list rather than
+# against which features happen to be on. What only these sets can see is a gate
+# expression's *consequences*: an item dead once one codec is off, an import
+# with no user, a helper that needs two flags to coincide. `202cfa5` fixed
+# exactly that on `harness::Measured` -- an item hoisted into a wider gate than
+# its users have -- and found it by hand-linting these six sets, because no gate
+# could.
+#
+# A task of its own rather than more invocations inside `features:targets`. That
+# task is one `cargo hack` command whose whole shape is "one feature at a time
+# against the baseline", which is what its name says and what its comment argues
+# for; "`macros` *and* a codec" is the opposite shape, and cargo-hack expresses
+# it only as a powerset -- which is `features:check`'s job, and which with
+# `--all-targets` on would cost far more than six builds. So it sits beside
+# `lint:baseline` instead, as the third named feature set Clippy is run over.
+#
+# `-p kynos` rather than `--workspace`: `macros` and the five codecs are all
+# `kynos`'s own flags, and neither other member declares one.
+#
+# Against the 3.1 baseline alone, for `features:targets`' reason: the 3.2 side
+# of every one of these gates is already built by `lint` and `test`, both of
+# which pass `--all-features`. Adding it here would double six builds to see
+# what two already see.
+#
+# The sets are written out rather than derived from a loop over codec names. Six
+# lines that can be grepped for, copied into a shell and run one at a time are
+# what someone reading a failure wants; the two-line version buys nothing and
+# hides which set is which.
+#
+# Incremental compilation stays on, where `features:check` and
+# `features:targets` turn it off. Their argument is that a session written for a
+# combination nothing will name again is a session nothing will read. This task
+# names the same six sets on every run and is in `hooks:pre-push`, so those
+# sessions are read back on the next push -- and six of them is not the scale
+# that argument is about.
+run = '''
+set -eu
+
+for features in \
+  openapi31,macros \
+  openapi31,macros,json \
+  openapi31,macros,form \
+  openapi31,macros,multipart \
+  openapi31,macros,protobuf \
+  openapi31,macros,compression; do
+  echo "linting kynos at $features"
+  cargo clippy -p kynos --all-targets --no-default-features \
+    --features "$features" -- -D warnings
+done
+'''
+
 [tasks."lint:fix"]
 description = "Apply Clippy fixes across the workspace"
 run = "cargo clippy --fix --workspace --all-targets --all-features --allow-dirty --allow-staged -- -D warnings"
