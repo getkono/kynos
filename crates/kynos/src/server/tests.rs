@@ -27,6 +27,64 @@ fn http2_defaults_are_owned_by_kynos() {
     );
 }
 
+/// `accept.rs` clones the whole `TransportConfig` per accepted socket, so this
+/// is a per-connection cost rather than a per-server one. Measured at 40 bytes
+/// and rounded up to the next multiple of 64, since `docs/nfr.md#thresholds`
+/// asks for a recorded measurement rather than a chosen number.
+#[cfg(feature = "http1")]
+#[test]
+fn an_http1_config_is_cheap_to_copy_per_connection() {
+    let http1 = size_of::<Http1Config>();
+
+    assert!(
+        http1 <= 64,
+        "Http1Config grew to {http1} bytes from a measured 40; \
+         it is copied once per accepted socket"
+    );
+}
+
+/// The same, for the HTTP/2 half. Measured at 80 bytes, rounded up to 128.
+///
+/// `Http2FlowControl` and `Http2KeepAlive` get no ceiling of their own because
+/// neither is ever held per connection on its own. This bound does not
+/// substitute for one: 80 against 128 leaves 48 bytes of slack, so either could
+/// roughly double before it fires.
+#[cfg(feature = "http2")]
+#[test]
+fn an_http2_config_is_cheap_to_copy_per_connection() {
+    let http2 = size_of::<Http2Config>();
+
+    assert!(
+        http2 <= 128,
+        "Http2Config grew to {http2} bytes from a measured 80; \
+         it is copied once per accepted socket"
+    );
+}
+
+/// `TransportConfig` is the struct `accept.rs` actually clones per socket, which
+/// is what makes the two ceilings above per-connection costs at all.
+///
+/// Measured at 168 bytes with every feature on, which is where it is widest --
+/// it gains its TLS runtime there -- and rounded up to 192, so the ceiling holds
+/// at every smaller feature set by construction. Ungated for that reason.
+///
+/// 192 is well under the smallest read/write buffer the configuration
+/// configures, so describing a connection never costs more than serving one.
+/// That relation is prose rather than an assertion: nothing can falsify it while
+/// this ceiling holds, and `MIN_HTTP1_BUFFER_SIZE` is pinned by a `const`
+/// assertion in `protocol.rs`. `docs/architecture.md` records it in
+/// "Why hyper stays".
+#[test]
+fn a_transport_config_is_cheap_to_clone_per_connection() {
+    let config = size_of::<super::TransportConfig>();
+
+    assert!(
+        config <= 192,
+        "TransportConfig grew to {config} bytes from a measured 168; \
+         it is cloned once per accepted socket"
+    );
+}
+
 #[test]
 fn shutdown_default_leaves_an_orchestrator_margin() {
     assert_eq!(super::DEFAULT_SHUTDOWN_TIMEOUT.as_secs(), 25);

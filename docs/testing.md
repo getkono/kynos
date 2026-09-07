@@ -20,7 +20,7 @@ not that module also becomes a directory — the two halves of the layout rule a
 separate, and [`nfr.md`](nfr.md#the-module-size-budget) says why the second one
 is a prompt rather than a trigger. That is why unit tests appear at
 [`error/rejection/tests.rs`](../crates/kynos/src/error/rejection/tests.rs) beside
-a 643-line module, and at
+a 727-line module, and at
 [`middleware/compression/tests.rs`](../crates/kynos/src/middleware/compression/tests.rs)
 beside a 675-line one, rather than inline.
 
@@ -39,7 +39,11 @@ rather than by the table above. The two documents divide by question — this on
 says what a guarantee owes, that one says what a *feature costs the request
 path* — and `alloc.rs` is filed here as well because the inventory above claims
 to be every integration target, and a claim of completeness is worth only as
-much as its exceptions.
+much as its exceptions. [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs)
+is filed here under the same exception and for the same reason: it asserts a
+cost too, and it is a target of its own rather than more rows in `alloc.rs`
+because a `#[global_allocator]` measures the whole binary it is installed in,
+so a body constructor's number cannot share a file with the routing path's.
 
 `conformance.rs` runs now that the router and `test/` have landed, and both of
 its assertions pass. `every_declared_response_is_exercised` carried an
@@ -54,11 +58,12 @@ attribute outlived its reason and went with it.
 | [`errors.rs`](../crates/kynos/tests/errors.rs) | each extractor rejects with the rejection type its signature names |
 | [`reporting.rs`](../crates/kynos/tests/reporting.rs) | every error type a caller can receive is `Error + Send + Sync + 'static` |
 | [`typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) | a route attribute's `relative_uri` percent-encodes its parameters, and that the hand-written fixture it encodes with describes what it encodes — a `Schema` body nothing executes cannot disagree with the `encode` beside it |
-| [`size.rs`](../crates/kynos/tests/size.rs) | a build failure does not inline a `Violation`, and a `Result` costs no more than it |
+| [`size.rs`](../crates/kynos/tests/size.rs) | a build failure does not inline a `Violation`, a `Result` costs no more than it, and which of the three bodies Kynos erases are zero-sized — the reasons `alloc_body.rs`'s counts read the way they do, filed here because a `size_of` needs no allocator |
 | [`alloc.rs`](../crates/kynos/tests/alloc.rs) | what the routing path allocates per route shape, and that a replayed request costs what the first one did. It owns a `#[global_allocator]`, which is why it is a target of its own rather than a sibling `tests.rs`: installed in the library's unit-test binary the counter would reach every unit test in it |
+| [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) | what erasing a body through `UnsyncBoxBody` costs: nothing for an empty body, which erases a zero-sized type, and one allocation for any body that does not. A second `#[global_allocator]` target, for the reason the first one is one; the zero-sized facts behind both numbers are size guards and live in `size.rs` |
 | [`conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs) | that the committed corpus is what this build emits, and that it still carries the 3.2 constructs it exists to pin — asserted against the committed *text*, since what a downstream repository reads is the file |
 | [`conformance.rs`](../crates/kynos/tests/conformance.rs) | that the responses a suite observed match what the document promises, and that every declared response was exercised |
-| [`matrix.rs`](../crates/kynos/tests/matrix.rs) | the same two assertions over every layer Kynos owns, which is the only place a wrong *document* fails against responses that actually happened. Static assertions about that document belong in `description.rs` even when the matrix is what found them: the matrix reports which promise went unkept, and the small fixture there says which rule was broken |
+| [`matrix.rs`](../crates/kynos/tests/matrix.rs) | the same two assertions over every layer Kynos owns, which is the only place a wrong *document* fails against responses that actually happened. Static assertions about that document belong in `description.rs` even when the matrix is what found them: the matrix reports which promise went unkept, and the small fixture there says which rule was broken. That rule is about a document; an assertion about a *type* is a different question and stays with the type, which is why the `ShortCircuit` sweep is in `interceptors.rs` — see [below](#the-sweep-and-the-matrix-assert-one-property-over-two-sets) |
 | [`dispatch.rs`](../crates/kynos/tests/dispatch.rs), [`routing.rs`](../crates/kynos/tests/routing.rs), [`panics.rs`](../crates/kynos/tests/panics.rs) | every outcome one request can reach, the routes the router declines, and that recovery happens only where it was asked for |
 | [`limits.rs`](../crates/kynos/tests/limits.rs), [`interceptors.rs`](../crates/kynos/tests/interceptors.rs), [`middleware.rs`](../crates/kynos/tests/middleware.rs), [`cors.rs`](../crates/kynos/tests/cors.rs), [`description.rs`](../crates/kynos/tests/description.rs), [`sse.rs`](../crates/kynos/tests/sse.rs) | each interceptor doing what it declares, setting only what it declared, and declaring it on exactly the operations it covers. `middleware.rs` also holds `partial` and `ranged_assets`, which assert that compression leaves anything a byte range is calculated against alone — a range is calculated over the encoded octets, so re-encoding a 206 puts a `Content-Range` on a body it is wrong about, and encoding a 200 that advertises `Accept-Ranges` puts one strong `ETag` over two representations. `ranged_assets` is the second half end to end: it resumes an asset download against the tag it was served with and splices the two halves back into the file. `description.rs` carries the same scope question one level down in its second section: which *statuses* within an operation a response field's declaration reaches, which is where `Accept-Ranges`, `Content-Range` and the 416 are each pinned to the statuses that give them a meaning — and where a response header nothing in the handler writes is pinned too, since a header group's and an interceptor's alike are filed under a wildcard and have to reach the exact key a consumer resolves to. Its third section is that question on the tag axis: which of the four tag scopes reaches the operation's `tags`, in what order, and whether each scope that names a tag also registers its metadata in the document's `tags` — a name arriving without its metadata is an `UndocumentedTag` warning on every operation carrying one, so both halves are asserted for every scope |
 | [`rate_limit.rs`](../crates/kynos/tests/rate_limit.rs) | the shipped limiter over a store: one quota and several, burst, keying, exemption, and both failure policies — and, since an application may replace the algorithm outright, that a `RateLimitPolicy` Kynos does not ship reaches the wire with its own `Retry-After` — behaviour that is a property of a *sequence* of requests rather than of any one |
@@ -283,16 +288,50 @@ same check, and `every_interceptor_kynos_ships_is_accounted_for` in
 difference showed. A count reports that two numbers differ; a set of type names
 reports *which* interceptor nothing accounts for. It also stops two branches
 each adding one from colliding, since an alphabetical insertion puts them on
-different lines where a shared count puts them on the same one.
+different lines where a shared count puts them on the same one. The same file
+now names the `ShortCircuit` set the same way, after eight of its ten members
+were found describing a response with no content while sending a problem
+document. Eight hand-written cases would have been eight places for a ninth
+implementation to be missing from, which is why the set is asserted and the
+sweep derives what it must drive from it.
 
-The declared side of that pair is read off disk — every `.rs` file under
-`src/middleware/`, walked rather than transcribed. A transcribed list is a third
+The declared side of each of the three is read off disk, walked rather than
+transcribed, over the directory the trait's implementations actually live in:
+`src/middleware/` for the interceptor and observer sets, and the whole of
+`crates/kynos/src` for the `ShortCircuit` set, because `Infallible` implements
+it in `src/response/mod.rs`. Scoping a walk to less than that is this
+paragraph's own cautionary tale one level up. A transcribed list is a third
 place the set is written down, and it went wrong exactly as that predicts: the
 observer counter opened ten files, `compression.rs` was not among them, and an
 `Observer` implemented there would have been counted by nothing while both
 counters kept passing. Walking the directory removes the list rather than
 maintaining it, and lets the check hold at baseline features too, since source
 text exists on disk whether or not the feature that compiles it is on.
+
+### The sweep and the matrix assert one property over two sets
+
+`every_short_circuit_declares_the_content_it_sends` and the conformance matrix
+both hold a description to the exchange it describes, and both are kept,
+because neither set contains the other.
+
+The sweep drives a value of every short circuit this build compiled and can
+construct — nine of the ten with every feature on, six at the default set — and
+compares what `into_response` wrote against what `Responses` declared, with no
+document, no client and no route in between. That reaches the 406 in
+`compression` and the 400, 413 and 415 in `decompression`, none of which any
+fixture app in the suite provokes. The matrix is the other direction: it holds
+whatever actually happened on a live exchange, which includes an application's
+own short circuit and a handler — code the sweep cannot enumerate, because its
+set is what Kynos ships. The overlap has a measured direction: of the eight
+implementations that were declaring nothing while sending a problem document,
+the matrix reached five and the sweep reached all eight.
+
+That is also why the sweep stays in `interceptors.rs` rather than moving to
+`description.rs` under the rule in the table above. That rule routes static
+assertions about a *document* — which statuses and fields an operation
+declares. The sweep asserts nothing about a document: it reads two associated
+items off one value, and it derives what it drives from the `ShortCircuit` set
+asserted a few lines above it in the same file.
 
 ## The off-path proof
 
@@ -650,5 +689,10 @@ operation, on the first run of `assert_declared_responses_covered` over the
 whole owned-layer matrix. Every other test in the suite passed throughout.
 
 Both share a shape worth naming: the code was right, the document was wrong, and
-the two disagreed in a direction only a live exchange checked against the
-description can expose.
+the two disagreed about a *status* and a *header key* — which a live exchange
+checked against the description is what exposes, because neither end alone holds
+both halves. A claim about a *type* is the other case and takes the direct
+assertion instead: the sweep in `tests/interceptors.rs` reads each short
+circuit's declaration against the response it builds, with no request at all.
+[`middleware.md`](middleware.md#declaring-is-not-describing) states that
+division from the interceptor side.

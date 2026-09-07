@@ -157,10 +157,10 @@ impl crate::response::ShortCircuit for NotAcceptable {
 
 impl crate::response::Responses for NotAcceptable {
     fn responses(registry: &mut crate::schema::registry::Registry) -> kynos_openapi::Responses {
-        let _ = registry;
         kynos_openapi::Responses::new().with(
             406,
-            kynos_openapi::Response::new(
+            crate::error::problem::problem_response(
+                registry,
                 "no representation has a content coding the request accepts",
             ),
         )

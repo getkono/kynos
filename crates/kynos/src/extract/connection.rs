@@ -282,3 +282,6 @@ impl Describe for Connection {
         let _ = operation;
     }
 }
+
+#[cfg(test)]
+mod tests;

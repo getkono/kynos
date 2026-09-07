@@ -19,7 +19,7 @@ use kynos_openapi::model::schema::types::SchemaType;
 use tokio::io::{AsyncRead, ReadBuf};
 
 use crate::{
-    error::problem::Problem,
+    error::problem::{Problem, problem_response},
     http,
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
@@ -127,22 +127,22 @@ impl ShortCircuit for Undecodable {
 
 impl Responses for Undecodable {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        let _ = registry;
-
         kynos_openapi::Responses::new()
             .with(
                 400,
-                kynos_openapi::Response::new(
+                problem_response(
+                    registry,
                     "the request body did not decode as the coding it declared",
                 ),
             )
             .with(
                 413,
-                kynos_openapi::Response::new("the request body exceeds the configured limit"),
+                problem_response(registry, "the request body exceeds the configured limit"),
             )
             .with(
                 415,
-                kynos_openapi::Response::new(
+                problem_response(
+                    registry,
                     "the request body's content coding is not one this server decodes",
                 )
                 .with_header("Accept-Encoding", accepted_encoding_header()),
