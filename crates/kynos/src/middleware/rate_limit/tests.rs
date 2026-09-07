@@ -1,4 +1,4 @@
-use std::{fmt, time::Duration};
+use std::{fmt, marker::PhantomData, time::Duration};
 
 use super::{
     Legacy, RateLimit, Structured,
@@ -471,6 +471,33 @@ async fn an_unnamed_refusal_type_declares_no_example_and_sends_about_blank() {
 /// nothing, so a `#[derive]` on `RateLimited` would bound `T` and refuse this
 /// call.
 fn assert_refusal_traits<T: Clone + fmt::Debug + Eq>() {}
+
+/// Witnesses that a refusal crosses a task boundary whatever names its type.
+fn assert_send_sync<T: Send + Sync>() {}
+
+/// A marker that is deliberately neither `Send` nor `Sync`.
+///
+/// A raw pointer is the cheapest way to be neither. It is still `'static`, so
+/// it satisfies `RefusalType` and the only thing under test is whether the
+/// refusal's auto traits followed it.
+struct Unsendable(PhantomData<*const ()>);
+
+impl RefusalType for Unsendable {
+    const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/unsendable");
+}
+
+/// A refusal is `Send` and `Sync` whatever marker names its problem type.
+///
+/// The field is `PhantomData<fn() -> T>` rather than `PhantomData<T>` for this
+/// reason and no other: a `PhantomData<T>` inherits `T`'s auto traits, and a
+/// refusal that is not `Send` cannot be returned from an interceptor at all --
+/// a bound failure at every mount site, from a marker the application thought
+/// was only a name.
+#[test]
+fn a_refusal_is_send_and_sync_whatever_marker_names_it() {
+    assert_send_sync::<RateLimited<Unsendable>>();
+    assert_send_sync::<RateLimitedFields<Unsendable>>();
+}
 
 /// A refusal survives a clone, in both spellings.
 ///
