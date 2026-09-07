@@ -767,6 +767,41 @@ grading = PERFORMANCE[PERFORMANCE.index("| Grade | Owes | Flags |") :]
 # exists. Forward only: a row for a flag graded elsewhere is not an error, since
 # an element may be worth holding under any grade.
 OFF_PATH_GRADE = "Off-path proof"
+
+
+def off_path_coverage(off_path_graded, off_path_elements, grades):
+    """What the off-path table fails to cover of what performance.md graded.
+
+    A function rather than two statements in the rule body, because this is
+    the one comparison here whose inputs are both parsed and whose own failure
+    mode is silence: the check reads a grade by name, and a name that is gone
+    empties the compared set instead of emptying the table. Written inline it
+    was reachable only by running the gate against the real two documents, so
+    `and False` on the guard below left every case green and the gate at zero.
+
+    `grades` is every grade the table writes, and is what the name is checked
+    against: renaming the grade in `performance.md` and not here would pass
+    every flag in it silently -- a rule about the argument nobody wrote,
+    itself passing because nobody wrote the grade.
+    """
+    if OFF_PATH_GRADE not in grades:
+        return [
+            f"performance.md's grading table no longer has a {OFF_PATH_GRADE!r} "
+            "row, so nothing decides which flags owe a proof that a request "
+            "cannot reach them and the off-path table is held to covering nothing"
+        ]
+    if unproven := sorted(set(off_path_graded) - off_path_elements):
+        return [
+            f"performance.md grades a flag {OFF_PATH_GRADE}, and no row of "
+            "testing.md's off-path table names it. That grade says the flag's "
+            "cost is nothing because a request cannot reach what it adds, which "
+            "is an argument rather than a measurement, and a graded argument "
+            "nobody wrote reads exactly like one that was written and holds:\n"
+            "    " + "\n    ".join(unproven)
+        ]
+    return []
+
+
 graded, off_path_graded, grades = [], [], []
 for line in grading.split("\n")[2:]:
     if not line.startswith("|"):
@@ -778,25 +813,7 @@ for line in grading.split("\n")[2:]:
     if cells[1].strip() == OFF_PATH_GRADE:
         off_path_graded += flags
 
-# Read by name, so the name has to still be there. Renaming the grade without
-# renaming it here would empty `off_path_graded` and pass every flag in it
-# silently -- a rule about the grade nobody wrote a proof for, itself passing
-# because nobody wrote the grade.
-if OFF_PATH_GRADE not in grades:
-    failures.append(
-        f"performance.md's grading table no longer has a {OFF_PATH_GRADE!r} row, "
-        "so nothing decides which flags owe a proof that a request cannot reach "
-        "them and the off-path table is held to covering nothing"
-    )
-elif unproven := sorted(set(off_path_graded) - off_path_elements):
-    failures.append(
-        f"performance.md grades a flag {OFF_PATH_GRADE}, and no row of "
-        "testing.md's off-path table names it. That grade says the flag's cost "
-        "is nothing because a request cannot reach what it adds, which is an "
-        "argument rather than a measurement, and a graded argument nobody wrote "
-        "reads exactly like one that was written and holds:\n    "
-        + "\n    ".join(unproven)
-    )
+failures += off_path_coverage(off_path_graded, off_path_elements, grades)
 
 manifest = tomllib.loads((ROOT / "crates/kynos/Cargo.toml").read_text())
 flags = set(manifest["features"])
