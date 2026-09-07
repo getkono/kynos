@@ -356,7 +356,8 @@ impl RefusalType for Throttled {
     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/rate-limited");
 }
 
-/// What one short circuit declares and what it sends, as the `type` of each.
+/// What one short circuit declares and what it sends: the whole example, and
+/// the `type` the wire carried.
 ///
 /// `None` on the declared side means the media type carries no example at all,
 /// which is what an unnamed type must leave behind.
@@ -369,7 +370,6 @@ async fn declared_and_sent<S: ShortCircuit>(value: S) -> (Option<serde_json::Val
             .content
             .get(APPLICATION_PROBLEM_JSON)
             .and_then(|media_type| media_type.example())
-            .and_then(|example| example.get("type"))
             .cloned(),
         _ => panic!("a refusal declares a 429 carrying a problem document"),
     };
@@ -399,13 +399,11 @@ async fn declared_and_sent<S: ShortCircuit>(value: S) -> (Option<serde_json::Val
 #[tokio::test]
 async fn a_named_refusal_type_is_one_statement_both_halves_read() {
     let uri = Throttled::TYPE_URI.expect("the marker names a type");
+    let expected = serde_json::json!({ "type": uri, "status": 429 });
 
     let (declared, sent) =
         declared_and_sent(RateLimited::<Throttled>::new(Duration::from_secs(30), 100)).await;
-    assert_eq!(
-        declared.as_ref().and_then(serde_json::Value::as_str),
-        Some(uri)
-    );
+    assert_eq!(declared.as_ref(), Some(&expected));
     assert_eq!(sent, uri);
 
     let (declared, sent) = declared_and_sent(RateLimitedFields::<Throttled>::new(
@@ -414,11 +412,33 @@ async fn a_named_refusal_type_is_one_statement_both_halves_read() {
         policies(),
     ))
     .await;
-    assert_eq!(
-        declared.as_ref().and_then(serde_json::Value::as_str),
-        Some(uri)
-    );
+    assert_eq!(declared.as_ref(), Some(&expected));
     assert_eq!(sent, uri);
+}
+
+/// The example fixes the two members the wire cannot vary, and nothing else.
+///
+/// `title` and `detail` are English prose. A localizing interceptor rewrites
+/// them per request -- `examples/localized_errors.rs` is exactly that -- so an
+/// example serialized from the whole `Problem` would publish `"Too Many
+/// Requests"` about a response that says `"Trop de requetes"`. Nothing catches
+/// that: the conformance harness validates a body against `schema` and never
+/// reads `example`. So the assertion is on the key *set*, which a widened
+/// example fails.
+#[tokio::test]
+async fn a_declared_example_pins_only_what_the_wire_cannot_vary() {
+    let (declared, _) =
+        declared_and_sent(RateLimited::<Throttled>::new(Duration::from_secs(30), 100)).await;
+
+    let example = declared.expect("a named type declares an example");
+    let members = example
+        .as_object()
+        .expect("an example of a problem document is an object")
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+
+    assert_eq!(members, ["status", "type"], "{example}");
 }
 
 /// Naming no type leaves both halves exactly as they were.
