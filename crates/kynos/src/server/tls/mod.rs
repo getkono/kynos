@@ -184,9 +184,9 @@ impl TlsConfig {
 
         config.alpn_protocols = vec![
             #[cfg(feature = "http2")]
-            b"h2".to_vec(),
+            crate::server::protocol::ALPN_HTTP2.to_vec(),
             #[cfg(feature = "http1")]
-            b"http/1.1".to_vec(),
+            crate::server::protocol::ALPN_HTTP1_1.to_vec(),
         ];
         config.max_early_data_size = 0;
         Ok(TlsRuntime {

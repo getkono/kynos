@@ -141,6 +141,29 @@ where
         }
     }
 
+    // The handshake already settled which protocol this connection speaks, so
+    // the driver is told rather than left to sniff the first bytes back off the
+    // stream. Sniffing costs no read syscall under TLS -- `tokio-rustls` has
+    // already decrypted and buffered the record the head arrived in -- but it
+    // does copy that head onto the heap, poll the TLS stack once more for it,
+    // and read the connection's protocol from the wire when rustls has the
+    // answer, which makes the bytes a second source of truth for it.
+    //
+    // Any other identifier, and every connection with no ALPN at all -- which
+    // is every plaintext one -- falls through to the sniff, since there the
+    // wire is the only source there is.
+    match connection_info.alpn_protocol() {
+        #[cfg(feature = "http2")]
+        Some(alpn) if alpn == crate::server::protocol::ALPN_HTTP2 => {
+            builder = builder.http2_only();
+        }
+        #[cfg(feature = "http1")]
+        Some(alpn) if alpn == crate::server::protocol::ALPN_HTTP1_1 => {
+            builder = builder.http1_only();
+        }
+        _ => {}
+    }
+
     let handler = service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
         let service = Arc::clone(&service);
         // A reference count, not a copy of what the handshake produced.
