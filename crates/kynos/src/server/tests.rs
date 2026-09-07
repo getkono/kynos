@@ -68,6 +68,13 @@ fn an_http2_config_is_cheap_to_copy_per_connection() {
 /// Measured at 168 bytes with every feature on, which is where it is widest --
 /// it gains its TLS runtime there -- and rounded up to 192, so the ceiling holds
 /// at every smaller feature set by construction. Ungated for that reason.
+///
+/// 192 is well under the smallest read/write buffer the configuration
+/// configures, so describing a connection never costs more than serving one.
+/// That relation is prose rather than an assertion: nothing can falsify it while
+/// this ceiling holds, and `MIN_HTTP1_BUFFER_SIZE` is pinned by a `const`
+/// assertion in `protocol.rs`. `docs/architecture.md` records it in
+/// "Why hyper stays".
 #[test]
 fn a_transport_config_is_cheap_to_clone_per_connection() {
     let config = size_of::<super::TransportConfig>();
@@ -76,37 +83,6 @@ fn a_transport_config_is_cheap_to_clone_per_connection() {
         config <= 192,
         "TransportConfig grew to {config} bytes from a measured 168; \
          it is cloned once per accepted socket"
-    );
-}
-
-/// The relation the ceiling above only ratchets: the configuration copied per
-/// connection stays smaller than the smallest read/write buffer it configures,
-/// so describing a connection never costs more than serving one.
-///
-/// Its failure set is empty as things stand, and honestly so. The ceiling above
-/// is ungated and `192 < 8192`, so this cannot fail while
-/// `a_transport_config_is_cheap_to_clone_per_connection` passes, and that test
-/// runs wherever this one does. Being the only assertion in its own test is
-/// what keeps it *reachable*; it is not what would give it a failure case.
-///
-/// It is kept for what it states rather than for what it catches -- 168
-/// measured bytes against 8192 -- and it binds only if a review ever raises the
-/// ceiling. `docs/architecture.md` records the same in "Why hyper stays", along
-/// with why the anchor is `MIN_HTTP1_BUFFER_SIZE` rather than the roughly
-/// 16 KiB it attributes to hyper.
-///
-/// Gated on `http1` for the constant, not for `TransportConfig`, which exists
-/// wherever `server` does.
-#[cfg(feature = "http1")]
-#[test]
-fn the_per_connection_config_is_smaller_than_the_buffer_it_configures() {
-    let config = size_of::<super::TransportConfig>();
-    let floor = crate::server::protocol::MIN_HTTP1_BUFFER_SIZE;
-
-    assert!(
-        config < floor,
-        "TransportConfig ({config} bytes) must stay under the smallest transport buffer \
-         it configures ({floor} bytes)"
     );
 }
 

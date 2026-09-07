@@ -76,6 +76,12 @@ fn a_connection_clone_shares_its_payload() {
 /// next multiple of 8 for `TlsIdentity`, where a 64-byte step would be most of
 /// the type again and would absorb two more `Option<String>` fields that every
 /// plaintext connection would pay for.
+///
+/// Both readings are far under the smallest read/write buffer the transport
+/// accepts, which is the design property: per-connection state is a fraction of
+/// a transport buffer rather than a multiple of one. That is prose here because
+/// nothing can falsify it while these ceilings hold —
+/// `docs/architecture.md` records it in "Why hyper stays".
 #[test]
 fn the_inline_connection_record_stays_small() {
     let payload = size_of::<Inner>();
@@ -88,43 +94,5 @@ fn the_inline_connection_record_stays_small() {
     assert!(
         tls <= 80,
         "TlsIdentity grew to {tls} bytes, widening every connection including plaintext ones"
-    );
-}
-
-/// The relation the absolutes above only ratchet: the inline record Kynos keeps
-/// per accepted socket fits inside the smallest read/write buffer the transport
-/// will accept — the two `Arc` counts included, the heap the record points at
-/// excluded.
-///
-/// The anchor is `MIN_HTTP1_BUFFER_SIZE`, which lives in code and is enforced
-/// by `validate_protocol_config`, rather than the roughly 16 KiB per live
-/// connection `docs/architecture.md` attributes to hyper in "Why hyper stays".
-/// It is half that prose figure, so holding against it is the stronger claim,
-/// and a number in code cannot drift away from a document nothing checks it
-/// against.
-///
-/// Its failure set is empty as things stand, and honestly so. The ceiling above
-/// is ungated, so it runs in every binary this test runs in, and `Inner <= 192`
-/// plus two `Arc` counts is under 8192 by construction: nothing can fail here
-/// while that ceiling holds. Splitting the two into separate tests removed the
-/// unreachable-assertion problem, not this one.
-///
-/// It is kept for what it states rather than for what it catches — 160 measured
-/// bytes against 8192 is 51x of headroom, and the design property is that
-/// per-connection state stays a fraction of a transport buffer rather than a
-/// multiple of one. It becomes the binding assertion only if a review ever
-/// raises the ceiling, which is when an outer bound is worth having been
-/// written down already. `docs/architecture.md` records the same in "Why hyper
-/// stays".
-#[cfg(all(feature = "server", feature = "http1"))]
-#[test]
-fn per_connection_state_fits_inside_the_smallest_transport_buffer() {
-    let allocation = size_of::<Inner>() + 2 * size_of::<usize>();
-    let floor = crate::server::protocol::MIN_HTTP1_BUFFER_SIZE;
-
-    assert!(
-        allocation < floor,
-        "per-connection state ({allocation} bytes, Inner plus the two Arc counts) \
-         must stay under the smallest transport buffer the crate accepts ({floor} bytes)"
     );
 }
