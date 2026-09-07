@@ -72,6 +72,18 @@ Numeric ceilings are written `TBD` until they are measured.
 A guessed ceiling is worse than no ceiling: it either fails constantly and gets
 disabled, or passes trivially and hides the regression it was meant to catch.
 
+Four ceilings below stay `TBD` because the measurement that would set one is
+`kynos-bench`'s: route resolution p99 at a thousand registered operations,
+per-layer added p99, syscalls per request, and idle memory per connection at
+100k connections. A counted figure taken beside one of them would not set it: a
+`size_of` on per-connection state is the structural reading
+[`performance.md`](performance.md#the-boundary) allocates to this repository,
+not the resident-memory reading at scale the ceiling names, and an allocation
+count at stack depth 0/4/8 is not a latency. Where a ceiling has a counted twin
+here — as route resolution and per-layer overhead do — that is why the counted
+half and the timed half are separate rows, and only the timed one carries the
+`TBD`.
+
 ## Modules
 
 | Requirement group | Location |
@@ -178,6 +190,7 @@ of which anything here would currently catch.
 | performance | Route dispatch allocates at most a recorded number of times per route shape, and a replayed request costs what the first one did | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), over a handler that allocates nothing, counting fresh allocations and reallocations across a 10k-request replay | `enforced` |
 | performance | Zero heap allocations on the routing path | — | `absent`. The row above enforces a ceiling, which is the opposite direction; nothing asserts the zero, and the measurement below is why |
 | performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `kynos-bench` |
+| performance | Erasing a body through the boxed trait object costs a recorded number of allocations per construction | [`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs), counting `Body::empty` and `Body::from_bytes` | `enforced` |
 | reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; [`tests/routing.rs`](../crates/kynos/tests/routing.rs) over `Router::validate` for those only visible once the tree is assembled, each refusal with its pass control | `enforced` |
 | security | A served asset path is enumerated, never joined from request input | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) asserting an embedded set registers only literal `paths` keys, and [`router/assets/fs/tests.rs`](../crates/kynos/src/router/assets/fs/tests.rs) sweeping every escape a resolver must refuse against a control that must not be | `enforced` |
 | correctness | A route with no expressible template is recorded rather than described | [`tests/unchecked.rs`](../crates/kynos/tests/unchecked.rs) asserting a catch-all takes no `paths` key and reaches `x-kynos-opaque-routes` | `enforced` |
@@ -198,10 +211,21 @@ the four belongs to which is part of the attribution below.
 
 Nothing here attributes those seven to the lines that make them, and this
 document does not guess: the candidates a reader will think of first — the
-extension map, the capture vector, the body wrapper that reports a disconnect —
-are the obvious suspects and not evidence. Attribution is the next piece of
-work, and it is what turns a ceiling into a decision about which allocation to
-remove.
+extension map, the capture vector — are the obvious suspects and not evidence.
+Attribution is the next piece of work, and it is what turns a ceiling into a
+decision about which allocation to remove.
+
+**One suspect is off the list rather than unconvicted.** The body wrapper that
+reports a disconnect was the third name here, and erasing a body is none of the
+seven: the request body is built before the counted region opens, and the
+response a `204` sends is `Body::empty()`, which erases a zero-sized type, so
+`Box::pin` never reaches the allocator. What erasure costs where it is not free
+is what the erasure row above records — nothing for an empty body, one
+allocation for a body carrying bytes — held as an equality rather than as a
+ceiling, because a count under either would mean the boxing had stopped
+happening. The cost the entry predicted is real one step further out, on the
+server path, where `Body::from_incoming` erases a `hyper::body::Incoming` that
+is not zero-sized.
 
 The ceilings are recorded rather than the zero because
 [Thresholds](#thresholds) asks for the first measurement rather than the hoped
@@ -228,6 +252,7 @@ rewrite.
 | dx | Every rejection produces an error naming the field and the fix | `trybuild` UI tests, plus [`error/rejection/tests.rs`](../crates/kynos/src/error/rejection/tests.rs) counting every variant and asserting each renders a sentence rather than a debug dump | `enforced` for the counting; `planned` for the snapshots |
 | security | A credential is read from the field its scheme declared, and from no other | `Carries` is emitted by the same derive as `describe`, so the two are one text; [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) drives a derived API-key carrier to 200, 401 and 403 over a live service | `enforced` |
 | security | An authenticator cannot read a request field the scheme did not declare | Structural: `Authenticator::authenticate` receives `S::Presented` and is never given the request | `enforced` |
+| performance | An opt-in body codec's added allocations on an operation that mounts it are at most a recorded number, in both directions | [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs), taking each codec against the same service's bodyless floor, its `Binary<OctetStream>` transport floor and its bodyless responding floor | `enforced` |
 
 **There is deliberately no default body cap**, and the row above says so rather
 than claiming one. This document previously read "body size, header count and
@@ -260,8 +285,9 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | Two interceptors covering one operation never write one response header when either writes it from a short circuit | — | `by-design`, and recorded in [`middleware.md`](middleware.md#what-the-framework-computes-and-what-it-does-not): a `Short` response's headers are in no `const`, so `Retry-After` written from a 429 is compared against nothing. A `HEADERS` const on `ShortCircuit` is what would close it, and `#[derive(ApiError)]` could not derive one from an `IntoResponse` body — the `contribution` method the design refuses. Unreachable with what Kynos ships: only one short circuit answers a request |
 | correctness | Contribution composition is order-sensitive and deterministic | Permuted stacks produce differing, stable documents | `planned` for the *document*; the composition **check** is no longer order-sensitive, which is the order-insensitivity row above |
 | reliability | `Opaque` propagates to every affected operation and omits none | Unit test over a synthetic router tree | `planned` |
-| performance | Per-layer added allocations and future size ≤ TBD | The counting allocator and `size_of` over one interceptor stack at depth 0/4/8, reported as the marginal cost of a layer | `planned` |
+| performance | Added allocations = 1 per layer, held as an equality, and the dispatch future ≤ 280 bytes at any depth | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), counting one request through a no-op interceptor stack at depth 0/4/8 and reporting the marginal cost of a layer, plus a `size_of` ratchet on the future a driver holds | `enforced` |
 | performance | Per-layer added p99 ≤ TBD | `criterion` at stack depth 0/4/8 with a regression gate | `kynos-bench` |
+| performance | Compression's added allocations never fall as the body grows, and grow by no more than the 8 KiB reads the encoder's drain adds between one non-empty body size and the next; encoding a body the encoder engages on costs strictly more than declining to, with the empty body the baseline of that relation rather than a rung of the first; and what declining costs is a recorded constant rather than a held one | [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs), over gzip, brotli and zstd at 0/1 KiB/16 KiB/256 KiB, engaged and not by `Accept-Encoding` on one mounted service | `enforced` |
 | correctness | A stored response is never served to a request its stored `Vary` does not select | [`middleware/cache/tests.rs`](../crates/kynos/src/middleware/cache/tests.rs) over the selection rules, plus [`tests/cache.rs`](../crates/kynos/tests/cache.rs) over a live sequence | `enforced` |
 | correctness | A response that stated no freshness is never reused | [`tests/cache.rs`](../crates/kynos/tests/cache.rs) counting handler calls across three requests | `enforced` |
 | correctness | A timeout answers a status the specification defines for an origin server | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) over a live handler past its budget, and [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) against the emitted document | `enforced` |
@@ -317,6 +343,18 @@ The first row is the enforcement of [`middleware.md`](middleware.md), and it
 runs: without it the soundness invariant would be an intention rather than a
 guarantee. It has already earned its keep twice — see
 [`testing.md`](testing.md#what-the-harness-found-on-its-first-run).
+
+**A layer costs one heap allocation and no future width.** A static match costs
+seven allocations with no stack in front of it, eleven behind four layers and
+fifteen behind eight; the future a driver holds is 280 bytes at every one of
+those depths, and at both feature sets that target is built at. The one
+allocation is the object-safe form of `Interceptor` boxing the future it
+returns, which is the price of a heterogeneous chain fitting in one slice. Both
+figures are the measurement rather than the target, per
+[Thresholds](#thresholds), and the relation beside them — that a layer costs the
+same wherever it sits — is what survives a change to either. This row is where
+the status of the split's counted half is read, rather than from the split
+paragraph in [Status](#status).
 
 ## Runtime
 
@@ -400,10 +438,11 @@ The line count is a prompt rather than a trigger because the rule interacts with
 the one directly above it in AGENTS.md — *"Submodules are `pub` with no parent
 re-exports"* — in a way worth stating. Splitting a module that declares several
 public types lengthens every one of their paths, because no re-export may
-preserve the old one. `error/rejection.rs` is the clearest case: eight rejection
-types in 643 lines, and splitting it would turn `error::rejection::PathRejection`
-into `error::rejection::path::PathRejection`. Seventeen of the twenty-nine are
-that shape, worth roughly a hundred public paths between them — and each is one
+preserve the old one. `error/rejection.rs` is the clearest case: it is one of
+them, it declares eight rejection types, and splitting it would turn
+`error::rejection::PathRejection` into
+`error::rejection::path::PathRejection`. Seventeen of the twenty-nine are that
+shape, worth roughly a hundred public paths between them — and each is one
 cohesive family, which is precisely what the concern test says may stay a file.
 So they stay: a longer path is a worse name, and the rule's first clause already
 permits the shorter one. That was settled before v0.1.0, while the surface could
@@ -467,6 +506,13 @@ surface baseline is recorded against a surface that has stopped moving.
 Compile time needs a trend line rather than a spot check: it is the failure mode
 that kills macro-heavy type-level frameworks, and it degrades gradually enough
 that no single change ever looks responsible.
+
+The incremental-rebuild ceiling stays `TBD`, and stays that way until something
+measures one. Nothing here builds a hundred operations and times the rebuild
+after a one-line handler edit, so there is no first measurement to set it from,
+and [Thresholds](#thresholds) rules out the alternative. `planned` is the
+honest status rather than `needs-tooling`: `cargo build --timings` ships with
+the toolchain, so the row is waiting on wiring rather than on an installation.
 
 ## Observability
 
