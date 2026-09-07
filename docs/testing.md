@@ -281,6 +281,22 @@ sites in `kynos-openapi/src`. A feature gate no test build exercises is a gate
 whose off-state is unknown, and the suite passing on the first baseline run does
 not retire the obligation: it held by luck rather than by check.
 
+That leaves three shapes a test target is built at — every feature on, the
+default set, and `openapi31` alone — and a target gated on one optional feature
+apiece is at none of them.
+[`alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) is that target: five
+modules, one codec each, over a shared harness gated on their disjunction. The
+sets it is interesting at are `openapi31 + macros + F`, and no task built one —
+`features:targets` builds one feature at a time against `openapi31`, so `macros`
+and a codec are never in the same build, and `features:check` passes
+`--no-dev-deps`. [`mise run lint:codecs`](../mise.toml) is the six missing sets.
+It is a Clippy run rather than a test run because what those sets alone can see
+is a compile-time consequence — an item dead once one codec is off, an import
+with no user — rather than an assertion that fails; a misspelled feature *name*
+was never the exposure, since `unexpected_cfgs` validates one against the whole
+feature list wherever the file compiles at all. `202cfa5` is the class, and it
+was found by hand-linting the six sets before there was a task that did.
+
 **A gap [`nfr.md`](nfr.md) documents is characterized.** Excluding a known-lossy
 shape from a generator keeps the property honest, but on its own it leaves the
 behaviour unrecorded: closing the gap turns nothing red, and widening it turns
