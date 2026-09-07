@@ -188,6 +188,12 @@ const STACKED_ALONE: usize = SHAPES[0].1;
 
 /// Every stack depth measured here, with what a request through it costs
 /// today.
+///
+/// Depth 0 is the baseline the other two are read against rather than a row
+/// this file asserts on its own: its builder, target and ceiling are the
+/// static match's, which
+/// `the_routing_path_allocates_where_the_requirement_asks_for_nothing` already
+/// holds. Only the stacked rows are counted and replayed below.
 const STACKS: [Stack; 3] = [
     // No stack at all: what the same target costs in `SHAPES`, not a second
     // recording of it.
@@ -211,14 +217,20 @@ const PER_LAYER: usize = 1;
 /// makes the future narrower, which is not a regression.
 const FUTURE_BYTES: usize = 280;
 
-/// The record, for the middleware half: what one request costs at each depth,
-/// over interceptors that allocate nothing of their own.
+/// The record, for the middleware half: what one request costs at each depth a
+/// stack is mounted at, over interceptors that allocate nothing of their own.
 ///
-/// Seven allocations at depth 0, eleven at depth 4 and fifteen at depth 8 —
-/// one heap allocation per layer, on top of the seven the routing path costs
-/// with no stack in front of it. That one is the object-safe form of
+/// Eleven allocations at depth 4 and fifteen at depth 8, against the
+/// [`STACKED_ALONE`] seven the routing path costs with no stack in front of
+/// it — one heap allocation per layer. That one is the object-safe form of
 /// `Interceptor` boxing the future it returns, which is the price of a
 /// heterogeneous chain fitting in one slice.
+///
+/// Depth 0 is skipped rather than measured again here: it is the same builder,
+/// the same target and the same ceiling
+/// `the_routing_path_allocates_where_the_requirement_asks_for_nothing`
+/// already asserts. It stays in the table as the baseline the delta is taken
+/// against.
 ///
 /// Ceilings rather than targets, and measured rather than chosen, as
 /// [`nfr.md`](../../../docs/nfr.md#thresholds) requires of a first
@@ -227,7 +239,7 @@ const FUTURE_BYTES: usize = 280;
 /// to any of them.
 #[test]
 fn an_interceptor_stack_allocates_what_is_recorded_here() {
-    for (depth, build, ceiling) in STACKS {
+    for &(depth, build, ceiling) in &STACKS[1..] {
         let counted = counted(&build(), STACKED);
         assert!(
             counted <= ceiling,
@@ -441,11 +453,13 @@ fn a_capture_is_what_a_path_parameter_costs() {
 /// be state accumulating on the routing path, which no single-request
 /// measurement can see.
 ///
-/// Every shape and every stack depth is replayed, not only the parameterised
-/// shape: a pair of tables that record six numbers and replay one would leave
-/// five of them resting on a single reading. A chain is where the question is
-/// sharpest — every layer holds an `Arc` and every call boxes a future, so a
-/// clone that outlived its request would show here and nowhere else.
+/// Every shape and every *stacked* depth is replayed, not only the
+/// parameterised shape: a pair of tables that record six numbers and replay one
+/// would leave five of them resting on a single reading. Depth 0 is the
+/// [`STACKED`] row of [`SHAPES`], replayed against the same service by the loop
+/// above. A chain is where the question is sharpest — every layer holds an
+/// `Arc` and every call boxes a future, so a clone that outlived its request
+/// would show here and nowhere else.
 #[test]
 fn a_replayed_request_costs_what_the_first_one_did() {
     let service = service();
@@ -454,7 +468,7 @@ fn a_replayed_request_costs_what_the_first_one_did() {
         replayed(&service, target, target);
     }
 
-    for (depth, build, _) in STACKS {
+    for &(depth, build, _) in &STACKS[1..] {
         replayed(
             &build(),
             STACKED,
