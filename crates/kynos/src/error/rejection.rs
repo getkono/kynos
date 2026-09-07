@@ -28,15 +28,20 @@
 //! failed — RFC 9457 §5 is explicit that a problem is not a debugging channel,
 //! and which of several credential checks refused a request is the server's
 //! business.
+//!
+//! One field is not that shape, and is an exception rather than a hole in the
+//! rule: the problem type on [`AuthRejection::Forbidden`]. The request did not
+//! determine it and neither did Kynos — the *application's* authorizer supplies
+//! it, because only the application knows which of its authorization rules
+//! declined. It is still a fact the caller may have: it names a class of
+//! refusal, not the check that produced one.
 
 use std::collections::BTreeMap;
 
 use serde_json::json;
 
-use kynos_openapi::model::body::mime_names::APPLICATION_PROBLEM_JSON;
-
 use crate::{
-    error::problem::{IntoProblem, Problem},
+    error::problem::{IntoProblem, Problem, problem_response},
     http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
@@ -44,9 +49,13 @@ use crate::{
 
 /// One response per declared status, each an `application/problem+json`
 /// document referring to the shared [`Problem`] component.
+///
+/// The description is [`problem_response`]'s, because a rejection's response is
+/// the same problem document every other refusal sends and a second spelling of
+/// the media type is a second place for it to drift. A rejection declaring no
+/// status therefore registers no `Problem` component either, which is right: it
+/// declares no problem.
 fn problem_responses(registry: &mut Registry, statuses: &[StatusCode]) -> kynos_openapi::Responses {
-    let schema = registry.resolve::<Problem>();
-
     statuses
         .iter()
         .fold(kynos_openapi::Responses::new(), |responses, status| {
@@ -55,14 +64,7 @@ fn problem_responses(registry: &mut Registry, statuses: &[StatusCode]) -> kynos_
                 str::to_owned,
             );
 
-            responses.with(
-                status.as_u16(),
-                kynos_openapi::Response::with_content(
-                    description,
-                    APPLICATION_PROBLEM_JSON,
-                    kynos_openapi::MediaType::new(schema.clone()),
-                ),
-            )
+            responses.with(status.as_u16(), problem_response(registry, description))
         })
 }
 
@@ -538,7 +540,27 @@ pub enum AuthRejection {
 
     /// Credentials were valid but insufficient. Produces 403.
     #[error("access is not permitted")]
-    Forbidden,
+    Forbidden {
+        /// The problem `type` this 403 carries, or `about:blank` when `None`.
+        ///
+        /// The asymmetry with `Unauthenticated` is the point. A 401 has no such
+        /// field: which credential check refused is the server's business, and
+        /// a client can act on neither answer differently. An *authorization*
+        /// rule is the opposite — "this account is suspended" is a class of
+        /// refusal a client acts on, and only the application knows which of
+        /// its rules refused, so the URI is a value the rejection carries
+        /// rather than one Kynos could name for it.
+        ///
+        /// Set it with [`AuthRejection::forbidden_as`] and leave it unset with
+        /// [`AuthRejection::forbidden`]. `&'static str` rather than an owned
+        /// string is where the friction belongs, not a micro-optimisation: the
+        /// URI reaches the client verbatim and is not validated, so a name
+        /// assembled from the request has to be leaked before it can be passed
+        /// — which is deliberate enough that nobody does it by accident, and
+        /// is the whole of the guarantee. It is the same bound
+        /// `Unauthenticated`'s `challenge` carries one variant above.
+        type_uri: Option<&'static str>,
+    },
 }
 
 impl AuthRejection {
@@ -552,12 +574,63 @@ impl AuthRejection {
         Self::Unauthenticated { challenge: None }
     }
 
+    /// A 403 whose type is `about:blank`.
+    ///
+    /// What an [`Authenticator`](crate::security::Authenticator) returns when
+    /// the refusal has no name of its own — the 403 every version of this enum
+    /// has produced.
+    #[must_use]
+    pub const fn forbidden() -> Self {
+        Self::Forbidden { type_uri: None }
+    }
+
+    /// A 403 carrying the problem type the authorizer chose for it.
+    ///
+    /// The one part of a rejection Kynos cannot supply: a refusal means
+    /// something in the application's own vocabulary, and RFC 9457 section
+    /// 3.1.1 is where that meaning is spelled. The title stays the status
+    /// code's reason phrase — section 3.1.3 makes a title a property of the
+    /// type, and Kynos has none to offer for a URI it has never seen; an
+    /// application wanting its own title has `#[derive(ApiError)]`.
+    ///
+    /// **This reaches the wire and not the description.** The 403 an operation
+    /// declares still refers to the shared `Problem` component and narrows
+    /// nothing, because `Describe` for `Auth<S>` and `Scoped<S, R>` is generic
+    /// in the scheme alone and the authenticator is a value on the context,
+    /// unreachable while the document is built. A client reading the body sees
+    /// this URI; a client reading the description does not. #118 is where that
+    /// gap is settled.
+    ///
+    /// The URI is not validated and reaches the client verbatim, so it names a
+    /// class of refusal rather than a fact about the caller. RFC 9457 section
+    /// 3.1.1 recommends an absolute URI: a relative reference resolves against
+    /// the request, so the same refusal would carry a different identity per
+    /// endpoint. `&'static str` is
+    /// what holds an author to that: a URI assembled from the request would
+    /// have to be leaked to be passed here, which is friction in exactly the
+    /// right place. A `const` refusal is the ordinary case.
+    ///
+    /// ```
+    /// use kynos::{error::rejection::AuthRejection, http::StatusCode};
+    ///
+    /// const SUSPENDED: AuthRejection =
+    ///     AuthRejection::forbidden_as("https://errors.example.com/account-suspended");
+    ///
+    /// assert_eq!(SUSPENDED.status(), StatusCode::FORBIDDEN);
+    /// ```
+    #[must_use]
+    pub const fn forbidden_as(type_uri: &'static str) -> Self {
+        Self::Forbidden {
+            type_uri: Some(type_uri),
+        }
+    }
+
     /// The status this rejection produces.
     #[must_use]
     pub fn status(&self) -> StatusCode {
         match self {
             Self::Unauthenticated { .. } => StatusCode::UNAUTHORIZED,
-            Self::Forbidden => StatusCode::FORBIDDEN,
+            Self::Forbidden { .. } => StatusCode::FORBIDDEN,
         }
     }
 
@@ -570,7 +643,7 @@ impl AuthRejection {
     pub fn challenge(&self) -> Option<&'static str> {
         match self {
             Self::Unauthenticated { challenge } => *challenge,
-            Self::Forbidden => None,
+            Self::Forbidden { .. } => None,
         }
     }
 
@@ -585,18 +658,35 @@ impl AuthRejection {
     pub fn with_challenge(self, challenge: Option<&'static str>) -> Self {
         match self {
             Self::Unauthenticated { .. } => Self::Unauthenticated { challenge },
-            Self::Forbidden => Self::Forbidden,
+            forbidden @ Self::Forbidden { .. } => forbidden,
         }
     }
 }
 
 impl IntoProblem for AuthRejection {
     fn into_problem(self) -> Problem {
-        // Nothing beyond the sentence the variant already carries: which check
-        // refused the request is exactly what an attacker would like to learn,
-        // and a client can act on neither answer differently. The challenge is
-        // not part of it -- RFC 9110 puts that in a header, not in a body.
-        Problem::new(self.status()).with_detail(self.to_string())
+        // Nothing Kynos adds beyond the sentence the variant already carries:
+        // which check refused the request is exactly what an attacker would
+        // like to learn, and a client can act on neither answer differently.
+        // The challenge is not part of it -- RFC 9110 puts that in a header,
+        // not in a body. The one thing that does reach the document came from
+        // the application, below.
+        let status = self.status();
+        let detail = self.to_string();
+
+        match self {
+            // The exception, and the only one: an authorizer that named its
+            // refusal named something Kynos does not know. The title is the
+            // reason phrase `Problem::new` would have given it, for the reason
+            // `forbidden_as` states.
+            Self::Forbidden {
+                type_uri: Some(type_uri),
+            } => Problem::of_type(status, type_uri, "Forbidden"),
+            Self::Forbidden { type_uri: None } | Self::Unauthenticated { .. } => {
+                Problem::new(status)
+            }
+        }
+        .with_detail(detail)
     }
 
     fn statuses() -> &'static [StatusCode] {

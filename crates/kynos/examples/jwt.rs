@@ -274,7 +274,7 @@ impl<C: Sync> Authenticator<AccessToken, C> for Keys {
         {
             Ok(())
         } else {
-            Err(AuthRejection::Forbidden)
+            Err(AuthRejection::forbidden())
         }
     }
 }

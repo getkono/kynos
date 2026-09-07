@@ -252,6 +252,7 @@ belongs with [`security.md`](security.md) rather than here.
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | correctness | Emitted document ⊇ observable responses | [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) checking live responses against the generated document across the owned-layer matrix, in both directions | `enforced` |
+| correctness | A short circuit's description declares the body it sends, and declares none only where it sends none | `every_short_circuit_declares_the_content_it_sends` in [`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) driving every constructible implementation against `every_short_circuit_kynos_ships_is_accounted_for`'s set, plus the declaration-of-none check in [`test/conformance.rs`](../crates/kynos/src/test/conformance.rs) that [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) runs over a live exchange | `enforced` |
 | correctness | Two interceptors covering one operation never add one response header or answer with one status | `CompatibleWith` forced at every mount site, with a `trybuild` case per scope in [`tests/ui/antipattern/`](../crates/kynos/tests/ui/antipattern/) and a pass control for each | `enforced` for what the two sides declare; the two rows below are where a declaration is missing |
 | correctness | The check does not depend on the order the scopes were written in | The five `*_collide` cases mount a scope *before* the interceptor that conflicts with it, which is the order that used to compile | `enforced`; this row is why the one above is not a restatement |
 | correctness | An interceptor attaches exactly the header group it declared, and that group writes only the names it declared | `with_headers` on `Continued<()>` alone, pinned by `interceptor_attaches_an_undeclared_header`; the encode-subset `debug_assert` in the one writer, pinned by `a_group_encoding_an_undeclared_field_is_refused` | `enforced` in debug; the assert is compiled out of release |
@@ -327,6 +328,7 @@ guarantee. It has already earned its keep twice — see
 | reliability | A streamed request body is decoded as it arrives rather than after it has been collected | [`extract/body/json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) reading a body delivered one frame per byte, and every frame boundary of a fixed body | `enforced` for a body declaring a `Content-Length`; `by-design` under `BodySize` for a chunked one |
 | performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `kynos-bench` |
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `kynos-bench` |
+| performance | The per-connection state Kynos itself holds inline stays within its recorded ceilings | [`extract/connection/tests.rs`](../crates/kynos/src/extract/connection/tests.rs), asserting `Connection` one pointer wide, narrower than `Inner`, and shared rather than copied on clone, `Inner` ≤ 192 from a measured 144 and `TlsIdentity` ≤ 128 from a measured 72; and [`server/tests.rs`](../crates/kynos/src/server/tests.rs), asserting the configuration cloned per accepted socket — `Http1Config` ≤ 64 from 40, `Http2Config` ≤ 128 from 80, `TransportConfig` ≤ 192 from 168. Every reading is a `size_of`, so what a certificate chain or a server name points at is counted by none of them | `enforced` for the ceilings; the relation to the smallest transport buffer is prose in the same doc comments, since it cannot fail while a ceiling holds |
 | compatibility | `Listener::Tokio` is the only public item naming a tokio type | `cargo-public-api` assertion over the framework surface | `needs-tooling` |
 | compatibility | Every `tokio` mention outside `crates/kynos/src/server/` appears in the allowance table in [`architecture.md`](architecture.md#runtime-policy), and the table has exactly six rows | `mise run containment:check`, which reads the table rather than restating it, over source stripped of comments, string literals and `#[cfg(test)]` modules | `enforced` |
 
@@ -335,6 +337,15 @@ The last two rows are the enforcement of the tokio-only policy in
 abstraction trait to keep private, so what CI has to check is the opposite:
 that direct tokio use stays where it is allowed, and that it reaches users only
 through the listener handover it is meant to.
+
+The `size_of` row and the idle-memory row above it are two requirements, not one
+measured twice. A `size_of` reads what a type holds inline and nothing a pointer
+in it reaches, so it cannot see a peer certificate chain, a connection task's
+future or hyper's own buffers; resident memory at 100k connections sees all of
+them and no individual type. That is the split
+[`performance.md`](performance.md#the-boundary) draws for the per-connection
+shape, which owes a size guard here and sends resident memory at scale to
+`kynos-bench`. Neither row's status may be read off the other's.
 
 The containment row is written against an enumerated table rather than against
 `server/` alone, and that is a correction rather than a loosening: the grep as
@@ -381,7 +392,7 @@ where someone mounting a cap will meet it.
 
 AGENTS.md: *"A module becomes a directory once it holds two
 independently-changing concerns … Passing ~400 lines excluding tests is when to
-ask that question, not an answer to it."* Twenty-eight files under `crates/*/src`
+ask that question, not an answer to it."* Twenty-nine files under `crates/*/src`
 are past that line and asked it, and `containment:check` holds that number so it
 can only move on purpose.
 
@@ -391,8 +402,8 @@ re-exports"* — in a way worth stating. Splitting a module that declares severa
 public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: eight rejection
 types in 643 lines, and splitting it would turn `error::rejection::PathRejection`
-into `error::rejection::path::PathRejection`. Sixteen of the twenty-eight are that
-shape, worth roughly a hundred public paths between them — and each is one
+into `error::rejection::path::PathRejection`. Seventeen of the twenty-nine are
+that shape, worth roughly a hundred public paths between them — and each is one
 cohesive family, which is precisely what the concern test says may stay a file.
 So they stay: a longer path is a worse name, and the rule's first clause already
 permits the shorter one. That was settled before v0.1.0, while the surface could
@@ -405,6 +416,18 @@ sit in any module of the crate. That is why `router/`, `emit/downgrade/` and
 
 The budget is the honest record of what stayed. It falls when a module is split,
 and raising it means saying in the same commit why a new module needs the room.
+
+`response/status.rs` is the twenty-ninth, and it is the shape above rather than
+a new argument. It declares six public types — `Location`, `NoContent`,
+`Created`, `Accepted`, `Redirect` and `ValidRedirectCode` — so splitting it
+would turn `response::status::Created` into
+`response::status::created::Created` and do the same to the other five. What
+pushed it over was the third case in the rule that decides a wrapper's declared
+response: a body may describe no 200, or one, or the wrapper's own status, and
+the last of those is the one whose absence let a `Created<T>` overwrite a
+representation the body had already declared. The case is four lines; the
+account of why the body's half wins is the rest, and it is the half a later
+reader needs.
 
 ## Dependencies
 
@@ -493,7 +516,7 @@ open against a `kynos-otel` that may never be written.
 | reliability | Every reachable feature combination compiles | `mise run features:check` (`cargo hack --feature-powerset`) | `enforced` |
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
 | reliability | Tests are hermetic; no shared state, no ordering dependence, no retries | `cargo-nextest` process isolation, `retries = 0`, guarded by `crates/kynos/tests/hermeticity.rs` | `enforced` |
-| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 28 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
+| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 29 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
 | reliability | Panic recovery refuses to compile under `panic = "abort"` | `mise run panic:check` | `enforced` |
 | reliability | Commits follow Conventional Commits | `convco`, via git hook and CI | `enforced` |
 | compatibility | Every hand-rolled `Stream` implementation is private, except the one row in [`architecture.md`](architecture.md#public-api-surface), and there are exactly three of them | `mise run containment:check`, counting `Stream for` against the table and the two private sites its prose names | `enforced` |

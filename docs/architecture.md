@@ -382,19 +382,30 @@ requires cannot compile in any crate inheriting those lints, which is all three
 of them. Taking a vetted one is how the invariant is kept
 rather than bent: the unsafe stays upstream, and this tree keeps a rule it
 would otherwise have had to carve an exception into. It is a dev-dependency
+<<<<<<< HEAD
 named by two test targets and by nothing under `src/`:
 [`kynos/tests/alloc.rs`](../crates/kynos/tests/alloc.rs) for the routing path,
 and [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs)
 for what producing a description costs at 10, 100 and 1000 operations. Two
 rather than one shared target because an integration binary cannot be depended
 on: each crate that counts installs the counter itself.
+=======
+named by [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) and
+[`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs), and by nothing
+under `src/`.
+>>>>>>> origin/master
 
 Two properties decide which counter, and both are load-bearing. Its counters
 are **thread-local**, so a region reads what the measuring thread allocated
 rather than what the process did — `libtest` runs a test on a thread it spawns
 and keeps its own alive beside it, so a process-global counter reports the
+<<<<<<< HEAD
 harness's allocations as the measured path's, on whichever microsecond-wide
 region happens to be open. And it installs **no allocator on its own behalf**: each
+=======
+harness's allocations as the router's, on whichever microsecond-wide region
+happens to be open. And it installs **no allocator on its own behalf**: each
+>>>>>>> origin/master
 target that wants it writes the `#[global_allocator]` line itself, which is
 what keeps the instrument out of every other test binary in the package.
 
@@ -649,6 +660,20 @@ hyper's own parser, which uses uninitialized memory for the header array; and
 owning HTTP framing means owning request-smuggling response permanently. The
 resolution is a measurement, not more argument.
 
+That 16 KiB is prose, and nothing gates it against hyper. So what
+[#87](https://github.com/getkono/kynos/issues/87) asked to be stated as a
+relation against this figure is guarded as absolute `size_of` ceilings on
+Kynos's own per-connection state instead — 192 bytes for the inline connection
+record, 192 for the protocol configuration cloned per socket. Those are what
+can fail. The relation itself is recorded beside them as prose
+(`crates/kynos/src/extract/connection/tests.rs`,
+`crates/kynos/src/server/tests.rs`): per-connection state is a fraction of a
+transport buffer, not a multiple of one. It is not asserted, because it cannot
+be falsified — `MIN_HTTP1_BUFFER_SIZE` is the 8 KiB floor
+`validate_protocol_config` accepts and a `const` assertion in `protocol.rs`
+pins, and each ceiling is two orders of magnitude below it, so a relation test
+would fail only after its ceiling had already failed.
+
 Upstreaming is not a schedule that can be planned on — hyper ranks correctness
 above speed and speed above flexibility, and a seam for supplying a buffer pool
 is exactly the flexibility it declines. Vendoring trades a maintained
@@ -670,7 +695,58 @@ for a defect rather than as an optimization — the metadata was private and
 `#[expect(dead_code)]`, and the extractor that was meant to read it panicked on
 every request — which is why the entry stays here rather than moving to a
 benchmark: the cost was real, and removing it was not what motivated the
-change.
+change. The reference count is now guarded at one pointer wide in
+`crates/kynos/src/extract/connection/tests.rs`, alongside a bound on the state
+behind it. That bound is a `size_of`, so what fits inside the smallest
+per-connection transport buffer the crate accepts is the inline record — the
+addresses, the flags, and the headers of the TLS metadata — and not the bytes
+those headers point at. The protocol configuration cloned per socket is bounded
+separately, in `crates/kynos/src/server/tests.rs`. What one accepted socket
+costs in total is not guarded anywhere: that would have to include the peer
+certificate chain `TlsIdentity` owns, which a `size_of` sees as one
+pointer-width triple and a multi-certificate mTLS chain makes kilobytes of heap
+the reading does not see, along with the connection task's future, the service
+handle and the semaphore permit, none of which is bounded today.
+
+The other two have their numbers now, and neither costs what the entry above
+predicted. The first is traced through the dependencies it runs on rather than
+measured, which is the whole of what it claims: re-sniffing ALPN costs no read
+syscall on the one path where ALPN exists. hyper-util's `read_version` reads
+into a 24-byte array and rewinds the head it copied out, and on plaintext TCP
+that cap does force the codec into a second `read(2)` — but plaintext
+negotiates no protocol to discard in the first place. Under TLS, `tokio-rustls`
+reads and decrypts a whole record before it hands any plaintext up, and rustls
+reports no want for a read while that plaintext is buffered, so the codec's
+next read is served out of memory. What is left is one heap copy of the head,
+at most 24 bytes, and one extra poll through the TLS stack per connection — a
+socket-level per-connection figure, and so `kynos-bench`'s by the boundary
+[`performance.md`](performance.md#the-boundary) sets. It is deferred there
+rather than taken here, and filed as
+[#114](https://github.com/getkono/kynos/issues/114): one allocation per
+connection is not the syscall per connection the entry was written for, and the
+number is what decides it.
+
+Erasing a body is not on the routing path at all. None of the seven allocations
+[`alloc.rs`](../crates/kynos/tests/alloc.rs) records for a static match is a
+body erasure — the request body there is built before the counted region opens,
+and a `204`'s response body is `Body::empty`, which erases a zero-sized type, so
+the `Box::pin` behind it returns a dangling pointer and never reaches the
+allocator. The mutex is not part of the cost either; it is inline in `Body`. The
+entry is true one step further out, on the server path, where
+`Body::from_incoming` erases a `hyper::body::Incoming` that is not zero-sized:
+on a router with no observer registered, one allocation per request that
+arrives over a socket, and one more for a response body that is not empty. The
+qualifier is the condition
+[`dispatch.rs`](../crates/kynos/src/router/dispatch.rs)'s `finish` branches on
+— a router with an observer erases the response body a second time through a
+`Watched` that is not zero-sized and boxes the disconnect report beside it, for
+two more. That figure is traced rather than counted: `Body::from_incoming` is
+`pub(crate)` and nothing counts it.
+[`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) counts both constructors
+— zero for `Body::empty`, one for `Body::from_bytes` — and
+[`size.rs`](../crates/kynos/tests/size.rs) holds the zero-sized reason as a
+witness beside it, so a dependency bump that ends it turns something red rather
+than leaving this paragraph quietly wrong.
 
 ### Why kernel TLS is deferred
 
