@@ -51,6 +51,14 @@ jobs:
       # default set share every dependency build, so they belong on one cache.
       - name: Lint at baseline features
         run: mise run lint:baseline
+      # And a third, for the second one's reason: this job is where Clippy
+      # runs, and a pass with a runner and a checkout of its own would pay for
+      # both to compile `-p kynos` six times. Not in the `features` job, though
+      # feature sets are what it is about: nothing here is driven by
+      # cargo-hack, and both tasks in that job rewrite member manifests while
+      # they walk.
+      - name: Lint at each codec's feature set
+        run: mise run lint:codecs
       # Here because it compiles nothing, so it wants no Cargo cache of its
       # own. It belongs in some job: `check` runs it, and the comment above
       # says these jobs run every task `check` does.

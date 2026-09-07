@@ -613,6 +613,7 @@ run = [
   { task = "format:check" },
   { task = "lint" },
   { task = "lint:baseline" },
+  { task = "lint:codecs" },
   { task = "test" },
   { task = "test:baseline" },
   { task = "test:doc" },
@@ -659,10 +660,16 @@ description = "Run all pre-push checks"
 # only as good as the parsers under it, and a parser that breaks is what makes
 # the gate pass silently -- so a push carrying a green gate over a broken parser
 # is exactly what the pair is here to refuse.
+#
+# `lint:codecs` is here rather than left to CI because the defect it catches is
+# invisible to the two lint passes above it, and a push is the last point where
+# its author is still the one looking. The six builds it adds are `-p kynos` at
+# small feature sets, which is the cheap end of what this list already runs.
 run = [
   { task = "format:check" },
   { task = "lint" },
   { task = "lint:baseline" },
+  { task = "lint:codecs" },
   { task = "coverage" },
   { task = "docs:check" },
   { task = "containment:check" },
