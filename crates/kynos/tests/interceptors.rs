@@ -561,7 +561,16 @@ async fn case<S: kynos::response::ShortCircuit>(
     let body = body.collect().await.expect("a readable body").to_bytes();
 
     Case {
+        // The generic argument goes first, then the path. `type_name` of a
+        // generic short circuit is `..::RateLimited<..::Throttled>`, whose last
+        // `::` segment is `Throttled>` -- a name that appears in no source
+        // file, so the sweep would report a short circuit nobody wrote. The
+        // source-text half already stops at `<`, and this is the same rule on
+        // the other side of the comparison.
         name: std::any::type_name::<S>()
+            .split('<')
+            .next()
+            .expect("a type name is not empty")
             .rsplit("::")
             .next()
             .expect("a type name has a last segment"),

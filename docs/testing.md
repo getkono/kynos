@@ -551,5 +551,10 @@ operation, on the first run of `assert_declared_responses_covered` over the
 whole owned-layer matrix. Every other test in the suite passed throughout.
 
 Both share a shape worth naming: the code was right, the document was wrong, and
-the two disagreed in a direction only a live exchange checked against the
-description can expose.
+the two disagreed about a *status* and a *header key* — which a live exchange
+checked against the description is what exposes, because neither end alone holds
+both halves. A claim about a *type* is the other case and takes the direct
+assertion instead: the sweep in `tests/interceptors.rs` reads each short
+circuit's declaration against the response it builds, with no request at all.
+[`middleware.md`](middleware.md#declaring-is-not-describing) states that
+division from the interceptor side.
