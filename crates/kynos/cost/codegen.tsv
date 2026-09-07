@@ -4,6 +4,12 @@
 #     --sort lines --no-default-features --features openapi31[,<feature>]
 # Written by `mise run cost:record`; compared by `mise run cost:features`.
 #
+# The fixture uses none of these features -- it mounts no codec and calls no
+# optional API -- so a zero row says the collector instantiated nothing because
+# nothing called it, not that the feature is free to a program that uses it.
+# What each row does establish is the cost of merely enabling F to a program
+# that does not use F.
+#
 # The dev profile, not `--release`, and that is not an oversight: `llvm-lines`
 # reads pre-link IR, and a fat-LTO release build deletes the monomorphizations
 # this exists to count.

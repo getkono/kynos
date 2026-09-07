@@ -141,6 +141,11 @@ BINARY_HEADER = """\
 #     --no-default-features --features openapi31[,<feature>]
 # Written by `mise run cost:record`; compared by `mise run cost:features`.
 #
+# The fixture uses none of these features -- it mounts no codec and calls no
+# optional API -- so a zero row says the linker stripped what nothing called,
+# not that the feature is free to a program that uses it. What each row does
+# establish is the cost of merely enabling F to a program that does not use F.
+#
 # The compared column is `delta`: the difference against the openapi31 build in
 # the same run, never the absolute. `performance.md#thresholds` is the reason --
 # relations outlive absolutes, and an absolute moves on a toolchain bump that
@@ -163,6 +168,12 @@ CODEGEN_HEADER = """\
 #   cargo llvm-lines --package kynos --example cost_fixture --color never \\
 #     --sort lines --no-default-features --features openapi31[,<feature>]
 # Written by `mise run cost:record`; compared by `mise run cost:features`.
+#
+# The fixture uses none of these features -- it mounts no codec and calls no
+# optional API -- so a zero row says the collector instantiated nothing because
+# nothing called it, not that the feature is free to a program that uses it.
+# What each row does establish is the cost of merely enabling F to a program
+# that does not use F.
 #
 # The dev profile, not `--release`, and that is not an oversight: `llvm-lines`
 # reads pre-link IR, and a fat-LTO release build deletes the monomorphizations
@@ -661,6 +672,13 @@ def report(binary, codegen, functions, recorded, versions):
         "`crates/kynos/cost/fixture.rs` at each feature. Each section states "
         "which toolchain recorded the baseline its drift column is taken "
         "against, which need not be this one.",
+        "",
+        "The fixture uses none of these features -- it mounts no codec and "
+        "calls no optional API -- so a zero row says the linker stripped, or "
+        "the collector never instantiated, what nothing called. It does not "
+        "say the feature is free to a program that uses it. What a row does "
+        "establish is the cost of merely enabling F to a program that does "
+        "not use F.",
         "",
         "No ceiling is applied. This reports a trend; a threshold is set from a "
         "recorded measurement as a change to `docs/nfr.md`.",
