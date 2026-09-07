@@ -83,7 +83,10 @@ fn erasing_a_body_costs_what_the_table_records() {
     // the second row measures the erasure and not the payload behind it.
     let payload = Bytes::from_static(b"{\"ok\":true}");
 
-    let measured = [
+    // Typed to the record's own length, so a row added above without a
+    // constructor added here is a compile error rather than a row `zip`
+    // silently drops.
+    let measured: [usize; RECORDED.len()] = [
         counted(Body::empty),
         counted(move || Body::from_bytes(payload)),
     ];
