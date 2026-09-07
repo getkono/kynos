@@ -24,9 +24,10 @@ kynos-openapi = { version = "0.1.0", path = "crates/kynos-openapi", default-feat
 # Its counters are thread-local, so a region reads what the measuring thread
 # allocated rather than what the process did -- `libtest` always has a second
 # thread alive beside the one running a test, and a process-global counter
-# reports its work as the router's. And it installs nothing on its own behalf:
-# each target that wants it declares `#[global_allocator]` itself, which is
-# what keeps the instrument out of every other test binary in the package.
+# reports its work as the measured path's. And it installs nothing on its own
+# behalf: each target that wants it declares `#[global_allocator]` itself,
+# which is what keeps the instrument out of every other test binary in the
+# package.
 # `macros` is off because the attribute form is unused; `std` carries
 # `AllocCounterSystem`, and `pin-utils` rides along for an async helper this
 # tree does not call.
