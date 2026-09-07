@@ -207,11 +207,22 @@ def capture(command, env=None):
 def sweep_env():
     """The environment every build in the sweep runs under.
 
-    An ambient `RUSTFLAGS` silently changes every number recorded here, and a
-    trend built on that is noise rather than a trend, so it is refused rather
-    than overridden -- overriding it would discard a flag the caller meant.
+    An ambient flag silently changes every number recorded here, and a trend
+    built on that is noise rather than a trend, so each is refused rather than
+    overridden -- overriding one would discard a flag the caller meant.
+
+    Four names, not the two that are obviously flags. Cargo reads a profile's
+    flags from `CARGO_BUILD_RUSTFLAGS` when neither `RUSTFLAGS` nor its encoded
+    form is set, and `CARGO_BUILD_TARGET` moves the build off the host the
+    provenance header records -- so a sweep under either is measuring a program
+    the header does not describe.
     """
-    for name in ("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"):
+    for name in (
+        "RUSTFLAGS",
+        "CARGO_ENCODED_RUSTFLAGS",
+        "CARGO_BUILD_RUSTFLAGS",
+        "CARGO_BUILD_TARGET",
+    ):
         if os.environ.get(name):
             fail(
                 f"{name} is set. It changes every number this sweep records "
