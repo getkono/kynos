@@ -325,11 +325,17 @@ impl<P: Clone, D, T> Clone for RateLimit<P, D, T> {
 
 impl<P: fmt::Debug, D, T> fmt::Debug for RateLimit<P, D, T> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // One field: the spelling and the problem type are in the type's name,
-        // and `_spelling` holds nothing an operator can read.
+        // Destructured, so a field added to the struct is a compile error here
+        // rather than a member this silently stops printing. One field
+        // survives it: `_spelling` holds nothing an operator can read.
+        let Self {
+            policy,
+            _spelling: _,
+        } = self;
+
         formatter
             .debug_struct("RateLimit")
-            .field("policy", &self.policy)
+            .field("policy", policy)
             .finish()
     }
 }

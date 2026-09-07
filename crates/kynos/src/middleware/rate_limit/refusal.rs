@@ -268,17 +268,32 @@ impl<T> Clone for RateLimited<T> {
 
 impl<T> fmt::Debug for RateLimited<T> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Destructured rather than read member by member: `new` and `clone`
+        // stop compiling when a field is added, and this makes the two that
+        // would otherwise ignore it stop too.
+        let Self {
+            retry_after,
+            limit,
+            problem_type: _,
+        } = self;
+
         formatter
             .debug_struct("RateLimited")
-            .field("retry_after", &self.retry_after)
-            .field("limit", &self.limit)
+            .field("retry_after", retry_after)
+            .field("limit", limit)
             .finish()
     }
 }
 
 impl<T> PartialEq for RateLimited<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.retry_after == other.retry_after && self.limit == other.limit
+        let Self {
+            retry_after,
+            limit,
+            problem_type: _,
+        } = self;
+
+        *retry_after == other.retry_after && *limit == other.limit
     }
 }
 
@@ -292,20 +307,32 @@ impl<T> Clone for RateLimitedFields<T> {
 
 impl<T> fmt::Debug for RateLimitedFields<T> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            retry_after,
+            limits,
+            policies,
+            problem_type: _,
+        } = self;
+
         formatter
             .debug_struct("RateLimitedFields")
-            .field("retry_after", &self.retry_after)
-            .field("limits", &self.limits)
-            .field("policies", &self.policies)
+            .field("retry_after", retry_after)
+            .field("limits", limits)
+            .field("policies", policies)
             .finish()
     }
 }
 
 impl<T> PartialEq for RateLimitedFields<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.retry_after == other.retry_after
-            && self.limits == other.limits
-            && self.policies == other.policies
+        let Self {
+            retry_after,
+            limits,
+            policies,
+            problem_type: _,
+        } = self;
+
+        *retry_after == other.retry_after && *limits == other.limits && *policies == other.policies
     }
 }
 

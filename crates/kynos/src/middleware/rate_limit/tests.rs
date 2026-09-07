@@ -610,8 +610,8 @@ fn a_limiter_keeps_its_impls_whatever_type_names_its_refusal() {
     assert_clone_and_debug::<RateLimit<Policy, Legacy, ()>>();
     assert_clone_and_debug::<RateLimit<Policy, Structured, Throttled>>();
 
-    // And they still say what they said: the spelling and the problem type are
-    // in the type name, so `Debug` has one field to print.
+    // And they still say what they said. One field: `_spelling` holds nothing
+    // an operator can read.
     let limiter = RateLimit::new(Policy)
         .refusal_type::<Throttled>()
         .standard_fields();
