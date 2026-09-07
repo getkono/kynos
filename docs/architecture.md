@@ -382,7 +382,8 @@ requires cannot compile in any crate inheriting those lints, which is all three
 of them. Taking a vetted one is how the invariant is kept
 rather than bent: the unsafe stays upstream, and this tree keeps a rule it
 would otherwise have had to carve an exception into. It is a dev-dependency
-named by [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) and by nothing
+named by [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) and
+[`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs), and by nothing
 under `src/`.
 
 Two properties decide which counter, and both are load-bearing. Its counters
@@ -390,7 +391,7 @@ are **thread-local**, so a region reads what the measuring thread allocated
 rather than what the process did — `libtest` runs a test on a thread it spawns
 and keeps its own alive beside it, so a process-global counter reports the
 harness's allocations as the router's, on whichever microsecond-wide region
-happens to be open. And it installs **no allocator on its own behalf**: the one
+happens to be open. And it installs **no allocator on its own behalf**: each
 target that wants it writes the `#[global_allocator]` line itself, which is
 what keeps the instrument out of every other test binary in the package.
 
@@ -692,6 +693,46 @@ certificate chain `TlsIdentity` owns, which a `size_of` sees as one
 pointer-width triple and a multi-certificate mTLS chain makes kilobytes of heap
 the reading does not see, along with the connection task's future, the service
 handle and the semaphore permit, none of which is bounded today.
+
+The other two have their numbers now, and neither costs what the entry above
+predicted. The first is traced through the dependencies it runs on rather than
+measured, which is the whole of what it claims: re-sniffing ALPN costs no read
+syscall on the one path where ALPN exists. hyper-util's `read_version` reads
+into a 24-byte array and rewinds the head it copied out, and on plaintext TCP
+that cap does force the codec into a second `read(2)` — but plaintext
+negotiates no protocol to discard in the first place. Under TLS, `tokio-rustls`
+reads and decrypts a whole record before it hands any plaintext up, and rustls
+reports no want for a read while that plaintext is buffered, so the codec's
+next read is served out of memory. What is left is one heap copy of the head,
+at most 24 bytes, and one extra poll through the TLS stack per connection — a
+socket-level per-connection figure, and so `kynos-bench`'s by the boundary
+[`performance.md`](performance.md#the-boundary) sets. It is deferred there
+rather than taken here, and filed as
+[#114](https://github.com/getkono/kynos/issues/114): one allocation per
+connection is not the syscall per connection the entry was written for, and the
+number is what decides it.
+
+Erasing a body is not on the routing path at all. None of the seven allocations
+[`alloc.rs`](../crates/kynos/tests/alloc.rs) records for a static match is a
+body erasure — the request body there is built before the counted region opens,
+and a `204`'s response body is `Body::empty`, which erases a zero-sized type, so
+the `Box::pin` behind it returns a dangling pointer and never reaches the
+allocator. The mutex is not part of the cost either; it is inline in `Body`. The
+entry is true one step further out, on the server path, where
+`Body::from_incoming` erases a `hyper::body::Incoming` that is not zero-sized:
+on a router with no observer registered, one allocation per request that
+arrives over a socket, and one more for a response body that is not empty. The
+qualifier is the condition
+[`dispatch.rs`](../crates/kynos/src/router/dispatch.rs)'s `finish` branches on
+— a router with an observer erases the response body a second time through a
+`Watched` that is not zero-sized and boxes the disconnect report beside it, for
+two more. That figure is traced rather than counted: `Body::from_incoming` is
+`pub(crate)` and nothing counts it.
+[`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) counts both constructors
+— zero for `Body::empty`, one for `Body::from_bytes` — and
+[`size.rs`](../crates/kynos/tests/size.rs) holds the zero-sized reason as a
+witness beside it, so a dependency bump that ends it turns something red rather
+than leaving this paragraph quietly wrong.
 
 ### Why kernel TLS is deferred
 

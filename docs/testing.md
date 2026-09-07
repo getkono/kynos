@@ -39,7 +39,11 @@ rather than by the table above. The two documents divide by question — this on
 says what a guarantee owes, that one says what a *feature costs the request
 path* — and `alloc.rs` is filed here as well because the inventory above claims
 to be every integration target, and a claim of completeness is worth only as
-much as its exceptions.
+much as its exceptions. [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs)
+is filed here under the same exception and for the same reason: it asserts a
+cost too, and it is a target of its own rather than more rows in `alloc.rs`
+because a `#[global_allocator]` measures the whole binary it is installed in,
+so a body constructor's number cannot share a file with the routing path's.
 
 `conformance.rs` runs now that the router and `test/` have landed, and both of
 its assertions pass. `every_declared_response_is_exercised` carried an
@@ -54,8 +58,9 @@ attribute outlived its reason and went with it.
 | [`errors.rs`](../crates/kynos/tests/errors.rs) | each extractor rejects with the rejection type its signature names |
 | [`reporting.rs`](../crates/kynos/tests/reporting.rs) | every error type a caller can receive is `Error + Send + Sync + 'static` |
 | [`typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) | a route attribute's `relative_uri` percent-encodes its parameters, and that the hand-written fixture it encodes with describes what it encodes — a `Schema` body nothing executes cannot disagree with the `encode` beside it |
-| [`size.rs`](../crates/kynos/tests/size.rs) | a build failure does not inline a `Violation`, and a `Result` costs no more than it |
+| [`size.rs`](../crates/kynos/tests/size.rs) | a build failure does not inline a `Violation`, a `Result` costs no more than it, and which of the three bodies Kynos erases are zero-sized — the reasons `alloc_body.rs`'s counts read the way they do, filed here because a `size_of` needs no allocator |
 | [`alloc.rs`](../crates/kynos/tests/alloc.rs) | what the routing path allocates per route shape, and that a replayed request costs what the first one did. It owns a `#[global_allocator]`, which is why it is a target of its own rather than a sibling `tests.rs`: installed in the library's unit-test binary the counter would reach every unit test in it |
+| [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) | what erasing a body through `UnsyncBoxBody` costs: nothing for an empty body, which erases a zero-sized type, and one allocation for any body that does not. A second `#[global_allocator]` target, for the reason the first one is one; the zero-sized facts behind both numbers are size guards and live in `size.rs` |
 | [`conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs) | that the committed corpus is what this build emits, and that it still carries the 3.2 constructs it exists to pin — asserted against the committed *text*, since what a downstream repository reads is the file |
 | [`conformance.rs`](../crates/kynos/tests/conformance.rs) | that the responses a suite observed match what the document promises, and that every declared response was exercised |
 | [`matrix.rs`](../crates/kynos/tests/matrix.rs) | the same two assertions over every layer Kynos owns, which is the only place a wrong *document* fails against responses that actually happened. Static assertions about that document belong in `description.rs` even when the matrix is what found them: the matrix reports which promise went unkept, and the small fixture there says which rule was broken. That rule is about a document; an assertion about a *type* is a different question and stays with the type, which is why the `ShortCircuit` sweep is in `interceptors.rs` — see [below](#the-sweep-and-the-matrix-assert-one-property-over-two-sets) |
