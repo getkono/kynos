@@ -5,7 +5,7 @@ measurement a given shape of code owes. [`nfr.md`](nfr.md) records which of
 these run today; this document is about the method.
 
 Every section except [Rationale](#rationale) states a rule that binds
-implementation work. All five of the kinds below run today, three of them only
+implementation work. All five of the kinds below run today, four of them only
 for part of what they cover, and the [taxonomy](#the-taxonomy)'s last column is
 where that is admitted rather than implied.
 
@@ -46,11 +46,11 @@ What each kind of measurement proves that no other kind does.
 
 | Kind | Lives in | Runs under | Proves | Status |
 | --- | --- | --- | --- | --- |
-| Allocation count | its own integration target | `cargo nextest`, over `alloc_counter` | that a path allocates a bounded number of times | in use, at [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) |
-| Size guard | [`tests/size.rs`](../crates/kynos/tests/size.rs), or a sibling `tests.rs`, or beside the count that shares its fixture | `cargo nextest` | that a type or a future did not grow | in use for types, and for the dispatch future at [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) |
+| Allocation count | its own integration target | `cargo nextest`, over `alloc_counter` | that a path allocates a bounded number of times | in use, at four targets: [`kynos/tests/alloc.rs`](../crates/kynos/tests/alloc.rs) for the routing path, [`kynos/tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) for body erasure, [`kynos/tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) for what a payload codec adds, and [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs) for what producing a description costs at 10, 100 and 1000 operations. Several rather than one because an integration binary cannot be depended on, so a second crate that counts cannot reach the first one's harness |
+| Size guard | [`tests/size.rs`](../crates/kynos/tests/size.rs), or a sibling `tests.rs`, or beside the count that shares its fixture | `cargo nextest` | that a type or a future did not grow | in use for types, and for the dispatch future at [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) — which is the one future guarded, not every future |
 | Off-path proof | a sibling `tests.rs`, and a table [`containment:check`](../scripts/containment.py) reads | `python3 scripts/containment.py`, `cargo nextest` | that a feature is unreachable from the request path | in use, for the off-path flags and for the document, the registry, the validators and `jsonschema`: a table in [`testing.md`](testing.md#the-off-path-proof) held by `mise run containment:check`, plus the field witness in [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs); `describe` is the one off-path shape no row holds, and the emitters are held by the `yaml` flag's row rather than by one of their own |
 | Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | in use, via `mise run cost:features` over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs); reports a trend and sets no ceiling, and sees the generics that fixture instantiates rather than the whole surface — so a feature that grows the dependency graph can shrink this number by sharing instantiations out of upstream rlibs, and a negative row is a relocation rather than a saving |
-| Binary delta | a feature sweep | `.text` of a fixed fixture | what a feature costs a linked artifact | in use, over [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv); reports a trend and sets no ceiling |
+| Binary delta | a feature sweep | `.text` of a fixed fixture | what a feature costs a linked artifact | in use, over [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv); reports a trend and sets no ceiling. The fixture uses none of these features, so a zero row says the linker stripped — or the collector never instantiated — what nothing called, rather than that the feature is free to a program that uses it |
 
 **An allocation count needs its own target because a global allocator is
 process-wide.** Installing one in the library's unit-test binary would perturb
@@ -78,8 +78,12 @@ one keeps that invariant rather than bending it, and why the crate that
 installs no allocator on its own behalf was the one worth taking.
 
 The two sweep kinds are not tests. They build the same fixture at each feature
-and compare artifacts, which no test harness can express, so they are a task
-rather than a target and their baselines are committed files.
+and compare artifacts, which no test harness can express, so they are a task —
+`mise run cost:features`, over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs)
+— rather than a target, and their baselines are the committed
+[`cost/binary.tsv`](../crates/kynos/cost/binary.tsv) and
+[`cost/codegen.tsv`](../crates/kynos/cost/codegen.tsv), which
+`mise run cost:record` writes.
 
 ## The allocation
 
@@ -98,7 +102,7 @@ Six shapes account for the routing stack.
 | Per-request path element | it runs inside `Dispatch::serve` for every request | an allocation count over a replay, and a future-size guard | a timing figure |
 | Per-layer element | an `Interceptor` in the erased chain | an allocation and future-size delta at stack depth 0/4/8 | a per-layer latency |
 | Per-connection element | [`server/`](../crates/kynos/src/server/), TLS, the protocol configs | a size guard on per-connection state | per-request attribution; resident memory at scale is `kynos-bench` |
-| Off-path element | the document model, the emitters, the validators, `describe` | a proof it is unreachable from the request path, and a binary delta | any per-request measurement |
+| Off-path element | the document model, the emitters, the validators, `describe` | a proof it is unreachable from the request path, a binary delta, and an allocation count on generation | any per-request measurement |
 | Opt-in payload codec | a body extractor or response codec behind a feature | a binary delta, and an allocation count on an operation that names it | a measurement on a route that never mounts it |
 
 **A type-level surface owes a codegen delta and nothing else, for the same
@@ -126,6 +130,15 @@ elements — the emitted `Document`, `Registry::{new,default}`,
 [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs) pins
 every field a request reaches through the dispatch table, so a new one is a
 compile failure until someone argues for it.
+
+**Off the request path is not the same as free, which is why the shape owes a
+third thing.** Zero per request says nothing about what building the document
+costs the process that builds it, and that cost scales in a dimension no
+per-request measurement has: the number of operations declared.
+[`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs) counts
+one `to_json` and one `emit` at 10, 100 and 1000 of them, against recorded
+ceilings and a per-decade sub-quadratic relation. It is billed here rather than
+under a per-request shape precisely because a request never reaches it.
 
 **An opt-in codec is measured on a route that mounts it.** Measuring `json`
 against an operation with no body would report zero and mean nothing. The

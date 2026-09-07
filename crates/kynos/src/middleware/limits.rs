@@ -14,7 +14,7 @@ use kynos_openapi::model::schema::types::SchemaType;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::{
-    error::problem::Problem,
+    error::problem::{Problem, problem_response},
     http,
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
@@ -67,10 +67,9 @@ impl ShortCircuit for BodySizeExceeded {
 
 impl Responses for BodySizeExceeded {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        let _ = registry;
         kynos_openapi::Responses::new().with(
             413,
-            kynos_openapi::Response::new("the request body exceeds the configured limit"),
+            problem_response(registry, "the request body exceeds the configured limit"),
         )
     }
 }
@@ -220,10 +219,12 @@ impl ShortCircuit for TimedOut {
 
 impl Responses for TimedOut {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        let _ = registry;
         kynos_openapi::Responses::new().with(
             408,
-            kynos_openapi::Response::new("the handler did not finish within the configured limit"),
+            problem_response(
+                registry,
+                "the handler did not finish within the configured limit",
+            ),
         )
     }
 }
@@ -432,10 +433,9 @@ impl ShortCircuit for AtCapacity {
 
 impl Responses for AtCapacity {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        let _ = registry;
         kynos_openapi::Responses::new().with(
             503,
-            kynos_openapi::Response::new("the service is at its concurrency limit")
+            problem_response(registry, "the service is at its concurrency limit")
                 .with_header("Retry-After", retry_after_header()),
         )
     }

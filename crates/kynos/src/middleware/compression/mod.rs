@@ -157,10 +157,10 @@ impl crate::response::ShortCircuit for NotAcceptable {
 
 impl crate::response::Responses for NotAcceptable {
     fn responses(registry: &mut crate::schema::registry::Registry) -> kynos_openapi::Responses {
-        let _ = registry;
         kynos_openapi::Responses::new().with(
             406,
-            kynos_openapi::Response::new(
+            crate::error::problem::problem_response(
+                registry,
                 "no representation has a content coding the request accepts",
             ),
         )
@@ -235,6 +235,14 @@ fn negotiate(headers: &http::HeaderMap) -> Negotiated {
     }
 }
 
+/// How much of an encoder's output one read takes.
+///
+/// Named because it is measured from outside the crate: `DRAIN_CHUNK` in
+/// `tests/alloc_codecs.rs` mirrors it to bound how the encoder's allocation
+/// count may grow with the body, and an integration target cannot see a
+/// `pub(crate)` const. Moving this number means moving that one.
+const DRAIN_CHUNK: usize = 8 * 1024;
+
 /// Reads an encoder to its end.
 ///
 /// Driven by hand rather than through `AsyncReadExt`, so that compression needs
@@ -242,7 +250,7 @@ fn negotiate(headers: &http::HeaderMap) -> Negotiated {
 /// against.
 async fn drain<R: AsyncRead + Unpin>(mut source: R) -> io::Result<Bytes> {
     let mut encoded = BytesMut::new();
-    let mut chunk = [0_u8; 8 * 1024];
+    let mut chunk = [0_u8; DRAIN_CHUNK];
 
     loop {
         let read = std::future::poll_fn(|context| {

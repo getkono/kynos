@@ -45,16 +45,22 @@ on a shared runner is a guessed ceiling by the standard
 [Thresholds](#thresholds) sets, whatever the requirement names.
 [`performance.md`](performance.md#the-boundary) carries the reasoning.
 
+The counted halves are being wired one at a time rather than together: route
+resolution's is `enforced` in [Routing](#routing) below, generation's is
+`enforced` in [Document model](#document-model), and the per-layer one in
+[Middleware](#middleware) is still `planned`. This paragraph records the split
+and not a status, so read the status off the row.
+
 Nothing was deleted in the split, and that is deliberate: replacing a latency
 requirement with an allocation one and calling it a refiling would leave the
 latency unmeasured in both repositories while this column claimed otherwise.
 
 Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
-`trybuild`, `proptest`, `alloc_counter`, rustdoc with `missing_docs = "deny"`, and
-`cargo-semver-checks` — the last through both release-plz, at default features
-and fail-open, and `mise run semver:check`, at every feature. Not yet present:
-`cargo-public-api`, `cargo-fuzz`. `criterion` is not on this list and will not
-be: benchmarks live in `kynos-bench`.
+`trybuild`, `proptest`, `alloc_counter`, `cargo-llvm-lines`, rustdoc with
+`missing_docs = "deny"`, and `cargo-semver-checks` — the last through both
+release-plz, at default features and fail-open, and `mise run semver:check`, at
+every feature. Not yet present: `cargo-public-api`, `cargo-fuzz`. `criterion` is
+not on this list and will not be: benchmarks live in `kynos-bench`.
 
 ## Thresholds
 
@@ -108,7 +114,7 @@ half and the timed half are separate rows, and only the timed one carries the
 | correctness | Emitted documents are byte-deterministic across platforms | A cross-OS CI job, which does not exist: every job runs on `ubuntu-latest` | `planned` |
 | dx | No public item exposes `Pin`, `BoxFuture` or a tokio type | `cargo-public-api` assertion | `needs-tooling` |
 | operability | `--check` mode exits nonzero on drift from the committed document | A binary target, used as a required gate on the framework's own examples | `blocked-on-impl` |
-| performance | Generation allocations and output size scale sub-quadratically in operation count | Counting the allocations and output bytes of one emission at 10/100/1000 operations, with a fitted-slope assertion | `planned` |
+| performance | Generation allocations and output size scale sub-quadratically in operation count | [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs), counting one `to_json` and one `emit` at 10/100/1000 operations: per-size ceilings recorded from the first measurement over all three series — one `to_json`'s allocations, one `emit`'s, and the emitted document's size in bytes, in JSON — and a per-decade integer relation `a(n)·m² < a(m)·n²` over the same three. **Not** a fitted slope: a pure quadratic fits at exactly 2.0, so a gate there turns on the last bit of a logarithm and any ceiling below it is a number nobody measured, which [Thresholds](#thresholds) refuses | `enforced`, with the division of labour recorded in the file and held by a control rather than assumed: the relation cancels an added exactly-quadratic term algebraically, in bytes exactly as in allocations, so a nested walk over `paths` is caught by the recorded ceilings and not by the relation — dropping either set would leave that half of the requirement caught by nothing. A synthetic series drives both halves in the target itself, so an assertion that stops asserting is red. Counting allocation *calls* still leaves a quadratic that allocates nothing to the timed twin below |
 | performance | Generation time scales sub-quadratically in operation count | Measured at 10/100/1000 operations with a fitted-slope assertion | `kynos-bench` |
 
 The `--check` row's blocker was never a `todo!()` body: the workspace declares no
@@ -271,6 +277,7 @@ belongs with [`security.md`](security.md) rather than here.
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | correctness | Emitted document ⊇ observable responses | [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) checking live responses against the generated document across the owned-layer matrix, in both directions | `enforced` |
+| correctness | A short circuit's description declares the body it sends, and declares none only where it sends none | `every_short_circuit_declares_the_content_it_sends` in [`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) driving every constructible implementation against `every_short_circuit_kynos_ships_is_accounted_for`'s set, plus the declaration-of-none check in [`test/conformance.rs`](../crates/kynos/src/test/conformance.rs) that [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) runs over a live exchange | `enforced` |
 | correctness | Two interceptors covering one operation never add one response header or answer with one status | `CompatibleWith` forced at every mount site, with a `trybuild` case per scope in [`tests/ui/antipattern/`](../crates/kynos/tests/ui/antipattern/) and a pass control for each | `enforced` for what the two sides declare; the two rows below are where a declaration is missing |
 | correctness | The check does not depend on the order the scopes were written in | The five `*_collide` cases mount a scope *before* the interceptor that conflicts with it, which is the order that used to compile | `enforced`; this row is why the one above is not a restatement |
 | correctness | An interceptor attaches exactly the header group it declared, and that group writes only the names it declared | `with_headers` on `Continued<()>` alone, pinned by `interceptor_attaches_an_undeclared_header`; the encode-subset `debug_assert` in the one writer, pinned by `a_group_encoding_an_undeclared_field_is_refused` | `enforced` in debug; the assert is compiled out of release |
@@ -359,6 +366,7 @@ paragraph in [Status](#status).
 | reliability | A streamed request body is decoded as it arrives rather than after it has been collected | [`extract/body/json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) reading a body delivered one frame per byte, and every frame boundary of a fixed body | `enforced` for a body declaring a `Content-Length`; `by-design` under `BodySize` for a chunked one |
 | performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `kynos-bench` |
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `kynos-bench` |
+| performance | The per-connection state Kynos itself holds inline stays within its recorded ceilings | [`extract/connection/tests.rs`](../crates/kynos/src/extract/connection/tests.rs), asserting `Connection` one pointer wide, narrower than `Inner`, and shared rather than copied on clone, `Inner` ≤ 192 from a measured 144 and `TlsIdentity` ≤ 128 from a measured 72; and [`server/tests.rs`](../crates/kynos/src/server/tests.rs), asserting the configuration cloned per accepted socket — `Http1Config` ≤ 64 from 40, `Http2Config` ≤ 128 from 80, `TransportConfig` ≤ 192 from 168. Every reading is a `size_of`, so what a certificate chain or a server name points at is counted by none of them | `enforced` for the ceilings; the relation to the smallest transport buffer is prose in the same doc comments, since it cannot fail while a ceiling holds |
 | compatibility | `Listener::Tokio` is the only public item naming a tokio type | `cargo-public-api` assertion over the framework surface | `needs-tooling` |
 | compatibility | Every `tokio` mention outside `crates/kynos/src/server/` appears in the allowance table in [`architecture.md`](architecture.md#runtime-policy), and the table has exactly six rows | `mise run containment:check`, which reads the table rather than restating it, over source stripped of comments, string literals and `#[cfg(test)]` modules | `enforced` |
 
@@ -367,6 +375,15 @@ The last two rows are the enforcement of the tokio-only policy in
 abstraction trait to keep private, so what CI has to check is the opposite:
 that direct tokio use stays where it is allowed, and that it reaches users only
 through the listener handover it is meant to.
+
+The `size_of` row and the idle-memory row above it are two requirements, not one
+measured twice. A `size_of` reads what a type holds inline and nothing a pointer
+in it reaches, so it cannot see a peer certificate chain, a connection task's
+future or hyper's own buffers; resident memory at 100k connections sees all of
+them and no individual type. That is the split
+[`performance.md`](performance.md#the-boundary) draws for the per-connection
+shape, which owes a size guard here and sends resident memory at scale to
+`kynos-bench`. Neither row's status may be read off the other's.
 
 The containment row is written against an enumerated table rather than against
 `server/` alone, and that is a correction rather than a loosening: the grep as
@@ -413,7 +430,7 @@ where someone mounting a cap will meet it.
 
 AGENTS.md: *"A module becomes a directory once it holds two
 independently-changing concerns … Passing ~400 lines excluding tests is when to
-ask that question, not an answer to it."* Twenty-eight files under `crates/*/src`
+ask that question, not an answer to it."* Twenty-nine files under `crates/*/src`
 are past that line and asked it, and `containment:check` holds that number so it
 can only move on purpose.
 
@@ -424,7 +441,7 @@ public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: it is one of
 them, it declares eight rejection types, and splitting it would turn
 `error::rejection::PathRejection` into
-`error::rejection::path::PathRejection`. Sixteen of the twenty-eight are that
+`error::rejection::path::PathRejection`. Seventeen of the twenty-nine are that
 shape, worth roughly a hundred public paths between them — and each is one
 cohesive family, which is precisely what the concern test says may stay a file.
 So they stay: a longer path is a worse name, and the rule's first clause already
@@ -438,6 +455,18 @@ sit in any module of the crate. That is why `router/`, `emit/downgrade/` and
 
 The budget is the honest record of what stayed. It falls when a module is split,
 and raising it means saying in the same commit why a new module needs the room.
+
+`response/status.rs` is the twenty-ninth, and it is the shape above rather than
+a new argument. It declares six public types — `Location`, `NoContent`,
+`Created`, `Accepted`, `Redirect` and `ValidRedirectCode` — so splitting it
+would turn `response::status::Created` into
+`response::status::created::Created` and do the same to the other five. What
+pushed it over was the third case in the rule that decides a wrapper's declared
+response: a body may describe no 200, or one, or the wrapper's own status, and
+the last of those is the one whose absence let a `Created<T>` overwrite a
+representation the body had already declared. The case is four lines; the
+account of why the body's half wins is the rest, and it is the half a later
+reader needs.
 
 ## Dependencies
 
@@ -533,7 +562,7 @@ open against a `kynos-otel` that may never be written.
 | reliability | Every reachable feature combination compiles | `mise run features:check` (`cargo hack --feature-powerset`) | `enforced` |
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
 | reliability | Tests are hermetic; no shared state, no ordering dependence, no retries | `cargo-nextest` process isolation, `retries = 0`, guarded by `crates/kynos/tests/hermeticity.rs` | `enforced` |
-| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 28 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
+| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 29 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
 | reliability | Panic recovery refuses to compile under `panic = "abort"` | `mise run panic:check` | `enforced` |
 | reliability | Commits follow Conventional Commits | `convco`, via git hook and CI | `enforced` |
 | compatibility | Every hand-rolled `Stream` implementation is private, except the one row in [`architecture.md`](architecture.md#public-api-surface), and there are exactly three of them | `mise run containment:check`, counting `Stream for` against the table and the two private sites its prose names | `enforced` |
@@ -544,6 +573,7 @@ open against a `kynos-otel` that may never be written.
 | dx | Every public item has a compiling doc example | Doctests already run via `mise run test:doc`; *presence* of an example per item is unenforced | `planned` |
 | compatibility | Public API item count is tracked as a budget | `cargo-public-api` count with a committed baseline | `needs-tooling` |
 | performance | The benchmark suite runs nightly with regression alerting | `kynos-bench`, so erosion surfaces as a trend rather than at release | `kynos-bench` |
+| performance | What each feature costs a linked artifact and in monomorphized IR | `mise run cost:features` over a fixed fixture at each feature, dedicated CI job, deltas against a committed baseline | `partial`: the trend goes to the job summary rather than failing the pull request, and no ceiling is set — one is set from a first recorded measurement, which is what the committed baselines are |
 
 **The re-export row is judged by where a path leads, not by a list of files.**
 A `pub use` of a foreign crate is a facade: `http/mod.rs` republishes
@@ -565,7 +595,7 @@ what they unblock:
 | `trybuild` | Compile-fail and UI rows in routing, extraction and macros | Already in `[workspace.dependencies]`; needs only a consumer |
 | `proptest` | IR round-tripping, schema projection, the conformance harness | |
 | `cargo-fuzz` | Extractor panic-freedom | Needs a committed corpus and a nightly job |
-| `cargo-llvm-lines` | The codegen-delta kind in [`performance.md`](performance.md#the-taxonomy), which is what a type-level surface owes | The only measurement in that document with no tool present. A feature sweep can report `.text` deltas without it; attributing them to a monomorphization needs it |
+| `cargo-llvm-lines` | The codegen-delta kind in [`performance.md`](performance.md#the-taxonomy), which is what a type-level surface owes | Closed. `mise run cost:features` runs it at each feature over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs), in the dev profile because a fat-LTO build deletes the monomorphizations this counts. It counts the example crate's own instantiations, so a feature that grows the dependency graph can shrink the number by sharing generics out of upstream rlibs — a negative row is a relocation, not a saving. It lists, for the features that moved, which monomorphizations that feature instantiates beyond the baseline — its composition in that run, not a per-function drift, which the baseline deliberately does not record. The `.text` half of the same sweep answers the binary-delta row beside it. Neither sets a ceiling — see [Thresholds](#thresholds) |
 | `cargo-semver-checks` | The `compatibility` rows in [Workspace](#workspace) | Closed. `mise run semver:check` runs it at `--all-features` on every pull request, against the last published version — which is what this row asked for once 0.1.0 reached crates.io. Release-plz still runs its own default-features, fail-open copy at release time, and that half is unchanged: the two are recorded separately above because they buy different things |
 
 `criterion` is intentionally absent from this list, and stays absent now that

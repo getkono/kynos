@@ -36,6 +36,10 @@
 //! * **A store outage is not an API outage.** The default on failure is to
 //!   allow. A limiter exists to shed load, and one that sheds everything when
 //!   its cache blinks has turned a degradation into an incident.
+//! * **The refusal names its own problem type.** `about:blank` says the status
+//!   code is the whole story, which is false of a service enforcing three
+//!   different quotas. The URI is stated once, as a type, and reaches both the
+//!   429's body and the 429 the description declares.
 
 use std::{net::Ipv4Addr, time::Duration};
 
@@ -46,6 +50,7 @@ use kynos::{
         RateLimit,
         key::{And, ByClientAddress, ByRoute},
         quota::{Quota, Quotas},
+        refusal::RefusalType,
         store::{RateLimitStore, StoreFailure},
     },
     prelude::*,
@@ -105,6 +110,17 @@ impl RateLimitStore for MokaCounters {
     }
 }
 
+/// The problem type every refusal from this service carries.
+///
+/// A marker rather than a value: what an interceptor declares is read from its
+/// associated types, so a URI chosen per denial would reach the wire and leave
+/// the description saying `about:blank` about it.
+struct Throttled;
+
+impl RefusalType for Throttled {
+    const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/rate-limited");
+}
+
 // --- The operations -------------------------------------------------------
 
 /// An ordinary read, under the shared limit.
@@ -148,7 +164,10 @@ async fn main() -> kynos::Result<()> {
             )
             // Every quota reaches the wire. Without this the response could
             // report one of the three, and a client could not tell which.
-            .standard_fields(),
+            .standard_fields()
+            // And the 429 says which *kind* of refusal it is, so a client can
+            // branch on `type` rather than on the status code alone.
+            .refusal_type::<Throttled>(),
         )
         .mount(kynos::routes![reports, render]);
 

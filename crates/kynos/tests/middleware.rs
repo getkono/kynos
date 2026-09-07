@@ -11,6 +11,7 @@ use kynos::{
     middleware::rate_limit::{
         RateLimit,
         decision::{Decision, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
+        refusal::RefusalType,
     },
     router::operation::Route,
 };
@@ -120,6 +121,10 @@ async fn a_denial_carries_the_headers_its_own_response_type_describes() {
     assert_eq!(reply.field("x-ratelimit-limit").as_deref(), Some("100"));
     assert_eq!(reply.field("x-ratelimit-remaining").as_deref(), Some("0"));
     assert_eq!(reply.field("x-ratelimit-reset").as_deref(), Some("30"));
+
+    // The default type, so that naming one is visibly a decision rather than
+    // the only way to get a usable document.
+    assert_eq!(reply.json()["type"], "about:blank");
 }
 
 /// Setting a header means declaring it, and declaring it means a client
@@ -206,6 +211,135 @@ fn the_description_carries_whichever_spelling_was_selected() {
 
     assert!(emitted.contains("RateLimit-Policy"), "{emitted}");
     assert!(!emitted.contains("X-RateLimit-Limit"), "{emitted}");
+}
+
+/// The problem type this fixture's refusals carry.
+///
+/// A marker rather than a value, because the declaration is read from
+/// `Interceptor`'s associated types and never from an instance -- so a URI
+/// supplied at run time could reach the wire and nothing else.
+struct Throttled;
+
+impl RefusalType for Throttled {
+    const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/rate-limited");
+}
+
+/// One statement of the type, reaching both halves of the promise.
+///
+/// The defect: a service branching on `type` had no way to make its 429 say
+/// anything but `about:blank`, and adding one that reached only the wire would
+/// leave the document contradicting it -- which is the failure the short-circuit
+/// sweep exists to catch. So both halves are read here, from one mounted
+/// limiter, and the untyped document is read beside them: naming no type must
+/// still declare no example, or every existing description changes.
+#[tokio::test]
+async fn a_named_refusal_type_reaches_the_wire_and_the_document_it_declares() {
+    const URI: &str = "https://errors.example.com/rate-limited";
+
+    let service = support::router()
+        .intercept(RateLimit::new(AlwaysDenies::new()).refusal_type::<Throttled>())
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = get(&service, "/users/1").call().await;
+
+    assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(reply.json()["type"], URI);
+
+    let declared = serde_json::to_value(
+        support::router()
+            .intercept(RateLimit::new(AlwaysDenies::new()).refusal_type::<Throttled>())
+            .openapi()
+            .expect("a describable router"),
+    )
+    .expect("a serializable document");
+
+    assert_eq!(
+        declared["paths"]["/users/{id}"]["get"]["responses"]["429"]["content"]["application/problem+json"]
+            ["example"]["type"],
+        URI,
+        "the description does not carry the type the wire sent: {declared}"
+    );
+
+    // And the untyped limiter declares nothing extra, so the documents every
+    // service already emits are unchanged.
+    let untyped = serde_json::to_value(
+        support::router()
+            .intercept(RateLimit::new(AlwaysDenies::new()))
+            .openapi()
+            .expect("a describable router"),
+    )
+    .expect("a serializable document");
+
+    assert!(
+        untyped["paths"]["/users/{id}"]["get"]["responses"]["429"]["content"]
+            ["application/problem+json"]["example"]
+            .is_null(),
+        "an unnamed type still put an example in the document: {untyped}"
+    );
+}
+
+/// Naming the type and taking the draft's fields are two decisions, in either
+/// order.
+///
+/// `standard_fields` was widened to preserve `T` rather than resetting it to
+/// `()`, and nothing else mounts it at `T != ()`: narrowing it back to
+/// `RateLimit<P, Legacy, ()>` would reinstate the rule that the type must be
+/// named last, and every other test would stay green while it did. This one
+/// stops compiling.
+///
+/// Both halves again, because the pair is what the widening put at risk: the
+/// wire could keep the URI while the description that a `Structured` refusal
+/// declares lost it.
+#[tokio::test]
+async fn a_named_refusal_type_survives_taking_the_standard_fields() {
+    const URI: &str = "https://errors.example.com/rate-limited";
+
+    let service = support::router()
+        .intercept(
+            RateLimit::new(AlwaysDenies::new())
+                .refusal_type::<Throttled>()
+                .standard_fields(),
+        )
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = get(&service, "/users/1").call().await;
+
+    assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(reply.json()["type"], URI);
+
+    // The spelling survived the naming, so this really is the composition and
+    // not the legacy limiter under another name.
+    assert_eq!(
+        reply.field("ratelimit").as_deref(),
+        Some(r#""default";r=0;t=30"#)
+    );
+    assert!(reply.field("x-ratelimit-limit").is_none());
+
+    let declared = serde_json::to_value(
+        support::router()
+            .intercept(
+                RateLimit::new(AlwaysDenies::new())
+                    .refusal_type::<Throttled>()
+                    .standard_fields(),
+            )
+            .openapi()
+            .expect("a describable router"),
+    )
+    .expect("a serializable document");
+
+    let operation = &declared["paths"]["/users/{id}"]["get"];
+
+    assert_eq!(
+        operation["responses"]["429"]["content"]["application/problem+json"]["example"]["type"],
+        URI,
+        "the standard spelling's description does not carry the type the wire sent: {declared}"
+    );
+    assert!(
+        operation["responses"]["429"]["headers"]["RateLimit"].is_object(),
+        "the standard spelling was lost on the way through: {declared}"
+    );
 }
 
 /// Compression must not re-encode anything a byte range is calculated against.
