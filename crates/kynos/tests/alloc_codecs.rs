@@ -337,10 +337,11 @@ mod harness {
 
         assert!(
             over.is_empty(),
-            "{over:?}; the ceiling is `RECORDED` in this file, and the \
-             requirement it serves is reviewed in docs/nfr.md — raising one is \
-             a change to both, and lowering one is what a cheaper codec looks \
-             like"
+            "{over:?}; the ceiling is `RECORDED` in this file, which is where \
+             this number lives — the register row that sanctions it is filed by \
+             #121 under docs/nfr.md#extraction and is not there yet, so until \
+             then raising one is a change to this table alone, and lowering one \
+             is what a cheaper codec looks like"
         );
     }
 
@@ -557,9 +558,11 @@ mod json {
     /// today.
     ///
     /// Read rather than chosen: each ceiling was set to zero, the target run,
-    /// and the number the failure reported transcribed into the row. Raising
-    /// one is a change to [`nfr.md`](../../../docs/nfr.md#extraction); lowering
-    /// one is what a cheaper codec looks like.
+    /// and the number the failure reported transcribed into the row. This table
+    /// is where the number lives; the register row that sanctions it is filed
+    /// by #121 under [`nfr.md`](../../../docs/nfr.md#extraction). Raising one is
+    /// a change to both once that lands; lowering one is what a cheaper codec
+    /// looks like.
     ///
     /// **Decoding this body costs exactly what reading it undecoded costs**,
     /// which is the reading the transport floor exists to make visible. `serde`
@@ -1385,10 +1388,11 @@ mod compression {
 
         assert!(
             over.is_empty(),
-            "{over:?}; the ceiling is `RECORDED` in this file, and the \
-             requirement it serves is reviewed in docs/nfr.md — raising one is \
-             a change to both, and lowering one is what a cheaper encoder looks \
-             like"
+            "{over:?}; the ceiling is `RECORDED` in this file, which is where \
+             this number lives — the register row that sanctions it is filed by \
+             #121 under docs/nfr.md#middleware and is not there yet, so until \
+             then raising one is a change to this table alone, and lowering one \
+             is what a cheaper encoder looks like"
         );
     }
 
