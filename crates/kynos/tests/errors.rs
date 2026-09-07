@@ -184,7 +184,7 @@ impl<C: Sync> Authenticator<Bearer<Claims>, C> for Tokens {
         context: &C,
     ) -> Result<(), AuthRejection> {
         let _ = (credential, scopes, context);
-        Err(AuthRejection::Forbidden)
+        Err(AuthRejection::forbidden())
     }
 }
 

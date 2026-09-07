@@ -43,6 +43,13 @@
 //! The challenge is declared on the scheme rather than on the authenticator, so
 //! the `WWW-Authenticate` a client receives and the one the description
 //! advertises are one string.
+//!
+//! `Tokens::authorize` refuses with `AuthRejection::forbidden_as`, and `Rejects`
+//! with the plain `AuthRejection::forbidden()`. That is the whole of the
+//! asymmetry: a 403 is the one refusal here whose *meaning* is the
+//! application's, so it is the one an authenticator may name. A 401 carries no
+//! type at all, because which credential check refused is a fact a caller
+//! cannot act on and an attacker would like to have.
 
 use std::{collections::HashMap, net::Ipv4Addr};
 
@@ -154,6 +161,14 @@ struct Tokens {
     issued: HashMap<&'static str, Claims>,
 }
 
+/// The problem type `Tokens` gives a scope refusal.
+///
+/// A constant, because that is what `forbidden_as` is shaped for: it takes a
+/// `&'static str`, so the URI names a *class* of refusal — "a scope was
+/// missing" — and the missing scope, or the caller, would have to be leaked
+/// before it could be formatted into one.
+const INSUFFICIENT_SCOPE: &str = "https://errors.example.com/insufficient-scope";
+
 impl Tokens {
     /// Two callers, one of whom may read reports.
     fn seeded() -> Self {
@@ -205,13 +220,17 @@ impl<C: Sync> Authenticator<AccessToken, C> for Tokens {
 
         // Every demanded scope must be granted. `Forbidden` and not
         // `Unauthenticated`: the credential was valid, it just does not reach.
+        //
+        // And named, which is the half only an application can write. A client
+        // reading `about:blank` learns the status it already has; a client
+        // reading this one learns which refusal it met and what to do about it.
         if scopes
             .iter()
             .all(|demanded| credential.scopes.iter().any(|held| held == demanded))
         {
             Ok(())
         } else {
-            Err(AuthRejection::Forbidden)
+            Err(AuthRejection::forbidden_as(INSUFFICIENT_SCOPE))
         }
     }
 }
@@ -249,7 +268,7 @@ where
         context: &C,
     ) -> Result<(), AuthRejection> {
         let _ = (credential, scopes, context);
-        Err(AuthRejection::Forbidden)
+        Err(AuthRejection::forbidden())
     }
 }
 
