@@ -91,7 +91,10 @@ target — it is the generator module the property files share, included by
 `#[path]` because an integration binary cannot be depended on.
 
 `crates/kynos/tests/support/` is the same idiom: the fixture app the runtime
-targets drive, and one request builder over the public `Service::call`. Over
+targets drive, one request builder over the public `Service::call`, and
+`counting.rs`, whose `#[global_allocator]` line a target installs
+process-wide by including it — so that module belongs only to a target that
+wants the counter, and carries its own request builder for the same reason. Over
 `Service::call` rather than [`TestClient`](../crates/kynos/src/test/mod.rs),
 because `test-util` is not a default feature — a target reaching for the client
 compiles to nothing under `mise run test:baseline`, and that task is only a
