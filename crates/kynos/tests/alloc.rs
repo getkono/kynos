@@ -312,11 +312,8 @@ fn a_layer_costs_the_same_wherever_it_sits() {
 /// [`Service::call`] is an `async fn` over an erased dispatcher, so the stack
 /// is gone from the type before any driver sees a future: all three depths
 /// produce one future type, which is the only reason the array below compiles.
-/// **That compile is the depth-invariance assertion.** The equality after it
-/// cannot fail while the array stands, and is written out anyway because a
-/// change that made the future carry its stack would have to delete the array
-/// first — and a reader arriving at three separate `size_of_val` calls should
-/// be able to see what was given up.
+/// **That compile is the whole of the depth-invariance assertion**, so nothing
+/// below re-states it as an equality that could not fail.
 ///
 /// The ceiling is the half that can fail, and it is a ratchet rather than a
 /// target: a future that widened would cost every in-flight request on the
@@ -332,21 +329,16 @@ fn a_driver_holds_one_future_whatever_the_chain_is() {
     let (at_0, at_4, at_8) = (empty(), four(), eight());
 
     // One array, so the three futures are one type or this does not build.
+    // That compile *is* the depth-invariance assertion: a change that made the
+    // future carry its stack would have to delete this array first. Three
+    // readings of one type cannot differ, so none is asserted against another.
     let futures = [
         at_0.call(request(STACKED)),
         at_4.call(request(STACKED)),
         at_8.call(request(STACKED)),
     ];
-    let [w0, w4, w8] = futures.map(|future| size_of_val(&future));
+    let [w0, ..] = futures.map(|future| size_of_val(&future));
 
-    assert_eq!(
-        w4, w0,
-        "four layers widened the dispatch future from {w0} to {w4} bytes"
-    );
-    assert_eq!(
-        w8, w0,
-        "eight layers widened the dispatch future from {w0} to {w8} bytes"
-    );
     assert!(
         w0 <= FUTURE_BYTES,
         "the dispatch future is {w0} bytes against a recorded {FUTURE_BYTES}; \
