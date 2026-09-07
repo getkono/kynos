@@ -645,6 +645,20 @@ hyper's own parser, which uses uninitialized memory for the header array; and
 owning HTTP framing means owning request-smuggling response permanently. The
 resolution is a measurement, not more argument.
 
+That 16 KiB is prose, and nothing gates it against hyper. So what
+[#87](https://github.com/getkono/kynos/issues/87) asked to be stated as a
+relation against this figure is guarded as absolute `size_of` ceilings on
+Kynos's own per-connection state instead — 192 bytes for the inline connection
+record, 192 for the protocol configuration cloned per socket. Those are what
+can fail. The relation itself is recorded beside them as prose
+(`crates/kynos/src/extract/connection/tests.rs`,
+`crates/kynos/src/server/tests.rs`): per-connection state is a fraction of a
+transport buffer, not a multiple of one. It is not asserted, because it cannot
+be falsified — `MIN_HTTP1_BUFFER_SIZE` is the 8 KiB floor
+`validate_protocol_config` accepts and a `const` assertion in `protocol.rs`
+pins, and each ceiling is two orders of magnitude below it, so a relation test
+would fail only after its ceiling had already failed.
+
 Upstreaming is not a schedule that can be planned on — hyper ranks correctness
 above speed and speed above flexibility, and a seam for supplying a buffer pool
 is exactly the flexibility it declines. Vendoring trades a maintained
@@ -666,7 +680,18 @@ for a defect rather than as an optimization — the metadata was private and
 `#[expect(dead_code)]`, and the extractor that was meant to read it panicked on
 every request — which is why the entry stays here rather than moving to a
 benchmark: the cost was real, and removing it was not what motivated the
-change.
+change. The reference count is now guarded at one pointer wide in
+`crates/kynos/src/extract/connection/tests.rs`, alongside a bound on the state
+behind it. That bound is a `size_of`, so what fits inside the smallest
+per-connection transport buffer the crate accepts is the inline record — the
+addresses, the flags, and the headers of the TLS metadata — and not the bytes
+those headers point at. The protocol configuration cloned per socket is bounded
+separately, in `crates/kynos/src/server/tests.rs`. What one accepted socket
+costs in total is not guarded anywhere: that would have to include the peer
+certificate chain `TlsIdentity` owns, which a `size_of` sees as one
+pointer-width triple and a multi-certificate mTLS chain makes kilobytes of heap
+the reading does not see, along with the connection task's future, the service
+handle and the semaphore permit, none of which is bounded today.
 
 ### Why kernel TLS is deferred
 
