@@ -15,7 +15,7 @@ use crate::{
     router::{
         ShortCircuitCheck,
         endpoint::{DynEndpoint, set::IntoEndpoints},
-        operation::Tag,
+        operation::{DeclaredTag, Tag},
     },
 };
 
@@ -31,7 +31,8 @@ pub struct Group<C, P = Propagate, I = (), S = ()> {
     endpoints: Vec<Arc<dyn DynEndpoint<C>>>,
     interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
     short_circuit_checks: Vec<ShortCircuitCheck>,
-    tags: Vec<&'static str>,
+    tags: Vec<DeclaredTag>,
+    /// Kept beside `tags` for the reason `Router::tag_metadata` gives.
     tag_metadata: Vec<kynos_openapi::Tag>,
     /// Problems found while the group was assembled, which the fluent methods
     /// cannot return. A router takes them over when it mounts the group.
@@ -70,7 +71,7 @@ pub(crate) struct GroupParts<C> {
     pub(crate) endpoints: Vec<Arc<dyn DynEndpoint<C>>>,
     pub(crate) interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
     pub(crate) short_circuit_checks: Vec<ShortCircuitCheck>,
-    pub(crate) tags: Vec<&'static str>,
+    pub(crate) tags: Vec<DeclaredTag>,
     pub(crate) tag_metadata: Vec<kynos_openapi::Tag>,
     pub(crate) violations: Vec<Violation>,
     #[cfg(feature = "unchecked")]
@@ -181,7 +182,7 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     /// Tags every operation in this group.
     #[must_use]
     pub fn tag<T: Tag>(mut self) -> Self {
-        self.tags.push(T::NAME);
+        self.tags.push(DeclaredTag::of::<T>());
         self.tag_metadata.push(T::metadata());
         self
     }

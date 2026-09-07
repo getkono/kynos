@@ -60,7 +60,7 @@ attribute outlived its reason and went with it.
 | [`conformance.rs`](../crates/kynos/tests/conformance.rs) | that the responses a suite observed match what the document promises, and that every declared response was exercised |
 | [`matrix.rs`](../crates/kynos/tests/matrix.rs) | the same two assertions over every layer Kynos owns, which is the only place a wrong *document* fails against responses that actually happened. Static assertions about that document belong in `description.rs` even when the matrix is what found them: the matrix reports which promise went unkept, and the small fixture there says which rule was broken |
 | [`dispatch.rs`](../crates/kynos/tests/dispatch.rs), [`routing.rs`](../crates/kynos/tests/routing.rs), [`panics.rs`](../crates/kynos/tests/panics.rs) | every outcome one request can reach, the routes the router declines, and that recovery happens only where it was asked for |
-| [`limits.rs`](../crates/kynos/tests/limits.rs), [`interceptors.rs`](../crates/kynos/tests/interceptors.rs), [`middleware.rs`](../crates/kynos/tests/middleware.rs), [`cors.rs`](../crates/kynos/tests/cors.rs), [`description.rs`](../crates/kynos/tests/description.rs), [`sse.rs`](../crates/kynos/tests/sse.rs) | each interceptor doing what it declares, setting only what it declared, and declaring it on exactly the operations it covers. `middleware.rs` also holds `partial` and `ranged_assets`, which assert that compression leaves anything a byte range is calculated against alone — a range is calculated over the encoded octets, so re-encoding a 206 puts a `Content-Range` on a body it is wrong about, and encoding a 200 that advertises `Accept-Ranges` puts one strong `ETag` over two representations. `ranged_assets` is the second half end to end: it resumes an asset download against the tag it was served with and splices the two halves back into the file. `description.rs` carries the same scope question one level down in its second half: which *statuses* within an operation a response field's declaration reaches, which is where `Accept-Ranges`, `Content-Range` and the 416 are each pinned to the statuses that give them a meaning — and where a response header nothing in the handler writes is pinned too, since a header group's and an interceptor's alike are filed under a wildcard and have to reach the exact key a consumer resolves to |
+| [`limits.rs`](../crates/kynos/tests/limits.rs), [`interceptors.rs`](../crates/kynos/tests/interceptors.rs), [`middleware.rs`](../crates/kynos/tests/middleware.rs), [`cors.rs`](../crates/kynos/tests/cors.rs), [`description.rs`](../crates/kynos/tests/description.rs), [`sse.rs`](../crates/kynos/tests/sse.rs) | each interceptor doing what it declares, setting only what it declared, and declaring it on exactly the operations it covers. `middleware.rs` also holds `partial` and `ranged_assets`, which assert that compression leaves anything a byte range is calculated against alone — a range is calculated over the encoded octets, so re-encoding a 206 puts a `Content-Range` on a body it is wrong about, and encoding a 200 that advertises `Accept-Ranges` puts one strong `ETag` over two representations. `ranged_assets` is the second half end to end: it resumes an asset download against the tag it was served with and splices the two halves back into the file. `description.rs` carries the same scope question one level down in its second section: which *statuses* within an operation a response field's declaration reaches, which is where `Accept-Ranges`, `Content-Range` and the 416 are each pinned to the statuses that give them a meaning — and where a response header nothing in the handler writes is pinned too, since a header group's and an interceptor's alike are filed under a wildcard and have to reach the exact key a consumer resolves to. Its third section is that question on the tag axis: which of the four tag scopes reaches the operation's `tags`, in what order, and whether each scope that names a tag also registers its metadata in the document's `tags` — a name arriving without its metadata is an `UndocumentedTag` warning on every operation carrying one, so both halves are asserted for every scope |
 | [`rate_limit.rs`](../crates/kynos/tests/rate_limit.rs) | the shipped limiter over a store: one quota and several, burst, keying, exemption, and both failure policies — and, since an application may replace the algorithm outright, that a `RateLimitPolicy` Kynos does not ship reaches the wire with its own `Retry-After` — behaviour that is a property of a *sequence* of requests rather than of any one |
 | [`client.rs`](../crates/kynos/tests/client.rs) | the `TestClient`'s own surface rather than the harness's: every method the router accepts, a query string, a cookie jar, a peer address, the three body setters, and the two assertions a suite would otherwise hand-roll — a 206 checked as a `Content-Range` *and* a body that fills it, and a finite event stream read as its events |
 | [`cookies.rs`](../crates/kynos/tests/cookies.rs) | that two `Set-Cookie` fields reach the wire as two, which no unit test of either end can see |
@@ -222,8 +222,8 @@ document, so the extractor is a piece of work in its own right.
 `kynos-macros` cannot depend on `kynos`, so anything needing the facade — a
 derive's *expansion* compiling, a diagnostic's wording — lives in
 `crates/kynos/tests/`. What stays in the macro crate is what can be checked
-without it: the attribute grammars, the shape checks the derives share, and the
-signature the typed-URI emitter writes.
+without it: the attribute grammars, the shape checks the derives share, and
+both the signature and the documentation the typed-URI emitter writes.
 
 Its diagnostics are held twice on purpose, and the halves do different jobs.
 `derive/tests.rs` asserts *which* rule fired, counted against the
@@ -231,6 +231,24 @@ Its diagnostics are held twice on purpose, and the halves do different jobs.
 `tests/ui/macros/` asserts what that rule *says*. Neither substitutes for the
 other: a count cannot read a message, and a snapshot suite cannot notice a rule
 nobody wrote a case for.
+
+Nothing here renders the documentation that emitter writes, and nothing here
+can: rendering it needs the facade, and this crate cannot depend on it.
+Nothing in `crates/kynos` renders it either, but that is a fact about the tree
+rather than a property of it — route attributes appear in `crates/kynos/src`
+only inside doctest fences, rustdoc does not extract doctests from doctests,
+and `examples/` and `tests/` are never doctested, so `test`, `test:doc` and
+`docs:check` today pass whether or not a macro's emitted rustdoc is
+well-formed. One route attribute on a documented public item would change
+that.
+
+Until one exists, the sweep in `route/tests.rs` stands in for the render by
+asserting the property CommonMark's indented-code-block rule makes
+load-bearing: no emitted line's leading whitespace reaches four columns,
+counting a tab to the next stop as CommonMark does. It is a string check
+rather than a render, so every other way to break emitted documentation — an
+unannotated fenced block, a broken intra-doc link, a `#` colliding with a
+heading — remains unobserved, and it covers the typed-URI emitter alone.
 
 ### Cross-cutting
 

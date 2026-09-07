@@ -19,7 +19,7 @@ use crate::{
             Endpoint,
             set::{Endpoints, IntoEndpoints},
         },
-        operation::{OperationCx, Route, Tag},
+        operation::{DeclaredTag, OperationCx, Route, Tag},
     },
 };
 
@@ -51,7 +51,7 @@ pub struct EndpointBuilder<C, H, A, P = Propagate, I = ()> {
     operation_id: Option<&'static str>,
     summary: Option<&'static str>,
     description: Option<&'static str>,
-    tags: Vec<&'static str>,
+    tags: Vec<DeclaredTag>,
     deprecated: bool,
     interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
 
@@ -185,9 +185,23 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
     }
 
     /// Tags the operation.
+    ///
+    /// The tag's metadata reaches the document's own `tags` with it, so an
+    /// operation tagged only here is not filed under a heading nothing
+    /// declares.
     #[must_use]
     pub fn tag<T: Tag>(mut self) -> Self {
-        self.tags.push(T::NAME);
+        self.tags.push(DeclaredTag::of::<T>());
+        self
+    }
+
+    /// Tags the operation with a tag already resolved to a value.
+    ///
+    /// What `from_meta` calls: a route attribute's `tag = T` is a
+    /// [`DeclaredTag`] in an associated constant by the time it reaches here,
+    /// and the type it came from is no longer nameable.
+    pub(crate) fn with_tag(mut self, tag: DeclaredTag) -> Self {
+        self.tags.push(tag);
         self
     }
 
@@ -291,7 +305,7 @@ where
             operation.set_description(description);
         }
         for tag in &self.tags {
-            operation.add_tag(tag);
+            operation.add_tag(*tag);
         }
         operation.set_deprecated(self.deprecated);
 

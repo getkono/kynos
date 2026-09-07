@@ -45,7 +45,7 @@ use crate::{
         dispatch::{Dispatch, EndpointTerminal, PathEntry},
         endpoint::{DynEndpoint, set::IntoEndpoints},
         group::Group,
-        operation::{OperationCx, Route, Tag},
+        operation::{DeclaredTag, OperationCx, Route, Tag},
         policy::{FallbackPolicy, TrailingSlashPolicy},
         service::Service,
     },
@@ -68,7 +68,7 @@ pub(crate) struct Mounted<C> {
     /// Group- and nested-router interceptors, outermost first. The router's own
     /// are held separately, because `intercept` may be called after `mount`.
     interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
-    tags: Vec<&'static str>,
+    tags: Vec<DeclaredTag>,
     catch_panics: bool,
     /// Undescribed layers an enclosing scope wrapped this operation in,
     /// outermost first. `pub(crate)` because `unchecked` reads it back.
@@ -98,7 +98,13 @@ pub struct Router<C, P = Propagate, I = (), S = ()> {
     pub(crate) observers: Vec<Arc<dyn Observer<C>>>,
     pub(crate) info: Option<Info>,
     pub(crate) servers: Vec<kynos_openapi::Server>,
-    pub(crate) tags: Vec<&'static str>,
+    pub(crate) tags: Vec<DeclaredTag>,
+    /// Tag metadata declared at this router's own scope.
+    ///
+    /// Kept beside `tags` rather than derived from it, because a router that
+    /// calls `tag::<T>()` and mounts no operation still documents `T`. Both
+    /// pushes come from the same `T` in adjacent statements, so they cannot
+    /// drift.
     pub(crate) tag_metadata: Vec<kynos_openapi::Tag>,
     pub(crate) security_schemes: Vec<(&'static str, kynos_openapi::SecurityScheme)>,
     /// Problems found while mounting, which the fluent methods cannot return.
@@ -220,7 +226,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
         &mut self,
         endpoints: Vec<Arc<dyn DynEndpoint<C>>>,
         prefix: &str,
-        tags: &[&'static str],
+        tags: &[DeclaredTag],
         interceptors: &[Arc<dyn ErasedInterceptor<C>>],
         catch_panics: bool,
     ) where
@@ -570,7 +576,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// Registers tag metadata.
     #[must_use]
     pub fn tag<T: Tag>(mut self) -> Self {
-        self.tags.push(T::NAME);
+        self.tags.push(DeclaredTag::of::<T>());
         self.tag_metadata.push(T::metadata());
         self
     }

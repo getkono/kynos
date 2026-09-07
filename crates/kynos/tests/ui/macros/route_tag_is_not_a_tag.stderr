@@ -9,3 +9,8 @@ help: the trait `kynos::router::operation::Tag` is not implemented for `NotATag`
   |
 1 | struct NotATag;
   | ^^^^^^^^^^^^^^
+note: required by a bound in `DeclaredTag::of`
+ --> src/router/operation.rs
+  |
+  |     pub const fn of<T: Tag>() -> Self {
+  |                        ^^^ required by this bound in `DeclaredTag::of`

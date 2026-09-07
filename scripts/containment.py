@@ -13,6 +13,7 @@ dropped, both inline and as sibling files.
 import os
 import re
 import sys
+import tomllib
 from pathlib import Path
 
 # From the script's own location rather than the working directory, so that
@@ -232,6 +233,82 @@ elif int(budget.group(1)) != len(oversized):
         + "\n    ".join(oversized)
     )
 
+# --- The feature grading -----------------------------------------------------
+# `docs/performance.md` grades every flag `crates/kynos` declares, and the grade
+# decides what the flag owes: a full battery, an off-path proof, or nothing of
+# its own because it is an aggregate. A flag nobody graded is the exact failure
+# the table exists to make visible, and until this rule it failed nothing.
+#
+# Both sides are read off disk -- the flags from the table, the keys from the
+# manifest -- so neither is transcribed here and no count is stated in either.
+# `testing.md#cross-cutting` is the argument: a count reports that two numbers
+# differ where a set names the flag nothing accounts for, and a count puts two
+# branches each adding a flag on the same line where the table puts them on
+# different ones.
+#
+# The manifest is parsed rather than scanned. The failure `strip()`'s docstring
+# names applies here too: a regex over `^([\w-]+)\s*=` drops a quoted key, and a
+# dropped key is a flag falling silently out of the compared set. A rule whose
+# whole purpose is catching the flag nobody noticed cannot rest on a parser that
+# can lose one.
+PERFORMANCE = (ROOT / "docs/performance.md").read_text()
+grading = PERFORMANCE[PERFORMANCE.index("| Grade | Owes | Flags |") :]
+graded = []
+for line in grading.split("\n")[2:]:
+    if not line.startswith("|"):
+        break
+    graded += re.findall(r"`([^`]+)`", line.split("|")[3])
+
+manifest = tomllib.loads((ROOT / "crates/kynos/Cargo.toml").read_text())
+flags = set(manifest["features"])
+depended = {
+    member[len("dep:") :]
+    for members in manifest["features"].values()
+    for member in members
+    if member.startswith("dep:")
+}
+
+if ungraded := sorted(flags - set(graded)):
+    failures.append(
+        "crates/kynos declares a feature that performance.md's grading table "
+        "does not grade. Grading it is the argument the table exists to force: "
+        "a full battery, an off-path proof, or an aggregate that owes nothing "
+        "of its own:\n    " + "\n    ".join(ungraded)
+    )
+
+if undeclared := sorted(set(graded) - flags):
+    failures.append(
+        "performance.md grades a flag that crates/kynos does not declare, so "
+        "the row names a battery nothing can be enabled to owe. Either the flag "
+        "was renamed and the row was not, or the row outlived the feature:\n    "
+        + "\n    ".join(undeclared)
+    )
+
+if regraded := sorted({flag for flag in graded if graded.count(flag) > 1}):
+    failures.append(
+        "performance.md grades a flag in more than one row, where the table "
+        "says every flag appears in exactly one column. Two grades are two "
+        "different batteries owed and nothing decides between them:\n    "
+        + "\n    ".join(regraded)
+    )
+
+# An optional dependency no feature names with `dep:` makes Cargo synthesise an
+# implicit feature for it: a flag the crate declares, absent from `[features]`,
+# and so invisible to the three comparisons above. Its own failure rather than a
+# fourth entry in `ungraded`, because the remedy differs -- write the `dep:`, do
+# not add a table row.
+if implicit := sorted(
+    name
+    for name, spec in manifest["dependencies"].items()
+    if isinstance(spec, dict) and spec.get("optional") and name not in depended
+):
+    failures.append(
+        "an optional dependency of crates/kynos is named by no `dep:`, so Cargo "
+        "synthesises a feature for it that `[features]` does not list and this "
+        "rule cannot count against the grading. Name it from the feature that "
+        "needs it as `dep:`:\n    " + "\n    ".join(implicit)
+    )
+
 # --- Nothing a package compiles reaches outside the package ------------------
 # `cargo package` copies a package directory and nothing above it, so a path
 # literal that climbs out of one names a file the archive cannot carry. Two
@@ -356,4 +433,4 @@ for failure in failures:
     print(f"containment: {failure}", file=sys.stderr)
 if failures:
     sys.exit(1)
-print(f"containment: {len(FILES)} source files, {len(rows)} allowance rows, every rule holds")
+print(f"containment: {len(FILES)} source files, {len(rows)} allowance rows, {len(graded)} graded features, every rule holds")

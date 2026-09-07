@@ -16,7 +16,10 @@
 //!   correctly on every operation underneath.
 //! * **A tag is a type.** `#[derive(Tag)]` on a unit struct, so a misspelling
 //!   is a compile error rather than a second tag in the emitted document. It
-//!   can be applied at four scopes, and they add rather than override.
+//!   can be applied at four scopes, and they add rather than override. Each
+//!   scope registers the tag's metadata as well as its name, which is why
+//!   `Admin` reaches the document's `tags` from the attribute on
+//!   `suspend_user` and from nowhere else.
 //! * **`nest` and `merge` differ in whether a prefix is introduced.** `nest`
 //!   puts a whole router under a path; `merge` unions two operation sets at the
 //!   same level. Neither can produce a path the description cannot express.
@@ -114,9 +117,10 @@ async fn suspend_user(Path(path): Path<UserPath>) -> NoContent {
 /// This is what makes a subsystem reusable: it declares its own paths relative
 /// to nothing, and `nest` decides where they land.
 fn admin_router() -> Router<()> {
-    Router::<()>::new()
-        .tag::<Admin>()
-        .mount(kynos::routes![suspend_user])
+    // No `.tag::<Admin>()`: `suspend_user` names it on its own attribute, which
+    // is enough to put `admin` on the operation *and* its description in the
+    // document's `tags`.
+    Router::<()>::new().mount(kynos::routes![suspend_user])
 }
 
 /// A router assembled from a builder rather than from attributes.
