@@ -77,6 +77,17 @@ That is what makes *emitted ⊇ observable* — the invariant
 rather than a convention every extractor author has to remember. An extractor
 cannot forget to document its own failures, because it was never asked to.
 
+**What "union" means where two of them name one status.** A description files
+one response per status, so the three contributions are not concatenated.
+`OperationCx::add_responses` keeps the entry already declared — the order above
+is the precedence — with one exception: where both entries are
+`application/problem+json` documents narrowed to the type URIs they publish,
+the two become a choice over both, described as both. That is the only conflict
+with a meaning beyond precedence, because two problem documents on one status
+are two branches of one schema and two arbitrary responses are not.
+[`errors.md`](errors.md#what-the-declared-response-narrows-to) carries the rule,
+including what happens when one side narrows nothing.
+
 `Result<T, E>` unions the two sides on the way out, which is where a handler's
 success and failure descriptions come together with no restatement anywhere.
 

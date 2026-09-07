@@ -19,15 +19,18 @@ It covers what middleware refuses, too, and the description owes the same
 account of it. A `ShortCircuit` that *refuses* answers with a problem document,
 so the response it declares names `application/problem+json` and the `Problem`
 component. `error::problem::problem_response` writes that description for the
-eight interceptor short circuits, for the 500 a recovered panic contributes and
-for every extractor rejection; the `ApiError` derive still spells it itself, so
-it is one writer for everything the framework crate emits rather than one for
-the workspace. That second writer is a choice rather than a wall: the derive
-expands in an application crate, which `pub(crate)` does not reach, but
-[`kynos::__private`](../crates/kynos/src/__private/mod.rs) exists for exactly
-that hop and `#[derive(Reply)]` already takes it. Folding the derive onto the
-same writer belongs with the narrowing that rewrites its `Responses` body, so
-it is filed as #116 rather than done here.
+eight interceptor short circuits and for the 500 a recovered panic contributes.
+`error::problem::narrowed_response` writes it wherever the response also states
+which `type` it may carry: for every extractor rejection, and — through the
+forwarding function in
+[`kynos::__private`](../crates/kynos/src/__private/mod.rs) — for what the
+`ApiError` derive expands to. The derive needs that hop because it expands in an
+application crate, which `pub(crate)` does not reach, and `#[derive(Reply)]`
+already takes it.
+
+That fold was #116's to make rather than a tidying: a rejection and a handler's
+error type meet on a shared status, and two spellings of one shape are two
+things that cannot be unioned.
 
 Not every short circuit refuses. `NotModified` answers 304 with an empty body
 and rightly declares no content, and `Infallible` declares nothing at all
@@ -182,14 +185,28 @@ Two rules follow from what is actually on the wire:
   `title` at all — the description already says the only thing that status
   publishes.
 
-**The narrowing survives only on statuses no extractor claims.** An argument's
-rejection is contributed before the return type's responses and
-`Responses::merge_from` keeps the entry already present, so where an extractor
-and the handler's error type name one status, the extractor's generic problem
-response is what the document publishes — see
-[Where the union happens](#where-the-union-happens). Nothing about that is
-specific to the narrowing; it is the union's first-wins rule, and it is what
-makes a handler-only status the place a declared `type` is visible.
+**A status an extractor also claims publishes both halves of it.** An argument's
+rejection is contributed before the return type's responses, and a description
+files one response per status — so the two are unioned rather than raced. Each
+side's branches are flattened, a `type` already published is dropped, and what
+survives is rebuilt as a single `allOf` or a `oneOf` of them; the descriptions
+join the way a shared status already joins its variants. A `Path<T>` capture's
+400 beside a handler error's 400 is therefore a choice between `about:blank` and
+the type the variant declared, described as both. `Responses::union_from` is the
+rule, and [Where the union happens](#where-the-union-happens) is where it is
+applied.
+
+That works only because the rejection side narrows too, and it does: every
+rejection builds its problem with `Problem::new`, so `about:blank` is a true
+statement about each of them. A bare `$ref` there would have been fatal rather
+than merely vague — it matches every problem document, so a `oneOf` containing
+one is satisfied twice over.
+
+**A side that narrows nothing wins outright.** It already admits every problem
+document the other side describes, so it *is* the union, and narrowing to what
+the other side publishes would declare less than the operation sends. One
+declaration in Kynos is that shape on purpose — `AuthRejection`'s 403, below —
+and an interceptor's contribution or a hand-written `Responses` may be too.
 
 ## Rejections
 
@@ -238,7 +255,8 @@ the rejection carries that length and writes the field itself, as
 there is no per-operation string for a `Describe` to supply — which is what lets
 the header travel with the status wherever the status is declared from.
 
-`AuthRejection` is the one rejection whose problem `type` is not fixed.
+`AuthRejection` is the one rejection whose problem `type` is not fixed, and its
+403 is the one status in this table the description does not narrow.
 `AuthRejection::forbidden_as(type_uri)` puts an application's own URI on a 403,
 because only the application knows which of its rules refused; the 401 has no
 counterpart and is not getting one, since which credential check refused is a
@@ -246,8 +264,10 @@ fact a client cannot act on. The argument is a `&'static str` and the
 constructor is a `const fn`, so a URI built from the request cannot be spliced
 in without deliberately leaking it. What the operation *declares* for that 403
 is still the shared `Problem` component: the narrowing above is built from types
-alone, and this URI is a value that arrives at run time. The rest of the
-reasoning is in
+alone, and this URI is a value that arrives at run time. Every other rejection
+status narrows to `about:blank`; this one stays wide because admitting a URI
+nobody can name at description time is the only claim true of both bodies it may
+carry. The rest of the reasoning is in
 [`security.md`](security.md#a-403-may-name-itself-a-401-may-not).
 
 An extractor that cannot fail says so with `Infallible`, whose `Responses`
@@ -323,6 +343,15 @@ appearing outside `server/tls/`.
 `Rejection` as a `Responses`, then the return type's `Responses`.
 `Result<T, E>` unions the two sides on the way out, which is where a handler's
 success and failure descriptions meet with no restatement anywhere.
+
+Two of those contributions can name one status, and only one response can be
+filed under it. `OperationCx::add_responses` keeps the entry already declared,
+except where both it and the arriving one are problem documents narrowed to the
+types they publish — the one conflict that means something beyond precedence,
+since two problem responses under a status are two branches of a choice over the
+same component. `Result<T, E>` is not that case and does not get the exception:
+a success representation and a problem document are branches of nothing, so the
+success side wins as it always has.
 
 The scoping reason this lives in `Handler::describe` rather than in `Describe`
 is recorded in [`handlers.md`](handlers.md#where-the-rejection-union-happens).

@@ -813,10 +813,13 @@ shipped interceptor declares 403 at all. A CSRF interceptor declaring one
 compiles beside a credential guard, and always would have.
 
 The residual is real but much smaller, and it is about *description* rather than
-compilation: `Responses::merge_from` keeps the first entry on a key collision,
-so a CSRF 403 and an `Auth` 403 on one operation produce one entry with
-whichever description landed first. Understating a description by one sentence
-is the failure mode this project accepts elsewhere for the same reason.
+compilation: a CSRF 403 and an `Auth` 403 on one operation are one entry, since
+a description files one response per status. `Responses::union_from` now joins
+the two descriptions rather than keeping whichever landed first, so the sentence
+that used to be dropped is not — but neither 403 narrows its `type`, so the
+schema stays the shared component and a client cannot tell the two refusals
+apart from the declaration alone. Understating a description that way is the
+failure mode this project accepts elsewhere for the same reason.
 
 What made the exclusion look structural was that the crypto objection above is
 real for *token-based* CSRF: a synchroniser token needs randomness, an HMAC and

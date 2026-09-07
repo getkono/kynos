@@ -90,6 +90,16 @@ and `Scoped<S, R>` describe themselves from the scheme type alone, so the
 authenticator is unreachable while the document is built: the declared 403 still
 refers to the shared `Problem` component and narrows nothing.
 
+It is the only rejection status that does. Every other one — including the 401
+beside it — narrows to `about:blank`, because every other rejection builds its
+problem with `Problem::new` and that URI is a fact about it. The 403 is not
+narrowed rather than not narrowable: a body carrying an application's own URI
+would fail a schema constrained to `about:blank`, and a description that
+declares less than the operation sends is the one direction
+[`nfr.md`](nfr.md)'s *emitted ⊇ observable* forbids. Where a handler's own
+error type also names 403, the wide declaration is the one that survives, for
+the same reason.
+
 ### What Kynos does not verify
 
 No JWT verifier, no session store, no password hasher. Each is application
