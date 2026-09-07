@@ -17,9 +17,10 @@
 //! zero-sized value allocates nothing. What the entry describes is real one
 //! step further out, on the server path, where `Body::from_incoming` erases a
 //! `hyper::body::Incoming` that is not zero-sized. Three `size_of` witnesses
-//! hold those reasons: two say why the table below reads the way it does, and
-//! the third pins the type the server path erases, so a dependency bump that
-//! ends any of the three turns something red.
+//! hold those reasons, and they live in [`size.rs`](size.rs) where
+//! [`performance.md`](../../../docs/performance.md#the-taxonomy) files a size
+//! guard: nothing about a `size_of` needs the allocator this target installs,
+//! and a dependency bump that ends any of the three turns something red there.
 //!
 //! **Both rows are held exactly, and neither of them is a ceiling.**
 //! [`alloc.rs`](alloc.rs)'s numbers are ceilings because they record a
@@ -34,11 +35,8 @@
 //! `kynos::http`, which is behind no feature — so the numbers hold at every
 //! feature set `features:targets` builds.
 
-use std::{convert::Infallible, error::Error as StdError, mem::size_of_val};
-
 use alloc_counter::{AllocCounterSystem, count_alloc};
 use bytes::Bytes;
-use http_body_util::{BodyExt, Empty, Full};
 use kynos::http::body::Body;
 
 /// Declared here rather than reached for: `alloc_counter` installs nothing on
@@ -46,11 +44,6 @@ use kynos::http::body::Body;
 /// binary and in no other.
 #[global_allocator]
 static ALLOCATOR: AllocCounterSystem = AllocCounterSystem;
-
-/// What the erased error type is, spelled the way `body.rs` spells it, so the
-/// witness below measures the type the library actually erases rather than a
-/// cheaper relative of it.
-type BoxError = Box<dyn StdError + Send + Sync>;
 
 /// Every constructor measured here, with what it costs today.
 ///
@@ -99,59 +92,4 @@ fn erasing_a_body_costs_what_the_table_records() {
              in docs/architecture.md, which says what erasing a body costs"
         );
     }
-}
-
-/// Why the first row is zero, and the property the whole verdict rests on.
-///
-/// `Body::empty` erases `Empty<Bytes>` mapped into the boxed error, and
-/// `boxed_unsync` is a `Box::pin` — which for a zero-sized value returns a
-/// dangling pointer and touches the allocator not at all. The type is rebuilt
-/// here rather than named through the library, because the erased type is
-/// private by design and naming it publicly is what this file exists to avoid
-/// asking for. A dependency bump that gives `Empty` a field turns the first row
-/// above red as well — what this adds is *which* fact broke, and it is the
-/// fact `architecture.md`'s verdict is written on rather than the number.
-#[test]
-fn an_empty_body_erases_a_zero_sized_type() {
-    let erased = Empty::<Bytes>::new().map_err(|never: Infallible| -> BoxError { match never {} });
-
-    let size = size_of_val(&erased);
-    assert_eq!(
-        size, 0,
-        "the body `Body::empty` erases is {size} bytes rather than zero, so \
-         boxing it now allocates; the zero in the table above is no longer \
-         free and docs/architecture.md's verdict on it is stale"
-    );
-}
-
-/// Why the second row is one: the same erasure of a body that carries bytes has
-/// something to put on the heap.
-#[test]
-fn a_body_holding_bytes_is_not_zero_sized() {
-    let erased = Full::new(Bytes::from_static(b"{\"ok\":true}"))
-        .map_err(|never: Infallible| -> BoxError { match never {} });
-
-    assert!(
-        size_of_val(&erased) > 0,
-        "a body carrying bytes is zero-sized, which would make the recorded \
-         allocation for `Body::from_bytes` something other than the boxing"
-    );
-}
-
-/// Where the entry's "once per request" is actually true.
-///
-/// `Body::from_incoming` is the server path's erasure, and what it erases is
-/// hyper's own body. It is not zero-sized, so every request that arrives over a
-/// socket costs the `Box::pin` the second row above measures — outside the
-/// region [`alloc.rs`](alloc.rs) counts, which is why none of its seven is
-/// this one.
-#[test]
-fn the_body_the_server_erases_is_not_zero_sized() {
-    let size = size_of::<hyper::body::Incoming>();
-    assert!(
-        size > 0,
-        "hyper's incoming body is zero-sized, so erasing it would be free and \
-         the server path would cost one allocation fewer per request than \
-         docs/architecture.md records"
-    );
 }
