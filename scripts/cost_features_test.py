@@ -250,6 +250,28 @@ class ReadRecorded(unittest.TestCase):
             path.write_text(binary_header(865004))
             self.assertIsNone(cost.read_recorded(path))
 
+    def test_a_column_header_with_no_row_under_it_is_no_baseline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "baseline.tsv"
+            path.write_text(binary_header(865004) + "feature\ttext\tdelta\n")
+            self.assertIsNone(cost.read_recorded(path))
+
+    def test_a_conflicted_file_is_no_baseline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "baseline.tsv"
+            cost.write_tsv(
+                path,
+                binary_header(865004),
+                ["text", "delta"],
+                binary_rows(openapi32=75920),
+            )
+            path.write_text(
+                path.read_text().replace(
+                    f"{cost.BASELINE}\t", f"<<<<<<< HEAD\n{cost.BASELINE}\t", 1
+                )
+            )
+            self.assertIsNone(cost.read_recorded(path))
+
 
 class Ranking(unittest.TestCase):
     """What the report ranks, and against what."""
