@@ -45,9 +45,9 @@ on a shared runner is a guessed ceiling by the standard
 [Thresholds](#thresholds) sets, whatever the requirement names.
 [`performance.md`](performance.md#the-boundary) carries the reasoning.
 
-The counted halves landed `planned` and are being wired one at a time rather
-than together: generation is `enforced` in
-[Document model](#document-model) below, while the per-layer one in
+The counted halves are being wired one at a time rather than together: route
+resolution's is `enforced` in [Routing](#routing) below, generation's is
+`enforced` in [Document model](#document-model), and the per-layer one in
 [Middleware](#middleware) is still `planned`. This paragraph records the split
 and not a status, so read the status off the row.
 
