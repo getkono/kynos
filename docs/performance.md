@@ -46,7 +46,7 @@ What each kind of measurement proves that no other kind does.
 
 | Kind | Lives in | Runs under | Proves | Status |
 | --- | --- | --- | --- | --- |
-| Allocation count | its own integration target | `cargo nextest`, over `alloc_counter` | that a path allocates a bounded number of times | in use, at [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), [`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) and [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) |
+| Allocation count | its own integration target | `cargo nextest`, over `alloc_counter` | that a path allocates a bounded number of times | in use, at four targets: [`kynos/tests/alloc.rs`](../crates/kynos/tests/alloc.rs) for the routing path, [`kynos/tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) for body erasure, [`kynos/tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) for what a payload codec adds, and [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs) for what producing a description costs at 10, 100 and 1000 operations. Several rather than one because an integration binary cannot be depended on, so a second crate that counts cannot reach the first one's harness |
 | Size guard | [`tests/size.rs`](../crates/kynos/tests/size.rs), or a sibling `tests.rs` | `cargo nextest` | that a type or a future did not grow | in use for types; `planned` for futures |
 | Off-path proof | a sibling `tests.rs` | `cargo nextest` | that a feature is unreachable from the request path | `planned` |
 | Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | in use, via `mise run cost:features` over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs); reports a trend and sets no ceiling, and sees the generics that fixture instantiates rather than the whole surface — so a feature that grows the dependency graph can shrink this number by sharing instantiations out of upstream rlibs, and a negative row is a relocation rather than a saving |
@@ -91,7 +91,7 @@ Six shapes account for the routing stack.
 | Per-request path element | it runs inside `Dispatch::serve` for every request | an allocation count over a replay, and a future-size guard | a timing figure |
 | Per-layer element | an `Interceptor` in the erased chain | an allocation and future-size delta at stack depth 0/4/8 | a per-layer latency |
 | Per-connection element | [`server/`](../crates/kynos/src/server/), TLS, the protocol configs | a size guard on per-connection state | per-request attribution; resident memory at scale is `kynos-bench` |
-| Off-path element | the document model, the emitters, the validators, `describe` | a proof it is unreachable from the request path, and a binary delta | any per-request measurement |
+| Off-path element | the document model, the emitters, the validators, `describe` | a proof it is unreachable from the request path, a binary delta, and an allocation count on generation | any per-request measurement |
 | Opt-in payload codec | a body extractor or response codec behind a feature | a binary delta, and an allocation count on an operation that names it | a measurement on a route that never mounts it |
 
 **A type-level surface owes a codegen delta and nothing else, for the same
@@ -115,6 +115,15 @@ What settles it is reachability: the emitted `Document` is built once in
 `Dispatch::serve` touches it. That is checkable, and until it is checked the
 [README](../README.md)'s claim that there is no JSON Schema interpreter on the
 hot path rests on reading the code.
+
+**Off the request path is not the same as free, which is why the shape owes a
+third thing.** Zero per request says nothing about what building the document
+costs the process that builds it, and that cost scales in a dimension no
+per-request measurement has: the number of operations declared.
+[`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs) counts
+one `to_json` and one `emit` at 10, 100 and 1000 of them, against recorded
+ceilings and a per-decade sub-quadratic relation. It is billed here rather than
+under a per-request shape precisely because a request never reaches it.
 
 **An opt-in codec is measured on a route that mounts it.** Measuring `json`
 against an operation with no body would report zero and mean nothing. The

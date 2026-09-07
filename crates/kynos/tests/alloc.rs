@@ -2,9 +2,9 @@
 //! front of it adds, and how wide the future dispatch returns is.
 //!
 //! The allocation-count kind in
-//! [`performance.md`](../../../docs/performance.md#the-taxonomy), and the
-//! target that document says owns the global allocator. It is a target of its
-//! own rather than a sibling `tests.rs` beside the router because a
+//! [`performance.md`](../../../docs/performance.md#the-taxonomy), and one of
+//! the two targets that document says own the global allocator. It is a target
+//! of its own rather than a sibling `tests.rs` beside the router because a
 //! `#[global_allocator]` is process-wide: installed in the library's unit-test
 //! binary it would count, and slow, every other unit test in it.
 //!
