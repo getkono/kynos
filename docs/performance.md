@@ -164,8 +164,8 @@ flag to the files that write its gate and, usually, call its crate, and
 `containment:check` fails a flag graded off-path here with no row there — so
 the two documents cannot drift apart in the direction that loses a proof.
 [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv) records a `.text` delta
-for each flag that compiles alone: `yaml` at +6192 bytes, `test-util` at
-−2464, `uuid` at −32, and `openapi31` with the four `time` and `decimal`
+for each off-path flag that compiles alone: `yaml` at +6192 bytes, `test-util`
+at −2464, `uuid` at −32, and `openapi31` with the four `time` and `decimal`
 backends at 0. `time` and `decimal` have no row of their own because neither
 compiles alone, which `features:check` already probes.
 
