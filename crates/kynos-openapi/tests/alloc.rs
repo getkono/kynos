@@ -21,10 +21,11 @@
 //! Two stages, because one of them cannot fail on the cost this file exists to
 //! watch:
 //!
-//! - [`Document::to_json`] is the only entry point producing output *bytes*, so
-//!   the output-size half of the requirement can be read from nowhere else. It
-//!   walks `paths` exactly once: `Paths::serialize` iterates its map and every
-//!   `Serialize` below it is a derive.
+//! - [`Document::to_json`] is the only JSON entry point producing output
+//!   *bytes*, so the output-size half of the requirement can be read from
+//!   nowhere else in that serialization. It walks `paths` exactly once:
+//!   `Paths::serialize` iterates its map and every `Serialize` below it is a
+//!   derive.
 //! - [`Document::emit`] is where a nested walk over `paths` would live.
 //!   `emit::downgrade::three_two_only_constructs` iterates `document.paths.items`
 //!   and descends per entry, building a JSON pointer per node — and `to_json`
@@ -80,6 +81,11 @@
 //!   relation over bytes, which cancels an exactly-quadratic term exactly as
 //!   the relation over allocations does. A quadratic scratch buffer that never
 //!   reaches the wire is invisible to both.
+//! - **`Document::to_yaml`'s output size.** It is the other entry point
+//!   producing bytes, behind the `yaml` feature, and no series here reads it.
+//!   It drives the same `Serialize` impls over the same single walk, so a
+//!   nested walk added below `paths` is read as a failure by the JSON series
+//!   above; what nothing records is what the YAML formatter itself writes.
 //! - **Exponents strictly between 1 and 2.** `n^1.9` satisfies the relation.
 //! - **An added exactly-quadratic term, at any coefficient — including the
 //!   nested walk over `paths` that stage two exists to reach.** This is the
