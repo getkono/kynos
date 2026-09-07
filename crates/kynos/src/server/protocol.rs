@@ -7,8 +7,11 @@ use crate::server::error::ServerError;
 
 /// The smallest per-connection read/write buffer the crate accepts.
 ///
-/// `pub(crate)` so per-connection budgets elsewhere can be measured against
-/// it rather than against a figure transcribed from prose, which would drift.
+/// `pub(crate)` so a per-connection budget elsewhere can be measured against
+/// the floor in code rather than against a figure transcribed from prose,
+/// which would drift. Within this module it is both the floor
+/// `validate_protocol_config` enforces and the base the default buffer is
+/// sized from, so the two cannot part company.
 #[cfg(feature = "http1")]
 pub(crate) const MIN_HTTP1_BUFFER_SIZE: usize = 8_192;
 
@@ -47,7 +50,7 @@ impl Default for Http1Config {
             keep_alive: true,
             header_read_timeout: Some(Duration::from_secs(30)),
             max_headers: 100,
-            max_buffer_size: 8_192 + 4_096 * 100,
+            max_buffer_size: MIN_HTTP1_BUFFER_SIZE + 4_096 * 100,
         }
     }
 }
