@@ -58,16 +58,19 @@
 //!
 //! # Features
 //!
-//! The recorded ceilings are the `--all-features` reading, which is what CI
-//! measures. `emit/downgrade.rs` gates its whole walk behind `openapi32`, so a
-//! baseline build returns an empty `Vec` and does the clone alone: stage two
-//! was measured at 125, 1205 and 12 005 there against the 374, 3524 and 35 024
-//! recorded below. The same ceilings hold at baseline by being loose rather
-//! than by a second table — one `#[cfg]`-free table is worth more than a
-//! second set of numbers nothing else reads. Stage one and the byte counts are
-//! identical under both, since neither feature changes what 3.1 serializes.
-//! Nothing here is `#[cfg]`-gated, so `mise run test:baseline` runs the file as
-//! written.
+//! **Stage two is recorded twice, because it costs two different amounts.**
+//! `emit/downgrade.rs` gates its whole walk behind `openapi32`, so a baseline
+//! build returns an empty `Vec` and does the clone alone: stage two reads 125,
+//! 1205 and 12 005 there against the 374, 3524 and 35 024 at
+//! `--all-features`. Enforcing the larger number at baseline would run
+//! `mise run test:baseline` — a gate of its own — at a ratchet roughly three
+//! times looser than its own measurement, which is the guessed ceiling
+//! [`nfr.md`](../../../docs/nfr.md#thresholds) refuses; a per-operation
+//! allocation added to `three_two_only_constructs`'s baseline arm, which
+//! `--all-features` never compiles, would fit inside the slack. So
+//! `EMIT_CEILINGS` is the one `#[cfg]`-gated item in the file and every other
+//! number is shared: stage one and the byte counts are identical under both,
+//! since neither feature changes what 3.1 serializes.
 //!
 //! # What this cannot see
 //!
@@ -97,9 +100,10 @@
 //!   fires on `n^2.0001` and on `n³`; it does not fire at exactly `n²` over a
 //!   linear cost, at any coefficient, over any span of sizes. Concretely: a
 //!   descent in `three_two_only_constructs` allocating one pointer per
-//!   (path, path) pair reads 474, 13 524 and 1 035 024 — each recorded ceiling
-//!   plus n², which is how `NESTED_WALK` below derives them, and 97% of the
-//!   cost at a thousand operations — and *both* decades satisfy the relation.
+//!   (path, path) pair reads 474, 13 524 and 1 035 024 at `--all-features` —
+//!   each recorded ceiling plus n², which is how `NESTED_WALK` below derives
+//!   them from whichever ceilings the build enforces, and over 95% of the cost
+//!   at a thousand operations — and *both* decades satisfy the relation.
 //!
 //!   **The per-size ceilings are what catch that case** (474 exceeds the 374
 //!   recorded at ten operations), and they are what catch the sub-quadratic
@@ -149,30 +153,50 @@ struct Size {
     operations: usize,
     /// What one [`Document::to_json`] allocates here.
     json_allocations: usize,
-    /// What one [`Document::emit`] allocates here, at `--all-features`.
+    /// What one [`Document::emit`] allocates here, in this build's features.
     emit_allocations: usize,
     /// How many bytes one [`Document::to_json`] writes here.
     output_bytes: usize,
 }
+
+/// What one [`Document::emit`] allocates at each of [`SIZES`]'s points, at
+/// `--all-features`.
+///
+/// The only `#[cfg]`-gated item here, and it is gated because the cost it
+/// records is: `emit::downgrade::three_two_only_constructs` walks `paths` per
+/// entry under `openapi32` and returns an empty `Vec` without it, so one table
+/// enforced under both would be roughly three times looser than its own
+/// measurement in the build that reads it lower.
+#[cfg(feature = "openapi32")]
+const EMIT_CEILINGS: [usize; 3] = [374, 3524, 35_024];
+
+/// ...and at baseline, where the downgrade walk is compiled out and
+/// [`Document::emit`]'s `self.clone()` is the whole of stage two.
+///
+/// Transcribed from the baseline run exactly as the `--all-features` numbers
+/// are from theirs, so `mise run test:baseline` ratchets on what it measures
+/// rather than on what another feature set does.
+#[cfg(not(feature = "openapi32"))]
+const EMIT_CEILINGS: [usize; 3] = [125, 1205, 12_005];
 
 /// The three points, a decade apart, as the requirement names them.
 const SIZES: [Size; 3] = [
     Size {
         operations: 10,
         json_allocations: 27,
-        emit_allocations: 374,
+        emit_allocations: EMIT_CEILINGS[0],
         output_bytes: 4675,
     },
     Size {
         operations: 100,
         json_allocations: 210,
-        emit_allocations: 3524,
+        emit_allocations: EMIT_CEILINGS[1],
         output_bytes: 45985,
     },
     Size {
         operations: 1000,
         json_allocations: 2013,
-        emit_allocations: 35024,
+        emit_allocations: EMIT_CEILINGS[2],
         output_bytes: 460_885,
     },
 ];
@@ -344,8 +368,7 @@ fn stays_sub_quadratic(measure: &str, readings: &[(usize, usize)]) {
     }
 }
 
-/// The policy clause a recorded ceiling carries when it has nothing more
-/// specific to say. Two of the three do; `emit`'s carries a caveat of its own.
+/// The policy clause every recorded ceiling here carries.
 const A_CEILING_MOVES_BY_DECISION: &str =
     "raising a ceiling is a deliberate edit and lowering one is what an improvement looks like";
 
@@ -537,8 +560,7 @@ fn one_emission_allocates_what_was_recorded() {
             size.operations,
             emitted,
             size.emit_allocations,
-            "the ceiling is the `--all-features` reading, so a baseline run is expected to come \
-             in under it rather than at it",
+            A_CEILING_MOVES_BY_DECISION,
         );
     }
 }
