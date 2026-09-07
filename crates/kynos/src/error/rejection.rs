@@ -558,12 +558,12 @@ pub enum AuthRejection {
         ///
         /// Set it with [`AuthRejection::forbidden_as`] and leave it unset with
         /// [`AuthRejection::forbidden`]. `&'static str` rather than an owned
-        /// string is the guarantee, not a micro-optimisation: the URI reaches
-        /// the client verbatim and is not validated, and a type that cannot
-        /// hold a formatted string is one that cannot splice a caller's
-        /// identifier into a name meant for a *class* of refusal. It is the
-        /// same bound `Unauthenticated`'s `challenge` carries one variant
-        /// above.
+        /// string is where the friction belongs, not a micro-optimisation: the
+        /// URI reaches the client verbatim and is not validated, so a name
+        /// assembled from the request has to be leaked before it can be passed
+        /// — which is deliberate enough that nobody does it by accident, and
+        /// is the whole of the guarantee. It is the same bound
+        /// `Unauthenticated`'s `challenge` carries one variant above.
         type_uri: Option<&'static str>,
     },
 }
@@ -598,8 +598,19 @@ impl AuthRejection {
     /// type, and Kynos has none to offer for a URI it has never seen; an
     /// application wanting its own title has `#[derive(ApiError)]`.
     ///
+    /// **This reaches the wire and not the description.** The 403 an operation
+    /// declares still refers to the shared `Problem` component and narrows
+    /// nothing, because `Describe` for `Auth<S>` and `Scoped<S, R>` is generic
+    /// in the scheme alone and the authenticator is a value on the context,
+    /// unreachable while the document is built. A client reading the body sees
+    /// this URI; a client reading the description does not. #118 is where that
+    /// gap is settled.
+    ///
     /// The URI is not validated and reaches the client verbatim, so it names a
-    /// class of refusal rather than a fact about the caller. `&'static str` is
+    /// class of refusal rather than a fact about the caller. RFC 9457 section
+    /// 3.1.1 recommends an absolute URI: a relative reference resolves against
+    /// the request, so the same refusal would carry a different identity per
+    /// endpoint. `&'static str` is
     /// what holds an author to that: a URI assembled from the request would
     /// have to be leaked to be passed here, which is friction in exactly the
     /// right place. A `const` refusal is the ordinary case.

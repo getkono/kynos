@@ -163,10 +163,10 @@ struct Tokens {
 
 /// The problem type `Tokens` gives a scope refusal.
 ///
-/// A constant, because that is the only thing `forbidden_as` accepts: it takes
-/// a `&'static str`, so the URI names a *class* of refusal — "a scope was
-/// missing" — and cannot have the missing scope, or the caller, formatted into
-/// it.
+/// A constant, because that is what `forbidden_as` is shaped for: it takes a
+/// `&'static str`, so the URI names a *class* of refusal — "a scope was
+/// missing" — and the missing scope, or the caller, would have to be leaked
+/// before it could be formatted into one.
 const INSUFFICIENT_SCOPE: &str = "https://errors.example.com/insufficient-scope";
 
 impl Tokens {

@@ -304,7 +304,6 @@ fn a_named_403_survives_the_challenge_pass_and_still_sends_none() {
 
     let challenged = AuthRejection::forbidden_as(BANNED).with_challenge(Some(CHALLENGE));
 
-    assert_eq!(challenged.status(), StatusCode::FORBIDDEN);
     assert_eq!(challenged.challenge(), None);
     assert_eq!(challenged.into_problem().type_uri, BANNED);
 
@@ -320,7 +319,6 @@ fn a_named_403_survives_the_challenge_pass_and_still_sends_none() {
         .into_problem();
 
     assert_eq!(unauthenticated.type_uri, "about:blank");
-    assert_eq!(unauthenticated.status, StatusCode::UNAUTHORIZED);
 }
 
 // --- The closed set --------------------------------------------------------

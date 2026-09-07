@@ -94,7 +94,10 @@ struct Negotiation {
 /// The status is part of the key because a problem with no `#[problem(base)]`
 /// is `about:blank`, whose title section 4.2.1 makes a function of the status
 /// alone — so every rejection Kynos raises shares one URI and is told apart
-/// only by its code.
+/// only by its code. The one exception is a 403 an application named with
+/// `AuthRejection::forbidden_as`, which carries that application's URI: a
+/// catalogue wanting to translate it keys on the URI it passed, not on
+/// `about:blank`.
 fn catalogue() -> HashMap<(&'static str, u16, &'static str), &'static str> {
     HashMap::from([
         (
