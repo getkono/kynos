@@ -62,10 +62,13 @@ fn narrowed(schema: &Schema) -> Option<Vec<(&str, &Schema)>> {
     };
 
     match object.one_of.as_deref() {
-        // Every branch, or none of them. A `oneOf` where one branch narrows and
+        // No choice to read, so the schema is one branch -- and an empty
+        // `oneOf` is the same answer by another route, since it constrains no
+        // `type` and `published` says so.
+        Some([]) | None => Some(vec![(published(schema)?, schema)]),
+        // Every branch, or none of them: a `oneOf` where one branch narrows and
         // another does not is one the unnarrowed branch already satisfies for
         // every problem document, so it narrows nothing as a whole.
-        Some([]) | None => Some(vec![(published(schema)?, schema)]),
         Some(branches) => branches
             .iter()
             .map(|branch| Some((published(branch)?, branch)))
