@@ -263,6 +263,25 @@ description = "Verify every crate is named only where its owner allows"
 # rule held.
 run = "python3 scripts/containment.py"
 
+[tasks."containment:test"]
+description = "Test the parsers the containment gate reads its tables with"
+# The gate above is only as good as what it reads, and what it reads passes
+# through four parsers: two that take a table cell apart and two that take a
+# source file apart. A rule that breaks says so and exits one; a parser that
+# breaks drops a spelling, a site or a region of a file, and the gate goes on
+# printing `every rule holds` over a table it half read. All three of the
+# defects `fc1bf1d` fixed were exactly that, and none of them was reachable
+# from any input the tree happens to contain.
+#
+# `unittest` from the standard library and no test runner. There is no
+# `pytest`, no `tox` and no `requirements.txt` in this repository, and taking
+# a dependency to hold four pure functions is the worse trade.
+#
+# `-B` because `.gitignore` has no `__pycache__` entry, and a check that
+# leaves an untracked directory behind is a check people learn to work around.
+# The test file sets `sys.dont_write_bytecode` too, for a direct `python3` run.
+run = "python3 -B scripts/containment_test.py"
+
 [tasks."docs:check"]
 description = "Build documentation with warnings denied"
 # `missing_docs` is denied at the workspace level, so this also enforces that
@@ -429,6 +448,7 @@ run = [
   { task = "ui:check" },
   { task = "references:verify" },
   { task = "containment:check" },
+  { task = "containment:test" },
   { task = "docs:check" },
   { task = "panic:check" },
   { task = "features:check" },
@@ -462,6 +482,11 @@ description = "Run all pre-push checks"
 # on things a push should not carry: an undocumented public item, since
 # `missing_docs` is denied, and a crate named outside the module that owns it.
 # Both were first caught in CI, which is a slower place to learn it.
+#
+# `containment:test` follows `containment:check` wherever it goes. The gate is
+# only as good as the parsers under it, and a parser that breaks is what makes
+# the gate pass silently -- so a push carrying a green gate over a broken parser
+# is exactly what the pair is here to refuse.
 run = [
   { task = "format:check" },
   { task = "lint" },
@@ -469,5 +494,6 @@ run = [
   { task = "coverage" },
   { task = "docs:check" },
   { task = "containment:check" },
+  { task = "containment:test" },
   { task = "commits:check" },
 ]

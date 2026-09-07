@@ -354,27 +354,62 @@ each element, the identifier that names it, and the sites allowed to name it.
 Every other file is on the request path by default, so a new site is a failing
 build until someone adds it to a row and says why a request cannot reach it.
 
-**Four rows, and the count is the check.** A row deleted or truncated away
-would otherwise leave the gate reporting that every rule holds while the
-element it named went unchecked, which is the one failure a gate must not have.
-The count is stated here for the reason `architecture.md` states its allowance
-count: a table nothing sizes is a table a blank line can silently halve.
+Two things are graded off-path and each gets rows here. The first four rows are
+*elements*: the document model, the registry that mints its schemas, the
+validators, and the JSON Schema interpreter.
+[`performance.md`](performance.md#the-allocation) names four in its shape table
+and this is not that list. Three of its four are here — the document model, the
+validators and, held by the `yaml` row's emitter site further down rather than
+by one of these four, the emitters. The fourth, `describe`, is the one shape no
+row holds and cannot be: it is the site allowed by each of the rows whose
+element it builds, so a row naming it would be circular. What puts it off the
+path is that `Router::build` has returned before a service exists. Going the
+other way, the registry is in no shape-table row — it is here because it is what
+mints a schema, and the mint site is the stronger claim — and neither is the
+JSON Schema interpreter, whose row is the one the README's claim is about and
+allows `test/conformance.rs` alone: `describe` does not build it, and nothing on
+either side of that row names the other.
 
-The table is not yet the whole grading. It holds the document model, the
-validators, the registry that mints their schemas, and the JSON Schema
-interpreter the README's claim is about. The emitters and `describe` are graded
-off-path and held by nothing here: the emitters live in `kynos-openapi`, outside
-the one scope the rule reads, and get a row when
-[#86](https://github.com/getkono/kynos/issues/86) widens it; and `describe` is
-the site allowed by each of the three rows below whose element it builds, so a
-row naming it would be circular — what puts it off the path is that
-`Router::build` has returned before a service exists. The ten *flags*
-`performance.md` grades off-path are unheld here too, and for the same reason
-the emitters are: this table names elements rather than gates, and
-[#86](https://github.com/getkono/kynos/issues/86) is what teaches the rule a
-`feature = "..."` token. The fourth row, the JSON
-Schema interpreter, allows `test/conformance.rs` alone: `describe` does not
-build it, and nothing on either side of that row names the other.
+The ten rows after those are the *flags*
+[`performance.md`](performance.md#the-feature-grading) grades `Off-path proof`,
+which owe the same argument one at a time. A flag is a weaker thing to hold than
+an element — it names no type — so what a row holds is where the flag is
+*written*: the crate its gated code calls, and the `#[cfg(feature = "…")]` that
+compiles it. That is enough for the claim being made, and the ten fall into four
+kinds. Six compile the code the proof has to keep a request away from: `uuid`
+and the four `time`/`decimal` backends contribute `Schema`
+implementations, which need the `&mut Registry` only `describe` mints, and
+`yaml` contributes an emitter method on a document a request never holds.
+`test-util` compiles the conformance harness behind one gate on `pub mod test`,
+whose interpreter is the `jsonschema` row above. `time` and `decimal` compile
+nothing on their own — each is a `compile_error!` without a backend, which
+[`features:check`](../mise.toml) probes — so their rows hold the two files that
+say so, and their real cost is their backends' rows. `openapi31` compiles
+nothing conditionally at all, which its row states. In every case a gate written
+outside the sites its row allows is the first sight of that stopping being true,
+and it fails the build.
+
+`macros` is the eleventh flag performance.md could have graded here and does
+not: it is graded a full battery, because a derive is a type-level surface that
+owes a codegen delta, which an off-path proof does not include.
+
+Which flags belong here is not this document's to decide, and is not
+transcribed. `containment.py` reads the `Off-path proof` row of performance.md's
+grading table and requires every flag in it to appear in an *Element* cell of
+the table below, so regrading a flag into that column is a failing build until
+its row exists. That closes the one drift the grading table cannot see on its
+own: a full battery either runs or does not and an aggregate owes nothing, but a
+proof is an argument, and an argument that was graded and never written reads
+exactly like one that was written and holds. The check is forward only — a row
+for a flag graded elsewhere is not an error, since an element may be worth
+holding under any grade.
+
+**Fourteen rows, and the count is the check.** A row deleted or truncated
+away would otherwise leave the gate reporting that every rule holds while the
+element it named went unchecked, which is the one failure a gate must not
+have. The count is stated here for the reason `architecture.md` states its
+allowance count: a table nothing sizes is a table a blank line can silently
+halve.
 
 | Element | Named by | Named only in | Why a request cannot reach it |
 | --- | --- | --- | --- |
@@ -382,19 +417,52 @@ build it, and nothing on either side of that row names the other.
 | the schema registry | `Registry::{new,default}` | `router/describe.rs` | the one registry a build mints is consumed by `describe`, which has finished before a service exists to accept a request |
 | the document validators | `Validator` | `router/describe.rs` | a description is validated where it is built. The build either fails or drops the validator, and nothing on the request path holds one to run |
 | the JSON Schema interpreter | `jsonschema` | `test/conformance.rs` | it is behind `test-util` and exists to check an observed response against the description. The request parser is the other projection of the same declaration and interprets no schema |
+| the `openapi31` feature | `feature = "openapi31"` | `lib.rs`, `crates/kynos-openapi/src/lib.rs` | nothing is conditional on it. Both sites are the `#[cfg(not(feature = "openapi31"))] compile_error!` that refuses a build without it, and the 3.1 object model it names is compiled unconditionally. What that model does is held by the document, registry and validator rows above, and a request reaches none of the three |
+| the `yaml` feature | `serde_yaml_ng`, `feature = "yaml"` | `crates/kynos-openapi/src/emit/mod.rs`, `error/mod.rs` | `Document::to_yaml` is a method on the emitted document, reached only through `Service::openapi` after the build has finished. `Error::Yaml` carries a failure that emitter produced and is constructible nowhere else |
+| the `test-util` feature | `feature = "test-util"` | `lib.rs` | one gate, on `pub mod test`. What it compiles is the conformance harness, whose interpreter is the `jsonschema` row above |
+| the `uuid` feature | `uuid`, `feature = "uuid"` | `schema/impls/{mod,identifier}.rs` | its whole contribution is `impl Schema for Uuid`, and `Schema::schema` takes the `&mut Registry` that only `describe` mints |
+| the `time` feature | `feature = "time"` | `lib.rs`, `schema/impls/mod.rs` | it carries no types: enabled without a backend it is a `compile_error!`, which `features:check` probes. The two sites are the gate that says so and the module it would open; the cost is its backends' rows |
+| the `time-chrono` feature | `chrono`, `feature = "time-chrono"` | `lib.rs`, `schema/impls/temporal/{mod,chrono}.rs` | `Schema` implementations for the crate's date and time types, behind the `&mut Registry` only `describe` mints |
+| the `time-jiff` feature | `jiff`, `feature = "time-jiff"` | `lib.rs`, `schema/impls/temporal/{mod,jiff}.rs` | the same, for the other backend: `Schema` implementations reachable only through a registry a build has already consumed |
+| the `decimal` feature | `feature = "decimal"` | `lib.rs`, `schema/impls/mod.rs` | as `time`: no types of its own, a `compile_error!` without a backend, and the two sites are the gate and the module it opens |
+| the `decimal-rust` feature | `rust_decimal`, `feature = "decimal-rust"` | `lib.rs`, `schema/impls/decimal/{mod,rust_decimal}.rs` | `Schema` implementations for the crate's decimal type, behind the `&mut Registry` only `describe` mints |
+| the `decimal-big` feature | `bigdecimal`, `feature = "decimal-big"` | `lib.rs`, `schema/impls/decimal/{mod,bigdecimal}.rs` | the same, for the other backend |
 
-Site paths are relative to `crates/kynos/src/`, which is the one scope
-[`containment.py`](../scripts/containment.py) counts a row against: a file
-outside it is neither an offender nor an allowance, so an element whose home is
-another crate is unheld until the scope moves, which is a change to the rule and
-not to a row. A *Named by*
-cell holds an identifier, or a path of them, and brace-expands the way the
-*Named only in* column does when one element has more than one spelling that
-reaches it: `Registry::{new,default}` holds both, because `Registry::new` is
+A site path is relative to `crates/kynos/src/` unless it starts at `crates/`,
+which makes it relative to the repository root and is how a row names a file in
+a sibling crate. The scope [`containment.py`](../scripts/containment.py) counts
+a row against follows from the row's own sites: always `crates/kynos/src/`, plus
+one `crates/<name>/src/` tree per crate-qualified site. So the widening and the
+reason for it are one edit, and a row reaching into another crate cannot be
+written without saying where. Deriving it per row rather than declaring one
+scope for the table is what makes the widening safe: `Document`, `Registry` and
+`Validator` are all *declared* in `kynos-openapi`, and a table-wide scope
+spanning both crates would fail those three rows on sight while proving nothing
+about the crate a request runs in. A derived tree that is not a directory fails
+the row rather than scanning nothing: the derivation is string surgery over a
+crate name nothing else here spell-checks, and a misspelled one reads as a legal
+site while narrowing the row back to the home scope, where every spelling it
+names is still written.
+
+A *Named by* cell holds one of two kinds of token, and may hold several of
+either as a comma-separated list of backticked entries. The first is an
+identifier or a path of them, brace-expanding the way the *Named only in* column
+does when one element has more than one spelling that reaches it:
+`Registry::{new,default}` holds both, because `Registry::new` is
 `Self::default()` and a row holding only `new` would let a derived `default()`
-mint a registry anywhere. A cell may also come to hold a `feature = "…"` gate
-token, matched over the raw source rather than the stripped text, for a flag
-whose off-path proof is that nothing compiles it. A cell the rule cannot read
+mint a registry anywhere. The second is a `feature = "…"` gate, written as the
+`#[cfg]` attribute writes it, for an element whose whole contribution is what a
+gate compiles — a flag is not a Rust name, so there is nothing else to name it
+by. The two are matched over different text, and the string literals are the
+whole of the difference: an identifier over source with its comments, its
+literals and its inline `#[cfg(test)]` modules removed, a gate over the same
+source with the literals kept, because the flag name is one. Comments go from
+both corpora. A gate written in a comment or a rustdoc example is a mention no
+build compiles, and a rule reading one would report a row as holding on the
+strength of a sentence about it — a renamed flag staying green off a stale
+comment is the failure a naming rule is least able to survive. A feature row
+usually carries both — the code its gate compiles, and the crate that code
+calls — as in `` `uuid`, `feature = "uuid"` ``. A cell the rule cannot read
 fails the build rather than passing quietly, so teaching it a new kind of token
 is part of writing the row that needs one.
 
@@ -402,13 +470,25 @@ Each spelling in a cell is held to naming something, one at a time rather than
 as a union: a cell written `Registry::{new,defualt}` would otherwise pass on the
 strength of `new` while a derived `default()` minted a registry anywhere. What a
 spelling must name is a mention anywhere in the scope, sibling test files
-included,
-rather than a site on the request path — a mint spelling earns its row by being
-reachable, not by being reached, and the row is at its strongest when nothing a
-request can run writes it at all. `Registry::default` is that case today. A
-spelling nothing in the scope writes under any `cfg` is a rename or a typo, and
-fails the build: it is a row holding nothing rather than an element nothing
-reaches.
+included, rather than a site on the request path — a mint spelling earns its row
+by being reachable, not by being reached, and the row is at its strongest when
+nothing a request can run writes it at all. `Registry::default` is that case
+today. A spelling nothing in the scope writes under any `cfg` is a rename or a
+typo, and fails the build: it is a row holding nothing rather than an element
+nothing reaches.
+
+*Sibling* test files, and not every test: the same strip drops an inline
+`#[cfg(test)] mod` body from either corpus, so what a spelling may be found in
+is the source a request can run plus the `tests.rs` siblings beside it. That is
+the layout rule's own corpus — a module's tests belong in a sibling — rather
+than an approximation of "the tests", and it holds for a gate as much as for an
+identifier: an inline test module is the other place a gate can sit that no
+build outside `cfg(test)` compiles. A failure names which of the two corpora it
+read, so a row that has stopped holding says what text it was held against. A
+row whose cell the rule cannot read, or whose spelling names nothing, reports
+that one failure and stops: its site list goes unchecked until the cell is
+repaired, because an offender scan under a spelling already called
+untrustworthy would render a verdict nobody should act on.
 
 A cell names the shortest spelling that is unique in the workspace, not the
 longest one that is unambiguous. A qualified path is what an import removes:
@@ -430,9 +510,10 @@ claim and the true one.
 The two rules above are the ones this instantiates. **The set is named where the
 set has names**: a failure reports which file names an off-path element, not
 that two counts differ. **The declared side is read off disk**: the rule
-computes the real set of naming files from the stripped source, so the only
-hand-written thing in a row is the reason — which is exactly what a reviewer is
-being asked for when a build fails here.
+computes the real set of naming files from the stripped source — whichever of
+the two strippings the token kind asks for — so the only hand-written thing in
+a row is the reason, which is exactly what a reviewer is being asked for when a
+build fails here.
 
 The rule cannot see the whole path on its own. `Dispatch` hands every request to
 a trait object — `dyn ErasedTerminal`, `dyn ErasedInterceptor`, `dyn Observer`,

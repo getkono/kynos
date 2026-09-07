@@ -62,6 +62,12 @@ jobs:
       - name: Verify dependency and runtime containment
         run: mise run containment:check
 
+      # And here for it once more: this one runs the parsers that gate reads
+      # its tables and its sources with, over cells and fragments written for
+      # the purpose, so it compiles nothing either.
+      - name: Test the containment gate's parsers
+        run: mise run containment:test
+
   test:
     name: Tests
     runs-on: ubuntu-latest
