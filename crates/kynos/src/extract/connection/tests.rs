@@ -61,8 +61,8 @@ fn a_connection_clone_shares_its_payload() {
 /// one. `size_of` counts the record and the headers within it, never the bytes
 /// a header points at: `server_name`, `alpn` and `peer_certificates` are three
 /// pointer-width triples here and an unbounded number of kilobytes on the heap,
-/// so a three-certificate mTLS chain — roughly 4.6 KiB of DER — moves none of
-/// these readings. `docs/architecture.md` records that chain among what one
+/// so a three-certificate mTLS chain — kilobytes of DER these readings do not
+/// see — moves none of them. `docs/architecture.md` records that chain among what one
 /// accepted socket costs and nothing bounds.
 ///
 /// `Inner` carries `Option<TlsIdentity>` at every feature set, including a build

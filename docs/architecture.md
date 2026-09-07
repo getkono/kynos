@@ -689,9 +689,9 @@ those headers point at. The protocol configuration cloned per socket is bounded
 separately, in `crates/kynos/src/server/tests.rs`. What one accepted socket
 costs in total is not guarded anywhere: that would have to include the peer
 certificate chain `TlsIdentity` owns, which a `size_of` sees as one
-pointer-width triple and a three-certificate mTLS chain makes roughly 4.6 KiB of
-heap, along with the connection task's future, the service handle and the
-semaphore permit, none of which is bounded today.
+pointer-width triple and a multi-certificate mTLS chain makes kilobytes of heap
+the reading does not see, along with the connection task's future, the service
+handle and the semaphore permit, none of which is bounded today.
 
 ### Why kernel TLS is deferred
 
