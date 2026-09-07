@@ -24,6 +24,7 @@ this repository and `unittest` needs none.
 import contextlib
 import io
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -375,6 +376,40 @@ class Provenance(unittest.TestCase):
 
     def test_a_drift_within_one_toolchain_is_not_flagged(self):
         self.assertNotIn("mixes toolchains", self.report(LIVE))
+
+
+class Exclusions(unittest.TestCase):
+    """One feature-exclusion set, written down in three places.
+
+    `EXCLUDED` transcribes it a third time, after `mise.toml`'s
+    `features:check` and `features:targets` already spell it out, and
+    `docs/testing.md#cross-cutting` holds that a set with names is asserted
+    against those names rather than intended. The three are not identical and
+    this states exactly how they differ, so that a feature added to one of
+    them cannot quietly go missing from another: `features:check` needs no
+    exclusion for `full` because a powerset that carries every feature is
+    excluded by `--exclude-all-features` already, and the sweep excludes
+    `openapi31` on top because it is the pinned baseline every other point is
+    measured against rather than a point of its own.
+    """
+
+    def excluded_by(self, task):
+        """Every `--exclude-features` list `mise.toml`'s `task` spells."""
+        text = (cost.ROOT / "mise.toml").read_text()
+        body = text.split(f'[tasks."{task}"]', 1)[1].split("\n[tasks.", 1)[0]
+        return [
+            frozenset(names.split(","))
+            for names in re.findall(r"--exclude-features ([\w,-]+)", body)
+        ]
+
+    def test_the_sweep_excludes_the_target_matrix_set_and_its_baseline(self):
+        (matrix,) = self.excluded_by("features:targets")
+        self.assertEqual(cost.EXCLUDED, matrix | {cost.BASELINE})
+
+    def test_the_powerset_excludes_the_same_set_but_for_full(self):
+        powerset, _with_server = self.excluded_by("features:check")
+        (matrix,) = self.excluded_by("features:targets")
+        self.assertEqual(powerset | {"full"}, matrix)
 
 
 class Failures(unittest.TestCase):
