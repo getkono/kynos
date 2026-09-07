@@ -246,7 +246,7 @@ rewrite.
 | dx | Every rejection produces an error naming the field and the fix | `trybuild` UI tests, plus [`error/rejection/tests.rs`](../crates/kynos/src/error/rejection/tests.rs) counting every variant and asserting each renders a sentence rather than a debug dump | `enforced` for the counting; `planned` for the snapshots |
 | security | A credential is read from the field its scheme declared, and from no other | `Carries` is emitted by the same derive as `describe`, so the two are one text; [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) drives a derived API-key carrier to 200, 401 and 403 over a live service | `enforced` |
 | security | An authenticator cannot read a request field the scheme did not declare | Structural: `Authenticator::authenticate` receives `S::Presented` and is never given the request | `enforced` |
-| performance | An opt-in body codec's added allocations on an operation that mounts it are at most a recorded number, in both directions | [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs), taking each codec against the same service's bodyless floor and its `Binary<OctetStream>` transport floor | `enforced` |
+| performance | An opt-in body codec's added allocations on an operation that mounts it are at most a recorded number, in both directions | [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs), taking each codec against the same service's bodyless floor, its `Binary<OctetStream>` transport floor and its bodyless responding floor | `enforced` |
 
 **There is deliberately no default body cap**, and the row above says so rather
 than claiming one. This document previously read "body size, header count and
