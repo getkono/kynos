@@ -704,9 +704,10 @@ qualifier is the condition
 two more. That figure is traced rather than counted: `Body::from_incoming` is
 `pub(crate)` and nothing counts it.
 [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) counts both constructors
-— zero for `Body::empty`, one for `Body::from_bytes` — and holds the zero-sized
-reason as a witness of its own, so a dependency bump that ends it turns
-something red rather than leaving this paragraph quietly wrong.
+— zero for `Body::empty`, one for `Body::from_bytes` — and
+[`size.rs`](../crates/kynos/tests/size.rs) holds the zero-sized reason as a
+witness beside it, so a dependency bump that ends it turns something red rather
+than leaving this paragraph quietly wrong.
 
 ### Why kernel TLS is deferred
 
