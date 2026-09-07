@@ -393,8 +393,8 @@ Two properties decide which counter, and both are load-bearing. Its counters
 are **thread-local**, so a region reads what the measuring thread allocated
 rather than what the process did — `libtest` runs a test on a thread it spawns
 and keeps its own alive beside it, so a process-global counter reports the
-harness's allocations as the router's, on whichever microsecond-wide region
-happens to be open. And it installs **no allocator on its own behalf**: each
+harness's allocations as the measured path's, on whichever microsecond-wide
+region happens to be open. And it installs **no allocator on its own behalf**: each
 target that wants it writes the `#[global_allocator]` line itself, which is
 what keeps the instrument out of every other test binary in the package.
 
