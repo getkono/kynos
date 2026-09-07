@@ -384,6 +384,22 @@ class Failures(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("RUSTFLAGS", said)
 
+    def test_an_ambient_cargo_build_rustflags_stops_it_too(self):
+        with mock.patch.dict(
+            os.environ, {"CARGO_BUILD_RUSTFLAGS": "-Cstrip=symbols"}, clear=True
+        ):
+            code, said = self.refused(cost.sweep_env)
+        self.assertEqual(code, 1)
+        self.assertIn("CARGO_BUILD_RUSTFLAGS", said)
+
+    def test_an_ambient_cargo_build_target_stops_it_too(self):
+        with mock.patch.dict(
+            os.environ, {"CARGO_BUILD_TARGET": "x86_64-unknown-linux-musl"}, clear=True
+        ):
+            code, said = self.refused(cost.sweep_env)
+        self.assertEqual(code, 1)
+        self.assertIn("CARGO_BUILD_TARGET", said)
+
     def test_a_missing_llvm_size_stops_the_sweep_with_its_own_code(self):
         with tempfile.TemporaryDirectory() as sysroot:
             with mock.patch.object(cost, "capture", return_value=f"{sysroot}\n"):
