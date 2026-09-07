@@ -382,7 +382,8 @@ requires cannot compile in any crate inheriting those lints, which is all three
 of them. Taking a vetted one is how the invariant is kept
 rather than bent: the unsafe stays upstream, and this tree keeps a rule it
 would otherwise have had to carve an exception into. It is a dev-dependency
-named by [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs),
+named by
+[`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs),
 [`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) and
 [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs), and by nothing
 under `src/`.
@@ -392,9 +393,11 @@ are **thread-local**, so a region reads what the measuring thread allocated
 rather than what the process did — `libtest` runs a test on a thread it spawns
 and keeps its own alive beside it, so a process-global counter reports the
 harness's allocations as the router's, on whichever microsecond-wide region
-happens to be open. And it installs **no allocator on its own behalf**: each
-target that wants it writes the `#[global_allocator]` line itself, which is
-what keeps the instrument out of every other test binary in the package.
+happens to be open. And it installs **no allocator on its own behalf**: the
+`#[global_allocator]` line is written by the target that wants the counter, or
+once in the harness that several such targets `#[path]`-include. What keeps the
+counter out of every other test binary in the package is that no target which
+does not want it writes that line or includes that harness.
 
 `stats_alloc` held this slot and satisfies only the second, which is a flake
 that read as state accumulating on the routing path. `allocation-counter`

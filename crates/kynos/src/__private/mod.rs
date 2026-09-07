@@ -10,6 +10,7 @@
 
 pub mod endpoint;
 pub mod path;
+pub mod problem;
 pub mod reply;
 pub mod uri;
 
