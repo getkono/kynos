@@ -240,26 +240,55 @@ class AllowedSites(unittest.TestCase):
         self.assertIsNone(gate.allowed_sites("`router/dispatch.rs` and nowhere else"))
 
 
+# The trees this repository actually has, for the cases that do not care which
+# tree is missing. Stated rather than read off disk: a case asserting what a
+# derived tree does is about the derivation, and reading the real layout would
+# make it about the layout instead.
+REAL = {"crates/kynos/src/", "crates/kynos-openapi/src/", "crates/kynos-macros/src/"}
+
+
 class Scanned(unittest.TestCase):
-    """The trees a row's own sites put it in reach of."""
+    """The trees a row's own sites put it in reach of, and which of them exist.
+
+    The derivation is string surgery over a hand-written crate name, and no
+    other check on the cell can see a misspelling: a typo'd crate is still
+    backticked, still `crates/`-prefixed and still reads as a path. What it
+    yields is a tree matching no file, which narrows the row back to the home
+    scope where its spelling is still written -- so both halves of the row pass
+    and the sibling crate leaves the gate without a word.
+    """
+
+    def scanned(self, sites, trees=REAL):
+        return gate.scanned(sites, exists=trees.__contains__)
 
     def test_a_row_with_no_crate_qualified_site_scans_its_home_scope(self):
         sites = gate.allowed_sites("`router/dispatch.rs`, `router/describe.rs`")
-        self.assertEqual(gate.scanned(sites), ["crates/kynos/src/"])
+        self.assertEqual(self.scanned(sites), (["crates/kynos/src/"], []))
 
     def test_a_crate_qualified_site_opens_that_crate_to_the_scan(self):
         sites = gate.allowed_sites(
             "`router/dispatch.rs`, `crates/kynos-openapi/src/emit/mod.rs`"
         )
         self.assertEqual(
-            gate.scanned(sites),
-            ["crates/kynos-openapi/src/", "crates/kynos/src/"],
+            self.scanned(sites),
+            (["crates/kynos-openapi/src/", "crates/kynos/src/"], []),
         )
 
     def test_a_crate_path_outside_a_src_tree_opens_nothing(self):
         self.assertEqual(
-            gate.scanned({"crates/kynos-openapi/Cargo.toml"}), ["crates/kynos/src/"]
+            self.scanned({"crates/kynos-openapi/Cargo.toml"}),
+            (["crates/kynos/src/"], []),
         )
+
+    def test_a_misspelled_crate_is_reported_rather_than_scanned_for_nothing(self):
+        sites = gate.allowed_sites("`crates/kynos-opanapi/src/emit/mod.rs`")
+        trees, missing = self.scanned(sites)
+        self.assertEqual(missing, ["crates/kynos-opanapi/src/"])
+        self.assertIn("crates/kynos-opanapi/src/", trees)
+
+    def test_the_real_layout_leaves_every_derived_tree_standing(self):
+        sites = gate.allowed_sites("`crates/kynos-openapi/src/emit/mod.rs`")
+        self.assertEqual(gate.scanned(sites)[1], [])
 
 
 if __name__ == "__main__":
