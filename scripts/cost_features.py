@@ -402,6 +402,15 @@ def read_recorded(path):
     drift is a difference against these rows, and a difference measured by a
     different rustc is not the same claim as one measured by this one; while
     they were dropped the report could not tell a reader which it was holding.
+
+    `None` also when the file parses but holds nothing to compare against. A
+    baseline is unusable two ways short of being absent: a column header with
+    no row under it, and a row whose cells do not line up with that header --
+    which is what a conflicted file looks like, since `<<<<<<< HEAD` splits
+    into a single cell and lands beside the real rows. Both were accepted, and
+    an accepted-but-empty baseline is worse than no baseline: the report stops
+    saying it has nothing to compare against and starts printing a drift
+    verdict for a comparison it never made.
     """
     if not path.is_file():
         return None
@@ -415,9 +424,11 @@ def read_recorded(path):
                 stated[header[1]] = header[2]
             continue
         rows.append(line.split("\t"))
-    if not rows:
+    if len(rows) < 2:
         return None
     names, *body = rows
+    if any(len(cells) != len(names) for cells in body):
+        return None
     return Recorded(
         stated.get("toolchain"),
         stated.get("host"),
