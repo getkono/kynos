@@ -17,9 +17,16 @@ hooks {
             }
             // `.cargo/config.toml` is in the glob for the reason `Cargo.toml`
             // is: it decides how the workspace builds. Its `[profile.dev]`
-            // keys override the manifest's, so a typo'd key or an invalid
-            // value there breaks every build on the branch while matching
-            // none of the other steps' globs.
+            // keys override the manifest's, and an invalid *value* there
+            // fails every build on the branch while matching none of the
+            // other steps' globs.
+            //
+            // A misspelled key is the weaker half and this step does not
+            // catch it: cargo reports `unused config key profile.dev.debgu`
+            // and exits 0, and a misspelled profile *table* is not reported
+            // at all -- `-D warnings` is a rustc flag and never reaches a
+            // cargo-level config warning. What would catch that is a gate
+            // reading the file's own keys, which is filed as #127.
             ["lint"] {
                 glob = List("*.rs", "Cargo.toml", "Cargo.lock", ".cargo/config.toml")
                 check_first = true

@@ -103,8 +103,10 @@ description = "Lint every reachable feature combination"
 # Incremental compilation is off here, and it costs this task nothing. rustc
 # keys an incremental session on the crate's `-C metadata`, and a feature set
 # is part of that, so every combination cargo-hack walks gets a session
-# directory of its own -- written once, then never read again, because no later
-# invocation is ever the same combination. Nothing reclaims them: rustc's
+# directory of its own, and no *other* invocation in the same run ever names
+# it again. Across runs it is reused: a rerun of this task after an edit names
+# the same combinations, so what this trades away is that rerun's incremental
+# replay, and what it buys is the bytes below. Nothing reclaims them: rustc's
 # garbage collection prunes stale entries *within* a session, not sessions no
 # build will name again. A worktree that had run the matrix a few times held
 # 1280 of them, totalling 14 GiB, and a twelve-combination sweep left 0.21 GiB

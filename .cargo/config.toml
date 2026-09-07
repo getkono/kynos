@@ -49,7 +49,9 @@
 # writes a *standalone* workspace under `target/tests/trybuild/` and runs its
 # own `cargo` there, and the manifest it generates carries no `[profile]`
 # section -- so a profile in this repository's `Cargo.toml` never reaches it,
-# and the compile-fail suite kept building 187 cases at full debug info. Cargo
+# and the compile-fail suite kept building all 183 of its fixtures -- 91
+# compile-fail cases and their controls, the count `.config/nextest.toml`
+# states -- at full debug info. Cargo
 # discovers configuration by walking up from the working directory, and that
 # generated project sits inside this repository, so a profile here does reach
 # it: `target/tests` fell from 11 GiB to 2.3 GiB. The same reasoning covers
