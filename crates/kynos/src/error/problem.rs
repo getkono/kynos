@@ -335,6 +335,51 @@ pub(crate) fn problem_response(
     )
 }
 
+// --- What a refusal names itself -----------------------------------------
+
+/// The RFC 9457 problem type a refusal names.
+///
+/// `type` is what a client branches on, and `about:blank` says "the status code
+/// is the whole story" — true of a generic refusal and false of a service that
+/// distinguishes a burst limit from a spent monthly allowance, or a 503 from a
+/// concurrency cap from a 503 from a shed queue. Implement this on a marker
+/// type and select it on the interceptor that owns the refusal.
+///
+/// ```
+/// use kynos::error::problem::ProblemType;
+///
+/// struct Throttled;
+///
+/// impl ProblemType for Throttled {
+///     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/rate-limited");
+/// }
+/// ```
+///
+/// # Why a type rather than a value
+///
+/// What an interceptor declares is read from its associated types and never
+/// from an instance — see [`Interceptor`](crate::middleware::Interceptor),
+/// which has no `contribution` method for exactly this reason. A URI supplied
+/// at run time could therefore reach the wire and nothing else, leaving the
+/// document saying `about:blank` about a response that says otherwise. Stated
+/// as a type, the same `const` reaches both halves — the body a refusal writes
+/// and the response it declares, from one constant.
+///
+/// The const has no default. It is the one thing this trait carries, and a
+/// marker that left it unwritten would compile, ship `about:blank`, declare
+/// `about:blank`, and produce no diagnostic saying the feature had silently
+/// done nothing.
+///
+pub trait ProblemType: 'static {
+    /// The URI identifying the problem type, or `None` for `about:blank`.
+    const TYPE_URI: Option<&'static str>;
+}
+
+/// The default: a refusal whose status code is the whole story.
+impl ProblemType for () {
+    const TYPE_URI: Option<&'static str> = None;
+}
+
 // --- What one status declares --------------------------------------------
 //
 // Emitted code cannot spell `about:blank`: the URI a problem carrying no

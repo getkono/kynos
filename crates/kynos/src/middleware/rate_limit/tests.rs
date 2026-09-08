@@ -5,9 +5,10 @@ use super::{
     decision::{QuotaPolicy, QuotaUnit, ServiceLimit},
     headers::{RateLimitFields, RateLimitHeaders},
     quota::{estimate, recovers_in},
-    refusal::{RateLimited, RateLimitedFields, RefusalType},
+    refusal::{RateLimited, RateLimitedFields},
 };
 use crate::{
+    error::problem::ProblemType,
     extract::params::header::{EncodeHeaders, HeaderParams},
     response::ShortCircuit,
     schema::registry::Registry,
@@ -352,7 +353,7 @@ fn every_quota_unit_renders_as_a_string() {
 /// A type an application would name its refusals with.
 struct Throttled;
 
-impl RefusalType for Throttled {
+impl ProblemType for Throttled {
     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/rate-limited");
 }
 
@@ -389,7 +390,7 @@ async fn declared_and_sent<S: ShortCircuit>(value: S) -> (Option<serde_json::Val
     )
 }
 
-/// One `RefusalType` is read by both halves of a refusal's promise.
+/// One `ProblemType` is read by both halves of a refusal's promise.
 ///
 /// Both spellings, because the URI is stated on the limiter rather than on the
 /// spelling and a service choosing the draft's fields must not lose it. And
@@ -478,11 +479,11 @@ fn assert_send_sync<T: Send + Sync>() {}
 /// A marker that is deliberately neither `Send` nor `Sync`.
 ///
 /// A raw pointer is the cheapest way to be neither. It is still `'static`, so
-/// it satisfies `RefusalType` and the only thing under test is whether the
+/// it satisfies `ProblemType` and the only thing under test is whether the
 /// refusal's auto traits followed it.
 struct Unsendable(PhantomData<*const ()>);
 
-impl RefusalType for Unsendable {
+impl ProblemType for Unsendable {
     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/unsendable");
 }
 
@@ -613,7 +614,7 @@ fn a_limiter_keeps_its_impls_whatever_type_names_its_refusal() {
     // And they still say what they said. One field: `_spelling` holds nothing
     // an operator can read.
     let limiter = RateLimit::new(Policy)
-        .refusal_type::<Throttled>()
+        .problem_type::<Throttled>()
         .standard_fields();
 
     assert_eq!(

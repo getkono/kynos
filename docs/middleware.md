@@ -435,11 +435,11 @@ distinguishes a burst limit from a spent monthly allowance — a client branches
 ```rust,ignore
 struct Throttled;
 
-impl RefusalType for Throttled {
+impl ProblemType for Throttled {
     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/rate-limited");
 }
 
-RateLimit::new(policy).refusal_type::<Throttled>()
+RateLimit::new(policy).problem_type::<Throttled>()
 ```
 
 **It is a type-state, not a field on `Denial`.** What an interceptor declares is
@@ -469,7 +469,7 @@ machine-readable and it is not a *constraint*: nothing rejects a body whose
 constraint needs `type` narrowed to a `const` in the schema, and `Problem`'s
 schema is shared by every error Kynos describes — narrowing it there would
 narrow it for all of them. That is [#103]'s mechanism; when it lands the 429's
-`Problem.type` narrows to `RefusalType::TYPE_URI` and the conformance harness
+`Problem.type` narrows to `ProblemType::TYPE_URI` and the conformance harness
 starts failing a refusal whose body disagrees with its declaration.
 
 Naming no type is still the default, and it declares no example and sends

@@ -7,11 +7,11 @@
 #![cfg(all(feature = "macros", feature = "json"))]
 
 use kynos::{
+    error::problem::ProblemType,
     http::{Method, Request, StatusCode, header},
     middleware::rate_limit::{
         RateLimit,
         decision::{Decision, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
-        refusal::RefusalType,
     },
     router::operation::Route,
 };
@@ -220,7 +220,7 @@ fn the_description_carries_whichever_spelling_was_selected() {
 /// supplied at run time could reach the wire and nothing else.
 struct Throttled;
 
-impl RefusalType for Throttled {
+impl ProblemType for Throttled {
     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/rate-limited");
 }
 
@@ -237,7 +237,7 @@ async fn a_named_refusal_type_reaches_the_wire_and_the_document_it_declares() {
     const URI: &str = "https://errors.example.com/rate-limited";
 
     let service = support::router()
-        .intercept(RateLimit::new(AlwaysDenies::new()).refusal_type::<Throttled>())
+        .intercept(RateLimit::new(AlwaysDenies::new()).problem_type::<Throttled>())
         .build(App::new())
         .expect("a describable router");
 
@@ -248,7 +248,7 @@ async fn a_named_refusal_type_reaches_the_wire_and_the_document_it_declares() {
 
     let declared = serde_json::to_value(
         support::router()
-            .intercept(RateLimit::new(AlwaysDenies::new()).refusal_type::<Throttled>())
+            .intercept(RateLimit::new(AlwaysDenies::new()).problem_type::<Throttled>())
             .openapi()
             .expect("a describable router"),
     )
@@ -298,7 +298,7 @@ async fn a_named_refusal_type_survives_taking_the_standard_fields() {
     let service = support::router()
         .intercept(
             RateLimit::new(AlwaysDenies::new())
-                .refusal_type::<Throttled>()
+                .problem_type::<Throttled>()
                 .standard_fields(),
         )
         .build(App::new())
@@ -321,7 +321,7 @@ async fn a_named_refusal_type_survives_taking_the_standard_fields() {
         support::router()
             .intercept(
                 RateLimit::new(AlwaysDenies::new())
-                    .refusal_type::<Throttled>()
+                    .problem_type::<Throttled>()
                     .standard_fields(),
             )
             .openapi()
