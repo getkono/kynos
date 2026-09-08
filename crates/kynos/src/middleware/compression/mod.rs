@@ -2,7 +2,7 @@
 //!
 //! Out-of-document: content coding is transport, and OpenAPI does not model it.
 
-use std::{io, pin::Pin, task::Poll};
+use std::{io, marker::PhantomData, pin::Pin, task::Poll};
 
 use async_compression::{
     Level,
@@ -14,6 +14,7 @@ use http_body_util::BodyExt;
 use tokio::io::{AsyncRead, ReadBuf};
 
 use crate::{
+    error::problem::ProblemType,
     extract::params::header::{EncodeHeaders, HeaderParams},
     http,
     middleware::{
@@ -140,32 +141,85 @@ fn strongly_tagged(headers: &http::HeaderMap) -> bool {
 ///
 /// Reachable only through `Accept-Encoding`: it takes refusing identity *and*
 /// every coding this build offers, which no ordinary client does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NotAcceptable;
+///
+/// `T` names the problem type the body carries; `()` leaves `about:blank`. Set
+/// it with [`Compression::problem_type`].
+pub struct NotAcceptable<T = ()> {
+    /// Carries `T` without storing one. `fn() -> T` rather than `T`, so a
+    /// refusal is `Send` and `Sync` whatever the marker is.
+    problem_type: PhantomData<fn() -> T>,
+}
 
-impl crate::response::IntoResponse for NotAcceptable {
+impl<T> NotAcceptable<T> {
+    /// The refusal itself, which carries nothing but its type.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            problem_type: PhantomData,
+        }
+    }
+}
+
+impl<T> Default for NotAcceptable<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: ProblemType> crate::response::IntoResponse for NotAcceptable<T> {
     fn into_response(self) -> http::Response {
-        crate::error::problem::Problem::new(http::StatusCode::NOT_ACCEPTABLE)
+        crate::error::problem::refusal_problem::<T>(http::StatusCode::NOT_ACCEPTABLE)
             .with_detail("no representation of this resource has an acceptable content coding")
             .into_response()
     }
 }
 
-impl crate::response::ShortCircuit for NotAcceptable {
+impl<T: ProblemType> crate::response::ShortCircuit for NotAcceptable<T> {
     const STATUSES: &'static [u16] = &[406];
 }
 
-impl crate::response::Responses for NotAcceptable {
+impl<T: ProblemType> crate::response::Responses for NotAcceptable<T> {
     fn responses(registry: &mut crate::schema::registry::Registry) -> kynos_openapi::Responses {
         kynos_openapi::Responses::new().with(
             406,
-            crate::error::problem::problem_response(
+            crate::error::problem::refusal_response::<T>(
                 registry,
+                406,
                 "no representation has a content coding the request accepts",
             ),
         )
     }
 }
+
+// The derivable implementations, written out: `#[derive]` would bound each on
+// the marker, and a marker is a name rather than a value.
+
+impl<T> Clone for NotAcceptable<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for NotAcceptable<T> {}
+
+impl<T> std::fmt::Debug for NotAcceptable<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { problem_type: _ } = self;
+
+        formatter.debug_struct("NotAcceptable").finish()
+    }
+}
+
+impl<T> PartialEq for NotAcceptable<T> {
+    fn eq(&self, other: &Self) -> bool {
+        let Self { problem_type: _ } = self;
+        let Self { problem_type: _ } = other;
+
+        true
+    }
+}
+
+impl<T> Eq for NotAcceptable<T> {}
 
 /// What negotiation decided, per RFC 9110 section 12.5.3.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -444,17 +498,25 @@ pub struct Levels {
 /// arrangement that reaches it most easily — the body is stored and tagged over
 /// identity octets, then handed out here — but no cache is needed, and a
 /// handler setting its own `ETag` is treated identically.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Compression {
+///
+/// # Naming what the 406 is
+///
+/// [`problem_type`](Compression::problem_type) puts an application's own URI on
+/// the refusal. A 406 from negotiation and a 406 from an `Accept` the handler
+/// could not satisfy are different problems, and only a `type` tells them
+/// apart.
+pub struct Compression<T = ()> {
     /// The smallest response worth encoding, in bytes.
     min_size: u64,
     /// What each algorithm is asked for.
     levels: Levels,
     /// How eagerly a streamed body's encoded bytes are handed on.
     latency: LatencyMode,
+    /// Names the refusal's problem type without holding one.
+    problem_type: PhantomData<fn() -> T>,
 }
 
-impl Compression {
+impl Compression<()> {
     /// Enables every compiled-in algorithm, at each one's default level.
     #[must_use]
     pub fn new() -> Self {
@@ -462,9 +524,44 @@ impl Compression {
             min_size: 0,
             levels: Levels::default(),
             latency: LatencyMode::default(),
+            problem_type: PhantomData,
         }
     }
 
+    /// Names the RFC 9457 problem type this interceptor's 406 carries.
+    ///
+    /// Available only on a `Compression` that has not named one, so a chain
+    /// states the type at most once. See
+    /// [`BodySize::problem_type`](crate::middleware::limits::BodySize::problem_type)
+    /// for the rule and its pass control.
+    ///
+    /// ```
+    /// # #[cfg(feature = "compression")]
+    /// # {
+    /// use kynos::{error::problem::ProblemType, middleware::compression::Compression};
+    ///
+    /// struct NoAcceptableCoding;
+    ///
+    /// impl ProblemType for NoAcceptableCoding {
+    ///     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/coding");
+    /// }
+    ///
+    /// let compression = Compression::new().problem_type::<NoAcceptableCoding>();
+    /// # let _ = compression;
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn problem_type<T: ProblemType>(self) -> Compression<T> {
+        Compression {
+            min_size: self.min_size,
+            levels: self.levels,
+            latency: self.latency,
+            problem_type: PhantomData,
+        }
+    }
+}
+
+impl<T> Compression<T> {
     /// Skips responses smaller than `bytes`.
     #[must_use]
     pub fn min_size(mut self, bytes: u64) -> Self {
@@ -511,14 +608,59 @@ impl Compression {
     }
 }
 
-impl<C: Sync + 'static> Interceptor<C> for Compression {
+// The three derivable implementations, written out, for the reason
+// `NotAcceptable`'s four are: derived, a `Compression` naming a problem type
+// would lose them unless the application's marker derived them too.
+
+impl<T> Clone for Compression<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Compression<T> {}
+
+impl<T> std::fmt::Debug for Compression<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self {
+            min_size,
+            levels,
+            latency,
+            problem_type: _,
+        } = self;
+
+        formatter
+            .debug_struct("Compression")
+            .field("min_size", min_size)
+            .field("levels", levels)
+            .field("latency", latency)
+            .finish()
+    }
+}
+
+impl<T> Default for Compression<T> {
+    fn default() -> Self {
+        Self {
+            min_size: 0,
+            levels: Levels::default(),
+            latency: LatencyMode::default(),
+            problem_type: PhantomData,
+        }
+    }
+}
+
+impl<C, T> Interceptor<C> for Compression<T>
+where
+    C: Sync + 'static,
+    T: ProblemType,
+{
     type Reads = ();
     type Adds = ContentEncoding;
 
     /// 406, and only for a request that refused every representation this
     /// build can produce. Compression otherwise re-encodes a response rather
     /// than replacing it.
-    type Short = NotAcceptable;
+    type Short = NotAcceptable<T>;
 
     async fn intercept(
         &self,
@@ -526,7 +668,7 @@ impl<C: Sync + 'static> Interceptor<C> for Compression {
         reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> Result<Continued<ContentEncoding>, NotAcceptable> {
+    ) -> Result<Continued<ContentEncoding>, NotAcceptable<T>> {
         let _ = (reads, context);
 
         // Negotiated before the chain runs, because the request is handed on and
@@ -542,7 +684,7 @@ impl<C: Sync + 'static> Interceptor<C> for Compression {
         // have produced is one no acceptable coding exists for, so producing it
         // is work whose result cannot be sent.
         if negotiated == Negotiated::Nothing {
-            return Err(NotAcceptable);
+            return Err(NotAcceptable::new());
         }
 
         let mut continued = next.run(request).await;
@@ -611,7 +753,7 @@ impl<C: Sync + 'static> Interceptor<C> for Compression {
             // has asked for two things that cannot both hold, and 406 is a
             // better answer than quietly granting the one this file happens to
             // check first.
-            _ if policy == Encoding::Required => return Err(NotAcceptable),
+            _ if policy == Encoding::Required => return Err(NotAcceptable::new()),
             _ => return Ok(continued.with_headers(ContentEncoding::default())),
         };
 
@@ -637,7 +779,7 @@ impl<C: Sync + 'static> Interceptor<C> for Compression {
                 // Small, but the handler said identity is not an answer.
                 // Honouring `min_size` over that would be reading the
                 // service's own configuration as outranking the response's.
-                return Err(NotAcceptable);
+                return Err(NotAcceptable::new());
             }
 
             return Ok(continued.with_headers(ContentEncoding::default()));

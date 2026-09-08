@@ -16,6 +16,7 @@ use std::{num::NonZeroUsize, time::Duration};
 
 use kynos::{
     Router,
+    error::problem::ProblemType,
     http::{Method, StatusCode, header},
     middleware::limits::{BodySize, Concurrency, Timeout},
     response::status::NoContent,
@@ -896,4 +897,101 @@ async fn a_body_that_finished_is_not_reported_as_interrupted() {
         counts.disconnects.load(std::sync::atomic::Ordering::SeqCst),
         0
     );
+}
+
+// --- The problem type a limit's refusal names -----------------------------
+
+/// The type this fixture's 413 publishes.
+///
+/// A marker rather than a value: what an interceptor declares is read from its
+/// associated types, so a URI chosen per request would reach the wire and leave
+/// the description saying `about:blank` about it.
+struct TooLarge;
+
+impl ProblemType for TooLarge {
+    const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/payload-too-large");
+}
+
+/// The URI a named limit publishes reaches the wire *and* the declaration.
+///
+/// Both halves from one mounted limit, because the failure this closes is the
+/// two disagreeing — and the declaration is a narrowed schema rather than an
+/// example, which is what makes `assert_conformance` able to see the
+/// disagreement at all.
+#[tokio::test]
+async fn a_named_body_limit_publishes_one_type_on_both_halves() {
+    const URI: &str = "https://errors.example.com/payload-too-large";
+
+    let service = support::router()
+        .intercept(BodySize::new(16).problem_type::<TooLarge>())
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = support::post(&service, "/users")
+        .json(&User {
+            id: 1,
+            name: "a name comfortably longer than sixteen bytes".to_owned(),
+        })
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(reply.json()["type"], URI);
+
+    let declared = serde_json::to_value(service.openapi()).expect("a serializable document");
+
+    assert_eq!(
+        narrowed_type(&declared, "/users", "post", 413),
+        URI,
+        "the declared 413 does not narrow to the type the wire sent: {declared}"
+    );
+}
+
+/// Naming nothing declares and sends `about:blank`, which is what every
+/// existing mount already carried on the wire.
+///
+/// The pass control for the case above, and the assertion that the default
+/// narrows rather than referring to the shared component: a bare `$ref` admits
+/// every problem document the service can produce.
+#[tokio::test]
+async fn an_unnamed_body_limit_publishes_about_blank_on_both_halves() {
+    let service = support::router()
+        .intercept(BodySize::new(16))
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = support::post(&service, "/users")
+        .json(&User {
+            id: 1,
+            name: "a name comfortably longer than sixteen bytes".to_owned(),
+        })
+        .call()
+        .await;
+
+    assert_eq!(reply.json()["type"], "about:blank");
+
+    let declared = serde_json::to_value(service.openapi()).expect("a serializable document");
+
+    assert_eq!(
+        narrowed_type(&declared, "/users", "post", 413),
+        "about:blank"
+    );
+}
+
+/// The one URI an operation's declared problem response narrows `type` to.
+///
+/// The shape a single-branch narrowing takes: the shared component, and one
+/// object fixing `type` to a `const`.
+fn narrowed_type<'a>(
+    document: &'a serde_json::Value,
+    path: &str,
+    method: &str,
+    status: u16,
+) -> &'a str {
+    let schema = &document["paths"][path][method]["responses"][status.to_string()]["content"]["application/problem+json"]
+        ["schema"];
+
+    schema["allOf"][1]["properties"]["type"]["const"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the declared {status} does not narrow `type`: {schema}"))
 }

@@ -13,10 +13,10 @@
 //! session to keep the token in. This needs neither: no token, no session, no
 //! randomness, no HMAC — four header comparisons.
 
-use std::borrow::Cow;
+use std::{borrow::Cow, fmt, marker::PhantomData};
 
 use crate::{
-    error::problem::{Problem, problem_response},
+    error::problem::{ProblemType, refusal_problem, refusal_response},
     http::{self, HeaderMap},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, ShortCircuit},
@@ -65,18 +65,55 @@ const SEC_FETCH_SITE: http::HeaderName = http::HeaderName::from_static("sec-fetc
 /// strips `Origin` moves the ground this stands on — the same class of
 /// dependency that any check reading a forwarded field has, and worth knowing
 /// before mounting this behind one.
-#[derive(Clone, Debug, Default)]
-pub struct Csrf {
+///
+/// # Naming what the 403 is
+///
+/// [`problem_type`](Csrf::problem_type) puts an application's own URI on the
+/// refusal, so a client can tell a cross-site refusal from every other 403 the
+/// service sends — which matters here more than most, since a browser that
+/// forged the request is not the party reading the document.
+pub struct Csrf<T = ()> {
     trusted: Vec<Cow<'static, str>>,
+    /// Names the refusal's problem type without holding one.
+    problem_type: PhantomData<fn() -> T>,
 }
 
-impl Csrf {
+impl Csrf<()> {
     /// Refuses cross-site unsafe requests, trusting no other origin.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Names the RFC 9457 problem type this refusal's 403 carries.
+    ///
+    /// Available only on a `Csrf` that has not named one, so a chain states the
+    /// type at most once. See
+    /// [`BodySize::problem_type`](crate::middleware::limits::BodySize::problem_type)
+    /// for the rule and its pass control.
+    ///
+    /// ```
+    /// use kynos::{error::problem::ProblemType, middleware::csrf::Csrf};
+    ///
+    /// struct CrossSiteRefused;
+    ///
+    /// impl ProblemType for CrossSiteRefused {
+    ///     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/cross-site");
+    /// }
+    ///
+    /// let csrf = Csrf::new().problem_type::<CrossSiteRefused>();
+    /// # let _ = csrf;
+    /// ```
+    #[must_use]
+    pub fn problem_type<T: ProblemType>(self) -> Csrf<T> {
+        Csrf {
+            trusted: self.trusted,
+            problem_type: PhantomData,
+        }
+    }
+}
+
+impl<T> Csrf<T> {
     /// Also allows unsafe requests from this exact origin.
     ///
     /// Compared byte for byte after ASCII-lowercasing, because an origin is a
@@ -175,31 +212,57 @@ fn own_authority(headers: &HeaderMap, authority: Option<&str>) -> Option<String>
 }
 
 /// What a refused request is answered with.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CrossSite;
+///
+/// `T` names the problem type the body carries; `()` leaves `about:blank`. Set
+/// it with [`Csrf::problem_type`].
+pub struct CrossSite<T = ()> {
+    /// Carries `T` without storing one. `fn() -> T` rather than `T`, so a
+    /// refusal is `Send` and `Sync` whatever the marker is.
+    problem_type: PhantomData<fn() -> T>,
+}
 
-impl IntoResponse for CrossSite {
+impl<T> CrossSite<T> {
+    /// The refusal itself, which carries nothing but its type.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            problem_type: PhantomData,
+        }
+    }
+}
+
+impl<T> Default for CrossSite<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: ProblemType> IntoResponse for CrossSite<T> {
     fn into_response(self) -> http::Response {
-        Problem::new(http::StatusCode::FORBIDDEN)
+        refusal_problem::<T>(http::StatusCode::FORBIDDEN)
             .with_detail("this request came from another site")
             .into_response()
     }
 }
 
-impl ShortCircuit for CrossSite {
+impl<T: ProblemType> ShortCircuit for CrossSite<T> {
     const STATUSES: &'static [u16] = &[403];
 }
 
-impl crate::response::Responses for CrossSite {
+impl<T: ProblemType> crate::response::Responses for CrossSite<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         kynos_openapi::Responses::new().with(
             403,
-            problem_response(registry, "the request came from another site"),
+            refusal_response::<T>(registry, 403, "the request came from another site"),
         )
     }
 }
 
-impl<C: Sync + 'static> Interceptor<C> for Csrf {
+impl<C, T> Interceptor<C> for Csrf<T>
+where
+    C: Sync + 'static,
+    T: ProblemType,
+{
     /// `()` rather than a declared group.
     ///
     /// `Sec-Fetch-Site`, `Origin` and `Host` are read directly, for the reason
@@ -207,7 +270,7 @@ impl<C: Sync + 'static> Interceptor<C> for Csrf {
     /// and a browser-set field is not one a client may be told to send.
     type Reads = ();
     type Adds = ();
-    type Short = CrossSite;
+    type Short = CrossSite<T>;
 
     async fn intercept(
         &self,
@@ -215,7 +278,7 @@ impl<C: Sync + 'static> Interceptor<C> for Csrf {
         reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> Result<Continued<()>, CrossSite> {
+    ) -> Result<Continued<()>, CrossSite<T>> {
         let _ = (reads, context);
 
         if self.permits(
@@ -228,7 +291,75 @@ impl<C: Sync + 'static> Interceptor<C> for Csrf {
         ) {
             Ok(next.run(request).await)
         } else {
-            Err(CrossSite)
+            Err(CrossSite::new())
+        }
+    }
+}
+
+// The derivable implementations, written out: `#[derive]` would bound each on
+// the marker, and a marker is a name rather than a value. Destructured, so a
+// field added to either type is a compile error here.
+
+impl<T> Clone for CrossSite<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for CrossSite<T> {}
+
+impl<T> fmt::Debug for CrossSite<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { problem_type: _ } = self;
+
+        formatter.debug_struct("CrossSite").finish()
+    }
+}
+
+impl<T> PartialEq for CrossSite<T> {
+    fn eq(&self, other: &Self) -> bool {
+        let Self { problem_type: _ } = self;
+        let Self { problem_type: _ } = other;
+
+        true
+    }
+}
+
+impl<T> Eq for CrossSite<T> {}
+
+impl<T> Clone for Csrf<T> {
+    fn clone(&self) -> Self {
+        let Self {
+            trusted,
+            problem_type: _,
+        } = self;
+
+        Self {
+            trusted: trusted.clone(),
+            problem_type: PhantomData,
+        }
+    }
+}
+
+impl<T> fmt::Debug for Csrf<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            trusted,
+            problem_type: _,
+        } = self;
+
+        formatter
+            .debug_struct("Csrf")
+            .field("trusted", trusted)
+            .finish()
+    }
+}
+
+impl<T> Default for Csrf<T> {
+    fn default() -> Self {
+        Self {
+            trusted: Vec::new(),
+            problem_type: PhantomData,
         }
     }
 }

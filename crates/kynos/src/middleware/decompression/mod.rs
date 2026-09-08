@@ -10,7 +10,7 @@
 //! OpenAPI models neither direction. The refusals are declared, because a
 //! status a route can answer with is part of its contract whatever produced it.
 
-use std::io;
+use std::{fmt, io, marker::PhantomData};
 
 use async_compression::tokio::bufread::{BrotliDecoder, GzipDecoder, ZstdDecoder};
 use bytes::{Bytes, BytesMut};
@@ -19,7 +19,7 @@ use kynos_openapi::model::schema::types::SchemaType;
 use tokio::io::{AsyncRead, ReadBuf};
 
 use crate::{
-    error::problem::{Problem, problem_response},
+    error::problem::{ProblemType, refusal_problem, refusal_response},
     http,
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
@@ -67,31 +67,94 @@ const ACCEPTED: &str = "zstd, br, gzip";
 /// hundred times the work for one request. No real client sends more than one.
 const MAX_CODINGS: usize = 4;
 
-/// What [`Decompression`] answers with when it will not hand a body on.
+/// The markers a decoding refusal and its interceptor carry, in one phantom.
+///
+/// A named alias because there are three of them and `clippy::type_complexity`
+/// counts, which is the right pressure: the name says what the tuple is for
+/// where three parameters in a `PhantomData` would not.
+type Markers<U, M, L> = PhantomData<fn() -> (U, M, L)>;
+
+/// Why [`Decompression`] would not hand a body on.
 ///
 /// `#[non_exhaustive]`, as every other error type an application can match on
-/// is. A `ShortCircuit` type is exactly what a `match` in application code
-/// receives, so a variant added here would otherwise be a breaking change made
-/// by accident.
+/// is. This is exactly what a `match` in application code receives, so a
+/// variant added here would otherwise be a breaking change made by accident.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Undecodable {
-    /// The body named a content coding this server cannot decode.
+pub enum Reason {
+    /// The body named a content coding this server cannot decode. Produces 415.
     UnsupportedCoding,
-    /// The body did not decode as the coding it claimed.
+    /// The body did not decode as the coding it claimed. Produces 400.
     Malformed,
-    /// The decoded body passed the configured bound.
+    /// The decoded body passed the configured bound. Produces 413.
     TooLarge {
         /// The bound it passed, in bytes.
         limit: u64,
     },
 }
 
-impl IntoResponse for Undecodable {
+/// What [`Decompression`] answers with when it will not hand a body on.
+///
+/// # Three markers, not one
+///
+/// A 400, a 413 and a 415 are three problems, and a [`ProblemType`] names one.
+/// One marker covering all three would declare a malformed body and an
+/// unsupported coding the *same* problem type — and now that the declaration is
+/// a narrowed `const` rather than an example, it would declare it to a
+/// validator. So each refusal takes its own parameter, set by its own builder
+/// on [`Decompression`]. That is the granularity rule stated on `ProblemType`,
+/// applied where it actually bites: the marker goes on the refusal, and a type
+/// answering with several refusals carries several.
+///
+/// A struct rather than an enum for the same reason: a Rust enum has nowhere to
+/// put the `PhantomData` its variants share, so carrying the markers means
+/// carrying the reason in a field.
+pub struct Undecodable<U = (), M = (), L = ()> {
+    /// Why the body was refused, and with it which status this answers.
+    pub reason: Reason,
+    /// Carries the three markers without storing one. `fn() -> _` rather than
+    /// the bare tuple, so a refusal is `Send` and `Sync` whatever they are.
+    problem_type: Markers<U, M, L>,
+}
+
+impl<U, M, L> Undecodable<U, M, L> {
+    /// A refusal for a coding this server cannot decode.
+    #[must_use]
+    pub fn unsupported_coding() -> Self {
+        Self::of(Reason::UnsupportedCoding)
+    }
+
+    /// A refusal for a body that did not decode as the coding it declared.
+    #[must_use]
+    pub fn malformed() -> Self {
+        Self::of(Reason::Malformed)
+    }
+
+    /// A refusal for a body that decoded past `limit`.
+    #[must_use]
+    pub fn too_large(limit: u64) -> Self {
+        Self::of(Reason::TooLarge { limit })
+    }
+
+    /// The one constructor the three above go through.
+    fn of(reason: Reason) -> Self {
+        Self {
+            reason,
+            problem_type: PhantomData,
+        }
+    }
+}
+
+impl<U, M, L> IntoResponse for Undecodable<U, M, L>
+where
+    U: ProblemType,
+    M: ProblemType,
+    L: ProblemType,
+{
     fn into_response(self) -> http::Response {
-        match self {
-            Self::UnsupportedCoding => {
-                let mut response = Problem::new(http::StatusCode::UNSUPPORTED_MEDIA_TYPE)
+        match self.reason {
+            Reason::UnsupportedCoding => {
+                let mut response = refusal_problem::<U>(http::StatusCode::UNSUPPORTED_MEDIA_TYPE)
                     .with_detail(format!(
                         "the request body's content coding is not one this server decodes; \
                          it accepts {ACCEPTED}"
@@ -109,10 +172,10 @@ impl IntoResponse for Undecodable {
 
                 response
             }
-            Self::Malformed => Problem::new(http::StatusCode::BAD_REQUEST)
+            Reason::Malformed => refusal_problem::<M>(http::StatusCode::BAD_REQUEST)
                 .with_detail("the request body did not decode as the coding it declared")
                 .into_response(),
-            Self::TooLarge { limit } => Problem::new(http::StatusCode::PAYLOAD_TOO_LARGE)
+            Reason::TooLarge { limit } => refusal_problem::<L>(http::StatusCode::PAYLOAD_TOO_LARGE)
                 .with_detail(format!(
                     "the request body exceeds {limit} bytes once decoded"
                 ))
@@ -121,34 +184,88 @@ impl IntoResponse for Undecodable {
     }
 }
 
-impl ShortCircuit for Undecodable {
+impl<U, M, L> ShortCircuit for Undecodable<U, M, L>
+where
+    U: ProblemType,
+    M: ProblemType,
+    L: ProblemType,
+{
     const STATUSES: &'static [u16] = &[400, 413, 415];
 }
 
-impl Responses for Undecodable {
+impl<U, M, L> Responses for Undecodable<U, M, L>
+where
+    U: ProblemType,
+    M: ProblemType,
+    L: ProblemType,
+{
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         kynos_openapi::Responses::new()
             .with(
                 400,
-                problem_response(
+                refusal_response::<M>(
                     registry,
+                    400,
                     "the request body did not decode as the coding it declared",
                 ),
             )
             .with(
                 413,
-                problem_response(registry, "the request body exceeds the configured limit"),
+                refusal_response::<L>(
+                    registry,
+                    413,
+                    "the request body exceeds the configured limit",
+                ),
             )
             .with(
                 415,
-                problem_response(
+                refusal_response::<U>(
                     registry,
+                    415,
                     "the request body's content coding is not one this server decodes",
                 )
                 .with_header("Accept-Encoding", accepted_encoding_header()),
             )
     }
 }
+
+// The four derivable implementations, written out: `#[derive]` would bound each
+// on all three markers, and a marker is a name rather than a value.
+
+impl<U, M, L> Clone for Undecodable<U, M, L> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<U, M, L> Copy for Undecodable<U, M, L> {}
+
+impl<U, M, L> fmt::Debug for Undecodable<U, M, L> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            reason,
+            problem_type: _,
+        } = self;
+
+        formatter
+            .debug_struct("Undecodable")
+            .field("reason", reason)
+            .finish()
+    }
+}
+
+impl<U, M, L> PartialEq for Undecodable<U, M, L> {
+    fn eq(&self, other: &Self) -> bool {
+        let Self {
+            reason,
+            problem_type: _,
+        } = self;
+
+        *reason == other.reason
+    }
+}
+
+impl<U, M, L> Eq for Undecodable<U, M, L> {}
 
 /// Describes the `Accept-Encoding` that rides on the 415.
 fn accepted_encoding_header() -> kynos_openapi::Header {
@@ -161,10 +278,7 @@ fn accepted_encoding_header() -> kynos_openapi::Header {
 /// The cap is checked on the chunk that passes it rather than after the whole
 /// body has arrived, which is what makes it a defence: a bomb is refused while
 /// it is still a few kilobytes of memory.
-async fn drain_capped<R: AsyncRead + Unpin>(
-    mut source: R,
-    limit: u64,
-) -> Result<Bytes, Undecodable> {
+async fn drain_capped<R: AsyncRead + Unpin>(mut source: R, limit: u64) -> Result<Bytes, Reason> {
     let mut decoded = BytesMut::new();
     let mut chunk = [0_u8; 8 * 1024];
 
@@ -175,7 +289,7 @@ async fn drain_capped<R: AsyncRead + Unpin>(
             std::task::Poll::Ready(io::Result::Ok(buffer.filled().len()))
         })
         .await
-        .map_err(|_| Undecodable::Malformed)?;
+        .map_err(|_| Reason::Malformed)?;
 
         if read == 0 {
             return Ok(decoded.freeze());
@@ -183,7 +297,7 @@ async fn drain_capped<R: AsyncRead + Unpin>(
 
         let so_far = u64::try_from(decoded.len()).unwrap_or(u64::MAX);
         if so_far.saturating_add(u64::try_from(read).unwrap_or(u64::MAX)) > limit {
-            return Err(Undecodable::TooLarge { limit });
+            return Err(Reason::TooLarge { limit });
         }
 
         decoded.extend_from_slice(&chunk[..read]);
@@ -191,7 +305,7 @@ async fn drain_capped<R: AsyncRead + Unpin>(
 }
 
 /// Removes `coding` from `bytes`, producing no more than `limit` bytes.
-async fn decode(coding: Coding, bytes: Bytes, limit: u64) -> Result<Bytes, Undecodable> {
+async fn decode(coding: Coding, bytes: Bytes, limit: u64) -> Result<Bytes, Reason> {
     match coding {
         Coding::Zstd => drain_capped(ZstdDecoder::new(io::Cursor::new(bytes)), limit).await,
         // Boxed for the same reason the encoder is: brotli's state is measured
@@ -305,22 +419,138 @@ fn declared(headers: &http::HeaderMap) -> Option<Vec<Coding>> {
 /// `Content-Encoding` is removed, `Content-Length` is restated as the decoded
 /// length, and `Content-Digest`, `Digest` and `Content-MD5` are removed rather
 /// than left to be checked against octets they were never computed over.
-#[derive(Clone, Copy, Debug)]
-pub struct Decompression {
+///
+/// # Naming what each refusal is
+///
+/// Three refusals, three builders:
+/// [`unsupported_coding_problem_type`](Decompression::unsupported_coding_problem_type),
+/// [`malformed_problem_type`](Decompression::malformed_problem_type) and
+/// [`too_large_problem_type`](Decompression::too_large_problem_type). One
+/// builder naming all three would declare a 400 and a 415 the same problem
+/// type, which [`Undecodable`] says more about.
+pub struct Decompression<U = (), M = (), L = ()> {
     /// The largest body, decoded, that will be handed on.
     limit: u64,
     /// The largest decoded-to-encoded ratio that will be handed on, when one
     /// was set.
     max_ratio: Option<u64>,
+    /// Names each refusal's problem type without holding one.
+    problem_type: Markers<U, M, L>,
 }
 
-impl Decompression {
+impl Decompression<(), (), ()> {
     /// Decodes request bodies, capping the decoded body at `bytes`.
+    ///
+    /// Declared on the concrete type so that it still infers without a
+    /// turbofish, as
+    /// [`BodySize::new`](crate::middleware::limits::BodySize::new) is.
     #[must_use]
     pub fn new(bytes: u64) -> Self {
         Self {
             limit: bytes,
             max_ratio: None,
+            problem_type: PhantomData,
+        }
+    }
+}
+
+impl<M, L> Decompression<(), M, L> {
+    /// Names the RFC 9457 problem type the 415 carries.
+    ///
+    /// Available only where this refusal has not been named, so a chain names
+    /// each of the three at most once and in any order.
+    ///
+    /// ```
+    /// # #[cfg(feature = "compression")]
+    /// # {
+    /// use kynos::{error::problem::ProblemType, middleware::decompression::Decompression};
+    ///
+    /// struct UnknownCoding;
+    /// # impl ProblemType for UnknownCoding {
+    /// #     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/coding");
+    /// # }
+    /// struct Bomb;
+    ///
+    /// impl ProblemType for Bomb {
+    ///     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/bomb");
+    /// }
+    ///
+    /// let decompression = Decompression::new(1 << 20)
+    ///     .unsupported_coding_problem_type::<UnknownCoding>()
+    ///     .too_large_problem_type::<Bomb>();
+    /// # let _ = decompression;
+    /// # }
+    /// ```
+    ///
+    /// Naming one of them twice does not compile — the `impl` block requires
+    /// that slot to be `()`, so the method is simply not there once it is a
+    /// type. The block above is this rule's pass control: it names two
+    /// different refusals, which is the case that must go on compiling.
+    ///
+    /// ```compile_fail
+    /// use kynos::{error::problem::ProblemType, middleware::decompression::Decompression};
+    ///
+    /// struct UnknownCoding;
+    /// # impl ProblemType for UnknownCoding {
+    /// #     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/coding");
+    /// # }
+    /// struct AlsoUnknown;
+    /// # impl ProblemType for AlsoUnknown {
+    /// #     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/also");
+    /// # }
+    ///
+    /// let decompression = Decompression::new(1 << 20)
+    ///     .unsupported_coding_problem_type::<UnknownCoding>()
+    ///     .unsupported_coding_problem_type::<AlsoUnknown>();
+    /// # let _ = decompression;
+    /// ```
+    #[must_use]
+    pub fn unsupported_coding_problem_type<U: ProblemType>(self) -> Decompression<U, M, L> {
+        self.renamed()
+    }
+}
+
+impl<U, L> Decompression<U, (), L> {
+    /// Names the RFC 9457 problem type the 400 carries.
+    ///
+    /// Available only where this refusal has not been named. See
+    /// [`unsupported_coding_problem_type`](Decompression::unsupported_coding_problem_type)
+    /// for the rule and its pass control.
+    #[must_use]
+    pub fn malformed_problem_type<M: ProblemType>(self) -> Decompression<U, M, L> {
+        self.renamed()
+    }
+}
+
+impl<U, M> Decompression<U, M, ()> {
+    /// Names the RFC 9457 problem type the 413 carries.
+    ///
+    /// Available only where this refusal has not been named. See
+    /// [`unsupported_coding_problem_type`](Decompression::unsupported_coding_problem_type)
+    /// for the rule and its pass control.
+    #[must_use]
+    pub fn too_large_problem_type<L: ProblemType>(self) -> Decompression<U, M, L> {
+        self.renamed()
+    }
+}
+
+impl<U, M, L> Decompression<U, M, L> {
+    /// The same configuration under a different set of markers.
+    ///
+    /// One function behind all three builders, so a field added to this type
+    /// is dropped by none of them: the destructuring here is the compile error
+    /// that says so.
+    fn renamed<U2, M2, L2>(self) -> Decompression<U2, M2, L2> {
+        let Self {
+            limit,
+            max_ratio,
+            problem_type: _,
+        } = self;
+
+        Decompression {
+            limit,
+            max_ratio,
+            problem_type: PhantomData,
         }
     }
 
@@ -345,10 +575,43 @@ impl Decompression {
     }
 }
 
-impl<C: Sync + 'static> Interceptor<C> for Decompression {
+// The three derivable implementations, written out, for the reason
+// `Undecodable`'s four are: derived, they would bound all three markers.
+
+impl<U, M, L> Clone for Decompression<U, M, L> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<U, M, L> Copy for Decompression<U, M, L> {}
+
+impl<U, M, L> fmt::Debug for Decompression<U, M, L> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            limit,
+            max_ratio,
+            problem_type: _,
+        } = self;
+
+        formatter
+            .debug_struct("Decompression")
+            .field("limit", limit)
+            .field("max_ratio", max_ratio)
+            .finish()
+    }
+}
+
+impl<C, U, M, L> Interceptor<C> for Decompression<U, M, L>
+where
+    C: Sync + 'static,
+    U: ProblemType,
+    M: ProblemType,
+    L: ProblemType,
+{
     type Reads = ();
     type Adds = ();
-    type Short = Undecodable;
+    type Short = Undecodable<U, M, L>;
 
     async fn intercept(
         &self,
@@ -356,11 +619,11 @@ impl<C: Sync + 'static> Interceptor<C> for Decompression {
         reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> Result<Continued<()>, Undecodable> {
+    ) -> Result<Continued<()>, Undecodable<U, M, L>> {
         let _ = (reads, context);
 
         let Some(codings) = declared(request.headers()) else {
-            return Err(Undecodable::UnsupportedCoding);
+            return Err(Undecodable::unsupported_coding());
         };
 
         let (mut parts, body) = request.into_parts();
@@ -368,13 +631,17 @@ impl<C: Sync + 'static> Interceptor<C> for Decompression {
         // Read once, whether or not a coding was applied: the limit is the
         // route's body limit, and a request that skipped the coding is not
         // thereby exempt from it.
-        let arrived = collect_capped(body, self.limit).await?;
+        let arrived = collect_capped(body, self.limit)
+            .await
+            .map_err(Undecodable::of)?;
 
         let mut bytes = arrived;
         // Applied in the order listed, so undone in the reverse of it.
         for coding in codings.iter().rev().copied() {
             let bound = self.bound(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
-            bytes = decode(coding, bytes, bound).await?;
+            bytes = decode(coding, bytes, bound)
+                .await
+                .map_err(Undecodable::of)?;
         }
 
         // Only what the decode invalidated. A request that carried no coding
@@ -404,10 +671,7 @@ impl<C: Sync + 'static> Interceptor<C> for Decompression {
 }
 
 /// Reads `body` while the running total stays within `limit`.
-async fn collect_capped(
-    mut body: crate::http::body::Body,
-    limit: u64,
-) -> Result<Bytes, Undecodable> {
+async fn collect_capped(mut body: crate::http::body::Body, limit: u64) -> Result<Bytes, Reason> {
     let mut collected = BytesMut::new();
 
     while let Some(frame) = body.frame().await {
@@ -422,7 +686,7 @@ async fn collect_capped(
         let so_far = u64::try_from(collected.len()).unwrap_or(u64::MAX);
         let arriving = u64::try_from(data.len()).unwrap_or(u64::MAX);
         if so_far.saturating_add(arriving) > limit {
-            return Err(Undecodable::TooLarge { limit });
+            return Err(Reason::TooLarge { limit });
         }
 
         collected.extend_from_slice(&data);

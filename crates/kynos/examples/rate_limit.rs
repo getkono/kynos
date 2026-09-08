@@ -45,12 +45,12 @@ use std::{net::Ipv4Addr, time::Duration};
 
 use kynos::{
     Router,
+    error::problem::ProblemType,
     http::forwarded::TrustedProxies,
     middleware::rate_limit::{
         RateLimit,
         key::{And, ByClientAddress, ByRoute},
         quota::{Quota, Quotas},
-        refusal::RefusalType,
         store::{RateLimitStore, StoreFailure},
     },
     prelude::*,
@@ -117,7 +117,7 @@ impl RateLimitStore for MokaCounters {
 /// the description saying `about:blank` about it.
 struct Throttled;
 
-impl RefusalType for Throttled {
+impl ProblemType for Throttled {
     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/rate-limited");
 }
 
@@ -167,7 +167,7 @@ async fn main() -> kynos::Result<()> {
             .standard_fields()
             // And the 429 says which *kind* of refusal it is, so a client can
             // branch on `type` rather than on the status code alone.
-            .refusal_type::<Throttled>(),
+            .problem_type::<Throttled>(),
         )
         .mount(kynos::routes![reports, render]);
 

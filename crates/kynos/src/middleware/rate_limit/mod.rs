@@ -24,9 +24,10 @@ use std::{fmt, marker::PhantomData};
 use crate::middleware::rate_limit::{
     decision::{Decision, QuotaPolicy, RateLimitPolicy, ServiceLimit},
     headers::{RateLimitFields, RateLimitHeaders},
-    refusal::{RateLimited, RateLimitedFields, RefusalType},
+    refusal::{RateLimited, RateLimitedFields},
 };
 use crate::{
+    error::problem::ProblemType,
     extract::params::header::EncodeHeaders,
     http,
     middleware::{Continued, Interceptor, Next},
@@ -46,7 +47,7 @@ mod sealed {
 /// chosen here: which fields a response spells and which type its 429 names are
 /// independent decisions, and a service wanting the draft's fields must not
 /// lose the URI by taking them.
-pub trait RateLimitSpelling<T: RefusalType>: sealed::Sealed + Send + Sync + 'static {
+pub trait RateLimitSpelling<T: ProblemType>: sealed::Sealed + Send + Sync + 'static {
     /// The group a forwarded response carries.
     type Headers: EncodeHeaders;
     /// What a refusal answers with.
@@ -79,7 +80,7 @@ pub struct Structured;
 impl sealed::Sealed for Legacy {}
 impl sealed::Sealed for Structured {}
 
-impl<T: RefusalType> RateLimitSpelling<T> for Legacy {
+impl<T: ProblemType> RateLimitSpelling<T> for Legacy {
     type Headers = RateLimitHeaders;
     type Denied = RateLimited<T>;
 
@@ -98,7 +99,7 @@ impl<T: RefusalType> RateLimitSpelling<T> for Legacy {
     }
 }
 
-impl<T: RefusalType> RateLimitSpelling<T> for Structured {
+impl<T: ProblemType> RateLimitSpelling<T> for Structured {
     type Headers = RateLimitFields;
     type Denied = RateLimitedFields<T>;
 
@@ -184,7 +185,7 @@ impl<P, T> RateLimit<P, Legacy, T> {
     /// two statements of one fact, which is the objection this codebase raises
     /// against a `contribution` method.
     ///
-    /// A problem type named by [`refusal_type`](RateLimit::refusal_type)
+    /// A problem type named by [`problem_type`](RateLimit::problem_type)
     /// survives the change: the two are independent decisions.
     #[must_use]
     pub fn standard_fields(self) -> RateLimit<P, Structured, T> {
@@ -202,7 +203,7 @@ impl<P, D> RateLimit<P, D, ()> {
     /// [`standard_fields`](RateLimit::standard_fields) does: it changes what
     /// every covered operation declares. Stated once, and read by both the
     /// response body and the description — see
-    /// [`refusal::RefusalType`] for why that cannot be a value.
+    /// [`ProblemType`] for why that cannot be a value.
     ///
     /// Available only on a limiter that has not named one, so a chain states
     /// the type at most once and a reader never has to find the last call
@@ -210,9 +211,8 @@ impl<P, D> RateLimit<P, D, ()> {
     ///
     /// ```no_run
     /// # use std::time::Duration;
-    /// # use kynos::{http, middleware::rate_limit::{
+    /// # use kynos::{error::problem::ProblemType, http, middleware::rate_limit::{
     /// #     RateLimit, decision::{Decision, RateLimitPolicy, ServiceLimit},
-    /// #     refusal::RefusalType,
     /// # }, router::operation::Route};
     /// # #[derive(Clone, Debug)] struct PerClient;
     /// # impl RateLimitPolicy<()> for PerClient {
@@ -225,11 +225,11 @@ impl<P, D> RateLimit<P, D, ()> {
     /// # }
     /// struct Throttled;
     ///
-    /// impl RefusalType for Throttled {
+    /// impl ProblemType for Throttled {
     ///     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/rate-limited");
     /// }
     ///
-    /// let limit = RateLimit::new(PerClient).refusal_type::<Throttled>();
+    /// let limit = RateLimit::new(PerClient).problem_type::<Throttled>();
     /// # let _ = limit;
     /// ```
     ///
@@ -240,9 +240,8 @@ impl<P, D> RateLimit<P, D, ()> {
     ///
     /// ```compile_fail
     /// # use std::time::Duration;
-    /// # use kynos::{http, middleware::rate_limit::{
+    /// # use kynos::{error::problem::ProblemType, http, middleware::rate_limit::{
     /// #     RateLimit, decision::{Decision, RateLimitPolicy, ServiceLimit},
-    /// #     refusal::RefusalType,
     /// # }, router::operation::Route};
     /// # #[derive(Clone, Debug)] struct PerClient;
     /// # impl RateLimitPolicy<()> for PerClient {
@@ -254,21 +253,21 @@ impl<P, D> RateLimit<P, D, ()> {
     /// #     }
     /// # }
     /// struct Throttled;
-    /// # impl RefusalType for Throttled {
+    /// # impl ProblemType for Throttled {
     /// #     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/throttled");
     /// # }
     /// struct Overdrawn;
-    /// # impl RefusalType for Overdrawn {
+    /// # impl ProblemType for Overdrawn {
     /// #     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/overdrawn");
     /// # }
     ///
     /// let limit = RateLimit::new(PerClient)
-    ///     .refusal_type::<Throttled>()
-    ///     .refusal_type::<Overdrawn>();
+    ///     .problem_type::<Throttled>()
+    ///     .problem_type::<Overdrawn>();
     /// # let _ = limit;
     /// ```
     #[must_use]
-    pub fn refusal_type<T: RefusalType>(self) -> RateLimit<P, D, T> {
+    pub fn problem_type<T: ProblemType>(self) -> RateLimit<P, D, T> {
         RateLimit {
             policy: self.policy,
             _spelling: PhantomData,
@@ -281,7 +280,7 @@ where
     C: Sync + 'static,
     P: RateLimitPolicy<C>,
     D: RateLimitSpelling<T>,
-    T: RefusalType,
+    T: ProblemType,
 {
     type Reads = ();
     type Adds = D::Headers;

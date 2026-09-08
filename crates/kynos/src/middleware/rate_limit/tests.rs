@@ -5,9 +5,12 @@ use super::{
     decision::{QuotaPolicy, QuotaUnit, ServiceLimit},
     headers::{RateLimitFields, RateLimitHeaders},
     quota::{estimate, recovers_in},
-    refusal::{RateLimited, RateLimitedFields, RefusalType},
+    refusal::{RateLimited, RateLimitedFields},
 };
+use kynos_openapi::RefOr;
+
 use crate::{
+    error::problem::ProblemType,
     extract::params::header::{EncodeHeaders, HeaderParams},
     response::ShortCircuit,
     schema::registry::Registry,
@@ -352,25 +355,21 @@ fn every_quota_unit_renders_as_a_string() {
 /// A type an application would name its refusals with.
 struct Throttled;
 
-impl RefusalType for Throttled {
+impl ProblemType for Throttled {
     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/rate-limited");
 }
 
-/// What one short circuit declares and what it sends: the whole example, and
-/// the `type` the wire carried.
+/// What one short circuit's 429 declares its `type` may be, and what the wire
+/// carried.
 ///
-/// `None` on the declared side means the media type carries no example at all,
-/// which is what an unnamed type must leave behind.
-async fn declared_and_sent<S: ShortCircuit>(value: S) -> (Option<serde_json::Value>, String) {
+/// The declared half is read out of the *schema*, which is the half a body is
+/// validated against: `assert_conformance` compiles the declared schema and
+/// runs a response through it, and never reads an `example`.
+async fn declared_and_sent<S: ShortCircuit>(value: S) -> (String, String) {
     use http_body_util::BodyExt as _;
-    use kynos_openapi::{RefOr, model::body::mime_names::APPLICATION_PROBLEM_JSON};
 
     let declared = match S::responses(&mut Registry::new()).get(429) {
-        Some(RefOr::Item(response)) => response
-            .content
-            .get(APPLICATION_PROBLEM_JSON)
-            .and_then(|media_type| media_type.example())
-            .cloned(),
+        Some(RefOr::Item(response)) => declared_type(response),
         _ => panic!("a refusal declares a 429 carrying a problem document"),
     };
 
@@ -389,7 +388,30 @@ async fn declared_and_sent<S: ShortCircuit>(value: S) -> (Option<serde_json::Val
     )
 }
 
-/// One `RefusalType` is read by both halves of a refusal's promise.
+/// The one URI a declared problem response narrows `type` to.
+///
+/// The shape [`narrowed_response`](crate::error::problem) builds for a single
+/// branch: the shared component, and one object fixing `type` to a `const`.
+/// Anything else means the narrowing was lost, so this panics rather than
+/// returning an `Option` a caller could compare away.
+fn declared_type(response: &kynos_openapi::Response) -> String {
+    use kynos_openapi::model::body::mime_names::APPLICATION_PROBLEM_JSON;
+
+    let schema = response
+        .content
+        .get(APPLICATION_PROBLEM_JSON)
+        .and_then(|media_type| media_type.schema.as_ref())
+        .expect("a declared problem document carries a schema");
+
+    let declared = serde_json::to_value(schema).expect("a schema is serializable");
+
+    declared["allOf"][1]["properties"]["type"]["const"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the declared 429 does not narrow `type`: {declared}"))
+        .to_owned()
+}
+
+/// One `ProblemType` is read by both halves of a refusal's promise.
 ///
 /// Both spellings, because the URI is stated on the limiter rather than on the
 /// spelling and a service choosing the draft's fields must not lose it. And
@@ -399,11 +421,10 @@ async fn declared_and_sent<S: ShortCircuit>(value: S) -> (Option<serde_json::Val
 #[tokio::test]
 async fn a_named_refusal_type_is_one_statement_both_halves_read() {
     let uri = Throttled::TYPE_URI.expect("the marker names a type");
-    let expected = serde_json::json!({ "type": uri, "status": 429 });
 
     let (declared, sent) =
         declared_and_sent(RateLimited::<Throttled>::new(Duration::from_secs(30), 100)).await;
-    assert_eq!(declared.as_ref(), Some(&expected));
+    assert_eq!(declared, uri);
     assert_eq!(sent, uri);
 
     let (declared, sent) = declared_and_sent(RateLimitedFields::<Throttled>::new(
@@ -412,44 +433,58 @@ async fn a_named_refusal_type_is_one_statement_both_halves_read() {
         policies(),
     ))
     .await;
-    assert_eq!(declared.as_ref(), Some(&expected));
+    assert_eq!(declared, uri);
     assert_eq!(sent, uri);
 }
 
-/// The example fixes the two members the wire cannot vary, and nothing else.
+/// The narrowing fixes `type` and leaves every other member alone.
 ///
 /// `title` and `detail` are English prose. A localizing interceptor rewrites
-/// them per request -- `examples/localized_errors.rs` is exactly that -- so an
-/// example serialized from the whole `Problem` would publish `"Too Many
-/// Requests"` about a response that says `"Trop de requetes"`. Nothing catches
-/// that: the conformance harness validates a body against `schema` and never
-/// reads `example`. So the assertion is on the key *set*, which a widened
-/// example fails.
+/// them per request -- `examples/localized_errors.rs` is exactly that -- so a
+/// declaration that also fixed them would fail a response saying `"Trop de
+/// requetes"`, and this time the harness *would* notice: a narrowed schema is
+/// what `assert_conformance` validates a body against. So the assertion is
+/// that the narrowing adds one property and no other.
 #[tokio::test]
-async fn a_declared_example_pins_only_what_the_wire_cannot_vary() {
-    let (declared, _) =
-        declared_and_sent(RateLimited::<Throttled>::new(Duration::from_secs(30), 100)).await;
+async fn the_narrowing_fixes_the_one_member_the_wire_cannot_vary() {
+    let declared = match <RateLimited<Throttled> as crate::response::Responses>::responses(
+        &mut Registry::new(),
+    )
+    .get(429)
+    {
+        Some(RefOr::Item(response)) => serde_json::to_value(
+            response
+                .content
+                .get(kynos_openapi::model::body::mime_names::APPLICATION_PROBLEM_JSON)
+                .and_then(|media_type| media_type.schema.as_ref())
+                .expect("a declared problem document carries a schema"),
+        )
+        .expect("a schema is serializable"),
+        _ => panic!("a refusal declares a 429 carrying a problem document"),
+    };
 
-    let example = declared.expect("a named type declares an example");
-    let members = example
+    let narrowed = declared["allOf"][1]["properties"]
         .as_object()
-        .expect("an example of a problem document is an object")
+        .unwrap_or_else(|| panic!("the declared 429 does not narrow anything: {declared}"))
         .keys()
         .map(String::as_str)
         .collect::<Vec<_>>();
 
-    assert_eq!(members, ["status", "type"], "{example}");
+    assert_eq!(narrowed, ["type"], "{declared}");
 }
 
-/// Naming no type leaves both halves exactly as they were.
+/// Naming no type states `about:blank` on both halves rather than neither.
 ///
-/// The default is `()`, so this is what every document Kynos already emits
-/// says: `about:blank` on the wire, and no example beside it.
+/// The default is `()`, and what it declares is the URI `Problem::new` really
+/// sets -- not a bare `$ref` to the shared component. That distinction is the
+/// one `docs/errors.md` draws for a rejection and it holds here for the same
+/// reason: a `$ref` admits every problem document the service can produce, so a
+/// status an extractor also claims would lose its own narrowing to this one.
 #[tokio::test]
-async fn an_unnamed_refusal_type_declares_no_example_and_sends_about_blank() {
+async fn an_unnamed_refusal_type_declares_and_sends_about_blank() {
     let (declared, sent) =
         declared_and_sent(RateLimited::<()>::new(Duration::from_secs(30), 100)).await;
-    assert_eq!(declared, None);
+    assert_eq!(declared, "about:blank");
     assert_eq!(sent, "about:blank");
 
     let (declared, sent) = declared_and_sent(RateLimitedFields::<()>::new(
@@ -458,7 +493,7 @@ async fn an_unnamed_refusal_type_declares_no_example_and_sends_about_blank() {
         policies(),
     ))
     .await;
-    assert_eq!(declared, None);
+    assert_eq!(declared, "about:blank");
     assert_eq!(sent, "about:blank");
 }
 
@@ -478,11 +513,11 @@ fn assert_send_sync<T: Send + Sync>() {}
 /// A marker that is deliberately neither `Send` nor `Sync`.
 ///
 /// A raw pointer is the cheapest way to be neither. It is still `'static`, so
-/// it satisfies `RefusalType` and the only thing under test is whether the
+/// it satisfies `ProblemType` and the only thing under test is whether the
 /// refusal's auto traits followed it.
 struct Unsendable(PhantomData<*const ()>);
 
-impl RefusalType for Unsendable {
+impl ProblemType for Unsendable {
     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/unsendable");
 }
 
@@ -613,7 +648,7 @@ fn a_limiter_keeps_its_impls_whatever_type_names_its_refusal() {
     // And they still say what they said. One field: `_spelling` holds nothing
     // an operator can read.
     let limiter = RateLimit::new(Policy)
-        .refusal_type::<Throttled>()
+        .problem_type::<Throttled>()
         .standard_fields();
 
     assert_eq!(

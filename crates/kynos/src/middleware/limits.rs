@@ -6,7 +6,7 @@
 //! that rides that status — `Retry-After` on a 503 — is described by the same
 //! type that sets it, rather than by a separate entry keyed on the status.
 
-use std::{num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{fmt, marker::PhantomData, num::NonZeroUsize, sync::Arc, time::Duration};
 
 use bytes::{Bytes, BytesMut};
 use http_body_util::BodyExt;
@@ -14,7 +14,7 @@ use kynos_openapi::model::schema::types::SchemaType;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::{
-    error::problem::{Problem, problem_response},
+    error::problem::{ProblemType, refusal_problem, refusal_response},
     http,
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
@@ -47,29 +47,49 @@ fn set_retry_after(response: &mut http::Response, retry_after: Option<Duration>)
 ///
 /// Carries the limit it enforced, so the response can say what was exceeded
 /// rather than only that something was.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BodySizeExceeded {
+///
+/// `T` names the problem type the body carries; `()` leaves `about:blank`. Set
+/// it with [`BodySize::problem_type`].
+pub struct BodySizeExceeded<T = ()> {
     /// The maximum body size, in bytes.
     pub limit: u64,
+    /// Carries `T` without storing one. `fn() -> T` rather than `T`, so a
+    /// refusal is `Send` and `Sync` whatever the marker is.
+    problem_type: PhantomData<fn() -> T>,
 }
 
-impl IntoResponse for BodySizeExceeded {
+impl<T> BodySizeExceeded<T> {
+    /// A refusal reporting `limit` as the ceiling that was exceeded.
+    #[must_use]
+    pub fn new(limit: u64) -> Self {
+        Self {
+            limit,
+            problem_type: PhantomData,
+        }
+    }
+}
+
+impl<T: ProblemType> IntoResponse for BodySizeExceeded<T> {
     fn into_response(self) -> http::Response {
-        Problem::new(http::StatusCode::PAYLOAD_TOO_LARGE)
+        refusal_problem::<T>(http::StatusCode::PAYLOAD_TOO_LARGE)
             .with_detail(format!("the request body exceeds {} bytes", self.limit))
             .into_response()
     }
 }
 
-impl ShortCircuit for BodySizeExceeded {
+impl<T: ProblemType> ShortCircuit for BodySizeExceeded<T> {
     const STATUSES: &'static [u16] = &[413];
 }
 
-impl Responses for BodySizeExceeded {
+impl<T: ProblemType> Responses for BodySizeExceeded<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         kynos_openapi::Responses::new().with(
             413,
-            problem_response(registry, "the request body exceeds the configured limit"),
+            refusal_response::<T>(
+                registry,
+                413,
+                "the request body exceeds the configured limit",
+            ),
         )
     }
 }
@@ -99,17 +119,83 @@ impl Responses for BodySizeExceeded {
 /// refusing every length-less body and with it every chunked upload; both are
 /// worse trades than the buffer. `docs/nfr.md` records the same conclusion, and
 /// there is no missing constructor to write.
-#[derive(Clone, Copy, Debug)]
-pub struct BodySize {
+///
+/// # Naming what the 413 is
+///
+/// [`problem_type`](BodySize::problem_type) puts an application's own URI on
+/// the refusal, so a client can tell an oversized upload from every other 413
+/// the service sends. See [`ProblemType`] for why it is a type and not a value.
+pub struct BodySize<T = ()> {
     /// The maximum body size, in bytes.
     pub limit: u64,
+    /// Names the refusal's problem type without holding one.
+    problem_type: PhantomData<fn() -> T>,
 }
 
-impl BodySize {
+impl BodySize<()> {
     /// Caps bodies at `bytes`.
+    ///
+    /// Declared on the concrete type rather than on the generic one so that
+    /// this still infers without a turbofish: a default type parameter does not
+    /// participate in inference from an associated function.
     #[must_use]
     pub fn new(bytes: u64) -> Self {
-        Self { limit: bytes }
+        Self {
+            limit: bytes,
+            problem_type: PhantomData,
+        }
+    }
+
+    /// Names the RFC 9457 problem type this limit's 413 carries.
+    ///
+    /// Changes the type, because it changes what every covered operation
+    /// declares. Stated once, and read by both the response body and the
+    /// description.
+    ///
+    /// Available only on a limit that has not named one, so a chain states the
+    /// type at most once and a reader never has to find the last call that won.
+    ///
+    /// ```
+    /// use kynos::{error::problem::ProblemType, middleware::limits::BodySize};
+    ///
+    /// struct PayloadTooLarge;
+    ///
+    /// impl ProblemType for PayloadTooLarge {
+    ///     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/too-large");
+    /// }
+    ///
+    /// let limit = BodySize::new(1_024).problem_type::<PayloadTooLarge>();
+    /// # let _ = limit;
+    /// ```
+    ///
+    /// Naming a second one does not compile — the `impl` block is on
+    /// `BodySize<()>`, so the method is simply not there once `T` is a type.
+    /// The block above is this rule's pass control: the two differ only in the
+    /// second call.
+    ///
+    /// ```compile_fail
+    /// use kynos::{error::problem::ProblemType, middleware::limits::BodySize};
+    ///
+    /// struct PayloadTooLarge;
+    /// # impl ProblemType for PayloadTooLarge {
+    /// #     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/too-large");
+    /// # }
+    /// struct Overweight;
+    /// # impl ProblemType for Overweight {
+    /// #     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/overweight");
+    /// # }
+    ///
+    /// let limit = BodySize::new(1_024)
+    ///     .problem_type::<PayloadTooLarge>()
+    ///     .problem_type::<Overweight>();
+    /// # let _ = limit;
+    /// ```
+    #[must_use]
+    pub fn problem_type<T: ProblemType>(self) -> BodySize<T> {
+        BodySize {
+            limit: self.limit,
+            problem_type: PhantomData,
+        }
     }
 }
 
@@ -154,10 +240,14 @@ async fn read_capped(mut body: crate::http::body::Body, limit: u64) -> Option<By
     Some(collected.freeze())
 }
 
-impl<C: Sync + 'static> Interceptor<C> for BodySize {
+impl<C, T> Interceptor<C> for BodySize<T>
+where
+    C: Sync + 'static,
+    T: ProblemType,
+{
     type Reads = ();
     type Adds = ();
-    type Short = BodySizeExceeded;
+    type Short = BodySizeExceeded<T>;
 
     async fn intercept(
         &self,
@@ -165,14 +255,14 @@ impl<C: Sync + 'static> Interceptor<C> for BodySize {
         reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> Result<Continued<()>, BodySizeExceeded> {
+    ) -> Result<Continued<()>, BodySizeExceeded<T>> {
         let _ = (reads, context);
 
         // A declared length is the cheapest answer: an oversized upload is
         // refused before a byte of it is read.
         if let Some(declared) = declared_length(request.headers()) {
             if declared > self.limit {
-                return Err(BodySizeExceeded { limit: self.limit });
+                return Err(BodySizeExceeded::new(self.limit));
             }
 
             // The protocol driver delivers no more than the length it was told,
@@ -187,7 +277,7 @@ impl<C: Sync + 'static> Interceptor<C> for BodySize {
         // rebuild is one built from bytes.
         let (parts, body) = request.into_parts();
         let Some(bytes) = read_capped(body, self.limit).await else {
-            return Err(BodySizeExceeded { limit: self.limit });
+            return Err(BodySizeExceeded::new(self.limit));
         };
 
         let request = http::Request::from_parts(parts, crate::http::body::Body::from_bytes(bytes));
@@ -196,15 +286,31 @@ impl<C: Sync + 'static> Interceptor<C> for BodySize {
 }
 
 /// What [`Timeout`] answers with when a handler runs too long.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TimedOut {
+///
+/// `T` names the problem type the body carries; `()` leaves `about:blank`. Set
+/// it with [`Timeout::problem_type`], or replace this type outright with
+/// [`Timeout::answer_with`].
+pub struct TimedOut<T = ()> {
     /// The limit the handler passed.
     pub after: Duration,
+    /// Carries `T` without storing one, as in [`BodySizeExceeded`].
+    problem_type: PhantomData<fn() -> T>,
 }
 
-impl IntoResponse for TimedOut {
+impl<T> TimedOut<T> {
+    /// A refusal reporting `after` as the limit the handler passed.
+    #[must_use]
+    pub fn new(after: Duration) -> Self {
+        Self {
+            after,
+            problem_type: PhantomData,
+        }
+    }
+}
+
+impl<T: ProblemType> IntoResponse for TimedOut<T> {
     fn into_response(self) -> http::Response {
-        Problem::new(http::StatusCode::REQUEST_TIMEOUT)
+        refusal_problem::<T>(http::StatusCode::REQUEST_TIMEOUT)
             .with_detail(format!(
                 "the handler did not finish within {} seconds",
                 self.after.as_secs()
@@ -213,16 +319,17 @@ impl IntoResponse for TimedOut {
     }
 }
 
-impl ShortCircuit for TimedOut {
+impl<T: ProblemType> ShortCircuit for TimedOut<T> {
     const STATUSES: &'static [u16] = &[408];
 }
 
-impl Responses for TimedOut {
+impl<T: ProblemType> Responses for TimedOut<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         kynos_openapi::Responses::new().with(
             408,
-            problem_response(
+            refusal_response::<T>(
                 registry,
+                408,
                 "the handler did not finish within the configured limit",
             ),
         )
@@ -309,17 +416,17 @@ impl Responses for TimedOut {
 /// let timeout = Timeout::new(Duration::from_secs(30)).answer_with::<TookTooLong>();
 /// # let _ = timeout;
 /// ```
-pub struct Timeout<R = TimedOut> {
+pub struct Timeout<R = TimedOut<()>> {
     /// The maximum handler duration.
     pub limit: std::time::Duration,
     /// Names the response without holding one.
     ///
     /// `fn() -> R` so that `R` decides nothing about this type's auto traits:
     /// a `Timeout` is `Send` because a `Duration` is.
-    _response: std::marker::PhantomData<fn() -> R>,
+    _response: PhantomData<fn() -> R>,
 }
 
-impl Timeout<TimedOut> {
+impl Timeout<TimedOut<()>> {
     /// Limits handlers to `limit`.
     ///
     /// Answers with [`TimedOut`]. Declared on the concrete type rather than on
@@ -330,7 +437,40 @@ impl Timeout<TimedOut> {
     pub fn new(limit: std::time::Duration) -> Self {
         Self {
             limit,
-            _response: std::marker::PhantomData,
+            _response: PhantomData,
+        }
+    }
+
+    /// Names the RFC 9457 problem type this timeout's 408 carries.
+    ///
+    /// The smaller half of [`answer_with`](Timeout::answer_with): this names
+    /// the type a [`TimedOut`] publishes and changes nothing else, where
+    /// `answer_with` replaces the response outright. Reach for that one when a
+    /// timeout owes more than a URI — a `Retry-After`, a support identifier, a
+    /// shape the whole service answers timeouts in.
+    ///
+    /// Available only on a timeout still answering with an unnamed
+    /// [`TimedOut`], so a chain states the type at most once. See
+    /// [`BodySize::problem_type`] for the rule and its pass control.
+    ///
+    /// ```
+    /// # use std::time::Duration;
+    /// use kynos::{error::problem::ProblemType, middleware::limits::Timeout};
+    ///
+    /// struct TookTooLong;
+    ///
+    /// impl ProblemType for TookTooLong {
+    ///     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/timed-out");
+    /// }
+    ///
+    /// let timeout = Timeout::new(Duration::from_secs(30)).problem_type::<TookTooLong>();
+    /// # let _ = timeout;
+    /// ```
+    #[must_use]
+    pub fn problem_type<T: ProblemType>(self) -> Timeout<TimedOut<T>> {
+        Timeout {
+            limit: self.limit,
+            _response: PhantomData,
         }
     }
 }
@@ -348,7 +488,7 @@ impl<R> Timeout<R> {
     {
         Timeout {
             limit: self.limit,
-            _response: std::marker::PhantomData,
+            _response: PhantomData,
         }
     }
 }
@@ -400,9 +540,9 @@ where
     }
 }
 
-impl From<Duration> for TimedOut {
+impl<T> From<Duration> for TimedOut<T> {
     fn from(after: Duration) -> Self {
-        Self { after }
+        Self::new(after)
     }
 }
 
@@ -411,15 +551,31 @@ impl From<Duration> for TimedOut {
 /// The `Retry-After` header is *this type's*, not a separate entry keyed on
 /// 503: the type that sets the header is the type that describes it, so the two
 /// cannot come apart.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AtCapacity {
+///
+/// `T` names the problem type the body carries; `()` leaves `about:blank`. Set
+/// it with [`Concurrency::problem_type`], which is the one URI away that tells
+/// a shed 503 from every other 503 a service can send.
+pub struct AtCapacity<T = ()> {
     /// How long a client should wait, when there is a useful answer.
     pub retry_after: Option<Duration>,
+    /// Carries `T` without storing one, as in [`BodySizeExceeded`].
+    problem_type: PhantomData<fn() -> T>,
 }
 
-impl IntoResponse for AtCapacity {
+impl<T> AtCapacity<T> {
+    /// A refusal advertising `retry_after`, where there is a useful answer.
+    #[must_use]
+    pub fn new(retry_after: Option<Duration>) -> Self {
+        Self {
+            retry_after,
+            problem_type: PhantomData,
+        }
+    }
+}
+
+impl<T: ProblemType> IntoResponse for AtCapacity<T> {
     fn into_response(self) -> http::Response {
-        let mut response = Problem::new(http::StatusCode::SERVICE_UNAVAILABLE)
+        let mut response = refusal_problem::<T>(http::StatusCode::SERVICE_UNAVAILABLE)
             .with_detail("the service is at its concurrency limit")
             .into_response();
         set_retry_after(&mut response, self.retry_after);
@@ -427,15 +583,15 @@ impl IntoResponse for AtCapacity {
     }
 }
 
-impl ShortCircuit for AtCapacity {
+impl<T: ProblemType> ShortCircuit for AtCapacity<T> {
     const STATUSES: &'static [u16] = &[503];
 }
 
-impl Responses for AtCapacity {
+impl<T: ProblemType> Responses for AtCapacity<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         kynos_openapi::Responses::new().with(
             503,
-            problem_response(registry, "the service is at its concurrency limit")
+            refusal_response::<T>(registry, 503, "the service is at its concurrency limit")
                 .with_header("Retry-After", retry_after_header()),
         )
     }
@@ -474,17 +630,27 @@ impl Responses for AtCapacity {
 /// # use kynos::middleware::limits::Concurrency;
 /// let concurrency = Concurrency::new(0);
 /// ```
-#[derive(Clone, Debug)]
-pub struct Concurrency {
+///
+/// # Naming what the 503 is
+///
+/// A 503 from a concurrency cap and a 503 from anything else are one URI apiece
+/// away from being distinguishable, and
+/// [`problem_type`](Concurrency::problem_type) is that URI.
+pub struct Concurrency<T = ()> {
     /// The maximum number of requests in flight at once.
     pub limit: NonZeroUsize,
     slots: Arc<Semaphore>,
     queue_for: Duration,
     retry_after: Option<Duration>,
+    /// Names the refusal's problem type without holding one.
+    problem_type: PhantomData<fn() -> T>,
 }
 
-impl Concurrency {
+impl Concurrency<()> {
     /// Limits in-flight requests to `limit`.
+    ///
+    /// Declared on the concrete type so that it still infers without a
+    /// turbofish, as [`BodySize::new`] is.
     #[must_use]
     pub fn new(limit: NonZeroUsize) -> Self {
         Self {
@@ -492,9 +658,43 @@ impl Concurrency {
             slots: Arc::new(Semaphore::new(limit.get())),
             queue_for: Duration::ZERO,
             retry_after: None,
+            problem_type: PhantomData,
         }
     }
 
+    /// Names the RFC 9457 problem type this cap's 503 carries.
+    ///
+    /// Available only on a cap that has not named one, so a chain states the
+    /// type at most once. See [`BodySize::problem_type`] for the rule and its
+    /// pass control.
+    ///
+    /// ```
+    /// # use std::num::NonZeroUsize;
+    /// use kynos::{error::problem::ProblemType, middleware::limits::Concurrency};
+    ///
+    /// struct Shed;
+    ///
+    /// impl ProblemType for Shed {
+    ///     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/shed");
+    /// }
+    ///
+    /// let concurrency = Concurrency::new(NonZeroUsize::new(64).expect("nonzero"))
+    ///     .problem_type::<Shed>();
+    /// # let _ = concurrency;
+    /// ```
+    #[must_use]
+    pub fn problem_type<T: ProblemType>(self) -> Concurrency<T> {
+        Concurrency {
+            limit: self.limit,
+            slots: self.slots,
+            queue_for: self.queue_for,
+            retry_after: self.retry_after,
+            problem_type: PhantomData,
+        }
+    }
+}
+
+impl<T> Concurrency<T> {
     /// Waits up to `wait` for a slot before shedding.
     ///
     /// Declares nothing new. The answer when the wait expires is the same 503,
@@ -538,10 +738,14 @@ impl Concurrency {
     }
 }
 
-impl<C: Sync + 'static> Interceptor<C> for Concurrency {
+impl<C, T> Interceptor<C> for Concurrency<T>
+where
+    C: Sync + 'static,
+    T: ProblemType,
+{
     type Reads = ();
     type Adds = ();
-    type Short = AtCapacity;
+    type Short = AtCapacity<T>;
 
     async fn intercept(
         &self,
@@ -549,16 +753,195 @@ impl<C: Sync + 'static> Interceptor<C> for Concurrency {
         reads: (),
         context: &C,
         next: Next<'_, C>,
-    ) -> Result<Continued<()>, AtCapacity> {
+    ) -> Result<Continued<()>, AtCapacity<T>> {
         let _ = (reads, context);
 
         let Some(_slot) = self.acquire().await else {
-            return Err(AtCapacity {
-                retry_after: self.retry_after,
-            });
+            return Err(AtCapacity::new(self.retry_after));
         };
 
         Ok(next.run(request).await)
+    }
+}
+
+// --- The derivable implementations, written out ---------------------------
+//
+// `#[derive]` would bound each on the marker, and a marker is a name rather
+// than a value: it is never cloned, printed or compared, and requiring it to be
+// would make naming a problem type cost four derives on the application's own
+// marker. Every one destructures `self`, so a field added to a refusal is a
+// compile error here rather than a member these silently stop reading.
+
+impl<T> Clone for BodySizeExceeded<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for BodySizeExceeded<T> {}
+
+impl<T> fmt::Debug for BodySizeExceeded<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            limit,
+            problem_type: _,
+        } = self;
+
+        formatter
+            .debug_struct("BodySizeExceeded")
+            .field("limit", limit)
+            .finish()
+    }
+}
+
+impl<T> PartialEq for BodySizeExceeded<T> {
+    fn eq(&self, other: &Self) -> bool {
+        let Self {
+            limit,
+            problem_type: _,
+        } = self;
+
+        *limit == other.limit
+    }
+}
+
+impl<T> Eq for BodySizeExceeded<T> {}
+
+impl<T> Clone for TimedOut<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for TimedOut<T> {}
+
+impl<T> fmt::Debug for TimedOut<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            after,
+            problem_type: _,
+        } = self;
+
+        formatter
+            .debug_struct("TimedOut")
+            .field("after", after)
+            .finish()
+    }
+}
+
+impl<T> PartialEq for TimedOut<T> {
+    fn eq(&self, other: &Self) -> bool {
+        let Self {
+            after,
+            problem_type: _,
+        } = self;
+
+        *after == other.after
+    }
+}
+
+impl<T> Eq for TimedOut<T> {}
+
+impl<T> Clone for AtCapacity<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for AtCapacity<T> {}
+
+impl<T> fmt::Debug for AtCapacity<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            retry_after,
+            problem_type: _,
+        } = self;
+
+        formatter
+            .debug_struct("AtCapacity")
+            .field("retry_after", retry_after)
+            .finish()
+    }
+}
+
+impl<T> PartialEq for AtCapacity<T> {
+    fn eq(&self, other: &Self) -> bool {
+        let Self {
+            retry_after,
+            problem_type: _,
+        } = self;
+
+        *retry_after == other.retry_after
+    }
+}
+
+impl<T> Eq for AtCapacity<T> {}
+
+// The interceptors carry the same parameter for the same reason: derived, a
+// limit naming a problem type would lose `Clone` and `Debug` unless the
+// application's marker derived them too.
+
+impl<T> Clone for BodySize<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for BodySize<T> {}
+
+impl<T> fmt::Debug for BodySize<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            limit,
+            problem_type: _,
+        } = self;
+
+        formatter
+            .debug_struct("BodySize")
+            .field("limit", limit)
+            .finish()
+    }
+}
+
+impl<T> Clone for Concurrency<T> {
+    fn clone(&self) -> Self {
+        let Self {
+            limit,
+            slots,
+            queue_for,
+            retry_after,
+            problem_type: _,
+        } = self;
+
+        Self {
+            limit: *limit,
+            // Shared, so one limit stays one limit however many copies the
+            // router holds.
+            slots: Arc::clone(slots),
+            queue_for: *queue_for,
+            retry_after: *retry_after,
+            problem_type: PhantomData,
+        }
+    }
+}
+
+impl<T> fmt::Debug for Concurrency<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            limit,
+            slots,
+            queue_for,
+            retry_after,
+            problem_type: _,
+        } = self;
+
+        formatter
+            .debug_struct("Concurrency")
+            .field("limit", limit)
+            .field("slots", slots)
+            .field("queue_for", queue_for)
+            .field("retry_after", retry_after)
+            .finish()
     }
 }
 

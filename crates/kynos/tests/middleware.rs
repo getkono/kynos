@@ -7,11 +7,11 @@
 #![cfg(all(feature = "macros", feature = "json"))]
 
 use kynos::{
+    error::problem::ProblemType,
     http::{Method, Request, StatusCode, header},
     middleware::rate_limit::{
         RateLimit,
         decision::{Decision, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
-        refusal::RefusalType,
     },
     router::operation::Route,
 };
@@ -220,7 +220,7 @@ fn the_description_carries_whichever_spelling_was_selected() {
 /// supplied at run time could reach the wire and nothing else.
 struct Throttled;
 
-impl RefusalType for Throttled {
+impl ProblemType for Throttled {
     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/rate-limited");
 }
 
@@ -237,7 +237,7 @@ async fn a_named_refusal_type_reaches_the_wire_and_the_document_it_declares() {
     const URI: &str = "https://errors.example.com/rate-limited";
 
     let service = support::router()
-        .intercept(RateLimit::new(AlwaysDenies::new()).refusal_type::<Throttled>())
+        .intercept(RateLimit::new(AlwaysDenies::new()).problem_type::<Throttled>())
         .build(App::new())
         .expect("a describable router");
 
@@ -248,21 +248,20 @@ async fn a_named_refusal_type_reaches_the_wire_and_the_document_it_declares() {
 
     let declared = serde_json::to_value(
         support::router()
-            .intercept(RateLimit::new(AlwaysDenies::new()).refusal_type::<Throttled>())
+            .intercept(RateLimit::new(AlwaysDenies::new()).problem_type::<Throttled>())
             .openapi()
             .expect("a describable router"),
     )
     .expect("a serializable document");
 
     assert_eq!(
-        declared["paths"]["/users/{id}"]["get"]["responses"]["429"]["content"]["application/problem+json"]
-            ["example"]["type"],
+        narrowed_type(&declared, 429),
         URI,
-        "the description does not carry the type the wire sent: {declared}"
+        "the description does not narrow to the type the wire sent: {declared}"
     );
 
-    // And the untyped limiter declares nothing extra, so the documents every
-    // service already emits are unchanged.
+    // And the untyped limiter narrows to the URI *it* sends, so a service that
+    // names nothing still declares what it really carries.
     let untyped = serde_json::to_value(
         support::router()
             .intercept(RateLimit::new(AlwaysDenies::new()))
@@ -271,12 +270,24 @@ async fn a_named_refusal_type_reaches_the_wire_and_the_document_it_declares() {
     )
     .expect("a serializable document");
 
-    assert!(
-        untyped["paths"]["/users/{id}"]["get"]["responses"]["429"]["content"]
-            ["application/problem+json"]["example"]
-            .is_null(),
-        "an unnamed type still put an example in the document: {untyped}"
+    assert_eq!(
+        narrowed_type(&untyped, 429),
+        "about:blank",
+        "an unnamed type did not declare the URI it sends: {untyped}"
     );
+}
+
+/// The one URI the fixture operation's `status` response narrows `type` to.
+///
+/// The shape a single-branch narrowing takes: the shared component, and one
+/// object fixing `type` to a `const`.
+fn narrowed_type(document: &serde_json::Value, status: u16) -> &str {
+    let schema = &document["paths"]["/users/{id}"]["get"]["responses"][status.to_string()]["content"]
+        ["application/problem+json"]["schema"];
+
+    schema["allOf"][1]["properties"]["type"]["const"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the declared {status} does not narrow `type`: {schema}"))
 }
 
 /// Naming the type and taking the draft's fields are two decisions, in either
@@ -298,7 +309,7 @@ async fn a_named_refusal_type_survives_taking_the_standard_fields() {
     let service = support::router()
         .intercept(
             RateLimit::new(AlwaysDenies::new())
-                .refusal_type::<Throttled>()
+                .problem_type::<Throttled>()
                 .standard_fields(),
         )
         .build(App::new())
@@ -321,7 +332,7 @@ async fn a_named_refusal_type_survives_taking_the_standard_fields() {
         support::router()
             .intercept(
                 RateLimit::new(AlwaysDenies::new())
-                    .refusal_type::<Throttled>()
+                    .problem_type::<Throttled>()
                     .standard_fields(),
             )
             .openapi()
@@ -332,13 +343,81 @@ async fn a_named_refusal_type_survives_taking_the_standard_fields() {
     let operation = &declared["paths"]["/users/{id}"]["get"];
 
     assert_eq!(
-        operation["responses"]["429"]["content"]["application/problem+json"]["example"]["type"],
+        narrowed_type(&declared, 429),
         URI,
-        "the standard spelling's description does not carry the type the wire sent: {declared}"
+        "the standard spelling's description does not narrow to the type the wire sent: {declared}"
     );
     assert!(
         operation["responses"]["429"]["headers"]["RateLimit"].is_object(),
         "the standard spelling was lost on the way through: {declared}"
+    );
+}
+
+// --- The problem type a cross-site refusal names ---------------------------
+
+/// The type this fixture's 403 publishes.
+struct CrossSiteRefused;
+
+impl ProblemType for CrossSiteRefused {
+    const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/cross-site");
+}
+
+/// A named `Csrf` publishes one URI on the wire and in the declaration.
+///
+/// The second short circuit driven end to end this way, and it is a different
+/// shape from the limiter's: `CrossSite` carries no data at all, so a marker is
+/// the only thing that distinguishes one 403 from another.
+#[tokio::test]
+async fn a_named_cross_site_refusal_publishes_one_type_on_both_halves() {
+    const URI: &str = "https://errors.example.com/cross-site";
+
+    let service = support::router()
+        .intercept(kynos::middleware::csrf::Csrf::new().problem_type::<CrossSiteRefused>())
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = send(&service, Method::POST, "/users")
+        .header("sec-fetch-site", "cross-site")
+        .json(&serde_json::json!({ "id": 1, "name": "fresh" }))
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::FORBIDDEN);
+    assert_eq!(reply.json()["type"], URI);
+
+    let declared = serde_json::to_value(service.openapi()).expect("a serializable document");
+    let schema = &declared["paths"]["/users"]["post"]["responses"]["403"]["content"]["application/problem+json"]
+        ["schema"];
+
+    assert_eq!(
+        schema["allOf"][1]["properties"]["type"]["const"], URI,
+        "the declared 403 does not narrow to the type the wire sent: {declared}"
+    );
+}
+
+/// The pass control: unnamed, both halves say `about:blank`.
+#[tokio::test]
+async fn an_unnamed_cross_site_refusal_publishes_about_blank_on_both_halves() {
+    let service = support::router()
+        .intercept(kynos::middleware::csrf::Csrf::new())
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = send(&service, Method::POST, "/users")
+        .header("sec-fetch-site", "cross-site")
+        .json(&serde_json::json!({ "id": 1, "name": "fresh" }))
+        .call()
+        .await;
+
+    assert_eq!(reply.json()["type"], "about:blank");
+
+    let declared = serde_json::to_value(service.openapi()).expect("a serializable document");
+    let schema = &declared["paths"]["/users"]["post"]["responses"]["403"]["content"]["application/problem+json"]
+        ["schema"];
+
+    assert_eq!(
+        schema["allOf"][1]["properties"]["type"]["const"],
+        "about:blank"
     );
 }
 
@@ -1020,6 +1099,7 @@ mod encoding_policy {
 mod decompression {
     use kynos::{
         Router,
+        error::problem::ProblemType,
         extract::{
             body::text::Text,
             params::header::{DecodeHeaders, EncodeHeaders, HeaderParams, Headers},
@@ -1323,5 +1403,116 @@ mod decompression {
 
         assert_eq!(reply.status, StatusCode::OK);
         assert_eq!(reply.text(), "kynos");
+    }
+
+    // --- The three problem types the three refusals name ------------------
+
+    /// One marker per refusal, which is the whole of why `Undecodable` takes
+    /// three parameters and not one.
+    struct UnknownCoding;
+    struct NotWhatItClaimed;
+    struct Bomb;
+
+    impl ProblemType for UnknownCoding {
+        const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/coding");
+    }
+
+    impl ProblemType for NotWhatItClaimed {
+        const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/malformed");
+    }
+
+    impl ProblemType for Bomb {
+        const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/bomb");
+    }
+
+    /// The three statuses publish three different URIs, on the wire and in the
+    /// declaration.
+    ///
+    /// The case one shared marker would pass and must not: it would put one URI
+    /// on all three, declaring a malformed body and an unsupported coding the
+    /// same problem type — and, now that the declaration is a `const` a
+    /// validator reads, declaring it to the conformance harness.
+    #[tokio::test]
+    async fn three_refusals_publish_three_types_on_both_halves() {
+        let service = Router::<App>::new()
+            .mount(kynos::routes![echo, fields])
+            .intercept(
+                Decompression::new(64)
+                    .unsupported_coding_problem_type::<UnknownCoding>()
+                    .malformed_problem_type::<NotWhatItClaimed>()
+                    .too_large_problem_type::<Bomb>(),
+            )
+            .build(App::new())
+            .expect("a describable router");
+
+        let refused = |coding: &'static str, body: String| {
+            let service = &service;
+            async move {
+                post(service, "/echo")
+                    .header("content-encoding", coding)
+                    .header("content-type", "text/plain")
+                    .body(body)
+                    .call()
+                    .await
+            }
+        };
+
+        let unsupported = refused("deflate", "anything".to_owned()).await;
+        assert_eq!(unsupported.status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        assert_eq!(
+            unsupported.json()["type"],
+            "https://errors.example.com/coding"
+        );
+
+        let malformed = refused("gzip", "this is not a gzip stream".to_owned()).await;
+        assert_eq!(malformed.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            malformed.json()["type"],
+            "https://errors.example.com/malformed"
+        );
+
+        let too_large = refused("identity", payload()).await;
+        assert_eq!(too_large.status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(too_large.json()["type"], "https://errors.example.com/bomb");
+
+        // And the declaration says the same three, keyed by the status each
+        // answers with. `contains` rather than equality: `/echo` takes a body,
+        // so its 400 and 415 are the union of this interceptor's branch with
+        // the extractor's `about:blank` one — which is the union rule working,
+        // and would be invisible if each status published one branch.
+        let declared = serde_json::to_value(service.openapi()).expect("a serializable document");
+        let responses = &declared["paths"]["/echo"]["post"]["responses"];
+
+        for (status, uri) in [
+            (400, "https://errors.example.com/malformed"),
+            (413, "https://errors.example.com/bomb"),
+            (415, "https://errors.example.com/coding"),
+        ] {
+            let published = published_types(
+                &responses[status.to_string()]["content"]["application/problem+json"]["schema"],
+            );
+
+            assert!(
+                published.iter().any(|declared| declared == uri),
+                "the declared {status} publishes {published:?}, not the {uri} the wire sent"
+            );
+        }
+    }
+
+    /// Every type URI one declared problem response narrows to.
+    ///
+    /// One branch is a bare `allOf`; several are a `oneOf` of them, which is
+    /// what a status an extractor also claims produces.
+    fn published_types(schema: &serde_json::Value) -> Vec<String> {
+        let narrowed = |branch: &serde_json::Value| {
+            branch["allOf"][1]["properties"]["type"]["const"]
+                .as_str()
+                .map(ToOwned::to_owned)
+        };
+
+        match schema["oneOf"].as_array() {
+            Some(branches) => branches.iter().filter_map(narrowed).collect(),
+            None => narrowed(schema).into_iter().collect(),
+        }
     }
 }

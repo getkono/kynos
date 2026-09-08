@@ -335,6 +335,95 @@ pub(crate) fn problem_response(
     )
 }
 
+// --- What a refusal names itself -----------------------------------------
+
+/// The RFC 9457 problem type a refusal names.
+///
+/// `type` is what a client branches on, and `about:blank` says "the status code
+/// is the whole story" — true of a generic refusal and false of a service that
+/// distinguishes a burst limit from a spent monthly allowance, or a 503 from a
+/// concurrency cap from a 503 from a shed queue. Implement this on a marker
+/// type and select it on the interceptor that owns the refusal.
+///
+/// ```
+/// use kynos::error::problem::ProblemType;
+///
+/// struct Throttled;
+///
+/// impl ProblemType for Throttled {
+///     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/rate-limited");
+/// }
+/// ```
+///
+/// # Why a type rather than a value
+///
+/// What an interceptor declares is read from its associated types and never
+/// from an instance — see [`Interceptor`](crate::middleware::Interceptor),
+/// which has no `contribution` method for exactly this reason. A URI supplied
+/// at run time could therefore reach the wire and nothing else, leaving the
+/// document saying `about:blank` about a response that says otherwise. Stated
+/// as a type, the same `const` reaches both halves: one function builds the
+/// body and one narrows the declaration, both reading this constant.
+///
+/// The const has no default. It is the one thing this trait carries, and a
+/// marker that left it unwritten would compile, ship `about:blank`, declare
+/// `about:blank`, and produce no diagnostic saying the feature had silently
+/// done nothing.
+///
+pub trait ProblemType: 'static {
+    /// The URI identifying the problem type, or `None` for `about:blank`.
+    const TYPE_URI: Option<&'static str>;
+}
+
+/// The default: a refusal whose status code is the whole story.
+impl ProblemType for () {
+    const TYPE_URI: Option<&'static str> = None;
+}
+
+/// The problem a refusal puts on the wire, carrying the type `T` names.
+///
+/// One function for every short circuit, because the document is a claim about
+/// what the wire carries and two constructions of "the same" problem are how
+/// the two came to disagree. The `title` stays the status code's reason phrase
+/// whether or not a type was named: RFC 9457 section 3.1.3 makes it a summary
+/// of the problem *type*, and a refusal's reason phrase summarises every
+/// refusal of that kind there is.
+pub(crate) fn refusal_problem<T: ProblemType>(status: StatusCode) -> Problem {
+    let mut problem = Problem::new(status);
+
+    if let Some(uri) = T::TYPE_URI {
+        problem.type_uri = uri.into();
+    }
+
+    problem
+}
+
+/// The response a refusal declares for one status, narrowed to the type `T`
+/// names.
+///
+/// The other half of [`refusal_problem`], reading the same `const`. Narrowed
+/// rather than exemplified: [`assert_conformance`] validates a body against the
+/// declared `schema` and never reads an `example`, so a refusal whose body
+/// disagreed with an exemplified declaration passed.
+///
+/// A refusal naming no type narrows to `about:blank`, which is what
+/// [`Problem::new`] sets and what [`refusal_problem`] leaves alone — the same
+/// rule [`rejection`](crate::error::rejection) follows, and for the reason
+/// [`narrowed_response`] gives: a bare `$ref` admits every problem document the
+/// service can produce, so a status an extractor also claims would lose its own
+/// narrowing to this one.
+///
+/// [`assert_conformance`]: crate::test::TestClient::assert_conformance
+pub(crate) fn refusal_response<T: ProblemType>(
+    registry: &mut Registry,
+    status: u16,
+    summary: &'static str,
+) -> Response {
+    let problem = registry.resolve::<Problem>();
+
+    narrowed_response(&problem, status, &[(T::TYPE_URI, Some(summary))])
+}
+
 // --- What one status declares --------------------------------------------
 //
 // Emitted code cannot spell `about:blank`: the URI a problem carrying no

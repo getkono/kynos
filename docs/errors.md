@@ -18,18 +18,36 @@ a problem document, and both appear in the operation's `responses` — because
 It covers what middleware refuses, too, and the description owes the same
 account of it. A `ShortCircuit` that *refuses* answers with a problem document,
 so the response it declares names `application/problem+json` and the `Problem`
-component. `error::problem::problem_response` writes that description wherever the
-response says only that a problem document arrives: the eight interceptor short
-circuits, the 500 a recovered panic contributes, and the 403 `AuthRejection`
-declares where no scope set named a type for it, which is the one rejection
-status left wide for the reason [Rejections](#rejections) gives.
+component. `error::problem::problem_response` writes that description wherever
+the response says only that a problem document arrives: the 500 a recovered
+panic contributes, and the 403 `AuthRejection` declares where no scope set
+named a type for it, which is the one rejection status left wide for the reason
+[Rejections](#rejections) gives.
 `error::problem::narrowed_response` writes it wherever the response also states
-which `type` it may carry: for every extractor rejection, and — through the
-forwarding function in
+which `type` it may carry: for every extractor rejection, for every interceptor
+short circuit, and — through the forwarding function in
 [`kynos::__private`](../crates/kynos/src/__private/mod.rs) — for what the
 `ApiError` derive expands to. The derive needs that hop because it expands in an
 application crate, which `pub(crate)` does not reach, and `#[derive(Reply)]`
 already takes it.
+
+**An interceptor's refusal names its own type.** `error::problem::ProblemType`
+is one `const TYPE_URI` on a marker, selected on the short circuit and read by
+both halves through `refusal_problem` and `refusal_response` — so a 503 from a
+concurrency cap and a 503 from anything else are told apart by the member a
+client actually branches on. Naming nothing narrows to `about:blank`, which is
+what such a refusal really sends. `middleware.md` records why it is a type and
+not a value, and why the marker goes on the *refusal* rather than on the
+interceptor: a type answering with three statuses carries three markers, which
+is what `middleware::decompression::Undecodable` does.
+
+**Two shapes for one idea, and the difference is whether a type is already
+there.** `Scopes::FORBIDDEN_TYPE` is a `const` on a trait the *application*
+already implements for its own scope set, so a URI has somewhere to hang and a
+marker would be a second type saying what the first could. An interceptor's
+refusal has no such type — a `Concurrency` is Kynos's — so the marker *is* the
+type the application supplies. Both end as a `const` read while the description
+is built, which is the only property either rests on.
 
 That fold was #116's to make rather than a tidying: a rejection and a handler's
 error type meet on a shared status, and two spellings of one shape are two
@@ -314,7 +332,8 @@ the time a handler argument is built.
 [`RateLimit`, `Concurrency` and `Timeout`](../crates/kynos/src/middleware/limits.rs),
 which return a response directly and declare it through
 an interceptor's `Short`. They are not extractor rejections and have no rejection
-variant; an interceptor builds a `Problem` itself. See
+variant; an interceptor builds a `Problem` itself, through the same
+`refusal_problem` that the type it names is read from. See
 [`middleware.md`](middleware.md#declaring-is-not-describing).
 
 **[`kynos::Error`](../crates/kynos/src/error/mod.rs).** The framework's own
