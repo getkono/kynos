@@ -1219,7 +1219,87 @@ class Main(unittest.TestCase):
     UUID_NAMED_BY = ' `uuid`, `feature = "uuid"` |'
     UUID_SITES = " `schema/impls/{mod,identifier}.rs` |"
     UUID_ROW = UUID_ELEMENT + UUID_NAMED_BY + UUID_SITES
+    #: `testing.md`'s count of off-path rows, read as written for the reason
+    #: `SITE_COUNT` is: a case about the count rule must not depend on today's
+    #: count.
+    OFF_PATH_COUNT = re.compile(r"\*\*(\w+) rows, and the count is the check\.\*\*")
 
+    def test_a_malformed_off_path_row_is_reported(self):
+        # A cell lost with its pipe, which is what a hand-edited table does. The
+        # row is refused before anything else reads it, so the row-count rule
+        # fires beside this one; the shape failure is what is asserted.
+        broken = gate.TESTING.replace(
+            self.UUID_ROW, self.UUID_ELEMENT + self.UUID_NAMED_BY, 1
+        )
+        status, failures = self.report(testing=broken)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "off-path table has a malformed row")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("the `uuid` feature", reported[0])
+
+    def test_an_unreadable_off_path_site_cell_is_reported(self):
+        # A *Named only in* cell writing prose outside its backticks. The scan
+        # scope is derived from these sites, so the cell is refused whole rather
+        # than read for the half of it that still parses.
+        broken = gate.TESTING.replace(
+            self.UUID_ROW,
+            self.UUID_ELEMENT
+            + self.UUID_NAMED_BY
+            + " `schema/impls/mod.rs` and `schema/impls/identifier.rs` |",
+            1,
+        )
+        status, failures = self.report(testing=broken)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "cannot read as a comma-separated list")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("the `uuid` feature", reported[0])
+
+    def test_an_off_path_site_in_a_misspelled_crate_is_reported(self):
+        # One transposed letter in a crate name: every other check on the cell
+        # passes, and the tree it derives matches no file, which would narrow
+        # the row back to the home scope where its spellings are still written.
+        broken = gate.TESTING.replace(
+            self.UUID_ROW,
+            self.UUID_ELEMENT
+            + self.UUID_NAMED_BY
+            + " `crates/kynos-opanapi/src/schema/impls/mod.rs` |",
+            1,
+        )
+        status, failures = self.report(testing=broken)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "in a crate that does not exist")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos-opanapi/src/", reported[0])
+
+    def test_an_unreadable_off_path_named_by_cell_is_reported(self):
+        # The same residue, in the cell that says what names the element. A
+        # spelling dropped for having lost its backticks reads exactly like a
+        # row with one spelling that holds.
+        broken = gate.TESTING.replace(
+            self.UUID_ROW,
+            self.UUID_ELEMENT + ' `uuid` and `feature = "uuid"` |' + self.UUID_SITES,
+            1,
+        )
+        status, failures = self.report(testing=broken)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "cannot read as an identifier or a path of them")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("the `uuid` feature", reported[0])
+
+    def test_an_off_path_spelling_nothing_writes_is_reported(self):
+        # A renamed or mistyped spelling, and the row's other spelling still
+        # matching: this is the case the one-at-a-time hold exists for, since a
+        # union over the cell would report the row as holding.
+        broken = gate.TESTING.replace(
+            self.UUID_ROW,
+            self.UUID_ELEMENT + ' `uuidd`, `feature = "uuid"` |' + self.UUID_SITES,
+            1,
+        )
+        status, failures = self.report(testing=broken)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "writes that spelling")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("`uuidd`", reported[0])
 
     def test_an_off_path_element_named_outside_its_sites_is_reported(self):
         # The offender scan, which is the rule the second defect of #134 exists
@@ -1236,6 +1316,59 @@ class Main(unittest.TestCase):
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/schema/impls/identifier.rs", reported[0])
 
+    def test_an_emptied_off_path_table_is_reported(self):
+        # Every row dropped, header and separator left standing. Each per-row
+        # rule above reports nothing over an empty table, which is why the
+        # table's emptiness is a rule of its own.
+        head, tail = gate.TESTING.split(gate.OFF_PATH_HEADER, 1)
+        lines = tail.split("\n")
+        body = lines[2:]
+        while body and body[0].startswith("|"):
+            body.pop(0)
+        broken = head + gate.OFF_PATH_HEADER + "\n".join(lines[:2] + body)
+        status, failures = self.report(testing=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(self.naming(failures, "off-path table has no rows")), 1)
+
+    def test_a_reworded_off_path_count_claim_is_reported(self):
+        # The count sentence is what holds the row *set*, so losing it is a
+        # failure of its own rather than a rule that quietly stops.
+        broken = self.OFF_PATH_COUNT.sub(
+            lambda found: f"**{found.group(1)} rows, and that count is the check.**",
+            gate.TESTING,
+            count=1,
+        )
+        status, failures = self.report(testing=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            len(self.naming(failures, "no longer states how many rows its off-path table has")),
+            1,
+        )
+
+    def test_an_unreadable_off_path_count_is_reported(self):
+        # As `claimed`'s second branch, for the count this rule reads itself.
+        broken = self.OFF_PATH_COUNT.sub(
+            "**Nineteen rows, and the count is the check.**", gate.TESTING, count=1
+        )
+        status, failures = self.report(testing=broken)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "unreadable off-path row count")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("Nineteen", reported[0])
+
+    def test_a_stated_off_path_count_that_does_not_match_the_table_is_reported(self):
+        # A readable count the document does not state, so the claim and the
+        # table disagree whatever the table's length is.
+        written = self.OFF_PATH_COUNT.search(gate.TESTING).group(1)
+        wrong = "Seven" if written != "Seven" else "Eight"
+        broken = self.OFF_PATH_COUNT.sub(
+            f"**{wrong} rows, and the count is the check.**", gate.TESTING, count=1
+        )
+        status, failures = self.report(testing=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            len(self.naming(failures, f"claims {gate.NUMBERS[wrong]} off-path rows")), 1
+        )
 
     def test_a_moved_module_size_budget_is_reported(self):
         # `nfr`. The budget is a number in prose, and the rule holds it against
