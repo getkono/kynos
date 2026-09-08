@@ -430,5 +430,134 @@ class CargoConfig(unittest.TestCase):
         self.assertEqual(len(failures), 3)
 
 
+class TaxonomyCount(unittest.TestCase):
+    """How many of `performance.md`'s kinds of measurement run today.
+
+    A rule rather than a parser, and here for `cargo_config_failures`' reason:
+    its failure mode is silence. Nothing in this repository reads Markdown
+    prose, so the sentence and the table below it drifted apart twice in one
+    day with every gate green -- two branches rewrote the same count from two
+    readings of the same five rows. So every case below is a document this
+    repository does not ship and `mise run check` passes over unchanged.
+
+    The inputs are stated rather than read off disk, for the reason the two
+    classes above give: what is under test is what the rule does with a
+    document, not what `performance.md` happens to say today.
+    """
+
+    #: The five kinds, in the order the shipped table writes them.
+    KINDS = [
+        "Allocation count",
+        "Size guard",
+        "Off-path proof",
+        "Codegen delta",
+        "Binary delta",
+    ]
+
+    def document(self, claim="All five of the kinds below run today", statuses=None, header=None):
+        """A `performance.md` whose opening sentence states `claim`.
+
+        The cells carry no prose past their status: what the rule reads of a
+        row is its first column and its last, and a fixture that copied the
+        rest would only assert that the shipped table still says it.
+        """
+        statuses = ["in use"] * len(self.KINDS) if statuses is None else statuses
+        head = gate.TAXONOMY_HEADER if header is None else header
+        rows = "".join(
+            f"| {kind} | a target | `cargo nextest` | that it did not grow | {status} |\n"
+            for kind, status in zip(self.KINDS, statuses)
+        )
+        return (
+            f"# Performance\n\n{claim}, four of them only for part of what they\n"
+            f"cover.\n\n## The taxonomy\n\n{head}\n| --- | --- | --- | --- | --- |\n"
+            f"{rows}\nProse after the table.\n"
+        )
+
+    def test_the_shape_this_document_ships_holds(self):
+        self.assertEqual(gate.taxonomy_failures(self.document()), [])
+
+    def test_a_kind_that_stopped_running_is_named(self):
+        failures = gate.taxonomy_failures(
+            self.document(statuses=["in use", "in use", "planned", "in use", "in use"])
+        )
+        self.assertEqual(len(failures), 1)
+        self.assertIn("Off-path proof", failures[0])
+        self.assertNotIn("Size guard", failures[0])
+
+    def test_a_status_that_denies_running_does_not_read_as_running(self):
+        failures = gate.taxonomy_failures(
+            self.document(statuses=["not in use"] + ["in use"] * 4)
+        )
+        self.assertEqual(len(failures), 1)
+        self.assertIn("Allocation count", failures[0])
+
+    def test_a_dropped_row_fails_the_stated_count(self):
+        document = self.document()
+        last = document[document.index("| Binary delta") :]
+        failures = gate.taxonomy_failures(document.replace(last.split("\n")[0] + "\n", ""))
+        self.assertEqual(len(failures), 1)
+        self.assertIn("5", failures[0])
+        self.assertIn("4", failures[0])
+
+    def test_a_table_cut_short_by_a_blank_line_fails(self):
+        document = self.document().replace(
+            "| Off-path proof", "\n| Off-path proof", 1
+        )
+        failures = gate.taxonomy_failures(document)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("cut short", failures[0])
+
+    def test_a_prose_count_moved_without_the_table_fails(self):
+        failures = gate.taxonomy_failures(
+            self.document(claim="All six of the kinds below run today")
+        )
+        self.assertEqual(len(failures), 1)
+        self.assertIn("6", failures[0])
+        self.assertIn("5", failures[0])
+
+    def test_a_kind_added_with_the_count_moved_holds(self):
+        document = self.document(claim="All six of the kinds below run today")
+        document = document.replace(
+            "\nProse after",
+            "| Timing figure | a harness | a runner | how long it took | in use |\n\nProse after",
+        )
+        self.assertEqual(gate.taxonomy_failures(document), [])
+
+    def test_a_reworded_claim_is_named_rather_than_skipped(self):
+        failures = gate.taxonomy_failures(
+            self.document(claim="Two of the five kinds below run today")
+        )
+        self.assertEqual(len(failures), 1)
+        self.assertIn("no longer states", failures[0])
+
+    def test_an_unreadable_count_fails_rather_than_passing(self):
+        failures = gate.taxonomy_failures(
+            self.document(claim="All eighteen of the kinds below run today")
+        )
+        self.assertEqual(len(failures), 1)
+        self.assertIn("eighteen", failures[0])
+
+    def test_a_renamed_header_fails_rather_than_raising(self):
+        failures = gate.taxonomy_failures(
+            self.document(header="| Kind | Lives in | Runs under | Proves | State |")
+        )
+        self.assertEqual(len(failures), 1)
+        self.assertIn("taxonomy table", failures[0])
+
+    def test_an_emptied_table_holds_nothing_and_says_so(self):
+        document = self.document()
+        document = document[: document.index("| Allocation count")] + "\nProse after the table.\n"
+        failures = gate.taxonomy_failures(document)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("no rows", failures[0])
+
+    def test_a_stale_count_over_a_stopped_kind_is_reported_twice(self):
+        document = self.document(
+            claim="All six of the kinds below run today",
+            statuses=["in use", "in use", "in use", "in use", "planned"],
+        )
+        self.assertEqual(len(gate.taxonomy_failures(document)), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
