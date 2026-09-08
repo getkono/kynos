@@ -672,6 +672,16 @@ quiet = true
 # once the commit exists, and its lines are the extra parents of the commit
 # about to be written.
 #
+# It is a test for the *file*, not `git rev-parse --verify --quiet MERGE_HEAD`,
+# which resolves a ref. `git branch MERGE_HEAD`, `git tag MERGE_HEAD` and
+# `git update-ref refs/MERGE_HEAD HEAD` each make that probe exit 0 with no
+# merge in progress, and the gate would then exempt a one-parent commit that
+# `commits:check` and the `commits` CI job reject -- a silent, total loss of
+# this gate, in the direction opposite to the one it was written to fix.
+# `--git-path` is also the spelling that survives a linked worktree, where the
+# file is under `.git/worktrees/<name>/` rather than `.git/`, and this
+# repository is worked in linked worktrees.
+#
 # Squash, cherry-pick, revert and rebase are deliberately not exempted. Each
 # produces a one-parent commit that `commits:check` and the `commits` CI job do
 # check, so exempting them here would make this half accept what that half
@@ -683,7 +693,7 @@ quiet = true
 # commit-msg time separates it from committing on top of a merge, and
 # `--no-verify` remains the escape. Recorded in `docs/nfr.md`.
 run = '''
-if git rev-parse --verify --quiet MERGE_HEAD >/dev/null; then
+if [ -f "$(git rev-parse --git-path MERGE_HEAD)" ]; then
   exit 0
 fi
 convco check --from-stdin
