@@ -68,13 +68,16 @@ pub(crate) fn counted<C>(
     request: Request,
     expected: StatusCode,
 ) -> (usize, Response) {
-    // Before the region, and cheap: cloning a standard method copies an enum
-    // discriminant and cloning a `Uri` bumps a reference count. The name is
-    // built from them only where a message is emitted, because `alloc.rs`
-    // replays ten thousand identical requests per case and a `format!` on
-    // every drive would put fifty thousand `String`s in a binary that makes
-    // none — outside every region, so counted by nothing, and paid for in the
-    // wall clock the replay is already tuned against.
+    // Before the region, and the name is built from these only where a message
+    // is emitted. Cloning a standard method is free; cloning the `Uri` is not
+    // — every request here is parsed fresh, so its `Bytes` is still promotable
+    // and this is always a *first* clone, which boxes a `Shared`: measured at
+    // one allocation per drive, against zero for a repeat clone of the same
+    // `Uri`. That is still half of the `format!("{} {}", ..)` this replaces,
+    // which measured one allocation and one reallocation, and `alloc.rs`
+    // replays ten thousand identical requests per case. All of it is outside
+    // the region, so none of it is counted by anything and the saving is in
+    // the wall clock the replay is already tuned against.
     let (method, uri) = (request.method().clone(), request.uri().clone());
 
     let ((allocations, reallocations, _), polled) = count_alloc(|| {
