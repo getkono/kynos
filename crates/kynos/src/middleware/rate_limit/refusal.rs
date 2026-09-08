@@ -6,10 +6,10 @@
 
 use std::{fmt, marker::PhantomData, time::Duration};
 
-use kynos_openapi::model::{body::mime_names::APPLICATION_PROBLEM_JSON, schema::types::SchemaType};
+use kynos_openapi::model::schema::types::SchemaType;
 
 use crate::{
-    error::problem::{Problem, ProblemType, problem_response},
+    error::problem::{ProblemType, refusal_problem, refusal_response},
     extract::params::header::{EncodeHeaders, HeaderParams},
     http,
     middleware::rate_limit::{
@@ -53,7 +53,9 @@ impl<T> RateLimited<T> {
 
 impl<T: ProblemType> IntoResponse for RateLimited<T> {
     fn into_response(self) -> http::Response {
-        let mut response = refusal_problem::<T>().into_response();
+        let mut response = refusal_problem::<T>(http::StatusCode::TOO_MANY_REQUESTS)
+            .with_detail("the client has exceeded its request rate")
+            .into_response();
         set_retry_after(&mut response, self.retry_after);
 
         // The same three a success carries. A denial's reset *is* its retry
@@ -115,7 +117,9 @@ impl<T> RateLimitedFields<T> {
 
 impl<T: ProblemType> IntoResponse for RateLimitedFields<T> {
     fn into_response(self) -> http::Response {
-        let mut response = refusal_problem::<T>().into_response();
+        let mut response = refusal_problem::<T>(http::StatusCode::TOO_MANY_REQUESTS)
+            .with_detail("the client has exceeded its request rate")
+            .into_response();
         set_retry_after(&mut response, self.retry_after);
         write_group(
             &mut response,
@@ -139,61 +143,24 @@ impl<T: ProblemType> Responses for RateLimitedFields<T> {
     }
 }
 
-/// The problem both halves of a refusal read.
-///
-/// One function, because the document is a claim about what the wire carries
-/// and two constructions of "the same" problem are how the two came to
-/// disagree. The title stays the status code's reason phrase whether or not a
-/// type was named: it summarises the problem type, and "Too Many Requests"
-/// summarises every rate-limit refusal there is.
-fn refusal_problem<T: ProblemType>() -> Problem {
-    let mut problem = Problem::new(http::StatusCode::TOO_MANY_REQUESTS)
-        .with_detail("the client has exceeded its request rate");
-
-    if let Some(uri) = T::TYPE_URI {
-        problem.type_uri = uri.into();
-    }
-
-    problem
-}
-
 /// The 429's description, plus whichever header group produced it.
+///
+/// The narrowing is [`refusal_response`]'s, so the type named here is a
+/// `const` in the declared schema rather than an example beside it — which is
+/// what makes a refusal contradicting its own declaration a conformance
+/// failure rather than a document nobody validates against.
 fn described_refusal<T: ProblemType>(
     registry: &mut Registry,
     group: kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>>,
 ) -> kynos_openapi::Responses {
-    let mut response = group.into_iter().fold(
-        problem_response(registry, "the client has exceeded its request rate")
+    let response = group.into_iter().fold(
+        refusal_response::<T>(registry, 429, "the client has exceeded its request rate")
             .with_header("Retry-After", retry_after_header()),
         |response, (name, header)| match header {
             kynos_openapi::RefOr::Item(header) => response.with_header(name, header),
             kynos_openapi::RefOr::Ref(_) => response,
         },
     );
-
-    // A named type is *shown* rather than stated, because the `Problem` schema
-    // is shared by every error Kynos describes and narrowing `type` to one URI
-    // there would narrow it for all of them. An example is what the document
-    // can carry today; a `const`-narrowed member is the mechanism that will
-    // replace it.
-    //
-    // Two members and no more. An example is a promise about the wire, and the
-    // only members this code fixes are the URI and the status -- `title` and
-    // `detail` are English prose an interceptor is free to localize, so
-    // showing them would publish a claim no response is held to. These two are
-    // exactly what a `const`-narrowed `type` will state instead.
-    //
-    // Written through the media type `problem_response` already installed,
-    // which keeps that function the one writer of this content.
-    if let Some(uri) = T::TYPE_URI {
-        if let Some(media_type) = response.content.get_mut(APPLICATION_PROBLEM_JSON) {
-            let described = std::mem::take(media_type);
-            *media_type = described.with_example(serde_json::json!({
-                "type": uri,
-                "status": 429,
-            }));
-        }
-    }
 
     kynos_openapi::Responses::new().with(429, response)
 }

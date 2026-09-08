@@ -458,24 +458,24 @@ wrapping it. Naming it on the limiter covers both, and it is the same shape
 `standard_fields` already has — a decision that changes what every covered
 operation declares changes the type.
 
-**What the document can say today.** The declared 429 carries the URI as the
-`application/problem+json` media type's `example` — `{"type": ..., "status":
-429}`, and nothing else. Two members rather than a whole serialized `Problem`,
-because an example is a promise about the wire and only these two are fixed:
-`title` and `detail` are English prose that a localizing interceptor rewrites
-per request, so showing them would publish a claim no response is held to. It is
-machine-readable and it is not a *constraint*: nothing rejects a body whose
-`type` differs from an example. The
-constraint needs `type` narrowed to a `const` in the schema, and `Problem`'s
-schema is shared by every error Kynos describes — narrowing it there would
-narrow it for all of them. That is [#103]'s mechanism; when it lands the 429's
-`Problem.type` narrows to `ProblemType::TYPE_URI` and the conformance harness
-starts failing a refusal whose body disagrees with its declaration.
+**What the document states.** The declared response narrows `type` to
+`ProblemType::TYPE_URI` — the shape
+[`errors.md`](errors.md#what-the-declared-response-narrows-to) records for a
+derived error, built by the same `narrowed_response`. It carried an `example`
+until #123 and that was a placeholder: an example is machine-readable and it is
+not a *constraint*, and `assert_conformance` validates a body against the
+declared `schema` and never reads one. So a refusal whose body disagreed with
+its declaration passed. Narrowed, it fails.
 
-Naming no type is still the default, and it declares no example and sends
-`about:blank`, so a service that does not care carries nothing new.
+Only `type` is fixed. `title` and `detail` are English prose that a localizing
+interceptor rewrites per request, and a declaration that fixed them would refuse
+a response saying `"Trop de requetes"` — which, now that the declaration is
+checked, is a failure rather than a claim nobody reads.
 
-[#103]: https://github.com/getkono/kynos/issues/103
+Naming no type is still the default. It narrows to `about:blank`, which is the
+URI such a refusal really sends: a bare `$ref` to the shared `Problem` component
+would admit every problem document the service can produce, so a status an
+extractor also claims would lose its own narrowing to the interceptor's.
 
 ## The order a chain runs in
 
