@@ -608,7 +608,7 @@ async fn every_case() -> Vec<Case> {
         )
         .await,
     );
-    cases.push(case(registry, CrossSite).await);
+    cases.push(case(registry, CrossSite::<()>::new()).await);
     cases.push(case(registry, RateLimited::<()>::new(Duration::from_secs(1), 10)).await);
     cases.push(
         case(
@@ -783,11 +783,15 @@ fn assert_clone_and_debug<T: Clone + std::fmt::Debug>() {}
 /// was only a name.
 #[test]
 fn a_refusal_is_send_and_sync_whatever_marker_names_it() {
-    use kynos::middleware::limits::{AtCapacity, BodySizeExceeded, TimedOut};
+    use kynos::middleware::{
+        csrf::CrossSite,
+        limits::{AtCapacity, BodySizeExceeded, TimedOut},
+    };
 
     assert_send_sync::<BodySizeExceeded<Unsendable>>();
     assert_send_sync::<TimedOut<Unsendable>>();
     assert_send_sync::<AtCapacity<Unsendable>>();
+    assert_send_sync::<CrossSite<Unsendable>>();
 }
 
 /// A refusal and its interceptor keep their implementations whatever names the
@@ -797,14 +801,17 @@ fn a_refusal_is_send_and_sync_whatever_marker_names_it() {
 /// any of these types would bound the marker and refuse them.
 #[test]
 fn naming_a_problem_type_costs_the_marker_no_derives() {
-    use kynos::middleware::limits::{
-        AtCapacity, BodySize, BodySizeExceeded, Concurrency, TimedOut,
+    use kynos::middleware::{
+        csrf::{CrossSite, Csrf},
+        limits::{AtCapacity, BodySize, BodySizeExceeded, Concurrency, TimedOut},
     };
 
     assert_refusal_traits::<BodySizeExceeded<Bare>>();
     assert_refusal_traits::<TimedOut<Bare>>();
     assert_refusal_traits::<AtCapacity<Bare>>();
+    assert_refusal_traits::<CrossSite<Bare>>();
 
     assert_clone_and_debug::<BodySize<Bare>>();
     assert_clone_and_debug::<Concurrency<Bare>>();
+    assert_clone_and_debug::<Csrf<Bare>>();
 }

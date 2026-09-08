@@ -353,6 +353,74 @@ async fn a_named_refusal_type_survives_taking_the_standard_fields() {
     );
 }
 
+// --- The problem type a cross-site refusal names ---------------------------
+
+/// The type this fixture's 403 publishes.
+struct CrossSiteRefused;
+
+impl ProblemType for CrossSiteRefused {
+    const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/cross-site");
+}
+
+/// A named `Csrf` publishes one URI on the wire and in the declaration.
+///
+/// The second short circuit driven end to end this way, and it is a different
+/// shape from the limiter's: `CrossSite` carries no data at all, so a marker is
+/// the only thing that distinguishes one 403 from another.
+#[tokio::test]
+async fn a_named_cross_site_refusal_publishes_one_type_on_both_halves() {
+    const URI: &str = "https://errors.example.com/cross-site";
+
+    let service = support::router()
+        .intercept(kynos::middleware::csrf::Csrf::new().problem_type::<CrossSiteRefused>())
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = send(&service, Method::POST, "/users")
+        .header("sec-fetch-site", "cross-site")
+        .json(&serde_json::json!({ "id": 1, "name": "fresh" }))
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::FORBIDDEN);
+    assert_eq!(reply.json()["type"], URI);
+
+    let declared = serde_json::to_value(service.openapi()).expect("a serializable document");
+    let schema = &declared["paths"]["/users"]["post"]["responses"]["403"]["content"]["application/problem+json"]
+        ["schema"];
+
+    assert_eq!(
+        schema["allOf"][1]["properties"]["type"]["const"], URI,
+        "the declared 403 does not narrow to the type the wire sent: {declared}"
+    );
+}
+
+/// The pass control: unnamed, both halves say `about:blank`.
+#[tokio::test]
+async fn an_unnamed_cross_site_refusal_publishes_about_blank_on_both_halves() {
+    let service = support::router()
+        .intercept(kynos::middleware::csrf::Csrf::new())
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = send(&service, Method::POST, "/users")
+        .header("sec-fetch-site", "cross-site")
+        .json(&serde_json::json!({ "id": 1, "name": "fresh" }))
+        .call()
+        .await;
+
+    assert_eq!(reply.json()["type"], "about:blank");
+
+    let declared = serde_json::to_value(service.openapi()).expect("a serializable document");
+    let schema = &declared["paths"]["/users"]["post"]["responses"]["403"]["content"]["application/problem+json"]
+        ["schema"];
+
+    assert_eq!(
+        schema["allOf"][1]["properties"]["type"]["const"],
+        "about:blank"
+    );
+}
+
 /// Compression must not re-encode anything a byte range is calculated against.
 ///
 /// Two rules, one reason. RFC 9110 section 14.1.2: when a content coding is

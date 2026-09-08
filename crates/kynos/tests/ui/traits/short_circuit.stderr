@@ -14,7 +14,7 @@ help: the trait `ShortCircuit` is not implemented for `NotAResponse`
   = help: the following other types implement trait `ShortCircuit`:
             AtCapacity<T>
             BodySizeExceeded<T>
-            CrossSite
+            CrossSite<T>
             Infallible
             NotModified
             RateLimited<T>
