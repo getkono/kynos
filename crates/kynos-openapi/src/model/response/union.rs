@@ -50,11 +50,15 @@ enum Admits<'a> {
     These(Vec<(&'a str, &'a Schema)>),
     /// Every problem document, so the side is a superset of any other.
     Everything,
-    /// A shape this rule does not read, which says nothing about what it
-    /// admits. Not the same as admitting everything, and the distinction is
-    /// the whole of `union_of`'s soundness: `false`, an empty `oneOf` and a
-    /// `oneOf` whose branches overlap all land here, and each admits strictly
-    /// *less* than a narrowed side rather than more.
+    /// A shape this rule cannot show to cover the other side.
+    ///
+    /// Two cases land here and the decision is the same for both: a shape it
+    /// does not parse at all, and one it parses as admitting strictly *less*
+    /// than a narrowed side -- `false`, an empty `oneOf`, and a `oneOf` whose
+    /// branches overlap. Keeping this apart from
+    /// [`Everything`](Admits::Everything) is the whole of `union_of`'s
+    /// soundness: reading "not narrowed" as "admits everything" is what let a
+    /// schema satisfied by nothing be adopted as a status's declaration.
     Unread,
 }
 
