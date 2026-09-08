@@ -509,10 +509,18 @@ fn work_on_another_thread_is_not_counted() {
 /// What [`Calibrating`] adds to a request, by construction: one fresh
 /// allocation and one reallocation.
 ///
-/// A constructed target rather than a recorded measurement — the only number
-/// in either counting target written down before it was read, which is what
-/// makes an equality over it defensible. Nothing re-reads it when a ceiling
-/// moves, because none of what it counts is the router's.
+/// A constructed target rather than a recorded measurement, and the only
+/// number in either counting target that is one: it is what [`Calibrating`]'s
+/// body says it does, not what a run reported. That is what makes an equality
+/// over it defensible where
+/// [`nfr.md`](../../../docs/nfr.md#thresholds) refuses one over a measurement,
+/// and it is why nothing re-reads it when a ceiling moves — none of what it
+/// counts is the router's.
+///
+/// Confirmed against the instrument all the same, the way every recorded
+/// number here was read: set to zero, and the delta transcribed out of the
+/// failure. Two at baseline (`cargo nextest run -p kynos --test alloc`) and
+/// two with `--all-features`, the two configurations this target is built at.
 const CALIBRATION: usize = 2;
 
 /// The instrument's second invariant, and the one every ceiling in either
