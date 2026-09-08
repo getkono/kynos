@@ -1323,6 +1323,12 @@ class Main(unittest.TestCase):
         reported = self.naming(failures, "in a crate that does not exist")
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos-opanapi/src/", reported[0])
+        # And the skip that follows it. Dropping that `continue` leaves the row
+        # scanned against a tree derived from a crate that is not there, which
+        # is the narrowing back to the home scope this failure says did not
+        # happen: the scan then reports every site the misspelled cell does not
+        # list, on top of the failure above.
+        self.assertEqual(self.naming(failures, "is off the request path"), [])
 
     def test_an_unreadable_off_path_named_by_cell_is_reported(self):
         # The same residue, in the cell that says what names the element. A
@@ -1353,6 +1359,23 @@ class Main(unittest.TestCase):
         reported = self.naming(failures, "writes that spelling")
         self.assertEqual(len(reported), 1)
         self.assertIn("`uuidd`", reported[0])
+
+    def test_a_row_with_a_stale_spelling_is_not_also_scanned_for_offenders(self):
+        # One failure per row, which is a rule of its own rather than an
+        # accident of control flow: a cell this rule has just called
+        # untrustworthy does not also get to render a verdict on the sites. The
+        # fixture writes both faults at once -- a spelling nothing writes, and
+        # sites narrowed to one file that leaves offenders standing -- so the
+        # skip is the only thing between the row and a second failure.
+        broken = gate.TESTING.replace(
+            self.UUID_ROW,
+            self.UUID_ELEMENT + ' `uuidd`, `feature = "uuid"` |' + " `schema/mod.rs` |",
+            1,
+        )
+        status, failures = self.report(testing=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(self.naming(failures, "writes that spelling")), 1)
+        self.assertEqual(self.naming(failures, "is off the request path"), [])
 
     def test_an_off_path_element_named_outside_its_sites_is_reported(self):
         # The offender scan, which is the rule the second defect of #134 exists
