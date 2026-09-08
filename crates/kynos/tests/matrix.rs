@@ -93,11 +93,16 @@ struct Paging {
 
 /// What creating a user can fail with.
 ///
-/// `NameRequired` answers with 400, which is a status the body extractor's
+/// Two variants answer with 400, which is a status the body extractor's
 /// rejection already declares on this operation. That is the one case where two
-/// declarations meet on one key, and the reason both arms are driven below: a
-/// client of `POST /users` meets a generic 400 and a named one, and the entry
-/// filed under `400` has to admit each of them.
+/// declarations meet on one key, and the reason all three arms are driven
+/// below: a client of `POST /users` meets a generic 400 and two named ones, and
+/// the entry filed under `400` has to admit each of them.
+///
+/// Two rather than one on purpose. A single named 400 would meet the extractor
+/// as one branch against one, and the union would never be asked to flatten a
+/// side that is *already* a choice -- the arm a derive with two variants on one
+/// status reaches, and the arm nothing else here would drive.
 #[derive(Debug, thiserror::Error, ApiError)]
 #[problem(base = "https://errors.example.com/")]
 enum StoreError {
@@ -112,6 +117,14 @@ enum StoreError {
         title = "Name required"
     )]
     NameRequired,
+
+    #[error("that name is longer than the store accepts")]
+    #[problem(
+        status = 400,
+        type = "https://errors.example.com/name-too-long",
+        title = "Name too long"
+    )]
+    NameTooLong,
 }
 
 // --- Authentication -------------------------------------------------------
@@ -312,6 +325,10 @@ async fn create_user(Json(user): Json<User>) -> Result<Created<Json<User>>, Stor
 
     if user.name.is_empty() {
         return Err(StoreError::NameRequired);
+    }
+
+    if user.name.len() > 32 {
+        return Err(StoreError::NameTooLong);
     }
 
     Ok(Created::at(
@@ -721,6 +738,21 @@ async fn exercise_the_rejections(client: &TestClient<App>) {
         .await
         .assert_status(StatusCode::BAD_REQUEST)
         .assert_problem_type("https://errors.example.com/name-required");
+
+    // The second named 400, so every branch of the choice declared under that
+    // key is one this fixture produced. A union that dropped the branches of a
+    // side already holding a `oneOf` would leave this body matching nothing the
+    // description declares.
+    client
+        .post("/users")
+        .json(&User {
+            id: 4,
+            name: "n".repeat(33),
+        })
+        .send()
+        .await
+        .assert_status(StatusCode::BAD_REQUEST)
+        .assert_problem_type("https://errors.example.com/name-too-long");
 
     // A media type the operation never claimed.
     client
