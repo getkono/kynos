@@ -1012,6 +1012,38 @@ class Main(unittest.TestCase):
         for signature in ("does not grade", "does not declare", "in more than one row", "no row of"):
             self.assertEqual(self.naming(failures, signature), [], signature)
 
+    def test_the_reported_marker_says_which_rules_stopped_running(self):
+        # `section`'s `unrun` sentence, which the marker alone does not carry.
+        # A reader handed only the missing marker knows what is gone and not
+        # what stopped being held, and it is the second that decides whether
+        # the build may proceed.
+        broken = gate.PERFORMANCE.replace(self.GRADING, "| Grade | Owes | Flag |", 1)
+        _, failures = self.report(performance=broken)
+        reported = self.naming(failures, self.GRADING)[0]
+        self.assertIn("goes unparsed", reported)
+        self.assertIn("off-path coverage comparison", reported)
+
+    def test_a_missing_off_path_header_holds_nothing_and_says_so(self):
+        # `testing`. The off-path table is split at its header rather than
+        # sliced, so this rule fails on its own terms -- but it fails only if
+        # the document handed in is the one read.
+        broken = gate.TESTING.replace(gate.OFF_PATH_HEADER, "| Element | Named by |", 1)
+        status, failures = self.report(testing=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(self.naming(failures, "exactly one off-path table")), 1)
+
+    def test_a_moved_module_size_budget_is_reported(self):
+        # `nfr`. The budget is a number in prose, and the rule holds it against
+        # the count of files over the line.
+        broken = re.sub(
+            r"a module-size budget of \d+ files",
+            "a module-size budget of 99 files",
+            gate.NFR,
+        )
+        status, failures = self.report(nfr=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(self.naming(failures, "nfr.md budgets 99 files")), 1)
+
 
 
 if __name__ == "__main__":
