@@ -15,8 +15,8 @@ use crate::model::{
     schema::{Schema, object::SchemaObject},
 };
 
-/// The union of two problem responses, or `None` where the two are not that
-/// shape and the declared one stands.
+/// The union of two problem responses, or `None` where the two are not a
+/// shape this rule reads and the declared one stands.
 pub(super) fn unioned(declared: &Response, incoming: &Response) -> Option<Response> {
     let left = declared
         .content
@@ -28,7 +28,7 @@ pub(super) fn unioned(declared: &Response, incoming: &Response) -> Option<Respon
         .get(APPLICATION_PROBLEM_JSON)?
         .schema
         .as_ref();
-    let schema = union_of(left?, right?);
+    let schema = union_of(left?, right?)?;
     let description = joined(
         declared.description.as_deref(),
         incoming.description.as_deref(),
@@ -43,36 +43,79 @@ pub(super) fn unioned(declared: &Response, incoming: &Response) -> Option<Respon
     Some(unioned)
 }
 
-/// The schema admitting what either side admits.
-fn union_of(declared: &Schema, incoming: &Schema) -> Schema {
-    match (narrowed(declared), narrowed(incoming)) {
-        (Some(left), Some(right)) => rebuilt(left, right),
-        // Not narrowed is not a defect: it is the widest thing either side
-        // could have said, so it is already the union.
-        (None, _) => declared.clone(),
-        (_, None) => incoming.clone(),
+/// What one side says about the documents it admits.
+enum Admits<'a> {
+    /// Every branch constrains `type` to a `const`, so the side is exactly the
+    /// documents those branches describe.
+    These(Vec<(&'a str, &'a Schema)>),
+    /// Every problem document, so the side is a superset of any other.
+    Everything,
+    /// A shape this rule does not read, which says nothing about what it
+    /// admits. Not the same as admitting everything, and the distinction is
+    /// the whole of `union_of`'s soundness: `false`, an empty `oneOf` and a
+    /// `oneOf` whose branches overlap all land here, and each admits strictly
+    /// *less* than a narrowed side rather than more.
+    Unread,
+}
+
+/// The schema admitting what both sides admit, or `None` where neither side
+/// can be shown to cover the other.
+fn union_of(declared: &Schema, incoming: &Schema) -> Option<Schema> {
+    match (admits(declared), admits(incoming)) {
+        (Admits::These(left), Admits::These(right)) => Some(rebuilt(left, right)),
+        // A side admitting everything already admits every document the other
+        // describes, so it is the union whichever side carries it.
+        (Admits::Everything, _) => Some(declared.clone()),
+        (_, Admits::Everything) => Some(incoming.clone()),
+        // Nothing here covers the other, so the entry already declared stands
+        // -- which is `merge_from`'s rule, and is sound because a status the
+        // operation already declares is one it already described.
+        (Admits::Unread, _) | (_, Admits::Unread) => None,
     }
 }
 
-/// The branches of a narrowed problem schema, each with the type URI it
-/// publishes, or `None` where the schema narrows nothing.
-fn narrowed(schema: &Schema) -> Option<Vec<(&str, &Schema)>> {
-    let Schema::Object(object) = schema else {
-        return None;
+/// What a side admits, as far as this rule can tell.
+///
+/// `true` admits every instance outright. A bare `$ref` admits every problem
+/// document because of where this runs: the caller has already established
+/// that both sides are `application/problem+json`, so the component being
+/// referred to is the one every problem document satisfies. A `$ref` carrying
+/// *siblings* is not that -- the siblings constrain, and JSON Schema 2020-12
+/// applies them alongside the reference -- so it is unread rather than widest.
+fn admits(schema: &Schema) -> Admits<'_> {
+    let object = match schema {
+        Schema::Bool(true) => return Admits::Everything,
+        Schema::Bool(false) => return Admits::Unread,
+        Schema::Object(object) => object,
     };
 
+    // The reference and nothing else, compared against a schema built to be
+    // exactly that -- rather than against a list of keywords this would have to
+    // keep in step with `SchemaObject`.
+    let bare = SchemaObject {
+        reference: object.reference.clone(),
+        ..SchemaObject::default()
+    };
+
+    if object.reference.is_some() && **object == bare {
+        return Admits::Everything;
+    }
+
     match object.one_of.as_deref() {
-        // No choice to read, so the schema is one branch -- and an empty
-        // `oneOf` is the same answer by another route, since it constrains no
-        // `type` and `published` says so.
-        Some([]) | None => Some(vec![(published(schema)?, schema)]),
-        // Every branch, or none of them: a `oneOf` where one branch narrows and
-        // another does not is one the unnarrowed branch already satisfies for
-        // every problem document, so it narrows nothing as a whole.
+        // No choice to read, so the schema is one branch.
+        None => published(schema).map_or(Admits::Unread, |uri| Admits::These(vec![(uri, schema)])),
+        // A choice between nothing is satisfied by nothing, which is `false`
+        // written another way rather than a narrowing of anything.
+        Some([]) => Admits::Unread,
+        // Every branch, or none of them. A `oneOf` where one branch narrows and
+        // another does not is *narrower* than either: a document the narrowed
+        // branch describes matches the unnarrowed one too, and two matches is
+        // what `oneOf` forbids.
         Some(branches) => branches
             .iter()
             .map(|branch| Some((published(branch)?, branch)))
-            .collect(),
+            .collect::<Option<Vec<_>>>()
+            .map_or(Admits::Unread, Admits::These),
     }
 }
 
