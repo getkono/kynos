@@ -576,10 +576,15 @@ fn a_capture_is_what_a_path_parameter_costs() {
     let service = service();
 
     // Each shape reaches this test through the const that names it, rather
-    // than by destructuring `SHAPES` — a row reordered above would rebind
-    // three positional names here and leave the test passing about the wrong
-    // three requests, which is the hazard `alloc_codecs.rs`'s `Table` is a
-    // named struct to avoid.
+    // than by destructuring `SHAPES` here. That centralises the row-position
+    // binding rather than removing it — `STACKED`, `CAPTURED` and `MISSED` are
+    // still `SHAPES[0].0`, `[1].0` and `[2].0` — but it puts the binding in one
+    // place, beside the doc that says which shape each names, instead of
+    // three hundred lines away in a destructure that would silently rebind
+    // `matched`, `captured` and `missed` and leave this test passing about the
+    // wrong three requests. Removing it outright wants named fields, which is
+    // what `alloc_codecs.rs`'s `Table` is a struct rather than a
+    // `[Measured; 5]` for.
     let matched = counted(&service, STACKED, STACKED_STATUS);
     let captured = counted(&service, CAPTURED, CAPTURED_STATUS);
     let missed = counted(&service, MISSED, MISSED_STATUS);
