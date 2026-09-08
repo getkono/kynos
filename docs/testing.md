@@ -464,7 +464,7 @@ halve.
 | the schema registry | `Registry::{new,default}` | `router/describe.rs` | the one registry a build mints is consumed by `describe`, which has finished before a service exists to accept a request |
 | the document validators | `Validator` | `router/describe.rs` | a description is validated where it is built. The build either fails or drops the validator, and nothing on the request path holds one to run |
 | the JSON Schema interpreter | `jsonschema` | `test/conformance.rs` | it is behind `test-util` and exists to check an observed response against the description. The request parser is the other projection of the same declaration and interprets no schema |
-| the `openapi31` feature | `feature = "openapi31"` | `lib.rs`, `crates/kynos-openapi/src/lib.rs` | nothing is conditional on it. Both sites are the `#[cfg(not(feature = "openapi31"))] compile_error!` that refuses a build without it, and the 3.1 object model it names is compiled unconditionally. What that model does is held by the document, registry and validator rows above, and a request reaches none of the three |
+| the `openapi31` feature | `not(feature = "openapi31")` | `lib.rs`, `crates/kynos-openapi/src/lib.rs` | nothing is conditional on it. Both sites are the `#[cfg(not(feature = "openapi31"))] compile_error!` that refuses a build without it, and the 3.1 object model it names is compiled unconditionally. What that model does is held by the document, registry and validator rows above, and a request reaches none of the three |
 | the `yaml` feature | `serde_yaml_ng`, `feature = "yaml"` | `crates/kynos-openapi/src/emit/mod.rs`, `error/mod.rs` | `Document::to_yaml` is a method on the emitted document, reached only through `Service::openapi` after the build has finished. `Error::Yaml` carries a failure that emitter produced and is constructible nowhere else |
 | the `test-util` feature | `feature = "test-util"` | `lib.rs` | one gate, on `pub mod test`. What it compiles is the conformance harness, whose interpreter is the `jsonschema` row above |
 | the `uuid` feature | `uuid`, `feature = "uuid"` | `schema/impls/{mod,identifier}.rs` | its whole contribution is `impl Schema for Uuid`, and `Schema::schema` takes the `&mut Registry` that only `describe` mints |
@@ -500,7 +500,13 @@ does when one element has more than one spelling that reaches it:
 mint a registry anywhere. The second is a `feature = "…"` gate, written as the
 `#[cfg]` attribute writes it, for an element whose whole contribution is what a
 gate compiles — a flag is not a Rust name, so there is nothing else to name it
-by. The two are matched over different text, and the string literals are the
+by. A gate is read as the predicate around it rather than as the text of it, so
+a spelling matches only where the enclosing `#[cfg]`, `#![cfg]` or `cfg_attr`
+names the flag at the polarity the cell wrote; a spelling may therefore be
+written negated, as `not(feature = "…")`, and then matches only what the flag
+compiles by being *off*. The `openapi31` row is the case that needs it, since
+both of its sites are the `compile_error!` that refuses a build without the
+flag. The two are matched over different text, and the string literals are the
 whole of the difference: an identifier over source with its comments, its
 literals and its inline `#[cfg(test)]` modules removed, a gate over the same
 source with the literals kept, because the flag name is one. Comments go from

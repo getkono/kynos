@@ -354,12 +354,98 @@ NAMED_BY = re.compile(r"`?(\w+(?:\s*::\s*\w+)*)`?")
 # an element whose whole contribution is what a gate compiles has no crate or
 # type to be named by, and the gate is the only thing that names it.
 #
-# Matched as text, so it cannot tell a gate from its negation or from a
-# `cfg_attr` that compiles nothing: #134. The `openapi31` row is why that is not
-# a one-line narrowing -- both of its sites are
-# `#[cfg(not(feature = "openapi31"))] compile_error!`, so a pattern that reads
-# only the positive form empties the one row that has nothing else to hold.
+# Two spellings, because polarity is a property of the cell rather than of the
+# rule. `feature = "x"` names what the flag compiles when it is on;
+# `not(feature = "x")` names what it compiles when it is off, which is the whole
+# of what the `openapi31` row has to hold -- both of its sites are
+# `#[cfg(not(feature = "openapi31"))] compile_error!`. Reading either polarity
+# for existence instead would make existence strictly weaker than the offender
+# scan, which this file requires to run over the same corpus its existence was
+# asked of, and would leave the row unable to say which polarity it holds.
 GATE = re.compile(r'`?feature\s*=\s*"([\w-]+)"`?')
+NEGATED_GATE = re.compile(r'`?not\(\s*feature\s*=\s*"([\w-]+)"\s*\)`?')
+# Where a predicate starts. `cfg_attr` is here because it writes a gate that
+# compiles nothing -- `#[cfg_attr(docsrs, doc(cfg(feature = "x")))]` is a
+# documentation annotation -- and a walk that did not read it would take that
+# for the gate itself, which is half of #134.
+ATTRIBUTE = re.compile(r"#!?\[\s*(cfg_attr|cfg)\s*\(")
+# A `not(` group, which inverts the polarity of everything inside it.
+NEGATION = re.compile(r"\bnot\s*\(")
+
+
+class Gate:
+    """One gate spelling, matched against the `#[cfg]` predicate around it.
+
+    `.search(text)` like a compiled pattern's, so every call site that had one
+    is unchanged -- a bool rather than a match object, since all three consumers
+    read it in boolean context.
+
+    Text matching could not answer what a gate spelling asks. `feature = "uuid"`
+    is written by the gate; by `not(feature = "uuid")`, which compiles code only
+    where the flag is *off*; and by `#[cfg_attr(docsrs, doc(cfg(...)))]`, which
+    compiles nothing in any configuration. All three read alike as text, so an
+    offender scan over one reported a row broken by the other two. The predicate
+    is read instead: every `#[cfg(`, `#![cfg(` and `#[cfg_attr(` is walked with
+    its parentheses balanced, and the flag counts only where the parity of the
+    `not(` groups enclosing it is the one the spelling asked for.
+
+    Anchoring on `#[cfg(feature = "x")]` instead was measured against this tree
+    and is wrong on it: `lib.rs` names `time` and `decimal` positively and their
+    four backends negatively inside compound predicates, and there are 63
+    `all(`/`any(` sites here against 18 `not(` ones. A pattern that read only the
+    bare form would miss all of them, and would let
+    `#[cfg(all(feature = "uuid", debug_assertions))]` past the offender scan --
+    the silent pass this file names as its worst outcome.
+
+    `literal_end` balances the parentheses, which is what keeps a paren inside a
+    string literal from desynchronising the walk. The corpus a gate is read
+    against keeps its literals, because the flag name is one.
+    """
+
+    def __init__(self, flag, negated):
+        self.flag = flag
+        self.negated = negated
+        self.pattern = re.compile(r'feature\s*=\s*"' + re.escape(flag) + r'"')
+
+    def search(self, text):
+        """Whether any attribute in `text` names this flag at this polarity."""
+        return any(self.names(text, found) for found in ATTRIBUTE.finditer(text))
+
+    def names(self, text, attribute):
+        """Whether one `attribute` names this flag at this polarity."""
+        # The parity of the `not(` groups enclosing each open paren, innermost
+        # last. The attribute's own paren is already open, at even parity; the
+        # walk ends when it closes, which is what keeps one attribute's
+        # predicate from running into the code below it.
+        parity, i, n = [False], attribute.end(), len(text)
+        applies = attribute.group(1) == "cfg_attr"
+        while i < n and parity:
+            if found := NEGATION.match(text, i):
+                parity.append(not parity[-1])
+                i = found.end()
+            elif found := self.pattern.match(text, i):
+                if parity[-1] == self.negated:
+                    return True
+                i = found.end()
+            elif text[i] == "(":
+                parity.append(parity[-1])
+                i += 1
+            elif text[i] == ")":
+                parity.pop()
+                i += 1
+            elif applies and text[i] == "," and len(parity) == 1:
+                # Only the first argument of a `cfg_attr` is a predicate.
+                # Everything after it applies attributes and compiles nothing,
+                # so a flag named there names no gate at either polarity.
+                return False
+            elif (end := literal_end(text, i)) is not None:
+                i = end
+            else:
+                i += 1
+        # Parentheses that never balance are a file that does not compile, and
+        # the walk runs to the end of the text reporting nothing -- the posture
+        # `test_module_spans` takes for the same reason.
+        return False
 
 
 BACKTICKED = re.compile(r"`([^`]+)`")
@@ -388,7 +474,7 @@ def backticked(cell):
 
 
 def token(cell):
-    """One `(spelling, regex, gate)` per spelling in a *Named by* cell, or `None`.
+    """One `(spelling, matcher, gate)` per spelling in a *Named by* cell, or `None`.
 
     `None` loudly rather than a pattern that cannot match: a cell this function
     guesses at compiles to an escaped literal nothing in Rust source contains,
@@ -414,6 +500,11 @@ def token(cell):
     and `` `uuid`, `feature = "uuid"` `` is one element with two names, not two
     elements sharing a reason written twice.
 
+    A gate spelling may be written negated -- `not(feature = "x")` -- and then
+    matches only where the flag compiles code by being *off*. Its matcher is a
+    `Gate` rather than a compiled pattern, because the spelling is a claim about
+    the `#[cfg]` predicate around the string and not about the string.
+
     Which corpus a spelling is matched over is `gate` in each triple: an
     identifier over `SOURCES`, a gate over `GATE_SOURCES`. The two differ in
     the literals alone. A gate matched over the stripped text would name
@@ -436,11 +527,11 @@ def token(cell):
     for entry in entries or [cell]:
         for spelling in expand(entry.strip()):
             spelling = spelling.strip()
-            if gate := GATE.fullmatch(spelling):
-                flag = re.escape(gate.group(1))
-                spellings.append(
-                    (spelling, re.compile(r'feature\s*=\s*"' + flag + r'"'), True)
-                )
+            if named := GATE.fullmatch(spelling):
+                spellings.append((spelling, Gate(named.group(1), negated=False), True))
+                continue
+            if named := NEGATED_GATE.fullmatch(spelling):
+                spellings.append((spelling, Gate(named.group(1), negated=True), True))
                 continue
             readable = NAMED_BY.fullmatch(spelling)
             if readable is None:
