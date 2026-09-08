@@ -115,8 +115,16 @@ def braced_body(text, key, within=None):
     than a hint, because what the caller needs is *containment*: a step named
     somewhere in the file is not a step attached to the hook that runs it. An
     unanchored search cannot tell those apart, and the difference is the whole
-    gate. Double-quoted regions are skipped so a `{{commit_msg_file}}` inside
-    a value cannot close the block that holds it.
+    gate.
+
+    Two regions are not code and are skipped, because a brace in either would
+    move the block's end and hand the caller a step from some other hook.
+    Double-quoted values, so a `{{commit_msg_file}}` cannot close the block
+    that holds it; and `//` comments, because the comments in that very block
+    discuss `{{commit_msg_file}}` in prose. Neither skip is exercised by
+    today's `hk.pkl`, which is exactly why `BracedBody` tests them directly:
+    a scanner that breaks is what makes a containment check pass over a file
+    it half read.
 
     Returns None when `key` is absent from the region searched.
     """
@@ -130,18 +138,29 @@ def braced_body(text, key, within=None):
 
     depth = 0
     quoted = False
-    for index in range(opening, len(region)):
+    commented = False
+    index = opening
+    while index < len(region):
         character = region[index]
-        if character == '"':
-            quoted = not quoted
+        if commented:
+            commented = character != "\n"
         elif quoted:
-            continue
+            if character == "\\":
+                index += 1
+            elif character == '"':
+                quoted = False
+        elif character == '"':
+            quoted = True
+        elif region.startswith("//", index):
+            commented = True
+            index += 1
         elif character == "{":
             depth += 1
         elif character == "}":
             depth -= 1
             if depth == 0:
                 return region[opening + 1 : index]
+        index += 1
     return None
 
 
@@ -202,6 +221,61 @@ def convco_on_path():
     if located.returncode != 0:
         raise AssertionError(f"mise cannot resolve convco: {located.stderr}")
     return str(Path(located.stdout.strip()).parent) + os.pathsep + os.environ.get("PATH", "")
+
+
+class BracedBody(unittest.TestCase):
+    """The scanner `hk.pkl`'s containment promise rests on, over its own inputs.
+
+    Nothing else here reaches the two regions `braced_body` skips: today's
+    `hk.pkl` has balanced braces in both its values and its comments, so a
+    scanner that skipped neither would pass every other case in this file.
+    That is the shape `containment_test.py` already tests its own scanner for,
+    and the reason `mise.toml` gives for running that suite beside its gate --
+    a gate is only as good as the parser under it, and a parser that breaks is
+    what makes the gate pass silently.
+
+    The fragments below are written for this file rather than captured. Each
+    is the minimum that reaches a branch: enough pkl to be recognisable, and a
+    brace where a scanner would trip.
+    """
+
+    def test_a_block_is_returned_without_its_own_braces(self):
+        self.assertEqual(braced_body('["a"] {inside}', '["a"]'), "inside")
+
+    def test_a_nested_block_does_not_end_the_outer_one(self):
+        body = braced_body('["a"] {\n  ["b"] { x = 1 }\n}\n["c"] { y = 2 }', '["a"]')
+        self.assertIn('["b"]', body)
+        self.assertNotIn('["c"]', body)
+
+    def test_an_open_brace_in_a_comment_does_not_extend_the_block(self):
+        """A's hazard. That block's comments discuss `{{commit_msg_file}}`."""
+        body = braced_body('["a"] {\n  // prose mentioning a { brace\n}\n["b"] { y = 2 }', '["a"]')
+        self.assertNotIn('["b"]', body)
+
+    def test_a_closing_brace_in_a_comment_does_not_end_the_block(self):
+        body = braced_body('["a"] {\n  // prose mentioning a } brace\n  x = 1\n}', '["a"]')
+        self.assertIn("x = 1", body)
+
+    def test_a_brace_in_a_quoted_value_does_not_close_the_block(self):
+        body = braced_body('["a"] {\n  c = "run < {{f}}"\n  x = 1\n}', '["a"]')
+        self.assertIn("x = 1", body)
+
+    def test_a_comment_marker_inside_a_quoted_value_is_not_a_comment(self):
+        body = braced_body('["a"] {\n  c = "https://example.invalid"\n  x = 1\n}', '["a"]')
+        self.assertIn("x = 1", body)
+
+    def test_an_escaped_quote_does_not_end_a_quoted_value(self):
+        body = braced_body('["a"] {\n  c = "a \\" }"\n  x = 1\n}', '["a"]')
+        self.assertIn("x = 1", body)
+
+    def test_a_key_the_region_does_not_hold_is_absent(self):
+        """What containment is for: a sibling block's step is not this one's."""
+        text = '["a"] {\n  ["step"] { x = 1 }\n}\n["b"] {\n  ["other"] { y = 2 }\n}'
+        self.assertIsNone(braced_body(text, '["other"]', within=braced_body(text, '["a"]')))
+        self.assertIsNotNone(braced_body(text, '["step"]', within=braced_body(text, '["a"]')))
+
+    def test_an_unterminated_block_is_absent_rather_than_truncated(self):
+        self.assertIsNone(braced_body('["a"] {\n  x = 1\n', '["a"]'))
 
 
 class GateTestCase(unittest.TestCase):
