@@ -30,6 +30,13 @@ assert which rules ran rather than counting failures.
 running neither at import, which is what keeps a document nobody can read from
 killing the gate and this run with it.
 
+This docstring is the testing standard for `scripts/*.py`, and deliberately.
+`docs/testing.md` allocates a method to five kinds of *Rust* code and names
+`containment.py` only as a consumer of the tables it holds; neither this file
+nor `cost_features_test.py` has ever appeared in it. A gate script is tooling
+rather than shipped surface, and its tests are held by the gate that runs them,
+so there is no row here to write and none owed.
+
 The parsers are where a regression is silent. A rule that breaks reports a
 failure and exits one; a parser that breaks drops a spelling, a site or a whole
 region of a file and the gate still prints `every rule holds` -- the shape
