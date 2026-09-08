@@ -871,6 +871,112 @@ if implicit := sorted(
         "needs it as `dep:`:\n    " + "\n    ".join(implicit)
     )
 
+# --- The count of measurement kinds ------------------------------------------
+# `performance.md` opens by saying how many of the kinds in its taxonomy run
+# today, and until this rule nothing read that sentence. It went stale twice in
+# one day (#130): two branches rewrote the same count from two readings of the
+# same five rows, and the gate stayed green through both. There is no Markdown
+# linter here, so prose and the table it summarises can only agree by someone
+# recounting the rows by hand -- which is the check this replaces.
+#
+# The first of the two numbers is held and the second is not. Whether a kind
+# runs is the Status cell opening `in use`, which is countable. Whether it
+# covers only part of what it names is a concession the rest of that cell makes
+# in prose, and no token separates the four cells that make one from the one
+# that does not: an em dash misses the off-path row, a semicolon and `no ` miss
+# the size guard, and `rather than` matches the allocation count, whose only
+# qualifier explains why it has four targets rather than limiting what it
+# covers. Every candidate was run against the five cells before this said so. A
+# conjunction fitted to today's five cells would pass because it was drawn
+# around them and would fail the first honest rewording, which is worse than an
+# unheld number that the document admits is unheld. Holding it would take a
+# signal in the table -- a column, or a marker in the cell -- rather than a
+# cleverer regex over the same prose.
+#
+# The sentence is held as written, `All` included. Rewording it past this
+# pattern fails loudly rather than silently unholding the count, so a taxonomy
+# that stops running in full is a deliberate edit here and in the document
+# together.
+TAXONOMY_HEADER = "| Kind | Lives in | Runs under | Proves | Status |"
+TAXONOMY_CLAIM = r"All (\w+) of the kinds below run today"
+# What a Status cell opens with when the kind it grades runs. A prefix rather
+# than a search, so that a cell reading `not in use` -- or one conceding a limit
+# by naming what is *not* in use -- is read as the kind not running.
+RUNNING = "in use"
+
+
+def taxonomy_failures(text):
+    """Whether `performance.md`'s opening count matches its taxonomy table.
+
+    Text in, problems out, for `cargo_config_failures`' reason: the rule is
+    what needs the cases, and this repository's own document is one input to it
+    rather than the definition of it. The header is searched for rather than
+    sliced at, so a renamed column is a failure here instead of a traceback
+    that takes the test run with it.
+    """
+    header = text.find(TAXONOMY_HEADER)
+    if header < 0:
+        return [
+            "performance.md no longer has a taxonomy table headed "
+            f"`{TAXONOMY_HEADER}`, so the count its opening paragraph states is "
+            "held against nothing. Restore the columns, or name the new header "
+            "in containment.py in the same commit"
+        ]
+
+    kinds = []
+    for line in text[header:].split("\n")[2:]:
+        if not line.startswith("|"):
+            break
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        kinds.append((cells[0], cells[-1]))
+
+    if not kinds:
+        return [
+            "performance.md's taxonomy table has no rows, so the count above it "
+            "holds nothing. A kind that stopped being a kind is retired by "
+            "arguing it in that section, not by emptying the table"
+        ]
+
+    problems = []
+    stated = re.search(TAXONOMY_CLAIM, text)
+    if stated is None:
+        problems.append(
+            "performance.md no longer states how many of the kinds below its "
+            "taxonomy run today, so a row can be added or dropped without "
+            "failing this gate. The sentence is held as written -- rewording it "
+            "means rewording TAXONOMY_CLAIM in the same commit"
+        )
+    elif (expected := NUMBERS.get(stated.group(1).capitalize())) is None:
+        # Loudly, rather than skipping the check, for the reason NUMBERS gives.
+        problems.append(
+            "performance.md writes an unreadable count of measurement kinds: "
+            f"{stated.group(1)!r}"
+        )
+    elif expected != len(kinds):
+        problems.append(
+            f"performance.md claims {expected} kinds of measurement and its "
+            f"taxonomy table has {len(kinds)}. Adding a kind means moving that "
+            "sentence in the same commit; losing one means a row was dropped or "
+            "the table was cut short by a blank line"
+        )
+
+    idle = [
+        kind for kind, status in kinds if not status.casefold().startswith(RUNNING)
+    ]
+    if idle:
+        problems.append(
+            f"performance.md says all {len(kinds)} kinds below its taxonomy run "
+            "today, and the Status column disagrees: a cell that does not open "
+            f"`{RUNNING}` grades a kind that does not run. Either the cell is "
+            "wrong, or the sentence is -- and the sentence is the one this gate "
+            "holds, so reword it and TAXONOMY_CLAIM together:\n    "
+            + "\n    ".join(idle)
+        )
+    return problems
+
+
+failures += taxonomy_failures(PERFORMANCE)
+
 # --- Nothing a package compiles reaches outside the package ------------------
 # `cargo package` copies a package directory and nothing above it, so a path
 # literal that climbs out of one names a file the archive cannot carry. Two
