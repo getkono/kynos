@@ -301,9 +301,10 @@ class ImportTime(unittest.TestCase):
         reloaded, so the `gate` every other case here holds is untouched, and
         `sys.modules` is not written at all.
 
-        This is the one place on this branch that rebinds a stdlib attribute,
-        and it ships rather than living in a validation script, so it is worth
-        saying why it is here and why it is not the thing decision 9 refused.
+        This is the one stdlib rebinding on this branch that happens *after*
+        import, and it ships rather than living in a validation script, so it is
+        worth saying why it is here and why it is not the thing decision 9
+        refused.
         That decision rejected patching `gate.ARCHITECTURE` as an alternative
         to passing the documents to `main`, because it would have left every
         case mutating shared module state to reach a value the signature could
@@ -312,9 +313,16 @@ class ImportTime(unittest.TestCase):
         called. It is scoped to one case, restored in a `finally` whether the
         exec raises or not, and reaches nothing another case can observe.
 
-        `pathlib.Path.read_text` is the only stdlib state written. `sys.stdout`
-        and `sys.stderr` are swapped here and in `Main.report`, but by
-        `contextlib.redirect_*`, which restores them on the way out.
+        The whole of what this file writes outside its own namespace, since a
+        reader auditing that should not have to go looking:
+        `sys.dont_write_bytecode` and `sys.path`, set once at the head of the
+        file and deliberately never restored -- the first keeps a `.pyc` out of
+        an untracked `scripts/__pycache__/`, the second is how `containment` is
+        imported at all, and undoing either would undo the import; `sys.stdout`
+        and `sys.stderr`, swapped here and in `Main.report` by
+        `contextlib.redirect_*`, which restores them on the way out; and
+        `pathlib.Path.read_text`, restored below. The first two are on master
+        and predate this branch.
         """
         source = Path(gate.__file__).read_text()
         unpatched = Path.read_text

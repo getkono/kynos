@@ -386,8 +386,9 @@ NAMED_BY = re.compile(r"`?(\w+(?:\s*::\s*\w+)*)`?")
 # two trees this row is scanned in has ever written the positive form, and
 # `git log --all -S'cfg(feature = "openapi31")' -- crates/` returns nothing --
 # though that string is blind to a multi-line predicate, and one exists:
-# `crates/kynos/tests/matrix.rs:30` writes the flag positively inside a
-# `#![cfg(all(...))]` spread over five lines. It is in `crates/kynos/tests/`,
+# `crates/kynos/tests/matrix.rs` writes the flag positively inside a
+# `#![cfg(all(...))]`, and `-S` is blind to any compound predicate rather than
+# only to one broken across lines. That file is under `crates/kynos/tests/`,
 # outside both scanned trees, so the row is unaffected and the idiom is real.
 # Restoring the class means tolerating a stale gate *spelling* the way the row
 # loop already tolerates a stale *site* -- "a site claims a location, and
@@ -421,10 +422,11 @@ class Gate:
     `not(` groups enclosing it is the one the spelling asked for.
 
     Anchoring on `#[cfg(feature = "x")]` instead was measured against this tree
-    and is wrong on it: `lib.rs` names `time` and `decimal` positively and their
-    four backends negatively inside compound predicates, and there are 63
-    `all(`/`any(` sites here against 18 `not(` ones. A pattern that read only the
-    bare form would miss all of them, and would let
+    and is wrong on it, not merely in principle: `lib.rs` names `time` and
+    `decimal` positively and their four backends negatively inside compound
+    predicates, and compound predicates are the norm in this workspace rather
+    than the exotic case. A pattern that read only the bare form would miss
+    every one of those sites, and would let
     `#[cfg(all(feature = "uuid", debug_assertions))]` past the offender scan --
     the silent pass this file names as its worst outcome.
 
