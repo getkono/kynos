@@ -509,12 +509,13 @@ fn work_on_another_thread_is_not_counted() {
 /// What [`Calibrating`] adds to a request, by construction: one fresh
 /// allocation and one reallocation.
 ///
-/// A constructed target rather than a recorded measurement, and the only
-/// number in either counting target that is one: it is what [`Calibrating`]'s
-/// body says it does, not what a run reported. That is what makes an equality
-/// over it defensible where
-/// [`nfr.md`](../../../docs/nfr.md#thresholds) refuses one over a measurement,
-/// and it is why nothing re-reads it when a ceiling moves — none of what it
+/// A constructed target rather than a recorded measurement: it is what
+/// [`Calibrating`]'s body does, not what a run reported. That is the ground
+/// for holding it at an equality, and it is the ground
+/// [`nfr.md`](../../../docs/nfr.md#routing) already gives for holding body
+/// erasure at one — "because a count under either would mean the boxing had
+/// stopped happening". A count under this one would mean the counting had.
+/// It is also why nothing re-reads it when a ceiling moves: none of what it
 /// counts is the router's.
 ///
 /// Confirmed against the instrument all the same, the way every recorded
@@ -538,7 +539,7 @@ const CALIBRATION: usize = 2;
 /// when the router had merely got cheaper. Reading it against a transparent
 /// layer at the same depth cancels all eight. What is left is what
 /// [`Calibrating`] does, which nothing outside this file can move — the
-/// arrangement [`performance.md`](../../../docs/performance.md#the-taxonomy)
+/// arrangement [`performance.md`](../../../docs/performance.md#thresholds)
 /// asks for, where relations outlive absolutes.
 ///
 /// **Why no ceiling could see this.** Dropping `reallocations` from the
