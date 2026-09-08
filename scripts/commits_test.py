@@ -16,9 +16,9 @@ exist on that path unless the task supplies it. Nor can convco be told to: the
 So both halves are run here. `BothHalvesOverOneMerge` puts each verdict to
 both, over the same commit, and that is where the two are held to agree. It is
 not a universal, and cannot be: `TheAmendResidual` exists precisely to pin the
-one state where the halves *disagree*, and the two linked-worktree cases reach
-the hook half alone because what they are about is where the guard looks, not
-what convco says. Running only the hook half everywhere would leave the range
+one state where the halves *disagree*, and the linked-worktree cases reach the
+hook half alone because what they are about is where the guard looks, not what
+convco says. Running only the hook half everywhere would leave the range
 half's verdicts asserted in prose, and the range half is the one that moves
 under maintenance: a `.convco` holding
 `merges: true` -- the very switch behind `no_merge_commits` -- flips
@@ -256,8 +256,15 @@ class BracedBody(unittest.TestCase):
         self.assertEqual(braced_body('["a"] {inside}', '["a"]'), "inside")
 
     def test_a_nested_block_does_not_end_the_outer_one(self):
+        """The end is asserted, not just the contents.
+
+        Returning at the first `}` -- the implementation `braced_body` exists
+        to replace -- yields a body that still holds `["b"]` and still lacks
+        `["c"]`, so the two containment assertions alone leave it green.
+        """
         body = braced_body('["a"] {\n  ["b"] { x = 1 }\n}\n["c"] { y = 2 }', '["a"]')
         self.assertIn('["b"]', body)
+        self.assertIn("x = 1 }", body)
         self.assertNotIn('["c"]', body)
 
     def test_an_open_brace_in_a_comment_does_not_extend_the_block(self):
@@ -281,7 +288,9 @@ class BracedBody(unittest.TestCase):
         self.assertIn("x = 1", body)
 
     def test_a_brace_in_a_quoted_value_does_not_close_the_block(self):
-        body = braced_body('["a"] {\n  c = "run < {{f}}"\n  x = 1\n}', '["a"]')
+        """Unbalanced on purpose. Balanced braces in a value hold nothing:
+        a scanner that counted them would return the same body."""
+        body = braced_body('["a"] {\n  c = "run < }"\n  x = 1\n}', '["a"]')
         self.assertIn("x = 1", body)
 
     def test_a_comment_marker_inside_a_quoted_value_is_not_a_comment(self):
