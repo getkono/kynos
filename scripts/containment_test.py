@@ -1027,6 +1027,40 @@ class Main(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertEqual(len(self.naming(failures, "allowance table claims")), 1)
 
+    def test_a_reworded_allowance_count_claim_is_reported(self):
+        # `claimed`'s first branch. The sentence is reworded rather than
+        # deleted, which is what a documentation edit does to it, and the count
+        # word is left readable so the case cannot pass for the next branch's
+        # reason.
+        broken = re.sub(
+            r"\*\*(\w+) rows, and the count is the check\.\*\*",
+            lambda found: f"**{found.group(1)} rows, and that count is the check.**",
+            gate.ARCHITECTURE,
+            count=1,
+        )
+        status, failures = self.report(architecture=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(self.naming(failures, "no longer states a count matching")), 1)
+        # And the rule the sentence holds stops running rather than comparing
+        # against a number nobody wrote.
+        self.assertEqual(self.naming(failures, "allowance table claims"), [])
+
+    def test_an_unreadable_allowance_count_is_reported(self):
+        # `claimed`'s second branch: the sentence is there and states a number
+        # `NUMBERS` cannot read, which is a count nothing is holding. Loudly
+        # rather than skipped, and this is what holds that choice.
+        broken = re.sub(
+            r"\*\*(\w+) rows, and the count is the check\.\*\*",
+            "**Nineteen rows, and the count is the check.**",
+            gate.ARCHITECTURE,
+            count=1,
+        )
+        status, failures = self.report(architecture=broken)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "writes an unreadable count")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("Nineteen", reported[0])
+
     def test_a_tokio_site_the_table_stops_allowing_is_reported(self):
         # The presence half of its `named outside `server/`` absence: one real
         # allowed site is renamed to a path nothing occupies, so the file that
@@ -1178,6 +1212,31 @@ class Main(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertEqual(len(self.naming(failures, "exactly one off-path table")), 1)
 
+    #: The `uuid` off-path row, in the three cells the cases below rewrite. One
+    #: row reaches every rule the off-path loop states per row, and naming its
+    #: cells apart keeps each fixture to the one cell it breaks.
+    UUID_ELEMENT = "| the `uuid` feature |"
+    UUID_NAMED_BY = ' `uuid`, `feature = "uuid"` |'
+    UUID_SITES = " `schema/impls/{mod,identifier}.rs` |"
+    UUID_ROW = UUID_ELEMENT + UUID_NAMED_BY + UUID_SITES
+
+
+    def test_an_off_path_element_named_outside_its_sites_is_reported(self):
+        # The offender scan, which is the rule the second defect of #134 exists
+        # to correct: the row's sites are narrowed to one file, so every other
+        # file naming the element is a site a request may now reach it from.
+        broken = gate.TESTING.replace(
+            self.UUID_ROW,
+            self.UUID_ELEMENT + self.UUID_NAMED_BY + " `schema/mod.rs` |",
+            1,
+        )
+        status, failures = self.report(testing=broken)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "is off the request path")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/schema/impls/identifier.rs", reported[0])
+
+
     def test_a_moved_module_size_budget_is_reported(self):
         # `nfr`. The budget is a number in prose, and the rule holds it against
         # the count of files over the line.
@@ -1189,6 +1248,7 @@ class Main(unittest.TestCase):
         status, failures = self.report(nfr=broken)
         self.assertEqual(status, 1)
         self.assertEqual(len(self.naming(failures, "nfr.md budgets 99 files")), 1)
+
 
 
 
