@@ -1096,7 +1096,11 @@ class Main(unittest.TestCase):
         none of them naming the row, over a documentation edit that is fine.
         A fixture whose anchor IS its subject -- a header, a count sentence --
         needs no guard, because a case that reports the header unfound has
-        named what moved.
+        named what moved. Nor does one with no anchor at all: appending to a
+        source cannot miss.
+
+        Used on a source file as well as on a document, since a manifest key
+        can move for the same reason a table cell can.
         """
         if anchor not in document:
             # `self.fail` rather than `assertIn`, whose message renders the
@@ -1557,14 +1561,13 @@ class Main(unittest.TestCase):
         # `[features]` is left byte-identical, which is exactly what makes the
         # flag Cargo synthesises for this dependency invisible to the three
         # grading comparisons above the rule.
-        with self.reading(
-            "crates/kynos/Cargo.toml",
-            lambda text: text.replace(
-                "\n[dependencies]\n",
-                '\n[dependencies]\nprobe-unnamed = { version = "0", optional = true }\n',
-                1,
-            ),
-        ):
+        manifest = "crates/kynos/Cargo.toml"
+        broken = self.rewriting(
+            (gate.ROOT / manifest).read_text(),
+            "\n[dependencies]\n",
+            '\n[dependencies]\nprobe-unnamed = { version = "0", optional = true }\n',
+        )
+        with self.reading(manifest, lambda _: broken):
             status, failures = self.report()
         self.assertEqual(status, 1)
         reported = self.naming(failures, "named by no `dep:`")
@@ -1591,12 +1594,13 @@ class Main(unittest.TestCase):
         # whose helper had a suite of its own while nothing held the call. The
         # fault is the one the rule exists for -- a table cargo does not report
         # at all -- so `containment:check` is the only thing that could see it.
-        with self.reading(
-            ".cargo/config.toml",
-            lambda text: text.replace(
-                '[profile.dev.package."*"]', '[profile.dev.pakcage."*"]', 1
-            ),
-        ):
+        config = ".cargo/config.toml"
+        broken = self.rewriting(
+            (gate.ROOT / config).read_text(),
+            '[profile.dev.package."*"]',
+            '[profile.dev.pakcage."*"]',
+        )
+        with self.reading(config, lambda _: broken):
             status, failures = self.report()
         self.assertEqual(status, 1)
         self.assertEqual(
