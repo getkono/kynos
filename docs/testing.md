@@ -20,9 +20,10 @@ not that module also becomes a directory — the two halves of the layout rule a
 separate, and [`nfr.md`](nfr.md#the-module-size-budget) says why the second one
 is a prompt rather than a trigger. That is why unit tests appear at
 [`error/rejection/tests.rs`](../crates/kynos/src/error/rejection/tests.rs) beside
-a 727-line module, and at
+a module well past that line — eight rejection types, and a count that moves
+whenever one of them gains a status — and at
 [`middleware/compression/tests.rs`](../crates/kynos/src/middleware/compression/tests.rs)
-beside a 675-line one, rather than inline.
+beside another, rather than inline.
 
 The sibling file is the settled shape here even below that line — `di/`,
 `schema/` and `response/negotiate/` all keep one while sitting well under 400 —
@@ -128,6 +129,18 @@ a snapshot records. [`mise run ui:check`](../mise.toml) is its own task and its
 own CI step for that reason — and the exclusion belongs on the coverage command
 rather than on the nextest profile, because a profile-wide filter would remove
 the suite from every job that sets `NEXTEST_PROFILE`.
+
+That child `cargo` is not free of this repository's configuration, which is the
+half a snapshot's author has no reason to expect. `trybuild` generates a
+standalone workspace under `target/tests/trybuild/` and its manifest carries no
+`[profile]` section, so a profile written in the root `Cargo.toml` never reaches
+the fixtures — but cargo discovers *configuration* by walking up from the
+working directory, and that generated project sits inside this repository, so
+[`.cargo/config.toml`](../.cargo/config.toml) does reach it. The fixtures build
+at the dev profile declared there rather than at cargo's default, which is why
+`target/tests` is 2.3 GiB and not 11. Debug information is not what a snapshot
+records, so nothing about the suite's output turns on it; a change to that file
+that did reach the output would show up as every snapshot moving at once.
 
 Both coverage tasks carry it. `coverage:ci` always did; `coverage` did not,
 which mattered because `hooks:pre-push` runs that one — so every push ran the
@@ -280,6 +293,22 @@ built under `openapi31` alone — against the hundred-odd `openapi32` `#[cfg]`
 sites in `kynos-openapi/src`. A feature gate no test build exercises is a gate
 whose off-state is unknown, and the suite passing on the first baseline run does
 not retire the obligation: it held by luck rather than by check.
+
+That leaves three shapes a test target is built at — every feature on, the
+default set, and `openapi31` alone — and a target gated on one optional feature
+apiece is at none of them.
+[`alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) is that target: five
+modules, one codec each, over a shared harness gated on their disjunction. The
+sets it is interesting at are `openapi31 + macros + F`, and no task built one —
+`features:targets` builds one feature at a time against `openapi31`, so `macros`
+and a codec are never in the same build, and `features:check` passes
+`--no-dev-deps`. [`mise run lint:codecs`](../mise.toml) is the six missing sets.
+It is a Clippy run rather than a test run because what those sets alone can see
+is a compile-time consequence — an item dead once one codec is off, an import
+with no user — rather than an assertion that fails; a misspelled feature *name*
+was never the exposure, since `unexpected_cfgs` validates one against the whole
+feature list wherever the file compiles at all. `202cfa5` is the class, and it
+was found by hand-linting the six sets before there was a task that did.
 
 **A gap [`nfr.md`](nfr.md) documents is characterized.** Excluding a known-lossy
 shape from a generator keeps the property honest, but on its own it leaves the

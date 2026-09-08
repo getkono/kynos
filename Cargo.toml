@@ -32,8 +32,8 @@ kynos-openapi = { version = "0.1.0", path = "crates/kynos-openapi", default-feat
 # `AllocCounterSystem`, and `pin-utils` rides along for an async helper this
 # tree does not call.
 # It is `0.0.4` and was last published in 2019, which is the trade taken
-# knowingly: it is a dev-dependency of two test targets and the surface used is
-# one function.
+# knowingly: it is a dev-dependency of four test targets and the surface used
+# is one function.
 # `stats_alloc` was this dependency and counts into process globals, which is
 # the flake it caused. `allocation-counter` counts per thread but declares
 # `#[global_allocator]` inside the library, which would install the instrument

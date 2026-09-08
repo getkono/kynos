@@ -21,15 +21,21 @@
 //! an operation also puts that tag's metadata in the document's own `tags`. A
 //! scope that pays one half and not the other produces a document that still
 //! validates against everything else here.
+//!
+//! The fourth is what a status publishes when two contributors reach it. An
+//! extractor's rejection and the handler's error type can both name 400, and
+//! only one entry can be filed under that key -- so what the document says
+//! there is a choice, and a document that made the wrong one would still
+//! validate against everything else here.
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
 use std::collections::BTreeSet;
 
 use kynos::{
-    Router,
+    ApiError, PathParams, Router, Schema,
     error::rejection::RangeRejection,
-    extract::{body::binary::Binary, media::OctetStream},
+    extract::{body::binary::Binary, media::OctetStream, params::path::Path},
     middleware::limits::{BodySize, Timeout},
     openapi::Document,
     response::{
@@ -1117,4 +1123,114 @@ fn no_tag_is_declared_when_none_is_named() {
 
     assert!(tags_on(&document, "/alpha").is_empty());
     assert!(document.tags.is_empty(), "{:?}", document.tags);
+}
+
+// --- Scope in a status two contributors reach -------------------------------
+//
+// `Handler::describe` contributes each argument's rejection before the return
+// type's responses, and a status keys exactly one response. Where an extractor
+// and the handler's error type both name one, the entry filed there is what
+// every client is told about a status that carries *both* — so it publishes the
+// types both halves can put on the wire, rather than whichever half was
+// contributed first.
+
+/// What `/reviews/{id}` captures. The capture that may fail to deserialize is
+/// what makes `PathRejection`'s 400 reach the operation.
+#[derive(Schema, PathParams)]
+struct ReviewPath {
+    #[allow(dead_code)]
+    id: u64,
+}
+
+/// A failure answering with the status the capture's rejection already claims.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum ReviewError {
+    #[error("the review says nothing")]
+    #[problem(
+        status = 400,
+        type = "https://errors.example.com/empty-review",
+        title = "Empty review"
+    )]
+    Empty,
+}
+
+/// One operation, two contributors to one status.
+#[kynos::get("/reviews/{id}")]
+async fn review(Path(path): Path<ReviewPath>) -> Result<NoContent, ReviewError> {
+    let _ = path;
+    Err(ReviewError::Empty)
+}
+
+/// The problem schema declared on `status`, as JSON.
+fn declared_problem(operation: &kynos::openapi::Operation, status: &str) -> serde_json::Value {
+    let kynos::openapi::RefOr::Item(response) = operation
+        .responses
+        .responses
+        .get(status)
+        .unwrap_or_else(|| panic!("{status} is described"))
+    else {
+        panic!("{status} is described as a `$ref`");
+    };
+
+    serde_json::to_value(response).expect("a response serializes")
+}
+
+/// Every type URI a branch of `schema` constrains a problem's `type` to.
+fn published(schema: &serde_json::Value) -> Vec<String> {
+    let branches = schema["oneOf"]
+        .as_array()
+        .cloned()
+        .unwrap_or_else(|| vec![schema.clone()]);
+
+    branches
+        .iter()
+        .filter_map(|branch| branch["allOf"][1]["properties"]["type"]["const"].as_str())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+/// A status an extractor and a handler error type share publishes both.
+///
+/// The 400 a `Path<T>` capture produces carries `about:blank`; the 400 this
+/// handler returns carries the type its declaration named. Both are observable
+/// on this operation, so both are declared — publishing one of them makes the
+/// document wrong about the other, whichever way round it is dropped.
+#[test]
+fn a_status_an_extractor_and_an_error_type_share_publishes_both_types() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![review])
+        .openapi()
+        .expect("a describable router");
+    let schema = declared_problem(&operation(&document, "/reviews/{id}"), "400")
+        ["content"]["application/problem+json"]["schema"]
+        .clone();
+
+    assert_eq!(
+        published(&schema),
+        vec![
+            "about:blank".to_owned(),
+            "https://errors.example.com/empty-review".to_owned(),
+        ],
+        "{schema}"
+    );
+}
+
+/// And says what each of them means, rather than what the first one meant.
+///
+/// The description is prose and under no exactly-one rule, so it joins the two
+/// the way a shared status already joins the summaries of the variants
+/// answering with it.
+#[test]
+fn a_shared_status_describes_both_halves_of_what_it_publishes() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![review])
+        .openapi()
+        .expect("a describable router");
+    let response = declared_problem(&operation(&document, "/reviews/{id}"), "400");
+
+    assert_eq!(
+        response["description"],
+        serde_json::json!("Bad Request; Empty review"),
+        "{response}"
+    );
 }

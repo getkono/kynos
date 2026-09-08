@@ -410,7 +410,7 @@ satisfies only the first: it declares `#[global_allocator]` inside the library,
 so it would install the instrument everywhere. `dhat` is a profiler rather than
 a counter: a backtrace per allocation, and six crates this tree does not
 otherwise have. `alloc_counter` is `0.0.4` and last published in 2019, taken
-knowingly for one function — `count_alloc` — in the two test targets above.
+knowingly for one function — `count_alloc` — in the four test targets above.
 
 ### What each feature gates
 

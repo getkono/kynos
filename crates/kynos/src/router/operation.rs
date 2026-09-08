@@ -168,14 +168,15 @@ impl OperationCx<'_> {
         self.registry.declare_security_scheme(name, scheme);
     }
 
-    /// Merges responses an input's rejection can produce.
+    /// Merges responses a contributor to this operation can produce.
     ///
-    /// What the operation already declares wins: an input describes what its
-    /// own rejection looks like, and the handler's own response for a status is
-    /// the more specific of the two. Only statuses the operation says nothing
-    /// about are taken from `responses`.
+    /// A status the operation does not declare is taken from `responses`; one
+    /// it does keeps its entry, unless both are problem documents narrowed to
+    /// the types they publish, which
+    /// [`union_from`](kynos_openapi::Responses::union_from) joins into a choice
+    /// over both rather than letting contribution order decide.
     pub fn add_responses(&mut self, responses: &kynos_openapi::Responses) {
-        self.operation.responses.merge_from(responses);
+        self.operation.responses.union_from(responses);
     }
 
     /// Declares a header this input causes the operation to send.

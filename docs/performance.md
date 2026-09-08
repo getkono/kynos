@@ -5,9 +5,19 @@ measurement a given shape of code owes. [`nfr.md`](nfr.md) records which of
 these run today; this document is about the method.
 
 Every section except [Rationale](#rationale) states a rule that binds
-implementation work. Four of the five kinds below run today, two of them only
+implementation work. All five of the kinds below run today, four of them only
 for part of what they cover, and the [taxonomy](#the-taxonomy)'s last column is
 where that is admitted rather than implied.
+
+[`containment:check`](../scripts/containment.py) holds the first of those two
+numbers and not the second. How many kinds run is the Status column: a cell
+either opens `in use` or it does not, and the rule counts the rows and compares
+them to the sentence above. How many cover only part of what they name is a
+concession the rest of each cell makes in prose, and no token separates the four
+that make one from the one that does not — a rule for it would be fitted to
+today's cells and would fail the first honest rewording. So that number is
+recounted by hand when the taxonomy moves, and the sentence is held as written:
+rewording it means editing the rule in the same commit.
 
 The allocation count has already earned the document: the routing path was
 required to allocate nothing, had never been measured, and allocates seven
@@ -47,17 +57,28 @@ What each kind of measurement proves that no other kind does.
 | Kind | Lives in | Runs under | Proves | Status |
 | --- | --- | --- | --- | --- |
 | Allocation count | its own integration target | `cargo nextest`, over `alloc_counter` | that a path allocates a bounded number of times | in use, at four targets: [`kynos/tests/alloc.rs`](../crates/kynos/tests/alloc.rs) for the routing path, [`kynos/tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) for body erasure, [`kynos/tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) for what a payload codec adds, and [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs) for what producing a description costs at 10, 100 and 1000 operations. Several rather than one because an integration binary cannot be depended on, so a second crate that counts cannot reach the first one's harness |
-| Size guard | [`tests/size.rs`](../crates/kynos/tests/size.rs), or a sibling `tests.rs` | `cargo nextest` | that a type or a future did not grow | in use for types; `planned` for futures |
-| Off-path proof | a sibling `tests.rs` | `cargo nextest` | that a feature is unreachable from the request path | `planned` |
+| Size guard | [`tests/size.rs`](../crates/kynos/tests/size.rs), or a sibling `tests.rs`, or beside the count that shares its fixture | `cargo nextest` | that a type or a future did not grow | in use for types, and for the dispatch future at [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) — which is the one future guarded, not every future |
+| Off-path proof | a sibling `tests.rs`, and a table [`containment:check`](../scripts/containment.py) reads | `python3 scripts/containment.py`, `cargo nextest` | that a feature is unreachable from the request path | in use, for the off-path flags and for the document, the registry, the validators and `jsonschema`: a table in [`testing.md`](testing.md#the-off-path-proof) held by `mise run containment:check`, plus the field witness in [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs); `describe` is the one off-path shape no row holds, and the emitters are held by the `yaml` flag's row rather than by one of their own |
 | Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | in use, via `mise run cost:features` over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs); reports a trend and sets no ceiling, and sees the generics that fixture instantiates rather than the whole surface — so a feature that grows the dependency graph can shrink this number by sharing instantiations out of upstream rlibs, and a negative row is a relocation rather than a saving |
-| Binary delta | a feature sweep | `.text` of a fixed fixture | what a feature costs a linked artifact | in use, in the same sweep; the fixture uses none of these features, so a zero row in either sweep says the linker stripped — or the collector never instantiated — what nothing called, rather than that the feature is free to a program that uses it |
+| Binary delta | a feature sweep | `.text` of a fixed fixture | what a feature costs a linked artifact | in use, over [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv); reports a trend and sets no ceiling. The fixture uses none of these features, so a zero row says the linker stripped — or the collector never instantiated — what nothing called, rather than that the feature is free to a program that uses it |
 
 **An allocation count needs its own target because a global allocator is
 process-wide.** Installing one in the library's unit-test binary would perturb
 every other unit test in it, so the counter cannot live in a sibling `tests.rs`
 however much the feature it measures does. Nothing else here has that problem:
-a size guard and an off-path proof are ordinary assertions and belong beside
-the code they constrain.
+a size guard and an off-path proof's field witness are ordinary assertions and
+belong beside the code they constrain.
+
+**An off-path proof has two halves, because a request path is not a set of
+files.** The witness sits beside the code and pins what a request can reach
+through the dispatch table, so a new field is a compile failure until someone
+argues for it. The naming rule in [`containment.py`](../scripts/containment.py)
+reads [`testing.md`](testing.md#the-off-path-proof)'s table off disk and counts
+it against the source, so a site that names an off-path element and is in no
+row is a failing build until someone adds it and says why a request cannot
+reach it. Neither half carries the proof alone: the witness cannot see a
+mention of the document model in a file it never names, and the rule cannot see
+past an erased `dyn` boundary into the callee behind it.
 
 **The counter is a dependency because `unsafe_code = "forbid"` is not liftable
 by an `#[allow]`.** A `GlobalAlloc` implementation is `unsafe impl`, so this
@@ -112,9 +133,13 @@ that the cost is zero, and zero is not something a counter can report
 convincingly — a replay that never exercised the feature also counts nothing.
 What settles it is reachability: the emitted `Document` is built once in
 `Router::build` and read back only through `Service::openapi`, so nothing in
-`Dispatch::serve` touches it. That is checkable, and until it is checked the
-[README](../README.md)'s claim that there is no JSON Schema interpreter on the
-hot path rests on reading the code.
+`Dispatch::serve` touches it. That is checked. `containment:check` holds four
+elements — the emitted `Document`, `Registry::{new,default}`,
+`Validator` and `jsonschema` — to the sites
+[`testing.md`](testing.md#the-off-path-proof) allows them, and a witness in
+[`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs) pins
+every field a request reaches through the dispatch table, so a new one is a
+compile failure until someone argues for it.
 
 **Off the request path is not the same as free, which is why the shape owes a
 third thing.** Zero per request says nothing about what building the document
@@ -155,6 +180,17 @@ scalar format whose whole contribution is a JSON Schema `format` cannot reach
 `Dispatch::serve`, and spending an allocation replay on it would buy a zero
 already implied by its shape. What it still owes is the proof of that, because
 "cannot reach" is a claim about code rather than about intent.
+
+**Both halves of the off-path grade now run.**
+[`testing.md`](testing.md#the-off-path-proof)'s table holds every off-path
+flag to the files that write its gate and, usually, call its crate, and
+`containment:check` fails a flag graded off-path here with no row there — so
+the two documents cannot drift apart in the direction that loses a proof.
+[`cost/binary.tsv`](../crates/kynos/cost/binary.tsv) records a `.text` delta
+for each off-path flag that compiles alone: `yaml` at +6192 bytes, `test-util`
+at −2464, `uuid` at −32, and `openapi31` with the four `time` and `decimal`
+backends at 0. `time` and `decimal` have no row of their own because neither
+compiles alone, which `features:check` already probes.
 
 **The table is counted against the manifest.**
 [`containment:check`](../scripts/containment.py) reads the rows above and
