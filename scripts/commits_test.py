@@ -31,17 +31,20 @@ Nothing below forges a state file, and nothing below stands in for git. The
 fixtures build real repositories, reach a real merge with `git merge`, and one
 of them installs the `commit-msg` hook command that `hk.pkl` declares -- read
 out of `hk.pkl` rather than restated here, so that deleting the step, renaming
-it, moving it out of the `commit-msg` hook, dropping its
-`< {{commit_msg_file}}` redirect, or declaring in it any key beside the two
-this suite reads fails these tests -- and then runs a real `git merge --no-ff`
-through it. The last of those is an allowlist because hk decides whether a step
-runs at all from keys nothing here installs: `step_condition`, `condition`,
-`profiles`, `glob`, `exclude`, `dir` and `types` each leave the `check` line
-untouched and stop the step from running. That case is the reported symptom
-itself: before the fix, it is the `Not committing merge` the issue opens with.
-Its boundary is written down at the fixture: the command is wrapped in a
-two-line prologue the real hook does not have, so it proves git's ordering and
-not the environment hk supplies.
+it, moving it out of the `commit-msg` hook, or dropping its
+`< {{commit_msg_file}}` redirect fails these tests -- and then runs a real
+`git merge --no-ff` through it. That case is the reported symptom itself:
+before the fix, it is the `Not committing merge` the issue opens with. Its
+boundary is written down at the fixture: the command is wrapped in a two-line
+prologue the real hook does not have, so it proves git's ordering and not the
+environment hk supplies.
+
+Whether hk would run that step at all is a different question, and it is put
+to hk rather than inferred from the text of its configuration:
+`HkWouldRunTheStep` holds `hk run commit-msg --plan --json` to reporting the
+step `included`, and `hk config dump` to skipping no hook named `commit-msg`.
+A step hk skips still hands the fixture above a command to install and pass a
+merge through, while the hook a commit reaches runs nothing.
 
 One fixture is a linked worktree, because this repository is worked in linked
 worktrees and MERGE_HEAD lives under `.git/worktrees/<name>/` there. The
@@ -55,6 +58,7 @@ Run it as `mise run commits:test`, or directly. There is no Python test runner
 in this repository and `unittest` needs none.
 """
 
+import json
 import os
 import re
 import subprocess
@@ -232,19 +236,14 @@ def braced_body(text, key, within=None):
 #     the hook lookup -- `["commit-msg"]`, searched over `masked_source`
 #     the step lookup -- `["conventional-commit"]`, searched over `masked_source`
 #     the check lookup -- that step's `check = "..."`, searched over `masked_source`
-#     the key scan -- the key names that step declares, scanned over `masked_source`
 #
 #   mise.toml, via `declared_merge_guard`
 #     the task header -- `[tasks."commits:message"]`, safe by construction
 #     the task body -- that task's `run = '''`, safe by construction
 #
-# The key scan is the only read whose subject is a set of key names rather than
-# a value, and it is safe by the mask plus two things the mask alone does not
-# give it: the values are blanked as well, since between quotes there is no
-# key, and what it reports is measured against an allowlist -- a key withdrawn
-# by commenting it out gates nothing and must not be reported, and a key hk
-# grows later is one nothing here reads and must be. It anchors nowhere,
-# because Pkl needs no separator between members.
+# Every read here is about *what* the step runs. Whether hk runs it is not
+# read out of `hk.pkl` at all -- `HkWouldRunTheStep` asks hk -- so no entry
+# above has that as its subject.
 #
 # The task header and the task body are safe for a reason that does not
 # generalise, so it is written down rather than assumed: a TOML comment begins
@@ -272,72 +271,25 @@ def declared_check(step):
     return step[check.start(1) : check.end(1)]
 
 
-# The keys the `conventional-commit` step may declare: the command this suite
-# installs, and the one deciding where hk prints its output. An allowlist and
-# not a list of the keys that disarm the step, because that list is hk's rather
-# than this repository's. Measured on hk 1.53.0, each injected as a single line
-# into the real step: `step_condition`, `condition`, `profiles`, `glob`,
-# `exclude`, `dir` and `types` all leave `mise exec -- hk validate` green and
-# the `check` line untouched while `hk run commit-msg` exits 0 over a merge
-# subject, having run no step at all. Naming those seven would hold today's hk
-# and nothing after it.
-SANCTIONED_STEP_KEYS = frozenset({"check", "output_summary"})
-
-
-def unsanctioned_keys(step):
-    """The keys a step body declares beyond the ones this suite reads.
-
-    A function of its own for the reason `declared_check` is one: the real
-    `hk.pkl` declares nothing unsanctioned, so the properties worth holding
-    here -- that a commented-out key is not a declaration, that a block-valued
-    key carrying no `=` is a key all the same -- are invisible from the
-    repository's own configuration.
-
-    Read over the mask, like every other lookup into `hk.pkl` here, and then
-    over the values as well: between quotes there is no key, and this is the
-    one read for which a value's text is noise rather than the thing that
-    makes `["commit-msg"]` findable. `masked_source` has already turned every
-    escape into spaces, so the quotes left in the mask pair off exactly.
-
-    Both spellings Pkl gives a key are matched -- `name = value` and the block
-    form `name { ... }`, whose own entries are quoted keys rather than
-    identifiers and so report nothing of their own -- and neither is anchored
-    to a line start, because Pkl needs no separator between members and hk
-    reads a second key on a line that a line-anchored scan would not.
-    """
-    code = []
-    inside_value = False
-    for character in masked_source(step):
-        if character == '"':
-            inside_value = not inside_value
-        elif inside_value and character != "\n":
-            character = " "
-        code.append(character)
-    declared = re.findall(r"([A-Za-z_][A-Za-z0-9_]*)\s*[={]", "".join(code))
-    return sorted({key for key in declared if key not in SANCTIONED_STEP_KEYS})
-
-
 def declared_commit_msg_check():
     """The `check` command `hk.pkl` declares for the `conventional-commit` step.
 
     Read rather than restated, so the fixture that runs a real `git merge`
     through a real hook runs what the repository actually installs. Delete the
     step, rename it, move it out of the `commit-msg` hook, drop its
-    `< {{commit_msg_file}}` redirect, or declare in it a key this suite does
-    not read, and the end-to-end case stops passing instead of going on
-    asserting a command no hook would run.
+    `< {{commit_msg_file}}` redirect, and the end-to-end case stops passing
+    instead of going on asserting a command no hook would run.
 
     Moving it out is the one an unanchored search misses, and it is the one
     that disarms the gate most completely: a `conventional-commit` step
     declared under `pre-push` runs nothing at commit time, while still being
     findable by name anywhere in the file.
 
-    Declaring an unread key is the one containment alone cannot see. Every
-    lookup here is about *what* the step runs; hk decides *whether* it runs
-    from keys none of them read, and a step hk skips still hands this function
-    a command the end-to-end fixture will install, run a real merge through,
-    and pass on. Hence the allowlist: a key nothing here reads is a key these
-    tests cannot vouch for, whatever hk does with it.
+    Every lookup here is about *what* the step runs. hk decides *whether* it
+    runs, and a step hk skips still hands this function a command the
+    end-to-end fixture will install, run a real merge through, and pass on --
+    so that question is put to hk in `HkWouldRunTheStep` rather than inferred
+    from the keys this step happens to declare.
 
     Every lookup runs over `masked_source`, including the one for the
     `check` line itself. Commenting a line out and writing its replacement
@@ -356,15 +308,6 @@ def declared_commit_msg_check():
     step = braced_body(text, '["conventional-commit"]', within=hook)
     if step is None:
         raise AssertionError("hk.pkl's `commit-msg` hook declares no `conventional-commit` step")
-    unsanctioned = unsanctioned_keys(step)
-    if unsanctioned:
-        raise AssertionError(
-            "hk.pkl's `conventional-commit` step declares "
-            + ", ".join(f"`{key}`" for key in unsanctioned)
-            + ", which this suite does not read: hk decides whether the step runs at "
-            "all from keys like these, so the command read here is one these tests "
-            "would install and run while the hook ran nothing"
-        )
     return declared_check(step)
 
 
@@ -404,6 +347,117 @@ def convco_on_path():
     if located.returncode != 0:
         raise AssertionError(f"mise cannot resolve convco: {located.stderr}")
     return str(Path(located.stdout.strip()).parent) + os.pathsep + os.environ.get("PATH", "")
+
+
+def hk_binary():
+    """The pinned hk, resolved the way `convco_on_path` resolves convco.
+
+    Asked of mise rather than of `PATH`, so the answers below come from the
+    `hk` version `[tools]` pins -- which is the one whose plan format and
+    whose settings these assertions were measured against.
+    """
+    located = subprocess.run(["mise", "which", "hk"], cwd=ROOT, capture_output=True, text=True)
+    if located.returncode != 0:
+        raise AssertionError(f"mise cannot resolve hk: {located.stderr}")
+    return located.stdout.strip()
+
+
+def hk_answer(*arguments):
+    """One hk subcommand's JSON answer about this repository's configuration.
+
+    Run from the project root, because that is where hk finds `hk.pkl`, and
+    under an environment with every `GIT_*` and `HK_*` name removed. The
+    subject of these questions is what this repository declares: `HK_SKIP_HOOK`
+    in somebody's shell is that machine's escape hatch and is not committed
+    anywhere, and the global and system git configuration go to `os.devnull`
+    because hk merges git config into its settings and a `[hk]` section in a
+    `~/.gitconfig` must not answer for the repository.
+
+    Every failure is loud. An hk that exits non-zero, or stdout that is not
+    the document hk documents, leaves the question unanswered -- and an
+    unanswered question about whether a gate is armed must not read as yes.
+    """
+    environment = {
+        key: value
+        for key, value in {**scrubbed_environment(), **HERMETIC}.items()
+        if not key.startswith("HK_")
+    }
+    asked = subprocess.run(
+        [hk_binary(), *arguments],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    spelled = "hk " + " ".join(arguments)
+    if asked.returncode != 0:
+        raise AssertionError(
+            f"`{spelled}` exited {asked.returncode}\n"
+            f"stdout:\n{asked.stdout}\nstderr:\n{asked.stderr}"
+        )
+    try:
+        return json.loads(asked.stdout)
+    except json.JSONDecodeError as unreadable:
+        raise AssertionError(
+            f"`{spelled}` did not answer with JSON: {unreadable}\n"
+            f"stdout:\n{asked.stdout}\nstderr:\n{asked.stderr}"
+        ) from unreadable
+
+
+def commit_msg_plan():
+    """hk's plan for the `commit-msg` hook, over a message nothing reads.
+
+    `hk run commit-msg` requires the message file git hands its hook, and
+    `--plan` prints what would run instead of running it, so the file's
+    contents reach nothing. It holds the merge subject anyway, because that is
+    the message this whole suite is about.
+    """
+    with tempfile.TemporaryDirectory() as scratch:
+        message = Path(scratch) / "COMMIT_EDITMSG"
+        message.write_text(MERGE_SUBJECT)
+        return hk_answer("run", "commit-msg", "--plan", "--json", str(message))
+
+
+def planned_status(plan, step):
+    """The status hk's plan gives `step`, refusing a document it cannot read.
+
+    Defensive about the shape and silent about none of it: hk owns this format
+    and may change it, and every shape this cannot read is one where "the step
+    is included" would be an answer nothing measured.
+
+    A plan holding no step of that name is an error rather than an absence,
+    because that is what deleting the step, moving it to another hook and
+    renaming it each look like -- and the renamed case has a step whose status
+    a laxer reading would return.
+    """
+    steps = plan.get("steps")
+    if not isinstance(steps, list):
+        raise AssertionError(f"hk's plan carries no list of steps: {plan!r}")
+    for planned in steps:
+        if isinstance(planned, dict) and planned.get("name") == step:
+            status = planned.get("status")
+            if not isinstance(status, str):
+                raise AssertionError(f"hk's plan gives `{step}` no status: {planned!r}")
+            return status
+    named = [planned.get("name") for planned in steps if isinstance(planned, dict)]
+    raise AssertionError(f"hk's plan holds no step named `{step}`; it names {named}")
+
+
+def skipped_hooks(configuration):
+    """The hooks hk's effective configuration skips.
+
+    An absent setting is an error and not an empty list. The safe answer to
+    this question is "none", so a shape the setting cannot be found in -- hk
+    renaming it, or dropping it from the dump -- is the one shape that would
+    pass silently for as long as it lasted.
+    """
+    if "skip_hooks" not in configuration:
+        raise AssertionError(
+            "hk's effective configuration carries no `skip_hooks`: the setting "
+            f"this reads has been renamed or removed, and its keys are "
+            f"{sorted(configuration)}"
+        )
+    return configuration["skip_hooks"]
 
 
 class BracedBody(unittest.TestCase):
@@ -525,82 +579,6 @@ class BracedBody(unittest.TestCase):
         step = '                // check = "mise run --quiet commits:message < {{f}}"\n'
         with self.assertRaises(AssertionError):
             declared_check(step)
-
-    def test_a_key_beside_the_check_is_reported(self):
-        """The key scan, and the one read whose subject is not the `check`.
-
-        hk decides whether a step runs at all from keys this suite never
-        reads, so a `check` read out of a step hk skips is a command the
-        fixture runs while the hook runs nothing. Measured on hk 1.53.0
-        against the real step: `step_condition`, `condition`, `profiles`,
-        `glob`, `exclude`, `dir` and `types` each leave `hk validate` green
-        and the `check` line untouched while `hk run commit-msg` exits 0 over
-        a merge subject.
-        """
-        step = (
-            '                step_condition = "false"\n'
-            '                check = "mise run --quiet commits:message < {{f}}"\n'
-            '                output_summary = "stdout"\n'
-        )
-        self.assertEqual(unsanctioned_keys(step), ["step_condition"])
-
-    def test_the_two_keys_this_suite_reads_are_not_reported(self):
-        """The allowlist is an allowlist, not a rejection of every key."""
-        step = (
-            '                check = "mise run --quiet commits:message < {{f}}"\n'
-            '                output_summary = "stdout"\n'
-        )
-        self.assertEqual(unsanctioned_keys(step), [])
-
-    def test_a_commented_key_is_not_declared(self):
-        """Read over the mask, for the reason every other lookup here is.
-
-        Commenting a key out is how it is withdrawn, and a withdrawn key
-        gates nothing. Reported, this read would fail the suite over a file
-        hk runs exactly as the suite installs it.
-        """
-        step = '                // step_condition = "false"\n                check = "true"\n'
-        self.assertEqual(unsanctioned_keys(step), [])
-
-    def test_a_block_valued_key_is_reported_though_it_carries_no_equals_sign(self):
-        """Pkl spells a block-valued key `env { ... }`, with no `=` to match.
-
-        The assignments inside such a block are quoted keys rather than
-        identifiers, so what the scan reports is the block's own name -- which
-        is the one that matters, since `env` is not a key this suite reads
-        either.
-        """
-        step = (
-            "                env {\n"
-            '                    ["HK_NOTE"] = "note"\n'
-            "                }\n"
-            '                check = "true"\n'
-        )
-        self.assertEqual(unsanctioned_keys(step), ["env"])
-
-    def test_two_keys_sharing_a_line_are_both_reported(self):
-        """Pkl needs no separator between members, and hk accepts the result.
-
-        `output_summary = "stdout" step_condition = "false"` on one line is a
-        file `mise exec -- hk validate` calls valid, and hk then runs the
-        `commit-msg` hook to exit 0 over a merge subject with no step run. A
-        scan anchored to a line start reads the first key and stops, so the
-        sanctioned key hides the one that disarms the gate.
-        """
-        step = '                output_summary = "stdout" step_condition = "false"\n'
-        self.assertEqual(unsanctioned_keys(step), ["step_condition"])
-
-    def test_an_equals_sign_inside_a_value_is_not_a_key(self):
-        """Why a value is blanked for this read and kept for the others.
-
-        `masked_source` leaves a value's text findable, which is what makes
-        `["commit-msg"]` something `find` can locate. Between quotes there is
-        no key to report, so this read blanks it: unblanked and unanchored,
-        `check = "FOO=1 mise run ..."` reports a key named `FOO` and fails the
-        suite over a file hk runs exactly as it is installed.
-        """
-        step = '                check = "FOO=1 mise run --quiet commits:message < {{f}}"\n'
-        self.assertEqual(unsanctioned_keys(step), [])
 
     def test_a_masked_match_can_be_sliced_back_out_of_the_source(self):
         """Why the caller locates on the mask and slices the source.

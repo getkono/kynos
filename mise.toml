@@ -742,6 +742,12 @@ description = "Test that both halves of the commit rule agree about a merge"
 # real `git merge --no-ff` through it. That last one is issue #132's own
 # symptom, so reverting this fix makes it print `Not committing merge`.
 #
+# Whether hk would run that step at all is asked of hk, through
+# `hk run commit-msg --plan --json` and `hk config dump`, rather than inferred
+# from the text of `hk.pkl`. A step turned off by a merged duplicate entry, or
+# by a module-level `skip_steps` or `skip_hooks`, is one no scan of that file
+# can see, and the fixture above would go on installing its command.
+#
 # It is the slowest thing in `check` that compiles nothing: around fourteen
 # seconds, almost all of it spent in nested `mise run` invocations. That is
 # worth its three placements -- `check`, `hooks:pre-push` and the CI `lint`
