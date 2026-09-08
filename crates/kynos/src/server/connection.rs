@@ -12,7 +12,7 @@ use hyper_util::{
     server::conn::auto,
 };
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
+    io::{AsyncRead, AsyncReadExt as _, AsyncWrite},
     sync::watch,
 };
 
@@ -142,27 +142,23 @@ where
     }
 
     // The handshake already settled which protocol this connection speaks, so
-    // the driver is told rather than left to sniff the first bytes back off the
-    // stream. Sniffing costs no read syscall under TLS -- `tokio-rustls` has
-    // already decrypted and buffered the record the head arrived in -- but it
-    // does copy that head onto the heap, poll the TLS stack once more for it,
-    // and read the connection's protocol from the wire when rustls has the
-    // answer, which makes the bytes a second source of truth for it.
+    // the driver is told rather than left to derive it a second time from the
+    // first bytes of the stream. Sniffing costs no read syscall under TLS --
+    // `tokio-rustls` has already decrypted and buffered the record the head
+    // arrived in -- but it copies that head onto the heap, and it reads the
+    // connection's protocol off the wire when rustls has the answer, which
+    // makes the bytes a second source of truth for it.
     //
     // Any other identifier, and every connection with no ALPN at all -- which
-    // is every plaintext one -- falls through to the sniff, since there the
-    // wire is the only source there is.
-    match connection_info.alpn_protocol() {
+    // is every plaintext one -- is served by the sniffing driver as before,
+    // since there the wire is the only source there is.
+    let pinned = match connection_info.alpn_protocol() {
         #[cfg(feature = "http2")]
-        Some(alpn) if alpn == crate::server::protocol::ALPN_HTTP2 => {
-            builder = builder.http2_only();
-        }
+        Some(alpn) if alpn == crate::server::protocol::ALPN_HTTP2 => Some(Protocol::Http2),
         #[cfg(feature = "http1")]
-        Some(alpn) if alpn == crate::server::protocol::ALPN_HTTP1_1 => {
-            builder = builder.http1_only();
-        }
-        _ => {}
-    }
+        Some(alpn) if alpn == crate::server::protocol::ALPN_HTTP1_1 => Some(Protocol::Http1),
+        _ => None,
+    };
 
     let handler = service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
         let service = Arc::clone(&service);
@@ -179,6 +175,29 @@ where
         }
     });
 
+    // The pin waits for the client to say something first. A codec built before
+    // the client has spoken cannot be shut down gracefully -- hyper's HTTP/2
+    // server holds `close_pending` until the preface arrives -- so a pinned
+    // connection that fell silent would hold a drain open for the whole
+    // shutdown timeout. Until the first byte lands the connection is ours to
+    // drop, which is the property the driver's own sniff had for free: it owned
+    // the wait, and cancelled its own read.
+    let io = match pinned {
+        Some(protocol) => {
+            let Some(io) = first_byte(io, &mut lifecycle).await else {
+                return Ok(());
+            };
+            builder = match protocol {
+                #[cfg(feature = "http1")]
+                Protocol::Http1 => builder.http1_only(),
+                #[cfg(feature = "http2")]
+                Protocol::Http2 => builder.http2_only(),
+            };
+            io
+        }
+        None => FirstByte { first: None, io },
+    };
+
     let connection = builder.serve_connection(TokioIo::new(io), handler);
     tokio::pin!(connection);
     tokio::select! {
@@ -191,5 +210,115 @@ where
             connection.await
         }
         result = &mut connection => result,
+    }
+}
+
+/// The protocol a handshake settled on, held between the decision and the pin.
+///
+/// Between them the connection waits for the client's first byte, so the two
+/// cannot be one expression -- and reading the ALPN identifier twice would let
+/// the two readings disagree about which protocol was negotiated.
+#[derive(Clone, Copy, Debug)]
+enum Protocol {
+    #[cfg(feature = "http1")]
+    Http1,
+    #[cfg(feature = "http2")]
+    Http2,
+}
+
+/// Waits for the client to send one byte, or for shutdown to start first.
+///
+/// `None` when shutdown started, when the peer closed, and when the read
+/// failed: all three mean a connection with nothing in flight, which is a
+/// socket to drop rather than a codec to build and shut down.
+async fn first_byte<I>(
+    mut io: I,
+    lifecycle: &mut watch::Receiver<Lifecycle>,
+) -> Option<FirstByte<I>>
+where
+    I: AsyncRead + Unpin,
+{
+    let mut byte = [0_u8; 1];
+    // `read` is cancel-safe, so losing this branch loses no byte -- and the
+    // branch that wins it returns without reading at all.
+    let read = tokio::select! {
+        biased;
+        _ = wait_until_stopping(lifecycle) => return None,
+        read = io.read(&mut byte) => read,
+    };
+
+    match read {
+        Ok(1) => Some(FirstByte {
+            first: Some(byte[0]),
+            io,
+        }),
+        _ => None,
+    }
+}
+
+/// A stream whose first byte has already been read, handed back before the rest.
+///
+/// One byte rather than a buffer, and inline rather than on the heap: it is
+/// only the signal that the client has begun, and the codec reads the head
+/// itself. A connection that is not pinned carries one of these with nothing
+/// held back, so the two paths differ in when the codec is built rather than in
+/// what it is built on.
+struct FirstByte<I> {
+    first: Option<u8>,
+    io: I,
+}
+
+impl<I: AsyncRead + Unpin> AsyncRead for FirstByte<I> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if let Some(first) = self.first.take() {
+            if buf.remaining() == 0 {
+                self.first = Some(first);
+            } else {
+                buf.put_slice(&[first]);
+            }
+            return std::task::Poll::Ready(Ok(()));
+        }
+
+        std::pin::Pin::new(&mut self.io).poll_read(context, buf)
+    }
+}
+
+impl<I: AsyncWrite + Unpin> AsyncWrite for FirstByte<I> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.io).poll_write(context, buf)
+    }
+
+    fn poll_write_vectored(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+        buffers: &[std::io::IoSlice<'_>],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.io).poll_write_vectored(context, buffers)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.io.is_write_vectored()
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.io).poll_flush(context)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.io).poll_shutdown(context)
     }
 }
