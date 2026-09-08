@@ -77,6 +77,12 @@ HERMETIC = {
     "GIT_AUTHOR_EMAIL": "commit-gate-tests@invalid",
     "GIT_COMMITTER_NAME": "Commit Gate Tests",
     "GIT_COMMITTER_EMAIL": "commit-gate-tests@invalid",
+    # `git merge` opens an editor for its message when it thinks it is
+    # interactive. It does not think so here, because these pipes are not a
+    # terminal -- but that is a property of how the suite happens to be run,
+    # and the cases that complete a real merge would hang rather than fail if
+    # it ever stopped holding. Stated, so it is not left to be inferred.
+    "GIT_MERGE_AUTOEDIT": "no",
 }
 
 MERGE_SUBJECT = "Merge remote-tracking branch 'origin/master' into topic\n"
@@ -308,13 +314,14 @@ class RealMergeThroughARealHook(GateTestCase):
         # from the project root for mise to resolve `mise.toml` -- which is
         # exactly the position `hk` runs it from in the real repository, where
         # the two happen to be the same directory.
+        command = declared_commit_msg_check().replace("{{commit_msg_file}}", '"$message"')
         hook.write_text(
             "#!/bin/sh\n"
             'GIT_DIR="$(git rev-parse --absolute-git-dir)"\n'
             "export GIT_DIR\n"
             'message="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"\n'
-            f'cd "{ROOT}" || exit 1\n'
-            f"exec {declared_commit_msg_check().replace('{{commit_msg_file}}', '\"$message\"')}\n"
+            'cd "' + str(ROOT) + '" || exit 1\n'
+            "exec " + command + "\n"
         )
         hook.chmod(0o755)
 
