@@ -370,6 +370,15 @@ class GatePolarity(unittest.TestCase):
     about reading a nested `not(any(` should be a case about one this
     repository writes. Sixty-three `all(`/`any(` sites and eighteen `not(`
     sites make compound predicates the norm here rather than the exotic case.
+
+    One known limit, recorded rather than fixed: the walk finds its attributes
+    over the whole corpus, so an attribute written inside a *raw* string --
+    `const D: &str = r#"#[cfg(feature = "uuid")]"#;` -- is read as a gate. The
+    substring match this replaced read it as one too, so nothing regressed, and
+    the corpus a gate is asked of has to keep its literals because a flag name
+    is one. `literal_end` is what keeps a paren inside a literal from
+    desynchronising a predicate the walk is already inside, which is a
+    different claim and is the one the case below holds.
     """
 
     #: `crates/kynos/src/lib.rs`: `time` names no library of its own, and the
@@ -442,7 +451,42 @@ class GatePolarity(unittest.TestCase):
             )
         )
 
-    def test_a_gate_inside_a_string_literal_is_not_one(self):
+    def test_a_doubly_negated_gate_is_the_positive_one(self):
+        source = '#[cfg(not(not(feature = "uuid")))]\nfn present_with_uuid() {}\n'
+        self.assertTrue(self.matcher('`feature = "uuid"`').search(source))
+        self.assertFalse(self.matcher('`not(feature = "uuid")`').search(source))
+
+    def test_a_flag_after_a_closed_negation_is_read_at_the_outer_polarity(self):
+        # The `)` pop: without it the walk stays inside `not(` and reads `uuid`
+        # as negative, which is the whole predicate inverted by one branch.
+        source = '#[cfg(all(not(feature = "yaml"), feature = "uuid"))]\nfn f() {}\n'
+        self.assertTrue(self.matcher('`feature = "uuid"`').search(source))
+        self.assertTrue(self.matcher('`not(feature = "yaml")`').search(source))
+
+    def test_a_flag_beside_a_closed_group_is_still_reached(self):
+        # The plain `(` push: without it the group's two closes empty the stack
+        # early, the walk stops at the end of the attribute's first argument,
+        # and everything after it is invisible.
+        source = (
+            '#[cfg(any(all(feature = "yaml", feature = "json"), feature = "uuid"))]\n'
+            "fn f() {}\n"
+        )
+        self.assertTrue(self.matcher('`feature = "uuid"`').search(source))
+
+    def test_a_parenthesis_inside_a_string_literal_does_not_close_the_predicate(self):
+        # `literal_end`: without it the `)` in `"a)b"` closes two groups that
+        # are still open and the rest of the predicate is never read.
+        source = (
+            '#[cfg(all(feature = "yaml", not(cfgname = "a)b")), feature = "uuid"))]\n'
+            "fn f() {}\n"
+        )
+        self.assertTrue(self.matcher('`feature = "uuid"`').search(source))
+
+    def test_an_attribute_written_with_escaped_quotes_is_not_a_gate(self):
+        # Named for what it holds: the flag pattern wants an unescaped quote
+        # after the `=`, and a Rust string literal spelling an attribute has a
+        # backslash there. It says nothing about literal-awareness -- the case
+        # above is what says that, and the raw-string limit is in the docstring.
         self.assertFalse(
             self.matcher('`feature = "uuid"`').search(
                 'const DOC: &str = "#[cfg(feature = \\"uuid\\")]";\n'
