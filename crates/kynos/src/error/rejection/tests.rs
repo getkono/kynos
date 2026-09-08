@@ -332,6 +332,14 @@ fn a_named_403_survives_the_challenge_pass_and_still_sends_none() {
 ///
 /// Under `cookie`, because `CookieRejection` is gated there and the full set
 /// only exists in that build.
+///
+/// It counts the `pub enum`s, which is what a *failure* is here: a variant, a
+/// status and a sentence. `ScopedRejection<R>` is a struct wrapping one of
+/// them and declares no variant, no status and no sentence of its own, so it
+/// has nothing this sweep or the ledger below could hold it to — what it adds
+/// is a description, and
+/// `a_scope_set_that_names_its_refusal_narrows_the_403_to_a_choice` is where
+/// that is held.
 #[cfg(feature = "cookie")]
 #[test]
 fn every_rejection_a_caller_can_receive_has_a_case() {
@@ -599,8 +607,12 @@ fn every_rejection_declares_the_type_its_problems_carry() {
 /// `AuthRejection::forbidden_as` lets an authorizer put its own URI on a 403,
 /// and that value arrives at run time while a description is built from types.
 /// A 403 narrowed to `about:blank` would be a claim a named refusal breaks, so
-/// it stays the shared component — which admits both — and #118 is where the
-/// gap closes. The 401 beside it has no such field and narrows like the rest.
+/// it stays the shared component, which admits both. The 401 beside it has no
+/// such field and narrows like the rest.
+///
+/// This is the rejection *type* speaking for itself, which is all it can do: it
+/// carries no scope set, so it has no URI to name. `ScopedRejection<R>` below
+/// is the one that does, and it narrows.
 #[test]
 fn the_403_an_authorizer_may_name_is_the_one_status_left_wide() {
     let declared = declared_types::<AuthRejection>();
@@ -622,6 +634,77 @@ fn the_403_an_authorizer_may_name_is_the_one_status_left_wide() {
 
     assert_eq!(
         responses["403"]["content"]["application/problem+json"]["schema"]["$ref"],
+        serde_json::json!("#/components/schemas/Problem")
+    );
+}
+
+/// And the scope set that closes it, at the one seam a type can reach.
+///
+/// `ScopedRejection<R>` is the same two failures read against `R`, so the 403 a
+/// scope set named narrows to a choice between that URI and `about:blank` while
+/// the 401 beside it is untouched. Asserted here rather than only over an
+/// emitted document because this is the contributor that *decides* the status:
+/// a `Responses` returning the wide entry wins the union outright, so a
+/// regression here would silently un-narrow every scoped operation while every
+/// document still validated.
+#[test]
+fn a_scope_set_that_names_its_refusal_narrows_the_403_to_a_choice() {
+    /// Names one.
+    struct Named;
+
+    impl crate::security::auth::Scopes for Named {
+        const SCOPES: &'static [&'static str] = &["reports:read"];
+        const FORBIDDEN_TYPE: Option<&'static str> = Some("https://errors.example.com/no-scope");
+    }
+
+    /// Names none, which is every scope set written before the const existed.
+    struct Unnamed;
+
+    impl crate::security::auth::Scopes for Unnamed {
+        const SCOPES: &'static [&'static str] = &["reports:read"];
+    }
+
+    let mut registry = crate::schema::registry::Registry::new();
+    let named = serde_json::to_value(
+        <super::ScopedRejection<Named> as crate::response::Responses>::responses(&mut registry),
+    )
+    .expect("a set of responses serializes");
+
+    let published: Vec<&str> =
+        named["403"]["content"]["application/problem+json"]["schema"]["oneOf"]
+            .as_array()
+            .expect("a choice of two")
+            .iter()
+            .map(|branch| {
+                branch["allOf"][1]["properties"]["type"]["const"]
+                    .as_str()
+                    .expect("a branch constrains `type` to a const")
+            })
+            .collect();
+
+    assert_eq!(
+        published,
+        ["about:blank", "https://errors.example.com/no-scope"],
+        "{named}"
+    );
+
+    // The 401 is not touched by any of this: `unauthenticated` has no URI field
+    // and is not getting one.
+    assert_eq!(
+        named["401"]["content"]["application/problem+json"]["schema"]["allOf"][1]["properties"]["type"]
+            ["const"],
+        serde_json::json!("about:blank")
+    );
+
+    // Naming none declares what `AuthRejection` declares, which is what every
+    // guard declared before a scope set could name anything.
+    let unnamed = serde_json::to_value(
+        <super::ScopedRejection<Unnamed> as crate::response::Responses>::responses(&mut registry),
+    )
+    .expect("a set of responses serializes");
+
+    assert_eq!(
+        unnamed["403"]["content"]["application/problem+json"]["schema"]["$ref"],
         serde_json::json!("#/components/schemas/Problem")
     );
 }
