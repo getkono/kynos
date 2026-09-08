@@ -116,7 +116,7 @@ enum StoreError {
         type = "https://errors.example.com/name-required",
         title = "Name required"
     )]
-    NameRequired,
+    Unnamed,
 
     #[error("that name is longer than the store accepts")]
     #[problem(
@@ -124,7 +124,7 @@ enum StoreError {
         type = "https://errors.example.com/name-too-long",
         title = "Name too long"
     )]
-    NameTooLong,
+    Overlong,
 }
 
 // --- Authentication -------------------------------------------------------
@@ -324,11 +324,11 @@ async fn create_user(Json(user): Json<User>) -> Result<Created<Json<User>>, Stor
     }
 
     if user.name.is_empty() {
-        return Err(StoreError::NameRequired);
+        return Err(StoreError::Unnamed);
     }
 
     if user.name.len() > 32 {
-        return Err(StoreError::NameTooLong);
+        return Err(StoreError::Overlong);
     }
 
     Ok(Created::at(
@@ -581,6 +581,7 @@ async fn the_owned_layer_matrix_matches_the_description_it_emits() {
 
     exercise_the_operations(&client).await;
     exercise_the_rejections(&client).await;
+    exercise_the_shared_status(&client).await;
     exercise_the_limits(&client).await;
     #[cfg(feature = "assets")]
     exercise_the_ranges(&client).await;
@@ -698,22 +699,13 @@ async fn exercise_the_operations(client: &TestClient<App>) {
     }
 }
 
-/// Every declared way an operation says no.
-async fn exercise_the_rejections(client: &TestClient<App>) {
-    // A path variable that is not a `u64`.
-    client
-        .get("/users/not-a-number")
-        .send()
-        .await
-        .assert_status(StatusCode::BAD_REQUEST);
-
-    // A query member of the wrong type.
-    client
-        .get("/users?limit=lots")
-        .send()
-        .await
-        .assert_status(StatusCode::BAD_REQUEST);
-
+/// Every branch of the one status two contributors declare.
+///
+/// Its own function rather than three more cases in `exercise_the_rejections`,
+/// because these three are one assertion: `POST /users` files a single response
+/// under `400`, and each of these bodies has to validate against it. A branch
+/// this stopped driving would be a declaration nothing keeps.
+async fn exercise_the_shared_status(client: &TestClient<App>) {
     // A body that is not JSON at all: the extractor's half of the 400 this
     // operation declares, carrying the type a rejection publishes.
     client
@@ -753,6 +745,23 @@ async fn exercise_the_rejections(client: &TestClient<App>) {
         .await
         .assert_status(StatusCode::BAD_REQUEST)
         .assert_problem_type("https://errors.example.com/name-too-long");
+}
+
+/// Every declared way an operation says no.
+async fn exercise_the_rejections(client: &TestClient<App>) {
+    // A path variable that is not a `u64`.
+    client
+        .get("/users/not-a-number")
+        .send()
+        .await
+        .assert_status(StatusCode::BAD_REQUEST);
+
+    // A query member of the wrong type.
+    client
+        .get("/users?limit=lots")
+        .send()
+        .await
+        .assert_status(StatusCode::BAD_REQUEST);
 
     // A media type the operation never claimed.
     client
