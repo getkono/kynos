@@ -29,9 +29,15 @@ static ALLOCATOR: AllocCounterSystem = AllocCounterSystem;
 /// Drives one request and reports the heap operations serving it made.
 ///
 /// Fresh allocations and reallocations both, so that growing a buffer cannot
-/// pass as free. The request is built before the region opens, because parsing
-/// a target and boxing a body are the caller's cost rather than the router's,
-/// and the response is dropped after the region closes for the same reason.
+/// pass as free.
+///
+/// **Both ends of the region are the caller's, and this signature is what
+/// keeps them there.** Parsing a target and boxing a body are the caller's
+/// cost rather than the router's, and dropping a response is too — so the
+/// request arrives already built and the response is handed back undropped,
+/// rather than either being done here where the region could reach it. Handing
+/// it back also lets a caller with more to say about a response than its status
+/// say it, still outside the region.
 ///
 /// **The future is polled directly rather than driven by a runtime, and that is
 /// what makes the number mean the measured path.** What the measuring thread
@@ -57,10 +63,6 @@ static ALLOCATOR: AllocCounterSystem = AllocCounterSystem;
 /// codec handed a body it declines answers 415 before a byte is decoded, at a
 /// fraction of what decoding costs; recorded unchecked, that would read as a
 /// cheap codec rather than as a fixture that never reached one.
-///
-/// The response is handed back rather than dropped here, so that a caller with
-/// more to say about it than its status can say it before the drop — which is
-/// outside the region either way.
 pub(crate) fn counted<C>(
     service: &Service<C>,
     request: Request,
@@ -97,8 +99,9 @@ pub(crate) fn counted<C>(
         response.status(),
         expected,
         "{method} {} answered {} rather than the {expected} this measurement \
-         is of; a request a codec declined never reached the codec, and its \
-         count records the refusal instead",
+         is of; a request answered before it reached what is being measured — \
+         declined by a codec, missed by the router — is counted for the refusal \
+         instead",
         uri.path(),
         response.status()
     );
