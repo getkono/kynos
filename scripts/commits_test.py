@@ -127,8 +127,22 @@ class GateTestCase(unittest.TestCase):
         self.git("commit", "-q", "--allow-empty", "-m", "feat: the trunk side")
 
     def merge_head(self):
-        """Whether a merge is in progress, read the way the task reads it."""
-        return (self.repository / ".git" / "MERGE_HEAD").exists()
+        """Whether a merge is in progress, asked the way the task asks it.
+
+        `git rev-parse` rather than a path test, because MERGE_HEAD does not
+        always live at `.git/MERGE_HEAD` -- in a linked worktree it is under
+        `.git/worktrees/<name>/`, which is where this repository's own merges
+        happen. A fixture that agreed with the task only for the plain
+        repository it builds would be asserting less than it appears to.
+        """
+        probed = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", "MERGE_HEAD"],
+            cwd=self.repository,
+            env=self.env,
+            capture_output=True,
+            text=True,
+        )
+        return probed.returncode == 0
 
     def assertAccepted(self, result):
         self.assertEqual(
@@ -198,7 +212,11 @@ class NoMergeInProgress(GateTestCase):
         """
         self.git("merge", "--squash", "topic")
         self.assertFalse(self.merge_head(), "a squash merge wrote MERGE_HEAD")
-        self.assertTrue((self.repository / ".git" / "SQUASH_MSG").exists())
+        squash_message = self.git("rev-parse", "--git-path", "SQUASH_MSG").stdout.strip()
+        self.assertTrue(
+            (self.repository / squash_message).exists(),
+            "the fixture did not reach a squashed state",
+        )
         self.assertRejected(self.gate(SQUASH_SUBJECT))
 
 
