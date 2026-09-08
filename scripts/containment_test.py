@@ -940,6 +940,17 @@ class Main(unittest.TestCase):
     only assert that it reported nothing. Holding it means making the manifest
     an argument too, which is a change to `main` nobody has needed yet.
 
+    Left unheld deliberately, and on severity rather than on cost, because that
+    is the part worth keeping: wrapping that rule in the grading guard makes it
+    skipped only when `grading is None`, and that arises only when the grading
+    header has been renamed -- which has already appended a loud failure, is
+    returning 1, and says in its own message which rules stopped running. So the
+    unheld mutant costs one rule quietly not running inside an already-red gate
+    that enumerates them. Every mutant this file does hold left a *green* gate
+    over a live defect. A mutant with no silent pass in it is a different class
+    from one whose whole cost is a silent pass, and only the second kind is
+    worth widening a signature for.
+
     `main`'s success path -- `return 0` and the report line -- is held by
     `containment:check` rather than here, which is the right allocation:
     running every rule over the intact tree is what that gate is, and repeating
