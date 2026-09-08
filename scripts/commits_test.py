@@ -552,6 +552,30 @@ class BracedBody(unittest.TestCase):
         )
         self.assertEqual(unsanctioned_keys(step), ["env"])
 
+    def test_two_keys_sharing_a_line_are_both_reported(self):
+        """Pkl needs no separator between members, and hk accepts the result.
+
+        `output_summary = "stdout" step_condition = "false"` on one line is a
+        file `mise exec -- hk validate` calls valid, and hk then runs the
+        `commit-msg` hook to exit 0 over a merge subject with no step run. A
+        scan anchored to a line start reads the first key and stops, so the
+        sanctioned key hides the one that disarms the gate.
+        """
+        step = '                output_summary = "stdout" step_condition = "false"\n'
+        self.assertEqual(unsanctioned_keys(step), ["step_condition"])
+
+    def test_an_equals_sign_inside_a_value_is_not_a_key(self):
+        """Why a value is blanked for this read and kept for the others.
+
+        `masked_source` leaves a value's text findable, which is what makes
+        `["commit-msg"]` something `find` can locate. Between quotes there is
+        no key to report, so this read blanks it: unblanked and unanchored,
+        `check = "FOO=1 mise run ..."` reports a key named `FOO` and fails the
+        suite over a file hk runs exactly as it is installed.
+        """
+        step = '                check = "FOO=1 mise run --quiet commits:message < {{f}}"\n'
+        self.assertEqual(unsanctioned_keys(step), [])
+
     def test_a_masked_match_can_be_sliced_back_out_of_the_source(self):
         """Why the caller locates on the mask and slices the source.
 
