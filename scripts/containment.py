@@ -46,7 +46,6 @@ NUMBERS = {
     "Fifteen": 15,
     "Sixteen": 16,
 }
-failures = []
 
 
 CHAR_LITERAL = re.compile(r"'(\\.|[^\\'])'")
@@ -306,59 +305,9 @@ def permitted(path, allowed):
     return any(path == site or path.startswith(site.rstrip("/") + "/") for site in allowed)
 
 
-# --- The runtime allowance table -------------------------------------------
-rows = []
-table = section(
-    ARCHITECTURE,
-    "| Site | Names | Why it is not in `server/` |",
-    failures,
-    unrun=(
-        "architecture.md's runtime allowance table goes unparsed, and with it "
-        "both rules stated over it: the row count the document itself calls the "
-        "check, and the `tokio` offender scan, which over an empty allowance "
-        "would report every site in the crate and bury the renamed heading that "
-        "caused it"
-    ),
-)
-if table is not None:
-    for line in table.split("\n")[2:]:
-        if not line.startswith("|"):
-            break
-        rows.append(re.findall(r"`([^`]+)`", line.split("|")[1]))
-
-    stated = claimed(r"\*\*(\w+) rows, and the count is the check\.\*\*", failures)
-    if stated is not None and stated != len(rows):
-        failures.append(
-            f"architecture.md's allowance table claims {stated} rows and has {len(rows)}"
-        )
-
-    allowed = {f"crates/kynos/src/{site.lstrip('/')}" for row in rows for entry in row for site in expand(entry)}
-
-    if offenders := sorted(p for p in naming("tokio") if not permitted(p, allowed)):
-        failures.append(
-            "`tokio` is named outside `server/` at a site the allowance table does "
-            "not list:\n    " + "\n    ".join(offenders)
-        )
-
 # --- The dependency graph ---------------------------------------------------
 UNDER = "under"
 ONLY_IN = "only in"
-for crates, rule, where, description in [
-    (("hyper", "hyper_util"), ONLY_IN,
-     {"crates/kynos/src/server/connection.rs", "crates/kynos/src/http/body.rs"},
-     "`hyper` and `hyper-util` are named only in `server/connection.rs` and `http/body.rs`"),
-    (("rustls", "tokio_rustls"), UNDER, "crates/kynos/src/server/tls/",
-     "`tokio-rustls` and `rustls` are named only under `server/tls/`"),
-    (("matchit",), UNDER, "crates/kynos/src/router/",
-     "`matchit` may be named only under `router/`"),
-    (("h2", "httparse"), ONLY_IN, set(), "`h2` and `httparse` are never named"),
-    (("tower", "tower_service"), ONLY_IN, {"crates/kynos/src/unchecked.rs"},
-     "`tower` and `tower-service` are named only in `unchecked.rs`"),
-]:
-    found = naming(*crates)
-    stray = sorted(f for f in found if not f.startswith(where)) if rule == UNDER else sorted(found - where)
-    if stray:
-        failures.append(f"{description}, but it is also named in:\n    " + "\n    ".join(stray))
 
 # --- The off-path elements ---------------------------------------------------
 # `performance.md` grades the document model, the emitters, the validators and
@@ -575,217 +524,6 @@ def scanned(allowance, exists=None):
     return sorted(trees), sorted(tree for tree in trees if not exists(tree))
 
 
-halves = TESTING.split(OFF_PATH_HEADER)
-if len(halves) != 2:
-    failures.append(
-        "testing.md no longer holds exactly one off-path table under the header "
-        "this rule reads, so nothing states which elements a request may not "
-        "reach"
-    )
-
-off_path_rows = 0
-# Every backticked token an *Element* cell writes, which is where a row says
-# which flag it is the proof for. Read from the same rows the rest of this loop
-# checks, so a row cannot satisfy the grading below without also being held
-# above: the feature grading compares against this set further down.
-off_path_elements = set()
-for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
-    if not line.startswith("|"):
-        break
-    # `strip("|")` before the split, so the outer pipes do not yield two empty
-    # cells and shift every column by one.
-    cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-    if len(cells) != 4:
-        failures.append(f"testing.md's off-path table has a malformed row: {line.strip()}")
-        continue
-
-    element, named_by, where, reason = cells
-    off_path_rows += 1
-    off_path_elements |= set(re.findall(r"`([^`]+)`", element))
-    allowance = allowed_sites(where)
-    if allowance is None:
-        failures.append(
-            f"testing.md's off-path table allows {element} in {where}, which "
-            "this rule cannot read as a comma-separated list of backticked "
-            "paths. The row holds nothing until it can, and it holds it "
-            "nowhere: the trees this row is scanned in are derived from these "
-            "sites, so an unreadable cell is an unscanned crate rather than an "
-            "unchecked path"
-        )
-        continue
-    trees, missing = scanned(allowance)
-    if missing:
-        failures.append(
-            f"testing.md's off-path table allows {element} in a crate that "
-            "does not exist, so the tree derived from that site is scanned for "
-            "nothing and the row narrows back to " + OFF_PATH_SCOPE + " without "
-            "saying so. Either the crate was renamed and the cell was not, or "
-            "the site is a typo. The row's sites go unchecked meanwhile:\n    "
-            + "\n    ".join(missing)
-        )
-        continue
-    scope = ", ".join(trees)
-    spellings = token(named_by)
-    if spellings is None:
-        failures.append(
-            f"testing.md's off-path table names {element} with {named_by}, "
-            "which this rule cannot read as an identifier or a path of them. "
-            "The row holds nothing until it can: teach the rule the token, or "
-            "write one it already knows. The row's sites go unchecked "
-            "meanwhile"
-        )
-        continue
-
-    # Every spelling is held to naming something, one at a time rather than as
-    # a union. A union hides a stale spelling behind a live one: with the cell
-    # written `Registry::{new,defualt}`, `new` keeps the row's match set
-    # non-empty and the typo is swallowed, so the row goes on reporting that a
-    # registry is off the request path while `Registry::default()` mints one
-    # anywhere. A spelling is a claim about a name, and a name nothing in the
-    # workspace writes is a rename or a typo rather than an element nothing
-    # reaches. (Stale *sites* stay tolerated, deliberately -- subset semantics,
-    # as above -- because a site claims a location, and locations may empty out
-    # while the claim stays true.)
-    #
-    # Existence is asked of `SOURCES`, not `FILES`: a mint spelling earns its
-    # place in a cell by being reachable, not by being reached, so the row is at
-    # its strongest when no file a request can run writes it at all.
-    # `Registry::default` is that case -- it is written only in a sibling test
-    # file, which is exactly the row holding.
-    #
-    # Sibling test files, and not every test: `strip()` has already dropped the
-    # inline `#[cfg(test)] mod` bodies from `SOURCES` and from `GATE_SOURCES`
-    # alike, so the corpus this widens to is exactly the `tests.rs` siblings
-    # `under_test` holds out of `FILES`. That is the layout rule's corpus rather
-    # than an approximation of it -- a module's tests belong in a sibling -- and
-    # lifting the inline removal would re-admit the comment and literal mentions
-    # `strip()` exists to drop.
-    #
-    # A gate spelling is asked of `GATE_SOURCES` for the reason `token` gives:
-    # the flag name is a string literal, invisible in the stripped text, so
-    # that corpus is the same source with its literals kept. Its comments and
-    # inline test modules go all the same -- a gate is a claim about code a
-    # build compiles, and a flag named in a comment is not one.
-    stale = [
-        (spelling, gate)
-        for spelling, pattern, gate in spellings
-        if not any(
-            any(path.startswith(tree) for tree in trees) and pattern.search(text)
-            for path, text in (GATE_SOURCES if gate else SOURCES)
-        )
-    ]
-    if stale:
-        for spelling, gate in stale:
-            failures.append(
-                f"testing.md's off-path table names {element} with "
-                f"`{spelling}`, and nothing under {scope} writes that spelling "
-                f"{CORPUS[gate]}, sibling test files included. The row holds "
-                "nothing under it: either the element was renamed and the cell "
-                "was not, or it now lives outside the scope this row's own "
-                "sites reach, which is a site to add rather than a spelling to "
-                "keep. The row's sites go unchecked until the cell is repaired"
-            )
-        # One failure per row. A cell this rule has just called untrustworthy
-        # does not also get to render a verdict on the sites: the offender scan
-        # under a stale spelling reports against a match set nobody should
-        # believe, and a reviewer handed two failures repairs the second by
-        # editing the row the first says is already wrong. The message above
-        # says the sites went unchecked, so the skip is stated rather than
-        # inferred from a passing build.
-        continue
-
-    # The offender scan, over the request-runnable half of each corpus a
-    # spelling asked for -- the same corpus its existence was asked of, so a
-    # row cannot be held up by a mention the offender scan would not have
-    # counted. A file counts as naming the element if any one spelling matches
-    # it, in that spelling's own text.
-    named = sorted(
-        {
-            path
-            for _, pattern, gate in spellings
-            for path, text in (GATE_FILES if gate else FILES)
-            if any(path.startswith(tree) for tree in trees) and pattern.search(text)
-        }
-    )
-    if offenders := [path for path in named if path not in allowance]:
-        failures.append(
-            f"{element} is off the request path, and {named_by} is named at a "
-            "site testing.md's off-path table does not allow. The row says a "
-            f"request cannot reach it because {reason}. Either that reason "
-            "covers the site below and the row should say so, or a request can "
-            "now reach it:\n    " + "\n    ".join(offenders)
-        )
-
-if len(halves) == 2 and not off_path_rows:
-    failures.append(
-        "testing.md's off-path table has no rows, so it holds nothing. An "
-        "element that stopped being off-path is retired by arguing it in "
-        "performance.md's allocation, not by emptying the table"
-    )
-
-# The row *set* needs holding as well as the rows. Every check above runs per
-# row, so a row that is deleted -- or cut off early, which one blank line in
-# the middle of the table does, since the loop breaks on the first line that is
-# not a row -- takes its element out of the gate while the run still reports
-# that every rule holds. `testing.md` states the count for that reason, and
-# this compares it.
-elif len(halves) == 2:
-    stated = re.search(r"\*\*(\w+) rows, and the count is the check\.\*\*", TESTING)
-    if stated is None:
-        failures.append(
-            "testing.md no longer states how many rows its off-path table has, "
-            "so a row can be dropped without failing this gate"
-        )
-    else:
-        expected = NUMBERS.get(stated.group(1).capitalize())
-        if expected is None:
-            failures.append(
-                f"testing.md writes an unreadable off-path row count: "
-                f"{stated.group(1)!r}"
-            )
-        elif expected != off_path_rows:
-            failures.append(
-                f"testing.md claims {expected} off-path rows and the table has "
-                f"{off_path_rows}. Adding an element means saying so there; "
-                "losing one means a row was dropped or the table was cut short"
-            )
-
-# --- Hand-rolled `Stream` implementations -----------------------------------
-# Only the section that enumerates them. Collecting every link in the
-# document would let an unrelated mention anywhere else silently authorise a
-# new hand-rolled `Stream` -- which is also why a missing end marker fails here
-# rather than widening the slice to the foot of the document.
-surface = section(
-    ARCHITECTURE,
-    "### Public API surface",
-    failures,
-    "\n## ",
-    unrun=(
-        "architecture.md's list of the sites that may declare a hand-rolled "
-        "`Stream` goes unparsed, leaving nothing to check that every "
-        "implementation sits at one of them. The count of implementations is "
-        "still held, since it is read off the source rather than out of this "
-        "section"
-    ),
-)
-hand_rolled = {path for path, text in FILES if re.search(r"\bStream\s+for\b", text)}
-
-sites = claimed(
-    r"\*\*One public row, (\w+) sites, and the count is the check\*\*", failures
-)
-if sites is not None and sites != len(hand_rolled):
-    failures.append(
-        f"architecture.md claims {sites} hand-rolled `Stream` sites and there are "
-        f"{len(hand_rolled)}:\n    " + "\n    ".join(sorted(hand_rolled))
-    )
-if surface is not None:
-    declared = set(re.findall(r"\]\(\.\./(crates/[^)]+\.rs)\)", surface))
-    if undeclared := sorted(hand_rolled - declared):
-        failures.append(
-            "a hand-rolled `Stream` sits where architecture.md names no site:\n    "
-            + "\n    ".join(undeclared)
-        )
-
 # --- The module-size budget -------------------------------------------------
 # AGENTS.md: a module becomes a directory once it exceeds ~400 lines excluding
 # tests. Files still over that line are a debt, and `nfr.md` writes down how
@@ -802,22 +540,6 @@ if surface is not None:
 # of exactly 400 lines would be read as 401 and reported as past a line it has
 # not passed.
 NFR = (ROOT / "docs/nfr.md").read_text()
-oversized = sorted(
-    path
-    for path, _ in FILES
-    if (ROOT / path).read_text().count("\n") > 400
-)
-
-budget = re.search(r"a module-size budget of (\d+) files", NFR)
-if budget is None:
-    failures.append("nfr.md no longer states the module-size budget")
-elif int(budget.group(1)) != len(oversized):
-    failures.append(
-        f"nfr.md budgets {budget.group(1)} files over ~400 lines and there are "
-        f"{len(oversized)}. Splitting one means lowering the budget in the same "
-        "commit; adding one means arguing for it there.\n    "
-        + "\n    ".join(oversized)
-    )
 
 # --- The feature grading -----------------------------------------------------
 # `docs/performance.md` grades every flag `crates/kynos` declares, and the grade
@@ -880,87 +602,6 @@ def off_path_coverage(off_path_graded, off_path_elements, grades):
         ]
     return []
 
-
-grading = section(
-    PERFORMANCE,
-    "| Grade | Owes | Flags |",
-    failures,
-    unrun=(
-        "performance.md's grading table goes unparsed, and every rule stated "
-        "over it goes unrun: the off-path coverage comparison, and the "
-        "ungraded, undeclared and regraded checks. Over an empty grading every "
-        "flag the crate declares reads as ungraded, which reports thirty "
-        "problems where there is one"
-    ),
-)
-
-graded, off_path_graded, grades = [], [], []
-if grading is not None:
-    for line in grading.split("\n")[2:]:
-        if not line.startswith("|"):
-            break
-        cells = line.split("|")
-        flags = re.findall(r"`([^`]+)`", cells[3])
-        graded += flags
-        grades.append(cells[1].strip())
-        if cells[1].strip() == OFF_PATH_GRADE:
-            off_path_graded += flags
-
-    failures += off_path_coverage(off_path_graded, off_path_elements, grades)
-
-manifest = tomllib.loads((ROOT / "crates/kynos/Cargo.toml").read_text())
-flags = set(manifest["features"])
-depended = {
-    member[len("dep:") :]
-    for members in manifest["features"].values()
-    for member in members
-    if member.startswith("dep:")
-}
-
-# The same guard again rather than one block around both halves: the loop above
-# binds `flags` to one row's flags and the manifest read binds it to the crate's
-# feature set, and these three comparisons want the second.
-if grading is not None:
-    if ungraded := sorted(flags - set(graded)):
-        failures.append(
-            "crates/kynos declares a feature that performance.md's grading table "
-            "does not grade. Grading it is the argument the table exists to force: "
-            "a full battery, an off-path proof, or an aggregate that owes nothing "
-            "of its own:\n    " + "\n    ".join(ungraded)
-        )
-
-    if undeclared := sorted(set(graded) - flags):
-        failures.append(
-            "performance.md grades a flag that crates/kynos does not declare, so "
-            "the row names a battery nothing can be enabled to owe. Either the flag "
-            "was renamed and the row was not, or the row outlived the feature:\n    "
-            + "\n    ".join(undeclared)
-        )
-
-    if regraded := sorted({flag for flag in graded if graded.count(flag) > 1}):
-        failures.append(
-            "performance.md grades a flag in more than one row, where the table "
-            "says every flag appears in exactly one column. Two grades are two "
-            "different batteries owed and nothing decides between them:\n    "
-            + "\n    ".join(regraded)
-        )
-
-# An optional dependency no feature names with `dep:` makes Cargo synthesise an
-# implicit feature for it: a flag the crate declares, absent from `[features]`,
-# and so invisible to the three comparisons above. Its own failure rather than a
-# fourth entry in `ungraded`, because the remedy differs -- write the `dep:`, do
-# not add a table row.
-if implicit := sorted(
-    name
-    for name, spec in manifest["dependencies"].items()
-    if isinstance(spec, dict) and spec.get("optional") and name not in depended
-):
-    failures.append(
-        "an optional dependency of crates/kynos is named by no `dep:`, so Cargo "
-        "synthesises a feature for it that `[features]` does not list and this "
-        "rule cannot count against the grading. Name it from the feature that "
-        "needs it as `dep:`:\n    " + "\n    ".join(implicit)
-    )
 
 # --- The count of measurement kinds ------------------------------------------
 # `performance.md` opens by saying how many of the kinds in its taxonomy run
@@ -1066,8 +707,6 @@ def taxonomy_failures(text):
     return problems
 
 
-failures += taxonomy_failures(PERFORMANCE)
-
 # --- Nothing a package compiles reaches outside the package ------------------
 # `cargo package` copies a package directory and nothing above it, so a path
 # literal that climbs out of one names a file the archive cannot carry. Two
@@ -1109,28 +748,6 @@ def published(package):
         yield source
 
 
-for package in sorted((ROOT / "crates").iterdir()):
-    if not (package / "Cargo.toml").is_file():
-        continue
-    for source in published(package):
-        text = source.read_text()
-        reached = (
-            [(source.parent, literal) for literal in INCLUDED.findall(text)]
-            + [(package, literal.lstrip("/")) for literal in CONCATENATED.findall(text)]
-            + [(package, "/".join(JOIN.findall(chain))) for chain in JOINED.findall(text)]
-        )
-        for base, literal in reached:
-            if Path(os.path.normpath(base / literal)).is_relative_to(package):
-                continue
-            failures.append(
-                f"{source.relative_to(ROOT).as_posix()} reads {literal!r}, which "
-                f"resolves outside {package.relative_to(ROOT).as_posix()}. A "
-                "published archive carries the package directory and nothing "
-                "above it, so this names a file the archive cannot hold: either "
-                "keep what it reads inside the package, or `exclude` the target "
-                "and say in the manifest why the assertion is the repository's"
-            )
-
 # --- Parent re-exports ------------------------------------------------------
 # AGENTS.md: submodules are `pub` with no parent re-exports, so every item has
 # one canonical path, and the crate root and `kynos::prelude` are the only
@@ -1149,23 +766,6 @@ for package in sorted((ROOT / "crates").iterdir()):
 DECLARED_MODULE = re.compile(r"\bmod\s+(\w+)\s*[;{]")
 REEXPORT = re.compile(r"^[ \t]*pub\s+use\s+(\w+)", re.MULTILINE)
 
-reexports = []
-for path, text in FILES:
-    if path.endswith("/lib.rs"):
-        continue
-    own = set(DECLARED_MODULE.findall(text)) | {"crate", "self", "super"}
-    reexports += [
-        f"{path}: pub use {head}::..."
-        for head in REEXPORT.findall(text)
-        if head in own
-    ]
-
-if reexports:
-    failures.append(
-        "a `pub use` re-publishes one of our own items, giving it a second path "
-        "where the layout rule allows exactly one:\n    " + "\n    ".join(sorted(reexports))
-    )
-
 # --- Placeholder bodies -----------------------------------------------------
 # AGENTS.md permits a `todo!()` body only during the pre-v1 API-skeleton
 # milestone, where the surface is designed ahead of its implementation so it can
@@ -1180,12 +780,6 @@ if reexports:
 # own code, and `strip()` has already removed doc comments by the time this runs.
 # The word boundary keeps the rule off a macro that merely ends in `todo!`.
 PLACEHOLDER = re.compile(r"\btodo!")
-
-if placeholders := sorted(path for path, text in FILES if PLACEHOLDER.search(text)):
-    failures.append(
-        "a `todo!()` stands in for a body, and the exception that allowed one "
-        "lapsed when the API-skeleton milestone ended:\n    " + "\n    ".join(placeholders)
-    )
 
 # --- The dev build profile ---------------------------------------------------
 # `.cargo/config.toml` is what keeps a worktree's `target/` near the 17 GiB
@@ -1286,30 +880,462 @@ def cargo_config_failures(text):
     return problems
 
 
-failures += cargo_config_failures(
-    CARGO_CONFIG.read_text() if CARGO_CONFIG.is_file() else None
-)
+def main():
+    """Run every rule over this repository, and report what does not hold.
 
+    Every rule body lives here rather than at module scope, so that importing
+    this module runs none of them. `containment_test.py` imports it to hold the
+    parsers above to their own cases, and a rule that raised at import time took
+    that run down with the tree it was reading -- reporting the parsers as
+    untested exactly when a parser was what broke. What is still read at import
+    is the corpora and the documents above, which costs a few file reads and no
+    build; what is deferred is every rule stated over them.
 
-# --- Report -----------------------------------------------------------------
-# Under the guard so this module can be imported. `containment_test.py` holds
-# the parsers above to their own cases, and a module that exits on a broken
-# rule would take the test run down with the tree it was reading -- reporting
-# the parsers as untested exactly when a parser is what broke. The rules
-# themselves still run on import, which costs a few file reads and no build.
-#
-# Which is only half of what the guard is meant to buy, and #134 is the rest:
-# the three bare `.index()` slices above raise rather than failing, so renaming
-# `| Grade | Owes | Flags |` in `performance.md` kills this script *and* the
-# test run that would have reported it. The fix is a `def main()`, which
-# reindents every rule body and so does not belong on a branch changing what
-# the rules say.
-if __name__ == "__main__":
+    `failures` is a local for the same reason. A module holding a failure list
+    at import is a module that has already checked something.
+    """
+    failures = []
+
+    # --- The runtime allowance table ------------------------------------------
+    rows = []
+    table = section(
+        ARCHITECTURE,
+        "| Site | Names | Why it is not in `server/` |",
+        failures,
+        unrun=(
+            "architecture.md's runtime allowance table goes unparsed, and with it "
+            "both rules stated over it: the row count the document itself calls the "
+            "check, and the `tokio` offender scan, which over an empty allowance "
+            "would report every site in the crate and bury the renamed heading that "
+            "caused it"
+        ),
+    )
+    if table is not None:
+        for line in table.split("\n")[2:]:
+            if not line.startswith("|"):
+                break
+            rows.append(re.findall(r"`([^`]+)`", line.split("|")[1]))
+
+        stated = claimed(r"\*\*(\w+) rows, and the count is the check\.\*\*", failures)
+        if stated is not None and stated != len(rows):
+            failures.append(
+                f"architecture.md's allowance table claims {stated} rows and has {len(rows)}"
+            )
+
+        allowed = {f"crates/kynos/src/{site.lstrip('/')}" for row in rows for entry in row for site in expand(entry)}
+
+        if offenders := sorted(p for p in naming("tokio") if not permitted(p, allowed)):
+            failures.append(
+                "`tokio` is named outside `server/` at a site the allowance table does "
+                "not list:\n    " + "\n    ".join(offenders)
+            )
+
+    # --- The dependency graph ------------------------------------------------
+    for crates, rule, where, description in [
+        (("hyper", "hyper_util"), ONLY_IN,
+         {"crates/kynos/src/server/connection.rs", "crates/kynos/src/http/body.rs"},
+         "`hyper` and `hyper-util` are named only in `server/connection.rs` and `http/body.rs`"),
+        (("rustls", "tokio_rustls"), UNDER, "crates/kynos/src/server/tls/",
+         "`tokio-rustls` and `rustls` are named only under `server/tls/`"),
+        (("matchit",), UNDER, "crates/kynos/src/router/",
+         "`matchit` may be named only under `router/`"),
+        (("h2", "httparse"), ONLY_IN, set(), "`h2` and `httparse` are never named"),
+        (("tower", "tower_service"), ONLY_IN, {"crates/kynos/src/unchecked.rs"},
+         "`tower` and `tower-service` are named only in `unchecked.rs`"),
+    ]:
+        found = naming(*crates)
+        stray = sorted(f for f in found if not f.startswith(where)) if rule == UNDER else sorted(found - where)
+        if stray:
+            failures.append(f"{description}, but it is also named in:\n    " + "\n    ".join(stray))
+
+    # --- The off-path elements -----------------------------------------------
+    halves = TESTING.split(OFF_PATH_HEADER)
+    if len(halves) != 2:
+        failures.append(
+            "testing.md no longer holds exactly one off-path table under the header "
+            "this rule reads, so nothing states which elements a request may not "
+            "reach"
+        )
+
+    off_path_rows = 0
+    # Every backticked token an *Element* cell writes, which is where a row says
+    # which flag it is the proof for. Read from the same rows the rest of this loop
+    # checks, so a row cannot satisfy the grading below without also being held
+    # above: the feature grading compares against this set further down.
+    off_path_elements = set()
+    for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
+        if not line.startswith("|"):
+            break
+        # `strip("|")` before the split, so the outer pipes do not yield two empty
+        # cells and shift every column by one.
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) != 4:
+            failures.append(f"testing.md's off-path table has a malformed row: {line.strip()}")
+            continue
+
+        element, named_by, where, reason = cells
+        off_path_rows += 1
+        off_path_elements |= set(re.findall(r"`([^`]+)`", element))
+        allowance = allowed_sites(where)
+        if allowance is None:
+            failures.append(
+                f"testing.md's off-path table allows {element} in {where}, which "
+                "this rule cannot read as a comma-separated list of backticked "
+                "paths. The row holds nothing until it can, and it holds it "
+                "nowhere: the trees this row is scanned in are derived from these "
+                "sites, so an unreadable cell is an unscanned crate rather than an "
+                "unchecked path"
+            )
+            continue
+        trees, missing = scanned(allowance)
+        if missing:
+            failures.append(
+                f"testing.md's off-path table allows {element} in a crate that "
+                "does not exist, so the tree derived from that site is scanned for "
+                "nothing and the row narrows back to " + OFF_PATH_SCOPE + " without "
+                "saying so. Either the crate was renamed and the cell was not, or "
+                "the site is a typo. The row's sites go unchecked meanwhile:\n    "
+                + "\n    ".join(missing)
+            )
+            continue
+        scope = ", ".join(trees)
+        spellings = token(named_by)
+        if spellings is None:
+            failures.append(
+                f"testing.md's off-path table names {element} with {named_by}, "
+                "which this rule cannot read as an identifier or a path of them. "
+                "The row holds nothing until it can: teach the rule the token, or "
+                "write one it already knows. The row's sites go unchecked "
+                "meanwhile"
+            )
+            continue
+
+        # Every spelling is held to naming something, one at a time rather than as
+        # a union. A union hides a stale spelling behind a live one: with the cell
+        # written `Registry::{new,defualt}`, `new` keeps the row's match set
+        # non-empty and the typo is swallowed, so the row goes on reporting that a
+        # registry is off the request path while `Registry::default()` mints one
+        # anywhere. A spelling is a claim about a name, and a name nothing in the
+        # workspace writes is a rename or a typo rather than an element nothing
+        # reaches. (Stale *sites* stay tolerated, deliberately -- subset semantics,
+        # as above -- because a site claims a location, and locations may empty out
+        # while the claim stays true.)
+        #
+        # Existence is asked of `SOURCES`, not `FILES`: a mint spelling earns its
+        # place in a cell by being reachable, not by being reached, so the row is at
+        # its strongest when no file a request can run writes it at all.
+        # `Registry::default` is that case -- it is written only in a sibling test
+        # file, which is exactly the row holding.
+        #
+        # Sibling test files, and not every test: `strip()` has already dropped the
+        # inline `#[cfg(test)] mod` bodies from `SOURCES` and from `GATE_SOURCES`
+        # alike, so the corpus this widens to is exactly the `tests.rs` siblings
+        # `under_test` holds out of `FILES`. That is the layout rule's corpus rather
+        # than an approximation of it -- a module's tests belong in a sibling -- and
+        # lifting the inline removal would re-admit the comment and literal mentions
+        # `strip()` exists to drop.
+        #
+        # A gate spelling is asked of `GATE_SOURCES` for the reason `token` gives:
+        # the flag name is a string literal, invisible in the stripped text, so
+        # that corpus is the same source with its literals kept. Its comments and
+        # inline test modules go all the same -- a gate is a claim about code a
+        # build compiles, and a flag named in a comment is not one.
+        stale = [
+            (spelling, gate)
+            for spelling, pattern, gate in spellings
+            if not any(
+                any(path.startswith(tree) for tree in trees) and pattern.search(text)
+                for path, text in (GATE_SOURCES if gate else SOURCES)
+            )
+        ]
+        if stale:
+            for spelling, gate in stale:
+                failures.append(
+                    f"testing.md's off-path table names {element} with "
+                    f"`{spelling}`, and nothing under {scope} writes that spelling "
+                    f"{CORPUS[gate]}, sibling test files included. The row holds "
+                    "nothing under it: either the element was renamed and the cell "
+                    "was not, or it now lives outside the scope this row's own "
+                    "sites reach, which is a site to add rather than a spelling to "
+                    "keep. The row's sites go unchecked until the cell is repaired"
+                )
+            # One failure per row. A cell this rule has just called untrustworthy
+            # does not also get to render a verdict on the sites: the offender scan
+            # under a stale spelling reports against a match set nobody should
+            # believe, and a reviewer handed two failures repairs the second by
+            # editing the row the first says is already wrong. The message above
+            # says the sites went unchecked, so the skip is stated rather than
+            # inferred from a passing build.
+            continue
+
+        # The offender scan, over the request-runnable half of each corpus a
+        # spelling asked for -- the same corpus its existence was asked of, so a
+        # row cannot be held up by a mention the offender scan would not have
+        # counted. A file counts as naming the element if any one spelling matches
+        # it, in that spelling's own text.
+        named = sorted(
+            {
+                path
+                for _, pattern, gate in spellings
+                for path, text in (GATE_FILES if gate else FILES)
+                if any(path.startswith(tree) for tree in trees) and pattern.search(text)
+            }
+        )
+        if offenders := [path for path in named if path not in allowance]:
+            failures.append(
+                f"{element} is off the request path, and {named_by} is named at a "
+                "site testing.md's off-path table does not allow. The row says a "
+                f"request cannot reach it because {reason}. Either that reason "
+                "covers the site below and the row should say so, or a request can "
+                "now reach it:\n    " + "\n    ".join(offenders)
+            )
+
+    if len(halves) == 2 and not off_path_rows:
+        failures.append(
+            "testing.md's off-path table has no rows, so it holds nothing. An "
+            "element that stopped being off-path is retired by arguing it in "
+            "performance.md's allocation, not by emptying the table"
+        )
+
+    # The row *set* needs holding as well as the rows. Every check above runs per
+    # row, so a row that is deleted -- or cut off early, which one blank line in
+    # the middle of the table does, since the loop breaks on the first line that is
+    # not a row -- takes its element out of the gate while the run still reports
+    # that every rule holds. `testing.md` states the count for that reason, and
+    # this compares it.
+    elif len(halves) == 2:
+        stated = re.search(r"\*\*(\w+) rows, and the count is the check\.\*\*", TESTING)
+        if stated is None:
+            failures.append(
+                "testing.md no longer states how many rows its off-path table has, "
+                "so a row can be dropped without failing this gate"
+            )
+        else:
+            expected = NUMBERS.get(stated.group(1).capitalize())
+            if expected is None:
+                failures.append(
+                    f"testing.md writes an unreadable off-path row count: "
+                    f"{stated.group(1)!r}"
+                )
+            elif expected != off_path_rows:
+                failures.append(
+                    f"testing.md claims {expected} off-path rows and the table has "
+                    f"{off_path_rows}. Adding an element means saying so there; "
+                    "losing one means a row was dropped or the table was cut short"
+                )
+
+    # --- Hand-rolled `Stream` implementations ---------------------------------
+    # Only the section that enumerates them. Collecting every link in the
+    # document would let an unrelated mention anywhere else silently authorise a
+    # new hand-rolled `Stream` -- which is also why a missing end marker fails here
+    # rather than widening the slice to the foot of the document.
+    surface = section(
+        ARCHITECTURE,
+        "### Public API surface",
+        failures,
+        "\n## ",
+        unrun=(
+            "architecture.md's list of the sites that may declare a hand-rolled "
+            "`Stream` goes unparsed, leaving nothing to check that every "
+            "implementation sits at one of them. The count of implementations is "
+            "still held, since it is read off the source rather than out of this "
+            "section"
+        ),
+    )
+    hand_rolled = {path for path, text in FILES if re.search(r"\bStream\s+for\b", text)}
+
+    sites = claimed(
+        r"\*\*One public row, (\w+) sites, and the count is the check\*\*", failures
+    )
+    if sites is not None and sites != len(hand_rolled):
+        failures.append(
+            f"architecture.md claims {sites} hand-rolled `Stream` sites and there are "
+            f"{len(hand_rolled)}:\n    " + "\n    ".join(sorted(hand_rolled))
+        )
+    if surface is not None:
+        declared = set(re.findall(r"\]\(\.\./(crates/[^)]+\.rs)\)", surface))
+        if undeclared := sorted(hand_rolled - declared):
+            failures.append(
+                "a hand-rolled `Stream` sits where architecture.md names no site:\n    "
+                + "\n    ".join(undeclared)
+            )
+
+    # --- The module-size budget ----------------------------------------------
+    oversized = sorted(
+        path
+        for path, _ in FILES
+        if (ROOT / path).read_text().count("\n") > 400
+    )
+
+    budget = re.search(r"a module-size budget of (\d+) files", NFR)
+    if budget is None:
+        failures.append("nfr.md no longer states the module-size budget")
+    elif int(budget.group(1)) != len(oversized):
+        failures.append(
+            f"nfr.md budgets {budget.group(1)} files over ~400 lines and there are "
+            f"{len(oversized)}. Splitting one means lowering the budget in the same "
+            "commit; adding one means arguing for it there.\n    "
+            + "\n    ".join(oversized)
+        )
+
+    # --- The feature grading -------------------------------------------------
+    grading = section(
+        PERFORMANCE,
+        "| Grade | Owes | Flags |",
+        failures,
+        unrun=(
+            "performance.md's grading table goes unparsed, and every rule stated "
+            "over it goes unrun: the off-path coverage comparison, and the "
+            "ungraded, undeclared and regraded checks. Over an empty grading every "
+            "flag the crate declares reads as ungraded, which reports thirty "
+            "problems where there is one"
+        ),
+    )
+
+    graded, off_path_graded, grades = [], [], []
+    if grading is not None:
+        for line in grading.split("\n")[2:]:
+            if not line.startswith("|"):
+                break
+            cells = line.split("|")
+            flags = re.findall(r"`([^`]+)`", cells[3])
+            graded += flags
+            grades.append(cells[1].strip())
+            if cells[1].strip() == OFF_PATH_GRADE:
+                off_path_graded += flags
+
+        failures += off_path_coverage(off_path_graded, off_path_elements, grades)
+
+    manifest = tomllib.loads((ROOT / "crates/kynos/Cargo.toml").read_text())
+    flags = set(manifest["features"])
+    depended = {
+        member[len("dep:") :]
+        for members in manifest["features"].values()
+        for member in members
+        if member.startswith("dep:")
+    }
+
+    # The same guard again rather than one block around both halves: the loop above
+    # binds `flags` to one row's flags and the manifest read binds it to the crate's
+    # feature set, and these three comparisons want the second.
+    if grading is not None:
+        if ungraded := sorted(flags - set(graded)):
+            failures.append(
+                "crates/kynos declares a feature that performance.md's grading table "
+                "does not grade. Grading it is the argument the table exists to force: "
+                "a full battery, an off-path proof, or an aggregate that owes nothing "
+                "of its own:\n    " + "\n    ".join(ungraded)
+            )
+
+        if undeclared := sorted(set(graded) - flags):
+            failures.append(
+                "performance.md grades a flag that crates/kynos does not "
+                "declare, so the row names a battery nothing can be enabled to "
+                "owe. Either the flag was renamed and the row was not, or the "
+                "row outlived the feature:\n    "
+                + "\n    ".join(undeclared)
+            )
+
+        if regraded := sorted({flag for flag in graded if graded.count(flag) > 1}):
+            failures.append(
+                "performance.md grades a flag in more than one row, where the table "
+                "says every flag appears in exactly one column. Two grades are two "
+                "different batteries owed and nothing decides between them:\n    "
+                + "\n    ".join(regraded)
+            )
+
+    # An optional dependency no feature names with `dep:` makes Cargo synthesise an
+    # implicit feature for it: a flag the crate declares, absent from `[features]`,
+    # and so invisible to the three comparisons above. Its own failure rather than a
+    # fourth entry in `ungraded`, because the remedy differs -- write the `dep:`, do
+    # not add a table row.
+    if implicit := sorted(
+        name
+        for name, spec in manifest["dependencies"].items()
+        if isinstance(spec, dict) and spec.get("optional") and name not in depended
+    ):
+        failures.append(
+            "an optional dependency of crates/kynos is named by no `dep:`, so Cargo "
+            "synthesises a feature for it that `[features]` does not list and this "
+            "rule cannot count against the grading. Name it from the feature that "
+            "needs it as `dep:`:\n    " + "\n    ".join(implicit)
+        )
+
+    # --- The count of measurement kinds --------------------------------------
+    failures += taxonomy_failures(PERFORMANCE)
+
+    # --- Nothing a package compiles reaches outside the package --------------
+    for package in sorted((ROOT / "crates").iterdir()):
+        if not (package / "Cargo.toml").is_file():
+            continue
+        for source in published(package):
+            text = source.read_text()
+            reached = (
+                [(source.parent, literal) for literal in INCLUDED.findall(text)]
+                + [(package, literal.lstrip("/")) for literal in CONCATENATED.findall(text)]
+                + [(package, "/".join(JOIN.findall(chain))) for chain in JOINED.findall(text)]
+            )
+            for base, literal in reached:
+                if Path(os.path.normpath(base / literal)).is_relative_to(package):
+                    continue
+                failures.append(
+                    f"{source.relative_to(ROOT).as_posix()} reads {literal!r}, which "
+                    f"resolves outside {package.relative_to(ROOT).as_posix()}. A "
+                    "published archive carries the package directory and nothing "
+                    "above it, so this names a file the archive cannot hold: either "
+                    "keep what it reads inside the package, or `exclude` the target "
+                    "and say in the manifest why the assertion is the repository's"
+                )
+
+    # --- Parent re-exports ---------------------------------------------------
+    reexports = []
+    for path, text in FILES:
+        if path.endswith("/lib.rs"):
+            continue
+        own = set(DECLARED_MODULE.findall(text)) | {"crate", "self", "super"}
+        reexports += [
+            f"{path}: pub use {head}::..."
+            for head in REEXPORT.findall(text)
+            if head in own
+        ]
+
+    if reexports:
+        failures.append(
+            "a `pub use` re-publishes one of our own items, giving it a second path "
+            "where the layout rule allows exactly one:\n    " + "\n    ".join(sorted(reexports))
+        )
+
+    # --- Placeholder bodies --------------------------------------------------
+    if placeholders := sorted(path for path, text in FILES if PLACEHOLDER.search(text)):
+        failures.append(
+            "a `todo!()` stands in for a body, and the exception that allowed one "
+            "lapsed when the API-skeleton milestone ended:\n    " + "\n    ".join(placeholders)
+        )
+
+    # --- The dev build profile -----------------------------------------------
+    failures += cargo_config_failures(
+        CARGO_CONFIG.read_text() if CARGO_CONFIG.is_file() else None
+    )
+
+    # --- Report ---------------------------------------------------------------
     for failure in failures:
         print(f"containment: {failure}", file=sys.stderr)
     if failures:
-        sys.exit(1)
+        return 1
     print(
         f"containment: {len(FILES)} source files, {len(rows)} allowance rows, "
-        f"{off_path_rows} off-path rows, {len(graded)} graded features, every rule holds"
+        f"{off_path_rows} off-path rows, {len(graded)} graded features, "
+        "every rule holds"
     )
+    return 0
+
+
+# Nothing above this line has checked anything: the rules run from `main()` and
+# nowhere else, so importing this module costs the file reads at the top of it
+# and no more. That is the other half of what this guard was always meant to
+# buy, and until #134 it bought only the first: `containment_test.py` imports
+# this module, and a rule raising over a reworded document took that run down
+# with the tree it was reading, reporting the parsers as untested exactly when a
+# parser was what broke. `section()` closed the raise; this closes the import.
+if __name__ == "__main__":
+    sys.exit(main())
