@@ -215,35 +215,44 @@ def braced_body(text, key, within=None):
 
 
 # Every place this suite reads a declaration out of `hk.pkl` or `mise.toml`,
-# and what makes each one safe. The list is here because this hazard has now
-# recurred three times -- `//` comments, then `/* */`, then `braced_body`'s two
-# lookups, then the `check` regex below -- and each repair covered the sites it
-# happened to know about. A reader adding a seventh read belongs in this list.
+# and what makes each one safe. The list is here because this hazard has
+# recurred -- `//` comments, then `/* */`, then `braced_body`'s two lookups,
+# then the `check` regex below -- and each repair covered the sites it happened
+# to know about. A reader adding a read belongs in this list.
+#
+# Each read is named and none is numbered, because the numbering is the part
+# that went wrong: a read was inserted in the middle of the list, every read
+# after it shifted, and a docstring citing two of them by position went on
+# pointing at the pair it used to name -- one of which had become the read it
+# was saying was unlike itself. A name survives an insertion, a deletion and a
+# reordering; an ordinal survives none of the three, and the prose that cites
+# it fails silently rather than loudly.
 #
 #   hk.pkl, via `declared_commit_msg_check`
-#     1. the `["commit-msg"]` hook              -- searched over `masked_source`
-#     2. the `["conventional-commit"]` step     -- searched over `masked_source`
-#     3. that step's `check = "..."` line       -- searched over `masked_source`
-#     4. the key names that step declares       -- scanned over `masked_source`
+#     the hook lookup -- `["commit-msg"]`, searched over `masked_source`
+#     the step lookup -- `["conventional-commit"]`, searched over `masked_source`
+#     the check lookup -- that step's `check = "..."`, searched over `masked_source`
+#     the key scan -- the key names that step declares, scanned over `masked_source`
 #
 #   mise.toml, via `declared_merge_guard`
-#     5. the `[tasks."commits:message"]` header -- safe by construction
-#     6. that task's `run = '''` body              -- safe by construction
+#     the task header -- `[tasks."commits:message"]`, safe by construction
+#     the task body -- that task's `run = '''`, safe by construction
 #
-# 4 is the only one whose subject is a set of key names rather than a value,
-# and it is safe by the mask plus two things the mask alone does not give it:
-# the values are blanked as well, since between quotes there is no key, and
-# what it reports is measured against an allowlist -- a key withdrawn by
-# commenting it out gates nothing and must not be reported, and a key hk grows
-# later is one nothing here reads and must be. It anchors nowhere, because Pkl
-# needs no separator between members. 5 and 6 are
-# safe for a reason that does not generalise, so it is written down rather than
-# assumed: a TOML comment begins with `#`, and both patterns anchor to the
-# start of a line at a position where they require `[` or `r`. A commented-out
-# `#[tasks."commits:message"]` or `# run = '''` cannot match. What the body
-# then captures is verbatim, which is correct twice over: a `#` line inside
-# `run = '''...'''` is shell to mise and shell to the fixture alike, so there
-# is nothing there to mask.
+# The key scan is the only read whose subject is a set of key names rather than
+# a value, and it is safe by the mask plus two things the mask alone does not
+# give it: the values are blanked as well, since between quotes there is no
+# key, and what it reports is measured against an allowlist -- a key withdrawn
+# by commenting it out gates nothing and must not be reported, and a key hk
+# grows later is one nothing here reads and must be. It anchors nowhere,
+# because Pkl needs no separator between members.
+#
+# The task header and the task body are safe for a reason that does not
+# generalise, so it is written down rather than assumed: a TOML comment begins
+# with `#`, and both patterns anchor to the start of a line at a position where
+# they require `[` or `r`. A commented-out `#[tasks."commits:message"]` or
+# `# run = '''` cannot match. What the body then captures is verbatim, which is
+# correct twice over: a `#` line inside `run = '''...'''` is shell to mise and
+# shell to the fixture alike, so there is nothing there to mask.
 def declared_check(step):
     """The `check` command a step body declares, ignoring any commented ones.
 
@@ -318,17 +327,17 @@ def declared_commit_msg_check():
     not read, and the end-to-end case stops passing instead of going on
     asserting a command no hook would run.
 
-    The third of those is the one an unanchored search misses, and it is the
-    one that disarms the gate most completely: a `conventional-commit` step
+    Moving it out is the one an unanchored search misses, and it is the one
+    that disarms the gate most completely: a `conventional-commit` step
     declared under `pre-push` runs nothing at commit time, while still being
     findable by name anywhere in the file.
 
-    The fifth is the one containment alone cannot see. Every lookup here is
-    about *what* the step runs; hk decides *whether* it runs from keys none of
-    them read, and a step hk skips still hands this function a command the
-    end-to-end fixture will install, run a real merge through, and pass on.
-    Hence the allowlist: a key nothing here reads is a key these tests cannot
-    vouch for, whatever hk does with it.
+    Declaring an unread key is the one containment alone cannot see. Every
+    lookup here is about *what* the step runs; hk decides *whether* it runs
+    from keys none of them read, and a step hk skips still hands this function
+    a command the end-to-end fixture will install, run a real merge through,
+    and pass on. Hence the allowlist: a key nothing here reads is a key these
+    tests cannot vouch for, whatever hk does with it.
 
     Every lookup runs over `masked_source`, including the one for the
     `check` line itself. Commenting a line out and writing its replacement
@@ -366,10 +375,11 @@ def declared_merge_guard():
     below runs the guard where `mise run` cannot put it, and running a
     restatement there would hold nothing.
 
-    No mask here, and that is entries 4 and 5 of the list above rather than an
-    oversight: both patterns anchor where a TOML comment's `#` would have to
-    be, so neither can match a commented-out line, and the captured body is
-    shell in which a `#` line means the same thing to mise and to the fixture.
+    No mask here, and that is the task header and the task body of the list
+    above rather than an oversight: both patterns anchor where a TOML
+    comment's `#` would have to be, so neither can match a commented-out line,
+    and the captured body is shell in which a `#` line means the same thing to
+    mise and to the fixture.
     """
     text = (ROOT / "mise.toml").read_text()
     task = re.search(r'^\[tasks\."commits:message"\]\n(.*?)^\[', text, re.DOTALL | re.MULTILINE)
@@ -476,7 +486,7 @@ class BracedBody(unittest.TestCase):
         self.assertIsNone(braced_body(text, '["b"]', within=braced_body(text, '["a"]')))
 
     def test_a_commented_brace_between_a_key_and_its_block_is_not_the_opening(self):
-        """The second lookup runs over the mask for the reason the first does."""
+        """The step lookup runs over the mask for the reason the hook lookup does."""
         # Asserted exactly: a raw lookup opens at the *commented* brace, and
         # the body it returns still holds `live` -- it just starts too early.
         text = '["a"] {\n  ["b"] /* { */ { c = "live" }\n}'
@@ -491,7 +501,7 @@ class BracedBody(unittest.TestCase):
         self.assertNotIn("commented", body)
 
     def test_a_commented_check_is_not_the_declaration(self):
-        """The third lookup, over a fragment the real `hk.pkl` cannot provide.
+        """The check lookup, over a fragment the real `hk.pkl` cannot provide.
 
         Commenting a line out and writing its replacement below is the
         ordinary shape of a configuration edit, and this is the read that
@@ -517,7 +527,7 @@ class BracedBody(unittest.TestCase):
             declared_check(step)
 
     def test_a_key_beside_the_check_is_reported(self):
-        """The fourth lookup, and the one whose subject is not the `check`.
+        """The key scan, and the one read whose subject is not the `check`.
 
         hk decides whether a step runs at all from keys this suite never
         reads, so a `check` read out of a step hk skips is a command the

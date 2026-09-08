@@ -83,14 +83,14 @@ hooks {
             // merely described there: rename it, delete it, move it out of
             // this hook, drop the `< {{commit_msg_file}}` redirect, or give
             // it a key beside the two below, and the suite fails. The scan is
-            // brace-matched and bounded to this block for the third of those
-            // -- a `conventional-commit` step declared under `pre-push` runs
+            // brace-matched and bounded to this block for the move -- a
+            // `conventional-commit` step declared under `pre-push` runs
             // nothing at commit time while still being findable by name
             // anywhere in the file.
             //
-            // The fifth is held as an allowlist because the keys that disarm
-            // this step are hk's to add rather than this repository's to
-            // track. Measured on 1.53.0: `step_condition`, `condition`,
+            // The unread key is held as an allowlist because the keys that
+            // disarm this step are hk's to add rather than this repository's
+            // to track. Measured on 1.53.0: `step_condition`, `condition`,
             // `profiles`, `glob`, `exclude`, `dir` and `types` each leave
             // `hk validate` green and the `check` below untouched, while
             // `hk run commit-msg` exits 0 over a merge subject having run no
