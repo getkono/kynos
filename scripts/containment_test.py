@@ -970,21 +970,36 @@ class Main(unittest.TestCase):
     What a later sweep has to match is the accumulation, not one spelling of
     it.
 
-    What that leaves unheld is named rather than implied, and it is six sites:
-    the dependency-graph stray scan, the implicit-optional-dependency rule, the
-    package-escape read, the parent re-export scan, the placeholder scan, and
-    the `cargo_config_failures` wiring. Each reads `FILES`,
-    `crates/kynos/Cargo.toml` or `.cargo/config.toml` off `ROOT` rather than a
-    document, so no argument `main` takes reaches them. Silencing any one of
-    their failures leaves both gates green, which is the severity class worth
-    holding rather than the one below, and a stronger reason than the one that
-    leaves the manifest rule's *guard* unheld.
+    The rules `main` states over the tree rather than over a document split in
+    two, and the split is when the read happens rather than what is read. The
+    manifest rule, the package-escape read and the `cargo_config_failures`
+    wiring open their file *while `main` runs*, so what a case has to reach is
+    the read. `reading` below reaches it: one path, rebound for the length of
+    one call and put back in a `finally`. That is the patch `ImportTime`
+    justifies at length and it is justified the same way -- it reaches
+    something no signature carries -- and it is not what decision 9 refused,
+    which was patching a module constant a parameter could have carried
+    instead. These three reads are not module constants, and no parameter
+    would spare them.
 
-    The rule that cost a case: `main` reads `crates/kynos/Cargo.toml` off
-    `ROOT`, so the implicit-optional-dependency check below the grading is not
-    injectable, and a case claiming it survives a missing grading header could
-    only assert that it reported nothing. Holding it means making the manifest
-    an argument too, which is a change to `main` nobody has needed yet.
+    What that leaves unheld is named rather than implied, and it is three
+    sites: the dependency-graph stray scan, the parent re-export scan and the
+    placeholder scan. All three read `FILES`, which this module builds while it
+    is being imported, so by the time `main` runs the corpora are already what
+    they are and neither an argument nor a rebound read reaches them. Silencing
+    any one of their failures leaves both gates green, which is the severity
+    class worth holding rather than the one below, and a stronger reason than
+    the one that leaves the manifest rule's *guard* unheld. Holding them means
+    injecting the corpora, which is a wider change to `main`'s contract than
+    this branch made.
+
+    The case the manifest rule cost, and why it stays gone rather than coming
+    back: `test_the_manifest_rule_below_the_grading_still_runs` asserted that
+    the rule reported nothing over a document with no grading header, and an
+    assertion that a rule reported nothing is equally true of a rule that never
+    ran. The presence case below is what that rule was owed. What used to be
+    written here -- that the rule "is not injectable" -- was wrong, and the
+    excuse outlived the reason for it.
 
     Left unheld deliberately, and on severity rather than on cost, because that
     is the part worth keeping: wrapping that rule in the grading guard makes it
@@ -995,7 +1010,7 @@ class Main(unittest.TestCase):
     that enumerates them. Every mutant this file does hold left a *green* gate
     over a live defect. A mutant with no silent pass in it is a different class
     from one whose whole cost is a silent pass, and only the second kind is
-    worth widening a signature for.
+    worth paying for.
 
     `main`'s success path -- `return 0` and the report line -- is held by
     `containment:check` rather than here, which is the right allocation:
@@ -1027,6 +1042,33 @@ class Main(unittest.TestCase):
             elif line.strip() and failures:
                 failures[-1] += "\n" + line
         return status, failures
+
+    @contextlib.contextmanager
+    def reading(self, path, rewrite):
+        """One path in the tree reading as `rewrite` returns, for one call.
+
+        Three rules below the grading are stated over the tree rather than over
+        a document, and `main` opens their file itself: the manifest, each
+        source a package publishes, and `.cargo/config.toml`. No argument
+        reaches those, so the read is what a case reaches instead.
+
+        Scoped to one path, restored whether the body raises or not, and
+        reaching nothing another case can observe: the corpora and the four
+        documents were read at import and are already what they are, which is
+        the same reason the three rules stated over `FILES` stay unheld.
+        """
+        target = gate.ROOT / path
+        unpatched = Path.read_text
+
+        def read(opened, *args, **kwargs):
+            text = unpatched(opened, *args, **kwargs)
+            return rewrite(text) if opened == target else text
+
+        Path.read_text = read
+        try:
+            yield
+        finally:
+            Path.read_text = unpatched
 
     def naming(self, failures, needle):
         return [failure for failure in failures if needle in failure]
@@ -1470,6 +1512,58 @@ class Main(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertEqual(
             len(self.naming(failures, "no longer states the module-size budget")), 1
+        )
+
+    def test_an_optional_dependency_named_by_no_dep_is_reported(self):
+        # `crates/kynos/Cargo.toml`, which `main` reads rather than takes.
+        # `[features]` is left byte-identical, which is exactly what makes the
+        # flag Cargo synthesises for this dependency invisible to the three
+        # grading comparisons above the rule.
+        with self.reading(
+            "crates/kynos/Cargo.toml",
+            lambda text: text.replace(
+                "\n[dependencies]\n",
+                '\n[dependencies]\nprobe-unnamed = { version = "0", optional = true }\n',
+                1,
+            ),
+        ):
+            status, failures = self.report()
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "named by no `dep:`")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("probe-unnamed", reported[0])
+
+    def test_a_published_source_reading_above_its_package_is_reported(self):
+        # The package-escape read, over a source `published()` yields. The
+        # literal climbs out of `crates/kynos/` to a file the repository really
+        # has, so what the rule reports is the escape and not a missing target.
+        with self.reading(
+            "crates/kynos/src/lib.rs",
+            lambda text: text + '\nconst PROBE: &str = include_str!("../../../README.md");\n',
+        ):
+            status, failures = self.report()
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "resolves outside crates/kynos")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/lib.rs reads '../../../README.md'", reported[0])
+
+    def test_a_misspelled_dev_profile_table_is_reported(self):
+        # `cargo_config_failures`, reached through the one line of `main` that
+        # calls it: the second `failures += helper(...)`, and the second rule
+        # whose helper had a suite of its own while nothing held the call. The
+        # fault is the one the rule exists for -- a table cargo does not report
+        # at all -- so `containment:check` is the only thing that could see it.
+        with self.reading(
+            ".cargo/config.toml",
+            lambda text: text.replace(
+                '[profile.dev.package."*"]', '[profile.dev.pakcage."*"]', 1
+            ),
+        ):
+            status, failures = self.report()
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            len(self.naming(failures, 'no longer declares `profile.dev.package."*".debug`')),
+            1,
         )
 
 
