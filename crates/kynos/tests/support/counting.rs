@@ -66,9 +66,14 @@ pub(crate) fn counted<C>(
     request: Request,
     expected: StatusCode,
 ) -> (usize, Response) {
-    // Before the region: naming the operation is the report's cost, not the
-    // operation's.
-    let operation = format!("{} {}", request.method(), request.uri().path());
+    // Before the region, and cheap: cloning a standard method copies an enum
+    // discriminant and cloning a `Uri` bumps a reference count. The name is
+    // built from them only where a message is emitted, because `alloc.rs`
+    // replays ten thousand identical requests per case and a `format!` on
+    // every drive would put fifty thousand `String`s in a binary that makes
+    // none — outside every region, so counted by nothing, and paid for in the
+    // wall clock the replay is already tuned against.
+    let (method, uri) = (request.method().clone(), request.uri().clone());
 
     let ((allocations, reallocations, _), polled) = count_alloc(|| {
         let mut future = pin!(service.call(request));
@@ -80,19 +85,21 @@ pub(crate) fn counted<C>(
 
     let Poll::Ready(response) = polled else {
         panic!(
-            "{operation} was not ready on its first poll; these fixtures reach \
+            "{method} {} was not ready on its first poll; these fixtures reach \
              no socket, timer or task, so a pending future means something on \
              the measured path now needs a runtime — and the count above \
-             stopped measuring the whole of one request"
+             stopped measuring the whole of one request",
+            uri.path()
         );
     };
 
     assert_eq!(
         response.status(),
         expected,
-        "{operation} answered {} rather than the {expected} this measurement \
+        "{method} {} answered {} rather than the {expected} this measurement \
          is of; a request a codec declined never reached the codec, and its \
          count records the refusal instead",
+        uri.path(),
         response.status()
     );
 
