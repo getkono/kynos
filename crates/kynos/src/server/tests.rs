@@ -736,7 +736,7 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
     use http_body_util::{BodyExt as _, Empty};
     use hyper_util::rt::TokioIo;
     use tokio_rustls::rustls::{
-        ClientConfig, RootCertStore,
+        ClientConfig,
         pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject as _},
     };
 
@@ -769,15 +769,9 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
     let address = bound.local_addrs()[0];
     let server = tokio::spawn(bound.serve());
 
-    let mut anonymous_roots = RootCertStore::empty();
-    for certificate in CertificateDer::pem_slice_iter(ca) {
-        anonymous_roots
-            .add(certificate.expect("CA certificate parses"))
-            .expect("CA is a trust anchor");
-    }
     let anonymous_connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(
         ClientConfig::builder()
-            .with_root_certificates(anonymous_roots)
+            .with_root_certificates(trust_anchors(ca))
             .with_no_client_auth(),
     ));
     let anonymous_stream = tokio::net::TcpStream::connect(address)
@@ -806,19 +800,13 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
         connection.abort();
     }
 
-    let mut roots = RootCertStore::empty();
-    for certificate in CertificateDer::pem_slice_iter(ca) {
-        roots
-            .add(certificate.expect("CA certificate parses"))
-            .expect("CA is a trust anchor");
-    }
     let client_certificates = CertificateDer::pem_slice_iter(issued.client.certificate.as_bytes())
         .collect::<std::result::Result<Vec<_>, _>>()
         .expect("client chain parses");
     let client_key =
         PrivateKeyDer::from_pem_slice(issued.client.key.as_bytes()).expect("client key parses");
     let mut client_config = ClientConfig::builder()
-        .with_root_certificates(roots)
+        .with_root_certificates(trust_anchors(ca))
         .with_client_auth_cert(client_certificates, client_key)
         .expect("client identity is valid");
     client_config.alpn_protocols = vec![b"http/1.1".to_vec()];
@@ -1094,23 +1082,37 @@ async fn tls_server(
 /// on is what the server pins its driver to.
 #[cfg(feature = "tls")]
 fn alpn_connector(authority: &[u8], protocols: &[&[u8]]) -> tokio_rustls::TlsConnector {
-    use tokio_rustls::rustls::{
-        ClientConfig, RootCertStore,
-        pki_types::{CertificateDer, pem::PemObject as _},
-    };
+    use tokio_rustls::rustls::ClientConfig;
 
-    let mut roots = RootCertStore::empty();
-    for certificate in CertificateDer::pem_slice_iter(authority) {
-        roots
-            .add(certificate.expect("CA certificate parses"))
-            .expect("CA is a trust anchor");
-    }
     let mut config = ClientConfig::builder()
-        .with_root_certificates(roots)
+        .with_root_certificates(trust_anchors(authority))
         .with_no_client_auth();
     config.alpn_protocols = protocols.iter().map(|protocol| protocol.to_vec()).collect();
 
     tokio_rustls::TlsConnector::from(std::sync::Arc::new(config))
+}
+
+/// The PEM authority in `certificate`, as a store a client can verify against.
+///
+/// Every TLS case here trusts one minted authority and differs only in what it
+/// does afterwards -- offering a client certificate, offering an ALPN
+/// identifier, or offering neither -- so the anchors are built once and the
+/// difference is left at each call site.
+#[cfg(feature = "tls")]
+fn trust_anchors(certificate: &[u8]) -> tokio_rustls::rustls::RootCertStore {
+    use tokio_rustls::rustls::{
+        RootCertStore,
+        pki_types::{CertificateDer, pem::PemObject as _},
+    };
+
+    let mut roots = RootCertStore::empty();
+    for anchor in CertificateDer::pem_slice_iter(certificate) {
+        roots
+            .add(anchor.expect("CA certificate parses"))
+            .expect("CA is a trust anchor");
+    }
+
+    roots
 }
 
 /// A service whose entire response is what the connection settled on.
