@@ -54,6 +54,15 @@ appears in it, so a fragment needs to be recognisable Rust and no more.
 
 Run it as `mise run containment:test`, or directly. There is no Python test
 runner in this repository and `unittest` needs none.
+
+What it costs, said here because `hooks:pre-push` runs it and nothing else
+states a ceiling. Almost all of the time is `Main`: each of its cases calls
+`main()`, and each call re-runs every rule over the real tree, which is the
+rule half of what `containment:check` itself costs. The suites above it are
+free beside that -- they hand a parser some text and read what comes back,
+and the corpora they read are built once, at import. So a new `Main` case is
+priced at roughly one more run of the gate, and a suite that has stopped
+being affordable is shortened at `Main` rather than at the parsers.
 """
 
 import contextlib
