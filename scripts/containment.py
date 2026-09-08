@@ -382,9 +382,14 @@ NAMED_BY = re.compile(r"`?(\w+(?:\s*::\s*\w+)*)`?")
 # `kynos-openapi` declares `default = ["openapi31"]` and
 # `openapi32 = ["openapi31"]`, and both sites of the flag are the
 # `compile_error!` that refuses a build without it, so no build that compiles
-# has it off and a positive gate on it is code that cannot exist. The class has
-# never fired: `git log --all -S'cfg(feature = "openapi31")' -- crates/` returns
-# nothing. Restoring it means tolerating a stale gate *spelling* the way the row
+# has it off and a positive gate on it is code that cannot exist. Nothing in the
+# two trees this row is scanned in has ever written the positive form, and
+# `git log --all -S'cfg(feature = "openapi31")' -- crates/` returns nothing --
+# though that string is blind to a multi-line predicate, and one exists:
+# `crates/kynos/tests/matrix.rs:30` writes the flag positively inside a
+# `#![cfg(all(...))]` spread over five lines. It is in `crates/kynos/tests/`,
+# outside both scanned trees, so the row is unaffected and the idiom is real.
+# Restoring the class means tolerating a stale gate *spelling* the way the row
 # loop already tolerates a stale *site* -- "a site claims a location, and
 # locations may empty out while the claim stays true" -- which is a change to
 # what a spelling claims, and belongs to whoever needs it rather than here.
