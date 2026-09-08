@@ -629,6 +629,111 @@ class BracedBody(unittest.TestCase):
         self.assertIsNone(braced_body('["a"] {\n  x = 1\n', '["a"]'))
 
 
+class HkWouldRunTheStep(unittest.TestCase):
+    """Whether hk runs the step, asked of hk rather than inferred from its file.
+
+    Every read this suite makes out of `hk.pkl` is about *what* the
+    `conventional-commit` step runs: the end-to-end fixture installs that
+    command and drives a real merge through it. None of them says *whether* hk
+    would run the step at all, and a step hk skips still hands that fixture a
+    command to install, run and pass on while the real hook runs nothing.
+
+    Inferring the answer from the file's text does not work, and the reason is
+    structural rather than a matter of covering more keys. Pkl merges object
+    entries that share a key and hk applies the merged result, so a second
+    `["conventional-commit"]` entry carrying `step_condition = "false"`, or a
+    second `["commit-msg"]` entry beside this hook's, is authoritative to hk
+    and invisible to any scan that resolves a key to its first occurrence. hk
+    also reads settings that are not in the step at all -- module-level
+    `skip_steps` and `skip_hooks` -- which no reading of a step can see.
+
+    So hk is asked, twice, because one question does not answer the other.
+    `hk run commit-msg --plan --json` reports per step whether this hook would
+    include it, which is where a skipped step, a renamed one, a step moved to
+    another hook and both merged-entry shapes surface. `hk config dump`
+    reports the settings hk merged from every source, which is where a skipped
+    *hook* surfaces -- under `skip_hooks = List("commit-msg")` the plan still
+    reports this step `included` while `hk run commit-msg` exits 0 having run
+    nothing.
+    """
+
+    def test_hk_plans_to_run_the_conventional_commit_step(self):
+        """hk's own answer for this repository, over this repository's file."""
+        self.assertEqual(
+            planned_status(commit_msg_plan(), "conventional-commit"),
+            "included",
+            "hk does not plan to run the `conventional-commit` step of the "
+            "`commit-msg` hook, so the command the fixtures read out of "
+            "`hk.pkl` is one no commit would run",
+        )
+
+    def test_hk_skips_no_hook_named_commit_msg(self):
+        """The half of the same question the plan cannot see."""
+        self.assertNotIn(
+            "commit-msg",
+            skipped_hooks(hk_answer("config", "dump")),
+            "hk's effective configuration skips the `commit-msg` hook, so no "
+            "step declared under it runs whatever the plan for it says",
+        )
+
+    def test_a_step_hk_plans_to_skip_is_reported_as_skipped(self):
+        """Invisible from this repository's own `hk.pkl`, which is not disarmed.
+
+        The document below is hk 1.53.0's, emitted in a throwaway export with
+        `step_condition = "false"` inserted into the real step: `hk validate`
+        green, the `check` line untouched, and `hk run commit-msg` exit 0 over
+        a merge subject having run no step.
+        """
+        skipped = {
+            "hook": "commit-msg",
+            "runType": "check",
+            "steps": [
+                {
+                    "name": "conventional-commit",
+                    "status": "skipped",
+                    "orderIndex": 0,
+                    "reasons": [
+                        {
+                            "kind": "condition_false",
+                            "detail": "step_condition evaluated to false: false",
+                        }
+                    ],
+                    "fileCount": 0,
+                }
+            ],
+        }
+        self.assertEqual(planned_status(skipped, "conventional-commit"), "skipped")
+
+    def test_a_plan_naming_no_such_step_is_an_error(self):
+        """Deleting the step, moving it out of the hook, or renaming it.
+
+        Measured on hk 1.53.0: with the step deleted, and again with it moved
+        under `pre-push`, the plan for `commit-msg` is `"steps": []`; renamed,
+        it carries the new name alone. Reading a status off whichever step is
+        present would report `included` for the renamed case, which is the one
+        shape here that has a step to read.
+        """
+        for plan in (
+            {"hook": "commit-msg", "steps": []},
+            {
+                "hook": "commit-msg",
+                "steps": [{"name": "conventional-commit-renamed", "status": "included"}],
+            },
+        ):
+            with self.assertRaises(AssertionError):
+                planned_status(plan, "conventional-commit")
+
+    def test_a_configuration_carrying_no_skip_hooks_is_an_error(self):
+        """A renamed setting must not read as "nothing is skipped".
+
+        The safe answer to this question is an empty list, so a shape the
+        setting cannot be found in is the one shape that would pass silently
+        for as long as it lasted.
+        """
+        with self.assertRaises(AssertionError):
+            skipped_hooks({"skip_steps": []})
+
+
 class GateTestCase(unittest.TestCase):
     """A throwaway repository per test, and both halves of the rule over it."""
 
