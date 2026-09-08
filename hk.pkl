@@ -80,8 +80,12 @@ hooks {
             // That suite reads the `check` line below out of this file and
             // runs it as the `commit-msg` hook of a throwaway repository,
             // driving a real `git merge` through it. So this step is not
-            // merely described there: rename it, delete it, or drop the
-            // `< {{commit_msg_file}}` redirect, and the suite fails.
+            // merely described there: rename it, delete it, move it out of
+            // this hook, or drop the `< {{commit_msg_file}}` redirect, and
+            // the suite fails. The scan is brace-matched and bounded to this
+            // block for the third of those -- a `conventional-commit` step
+            // declared under `pre-push` runs nothing at commit time while
+            // still being findable by name anywhere in the file.
             ["conventional-commit"] {
                 check = "mise run --quiet commits:message < {{commit_msg_file}}"
                 output_summary = "stdout"

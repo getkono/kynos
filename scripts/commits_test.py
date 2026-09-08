@@ -26,9 +26,10 @@ cannot see it.
 Nothing below forges a state file, and nothing below stands in for git. The
 fixtures build real repositories, reach a real merge with `git merge`, and one
 of them installs the `commit-msg` hook command that `hk.pkl` declares -- read
-out of `hk.pkl` rather than restated here, so that deleting the step or
-dropping its `< {{commit_msg_file}}` redirect fails these tests -- and then
-runs a real `git merge --no-ff` through it. That case is the reported symptom
+out of `hk.pkl` rather than restated here, so that deleting the step, renaming
+it, moving it out of the `commit-msg` hook, or dropping its
+`< {{commit_msg_file}}` redirect fails these tests -- and then runs a real
+`git merge --no-ff` through it. That case is the reported symptom
 itself: before the fix, it is the `Not committing merge` the issue opens with.
 
 One fixture is a linked worktree, because this repository is worked in linked
@@ -101,24 +102,65 @@ def scrubbed_environment():
     return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
 
 
+def braced_body(text, key, within=None):
+    """The `{ ... }` that follows `key` in `text`, by matching braces.
+
+    Brace-matched rather than pattern-matched, and `within` is a slice rather
+    than a hint, because what the caller needs is *containment*: a step named
+    somewhere in the file is not a step attached to the hook that runs it. An
+    unanchored search cannot tell those apart, and the difference is the whole
+    gate. Double-quoted regions are skipped so a `{{commit_msg_file}}` inside
+    a value cannot close the block that holds it.
+
+    Returns None when `key` is absent from the region searched.
+    """
+    region = text if within is None else within
+    offset = region.find(key)
+    if offset < 0:
+        return None
+    opening = region.find("{", offset + len(key))
+    if opening < 0:
+        return None
+
+    depth = 0
+    quoted = False
+    for index in range(opening, len(region)):
+        character = region[index]
+        if character == '"':
+            quoted = not quoted
+        elif quoted:
+            continue
+        elif character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                return region[opening + 1 : index]
+    return None
+
+
 def declared_commit_msg_check():
     """The `check` command `hk.pkl` declares for the `conventional-commit` step.
 
     Read rather than restated, so the fixture that runs a real `git merge`
     through a real hook runs what the repository actually installs. Delete the
-    step, rename it, or drop its `< {{commit_msg_file}}` redirect, and the
-    end-to-end case stops passing instead of going on asserting a command no
-    hook would run.
+    step, rename it, move it out of the `commit-msg` hook, or drop its
+    `< {{commit_msg_file}}` redirect, and the end-to-end case stops passing
+    instead of going on asserting a command no hook would run.
+
+    The third of those is the one an unanchored search misses, and it is the
+    one that disarms the gate most completely: a `conventional-commit` step
+    declared under `pre-push` runs nothing at commit time, while still being
+    findable by name anywhere in the file.
     """
     text = (ROOT / "hk.pkl").read_text()
-    step = re.search(
-        r'\["commit-msg"\].*?\["conventional-commit"\]\s*\{(.*?)\n\s*\}',
-        text,
-        re.DOTALL,
-    )
+    hook = braced_body(text, '["commit-msg"]')
+    if hook is None:
+        raise AssertionError("hk.pkl declares no `commit-msg` hook")
+    step = braced_body(text, '["conventional-commit"]', within=hook)
     if step is None:
-        raise AssertionError("hk.pkl declares no `conventional-commit` step under `commit-msg`")
-    check = re.search(r'check\s*=\s*"(.*?)"\s*$', step.group(1), re.MULTILINE)
+        raise AssertionError("hk.pkl's `commit-msg` hook declares no `conventional-commit` step")
+    check = re.search(r'check\s*=\s*"(.*?)"\s*$', step, re.MULTILINE)
     if check is None:
         raise AssertionError("the `conventional-commit` step declares no `check`")
     return check.group(1)
