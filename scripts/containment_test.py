@@ -289,9 +289,23 @@ class ImportTime(unittest.TestCase):
         assertion cannot see.
 
         The module is re-executed into a namespace of its own rather than
-        reloaded, so the `gate` every other case here holds is untouched. The
-        read is patched on `pathlib.Path` and restored in a `finally`, which is
-        the only module state this file writes and it writes it back.
+        reloaded, so the `gate` every other case here holds is untouched, and
+        `sys.modules` is not written at all.
+
+        This is the one place on this branch that rebinds a stdlib attribute,
+        and it ships rather than living in a validation script, so it is worth
+        saying why it is here and why it is not the thing decision 9 refused.
+        That decision rejected patching `gate.ARCHITECTURE` as an alternative
+        to passing the documents to `main`, because it would have left every
+        case mutating shared module state to reach a value the signature could
+        have carried. This patch reaches something no signature can: what the
+        module does *while it is being imported*, before `main` exists to be
+        called. It is scoped to one case, restored in a `finally` whether the
+        exec raises or not, and reaches nothing another case can observe.
+
+        `pathlib.Path.read_text` is the only stdlib state written. `sys.stdout`
+        and `sys.stderr` are swapped here and in `Main.report`, but by
+        `contextlib.redirect_*`, which restores them on the way out.
         """
         source = Path(gate.__file__).read_text()
         unpatched = Path.read_text
