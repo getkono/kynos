@@ -154,10 +154,18 @@ impl Responses {
     ///   sound: two branches repeating a `const` are satisfied at once, which
     ///   is exactly what the keyword forbids.
     ///
-    ///   Where either side is *not* narrowed — a bare `$ref` to the shared
-    ///   component, or any other shape — that side is the union. It already
-    ///   admits every document the other one describes, and narrowing to the
-    ///   other would declare less than the operation sends.
+    ///   Where one side instead admits *everything* — `true`, or a bare `$ref`
+    ///   to the shared component, which every problem document satisfies — that
+    ///   side is the union: it already admits every document the other
+    ///   describes, and narrowing to the other would declare less than the
+    ///   operation sends.
+    ///
+    ///   A side that is neither is not read as either. A schema satisfied by
+    ///   nothing, an empty `oneOf`, and a `oneOf` whose branches overlap all
+    ///   fail the narrowing read while admitting strictly *less* than a
+    ///   narrowed side, so adopting one would declare a schema the operation's
+    ///   own bodies fail. Those keep the entry already declared, as
+    ///   `merge_from` would.
     ///
     /// * **The description.** Both, joined with `"; "`, dropping a sentence
     ///   already written word for word. Prose is under no exactly-one rule, so

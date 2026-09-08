@@ -205,11 +205,20 @@ statement about each of them. A bare `$ref` there would have been fatal rather
 than merely vague — it matches every problem document, so a `oneOf` containing
 one is satisfied twice over.
 
-**A side that narrows nothing wins outright.** It already admits every problem
-document the other side describes, so it *is* the union, and narrowing to what
-the other side publishes would declare less than the operation sends. One
-declaration in Kynos is that shape on purpose — `AuthRejection`'s 403, below —
-and an interceptor's contribution or a hand-written `Responses` may be too.
+**A side that admits every problem document wins outright.** A bare `$ref` to
+the shared component is that, and so is `true`: it already admits everything the
+other side describes, so it *is* the union, and narrowing to what the other side
+publishes would declare less than the operation sends. One declaration in Kynos
+is that shape on purpose — `AuthRejection`'s 403, below — and an interceptor's
+contribution or a hand-written `Responses` may be too.
+
+**Not narrowed is not the same as admitting everything**, and the union keeps
+the two apart. A schema satisfied by nothing, an empty `oneOf`, and a `oneOf`
+mixing a bare `$ref` with a narrowed branch — which is satisfied by *neither*
+branch for a document the narrowed one describes, since it matches both and
+`oneOf` admits exactly one — all fail the narrowing read while admitting
+strictly less. Adopting one would declare a schema the operation's own bodies
+fail, so a shape the rule cannot place keeps the entry already declared.
 
 ## Rejections
 
