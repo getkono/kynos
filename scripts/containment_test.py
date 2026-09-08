@@ -978,7 +978,7 @@ class Main(unittest.TestCase):
     matched `failures.append` and nothing else, so
     `failures += taxonomy_failures(...)` and
     `failures += cargo_config_failures(...)` were never mutated at all, and the
-    inventory below named five sites where the tree held seven. Silencing the
+    inventory below named fewer sites than the tree held. Silencing the
     taxonomy wiring left `containment:check` printing that every rule holds
     with the whole rule disconnected and `TaxonomyCount` green beside it: a
     helper held to its own cases says nothing about whether anything calls it.
@@ -997,11 +997,11 @@ class Main(unittest.TestCase):
     instead. These three reads are not module constants, and no parameter
     would spare them.
 
-    What that leaves unheld is named rather than implied, and it is three
-    sites: the dependency-graph stray scan, the parent re-export scan and the
-    placeholder scan. All three read `FILES`, which this module builds while it
-    is being imported, so by the time `main` runs the corpora are already what
-    they are and neither an argument nor a rebound read reaches them. Silencing
+    What that leaves unheld is named rather than implied: the dependency-graph
+    stray scan, the parent re-export scan and the placeholder scan. All three
+    read `FILES`, which this module builds while it is being imported, so by
+    the time `main` runs the corpora are already what they are and neither an
+    argument nor a rebound read reaches them. Silencing
     any one of their failures leaves both gates green, which is the severity
     class worth holding rather than the one below, and a stronger reason than
     the one that leaves the manifest rule's *guard* unheld. Holding them means
