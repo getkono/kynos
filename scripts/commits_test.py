@@ -13,10 +13,14 @@ exist on that path unless the task supplies it. Nor can convco be told to: the
 `--from-stdin` branch of `convco check` returns before
 `--ignore-message-pattern` is ever consulted.
 
-So both halves are run here, over the same commit, and every case that asserts
-one half's verdict on a merge asserts the other's too. Running only the hook
-half would leave the range half's verdicts asserted in prose, and the range
-half is the one that moves under maintenance: a `.convco` holding
+So both halves are run here. `BothHalvesOverOneMerge` puts each verdict to
+both, over the same commit, and that is where the two are held to agree. It is
+not a universal, and cannot be: `TheAmendResidual` exists precisely to pin the
+one state where the halves *disagree*, and the two linked-worktree cases reach
+the hook half alone because what they are about is where the guard looks, not
+what convco says. Running only the hook half everywhere would leave the range
+half's verdicts asserted in prose, and the range half is the one that moves
+under maintenance: a `.convco` holding
 `merges: true` -- the very switch behind `no_merge_commits` -- flips
 `convco check BASE..HEAD` from exit 0 to exit 1 over a merge subject while
 leaving the hook half untouched, and a `[tools]` bump of convco can do the

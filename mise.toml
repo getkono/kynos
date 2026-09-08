@@ -724,9 +724,11 @@ description = "Test that both halves of the commit rule agree about a merge"
 # over every commit written by hand, and the divergence surfaces only at the
 # next merge, where the fix that looks available is `--no-verify`.
 #
-# So every case that asserts one half's verdict on a merge asserts the other's
-# too, over the same commit -- because the range half is the one that moves
-# under maintenance. A `.convco` holding `merges: true` flips it from exit 0 to
+# So the verdicts are put to both halves over the same commit, in
+# `BothHalvesOverOneMerge`, because the range half is the one that moves under
+# maintenance. Not every case does: one class pins the single state where the
+# two are *supposed* to disagree, and the linked-worktree cases are about where
+# the guard looks rather than what convco says. A `.convco` holding `merges: true` flips it from exit 0 to
 # exit 1 over a merge subject while leaving the hook half untouched, and a
 # `[tools]` bump of convco can do the same; a suite that ran only the hook half
 # would stay green through it.
@@ -741,11 +743,15 @@ description = "Test that both halves of the commit rule agree about a merge"
 # symptom, so reverting this fix makes it print `Not committing merge`.
 #
 # It is the slowest thing in `check` that compiles nothing: around fourteen
-# seconds, almost all of it the fifteen nested `mise run` invocations the
-# cases make. That is worth its three placements -- `check`, `hooks:pre-push`
-# and the CI `lint` job -- because every one of those is somewhere the two
-# halves could already have diverged, but it is the number to weigh if the
-# suite grows again.
+# seconds, almost all of it spent in nested `mise run` invocations. That is
+# worth its three placements -- `check`, `hooks:pre-push` and the CI `lint`
+# job -- because every one of those is somewhere the two halves could already
+# have diverged, but it is the figure to weigh if the suite grows again.
+#
+# A duration and not a count of anything. Every count this task's comment has
+# carried has gone wrong: the number of cases, and then the number of nested
+# invocations, which was wrong when it was written. A wall-clock reading
+# measures the thing itself and nothing here would fail if a census drifted.
 #
 # `unittest` from the standard library and no test runner. There is no
 # `pytest`, no `tox` and no `requirements.txt` in this repository, and taking
