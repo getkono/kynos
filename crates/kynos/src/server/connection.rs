@@ -12,7 +12,7 @@ use hyper_util::{
     server::conn::auto,
 };
 use tokio::{
-    io::{AsyncRead, AsyncReadExt as _, AsyncWrite},
+    io::{AsyncRead, AsyncWrite, ReadBuf},
     sync::watch,
 };
 
@@ -239,19 +239,32 @@ where
     I: AsyncRead + Unpin,
 {
     let mut byte = [0_u8; 1];
-    // `read` is cancel-safe, so losing this branch loses no byte -- and the
-    // branch that wins it returns without reading at all.
+    let mut buf = ReadBuf::new(&mut byte);
+    // `AsyncRead::poll_read` rather than `AsyncReadExt::read`: the extension
+    // trait lives behind tokio's `io-util`, which the server does not enable
+    // and only some feature combinations pull in behind its back.
+    //
+    // Losing the race loses no byte. The buffer is this future's, not the
+    // stream's, and a poll that has not filled it has read nothing -- so the
+    // branch that wins reads a whole byte or none at all.
     let read = tokio::select! {
         biased;
         _ = wait_until_stopping(lifecycle) => return None,
-        read = io.read(&mut byte) => read,
+        read = std::future::poll_fn(|context| {
+            std::pin::Pin::new(&mut io).poll_read(context, &mut buf)
+        }) => read,
     };
 
     match read {
-        Ok(1) => Some(FirstByte {
-            first: Some(byte[0]),
-            io,
-        }),
+        Ok(()) if buf.filled().len() == 1 => {
+            let first = buf.filled()[0];
+            Some(FirstByte {
+                first: Some(first),
+                io,
+            })
+        }
+        // A read that filled nothing is the peer closing, and an error is the
+        // connection failing: neither leaves anything in flight.
         _ => None,
     }
 }
