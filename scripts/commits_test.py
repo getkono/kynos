@@ -37,11 +37,11 @@ this suite reads fails these tests -- and then runs a real `git merge --no-ff`
 through it. The last of those is an allowlist because hk decides whether a step
 runs at all from keys nothing here installs: `step_condition`, `condition`,
 `profiles`, `glob`, `exclude`, `dir` and `types` each leave the `check` line
-untouched and stop the step from running. That case is the reported symptom itself:
-before the fix, it is the `Not committing merge` the issue opens with. Its
-boundary is written down at the fixture: the command is wrapped in a two-line
-prologue the real hook does not have, so it proves git's ordering and not the
-environment hk supplies.
+untouched and stop the step from running. That case is the reported symptom
+itself: before the fix, it is the `Not committing merge` the issue opens with.
+Its boundary is written down at the fixture: the command is wrapped in a
+two-line prologue the real hook does not have, so it proves git's ordering and
+not the environment hk supplies.
 
 One fixture is a linked worktree, because this repository is worked in linked
 worktrees and MERGE_HEAD lives under `.git/worktrees/<name>/` there. The
@@ -234,13 +234,13 @@ def braced_body(text, key, within=None):
 # and it is safe by the mask plus its allowlist rather than by the mask alone:
 # a key withdrawn by commenting it out gates nothing and must not be reported,
 # and a key hk grows later is one nothing here reads and must be. 5 and 6 are
-# safe for a reason that does not generalise, so it is written
-# down rather than assumed: a TOML comment begins with `#`, and both patterns
-# anchor to the start of a line at a position where they require `[` or `r`.
-# A commented-out `#[tasks."commits:message"]` or `# run = '''` cannot match.
-# What the body then captures is verbatim, which is correct twice over: a `#`
-# line inside `run = '''...'''` is shell to mise and shell to the fixture
-# alike, so there is nothing there to mask.
+# safe for a reason that does not generalise, so it is written down rather than
+# assumed: a TOML comment begins with `#`, and both patterns anchor to the
+# start of a line at a position where they require `[` or `r`. A commented-out
+# `#[tasks."commits:message"]` or `# run = '''` cannot match. What the body
+# then captures is verbatim, which is correct twice over: a `#` line inside
+# `run = '''...'''` is shell to mise and shell to the fixture alike, so there
+# is nothing there to mask.
 def declared_check(step):
     """The `check` command a step body declares, ignoring any commented ones.
 
