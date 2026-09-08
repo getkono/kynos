@@ -471,6 +471,23 @@ class GatePolarity(unittest.TestCase):
         self.assertTrue(self.matcher('`feature = "uuid"`').search(source))
         self.assertFalse(self.matcher('`not(feature = "uuid")`').search(source))
 
+    def test_a_negation_written_with_a_space_is_still_a_negation(self):
+        # `\bnot\s*\(`, both halves. Rust allows the space, rustfmt does not
+        # insert it, and a pattern reading `not(` alone takes the spaced form
+        # for a bare paren -- which reads the flag POSITIVE, over code that
+        # exists only when the flag is off. That is #134's reported symptom.
+        source = '#[cfg(not (feature = "uuid"))]\nfn absent_when_uuid_is_on() {}\n'
+        self.assertFalse(self.matcher('`feature = "uuid"`').search(source))
+        self.assertTrue(self.matcher('`not(feature = "uuid")`').search(source))
+
+    def test_a_cfg_attr_predicate_nesting_a_comma_is_read_past_it(self):
+        # The comma-depth test. Only a comma at the attribute's own depth ends
+        # a `cfg_attr` predicate; one inside `all(...)` separates that group's
+        # own arguments. Reading any comma as the end makes this a non-gate,
+        # and an offender naming an off-path flag then goes unreported.
+        source = '#[cfg_attr(all(docsrs, feature = "uuid"), doc(hidden))]\npub fn f() {}\n'
+        self.assertTrue(self.matcher('`feature = "uuid"`').search(source))
+
     def test_a_flag_after_a_closed_negation_is_read_at_the_outer_polarity(self):
         # The `)` pop: without it the walk stays inside `not(` and reads `uuid`
         # as negative, which is the whole predicate inverted by one branch.
