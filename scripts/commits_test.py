@@ -112,6 +112,64 @@ def scrubbed_environment():
     return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
 
 
+# The characters a quoted value must not be able to contribute to a scan: two
+# that open or close a block, and two that start a comment.
+STRUCTURAL = "{}/*"
+
+
+def masked_source(region):
+    """`region` with comments blanked and quoted values neutralised, index for index.
+
+    Every replacement is one character wide and newlines are preserved, so an
+    offset into the mask is the same offset into `region`: a caller searches
+    the mask and slices the source.
+
+    The two kinds of span are treated differently on purpose. A comment is not
+    code, so it is blanked entirely and nothing can be *found* in one. A
+    quoted span is code -- in Pkl a block's own key is a quoted string -- so it
+    stays findable, and only the characters that could open a block, close one
+    or begin a comment are replaced. A value can then never be structure, and
+    `["commit-msg"]` is still something `find` can locate.
+
+    Block comments do not nest, and the first `*/` ends one. That is not a
+    simplification: `/* a /* b */ { */` is a syntax error to Pkl itself, which
+    `mise exec -- hk validate` rejects with `expected identifier, got LBrace`,
+    so no file hk accepts can distinguish a nesting scanner from this one.
+    """
+    masked = []
+    index = 0
+    length = len(region)
+    while index < length:
+        pair = region[index : index + 2]
+        if pair == "//":
+            end = region.find("\n", index)
+            end = length if end < 0 else end
+            masked.append(" " * (end - index))
+            index = end
+        elif pair == "/*":
+            closing = region.find("*/", index + 2)
+            end = length if closing < 0 else closing + 2
+            masked.append("".join(" " if c != "\n" else "\n" for c in region[index:end]))
+            index = end
+        elif region[index] == '"':
+            masked.append('"')
+            index += 1
+            while index < length:
+                character = region[index]
+                if character == "\\":
+                    masked.append("  ")
+                    index += 2
+                    continue
+                masked.append(" " if character in STRUCTURAL else character)
+                index += 1
+                if character == '"':
+                    break
+        else:
+            masked.append(region[index])
+            index += 1
+    return "".join(masked)
+
+
 def braced_body(text, key, within=None):
     """The `{ ... }` that follows `key` in `text`, by matching braces.
 
@@ -121,59 +179,34 @@ def braced_body(text, key, within=None):
     unanchored search cannot tell those apart, and the difference is the whole
     gate.
 
-    Three regions are not code and are skipped, because a brace in any of them
-    would move the block's end and hand the caller a step from some other
-    hook. Double-quoted values, so a `{{commit_msg_file}}` cannot close the
-    block that holds it; `//` comments, because the comments in that very
-    block discuss `{{commit_msg_file}}` in prose; and Pkl's `/* ... */`, for
-    the same reason and in the same block. None of the three is exercised by
-    today's `hk.pkl`, which is exactly why `BracedBody` tests them directly:
-    a scanner that breaks is what makes a containment check pass over a file
-    it half read.
+    The search and the scan both run over `masked_source`, which is what makes
+    that true of the *lookup* and not only of the brace counting. Skipping
+    comments inside the depth loop alone left both `find` calls reading raw
+    text, so a step that existed only as a commented-out block was located and
+    returned as a live declaration -- and the end-to-end fixture could not
+    notice, because it installs as its hook the string this function read.
+    A scan that finds nothing fails loudly; one that finds the wrong block
+    reports green, and that is the failure this exists for.
 
-    Returns None when `key` is absent from the region searched.
+    Returns None when `key` is absent from the code of the region searched.
     """
     region = text if within is None else within
-    offset = region.find(key)
+    mask = masked_source(region)
+    offset = mask.find(key)
     if offset < 0:
         return None
-    opening = region.find("{", offset + len(key))
+    opening = mask.find("{", offset + len(key))
     if opening < 0:
         return None
 
     depth = 0
-    quoted = False
-    commented = False
-    index = opening
-    while index < len(region):
-        character = region[index]
-        if commented:
-            commented = character != "\n"
-        elif quoted:
-            if character == "\\":
-                index += 1
-            elif character == '"':
-                quoted = False
-        elif character == '"':
-            quoted = True
-        elif region.startswith("//", index):
-            commented = True
-            index += 1
-        elif region.startswith("/*", index):
-            # After the quoted check above, never before it: a glob such as
-            # `"**/*.rs"` carries `/*` in a value, and reading that as a
-            # comment would swallow the rest of the file.
-            closing = region.find("*/", index + 2)
-            if closing < 0:
-                return None
-            index = closing + 1
-        elif character == "{":
+    for index in range(opening, len(mask)):
+        if mask[index] == "{":
             depth += 1
-        elif character == "}":
+        elif mask[index] == "}":
             depth -= 1
             if depth == 0:
                 return region[opening + 1 : index]
-        index += 1
     return None
 
 
@@ -239,9 +272,9 @@ def convco_on_path():
 class BracedBody(unittest.TestCase):
     """The scanner `hk.pkl`'s containment promise rests on, over its own inputs.
 
-    Nothing else here reaches the two regions `braced_body` skips: today's
-    `hk.pkl` has balanced braces in both its values and its comments, so a
-    scanner that skipped neither would pass every other case in this file.
+    Nothing else here reaches the regions `braced_body` masks: today's
+    `hk.pkl` has balanced braces in its values and its comments alike, so a
+    scanner that masked none of them would pass every other case in this file.
     That is the shape `containment_test.py` already tests its own scanner for,
     and the reason `mise.toml` gives for running that suite beside its gate --
     a gate is only as good as the parser under it, and a parser that breaks is
@@ -300,6 +333,35 @@ class BracedBody(unittest.TestCase):
     def test_an_escaped_quote_does_not_end_a_quoted_value(self):
         body = braced_body('["a"] {\n  c = "a \\" }"\n  x = 1\n}', '["a"]')
         self.assertIn("x = 1", body)
+
+    def test_a_key_that_exists_only_in_a_comment_is_not_found(self):
+        """The search runs over the mask too, not just the brace counting.
+
+        Commenting a block out is how a step is disabled, so a commented one
+        must not read as a declaration. When only the depth loop skipped
+        comments, this returned the commented block's body and the end-to-end
+        fixture could not object -- it installs whatever this returns.
+        """
+        # A live sibling follows, so a search over raw text does not merely
+        # return None here -- it finds the commented key and then the *next*
+        # real brace, and hands back a body belonging to something else.
+        text = '["a"] {\n  // ["b"] { c = "commented" }\n  ["c"] { c = "other" }\n}'
+        self.assertIsNone(braced_body(text, '["b"]', within=braced_body(text, '["a"]')))
+
+    def test_a_commented_brace_between_a_key_and_its_block_is_not_the_opening(self):
+        """The second lookup runs over the mask for the reason the first does."""
+        # Asserted exactly: a raw lookup opens at the *commented* brace, and
+        # the body it returns still holds `live` -- it just starts too early.
+        text = '["a"] {\n  ["b"] /* { */ { c = "live" }\n}'
+        body = braced_body(text, '["b"]', within=braced_body(text, '["a"]'))
+        self.assertEqual(body, ' c = "live" ')
+
+    def test_a_live_key_is_found_past_a_commented_copy_of_itself(self):
+        """And the mask must not hide the real one behind the commented one."""
+        text = '["a"] {\n  // ["b"] { c = "commented" }\n  ["b"] { c = "live" }\n}'
+        body = braced_body(text, '["b"]', within=braced_body(text, '["a"]'))
+        self.assertIn("live", body)
+        self.assertNotIn("commented", body)
 
     def test_a_key_the_region_does_not_hold_is_absent(self):
         """What containment is for: a sibling block's step is not this one's."""
