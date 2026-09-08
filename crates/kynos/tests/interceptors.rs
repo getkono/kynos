@@ -599,22 +599,12 @@ async fn every_case() -> Vec<Case> {
     let registry = &mut kynos::schema::registry::Registry::new();
     let mut cases = Vec::new();
 
-    cases.push(case(registry, BodySizeExceeded { limit: 64 }).await);
+    cases.push(case(registry, BodySizeExceeded::<()>::new(64)).await);
+    cases.push(case(registry, TimedOut::<()>::new(Duration::from_secs(1))).await);
     cases.push(
         case(
             registry,
-            TimedOut {
-                after: Duration::from_secs(1),
-            },
-        )
-        .await,
-    );
-    cases.push(
-        case(
-            registry,
-            AtCapacity {
-                retry_after: Some(Duration::from_secs(1)),
-            },
+            AtCapacity::<()>::new(Some(Duration::from_secs(1))),
         )
         .await,
     );
@@ -747,4 +737,74 @@ async fn every_short_circuit_declares_the_content_it_sends() {
             );
         }
     }
+}
+
+// --- What a marker must not cost the type that names it -------------------
+//
+// The four implementations every parameterised refusal writes out by hand, and
+// the auto traits its `PhantomData<fn() -> T>` protects. Held here rather than
+// per module because it is one rule over a set: a `#[derive]` anywhere in that
+// set would bound the marker and take the implementation away from every
+// application whose marker is only a name.
+
+/// A marker that is deliberately neither `Send` nor `Sync`.
+///
+/// A raw pointer is the cheapest way to be neither. It is still `'static`, so
+/// it satisfies `ProblemType` and the only thing under test is whether the
+/// refusal's auto traits followed it.
+struct Unsendable(std::marker::PhantomData<*const ()>);
+
+impl kynos::error::problem::ProblemType for Unsendable {
+    const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/unsendable");
+}
+
+/// A marker deriving nothing at all, which is what an application writes.
+struct Bare;
+
+impl kynos::error::problem::ProblemType for Bare {
+    const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/bare");
+}
+
+/// Witnesses that a refusal crosses a task boundary whatever names its type.
+fn assert_send_sync<T: Send + Sync>() {}
+
+/// Witnesses the four implementations a refusal writes out.
+fn assert_refusal_traits<T: Clone + std::fmt::Debug + Eq>() {}
+
+/// Witnesses the two an interceptor writes out.
+fn assert_clone_and_debug<T: Clone + std::fmt::Debug>() {}
+
+/// A refusal is `Send` and `Sync` whatever marker names its problem type.
+///
+/// The field is `PhantomData<fn() -> T>` rather than `PhantomData<T>` for this
+/// reason and no other: a `PhantomData<T>` inherits `T`'s auto traits, and a
+/// refusal that is not `Send` cannot be returned from an interceptor at all —
+/// a bound failure at every mount site, from a marker the application thought
+/// was only a name.
+#[test]
+fn a_refusal_is_send_and_sync_whatever_marker_names_it() {
+    use kynos::middleware::limits::{AtCapacity, BodySizeExceeded, TimedOut};
+
+    assert_send_sync::<BodySizeExceeded<Unsendable>>();
+    assert_send_sync::<TimedOut<Unsendable>>();
+    assert_send_sync::<AtCapacity<Unsendable>>();
+}
+
+/// A refusal and its interceptor keep their implementations whatever names the
+/// problem type.
+///
+/// `Bare` derives nothing, so these calls are the whole test: a `#[derive]` on
+/// any of these types would bound the marker and refuse them.
+#[test]
+fn naming_a_problem_type_costs_the_marker_no_derives() {
+    use kynos::middleware::limits::{
+        AtCapacity, BodySize, BodySizeExceeded, Concurrency, TimedOut,
+    };
+
+    assert_refusal_traits::<BodySizeExceeded<Bare>>();
+    assert_refusal_traits::<TimedOut<Bare>>();
+    assert_refusal_traits::<AtCapacity<Bare>>();
+
+    assert_clone_and_debug::<BodySize<Bare>>();
+    assert_clone_and_debug::<Concurrency<Bare>>();
 }

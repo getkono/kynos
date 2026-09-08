@@ -12,8 +12,8 @@ help: the trait `ShortCircuit` is not implemented for `NotAResponse`
   = note: an interceptor answers with a type that says which statuses it can produce; derive it with `#[derive(kynos::ApiError)]`
   = note: use `std::convert::Infallible` for an interceptor that always reaches the handler
   = help: the following other types implement trait `ShortCircuit`:
-            AtCapacity
-            BodySizeExceeded
+            AtCapacity<T>
+            BodySizeExceeded<T>
             CrossSite
             Infallible
             NotModified

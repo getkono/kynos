@@ -5,11 +5,11 @@ error[E0277]: the trait bound `Identity: Interceptor<()>` is not satisfied
   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `Interceptor<()>` is not implemented for `Identity`
   |
   = help: the following other types implement trait `Interceptor<C>`:
-            BodySize
+            BodySize<T>
             BodyTimeout
             Cache<S, D>
             Compression
-            Concurrency
+            Concurrency<T>
             Cors<D>
             Csrf
             Decompression

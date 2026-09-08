@@ -9,11 +9,11 @@ error[E0277]: `kynos::Problem` does not declare which responses it can produce
    = help: the following other types implement trait `kynos::response::Responses`:
              ()
              Accepted<T>
-             AtCapacity
+             AtCapacity<T>
              AuthRejection
              BinaryStream<S, M>
              BodyRejection
-             BodySizeExceeded
+             BodySizeExceeded<T>
              CookieRejection
            and $N others
    = note: required for `Result<NoContent, kynos::Problem>` to implement `kynos::response::Responses`
