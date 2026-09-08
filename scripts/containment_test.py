@@ -226,6 +226,29 @@ class Section(unittest.TestCase):
         self.assertEqual(failures, [])
 
 
+class ImportTime(unittest.TestCase):
+    """That importing `containment.py` runs no rule.
+
+    The `if __name__ == "__main__":` guard at the foot of that file used to
+    cover the report alone. Every rule body was a top-level statement, so the
+    import at the head of this file ran the whole gate against the real tree
+    before the first test started -- and the cost was not the file reads, which
+    are cheap and sanctioned. It was that a rule raising over a reworded
+    document took this run down with it, and reported the parsers as untested
+    exactly when a parser was what broke.
+
+    Structural rather than behavioural, and said so: the behavioural half is
+    `Section` above, which is what fails when a heading is renamed. These two
+    say where the rules live, which is what makes that guard's own comment true.
+    """
+
+    def test_the_module_holds_no_failure_list_at_import(self):
+        self.assertFalse(hasattr(gate, "failures"))
+
+    def test_every_rule_is_reachable_as_main(self):
+        self.assertTrue(callable(getattr(gate, "main", None)))
+
+
 class Token(unittest.TestCase):
     """What one *Named by* cell parses to, and when it refuses to parse."""
 
