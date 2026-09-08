@@ -231,9 +231,12 @@ def braced_body(text, key, within=None):
 #     6. that task's `run = '''` body              -- safe by construction
 #
 # 4 is the only one whose subject is a set of key names rather than a value,
-# and it is safe by the mask plus its allowlist rather than by the mask alone:
-# a key withdrawn by commenting it out gates nothing and must not be reported,
-# and a key hk grows later is one nothing here reads and must be. 5 and 6 are
+# and it is safe by the mask plus two things the mask alone does not give it:
+# the values are blanked as well, since between quotes there is no key, and
+# what it reports is measured against an allowlist -- a key withdrawn by
+# commenting it out gates nothing and must not be reported, and a key hk grows
+# later is one nothing here reads and must be. It anchors nowhere, because Pkl
+# needs no separator between members. 5 and 6 are
 # safe for a reason that does not generalise, so it is written down rather than
 # assumed: a TOML comment begins with `#`, and both patterns anchor to the
 # start of a line at a position where they require `[` or `r`. A commented-out
@@ -281,14 +284,27 @@ def unsanctioned_keys(step):
     key carrying no `=` is a key all the same -- are invisible from the
     repository's own configuration.
 
-    Read over the mask, like every other lookup into `hk.pkl` here. Both
-    spellings Pkl gives a key are matched at a line start: `name = value`, and
-    the block form `name { ... }` whose own entries are quoted keys rather than
-    identifiers and so report nothing of their own.
+    Read over the mask, like every other lookup into `hk.pkl` here, and then
+    over the values as well: between quotes there is no key, and this is the
+    one read for which a value's text is noise rather than the thing that
+    makes `["commit-msg"]` findable. `masked_source` has already turned every
+    escape into spaces, so the quotes left in the mask pair off exactly.
+
+    Both spellings Pkl gives a key are matched -- `name = value` and the block
+    form `name { ... }`, whose own entries are quoted keys rather than
+    identifiers and so report nothing of their own -- and neither is anchored
+    to a line start, because Pkl needs no separator between members and hk
+    reads a second key on a line that a line-anchored scan would not.
     """
-    declared = re.findall(
-        r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*[={]", masked_source(step), re.MULTILINE
-    )
+    code = []
+    inside_value = False
+    for character in masked_source(step):
+        if character == '"':
+            inside_value = not inside_value
+        elif inside_value and character != "\n":
+            character = " "
+        code.append(character)
+    declared = re.findall(r"([A-Za-z_][A-Za-z0-9_]*)\s*[={]", "".join(code))
     return sorted({key for key in declared if key not in SANCTIONED_STEP_KEYS})
 
 
