@@ -66,6 +66,16 @@ hooks {
     }
     ["commit-msg"] {
         steps {
+            // A merge in progress is exempt from this rule, and the exemption
+            // lives inside the task rather than in a `step_condition` here.
+            // hk's `exec()` returns a command's stdout and raises on a non-zero
+            // exit, and `src/step/execution.rs` propagates that with `?`, so the
+            // natural spelling of "skip when MERGE_HEAD resolves" would fail the
+            // hook on every commit that is not a merge; only a literal
+            // `Bool(false)` skips a step. And `src/test_runner.rs` evaluates no
+            // condition and cannot render `{{commit_msg_file}}`, so an `hk test`
+            // case could neither exercise one nor run this step at all. In the
+            // task, the exemption is covered by `mise run commits:test`.
             ["conventional-commit"] {
                 check = "mise run --quiet commits:message < {{commit_msg_file}}"
                 output_summary = "stdout"

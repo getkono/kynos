@@ -656,7 +656,38 @@ run = [
 [tasks."commits:message"]
 description = "Validate one Conventional Commit message from stdin"
 quiet = true
-run = "convco check --from-stdin"
+# The merge exemption has to be stated here, because convco states it as a
+# property of the commit and this task is only ever given a message.
+# `convco check <range>` drops a merge by parent count, and a bare message has
+# no parents -- so the two spellings of this repository's one rule disagreed
+# about every merge, and `git merge` could not write its own merge commit.
+#
+# It cannot be pushed back into convco: the `--from-stdin` branch of
+# `convco check` returns before `--ignore-message-pattern` is consulted, in
+# 0.7.0 and in 0.7.1 alike, so no flag, `.convco` file or version bump reaches
+# it. Nor into `hk.pkl` -- see the note on the step that calls this.
+#
+# MERGE_HEAD is the parent count, read at the only moment this task can read
+# anything: git writes it before running the commit-msg hook and removes it
+# once the commit exists, and its lines are the extra parents of the commit
+# about to be written.
+#
+# Squash, cherry-pick, revert and rebase are deliberately not exempted. Each
+# produces a one-parent commit that `commits:check` and the `commits` CI job do
+# check, so exempting them here would make this half accept what that half
+# rejects -- the reported bug with its sign flipped.
+#
+# One case this cannot reach: amending or rewording an *existing* merge commit
+# runs the hook with MERGE_HEAD already gone over a commit that still has two
+# parents, so the gate rejects what `commits:check` exempts. Nothing at
+# commit-msg time separates it from committing on top of a merge, and
+# `--no-verify` remains the escape. Recorded in `docs/nfr.md`.
+run = '''
+if git rev-parse --verify --quiet MERGE_HEAD >/dev/null; then
+  exit 0
+fi
+convco check --from-stdin
+'''
 
 [tasks."commits:check"]
 description = "Validate an explicit or outgoing commit range"
