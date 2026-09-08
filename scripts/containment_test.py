@@ -947,26 +947,38 @@ class Main(unittest.TestCase):
     joins that inventory or it does not go in.
 
     The third kind of mutation named above -- a rule's own failure deleted --
-    is now held across every document `main` takes: each `failures.append` in
-    `main` and in `claimed` that a rewritten `architecture.md`, `testing.md`,
-    `performance.md` or `nfr.md` can reach has a case below that makes it
-    appear. That was not true before, and the gap was not decorative. Silencing
-    the off-path offender scan -- the rule the second defect of #134 exists to
-    correct -- left both gates green, with `containment:check` printing that
-    every rule holds. The repair is cheap for the reason the absence pairs are
-    cheap, and this branch is what made it available: the documents are `main`'s
-    arguments, so one rewritten cell reaches one rule.
+    is held across every document `main` takes, and across both shapes `main`
+    accumulates a failure in: `failures.append(...)` and
+    `failures += helper(...)`. Every one of them a rewritten `architecture.md`,
+    `testing.md`, `performance.md` or `nfr.md` can reach has a case below that
+    makes it appear. That was not true before, and the gap was not decorative.
+    Silencing the off-path offender scan -- the rule the second defect of #134
+    exists to correct -- left both gates green, with `containment:check`
+    printing that every rule holds. The repair is cheap for the reason the
+    absence pairs are cheap, and this branch is what made it available: the
+    documents are `main`'s arguments, so one rewritten cell reaches one rule.
 
-    What that leaves unheld is named rather than implied. The rules stated over
-    the tree itself -- the dependency-graph stray scan, the
-    implicit-optional-dependency rule, the package-escape read, the parent
-    re-export scan and the placeholder scan -- read `FILES` or
-    `crates/kynos/Cargo.toml` off `ROOT` rather than a document, so no argument
-    reaches them. Silencing any one of their failures leaves both gates green,
-    which is the severity class worth holding rather than the one below, and a
-    stronger reason than the one that leaves the manifest rule's *guard*
-    unheld. Holding them means injecting the corpora rather than the documents,
-    which is a wider change to `main`'s contract than this branch made.
+    Both shapes, and the second is written down because the instrument drew
+    that boundary once and drew it wrong. The sweep that found this class
+    matched `failures.append` and nothing else, so
+    `failures += taxonomy_failures(...)` and
+    `failures += cargo_config_failures(...)` were never mutated at all, and the
+    inventory below named five sites where the tree held seven. Silencing the
+    taxonomy wiring left `containment:check` printing that every rule holds
+    with the whole rule disconnected and `TaxonomyCount` green beside it: a
+    helper held to its own cases says nothing about whether anything calls it.
+    What a later sweep has to match is the accumulation, not one spelling of
+    it.
+
+    What that leaves unheld is named rather than implied, and it is six sites:
+    the dependency-graph stray scan, the implicit-optional-dependency rule, the
+    package-escape read, the parent re-export scan, the placeholder scan, and
+    the `cargo_config_failures` wiring. Each reads `FILES`,
+    `crates/kynos/Cargo.toml` or `.cargo/config.toml` off `ROOT` rather than a
+    document, so no argument `main` takes reaches them. Silencing any one of
+    their failures leaves both gates green, which is the severity class worth
+    holding rather than the one below, and a stronger reason than the one that
+    leaves the manifest rule's *guard* unheld.
 
     The rule that cost a case: `main` reads `crates/kynos/Cargo.toml` off
     `ROOT`, so the implicit-optional-dependency check below the grading is not
@@ -1224,6 +1236,25 @@ class Main(unittest.TestCase):
         reported = self.naming(failures, self.GRADING)[0]
         self.assertIn("goes unparsed", reported)
         self.assertIn("off-path coverage comparison", reported)
+
+    def test_a_reworded_taxonomy_claim_is_reported(self):
+        # `taxonomy_failures`, reached through the one line of `main` that
+        # calls it. Its own suite holds what the helper returns; this holds
+        # that `main` still adds it to `failures`, which is a separate claim
+        # and the one a sweep over `failures.append` alone could not see --
+        # replacing that line with `pass` disconnects the rule with both gates
+        # green.
+        broken = re.sub(
+            gate.TAXONOMY_CLAIM,
+            lambda found: f"All {found.group(1)} of the kinds listed below run today",
+            gate.PERFORMANCE,
+            count=1,
+        )
+        status, failures = self.report(performance=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            len(self.naming(failures, "no longer states how many of the kinds below")), 1
+        )
 
     def test_a_missing_off_path_header_holds_nothing_and_says_so(self):
         # `testing`. The off-path table is split at its header rather than
