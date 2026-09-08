@@ -188,7 +188,11 @@ fn depth_8() -> Service<()> {
 ///
 /// The same depth as [`calibrated`] and the same builder, differing only in
 /// which interceptor is mounted, so that the difference between two readings
-/// taken through them is what [`Calibrating`] does and nothing else.
+/// taken through them is what [`Calibrating`] does and nothing else. What
+/// makes that hold is that the erased chain boxes each layer's future with one
+/// `Box::pin` whose cost does not depend on how large that future is, and both
+/// interceptors declare the same associated types — so the layer itself costs
+/// the same in both. True today, and pinned by nothing.
 fn depth_1() -> Service<()> {
     router()
         .intercept(Transparent)
@@ -550,14 +554,23 @@ const CALIBRATION: usize = 2;
 /// replays read a uniform fall as still constant, and the strict relations and
 /// the equalities over differences are all one-sided.
 ///
-/// **What this cannot catch, since only a docblock can hold it.** The region
-/// is "construct the future, then poll it", and an `async fn`'s construction
-/// allocates nothing, so a narrowing of the region's *front* boundary moves no
-/// count — measured, by moving `Service::call` outside the region and watching
-/// both targets stay green. No fixture can reach that boundary either: the
-/// only handle one has on the inside is `Interceptor::intercept`, which is
-/// itself an `async fn`. It becomes a real hole the day dispatch boxes at call
-/// time rather than at poll time.
+/// **What this cannot catch, since only a docblock can hold it.** A delta
+/// cancels any shift the two readings share. A driver that under-reported
+/// *every* request by the same amount would be invisible here — and to every
+/// ceiling, which a fall passes, and to every relation, which a common shift
+/// leaves standing. The absolute this replaced did catch that, and buying the
+/// sensitivity back costs a red test on each genuine routing-path
+/// improvement, which is the treadmill the delta exists to remove. The blind
+/// spot is accepted and written down rather than closed.
+///
+/// The region's *front* boundary is the concrete case. It is "construct the
+/// future, then poll it", and an `async fn`'s construction allocates nothing,
+/// so narrowing there shifts both readings by zero — measured, by moving
+/// `Service::call` outside the region and watching both targets stay green.
+/// No fixture can reach that boundary either: the only handle one has on the
+/// inside is `Interceptor::intercept`, which is itself an `async fn`. It
+/// becomes a real hole the day dispatch boxes at call time rather than at poll
+/// time.
 ///
 /// Filed here beside `work_on_another_thread_is_not_counted` rather than in
 /// `alloc_codecs.rs`, for that assertion's reason and by the precedent
@@ -584,8 +597,8 @@ fn the_counter_reports_every_heap_operation_in_the_region() {
         "one calibrating layer added {} heap operation(s) to a request that \
          cost {plain} through a transparent one, against the {CALIBRATION} it \
          performs by construction — one fresh allocation and one \
-         reallocation. A driver that stopped counting either kind reports \
-         fewer here, and every `<=` ceiling in this target and in \
+         reallocation. A driver that stopped counting one of the two kinds \
+         reports fewer here, and every `<=` ceiling in this target and in \
          alloc_codecs.rs would pass it",
         calibrating.saturating_sub(plain)
     );
