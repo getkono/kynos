@@ -1423,16 +1423,26 @@ class Main(unittest.TestCase):
         # The offender scan, which is the rule the second defect of #134 exists
         # to correct: the row's sites are narrowed to one file, so every other
         # file naming the element is a site a request may now reach it from.
+        site = "schema/mod.rs"
         broken = gate.TESTING.replace(
             self.UUID_ROW,
-            self.UUID_ELEMENT + self.UUID_NAMED_BY + " `schema/mod.rs` |",
+            self.UUID_ELEMENT + self.UUID_NAMED_BY + f" `{site}` |",
             1,
         )
         status, failures = self.report(testing=broken)
         self.assertEqual(status, 1)
         reported = self.naming(failures, "is off the request path")
         self.assertEqual(len(reported), 1)
-        self.assertIn("crates/kynos/src/schema/impls/identifier.rs", reported[0])
+        # Which file the scan names is read off the message rather than written
+        # here. This rule tolerates a stale *site* deliberately -- "locations
+        # may empty out while the claim stays true" -- so a rename that empties
+        # one of the cell's files is an edit the gate accepts, and a case
+        # naming that file would red `containment:test` over a rule that is
+        # fine. What is held is that a site outside the cell this fixture just
+        # narrowed was reported at all.
+        offenders = [line.strip() for line in reported[0].split("\n")[1:] if line.strip()]
+        self.assertTrue(offenders)
+        self.assertNotIn(gate.OFF_PATH_SCOPE + site, offenders)
 
     def test_an_emptied_off_path_table_is_reported(self):
         # Every row dropped, header and separator left standing. Each per-row
