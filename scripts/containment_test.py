@@ -240,16 +240,68 @@ class ImportTime(unittest.TestCase):
     document took this run down with it, and reported the parsers as untested
     exactly when a parser was what broke.
 
-    Structural rather than behavioural, and said so: the behavioural half is
-    `Section` above, which is what fails when a heading is renamed. These two
-    say where the rules live, which is what makes that guard's own comment true.
+    The first two cases below are proxies: they say where the rules live. The
+    third is the property itself, because a proxy can be satisfied by a module
+    that has moved its rules and kept one slice behind.
     """
+
+    #: Every marker a rule slices or splits a document at. A document holding
+    #: none of them is one no rule here can read, which is the tree #134 is
+    #: about.
+    MARKERS = (
+        "| Site | Names | Why it is not in `server/` |",
+        "### Public API surface",
+        "\n## ",
+        "| Grade | Owes | Flags |",
+        "| Element | Named by | Named only in | Why a request cannot reach it |",
+        "| Kind | Lives in | Runs under | Proves | Status |",
+    )
 
     def test_the_module_holds_no_failure_list_at_import(self):
         self.assertFalse(hasattr(gate, "failures"))
 
     def test_every_rule_is_reachable_as_main(self):
         self.assertTrue(callable(getattr(gate, "main", None)))
+
+    def test_importing_it_survives_documents_holding_none_of_those_markers(self):
+        """The property the two above stand in for.
+
+        Re-adding one module-level slice -- say
+        `STALE = ARCHITECTURE[ARCHITECTURE.index("### Public API surface"):]` --
+        leaves both of them green and every other case in this file green, and
+        turns this one into the `ValueError` that killed the gate and this run
+        with it. That is the whole of #134, and it is the one shape a structural
+        assertion cannot see.
+
+        The module is re-executed into a namespace of its own rather than
+        reloaded, so the `gate` every other case here holds is untouched. The
+        read is patched on `pathlib.Path` and restored in a `finally`, which is
+        the only module state this file writes and it writes it back.
+        """
+        source = Path(gate.__file__).read_text()
+        unpatched = Path.read_text
+
+        def without_markers(path, *args, **kwargs):
+            text = unpatched(path, *args, **kwargs)
+            if path.suffix != ".md":
+                return text
+            for marker in self.MARKERS:
+                text = text.replace(marker, "")
+            return text
+
+        probe = type(gate)("containment_over_unreadable_documents")
+        probe.__file__ = gate.__file__
+        Path.read_text = without_markers
+        try:
+            exec(compile(source, gate.__file__, "exec"), probe.__dict__)
+        finally:
+            Path.read_text = unpatched
+
+        self.assertFalse(hasattr(probe, "failures"))
+        # And the rules are still all there to be run, reporting rather than
+        # raising over the documents they cannot read.
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(probe.main(), 1)
 
 
 class Token(unittest.TestCase):
