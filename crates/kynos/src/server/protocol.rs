@@ -1,5 +1,6 @@
-//! HTTP/1 and HTTP/2 tuning, and the checks that reject an unusable
-//! combination before a socket is bound.
+//! HTTP/1 and HTTP/2 tuning, the two ALPN identifiers naming those protocols
+//! on the wire, and the checks that reject an unusable combination before a
+//! socket is bound.
 
 use std::time::Duration;
 
