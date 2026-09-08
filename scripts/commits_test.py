@@ -442,6 +442,58 @@ class BracedBody(unittest.TestCase):
         with self.assertRaises(AssertionError):
             declared_check(step)
 
+    def test_a_key_beside_the_check_is_reported(self):
+        """The fourth lookup, and the one whose subject is not the `check`.
+
+        hk decides whether a step runs at all from keys this suite never
+        reads, so a `check` read out of a step hk skips is a command the
+        fixture runs while the hook runs nothing. Measured on hk 1.53.0
+        against the real step: `step_condition`, `condition`, `profiles`,
+        `glob`, `exclude`, `dir` and `types` each leave `hk validate` green
+        and the `check` line untouched while `hk run commit-msg` exits 0 over
+        a merge subject.
+        """
+        step = (
+            '                step_condition = "false"\n'
+            '                check = "mise run --quiet commits:message < {{f}}"\n'
+            '                output_summary = "stdout"\n'
+        )
+        self.assertEqual(unsanctioned_keys(step), ["step_condition"])
+
+    def test_the_two_keys_this_suite_reads_are_not_reported(self):
+        """The allowlist is an allowlist, not a rejection of every key."""
+        step = (
+            '                check = "mise run --quiet commits:message < {{f}}"\n'
+            '                output_summary = "stdout"\n'
+        )
+        self.assertEqual(unsanctioned_keys(step), [])
+
+    def test_a_commented_key_is_not_declared(self):
+        """Read over the mask, for the reason every other lookup here is.
+
+        Commenting a key out is how it is withdrawn, and a withdrawn key
+        gates nothing. Reported, this read would fail the suite over a file
+        hk runs exactly as the suite installs it.
+        """
+        step = '                // step_condition = "false"\n                check = "true"\n'
+        self.assertEqual(unsanctioned_keys(step), [])
+
+    def test_a_block_valued_key_is_reported_though_it_carries_no_equals_sign(self):
+        """Pkl spells a block-valued key `env { ... }`, with no `=` to match.
+
+        The assignments inside such a block are quoted keys rather than
+        identifiers, so what the scan reports is the block's own name -- which
+        is the one that matters, since `env` is not a key this suite reads
+        either.
+        """
+        step = (
+            "                env {\n"
+            '                    ["HK_NOTE"] = "note"\n'
+            "                }\n"
+            '                check = "true"\n'
+        )
+        self.assertEqual(unsanctioned_keys(step), ["env"])
+
     def test_a_masked_match_can_be_sliced_back_out_of_the_source(self):
         """Why the caller locates on the mask and slices the source.
 
