@@ -45,6 +45,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 # A `.pyc` written beside the scripts would be an untracked directory in every
 # working tree that ran these tests, and `.gitignore` has no entry for one. The
@@ -56,6 +57,17 @@ ROOT = Path(__file__).resolve().parent.parent
 # Hermetic by construction: no user or system git configuration reaches these
 # repositories, and identity is supplied rather than discovered, so a machine
 # with no `user.email` set runs them the same as one that has.
+#
+# The inherited `GIT_*` variables go too, and that one is not defensive
+# housekeeping. `commits:test` runs from `hooks:pre-push`, which git invokes
+# with a git environment already exported -- `GIT_INDEX_FILE`, `GIT_PREFIX` and
+# `GIT_EXEC_PATH` are all present in a hook today, and `GIT_DIR`,
+# `GIT_WORK_TREE`, `GIT_OBJECT_DIRECTORY` and `GIT_COMMON_DIR` are exported by
+# other git entry points and by anyone who exports them by hand. Any one of
+# them redirects the fixture's own `git init` and `git commit` at whatever
+# repository it names, which for that hook is the repository being pushed. A
+# test that writes commits into the tree that invoked it is the failure this
+# scrub exists to make impossible, rather than to make unlikely.
 HERMETIC = {
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_SYSTEM": os.devnull,
@@ -70,6 +82,11 @@ CONVENTIONAL_SUBJECT = "fix(hooks): complete the merge by hand\n"
 SQUASH_SUBJECT = "Squashed commit of the following:\n"
 
 
+def scrubbed_environment():
+    """This process's environment with every inherited `GIT_*` name removed."""
+    return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+
+
 class GateTestCase(unittest.TestCase):
     """A throwaway repository per test, and the gate run against its state."""
 
@@ -78,7 +95,7 @@ class GateTestCase(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.repository = Path(directory.name)
 
-        self.env = {**os.environ, **HERMETIC}
+        self.env = {**scrubbed_environment(), **HERMETIC}
         self.git("-c", "init.defaultBranch=main", "init", "-q", ".")
 
     def git(self, *arguments):
@@ -218,6 +235,58 @@ class NoMergeInProgress(GateTestCase):
             "the fixture did not reach a squashed state",
         )
         self.assertRejected(self.gate(SQUASH_SUBJECT))
+
+
+class AmbientGitEnvironment(GateTestCase):
+    """The fixtures must not follow a git environment the caller exported.
+
+    This is the case that makes the scrub above a rule rather than a habit.
+    `commits:test` runs from `hooks:pre-push`, which git invokes with a git
+    environment already in place, and the repository that environment names is
+    the one being pushed. A fixture that inherited it would `git init` and
+    `git commit` into somebody's working tree while they pushed it.
+    """
+
+    def setUp(self):
+        decoy = tempfile.TemporaryDirectory()
+        self.addCleanup(decoy.cleanup)
+        self.decoy = Path(decoy.name)
+        subprocess.run(
+            ["git", "-c", "init.defaultBranch=main", "init", "-q", "."],
+            cwd=self.decoy,
+            env={**scrubbed_environment(), **HERMETIC},
+            capture_output=True,
+            check=True,
+        )
+
+        exported = mock.patch.dict(
+            os.environ,
+            {"GIT_DIR": str(self.decoy / ".git"), "GIT_WORK_TREE": str(self.decoy)},
+        )
+        exported.start()
+        self.addCleanup(exported.stop)
+
+        super().setUp()
+        self.diverging_branches()
+        self.git("merge", "--no-commit", "--no-ff", "topic")
+
+    def decoy_has_commits(self):
+        probed = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", "HEAD"],
+            cwd=self.decoy,
+            env={**scrubbed_environment(), **HERMETIC},
+            capture_output=True,
+            text=True,
+        )
+        return probed.returncode == 0
+
+    def test_an_exported_git_dir_reaches_neither_the_fixture_nor_the_gate(self):
+        self.assertFalse(
+            self.decoy_has_commits(),
+            "the fixture wrote into the repository the ambient GIT_DIR names",
+        )
+        self.assertTrue(self.merge_head(), "the fixture did not reach a merge state")
+        self.assertAccepted(self.gate(MERGE_SUBJECT))
 
 
 if __name__ == "__main__":
