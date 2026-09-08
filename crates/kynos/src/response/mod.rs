@@ -247,12 +247,18 @@ impl ShortCircuit for Infallible {
 /// # When both sides claim one status
 ///
 /// The success side wins, and the failure side's entry for that status is
-/// dropped. Two reasons: it is the rule
-/// [`kynos_openapi::Responses::merge_from`] already applies everywhere else a
-/// description is joined, so a status has one meaning throughout the document;
-/// and a description keys responses by status alone, so of the two only one can
-/// be emitted whatever is chosen here. An error type sharing a status with the
-/// success type is asking for a status that means two things, which is a
+/// dropped. A description keys responses by status alone, so of the two only
+/// one can be emitted whatever is chosen here — and the two have no relation
+/// beyond the key they share, which is exactly what
+/// [`kynos_openapi::Responses::merge_from`]'s first-wins rule is for. This is
+/// its one remaining caller.
+///
+/// It is deliberately *not*
+/// [`union_from`](kynos_openapi::Responses::union_from), which an operation's
+/// contributors go through instead: that unions two problem documents on one
+/// status, and a success representation beside a problem document is not two
+/// branches of anything. An error type sharing a status with the success type
+/// is asking for a status that means two things, which is a
 /// [`Reply`](crate::Reply) enum rather than a `Result`.
 impl<T, E> Responses for Result<T, E>
 where

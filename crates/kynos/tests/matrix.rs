@@ -92,12 +92,39 @@ struct Paging {
 }
 
 /// What creating a user can fail with.
+///
+/// Two variants answer with 400, which is a status the body extractor's
+/// rejection already declares on this operation. That is the one case where two
+/// declarations meet on one key, and the reason all three arms are driven
+/// below: a client of `POST /users` meets a generic 400 and two named ones, and
+/// the entry filed under `400` has to admit each of them.
+///
+/// Two rather than one on purpose. A single named 400 would meet the extractor
+/// as one branch against one, and the union would never be asked to flatten a
+/// side that is *already* a choice -- the arm a derive with two variants on one
+/// status reaches, and the arm nothing else here would drive.
 #[derive(Debug, thiserror::Error, ApiError)]
 #[problem(base = "https://errors.example.com/")]
 enum StoreError {
     #[error("that name is already taken")]
     #[problem(status = 409, type = "https://errors.example.com/name-taken")]
     NameTaken,
+
+    #[error("a user needs a name")]
+    #[problem(
+        status = 400,
+        type = "https://errors.example.com/name-required",
+        title = "Name required"
+    )]
+    Unnamed,
+
+    #[error("that name is longer than the store accepts")]
+    #[problem(
+        status = 400,
+        type = "https://errors.example.com/name-too-long",
+        title = "Name too long"
+    )]
+    Overlong,
 }
 
 // --- Authentication -------------------------------------------------------
@@ -294,6 +321,14 @@ async fn list_users(Query(query): Query<UserQuery>) -> WithHeaders<Json<Vec<User
 async fn create_user(Json(user): Json<User>) -> Result<Created<Json<User>>, StoreError> {
     if user.name == "taken" {
         return Err(StoreError::NameTaken);
+    }
+
+    if user.name.is_empty() {
+        return Err(StoreError::Unnamed);
+    }
+
+    if user.name.len() > 32 {
+        return Err(StoreError::Overlong);
     }
 
     Ok(Created::at(
@@ -546,6 +581,7 @@ async fn the_owned_layer_matrix_matches_the_description_it_emits() {
 
     exercise_the_operations(&client).await;
     exercise_the_rejections(&client).await;
+    exercise_the_shared_status(&client).await;
     exercise_the_limits(&client).await;
     #[cfg(feature = "assets")]
     exercise_the_ranges(&client).await;
@@ -663,6 +699,54 @@ async fn exercise_the_operations(client: &TestClient<App>) {
     }
 }
 
+/// Every branch of the one status two contributors declare.
+///
+/// Its own function rather than three more cases in `exercise_the_rejections`,
+/// because these three are one assertion: `POST /users` files a single response
+/// under `400`, and each of these bodies has to validate against it. A branch
+/// this stopped driving would be a declaration nothing keeps.
+async fn exercise_the_shared_status(client: &TestClient<App>) {
+    // A body that is not JSON at all: the extractor's half of the 400 this
+    // operation declares, carrying the type a rejection publishes.
+    client
+        .post("/users")
+        .header("content-type", "application/json")
+        .send()
+        .await
+        .assert_status(StatusCode::BAD_REQUEST)
+        .assert_problem_type("about:blank");
+
+    // The handler's half of the same 400, carrying the type its declaration
+    // named. Both bodies are checked against the one schema declared under
+    // `400`, which is what makes the union sound rather than merely richer: a
+    // schema narrowed to either type alone fails against the other.
+    client
+        .post("/users")
+        .json(&User {
+            id: 3,
+            name: String::new(),
+        })
+        .send()
+        .await
+        .assert_status(StatusCode::BAD_REQUEST)
+        .assert_problem_type("https://errors.example.com/name-required");
+
+    // The second named 400, so every branch of the choice declared under that
+    // key is one this fixture produced. A union that dropped the branches of a
+    // side already holding a `oneOf` would leave this body matching nothing the
+    // description declares.
+    client
+        .post("/users")
+        .json(&User {
+            id: 4,
+            name: "n".repeat(33),
+        })
+        .send()
+        .await
+        .assert_status(StatusCode::BAD_REQUEST)
+        .assert_problem_type("https://errors.example.com/name-too-long");
+}
+
 /// Every declared way an operation says no.
 async fn exercise_the_rejections(client: &TestClient<App>) {
     // A path variable that is not a `u64`.
@@ -675,14 +759,6 @@ async fn exercise_the_rejections(client: &TestClient<App>) {
     // A query member of the wrong type.
     client
         .get("/users?limit=lots")
-        .send()
-        .await
-        .assert_status(StatusCode::BAD_REQUEST);
-
-    // A body that is not JSON at all.
-    client
-        .post("/users")
-        .header("content-type", "application/json")
         .send()
         .await
         .assert_status(StatusCode::BAD_REQUEST);

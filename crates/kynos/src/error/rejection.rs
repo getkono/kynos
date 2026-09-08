@@ -41,31 +41,54 @@ use std::collections::BTreeMap;
 use serde_json::json;
 
 use crate::{
-    error::problem::{IntoProblem, Problem, problem_response},
+    error::problem::{IntoProblem, Problem, narrowed_response, problem_response},
     http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
 };
 
-/// One response per declared status, each an `application/problem+json`
-/// document referring to the shared [`Problem`] component.
+/// One response per declared status, each narrowing the shared [`Problem`]
+/// component to the type URI a rejection publishes.
 ///
-/// The description is [`problem_response`]'s, because a rejection's response is
-/// the same problem document every other refusal sends and a second spelling of
-/// the media type is a second place for it to drift. A rejection declaring no
-/// status therefore registers no `Problem` component either, which is right: it
-/// declares no problem.
+/// Every rejection *this* function describes builds its problem with
+/// [`Problem::new`], so every one of them writes `about:blank` — which makes
+/// the narrowing a true statement rather than a guess, and states in the
+/// document what a client otherwise has to learn by receiving one. The
+/// qualification is not idle: [`AuthRejection`] below reaches
+/// [`Problem::of_type`] for a 403 an authorizer named, which is why that one
+/// status does not come through here.
+///
+/// The narrowing is also what lets a rejection meet a handler's error type on a
+/// status without either of them losing. Two narrowed problem responses union
+/// into a choice between the types each publishes; a bare `$ref` beside one
+/// would match every problem document and cost that choice its exactly-one
+/// rule, so it wins outright instead and the derive's narrowing is discarded.
+/// [`OperationCx::add_responses`](crate::router::operation::OperationCx::add_responses)
+/// is where the two meet.
+///
+/// The one status this cannot describe is [`AuthRejection`]'s 403, which
+/// declares itself below.
+///
+/// A rejection declaring no status registers no `Problem` component either,
+/// which is right: it declares no problem.
 fn problem_responses(registry: &mut Registry, statuses: &[StatusCode]) -> kynos_openapi::Responses {
     statuses
         .iter()
         .fold(kynos_openapi::Responses::new(), |responses, status| {
-            let description = status.canonical_reason().map_or_else(
-                || format!("a `{}` response", status.as_u16()),
-                str::to_owned,
-            );
-
-            responses.with(status.as_u16(), problem_response(registry, description))
+            responses.with(status.as_u16(), narrowed_problem(registry, *status))
         })
+}
+
+/// The response one status declares: the shared component narrowed to
+/// `about:blank`.
+///
+/// One branch naming no URI, which is what every rejection but one publishes,
+/// and no summary, because the status code's reason phrase is all a rejection
+/// has to say about itself.
+fn narrowed_problem(registry: &mut Registry, status: StatusCode) -> kynos_openapi::Response {
+    let problem = registry.resolve::<Problem>();
+
+    narrowed_response(&problem, status.as_u16(), &[(None, None)])
 }
 
 /// Emits the two implementations that are mechanical for every rejection: the
@@ -723,9 +746,42 @@ impl IntoResponse for AuthRejection {
     }
 }
 
+/// The one rejection whose statuses are not described alike.
+///
+/// The 401 narrows like every other: [`AuthRejection::unauthenticated`] leaves
+/// the type to [`Problem::new`], and which credential check refused is not a
+/// fact this type will ever carry.
+///
+/// The 403 cannot, and that is [`AuthRejection::forbidden_as`]'s doing rather
+/// than an omission here. An authorizer may name its refusal with a URI of the
+/// application's own, and that value arrives at run time while this runs over
+/// types alone — so a 403 on the wire carries `about:blank` *or* something no
+/// description could have known. Narrowing it to the first would declare less
+/// than the operation sends, which is the one direction `emitted ⊇ observable`
+/// forbids, so it stays the shared component and admits both. #118 is where
+/// that gap is settled.
+///
+/// Driven from [`IntoProblem::statuses`] rather than from two literals, so a
+/// status added there is described rather than silently dropped.
 impl Responses for AuthRejection {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        problem_responses(registry, <AuthRejection as IntoProblem>::statuses())
+        <AuthRejection as IntoProblem>::statuses().iter().fold(
+            kynos_openapi::Responses::new(),
+            |responses, status| {
+                let declared = if *status == StatusCode::FORBIDDEN {
+                    let description = status.canonical_reason().map_or_else(
+                        || format!("a `{}` response", status.as_u16()),
+                        str::to_owned,
+                    );
+
+                    problem_response(registry, description)
+                } else {
+                    narrowed_problem(registry, *status)
+                };
+
+                responses.with(status.as_u16(), declared)
+            },
+        )
     }
 }
 

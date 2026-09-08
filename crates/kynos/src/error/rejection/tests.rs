@@ -523,3 +523,105 @@ fn every_variant_renders_a_sentence() {
         );
     }
 }
+
+/// The type URI each status a rejection declares narrows `type` to, or `None`
+/// where it narrows nothing and refers to the shared component alone.
+///
+/// Keyed by status and driven from `statuses()`, so a status added to a
+/// rejection is described here rather than silently skipped.
+fn declared_types<T>() -> std::collections::BTreeMap<u16, Option<String>>
+where
+    T: IntoProblem + crate::response::Responses,
+{
+    let mut registry = crate::schema::registry::Registry::new();
+    let responses =
+        serde_json::to_value(T::responses(&mut registry)).expect("a set of responses serializes");
+
+    T::statuses()
+        .iter()
+        .map(|status| {
+            let schema = &responses[status.as_u16().to_string()]["content"]
+                ["application/problem+json"]["schema"];
+
+            (
+                status.as_u16(),
+                schema["allOf"][1]["properties"]["type"]["const"]
+                    .as_str()
+                    .map(ToOwned::to_owned),
+            )
+        })
+        .collect()
+}
+
+/// Every rejection publishes `about:blank`, so every status it declares says
+/// so.
+///
+/// A response referring to the shared `Problem` component alone would be
+/// weaker prose and worse than that on a status a handler's error type also
+/// names: a bare `$ref` inside a `oneOf` matches every problem document, so it
+/// cannot be one branch of a choice and wins the whole entry instead. Asserted
+/// over every rejection rather than one, because the property is
+/// `Problem::new`'s and each type reaches it separately.
+#[test]
+fn every_rejection_declares_the_type_its_problems_carry() {
+    let declared = [
+        ("PathRejection", declared_types::<PathRejection>()),
+        ("QueryRejection", declared_types::<QueryRejection>()),
+        ("HeaderRejection", declared_types::<HeaderRejection>()),
+        ("BodyRejection", declared_types::<BodyRejection>()),
+        (
+            "NegotiationRejection",
+            declared_types::<NegotiationRejection>(),
+        ),
+        ("RangeRejection", declared_types::<RangeRejection>()),
+        #[cfg(feature = "cookie")]
+        (
+            "CookieRejection",
+            declared_types::<super::CookieRejection>(),
+        ),
+    ];
+
+    for (rejection, statuses) in declared {
+        assert!(!statuses.is_empty(), "{rejection} declares no status");
+
+        for (status, published) in statuses {
+            assert_eq!(
+                published.as_deref(),
+                Some("about:blank"),
+                "{rejection}'s {status} does not declare the type it sends"
+            );
+        }
+    }
+}
+
+/// The exception, and the reason it is one.
+///
+/// `AuthRejection::forbidden_as` lets an authorizer put its own URI on a 403,
+/// and that value arrives at run time while a description is built from types.
+/// A 403 narrowed to `about:blank` would be a claim a named refusal breaks, so
+/// it stays the shared component — which admits both — and #118 is where the
+/// gap closes. The 401 beside it has no such field and narrows like the rest.
+#[test]
+fn the_403_an_authorizer_may_name_is_the_one_status_left_wide() {
+    let declared = declared_types::<AuthRejection>();
+
+    assert_eq!(
+        declared[&StatusCode::UNAUTHORIZED.as_u16()].as_deref(),
+        Some("about:blank")
+    );
+    assert_eq!(declared[&StatusCode::FORBIDDEN.as_u16()], None);
+
+    // Wide rather than absent, which the assertion above cannot tell apart: the
+    // 403 is declared, and what it declares is the component every problem
+    // document satisfies.
+    let mut registry = crate::schema::registry::Registry::new();
+    let responses = serde_json::to_value(<AuthRejection as crate::response::Responses>::responses(
+        &mut registry,
+    ))
+    .expect("a set of responses serializes");
+
+    assert_eq!(
+        responses["403"]["content"]["application/problem+json"]["schema"]["$ref"],
+        serde_json::json!("#/components/schemas/Problem")
+    );
+}

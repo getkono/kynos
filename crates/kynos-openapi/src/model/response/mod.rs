@@ -2,6 +2,11 @@
 
 pub mod status;
 
+// Private, because it declares no item of its own that a path could point at:
+// [`Responses::union_from`]'s rule is what it holds, and that rule is reachable
+// only through the method stating it.
+mod union;
+
 use std::fmt;
 
 use serde::{
@@ -15,7 +20,7 @@ use crate::{
     Map,
     model::{
         body::media_type::MediaType, extensions::Extensions, link::Link, parameter::header::Header,
-        reference::RefOr, response::status::StatusPattern,
+        reference::RefOr, response::status::StatusPattern, response::union::unioned,
     },
 };
 
@@ -114,6 +119,76 @@ impl Responses {
         for (key, response) in &other.responses {
             if !self.responses.contains_key(key) {
                 self.responses.insert(key.clone(), response.clone());
+            }
+        }
+    }
+
+    /// Merges another set into this one, unioning two problem responses that
+    /// meet on one status.
+    ///
+    /// [`merge_from`](Responses::merge_from) with one exception, and the
+    /// exception is the only reason this exists. A status is one key and a
+    /// response is what a client is told about it, so where two contributors
+    /// both name a status — an extractor's rejection and the handler's error
+    /// type is the case that motivates this — keeping whichever arrived first
+    /// publishes half of what the operation can send.
+    ///
+    /// The exception is deliberately narrow. It applies where both entries
+    /// declare an `application/problem+json` schema, because two problem
+    /// documents under one status are two branches of a choice over the same
+    /// component — which merging two arbitrary responses is not. Anything else
+    /// keeps the entry already declared, exactly as `merge_from` would.
+    ///
+    /// # What the union is
+    ///
+    /// The entry already declared, with two of its fields replaced, so
+    /// everything else it carries — a `WWW-Authenticate` header, a link, an
+    /// extension — survives a contributor arriving after it.
+    ///
+    /// * **The schema.** A *narrowed* problem schema constrains `type` to a
+    ///   `const` on every branch, which is the shape `#[derive(ApiError)]`
+    ///   emits: one `allOf` for a single type, a `oneOf` of them for several.
+    ///   Where both sides are narrowed the branches are flattened, deduplicated
+    ///   by the URI they publish and rebuilt — a single `allOf` where one
+    ///   survives, a `oneOf` where several do. The dedup is what keeps `oneOf`
+    ///   sound: two branches repeating a `const` are satisfied at once, which
+    ///   is exactly what the keyword forbids.
+    ///
+    ///   Where one side instead admits *everything* — `true`, or a bare `$ref`
+    ///   to the shared component, which every problem document satisfies — that
+    ///   side is the union: it already admits every document the other
+    ///   describes, and narrowing to the other would declare less than the
+    ///   operation sends.
+    ///
+    ///   A side that is neither is not read as either. A schema satisfied by
+    ///   nothing, an empty `oneOf`, and a `oneOf` whose branches overlap all
+    ///   fail the narrowing read while admitting strictly *less* than a
+    ///   narrowed side, so adopting one would declare a schema the operation's
+    ///   own bodies fail. Those keep the entry already declared, as
+    ///   `merge_from` would.
+    ///
+    /// * **The description.** Both, joined with `"; "`, dropping a sentence
+    ///   already written word for word. Prose is under no exactly-one rule, so
+    ///   a status two contributors reach says what each of them means.
+    pub fn union_from(&mut self, other: &Self) {
+        if self.default_response.is_none() {
+            self.default_response.clone_from(&other.default_response);
+        }
+        for (key, incoming) in &other.responses {
+            // Resolved to an owned entry before anything is inserted, so the
+            // read of the declared response ends where the write begins.
+            let replacement = match (self.responses.get(key), incoming) {
+                (None, incoming) => Some(incoming.clone()),
+                (Some(RefOr::Item(declared)), RefOr::Item(incoming)) => {
+                    unioned(declared, incoming).map(RefOr::Item)
+                }
+                // A response held as a `$ref` is not reached into, on either
+                // side: what it refers to is not this document's to read.
+                (Some(_), _) => None,
+            };
+
+            if let Some(response) = replacement {
+                self.responses.insert(key.clone(), response);
             }
         }
     }
