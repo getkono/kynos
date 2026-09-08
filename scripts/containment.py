@@ -480,8 +480,8 @@ class Gate:
         With one shape where that is false, recorded rather than handled:
         `#[cfg_attr(pred, cfg(feature = "x"))]` applies a `cfg`, which does
         compile the item conditionally, and this returns `False` over it. No
-        `.rs` file in the workspace writes `cfg_attr` at all -- the only two
-        occurrences are prose in the two manifests, each recording a decision
+        `.rs` file in the workspace writes `cfg_attr` at all -- `grep -rn
+        cfg_attr crates/` finds it only in manifest prose recording a decision
         not to adopt `docsrs` -- so the shape is unreachable here. Handling it
         means walking into a nested `cfg(` at the outer polarity rather than
         stopping at the comma, which is a decision for whoever writes the
