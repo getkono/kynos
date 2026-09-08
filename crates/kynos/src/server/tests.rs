@@ -862,26 +862,29 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
         .expect("server exits cleanly");
 }
 
-/// Each protocol ALPN can settle on is the one that connection is served with.
+/// A connection that settled on `http/1.1` is served over HTTP/1.
 ///
 /// `serve_http` pins hyper's `auto` driver to the identifier the handshake
 /// agreed rather than letting it read a protocol back off the first bytes of
-/// the stream, and a build offering both has to keep serving both: pinning the
-/// wrong half of the offer would refuse every client that chose the other.
+/// the stream, and pinning the wrong half of a two-protocol offer would refuse
+/// every client that chose the other -- so each half is served here, under its
+/// own protocol's gate rather than under both, since a build carrying one
+/// protocol pins that one and is where a mistake in its arm would ship alone.
 ///
 /// The handler reports the ALPN identifier the connection carries alongside the
 /// version the request arrived with, so a connection served as the *other*
 /// protocol fails the comparison instead of passing it as "served at all".
 ///
-/// This case does not distinguish a pinned driver from a sniffing one -- both
-/// answer a client that speaks what it negotiated, which is the point of
-/// keeping it. `a_client_contradicting_its_negotiated_protocol_is_refused`
-/// below is what the pin can fail.
-#[cfg(all(feature = "tls", feature = "http1", feature = "http2"))]
+/// Neither half distinguishes a pinned driver from a sniffing one: both answer
+/// a client that speaks what it negotiated, and in a build carrying one
+/// protocol the sniff can only reach the same answer the pin does.
+/// `a_client_contradicting_its_negotiated_protocol_is_refused` is what the pin
+/// can fail, and it needs both protocols compiled to say so.
+#[cfg(all(feature = "tls", feature = "http1"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn tls_serves_each_protocol_alpn_settles_on() {
+async fn tls_serves_a_connection_that_settled_on_http1() {
     use http_body_util::{BodyExt as _, Empty};
-    use hyper_util::rt::{TokioExecutor, TokioIo};
+    use hyper_util::rt::TokioIo;
     use tokio_rustls::rustls::pki_types::ServerName;
 
     let (address, authority, shutdown_sender, server) =
@@ -920,6 +923,29 @@ async fn tls_serves_each_protocol_alpn_settles_on() {
     assert_eq!(body, bytes::Bytes::from_static(b"http/1.1 HTTP/1.1"));
     drop(sender);
     connection.abort();
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// The other half of the offer: a connection that settled on `h2`.
+///
+/// Gated on `http2` alone for the reason the HTTP/1 case above gives, and it is
+/// the half that matters most there: `h2` is the only identifier an
+/// `http2`-only build offers, so nothing else in that build reaches the pin at
+/// all.
+#[cfg(all(feature = "tls", feature = "http2"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tls_serves_a_connection_that_settled_on_h2() {
+    use http_body_util::{BodyExt as _, Empty};
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+    use tokio_rustls::rustls::pki_types::ServerName;
+
+    let (address, authority, shutdown_sender, server) =
+        tls_server(negotiated_protocol_service()).await;
 
     let stream = tokio::net::TcpStream::connect(address)
         .await
