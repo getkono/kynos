@@ -32,6 +32,9 @@ Run it as `mise run containment:test`, or directly. There is no Python test
 runner in this repository and `unittest` needs none.
 """
 
+import contextlib
+import io
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -737,6 +740,108 @@ class TaxonomyCount(unittest.TestCase):
             statuses=["in use", "in use", "in use", "in use", "planned"],
         )
         self.assertEqual(len(gate.taxonomy_failures(document)), 2)
+
+
+class Main(unittest.TestCase):
+    """What each rule stops checking when the marker it reads is gone.
+
+    `Section` above pins the helper's refusal to widen a slice. This pins that
+    the callers ask for it, which is a different claim and the one this file's
+    subject rests on: with the helper in place and a call site written
+    `table or ""`, or written without its end marker, both gates stay green and
+    the rule goes on reporting against text it was written to exclude. Every
+    case below fails against exactly that mutation and passes against the code
+    as written.
+
+    The documents are this repository's own with one marker removed, and the
+    corpora are the real ones. What is under test here is a *rule* rather than a
+    parser: the `tokio` scan is only wrong about the tree it reads, and a
+    synthetic tree would make the case a test of its own fixture. `main` takes
+    the documents as arguments for this reason, the way `scanned` takes
+    `exists`.
+
+    The assertions name the rules that must and must not have run rather than
+    counting failures, so a case says what it holds and does not fail for a
+    reason belonging to `containment:check`. Nothing here writes to the
+    repository or to module state.
+    """
+
+    ALLOWANCE = "| Site | Names | Why it is not in `server/` |"
+    SURFACE = "### Public API surface"
+    GRADING = "| Grade | Owes | Flags |"
+    #: `architecture.md`'s count of hand-rolled `Stream` sites, read as written
+    #: so a case does not depend on today's number.
+    SITE_COUNT = re.compile(r"(\*\*One public row, )\w+( sites, and the count is the check\*\*)")
+
+    def report(self, **documents):
+        """`main`'s status and what it reported, with its own output held."""
+        err, out = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
+            status = gate.main(**documents)
+        head = "containment: "
+        return status, [
+            line[len(head) :] for line in err.getvalue().split("\n") if line.startswith(head)
+        ]
+
+    def naming(self, failures, needle):
+        return [failure for failure in failures if needle in failure]
+
+    def test_a_renamed_allowance_header_skips_the_row_count_and_the_tokio_scan(self):
+        broken = gate.ARCHITECTURE.replace(self.ALLOWANCE, "| Site | Named | Why |", 1)
+        status, failures = self.report(architecture=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(self.naming(failures, self.ALLOWANCE)), 1)
+        # Both rules over the table, and the scan especially: over an empty
+        # allowance it reports every non-`server/` file in the crate.
+        self.assertEqual(self.naming(failures, "allowance table claims"), [])
+        self.assertEqual(self.naming(failures, "named outside `server/`"), [])
+
+    def test_a_renamed_surface_heading_skips_the_declaration_check(self):
+        broken = gate.ARCHITECTURE.replace(self.SURFACE, "### The public surface", 1)
+        status, failures = self.report(architecture=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(self.naming(failures, self.SURFACE)), 1)
+        self.assertEqual(self.naming(failures, "names no site"), [])
+
+    def test_a_renamed_surface_heading_leaves_the_stated_site_count_held(self):
+        broken = gate.ARCHITECTURE.replace(self.SURFACE, "### The public surface", 1)
+        broken = self.SITE_COUNT.sub(r"\g<1>Sixteen\g<2>", broken)
+        status, failures = self.report(architecture=broken)
+        self.assertEqual(status, 1)
+        # The count reads the sites off the source, so losing the section does
+        # not cost it. Moving it inside the guard would.
+        self.assertEqual(len(self.naming(failures, "hand-rolled `Stream` sites and there are")), 1)
+
+    def test_a_missing_end_marker_reports_rather_than_widening_the_slice(self):
+        at = gate.ARCHITECTURE.index(self.SURFACE)
+        broken = gate.ARCHITECTURE[:at] + gate.ARCHITECTURE[at:].replace("\n## ", "\n<> ")
+        status, failures = self.report(architecture=broken)
+        self.assertEqual(status, 1)
+        # Without the end marker the slice runs to the foot of the document and
+        # every link in it authorises a hand-rolled `Stream`, silently.
+        self.assertEqual(len(self.naming(failures, repr("\n## "))), 1)
+        self.assertEqual(self.naming(failures, "names no site"), [])
+
+    def test_a_renamed_grading_header_skips_every_rule_over_the_grading(self):
+        broken = gate.PERFORMANCE.replace(self.GRADING, "| Grade | Owes | Flag |", 1)
+        status, failures = self.report(performance=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(self.naming(failures, self.GRADING)), 1)
+        for signature in ("does not grade", "does not declare", "in more than one row", "no row of"):
+            self.assertEqual(self.naming(failures, signature), [], signature)
+
+    def test_the_manifest_rule_below_the_grading_still_runs(self):
+        broken = gate.PERFORMANCE.replace(self.GRADING, "| Grade | Owes | Flag |", 1)
+        status, failures = self.report(performance=broken)
+        # `implicit` reads the manifest alone and is skipped by nothing here.
+        self.assertEqual(status, 1)
+        self.assertEqual(self.naming(failures, "named by no `dep:`"), [])
+
+    def test_a_reported_failure_exits_nonzero(self):
+        broken = gate.PERFORMANCE.replace(self.GRADING, "| Grade | Owes | Flag |", 1)
+        status, failures = self.report(performance=broken)
+        self.assertTrue(failures)
+        self.assertNotEqual(status, 0)
 
 
 if __name__ == "__main__":
