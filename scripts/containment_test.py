@@ -1,19 +1,34 @@
-"""Tests for the parsers `containment.py` reads its tables and sources with, and
-for the one rule stated over them whose own failure is silence.
+"""Tests for the parsers `containment.py` reads its tables and sources with, for
+the rules stated over them whose own failure is silence, and for the shape that
+keeps a broken document from taking this run down with it.
 
-Most of what is under test here takes text and returns a corpus, a set of paths
-or a list of patterns. The rules stated over those are not tested: they read the
-real tree, and running them is what `containment:check` is.
+Most of what is under test here takes text and returns a corpus, a set of paths,
+a list of patterns or a slice. Running the rules against the intact tree is what
+`containment:check` is, and this file does not repeat it.
 
-Two rules are the exception, and both are here for the same property.
+Three rules are here all the same, each for its own reason.
 `off_path_coverage` compares two documents and reads a grade out of one by
 name, so a name that has gone empties the compared set rather than the table --
 the failure mode a parser has, in a rule. `cargo_config_failures` reads a
 configuration file that nothing else in this repository observes, and the
 mistake it exists to catch is one cargo itself reports as a warning over a
-successful build, or does not report at all. Both have their inputs stated
-below rather than read off disk, since what is under test is what the rule does
-with a document or a config and not what this repository's own happen to say.
+successful build, or does not report at all. `taxonomy_failures` holds a
+sentence against the table below it, and nothing here reads Markdown prose. All
+three have their inputs stated below rather than read off disk, since what is
+under test is what the rule does with a document or a config and not what this
+repository's own happen to say.
+
+`Main` is the exception to that, deliberately. What each rule *stops* checking
+when the marker it slices at is gone is a decision `main` makes four times over,
+and it is a decision about the real tree: an emptied allowance reports every
+file in the crate, and a widened slice authorises a hand-rolled `Stream` off any
+link in the document. So those cases hand `main` this repository's own documents
+with one marker removed, which `main` takes as arguments for that purpose, and
+assert which rules ran rather than counting failures.
+
+`ImportTime` is not about a parser or a rule at all. It holds the file to
+running neither at import, which is what keeps a document nobody can read from
+killing the gate and this run with it.
 
 The parsers are where a regression is silent. A rule that breaks reports a
 failure and exits one; a parser that breaks drops a spelling, a site or a whole
