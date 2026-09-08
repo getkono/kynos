@@ -646,6 +646,7 @@ run = [
   { task = "containment:check" },
   { task = "containment:test" },
   { task = "cost:test" },
+  { task = "commits:test" },
   { task = "docs:check" },
   { task = "panic:check" },
   { task = "features:check" },
@@ -672,6 +673,29 @@ else
 fi
 '''
 
+[tasks."commits:test"]
+description = "Test that both halves of the commit rule agree about a merge"
+# The two tasks above state one rule through two instruments that cannot see
+# the same thing: `commits:check` gives convco a range, where a merge is
+# dropped by parent count, and `commits:message` gives it one message, where
+# there is no parent count to drop by. Nothing else holds them to the same
+# answer, and when they disagree neither one fails -- both keep exiting zero
+# over every commit written by hand, and the divergence surfaces only at the
+# next merge, where the fix that looks available is `--no-verify`.
+#
+# So the cases build real repositories and put them in a real merge rather
+# than forging a state file, and one of them runs `git merge --squash` to
+# assert the exemption has not widened past what the range form exempts.
+#
+# `unittest` from the standard library and no test runner. There is no
+# `pytest`, no `tox` and no `requirements.txt` in this repository, and taking
+# a dependency to run five subprocess cases is the worse trade.
+#
+# `-B` because `.gitignore` has no `__pycache__` entry, and a check that
+# leaves an untracked directory behind is a check people learn to work around.
+# The test file sets `sys.dont_write_bytecode` too, for a direct `python3` run.
+run = "python3 -B scripts/commits_test.py"
+
 [tasks."hooks:pre-push"]
 description = "Run all pre-push checks"
 # `docs:check` and `containment:check` are here because neither is slow --
@@ -689,6 +713,11 @@ description = "Run all pre-push checks"
 # invisible to the two lint passes above it, and a push is the last point where
 # its author is still the one looking. The six builds it adds are `-p kynos` at
 # small feature sets, which is the cheap end of what this list already runs.
+#
+# `commits:test` follows `commits:check` for the reason `containment:test`
+# follows its gate: it is the only thing holding the range form below and the
+# commit-msg hook to the same answer about a merge, and a push is the last
+# point where the person who wrote the messages is still looking at them.
 run = [
   { task = "format:check" },
   { task = "lint" },
@@ -699,4 +728,5 @@ run = [
   { task = "containment:check" },
   { task = "containment:test" },
   { task = "commits:check" },
+  { task = "commits:test" },
 ]
