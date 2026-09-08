@@ -724,13 +724,25 @@ description = "Test that both halves of the commit rule agree about a merge"
 # over every commit written by hand, and the divergence surfaces only at the
 # next merge, where the fix that looks available is `--no-verify`.
 #
-# So the cases build real repositories and put them in a real merge rather
-# than forging a state file, and one of them runs `git merge --squash` to
-# assert the exemption has not widened past what the range form exempts.
+# So every case that asserts one half's verdict on a merge asserts the other's
+# too, over the same commit -- because the range half is the one that moves
+# under maintenance. A `.convco` holding `merges: true` flips it from exit 0 to
+# exit 1 over a merge subject while leaving the hook half untouched, and a
+# `[tools]` bump of convco can do the same; a suite that ran only the hook half
+# would stay green through it.
+#
+# The cases build real repositories rather than forging state files: one runs
+# `git merge --squash` to assert the exemption has not widened past what the
+# range form exempts, one is a linked worktree, because that is how this
+# repository is worked and MERGE_HEAD lives elsewhere there, and one installs
+# the `commit-msg` command `hk.pkl` declares -- read out of `hk.pkl`, so
+# deleting the step or dropping its redirect fails the suite -- and drives a
+# real `git merge --no-ff` through it. That last one is issue #132's own
+# symptom, so reverting this fix makes it print `Not committing merge`.
 #
 # `unittest` from the standard library and no test runner. There is no
 # `pytest`, no `tox` and no `requirements.txt` in this repository, and taking
-# a dependency to run five subprocess cases is the worse trade.
+# a dependency to drive git and convco through subprocess is the worse trade.
 #
 # `-B` because `.gitignore` has no `__pycache__` entry, and a check that
 # leaves an untracked directory behind is a check people learn to work around.
