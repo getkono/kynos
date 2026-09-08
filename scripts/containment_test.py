@@ -1127,11 +1127,8 @@ class Main(unittest.TestCase):
         # The presence half of the allowance case's `allowance table claims`
         # absence. The count word has to be one `NUMBERS` can read, or
         # `claimed` reports an unreadable count instead of the mismatch.
-        broken = re.sub(
-            r"\*\*(\w+) rows, and the count is the check\.\*\*",
-            "**Seven rows, and the count is the check.**",
-            gate.ARCHITECTURE,
-            count=1,
+        broken = self.ROW_COUNT.sub(
+            "**Seven rows, and the count is the check.**", gate.ARCHITECTURE, count=1
         )
         status, failures = self.report(architecture=broken)
         self.assertEqual(status, 1)
@@ -1142,8 +1139,7 @@ class Main(unittest.TestCase):
         # deleted, which is what a documentation edit does to it, and the count
         # word is left readable so the case cannot pass for the next branch's
         # reason.
-        broken = re.sub(
-            r"\*\*(\w+) rows, and the count is the check\.\*\*",
+        broken = self.ROW_COUNT.sub(
             lambda found: f"**{found.group(1)} rows, and that count is the check.**",
             gate.ARCHITECTURE,
             count=1,
@@ -1159,11 +1155,8 @@ class Main(unittest.TestCase):
         # `claimed`'s second branch: the sentence is there and states a number
         # `NUMBERS` cannot read, which is a count nothing is holding. Loudly
         # rather than skipped, and this is what holds that choice.
-        broken = re.sub(
-            r"\*\*(\w+) rows, and the count is the check\.\*\*",
-            "**Nineteen rows, and the count is the check.**",
-            gate.ARCHITECTURE,
-            count=1,
+        broken = self.ROW_COUNT.sub(
+            "**Nineteen rows, and the count is the check.**", gate.ARCHITECTURE, count=1
         )
         status, failures = self.report(architecture=broken)
         self.assertEqual(status, 1)
@@ -1348,10 +1341,11 @@ class Main(unittest.TestCase):
     UUID_NAMED_BY = ' `uuid`, `feature = "uuid"` |'
     UUID_SITES = " `schema/impls/{mod,identifier}.rs` |"
     UUID_ROW = UUID_ELEMENT + UUID_NAMED_BY + UUID_SITES
-    #: `testing.md`'s count of off-path rows, read as written for the reason
-    #: `SITE_COUNT` is: a case about the count rule must not depend on today's
-    #: count.
-    OFF_PATH_COUNT = re.compile(r"\*\*(\w+) rows, and the count is the check\.\*\*")
+    #: The row-count sentence, read off the gate rather than respelled here,
+    #: and matched rather than written out for the reason `SITE_COUNT` is: a
+    #: case about the count rule must not depend on today's count. One pattern
+    #: for both documents, because one rule reads it out of both.
+    ROW_COUNT = re.compile(gate.ROW_COUNT_CLAIM)
 
     def test_a_malformed_off_path_row_is_reported(self):
         # A cell lost with its pipe, which is what a hand-edited table does. The
@@ -1495,7 +1489,7 @@ class Main(unittest.TestCase):
     def test_a_reworded_off_path_count_claim_is_reported(self):
         # The count sentence is what holds the row *set*, so losing it is a
         # failure of its own rather than a rule that quietly stops.
-        broken = self.OFF_PATH_COUNT.sub(
+        broken = self.ROW_COUNT.sub(
             lambda found: f"**{found.group(1)} rows, and that count is the check.**",
             gate.TESTING,
             count=1,
@@ -1509,7 +1503,7 @@ class Main(unittest.TestCase):
 
     def test_an_unreadable_off_path_count_is_reported(self):
         # As `claimed`'s second branch, for the count this rule reads itself.
-        broken = self.OFF_PATH_COUNT.sub(
+        broken = self.ROW_COUNT.sub(
             "**Nineteen rows, and the count is the check.**", gate.TESTING, count=1
         )
         status, failures = self.report(testing=broken)
@@ -1521,9 +1515,9 @@ class Main(unittest.TestCase):
     def test_a_stated_off_path_count_that_does_not_match_the_table_is_reported(self):
         # A readable count the document does not state, so the claim and the
         # table disagree whatever the table's length is.
-        written = self.OFF_PATH_COUNT.search(gate.TESTING).group(1)
+        written = self.ROW_COUNT.search(gate.TESTING).group(1)
         wrong = "Seven" if written != "Seven" else "Eight"
-        broken = self.OFF_PATH_COUNT.sub(
+        broken = self.ROW_COUNT.sub(
             f"**{wrong} rows, and the count is the check.**", gate.TESTING, count=1
         )
         status, failures = self.report(testing=broken)

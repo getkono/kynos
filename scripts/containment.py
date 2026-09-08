@@ -222,6 +222,14 @@ def naming(*crates):
     return {path for path, text in FILES if pattern.search(text)}
 
 
+#: The sentence two documents state a table's row count in, and the one
+#: sentence this file reads out of two of them: `architecture.md`'s allowance
+#: table and `testing.md`'s off-path table each write it over their own table.
+#: A module constant for the reason `TAXONOMY_CLAIM` and `OFF_PATH_HEADER` are:
+#: an anchor spelled at its call site is an anchor spelled twice.
+ROW_COUNT_CLAIM = r"\*\*(\w+) rows, and the count is the check\.\*\*"
+
+
 def claimed(text, sentence, failures):
     """The number `architecture.md` writes into one of its count claims.
 
@@ -1088,9 +1096,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None):
                 break
             rows.append(re.findall(r"`([^`]+)`", line.split("|")[1]))
 
-        stated = claimed(
-            architecture, r"\*\*(\w+) rows, and the count is the check\.\*\*", failures
-        )
+        stated = claimed(architecture, ROW_COUNT_CLAIM, failures)
         if stated is not None and stated != len(rows):
             failures.append(
                 f"architecture.md's allowance table claims {stated} rows and has {len(rows)}"
@@ -1278,7 +1284,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None):
     # that every rule holds. `testing.md` states the count for that reason, and
     # this compares it.
     elif len(halves) == 2:
-        stated = re.search(r"\*\*(\w+) rows, and the count is the check\.\*\*", testing)
+        stated = re.search(ROW_COUNT_CLAIM, testing)
         if stated is None:
             failures.append(
                 "testing.md no longer states how many rows its off-path table has, "
