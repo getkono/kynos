@@ -297,6 +297,104 @@ class Token(unittest.TestCase):
         self.assertIsNone(gate.token("whatever the emitter happens to call"))
 
 
+class GatePolarity(unittest.TestCase):
+    """What a gate spelling matches in source, and what it refuses to match.
+
+    A gate is a claim about code a build compiles, and the string
+    `feature = "x"` is written by the gate, by its negation, by a `cfg_attr`
+    that compiles nothing in any configuration, and by any nesting of the
+    three. Matched as text a spelling could tell none of them apart, so a
+    `#[cfg(not(feature = "uuid"))]` in a file the `uuid` row does not allow
+    failed the build over code that exists only when `uuid` is off. Read as a
+    predicate instead: each `#[cfg(`, `#![cfg(` and `#[cfg_attr(` is walked
+    with its parentheses balanced, and the flag is matched at the polarity the
+    cell asked for.
+
+    The fragments are written for this file, with one exception: the compound
+    predicate below is copied from `crates/kynos/src/lib.rs`, because a case
+    about reading a nested `not(any(` should be a case about one this
+    repository writes. Sixty-three `all(`/`any(` sites and eighteen `not(`
+    sites make compound predicates the norm here rather than the exotic case.
+    """
+
+    #: `crates/kynos/src/lib.rs`: `time` names no library of its own, and the
+    #: gate that says so names both backends negatively.
+    COMPOUND = (
+        "#[cfg(all(\n"
+        '    feature = "time",\n'
+        '    not(any(feature = "time-chrono", feature = "time-jiff"))\n'
+        "))]\n"
+        'compile_error!("the `time` feature carries no types of its own");\n'
+    )
+
+    def matcher(self, cell):
+        parsed = gate.token(cell)
+        self.assertIsNotNone(parsed, f"{cell!r} was expected to parse")
+        self.assertEqual(len(parsed), 1, f"{cell!r} was expected to hold one spelling")
+        _, pattern, is_gate = parsed[0]
+        self.assertTrue(is_gate, f"{cell!r} was expected to parse as a gate")
+        return pattern
+
+    def test_a_negated_gate_is_not_the_positive_one(self):
+        self.assertFalse(
+            self.matcher('`feature = "uuid"`').search(
+                '#[cfg(not(feature = "uuid"))]\nfn absent_when_uuid_is_on() {}\n'
+            )
+        )
+
+    def test_a_documentation_annotation_is_not_a_gate(self):
+        self.assertFalse(
+            self.matcher('`feature = "uuid"`').search(
+                '#[cfg_attr(docsrs, doc(cfg(feature = "uuid")))]\npub fn f() {}\n'
+            )
+        )
+
+    def test_a_cfg_attr_predicate_is_still_a_gate(self):
+        self.assertTrue(
+            self.matcher('`feature = "uuid"`').search(
+                '#[cfg_attr(feature = "uuid", derive(Debug))]\nstruct S;\n'
+            )
+        )
+
+    def test_a_negated_cell_names_the_negation(self):
+        pattern = self.matcher('`not(feature = "openapi31")`')
+        self.assertTrue(
+            pattern.search('#[cfg(not(feature = "openapi31"))]\ncompile_error!("no");\n')
+        )
+        self.assertFalse(pattern.search('#[cfg(feature = "openapi31")]\nfn f() {}\n'))
+
+    def test_a_flag_positive_under_all_beside_a_negated_backend_is_read_both_ways(self):
+        self.assertTrue(self.matcher('`feature = "time"`').search(self.COMPOUND))
+        self.assertFalse(self.matcher('`feature = "time-chrono"`').search(self.COMPOUND))
+        self.assertTrue(
+            self.matcher('`not(feature = "time-chrono")`').search(self.COMPOUND)
+        )
+
+    def test_a_flag_inside_all_is_still_a_gate(self):
+        self.assertTrue(
+            self.matcher('`feature = "uuid"`').search(
+                '#[cfg(all(feature = "uuid", feature = "yaml"))]\nfn both() {}\n'
+            )
+        )
+
+    def test_a_bare_cfg_gate_is_still_a_gate(self):
+        self.assertTrue(self.matcher('`feature = "uuid"`').search(GATE))
+
+    def test_an_inner_attribute_is_read_like_an_outer_one(self):
+        self.assertTrue(
+            self.matcher('`feature = "test-util"`').search(
+                '#![cfg(feature = "test-util")]\npub mod test {}\n'
+            )
+        )
+
+    def test_a_gate_inside_a_string_literal_is_not_one(self):
+        self.assertFalse(
+            self.matcher('`feature = "uuid"`').search(
+                'const DOC: &str = "#[cfg(feature = \\"uuid\\")]";\n'
+            )
+        )
+
+
 class AllowedSites(unittest.TestCase):
     """What one *Named only in* cell allows, and what it refuses to allow."""
 
