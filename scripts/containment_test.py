@@ -167,6 +167,65 @@ class Literals(unittest.TestCase):
             self.assertIn("Reader", gate.strip(source, literals=literals))
 
 
+class Section(unittest.TestCase):
+    """The slice of a document a rule reads, and a marker that is no longer in it.
+
+    Every rule below reaches its document by slicing at a heading, and a heading
+    is a thing a document may be reworded past. `.index()` raises there, and a
+    raise inside this module is not one failing rule: it is the gate exiting
+    before it reports anything, and the import at the head of this file taking
+    the whole test run down with it -- so the run that would have named the
+    missing marker never starts. Reported and skipped instead, with the rule
+    that goes unchecked named in the failure.
+
+    The documents below are written for this file. What is under test is what
+    the helper does with a marker that is there and one that is not, and reading
+    this repository's own documents would make it a test of today's headings.
+    """
+
+    #: A marker with no regex meaning and every kind of whitespace a heading has.
+    GRADING = "| Grade | Owes | Flags |"
+
+    def test_a_renamed_heading_is_reported_rather_than_raising(self):
+        failures = []
+        self.assertIsNone(gate.section("# Doc\n\nprose\n", self.GRADING, failures))
+        self.assertEqual(len(failures), 1)
+        self.assertIn(self.GRADING, failures[0])
+
+    def test_a_present_heading_yields_the_text_from_it(self):
+        failures = []
+        body = f"{self.GRADING}\n| --- | --- | --- |\n| Full battery | a suite | `uuid` |\n"
+        self.assertEqual(
+            gate.section(f"# Doc\n\nprose\n\n{body}", self.GRADING, failures), body
+        )
+        self.assertEqual(failures, [])
+
+    def test_an_end_marker_truncates_at_it(self):
+        failures = []
+        document = f"# Doc\n\n{self.GRADING}\n| --- |\n\n## Next\n\nprose\n"
+        self.assertEqual(
+            gate.section(document, self.GRADING, failures, "\n## "),
+            f"{self.GRADING}\n| --- |\n",
+        )
+        self.assertEqual(failures, [])
+
+    def test_a_missing_end_marker_is_reported_rather_than_running_to_the_end_of_the_document(self):
+        failures = []
+        document = f"# Doc\n\n{self.GRADING}\n| --- |\n\nprose to the end\n"
+        self.assertIsNone(gate.section(document, self.GRADING, failures, "\n## "))
+        self.assertEqual(len(failures), 1)
+        self.assertIn(repr("\n## "), failures[0])
+
+    def test_the_first_of_two_headings_is_the_one_taken(self):
+        failures = []
+        document = f"{self.GRADING}\n| first |\n\n{self.GRADING}\n| second |\n"
+        self.assertEqual(
+            gate.section(document, self.GRADING, failures, "\n\n"),
+            f"{self.GRADING}\n| first |",
+        )
+        self.assertEqual(failures, [])
+
+
 class Token(unittest.TestCase):
     """What one *Named by* cell parses to, and when it refuses to parse."""
 
