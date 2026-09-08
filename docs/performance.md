@@ -9,6 +9,16 @@ implementation work. All five of the kinds below run today, four of them only
 for part of what they cover, and the [taxonomy](#the-taxonomy)'s last column is
 where that is admitted rather than implied.
 
+[`containment:check`](../scripts/containment.py) holds the first of those two
+numbers and not the second. How many kinds run is the Status column: a cell
+either opens `in use` or it does not, and the rule counts the rows and compares
+them to the sentence above. How many cover only part of what they name is a
+concession the rest of each cell makes in prose, and no token separates the four
+that make one from the one that does not — a rule for it would be fitted to
+today's cells and would fail the first honest rewording. So that number is
+recounted by hand when the taxonomy moves, and the sentence is held as written:
+rewording it means editing the rule in the same commit.
+
 The allocation count has already earned the document: the routing path was
 required to allocate nothing, had never been measured, and allocates seven
 times for a static match. [`nfr.md`](nfr.md#routing) carries the numbers and
