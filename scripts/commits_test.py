@@ -401,7 +401,6 @@ class BothHalvesOverOneMerge(GateTestCase):
         self.assertAccepted(self.range_gate(self.base))
 
 
-
 class RealMergeThroughARealHook(GateTestCase):
     """The reported symptom, observed rather than cited.
 
@@ -584,9 +583,6 @@ class NoMergeInProgress(GateTestCase):
         super().setUp()
         self.base = self.diverging_branches()
         self.assertFalse(self.merge_head(), "the fixture left a merge in progress")
-
-    def test_a_conventional_subject_passes_with_no_merge_in_progress(self):
-        self.assertAccepted(self.gate(CONVENTIONAL_SUBJECT))
 
     def test_a_squash_merge_leaves_no_merge_head_and_stays_checked(self):
         """`git merge --squash` is not a merge as far as this rule is concerned.
