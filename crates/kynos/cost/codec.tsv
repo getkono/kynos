@@ -1,0 +1,52 @@
+# Codec delta. `.text` of the `cost_codec` example, built as
+#   cargo build -p kynos --release --example cost_codec \
+#     --no-default-features --features openapi31,macros[,<codec>]
+# Written by `mise run cost:record`; compared by `mise run cost:features`.
+#
+# A different question from `binary.tsv`, over a different fixture, and neither
+# subsumes the other. That file measures a program that mounts no codec, so its
+# codec rows read zero and say the linker stripped what nothing called. This one
+# measures a program that mounts one: `performance.md`'s shape table bills an
+# opt-in payload codec a binary delta "on a route that mounts it", and that
+# route cannot exist in a fixture that also builds with the flag off.
+#
+# The baseline row is the fixture with its transport floor mounted -- one
+# operation reading octets as `Binary<OctetStream>` and dropping them, one
+# writing octets back -- and no codec. So a delta is decoding and encoding
+# rather than reading a body at all, which is the same floor
+# `tests/alloc_codecs.rs` takes its allocation counts against.
+#
+# WHAT A DELTA INCLUDES, stated because attributing it all to Kynos would be
+# wrong: mounting a codec pulls in the crate that implements it -- `serde_json`
+# for `json`, `serde_urlencoded` for `form`, `multer` for `multipart`, `prost`
+# for `protobuf`, `async-compression` and its gzip, brotli and zstd encoders for
+# `compression` -- and each mounted operation declares a payload type carrying a
+# `Schema` derive and the codec's own serialization derive. Every row below is
+# the whole arrangement. It is what a program mounting the codec pays, and for
+# several rows most of it is the dependency's rather than the framework's.
+#
+# `compression` is the row where that is not a caveat but the finding. It stands
+# an order of magnitude above every other, and what is in it is three whole
+# compression libraries -- the gzip, brotli and zstd backends `async-compression`
+# pulls -- rather than anything Kynos wrote. Read it as the price of the
+# encoders, and read `binary.tsv`'s `compression` row beside it for what the flag
+# costs a program that does not mount the interceptor.
+#
+# The compared column is `delta`, for `binary.tsv`'s reason: relations outlive
+# absolutes, and an absolute moves on a toolchain bump that changed nothing
+# about Kynos. `text` is recorded beside it as context and is not compared.
+#
+# No ceiling is set here or anywhere else. `nfr.md#thresholds` sets one from a
+# first recorded measurement, reviewed as a change to that document; this file
+# is that first measurement, not the ceiling.
+#
+# toolchain: 1.97.1 (8bab26f4f 2026-07-14)
+# host: x86_64-unknown-linux-gnu
+# baseline: 883900 bytes
+feature	text	delta
+(no codec)	883900	0
+compression	1835456	951556
+form	930156	46256
+json	947836	63936
+multipart	993468	109568
+protobuf	928012	44112

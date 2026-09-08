@@ -611,6 +611,56 @@ async fn shutdown_cancels_an_incomplete_tls_handshake() {
     }
 }
 
+/// A completed TLS handshake that then says nothing does not hold the drain.
+///
+/// The case above covers a handshake that never finished. This is the one that
+/// finished and fell silent: a pooled client's speculative pre-connect, or a
+/// scanner that opens a socket and stops. It is a connection with nothing in
+/// flight, so a drain must not wait for it.
+///
+/// It is the pin's failure mode, which is why it sits under the `http2` gate
+/// and not under `tls` alone. hyper's HTTP/2 server cannot finish a graceful
+/// shutdown before the client preface arrives -- `graceful_shutdown` in
+/// `State::Handshaking` only sets `close_pending` (`hyper` 1.11.0
+/// `src/proto/h2/server.rs`) -- so a connection pinned to `h2` the moment its
+/// handshake ended stays `Pending`, the accept loop's drain never finishes,
+/// `serve` waits out its whole shutdown timeout and returns
+/// `ShutdownTimeout`. Deriving the protocol from the first bytes had no such
+/// window: the driver owned the wait and cancelled its own read.
+///
+/// The client stream is held open across the assertion on purpose. Dropping it
+/// would close the socket, complete the connection through EOF, and pass
+/// whatever the server does with a client that stays.
+#[cfg(all(feature = "tls", feature = "http2"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_drains_a_tls_connection_that_never_speaks() {
+    use tokio_rustls::rustls::pki_types::ServerName;
+
+    let (address, authority, shutdown_sender, server) = tls_server(test_service()).await;
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let client = alpn_connector(authority.as_bytes(), &[b"h2"])
+        .connect(
+            ServerName::try_from("localhost").expect("valid DNS name"),
+            stream,
+        )
+        .await
+        .expect("the h2 handshake succeeds");
+
+    let _ = shutdown_sender.send(());
+    // Well inside `DEFAULT_SHUTDOWN_TIMEOUT`, so waiting the timeout out reads
+    // as this failing rather than as a slow drain.
+    tokio::time::timeout(std::time::Duration::from_secs(5), server)
+        .await
+        .expect("the drain completes rather than waiting out the shutdown timeout")
+        .expect("server task joins")
+        .expect("server exits cleanly");
+
+    drop(client);
+}
+
 #[cfg(feature = "tls")]
 #[test]
 fn mutual_tls_is_merged_into_every_security_alternative() {
@@ -686,7 +736,7 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
     use http_body_util::{BodyExt as _, Empty};
     use hyper_util::rt::TokioIo;
     use tokio_rustls::rustls::{
-        ClientConfig, RootCertStore,
+        ClientConfig,
         pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject as _},
     };
 
@@ -719,15 +769,9 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
     let address = bound.local_addrs()[0];
     let server = tokio::spawn(bound.serve());
 
-    let mut anonymous_roots = RootCertStore::empty();
-    for certificate in CertificateDer::pem_slice_iter(ca) {
-        anonymous_roots
-            .add(certificate.expect("CA certificate parses"))
-            .expect("CA is a trust anchor");
-    }
     let anonymous_connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(
         ClientConfig::builder()
-            .with_root_certificates(anonymous_roots)
+            .with_root_certificates(trust_anchors(ca))
             .with_no_client_auth(),
     ));
     let anonymous_stream = tokio::net::TcpStream::connect(address)
@@ -756,19 +800,13 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
         connection.abort();
     }
 
-    let mut roots = RootCertStore::empty();
-    for certificate in CertificateDer::pem_slice_iter(ca) {
-        roots
-            .add(certificate.expect("CA certificate parses"))
-            .expect("CA is a trust anchor");
-    }
     let client_certificates = CertificateDer::pem_slice_iter(issued.client.certificate.as_bytes())
         .collect::<std::result::Result<Vec<_>, _>>()
         .expect("client chain parses");
     let client_key =
         PrivateKeyDer::from_pem_slice(issued.client.key.as_bytes()).expect("client key parses");
     let mut client_config = ClientConfig::builder()
-        .with_root_certificates(roots)
+        .with_root_certificates(trust_anchors(ca))
         .with_client_auth_cert(client_certificates, client_key)
         .expect("client identity is valid");
     client_config.alpn_protocols = vec![b"http/1.1".to_vec()];
@@ -810,6 +848,303 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
         .await
         .expect("server task joins")
         .expect("server exits cleanly");
+}
+
+/// A connection that settled on `http/1.1` is served over HTTP/1.
+///
+/// `serve_http` pins hyper's `auto` driver to the identifier the handshake
+/// agreed rather than letting it read a protocol back off the first bytes of
+/// the stream, and pinning the wrong half of a two-protocol offer would refuse
+/// every client that chose the other -- so each half is served here, under its
+/// own protocol's gate rather than under both, since a build carrying one
+/// protocol pins that one and is where a mistake in its arm would ship alone.
+///
+/// The handler reports the ALPN identifier the connection carries alongside the
+/// version the request arrived with, so a connection served as the *other*
+/// protocol fails the comparison instead of passing it as "served at all".
+///
+/// Neither half distinguishes a pinned driver from a sniffing one: both answer
+/// a client that speaks what it negotiated, and in a build carrying one
+/// protocol the sniff can only reach the same answer the pin does.
+/// `a_client_contradicting_its_negotiated_protocol_is_refused` is what the pin
+/// can fail, and it needs both protocols compiled to say so.
+#[cfg(all(feature = "tls", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tls_serves_a_connection_that_settled_on_http1() {
+    use http_body_util::{BodyExt as _, Empty};
+    use hyper_util::rt::TokioIo;
+    use tokio_rustls::rustls::pki_types::ServerName;
+
+    let (address, authority, shutdown_sender, server) =
+        tls_server(negotiated_protocol_service()).await;
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let stream = alpn_connector(authority.as_bytes(), &[b"http/1.1"])
+        .connect(
+            ServerName::try_from("localhost").expect("valid DNS name"),
+            stream,
+        )
+        .await
+        .expect("the HTTP/1.1 handshake succeeds");
+    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .expect("HTTP/1 handshake completes");
+    let connection = tokio::spawn(connection);
+    let request = hyper::Request::builder()
+        .uri("/")
+        .header(hyper::header::HOST, "localhost")
+        .body(Empty::<bytes::Bytes>::new())
+        .expect("request builds");
+    let response = sender
+        .send_request(request)
+        .await
+        .expect("the request succeeds");
+    assert_eq!(response.version(), hyper::Version::HTTP_11);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("response body reads")
+        .to_bytes();
+    assert_eq!(body, bytes::Bytes::from_static(b"http/1.1 HTTP/1.1"));
+    drop(sender);
+    connection.abort();
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// The other half of the offer: a connection that settled on `h2`.
+///
+/// Gated on `http2` alone for the reason the HTTP/1 case above gives, and it is
+/// the half that matters most there: `h2` is the only identifier an
+/// `http2`-only build offers, so nothing else in that build reaches the pin at
+/// all.
+#[cfg(all(feature = "tls", feature = "http2"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tls_serves_a_connection_that_settled_on_h2() {
+    use http_body_util::{BodyExt as _, Empty};
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+    use tokio_rustls::rustls::pki_types::ServerName;
+
+    let (address, authority, shutdown_sender, server) =
+        tls_server(negotiated_protocol_service()).await;
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let stream = alpn_connector(authority.as_bytes(), &[b"h2"])
+        .connect(
+            ServerName::try_from("localhost").expect("valid DNS name"),
+            stream,
+        )
+        .await
+        .expect("the h2 handshake succeeds");
+    let (mut sender, connection) =
+        hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+            .await
+            .expect("HTTP/2 handshake completes");
+    let connection = tokio::spawn(connection);
+    let request = hyper::Request::builder()
+        .uri("https://localhost/")
+        .body(Empty::<bytes::Bytes>::new())
+        .expect("request builds");
+    let response = sender
+        .send_request(request)
+        .await
+        .expect("the request succeeds");
+    assert_eq!(response.version(), hyper::Version::HTTP_2);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("response body reads")
+        .to_bytes();
+    assert_eq!(body, bytes::Bytes::from_static(b"h2 HTTP/2.0"));
+    drop(sender);
+    connection.abort();
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// A client that contradicts the protocol it negotiated is refused.
+///
+/// The whole of what pinning changes. While the driver read the protocol off
+/// the first bytes of the stream, a connection that agreed on `h2` during the
+/// handshake and then wrote an HTTP/1 request head was answered in HTTP/1 --
+/// the wire overruling the handshake, and the connection carrying an ALPN
+/// identifier its own traffic contradicts. rustls settled `h2`, so `h2` is what
+/// the driver is given, and a request head that is not an HTTP/2 preface is not
+/// a request.
+///
+/// The refusal is asserted as "no HTTP/1 response", not as a particular
+/// failure: the driver may answer the malformed preface with a `GOAWAY`, close
+/// the connection, or reset it, and all three are the same refusal.
+#[cfg(all(feature = "tls", feature = "http1", feature = "http2"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_client_contradicting_its_negotiated_protocol_is_refused() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio_rustls::rustls::pki_types::ServerName;
+
+    let (address, authority, shutdown_sender, server) =
+        tls_server(negotiated_protocol_service()).await;
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let mut stream = alpn_connector(authority.as_bytes(), &[b"h2"])
+        .connect(
+            ServerName::try_from("localhost").expect("valid DNS name"),
+            stream,
+        )
+        .await
+        .expect("the h2 handshake succeeds");
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await
+        .expect("the request head writes");
+    stream.flush().await.expect("the request head flushes");
+
+    // The read's own result is discarded: a reset connection reports an error
+    // and a closed one reports zero bytes, and both are the same refusal. What
+    // the case asserts is what arrived.
+    let mut answer = Vec::new();
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        stream.read_to_end(&mut answer),
+    )
+    .await
+    .expect("the server answers or closes rather than holding the connection open");
+    assert!(
+        !answer.starts_with(b"HTTP/1.1"),
+        "a connection that negotiated `h2` was served HTTP/1: {}",
+        String::from_utf8_lossy(&answer)
+    );
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// A TLS listener serving `service`, and the authority a client must trust.
+///
+/// Both ALPN cases need the same three parts -- an authority, the server
+/// identity it issued, and a bound listener -- and neither asserts anything
+/// about any of them, so the setup is written once here.
+#[cfg(feature = "tls")]
+async fn tls_server(
+    service: crate::router::service::Service<()>,
+) -> (
+    std::net::SocketAddr,
+    String,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<crate::error::Result<()>>,
+) {
+    let issued = authority();
+    let tls = crate::server::tls::TlsConfig::from_pem(
+        issued.server.certificate.as_bytes(),
+        issued.server.key.as_bytes(),
+    )
+    .expect("server identity parses");
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(service)
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .tls(tls)
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("TLS listener prepares");
+    let address = bound.local_addrs()[0];
+
+    (
+        address,
+        issued.certificate,
+        shutdown_sender,
+        tokio::spawn(bound.serve()),
+    )
+}
+
+/// A client trusting `authority` and offering exactly `protocols` through ALPN.
+///
+/// The offer is the case's whole input: which identifier the handshake settles
+/// on is what the server pins its driver to.
+#[cfg(feature = "tls")]
+fn alpn_connector(authority: &[u8], protocols: &[&[u8]]) -> tokio_rustls::TlsConnector {
+    use tokio_rustls::rustls::ClientConfig;
+
+    let mut config = ClientConfig::builder()
+        .with_root_certificates(trust_anchors(authority))
+        .with_no_client_auth();
+    config.alpn_protocols = protocols.iter().map(|protocol| protocol.to_vec()).collect();
+
+    tokio_rustls::TlsConnector::from(std::sync::Arc::new(config))
+}
+
+/// The PEM authority in `certificate`, as a store a client can verify against.
+///
+/// Every TLS case here trusts one minted authority and differs only in what it
+/// does afterwards -- offering a client certificate, offering an ALPN
+/// identifier, or offering neither -- so the anchors are built once and the
+/// difference is left at each call site.
+#[cfg(feature = "tls")]
+fn trust_anchors(certificate: &[u8]) -> tokio_rustls::rustls::RootCertStore {
+    use tokio_rustls::rustls::{
+        RootCertStore,
+        pki_types::{CertificateDer, pem::PemObject as _},
+    };
+
+    let mut roots = RootCertStore::empty();
+    for anchor in CertificateDer::pem_slice_iter(certificate) {
+        roots
+            .add(anchor.expect("CA certificate parses"))
+            .expect("CA is a trust anchor");
+    }
+
+    roots
+}
+
+/// A service whose entire response is what the connection settled on.
+///
+/// The ALPN identifier the handshake agreed and the HTTP version the request
+/// arrived with: the first is what the driver is pinned from and the second is
+/// what it actually spoke, so the two disagreeing is a visible failure rather
+/// than a served request.
+#[cfg(feature = "tls")]
+fn negotiated_protocol_service() -> crate::router::service::Service<()> {
+    let document = kynos_openapi::Document::new(
+        kynos_openapi::SpecVersion::V3_1,
+        kynos_openapi::Info::new("Test", "1"),
+    );
+    crate::router::service::Service::new(document, |request: crate::http::Request| async move {
+        use crate::extract::FromRequestParts as _;
+
+        let (mut parts, _) = request.into_parts();
+        let version = parts.version;
+        let connection =
+            crate::extract::connection::Connection::from_request_parts(&mut parts, &())
+                .await
+                .expect("extracting a connection is infallible");
+        let alpn = connection.alpn_protocol().map_or_else(
+            || "none".to_owned(),
+            |alpn| String::from_utf8_lossy(alpn).into_owned(),
+        );
+
+        crate::http::Response::new(crate::http::body::Body::from_bytes(bytes::Bytes::from(
+            format!("{alpn} {version:?}"),
+        )))
+    })
 }
 
 #[cfg(feature = "tls")]

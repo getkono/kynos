@@ -17,6 +17,15 @@ is constructed, and it is marked as such: no target in this workspace
 instantiates a float-slice generic today, which is exactly why that defect was
 a wrong number waiting rather than a wrong number.
 
+The codec half is tested for a different exposure. Its parsing is the binary
+half's, but its *point list* and its baseline label are its own, and both are
+places a wrong answer looks right: a sweep whose points drifted from the six
+`mise run lint:codecs` builds would measure a set nothing lints, and a report
+that ranked against `openapi31` rather than against the fixture's floor would
+print a plausible table of the wrong subtraction. Both are asserted here, and so
+is the refusing direction `measure_binary` gained with them — a build that named
+no artifact, and an `llvm-size` that printed no `.text`.
+
 Run it as `mise run cost:test`, or directly. There is no Python test runner in
 this repository and `unittest` needs none.
 """
@@ -160,6 +169,36 @@ def recorded_codegen(directory, rows):
     )
 
 
+def codec_rows(**deltas):
+    """`{codec: {text, delta}}` over the mounting fixture, floor row first."""
+    floor = 883900
+    rows = {cost.CODEC_BASELINE: {"text": floor, "delta": 0}}
+    for label, delta in deltas.items():
+        rows[label.replace("_", "-")] = {"text": floor + delta, "delta": delta}
+    return rows
+
+
+def recorded_codec(directory, rows):
+    """`codec.tsv` as this run's baseline, recorded by the same toolchain."""
+    return written(
+        directory,
+        cost.CODEC_TSV,
+        rows,
+        ["text", "delta"],
+        cost.CODEC_HEADER.format(
+            toolchain=RECORDED_TOOLCHAIN, host=RECORDED_HOST, baseline=883900
+        ),
+    )
+
+
+def artifact_line(target, executable="/tmp/cost/target"):
+    """One `compiler-artifact` message, as `--message-format=json` emits it."""
+    return (
+        '{"reason":"compiler-artifact","executable":"%s",'
+        '"target":{"name":"%s"}}\n' % (executable, target)
+    )
+
+
 class ParseLlvmLines(unittest.TestCase):
     """`parse_llvm_lines` over what the tool actually prints."""
 
@@ -282,7 +321,12 @@ class Ranking(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             was = None if recorded is None else recorded_binary(directory, recorded)
         return cost.report(
-            measured, None, None, {cost.BINARY_TSV: was, cost.CODEGEN_TSV: None}, LIVE
+            measured,
+            None,
+            None,
+            None,
+            {cost.BINARY_TSV: was, cost.CODEGEN_TSV: None, cost.CODEC_TSV: None},
+            LIVE,
         )
 
     def codegen(self, measured, recorded):
@@ -293,7 +337,8 @@ class Ranking(unittest.TestCase):
             None,
             measured,
             codegen_functions(measured),
-            {cost.BINARY_TSV: None, cost.CODEGEN_TSV: was},
+            None,
+            {cost.BINARY_TSV: None, cost.CODEGEN_TSV: was, cost.CODEC_TSV: None},
             LIVE,
         )
 
@@ -362,7 +407,8 @@ class Provenance(unittest.TestCase):
             binary_rows(openapi32=76000),
             None,
             None,
-            {cost.BINARY_TSV: was, cost.CODEGEN_TSV: None},
+            None,
+            {cost.BINARY_TSV: was, cost.CODEGEN_TSV: None, cost.CODEC_TSV: None},
             versions,
         )
 
@@ -410,6 +456,84 @@ class Exclusions(unittest.TestCase):
         powerset, _with_server = self.excluded_by("features:check")
         (matrix,) = self.excluded_by("features:targets")
         self.assertEqual(powerset | {"full"}, matrix)
+
+
+class Codecs(unittest.TestCase):
+    """The third sweep: the fixture that mounts a codec, and its point list.
+
+    The question here is not the one `binary.tsv` answers, and the tests are
+    about keeping the two apart. A codec point is a *different program* from the
+    baseline point on purpose -- it mounts two operations the floor does not --
+    which is the opposite of what `fixture.rs` holds fixed, so the label the
+    deltas are taken against is a different one and every path that hardcoded
+    `openapi31` had to learn that.
+    """
+
+    def linted_sets(self):
+        """The feature sets `mise.toml`'s `lint:codecs` builds every target at."""
+        text = (cost.ROOT / "mise.toml").read_text()
+        body = text.split('[tasks."lint:codecs"]', 1)[1].split("\n[tasks.", 1)[0]
+        return set(re.findall(r"openapi31,macros(?:,[\w-]+)?", body))
+
+    def test_the_swept_sets_are_the_sets_lint_codecs_builds(self):
+        swept = {flags[-1] for _, flags in cost.codec_points()}
+        self.assertEqual(swept, self.linted_sets())
+
+    def test_every_codec_is_swept_at_the_macros_baseline(self):
+        points = dict(cost.codec_points())
+        self.assertEqual(set(points) - {cost.CODEC_BASELINE}, set(cost.CODECS))
+        for codec in cost.CODECS:
+            self.assertEqual(
+                points[codec][-1], f"{cost.CODEC_BASELINE_FEATURES},{codec}"
+            )
+
+    def test_the_floor_point_names_no_codec(self):
+        floor = dict(cost.codec_points())[cost.CODEC_BASELINE]
+        self.assertEqual(floor[-1], cost.CODEC_BASELINE_FEATURES)
+        self.assertNotIn(cost.CODEC_BASELINE, cost.CODECS)
+
+    def report(self, measured, recorded):
+        """The report for a codec-only run, against `recorded` or nothing."""
+        with tempfile.TemporaryDirectory() as directory:
+            was = None if recorded is None else recorded_codec(directory, recorded)
+        return cost.report(
+            None,
+            None,
+            None,
+            measured,
+            {cost.BINARY_TSV: None, cost.CODEGEN_TSV: None, cost.CODEC_TSV: was},
+            LIVE,
+        )
+
+    def test_every_number_survives_the_round_trip(self):
+        rows = codec_rows(json=63936, protobuf=0)
+        with tempfile.TemporaryDirectory() as directory:
+            back = recorded_codec(directory, rows)
+        self.assertEqual(back.rows, rows)
+        self.assertEqual(back.toolchain, RECORDED_TOOLCHAIN)
+
+    def test_a_first_run_ranks_each_codec_against_the_floor(self):
+        text = self.report(codec_rows(json=63936, form=46256), None)
+        self.assertIn("Codec delta", text)
+        self.assertIn(f"Largest cost, against the `{cost.CODEC_BASELINE}`", text)
+        self.assertIn("- `json` +63936", text)
+
+    def test_the_floor_point_is_never_ranked(self):
+        text = self.report(
+            codec_rows(json=63968), codec_rows(json=63936)
+        )
+        self.assertIn("- `json` +32", text)
+        self.assertNotIn(f"- `{cost.CODEC_BASELINE}`", text)
+
+    def test_the_openapi31_label_is_not_what_a_codec_row_is_taken_against(self):
+        """The regression a shared module-level `BASELINE` would reintroduce."""
+        text = self.report(codec_rows(json=63936), None)
+        self.assertNotIn(f"`{cost.BASELINE}` baseline", text)
+
+    def test_the_section_says_the_dependency_is_in_the_delta(self):
+        text = self.report(codec_rows(json=63936), None)
+        self.assertIn("serde_json", text)
+        self.assertIn("not attributable to Kynos alone", text)
 
 
 class Failures(unittest.TestCase):
@@ -470,6 +594,55 @@ class Failures(unittest.TestCase):
             code, said = self.refused(lambda: cost.measure_codegen([], {}))
         self.assertEqual(code, 1)
         self.assertIn("(TOTAL)", said)
+
+    def test_a_build_that_produced_no_executable_stops_the_binary_half(self):
+        """The other half of the guess `measure_binary` refuses to make.
+
+        It takes the artifact path from cargo rather than from
+        `target/release/examples/`, and the docstring there says why: a guess
+        would read one stale binary at every point and report a table of zeroes
+        with an exit status of zero. Nothing asserted what happens when cargo
+        names no artifact at all -- the case a `required-features` typo produces,
+        where the build succeeds and simply skips the target.
+        """
+        with mock.patch.object(cost, "capture", return_value=artifact_line("other")):
+            code, said = self.refused(
+                lambda: cost.measure_binary("/size", [], {}, cost.FIXTURE)
+            )
+        self.assertEqual(code, 1)
+        self.assertIn(cost.FIXTURE, said)
+
+    def test_the_codec_half_names_its_own_fixture_when_that_one_is_missing(self):
+        """Which fixture failed, not which fixture the message was written for."""
+        with mock.patch.object(cost, "capture", return_value=artifact_line("other")):
+            code, said = self.refused(
+                lambda: cost.measure_binary("/size", [], {}, cost.CODEC_FIXTURE)
+            )
+        self.assertEqual(code, 1)
+        self.assertIn(cost.CODEC_FIXTURE, said)
+        self.assertNotIn(cost.FIXTURE, said)
+
+    def test_a_binary_with_no_text_section_stops_the_sweep(self):
+        """`llvm-size` that printed sections and none of them `.text`.
+
+        A missing tool is already refused above. This is the tool present and
+        its output unusable, which is the shape a stripped or foreign artifact
+        takes -- and the shape that, unrefused, would make `.text` default to
+        nothing and every delta read as a saving.
+        """
+        with mock.patch.object(
+            cost,
+            "capture",
+            side_effect=[
+                artifact_line(cost.CODEC_FIXTURE),
+                "section        size   addr\n.rodata       1024      0\n",
+            ],
+        ):
+            code, said = self.refused(
+                lambda: cost.measure_binary("/size", [], {}, cost.CODEC_FIXTURE)
+            )
+        self.assertEqual(code, 1)
+        self.assertIn(".text", said)
 
     def test_a_command_that_exits_non_zero_stops_the_sweep(self):
         code, said = self.refused(

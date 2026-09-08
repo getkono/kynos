@@ -253,6 +253,31 @@ rewrite.
 | security | A credential is read from the field its scheme declared, and from no other | `Carries` is emitted by the same derive as `describe`, so the two are one text; [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) drives a derived API-key carrier to 200, 401 and 403 over a live service | `enforced` |
 | security | An authenticator cannot read a request field the scheme did not declare | Structural: `Authenticator::authenticate` receives `S::Presented` and is never given the request | `enforced` |
 | performance | An opt-in body codec's added allocations on an operation that mounts it are at most a recorded number, in both directions | [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs), taking each codec against the same service's bodyless floor, its `Binary<OctetStream>` transport floor and its bodyless responding floor | `enforced` |
+| performance | What mounting an opt-in payload codec costs a linked artifact is recorded and compared | `mise run cost:codecs` over [`cost/codec.rs`](../crates/kynos/cost/codec.rs), which mounts one operation each way per codec above a transport floor, with `.text` deltas against the committed [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv) | `partial`: the trend goes to the job summary rather than failing the pull request, and **no ceiling is set** — the figures below are a first recorded measurement in the sense [Thresholds](#thresholds) requires, and none of them yet supports one |
+
+**The codec row records numbers and sets no ceiling, and that is the threshold
+decision rather than a deferral.** The first sweep reads `protobuf` at +44112
+bytes of `.text`, `form` at +46256, `json` at +63936, `multipart` at +109568 and
+`compression` at +951556, over an 883900 byte floor — the fixture with its
+transport operations mounted and no codec. [Thresholds](#thresholds) permits a
+ceiling at a measured value, but a ceiling is only worth setting where the
+quantity it guards is one this repository controls, and this one is mostly not:
+each delta is the codec's code *and* its dependency's — `serde_json`,
+`serde_urlencoded`, `multer`, `prost`, `async-compression` — plus the payload
+type's two derives. A ceiling over that would fail on an upstream release that
+grew `multer` and pass through a Kynos extractor that doubled, which is the
+gate-that-cannot-fail-honestly [`performance.md`](performance.md#the-boundary)
+refuses. What the committed table buys instead is a drift column: the same
+figure re-measured by the same toolchain, so a change in Kynos's half shows up
+as movement rather than as a verdict nobody can attribute.
+
+**`compression` is the row where that reservation is the finding.** Its
++951556 is an order of magnitude above every other and is three whole
+compression libraries — the gzip, brotli and zstd backends `async-compression`
+pulls — rather than the interceptor over them. Read beside
+[`cost/binary.tsv`](../crates/kynos/cost/binary.tsv)'s `compression` row of
++160, which is what the flag costs a program that never mounts it, the pair
+says what neither says alone.
 
 **There is deliberately no default body cap**, and the row above says so rather
 than claiming one. This document previously read "body size, header count and
@@ -360,7 +385,7 @@ paragraph in [Status](#status).
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| reliability | Graceful shutdown drains all in-flight requests with zero dropped responses | Integration tests in `crates/kynos/src/server/tests.rs` covering HTTP/1 drain, HTTP/2 stream drain, TLS handshake cancellation, and timeout exhaustion | `enforced` |
+| reliability | Graceful shutdown drains all in-flight requests with zero dropped responses | Integration tests in `crates/kynos/src/server/tests.rs` covering HTTP/1 drain, HTTP/2 stream drain, TLS handshake cancellation, a completed TLS handshake that then sends nothing, and timeout exhaustion | `enforced` |
 | reliability | Backpressure is bounded by default via connection count, queue depth and timeouts | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting a request past the concurrency cap is shed with 503 rather than queued; a load test at 2× capacity for the memory bound | `enforced` for the shedding; `planned` for the load test |
 | reliability | HTTP/2 request-body flow control is released as the body is consumed, not as frames arrive | Load test streaming a large body to a slow consumer, asserting the receive window closes | `blocked-on-dependency` |
 | reliability | A streamed request body is decoded as it arrives rather than after it has been collected | [`extract/body/json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) reading a body delivered one frame per byte, and every frame boundary of a fixed body | `enforced` for a body declaring a `Content-Length`; `by-design` under `BodySize` for a chunked one |
@@ -587,7 +612,7 @@ open against a `kynos-otel` that may never be written.
 | dx | Every public item has a compiling doc example | Doctests already run via `mise run test:doc`; *presence* of an example per item is unenforced | `planned` |
 | compatibility | Public API item count is tracked as a budget | `cargo-public-api` count with a committed baseline | `needs-tooling` |
 | performance | The benchmark suite runs nightly with regression alerting | `kynos-bench`, so erosion surfaces as a trend rather than at release | `kynos-bench` |
-| performance | What each feature costs a linked artifact and in monomorphized IR | `mise run cost:features` over a fixed fixture at each feature, dedicated CI job, deltas against a committed baseline | `partial`: the trend goes to the job summary rather than failing the pull request, and no ceiling is set — one is set from a first recorded measurement, which is what the committed baselines are |
+| performance | What each feature costs a linked artifact and in monomorphized IR | `mise run cost:features` over a fixed fixture at each feature, dedicated CI job, deltas against a committed baseline | `partial`: the trend goes to the job summary rather than failing the pull request, and no ceiling is set — one is set from a first recorded measurement, which is what the committed baselines are. That fixture mounts no codec, so the codec question is [Extraction](#extraction)'s row over a second one |
 
 **The build-footprint row is held by its cause, because the effect is a number
 nothing reads and the cause is one cargo will not report.** The figure is a

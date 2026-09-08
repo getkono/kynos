@@ -13,6 +13,22 @@ collector, not about the API: it says that enabling F added nothing that
 survived into `.text`, or nothing that was instantiated here, because nothing
 called it. A non-zero row says the opposite, and says how much.
 
+A third sweep answers the other question, over a second fixture. The shape
+table in that document bills an opt-in payload codec "a binary delta, and an
+allocation count on an operation that names it", and says the delta is taken on
+a route that *mounts* the codec. No program can answer both questions: a route
+naming `Json<T>` cannot compile with `json` off, so the fixture that keeps its
+`json` row honest is the fixture that cannot be built at the baseline. So
+`--kind codec` sweeps `crates/kynos/cost/codec.rs` instead, which mounts one
+operation each way per codec behind that codec's flag, over a transport floor
+mounted at every point. Its baseline is that floor alone.
+
+What a codec row includes is stated in `codec.tsv` and worth stating here too:
+mounting a codec pulls in its dependency -- `serde_json`, `serde_urlencoded`,
+`multer`, `prost`, `async-compression` -- and its operations declare a payload
+type carrying two derives. The delta is all of that, which is what a program
+mounting the codec pays, and it is not Kynos code alone.
+
 That is narrower than the additivity `lib.rs` states, and deliberately not the
 same claim. `lib.rs` makes its claim about `openapi32` alone, and makes it
 about *source* compatibility -- the model types it extends are
@@ -95,6 +111,29 @@ BASELINE = "openapi31"
 ALL_FEATURES = "(all-features)"
 TOP = 5
 
+# The two example targets, named rather than spelled at each call site: a sweep
+# that built one and weighed the other would report a table of zeroes and exit
+# zero, which is the failure `measure_binary` already refuses to make possible
+# by taking the artifact path from cargo rather than guessing it.
+FIXTURE = "cost_fixture"
+CODEC_FIXTURE = "cost_codec"
+
+# The five opt-in payload codecs, and the feature set each is measured at.
+#
+# Stated rather than derived, because nothing in `[features]` marks a flag as a
+# codec -- `mise.toml`'s `lint:codecs` writes the same five out and argues for
+# writing them out, and `crates/kynos/tests/alloc_codecs.rs` has a module per
+# name. `cost_features_test.py` holds this set against that task's, so the three
+# lists cannot drift apart in the direction that loses a codec.
+CODECS = frozenset({"json", "form", "multipart", "protobuf", "compression"})
+# `macros` rather than `openapi31` alone: an operation is declared with an
+# attribute macro, so the fixture that mounts a codec cannot be built without
+# it. Pinned at every point, so it is not what any delta is measuring.
+CODEC_BASELINE_FEATURES = "openapi31,macros"
+# Parenthesised for `ALL_FEATURES`' reason. It is not a feature: it is the point
+# where the fixture mounts its transport floor and no codec at all.
+CODEC_BASELINE = "(no codec)"
+
 # `cargo llvm-lines` prints its total as two bare integers and every other row
 # with a share and a running share beside each -- `1608 (3.2%,  3.2%)     1
 # (0.1%,  0.1%)  <matchit::tree::Node<usize>>::insert` -- so both parentheses
@@ -151,6 +190,55 @@ BINARY_HEADER = """\
 # relations outlive absolutes, and an absolute moves on a toolchain bump that
 # changed nothing about Kynos. `text` is recorded beside it as context and is
 # not compared.
+#
+# No ceiling is set here or anywhere else. `nfr.md#thresholds` sets one from a
+# first recorded measurement, reviewed as a change to that document; this file
+# is that first measurement, not the ceiling.
+#
+# toolchain: {toolchain}
+# host: {host}
+# baseline: {baseline} bytes
+"""
+
+CODEC_TSV = "codec.tsv"
+CODEC_HEADER = """\
+# Codec delta. `.text` of the `cost_codec` example, built as
+#   cargo build -p kynos --release --example cost_codec \\
+#     --no-default-features --features openapi31,macros[,<codec>]
+# Written by `mise run cost:record`; compared by `mise run cost:features`.
+#
+# A different question from `binary.tsv`, over a different fixture, and neither
+# subsumes the other. That file measures a program that mounts no codec, so its
+# codec rows read zero and say the linker stripped what nothing called. This one
+# measures a program that mounts one: `performance.md`'s shape table bills an
+# opt-in payload codec a binary delta "on a route that mounts it", and that
+# route cannot exist in a fixture that also builds with the flag off.
+#
+# The baseline row is the fixture with its transport floor mounted -- one
+# operation reading octets as `Binary<OctetStream>` and dropping them, one
+# writing octets back -- and no codec. So a delta is decoding and encoding
+# rather than reading a body at all, which is the same floor
+# `tests/alloc_codecs.rs` takes its allocation counts against.
+#
+# WHAT A DELTA INCLUDES, stated because attributing it all to Kynos would be
+# wrong: mounting a codec pulls in the crate that implements it -- `serde_json`
+# for `json`, `serde_urlencoded` for `form`, `multer` for `multipart`, `prost`
+# for `protobuf`, `async-compression` and its gzip, brotli and zstd encoders for
+# `compression` -- and each mounted operation declares a payload type carrying a
+# `Schema` derive and the codec's own serialization derive. Every row below is
+# the whole arrangement. It is what a program mounting the codec pays, and for
+# several rows most of it is the dependency's rather than the framework's.
+#
+# `compression` is the row where that is not a caveat but the finding. It stands
+# an order of magnitude above every other, and what is in it is three whole
+# compression libraries -- the gzip, brotli and zstd backends `async-compression`
+# pulls -- rather than anything Kynos wrote. Read it as the price of the
+# encoders, and read `binary.tsv`'s `compression` row beside it for what the flag
+# costs a program that does not mount the interceptor.
+#
+# The compared column is `delta`, for `binary.tsv`'s reason: relations outlive
+# absolutes, and an absolute moves on a toolchain bump that changed nothing
+# about Kynos. `text` is recorded beside it as context and is not compared.
 #
 # No ceiling is set here or anywhere else. `nfr.md#thresholds` sets one from a
 # first recorded measurement, reviewed as a change to that document; this file
@@ -290,7 +378,31 @@ def points():
     yield ALL_FEATURES, ["--all-features"]
 
 
-def measure_binary(size, flags, env):
+def codec_points():
+    """The feature sets the codec sweep visits, its floor-only baseline first.
+
+    Written from `CODECS` rather than read off the manifest, which is the one
+    place this file departs from `points()`. A codec is not something
+    `[features]` marks: `json` and `cookie` are the same shape of entry there,
+    and only `performance.md`'s shape table distinguishes them. Deriving the
+    list would mean deriving it from a guess.
+    """
+    yield (
+        CODEC_BASELINE,
+        ["--no-default-features", "--features", CODEC_BASELINE_FEATURES],
+    )
+    for codec in sorted(CODECS):
+        yield (
+            codec,
+            [
+                "--no-default-features",
+                "--features",
+                f"{CODEC_BASELINE_FEATURES},{codec}",
+            ],
+        )
+
+
+def measure_binary(size, flags, env, example=FIXTURE):
     """`.text` of the fixture built at one point.
 
     `.text` rather than the file size because it excludes the two sections that
@@ -306,7 +418,7 @@ def measure_binary(size, flags, env):
     built = capture(
         [
             "cargo", "build", "-p", "kynos", "--release",
-            "--example", "cost_fixture",
+            "--example", example,
             "--message-format=json-render-diagnostics", *flags,
         ],
         env,
@@ -320,11 +432,11 @@ def measure_binary(size, flags, env):
         if (
             message.get("reason") == "compiler-artifact"
             and message.get("executable")
-            and message.get("target", {}).get("name") == "cost_fixture"
+            and message.get("target", {}).get("name") == example
         ):
             artifact = message["executable"]
     if artifact is None:
-        return fail("cargo reported no `cost_fixture` executable")
+        return fail(f"cargo reported no `{example}` executable")
     for line in capture([str(size), "-A", artifact]).splitlines():
         fields = line.split()
         if len(fields) >= 2 and fields[0] == ".text":
@@ -380,6 +492,28 @@ def sweep_binary(env, host):
         print(f"cost: binary {label}", file=sys.stderr, flush=True)
         text[label] = measure_binary(size, flags, env)
     base = text[BASELINE]
+    return {
+        label: {"text": value, "delta": value - base}
+        for label, value in text.items()
+    }
+
+
+def sweep_codec(env, host):
+    """`.text` of the mounting fixture at each codec, against the floor.
+
+    The same instrument and the same section as `sweep_binary`, over the other
+    fixture and a different baseline. Separate rather than parameterised into
+    that function because the two differ in what they hold fixed: this one
+    varies the *program* on purpose -- the codec point mounts two operations the
+    baseline point does not -- and folding them together would put one docstring
+    over two opposite claims about the fixture.
+    """
+    size = llvm_size(host)
+    text = {}
+    for label, flags in codec_points():
+        print(f"cost: codec {label}", file=sys.stderr, flush=True)
+        text[label] = measure_binary(size, flags, env, CODEC_FIXTURE)
+    base = text[CODEC_BASELINE]
     return {
         label: {"text": value, "delta": value - base}
         for label, value in text.items()
@@ -460,7 +594,7 @@ def write_tsv(path, header, names, rows):
     path.write_text(header + "\n".join(lines) + "\n")
 
 
-def table(rows, recorded, value, delta, unit):
+def table(rows, recorded, value, delta, unit, baseline=BASELINE):
     """The per-kind report table, and the two buckets it ranks points by.
 
     Two buckets rather than one, because a point the recorded baseline has no
@@ -484,14 +618,15 @@ def table(rows, recorded, value, delta, unit):
             # Not on a first run, where `movers` already ranks every point by
             # cost, and not for the baseline, which is the point the deltas are
             # taken against rather than a point with a cost of its own.
-            if recorded is not None and label != BASELINE:
+            if recorded is not None and label != baseline:
                 fresh[label] = measured[delta]
         else:
             moved_by = measured[delta] - was
-            # `openapi31` is the point every delta is taken against, so its own
-            # drift is zero by construction. Ranking it would spend one of five
-            # slots saying the baseline is the baseline.
-            if label != BASELINE:
+            # The point every delta is taken against has a drift of zero by
+            # construction -- `openapi31` for the feature sweeps, the codec
+            # fixture's floor for the codec one. Ranking it would spend one of
+            # five slots saying the baseline is the baseline.
+            if label != baseline:
                 drifts[label] = moved_by
             shown, moved = f"{was:+}", f"{moved_by:+}"
         lines.append(
@@ -501,7 +636,7 @@ def table(rows, recorded, value, delta, unit):
     return "\n".join(lines), drifts, fresh
 
 
-def movers(rows, drifts, recorded, delta):
+def movers(rows, drifts, recorded, delta, baseline=BASELINE):
     """The points to list, ranked, and what the ranking means.
 
     By drift once there is a recorded baseline to have drifted from, and by raw
@@ -512,9 +647,9 @@ def movers(rows, drifts, recorded, delta):
         ranked = [
             (label, measured[delta])
             for label, measured in rows.items()
-            if label != BASELINE
+            if label != baseline
         ]
-        heading = "Largest cost, against the `openapi31` baseline"
+        heading = f"Largest cost, against the `{baseline}` baseline"
     else:
         ranked = list(drifts.items())
         heading = "Largest drift, against the recorded baseline"
@@ -608,10 +743,21 @@ def provenance(recorded, versions):
     ]
 
 
-def section(title, note, rows, recorded, value, delta, unit, versions, functions=None):
+def section(
+    title,
+    note,
+    rows,
+    recorded,
+    value,
+    delta,
+    unit,
+    versions,
+    functions=None,
+    baseline=BASELINE,
+):
     """One kind's table, its ranked points, and optionally its attribution."""
-    body, drifts, fresh = table(rows, recorded, value, delta, unit)
-    ranked, heading = movers(rows, drifts, recorded, delta)
+    body, drifts, fresh = table(rows, recorded, value, delta, unit, baseline)
+    ranked, heading = movers(rows, drifts, recorded, delta, baseline)
     listed = [f"- `{label}` {moved:+}" for label, moved in ranked] or ["- none"]
     out = [
         f"### {title}",
@@ -630,7 +776,7 @@ def section(title, note, rows, recorded, value, delta, unit, versions, functions
     if new:
         out += [
             "#### Not in the recorded baseline, ranked by cost against "
-            "`openapi31`",
+            f"`{baseline}`",
             "",
             "These points have no drift to rank: the recorded baseline has no "
             "row for them, so there is nothing for them to have drifted from. "
@@ -643,10 +789,10 @@ def section(title, note, rows, recorded, value, delta, unit, versions, functions
     attributed = [label for label, _ in ranked] + [label for label, _ in new]
     if functions is not None and attributed:
         out += [
-            "#### What those features instantiate, against `openapi31`",
+            f"#### What those features instantiate, against `{baseline}`",
             "",
             "Each block is the listed feature's own composition in this run: "
-            "the monomorphizations that differ between it and the `openapi31` "
+            f"the monomorphizations that differ between it and the `{baseline}` "
             "baseline. Where the ranking above is by drift, this is *not* an "
             "explanation of that drift — per-function counts are not recorded "
             "in the baseline, so no per-function drift exists to show.",
@@ -657,7 +803,7 @@ def section(title, note, rows, recorded, value, delta, unit, versions, functions
     return out
 
 
-def report(binary, codegen, functions, recorded, versions):
+def report(binary, codegen, functions, codec, recorded, versions):
     """The trend report, as Markdown.
 
     A trend and nothing more: it states what moved and by how much, and passes
@@ -668,17 +814,23 @@ def report(binary, codegen, functions, recorded, versions):
     out = [
         "## Per-feature cost",
         "",
-        f"Measured by toolchain `{versions[0]}` on `{versions[1]}`, over "
-        "`crates/kynos/cost/fixture.rs` at each feature. Each section states "
-        "which toolchain recorded the baseline its drift column is taken "
-        "against, which need not be this one.",
+        f"Measured by toolchain `{versions[0]}` on `{versions[1]}`. Each "
+        "section states which toolchain recorded the baseline its drift column "
+        "is taken against, which need not be this one, and which of the two "
+        "fixtures it weighed.",
         "",
-        "The fixture uses none of these features -- it mounts no codec and "
+        "The first two sections build `crates/kynos/cost/fixture.rs` at each "
+        "feature. That fixture uses none of them -- it mounts no codec and "
         "calls no optional API -- so a zero row says the linker stripped, or "
         "the collector never instantiated, what nothing called. It does not "
         "say the feature is free to a program that uses it. What a row does "
         "establish is the cost of merely enabling F to a program that does "
         "not use F.",
+        "",
+        "The codec section answers the other question, over "
+        "`crates/kynos/cost/codec.rs`, which mounts one operation each way per "
+        "codec. No program answers both: a route naming `Json<T>` cannot "
+        "compile with `json` off.",
         "",
         "No ceiling is applied. This reports a trend; a threshold is set from a "
         "recorded measurement as a change to `docs/nfr.md`.",
@@ -710,29 +862,53 @@ def report(binary, codegen, functions, recorded, versions):
             versions,
             functions,
         )
+    if codec is not None:
+        out += section(
+            "Codec delta",
+            "`.text` of the *mounting* fixture, built at `--release`. The "
+            "baseline is that fixture with its transport floor and no codec, "
+            "so a delta is decoding and encoding rather than reading a body at "
+            "all. Each delta is the codec, the crate that implements it -- "
+            "`serde_json`, `serde_urlencoded`, `multer`, `prost`, "
+            "`async-compression` -- and the payload type its operations "
+            "declare, so it is not attributable to Kynos alone.",
+            codec,
+            recorded[CODEC_TSV],
+            "text",
+            "delta",
+            "`.text` bytes",
+            versions,
+            baseline=CODEC_BASELINE,
+        )
     return "\n".join(out) + "\n"
 
 
 def main():
     parsed = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    # `all` rather than the `both` it was: there are three kinds now, and a
+    # default whose name says two would be a default that lies about what it
+    # runs. Nothing passes the old name -- `cost:codegen` passes `codegen` and
+    # every other task takes the default.
     parsed.add_argument(
         "--kind",
-        choices=("both", "binary", "codegen"),
-        default="both",
-        help="which half of the sweep to run (default: both)",
+        choices=("all", "binary", "codegen", "codec"),
+        default="all",
+        help="which part of the sweep to run (default: all)",
     )
     kind = parsed.parse_args().kind
 
     env = sweep_env()
     versions = toolchain()
     recorded = {
-        name: read_recorded(COST / name) for name in (BINARY_TSV, CODEGEN_TSV)
+        name: read_recorded(COST / name)
+        for name in (BINARY_TSV, CODEGEN_TSV, CODEC_TSV)
     }
 
-    binary = sweep_binary(env, versions[1]) if kind != "codegen" else None
+    binary = sweep_binary(env, versions[1]) if kind in ("all", "binary") else None
     codegen, functions = (
-        sweep_codegen(env) if kind != "binary" else (None, None)
+        sweep_codegen(env) if kind in ("all", "codegen") else (None, None)
     )
+    codec = sweep_codec(env, versions[1]) if kind in ("all", "codec") else None
 
     written = []
     if binary is not None:
@@ -763,8 +939,22 @@ def main():
                 codegen,
             )
         )
+    if codec is not None:
+        written.append(
+            (
+                CODEC_TSV,
+                "cost-codec.tsv",
+                CODEC_HEADER.format(
+                    toolchain=versions[0],
+                    host=versions[1],
+                    baseline=codec[CODEC_BASELINE]["text"],
+                ),
+                ["text", "delta"],
+                codec,
+            )
+        )
 
-    text = report(binary, codegen, functions, recorded, versions)
+    text = report(binary, codegen, functions, codec, recorded, versions)
     (ROOT / "cost-report.md").write_text(text)
     print(text)
 

@@ -283,9 +283,10 @@ jobs:
   cost:
     name: Cost trend
     runs-on: ubuntu-latest
-    # Reports what each feature costs; does not fail the pull request on a
-    # delta. Modelled on the `semver` job above, and differing from it in one
-    # place worth naming.
+    # Reports what each feature costs a program that ignores it, and what
+    # mounting each payload codec costs one that does not; does not fail the
+    # pull request on a delta. Modelled on the `semver` job above, and differing
+    # from it in one place worth naming.
     #
     # `continue-on-error` is deliberately not used here, for that job's reason:
     # it leaves the check run reporting `failure` and the pull request showing a
@@ -309,8 +310,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
       # No `cargo-cache-key`, for the `package` job's reason above. This
-      # sweep builds the fixture once per feature point -- some fifty builds,
-      # half of them fat-LTO release -- so its target directory is the largest
+      # sweep builds a fixture once per point -- some fifty for the feature
+      # points and six more for the codec ones, over half of them fat-LTO
+      # release -- so its target directory is the largest
       # any job here would save, and `setup` records why saving it is the
       # wrong trade: a branch's cache entries are readable by nobody else
       # while still counting against the repository-wide limit, so a save this
@@ -319,7 +321,7 @@ jobs:
       # points built in one run, not against a cache.
       - name: Set up
         uses: ./.github/actions/setup
-      - name: Measure per-feature codegen and binary deltas
+      - name: Measure per-feature codegen and binary deltas, and per-codec ones
         run: mise run cost:features
       - name: Add cost summary
         run: cat cost-report.md >> "$GITHUB_STEP_SUMMARY"
@@ -330,4 +332,5 @@ jobs:
           path: |
             cost-report.md
             cost-binary.tsv
+            cost-codec.tsv
             cost-codegen.tsv

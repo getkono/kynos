@@ -11,10 +11,9 @@ use kynos_openapi::{
 };
 
 use crate::{
-    error::rejection::AuthRejection,
+    error::rejection::{AuthRejection, ScopedRejection, auth_responses},
     extract::{FromRequestParts, describe::Describe},
     http::{HeaderValue, Parts, StatusCode},
-    response::Responses,
     router::operation::OperationCx,
     security::{Authenticates, Authenticator, SecurityScheme, carrier::Carries},
 };
@@ -86,8 +85,15 @@ impl<S: SecurityScheme> Auth<S> {
 }
 
 impl<S: SecurityScheme> Describe for Auth<S> {
+    /// Declares `about:blank` for its 403, and cannot declare anything else.
+    ///
+    /// The type on a named 403 is [`Scopes::FORBIDDEN_TYPE`], and this argument
+    /// names no scope set: `S` is a scheme, the authenticator that would refuse
+    /// is a value on the application's context, and nothing here can reach it.
+    /// See the trait's documentation for why the seam sits there rather than on
+    /// the scheme.
     fn describe(operation: &mut OperationCx<'_>) {
-        declare::<S>(operation, S::scopes().to_vec());
+        declare::<S>(operation, S::scopes().to_vec(), None);
     }
 }
 
@@ -191,12 +197,15 @@ impl<S: SecurityScheme> MaybeAuth<S> {
 }
 
 impl<S: SecurityScheme> Describe for MaybeAuth<S> {
+    /// Declares `about:blank` for its 403, for the reason
+    /// [`Auth`](Auth#method.describe) gives: naming no scope set, it has no
+    /// [`Scopes::FORBIDDEN_TYPE`] to declare.
     fn describe(operation: &mut OperationCx<'_>) {
         // Before `declare`, because `add_security` appends in call order and
         // the empty requirement leading the list is how a reader sees that the
         // scheme is one of two acceptable answers rather than the only one.
         operation.add_security(SecurityRequirement::anonymous());
-        declare::<S>(operation, S::scopes().to_vec());
+        declare::<S>(operation, S::scopes().to_vec(), None);
     }
 }
 
@@ -230,9 +239,71 @@ where
 /// Declared as a unit struct so that scope sets are types rather than string
 /// literals repeated across handlers — a misspelled scope becomes a compile
 /// error, and renaming one is a single edit.
+///
+/// ```
+/// use kynos::security::auth::Scopes;
+///
+/// /// What an administrative endpoint demands, and what refusing it is called.
+/// struct Admin;
+///
+/// impl Scopes for Admin {
+///     const SCOPES: &'static [&'static str] = &["admin"];
+///     const FORBIDDEN_TYPE: Option<&'static str> =
+///         Some("https://errors.example.com/insufficient-scope");
+/// }
+///
+/// /// A scope set naming no type, which is every one written before this const
+/// /// existed and still the ordinary case.
+/// struct ReadReports;
+///
+/// impl Scopes for ReadReports {
+///     const SCOPES: &'static [&'static str] = &["reports:read"];
+/// }
+///
+/// assert_eq!(ReadReports::FORBIDDEN_TYPE, None);
+/// ```
 pub trait Scopes: Send + Sync + 'static {
     /// The scopes required.
     const SCOPES: &'static [&'static str];
+
+    /// The problem `type` a refusal of *these* scopes may publish, beside
+    /// `about:blank`.
+    ///
+    /// This is the description half of
+    /// [`AuthRejection::forbidden_as`](crate::error::rejection::AuthRejection::forbidden_as),
+    /// and the only seam a document assembled from types has for it. The URI an
+    /// authorizer chooses arrives at run time; the scope set it was refused for
+    /// is a *type*, so this is where an application says once which refusal a
+    /// [`Scoped<S, R>`](Scoped) argument can name.
+    ///
+    /// # What it declares
+    ///
+    /// A `Some` narrows the operation's 403 to a choice between `about:blank`
+    /// and this URI — **both**, never this one alone.
+    /// [`AuthRejection::forbidden()`](crate::error::rejection::AuthRejection::forbidden)
+    /// stays available to every authorizer, so a declaration naming only this
+    /// URI would say less than the operation sends, which is the one direction
+    /// *emitted ⊇ observable* forbids.
+    ///
+    /// A `None` — the default, and what every scope set written before this
+    /// existed says — declares the shared `Problem` component and narrows
+    /// nothing, which is what a 403 an authorizer may name anything at all is
+    /// owed.
+    ///
+    /// # What it promises
+    ///
+    /// That every 403 a `Scoped<S, R>` argument produces carries this URI or
+    /// `about:blank`. The whole guard, not the scope check alone: `Scoped`
+    /// authenticates before it authorizes, so an
+    /// [`Authenticator::authenticate`] that refuses with a *third* URI breaks
+    /// the same promise. Nothing in the type system holds it — the conformance harness does, by checking each
+    /// body against the schema declared for its status.
+    ///
+    /// [`Auth<S>`](Auth) and [`MaybeAuth<S>`](MaybeAuth) have no counterpart
+    /// and are not getting one. They name a scheme and no scope set, and a
+    /// type URI hung on the *scheme* would pin one name to every check made
+    /// under it — coarser than the per-refusal conditions the seam exists for.
+    const FORBIDDEN_TYPE: Option<&'static str> = None;
 }
 
 /// An [`Auth`] additionally requiring a set of scopes.
@@ -311,7 +382,7 @@ impl<S: SecurityScheme, R: Scopes> Describe for Scoped<S, R> {
                 scopes.push(scope);
             }
         }
-        declare::<S>(operation, scopes);
+        declare::<S>(operation, scopes, R::FORBIDDEN_TYPE);
     }
 }
 
@@ -321,12 +392,17 @@ where
     S: Carries,
     R: Scopes,
 {
-    type Rejection = AuthRejection;
+    /// [`AuthRejection`] described against `R`, which is what narrows the 403
+    /// this argument declares. See [`ScopedRejection`] for why the scope set has
+    /// to be read here rather than only in [`Describe`].
+    type Rejection = ScopedRejection<R>;
 
     async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
         // Both halves, because a `authorize` that answers 401 rather than 403
         // owes the client a challenge for the same reason `authenticate` does.
-        let challenged = |rejection: AuthRejection| rejection.with_challenge(S::challenge());
+        let challenged = |rejection: AuthRejection| {
+            ScopedRejection::new(rejection.with_challenge(S::challenge()))
+        };
 
         let presented = S::present(parts)
             .map_err(challenged)?
@@ -351,11 +427,20 @@ where
 /// The three halves are one act: the requirement names the scheme, the
 /// registration defines it under the same key, and the 401 carries the
 /// challenge the scheme itself supplies.
-fn declare<S: SecurityScheme>(operation: &mut OperationCx<'_>, scopes: Vec<&'static str>) {
+///
+/// `forbidden_type` is [`Scopes::FORBIDDEN_TYPE`] where the argument named a
+/// scope set, and `None` where it named only a scheme. It is the one thing the
+/// three arguments do not share, which is why it is a parameter here rather
+/// than a method on [`SecurityScheme`]: the seam is per scope set.
+fn declare<S: SecurityScheme>(
+    operation: &mut OperationCx<'_>,
+    scopes: Vec<&'static str>,
+    forbidden_type: Option<&'static str>,
+) {
     // Before the header, not after: `add_response_header` invents a thinly
     // described 401 when the operation declares none, and merging cannot
     // replace a response that already exists.
-    let responses = AuthRejection::responses(operation.registry());
+    let responses = auth_responses(operation.registry(), forbidden_type);
     operation.add_responses(&responses);
 
     // RFC 9110 section 11.6.1: a 401 MUST carry at least one challenge. Only a

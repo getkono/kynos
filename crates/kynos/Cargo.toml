@@ -40,7 +40,7 @@ categories = [
 # exist; the `required-features` `metaschema`'s declaration carried now sit in
 # the file's own `#![cfg]`, which holds in both trees.
 #
-# The two cost baselines go for the same reason, one step further out. Their
+# The three cost baselines go for the same reason, one step further out. Their
 # oracle is `scripts/cost_features.py` and the `cost:*` tasks in `mise.toml`,
 # both above this root, so the instructions printed in each file's own header
 # name commands a tarball does not contain; and what they record is a sweep of
@@ -48,12 +48,13 @@ categories = [
 # workspace rather than of the library someone downloaded. Shipping them would
 # ship a table nobody receiving it can reproduce, compare against or act on.
 #
-# `cost/fixture.rs` stays, and must: it is a declared `[[example]]`, and the
-# rule above applies to it in the other direction -- a declared target whose
-# path is excluded is a manifest error, so the file the sweep measures travels
-# even though the numbers it produced do not.
+# `cost/fixture.rs` and `cost/codec.rs` stay, and must: each is a declared
+# `[[example]]`, and the rule above applies to them in the other direction -- a
+# declared target whose path is excluded is a manifest error, so the files the
+# sweeps measure travel even though the numbers they produced do not.
 exclude = [
   "cost/binary.tsv",
+  "cost/codec.tsv",
   "cost/codegen.tsv",
   "tests/ledger.rs",
   "tests/metaschema.rs",
@@ -301,6 +302,25 @@ required-features = ["openapi31", "server", "http1", "http2", "tls"]
 [[example]]
 name = "cost_fixture"
 path = "cost/fixture.rs"
+
+# The second cost fixture, and the one that *mounts* each codec. It is here for
+# the question the one above structurally cannot answer: `fixture.rs` names no
+# codec, so a `json` or `protobuf` row of `cost/binary.tsv` measures the linker
+# stripping what nothing called. `docs/performance.md` bills an opt-in payload
+# codec a binary delta "on a route that mounts it", and a route that mounts one
+# cannot exist in a program that also builds with the flag off -- so the two
+# questions need two fixtures rather than one.
+#
+# `required-features` where `cost_fixture` deliberately has none, and for a
+# reason that does not weaken it: an operation is declared with an attribute
+# macro, so `macros` is not optional here. The sweep pins `openapi31,macros` at
+# every point it visits, and those six points are exactly the sets
+# `mise run lint:codecs` lints every target at, so this file is Clippy-checked
+# at each set it is measured at.
+[[example]]
+name = "cost_codec"
+path = "cost/codec.rs"
+required-features = ["openapi31", "macros"]
 
 [features]
 default = [

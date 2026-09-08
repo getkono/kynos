@@ -36,7 +36,7 @@
 //! declined. It is still a fact the caller may have: it names a class of
 //! refusal, not the check that produced one.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, marker::PhantomData};
 
 use serde_json::json;
 
@@ -45,6 +45,7 @@ use crate::{
     http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
+    security::auth::Scopes,
 };
 
 /// One response per declared status, each narrowing the shared [`Problem`]
@@ -616,13 +617,17 @@ impl AuthRejection {
     /// type, and Kynos has none to offer for a URI it has never seen; an
     /// application wanting its own title has `#[derive(ApiError)]`.
     ///
-    /// **This reaches the wire and not the description.** The 403 an operation
-    /// declares still refers to the shared `Problem` component and narrows
-    /// nothing, because `Describe` for `Auth<S>` and `Scoped<S, R>` is generic
-    /// in the scheme alone and the authenticator is a value on the context,
-    /// unreachable while the document is built. A client reading the body sees
-    /// this URI; a client reading the description does not. #118 is where that
-    /// gap is settled.
+    /// **Whether the description says so is the scope set's to decide.** A
+    /// [`Scoped<S, R>`](crate::security::auth::Scoped) argument whose `R` names
+    /// a
+    /// [`FORBIDDEN_TYPE`](crate::security::auth::Scopes::FORBIDDEN_TYPE)
+    /// declares a 403 publishing that URI or `about:blank`, and passing the
+    /// same URI here is what makes the two agree. Anywhere else — an `R` naming
+    /// none, or an [`Auth<S>`](crate::security::auth::Auth) or
+    /// [`MaybeAuth<S>`](crate::security::auth::MaybeAuth) argument, which names
+    /// no scope set to hang a const on — the declared 403 stays the shared
+    /// `Problem` component, and a client reading the body sees a URI a client
+    /// reading the description does not.
     ///
     /// The URI is not validated and reaches the client verbatim, so it names a
     /// class of refusal rather than a fact about the caller. RFC 9457 section
@@ -746,42 +751,183 @@ impl IntoResponse for AuthRejection {
     }
 }
 
-/// The one rejection whose statuses are not described alike.
+/// The one rejection whose statuses are not described alike, given the type its
+/// 403 may name.
 ///
-/// The 401 narrows like every other: [`AuthRejection::unauthenticated`] leaves
-/// the type to [`Problem::new`], and which credential check refused is not a
-/// fact this type will ever carry.
+/// The 401 narrows like every other rejection: [`AuthRejection::unauthenticated`]
+/// leaves the type to [`Problem::new`], and which credential check refused is
+/// not a fact this type will ever carry.
 ///
-/// The 403 cannot, and that is [`AuthRejection::forbidden_as`]'s doing rather
-/// than an omission here. An authorizer may name its refusal with a URI of the
-/// application's own, and that value arrives at run time while this runs over
-/// types alone — so a 403 on the wire carries `about:blank` *or* something no
-/// description could have known. Narrowing it to the first would declare less
-/// than the operation sends, which is the one direction `emitted ⊇ observable`
-/// forbids, so it stays the shared component and admits both. #118 is where
-/// that gap is settled.
+/// The 403 is the one status in the crate an *application* decides the type of.
+/// [`AuthRejection::forbidden_as`] takes a URI at run time, while a description
+/// is assembled from types — so `named` is the only thing about it a type can
+/// say, and it comes from
+/// [`Scopes::FORBIDDEN_TYPE`](crate::security::auth::Scopes::FORBIDDEN_TYPE) on
+/// the scope set a [`Scoped<S, R>`](crate::security::auth::Scoped) argument
+/// demanded.
 ///
 /// Driven from [`IntoProblem::statuses`] rather than from two literals, so a
 /// status added there is described rather than silently dropped.
+pub(crate) fn auth_responses(
+    registry: &mut Registry,
+    named: Option<&'static str>,
+) -> kynos_openapi::Responses {
+    <AuthRejection as IntoProblem>::statuses().iter().fold(
+        kynos_openapi::Responses::new(),
+        |responses, status| {
+            let declared = if *status == StatusCode::FORBIDDEN {
+                forbidden(registry, *status, named)
+            } else {
+                narrowed_problem(registry, *status)
+            };
+
+            responses.with(status.as_u16(), declared)
+        },
+    )
+}
+
+/// The 403 a guard declares: a choice of two types where the scope set named
+/// one, and the shared component where it did not.
+///
+/// **A choice, never the named URI alone.** [`AuthRejection::forbidden`] stays
+/// available to every authorizer whatever its scope set declares, so both
+/// bodies are observable on the operation and a narrowing to either one would
+/// declare less than it sends — the direction `emitted ⊇ observable` forbids.
+/// `about:blank` leads, because it is the answer a refusal with nothing of its
+/// own to say has always given.
+///
+/// Naming none leaves the shared component, which is the *widest* thing that
+/// can be declared rather than a gap: an authorizer that names no URI here may
+/// still name any URI at all on the wire, and only a schema every problem
+/// document satisfies is true of that. It is what every guard declared before
+/// [`Scopes::FORBIDDEN_TYPE`](crate::security::auth::Scopes::FORBIDDEN_TYPE)
+/// existed, and what [`Auth<S>`](crate::security::auth::Auth) and
+/// [`MaybeAuth<S>`](crate::security::auth::MaybeAuth) still declare.
+fn forbidden(
+    registry: &mut Registry,
+    status: StatusCode,
+    named: Option<&'static str>,
+) -> kynos_openapi::Response {
+    let Some(named) = named else {
+        let description = status.canonical_reason().map_or_else(
+            || format!("a `{}` response", status.as_u16()),
+            str::to_owned,
+        );
+
+        return problem_response(registry, description);
+    };
+
+    let problem = registry.resolve::<Problem>();
+
+    narrowed_response(
+        &problem,
+        status.as_u16(),
+        &[(None, None), (Some(named), None)],
+    )
+}
+
+/// The rejection a [`Scoped<S, R>`](crate::security::auth::Scoped) argument
+/// raises: the same two failures [`AuthRejection`] carries — it wraps one —
+/// described against the scope set that demanded them.
+///
+/// # Why the guard's rejection is not `AuthRejection` itself
+///
+/// Because `Responses` is reached through the *rejection type*, and a 403
+/// narrowed anywhere else is overwritten by the wide one `AuthRejection` would
+/// contribute beside it. A side admitting every problem document wins a union
+/// outright — the rule that keeps [`Auth<S>`](crate::security::auth::Auth)'s
+/// 403 sound, since an authorizer there may name a URI no type can — and it
+/// applies whichever contributor carries it. So a scope set that names its
+/// refusal has to be read by the contributor that decides the status, which is
+/// this type.
+///
+/// [`Scopes::FORBIDDEN_TYPE`] is what it reads, and naming none declares
+/// exactly what `AuthRejection` does.
+///
+/// Nothing constructs one but the guard, and an
+/// [`Authenticator`](crate::security::Authenticator) still returns an
+/// `AuthRejection`: what the check knows is which failure occurred, and the
+/// scope set is what the *argument* knows.
+pub struct ScopedRejection<R: Scopes> {
+    rejection: AuthRejection,
+    scopes: PhantomData<R>,
+}
+
+impl<R: Scopes> ScopedRejection<R> {
+    /// Describes `rejection` against scope set `R`.
+    #[must_use]
+    pub const fn new(rejection: AuthRejection) -> Self {
+        Self {
+            rejection,
+            scopes: PhantomData,
+        }
+    }
+
+    /// The failure itself.
+    #[must_use]
+    pub fn into_inner(self) -> AuthRejection {
+        self.rejection
+    }
+}
+
+/// Hand-written rather than derived, on the rule
+/// [`Auth`](crate::security::auth::Auth) states one file over: a derive would
+/// bound the implementation on the scope set, which is a marker carrying
+/// nothing, while what is actually being formatted is the rejection.
+impl<R: Scopes> std::fmt::Debug for ScopedRejection<R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("ScopedRejection")
+            .field(&self.rejection)
+            .finish()
+    }
+}
+
+impl<R: Scopes> std::fmt::Display for ScopedRejection<R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.rejection, f)
+    }
+}
+
+/// No `source`, deliberately: `Display` above is the wrapped rejection's own
+/// sentence, so a chain entry beneath it would print that sentence twice. It is
+/// the rule [`errors.md`] states for a value whose `Display` is self-contained.
+///
+/// [`errors.md`]: https://github.com/getkono/kynos/blob/master/docs/errors.md
+impl<R: Scopes> std::error::Error for ScopedRejection<R> {}
+
+impl<R: Scopes> From<AuthRejection> for ScopedRejection<R> {
+    fn from(rejection: AuthRejection) -> Self {
+        Self::new(rejection)
+    }
+}
+
+/// Byte for byte what the wrapped rejection writes: the scope set is a fact
+/// about the *description*, and nothing about it reaches a client.
+impl<R: Scopes> IntoResponse for ScopedRejection<R> {
+    fn into_response(self) -> crate::http::Response {
+        self.rejection.into_response()
+    }
+}
+
+/// The 401 and the 403, the second narrowed to what
+/// [`Scopes::FORBIDDEN_TYPE`] names — which is the whole reason this type is
+/// not `AuthRejection`.
+impl<R: Scopes> Responses for ScopedRejection<R> {
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        auth_responses(registry, R::FORBIDDEN_TYPE)
+    }
+}
+
+/// What a guard naming no scope set declares, which is what every guard
+/// declared before one could.
+///
+/// The trait method takes a registry and nothing else, so this is the only
+/// answer it has: a `Responses` implementation is reached from the rejection
+/// type, and the type carries no scope set. `auth_responses` above is where the
+/// named case is reached from, and `security::auth::declare` is its only caller.
 impl Responses for AuthRejection {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        <AuthRejection as IntoProblem>::statuses().iter().fold(
-            kynos_openapi::Responses::new(),
-            |responses, status| {
-                let declared = if *status == StatusCode::FORBIDDEN {
-                    let description = status.canonical_reason().map_or_else(
-                        || format!("a `{}` response", status.as_u16()),
-                        str::to_owned,
-                    );
-
-                    problem_response(registry, description)
-                } else {
-                    narrowed_problem(registry, *status)
-                };
-
-                responses.with(status.as_u16(), declared)
-            },
-        )
+        auth_responses(registry, None)
     }
 }
 
