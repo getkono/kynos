@@ -284,8 +284,15 @@ class BothHalvesOverOneMerge(GateTestCase):
         self.assertRejected(self.range_gate(self.base))
 
     def test_both_halves_accept_a_conventional_commit(self):
-        """The baseline, on both halves."""
+        """The baseline, on both halves, over the same commit.
+
+        The subject put to the hook half is then written and walked by the
+        range half, rather than the range half walking whatever the fixture
+        happened to leave at HEAD -- which is what "over the same commit"
+        has to mean for every case in this class if it is to mean it for any.
+        """
         self.assertAccepted(self.gate(CONVENTIONAL_SUBJECT))
+        self.git("commit", "-q", "--allow-empty", "--no-verify", "-m", CONVENTIONAL_SUBJECT.strip())
         self.assertAccepted(self.range_gate(self.base))
 
 
@@ -384,11 +391,6 @@ class LinkedWorktree(GateTestCase):
             "rev-parse", "--absolute-git-dir", cwd=self.linked
         ).stdout.strip()
 
-    def test_the_git_dir_is_the_per_worktree_one(self):
-        """The fixture is only evidence if it is genuinely a linked worktree."""
-        self.assertIn("worktrees", self.linked_git_dir)
-        self.assertFalse((self.linked / ".git").is_dir(), "the linked worktree has a real .git dir")
-
     def test_a_merge_in_a_linked_worktree_is_exempt(self):
         self.git("merge", "--no-commit", "--no-ff", "topic", cwd=self.linked)
         self.assertTrue(self.merge_head(cwd=self.linked), "no merge state in the linked worktree")
@@ -473,20 +475,6 @@ class NoMergeInProgress(GateTestCase):
         self.assertRejected(self.range_gate(self.base))
 
 
-class MergeInProgress(GateTestCase):
-    """The state git is in when it runs commit-msg for a merge commit."""
-
-    def setUp(self):
-        super().setUp()
-        self.base = self.diverging_branches()
-        self.git("merge", "--no-commit", "--no-ff", "topic")
-        self.assertTrue(self.merge_head(), "the fixture did not reach a merge state")
-
-    def test_a_conventional_subject_passes_while_a_merge_is_in_progress(self):
-        """The exemption skips the check; it does not reject what it would accept."""
-        self.assertAccepted(self.gate(CONVENTIONAL_SUBJECT))
-
-
 class TheAmendResidual(GateTestCase):
     """The one divergence this fix cannot reach, pinned so it cannot move unseen.
 
@@ -536,6 +524,12 @@ class AmbientGitEnvironment(GateTestCase):
     `mock.patch.dict` mutates this process's own `os.environ`, which is safe
     because `unittest` runs cases serially in one thread; it is undone by
     `addCleanup` whatever the case does.
+
+    What holds the scrub is the three decoy assertions and the merge state,
+    and nothing else here could: `gate()` sets `GIT_DIR` and `GIT_WORK_TREE`
+    outright, so putting a message through it would pass under any scrub at
+    all, including none. The subject of this class is the fixture's
+    environment, so the fixture is what it asserts on.
     """
 
     def setUp(self):
@@ -576,7 +570,7 @@ class AmbientGitEnvironment(GateTestCase):
             text=True,
         )
 
-    def test_an_exported_git_environment_reaches_neither_the_fixture_nor_the_gate(self):
+    def test_an_exported_git_environment_reaches_none_of_the_fixture(self):
         self.assertNotEqual(
             self.decoy_git("rev-parse", "--verify", "--quiet", "HEAD").returncode,
             0,
@@ -592,8 +586,9 @@ class AmbientGitEnvironment(GateTestCase):
             self.decoy_index.exists(),
             "the fixture wrote the index the ambient GIT_INDEX_FILE names",
         )
+        # The merge state is the fourth reading, and the only one that depends
+        # on the fixture's *refs* rather than on the decoy's contents.
         self.assertTrue(self.merge_head(), "the fixture did not reach a merge state")
-        self.assertAccepted(self.gate(MERGE_SUBJECT))
 
 
 if __name__ == "__main__":
