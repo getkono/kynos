@@ -205,8 +205,8 @@ fn component() -> Schema {
     Schema::component("Problem")
 }
 
-/// A problem response narrowing `type` to one URI, as the derive emits it.
-fn narrowed(description: &str, uri: &str) -> Response {
+/// One narrowed branch: the shared component, and the type it publishes.
+fn branch(uri: &str) -> Schema {
     let mut properties = Map::new();
     properties.insert(
         "type".to_owned(),
@@ -216,19 +216,29 @@ fn narrowed(description: &str, uri: &str) -> Response {
         })),
     );
 
-    problem(
-        description,
-        Schema::Object(Box::new(SchemaObject {
-            all_of: Some(vec![
-                component(),
-                Schema::Object(Box::new(SchemaObject {
-                    properties,
-                    ..SchemaObject::default()
-                })),
-            ]),
-            ..SchemaObject::default()
-        })),
-    )
+    Schema::Object(Box::new(SchemaObject {
+        all_of: Some(vec![
+            component(),
+            Schema::Object(Box::new(SchemaObject {
+                properties,
+                ..SchemaObject::default()
+            })),
+        ]),
+        ..SchemaObject::default()
+    }))
+}
+
+/// A schema carrying `one_of` and nothing else.
+fn choice(branches: Vec<Schema>) -> Schema {
+    Schema::Object(Box::new(SchemaObject {
+        one_of: Some(branches),
+        ..SchemaObject::default()
+    }))
+}
+
+/// A problem response narrowing `type` to one URI, as the derive emits it.
+fn narrowed(description: &str, uri: &str) -> Response {
+    problem(description, branch(uri))
 }
 
 /// A problem response referring to the shared component and narrowing nothing.
@@ -390,5 +400,132 @@ fn two_responses_that_are_not_problems_keep_the_one_declared() {
             .and_then(RefOr::as_item)
             .and_then(|response| response.description.as_deref()),
         Some("mine")
+    );
+}
+
+// --- Shapes the union may not adopt -----------------------------------------
+//
+// `union_from` adopts one side outright where that side admits every problem
+// document the other describes. Three shapes are read by none of its rules and
+// admit strictly *less* than a narrowed side, so adopting one would declare
+// less than the operation sends -- the direction the union exists to prevent.
+// Each is asserted separately, because each reaches the decision by a different
+// route.
+
+/// A schema satisfied by nothing admits nothing.
+///
+/// Adopting it would leave the operation declaring `false` for a status it
+/// answers, so a real body fails the schema its own description gave it.
+#[test]
+fn a_side_admitting_nothing_is_not_the_union() {
+    let mut base = Responses::new().with(
+        400,
+        narrowed("Bad Request", "https://errors.example.test/a"),
+    );
+    base.union_from(&Responses::new().with(400, problem("nothing at all", Schema::never())));
+
+    assert_eq!(
+        published(&declared(&base, 400)),
+        vec!["https://errors.example.test/a".to_owned()],
+        "the declared narrowing survived a side that admits nothing"
+    );
+}
+
+/// An empty `oneOf` is satisfied by no branch, so it is the same claim as
+/// `false` written another way.
+#[test]
+fn a_side_choosing_between_nothing_is_not_the_union() {
+    let mut base = Responses::new().with(
+        400,
+        narrowed("Bad Request", "https://errors.example.test/a"),
+    );
+    base.union_from(&Responses::new().with(400, problem("no branch", choice(Vec::new()))));
+
+    assert_eq!(
+        published(&declared(&base, 400)),
+        vec!["https://errors.example.test/a".to_owned()]
+    );
+}
+
+/// A `oneOf` mixing a bare `$ref` with a narrowed branch is satisfied by
+/// *neither* for a document the narrowed branch describes: the body matches
+/// both branches, and `oneOf` requires exactly one. It admits less than either
+/// side alone, so it is not the union of them.
+#[test]
+fn a_side_whose_branches_overlap_is_not_the_union() {
+    let mut base = Responses::new().with(
+        400,
+        narrowed("Bad Request", "https://errors.example.test/a"),
+    );
+    base.union_from(&Responses::new().with(
+        400,
+        problem(
+            "either",
+            choice(vec![component(), branch("https://errors.example.test/b")]),
+        ),
+    ));
+
+    assert_eq!(
+        published(&declared(&base, 400)),
+        vec!["https://errors.example.test/a".to_owned()]
+    );
+}
+
+/// The other half of the same split: `true` admits everything, so it *is* the
+/// union, exactly as a bare `$ref` is.
+#[test]
+fn a_side_admitting_everything_is_the_union() {
+    let mut base = Responses::new().with(
+        400,
+        narrowed("Bad Request", "https://errors.example.test/a"),
+    );
+    base.union_from(&Responses::new().with(400, problem("anything", Schema::any())));
+
+    assert_eq!(
+        declared(&base, 400),
+        serde_json::json!(true),
+        "a side admitting every document is what the status declares"
+    );
+}
+
+/// A side already holding a `oneOf` contributes its branches, not itself.
+///
+/// The case a derive with two variants on one status reaches, and the one a
+/// union that nested rather than flattened would break: `oneOf` of a `oneOf`
+/// is satisfied by exactly one *outer* branch, so a document matching one
+/// inner branch of a two-branch side satisfies the outer branch it sits in and
+/// the whole is still one — but nothing then holds the inner choice to being
+/// exclusive of the branch beside it.
+#[test]
+fn a_side_already_choosing_contributes_its_branches() {
+    let mut base = Responses::new().with(
+        400,
+        problem(
+            "Empty; Too long",
+            choice(vec![
+                branch("https://errors.example.test/empty"),
+                branch("https://errors.example.test/too-long"),
+            ]),
+        ),
+    );
+    base.union_from(&Responses::new().with(400, narrowed("Bad Request", "about:blank")));
+
+    let schema = declared(&base, 400);
+    assert_eq!(
+        published(&schema),
+        vec![
+            "https://errors.example.test/empty".to_owned(),
+            "https://errors.example.test/too-long".to_owned(),
+            "about:blank".to_owned(),
+        ],
+        "{schema}"
+    );
+    assert!(
+        schema["oneOf"]
+            .as_array()
+            .expect("three branches are a choice")
+            .iter()
+            .all(|branch| branch.get("oneOf").is_none()),
+        "a branch is a branch rather than a nested choice: {schema}"
     );
 }
