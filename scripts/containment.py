@@ -423,7 +423,7 @@ class Gate:
 
     Anchoring on `#[cfg(feature = "x")]` instead was measured against this tree
     and is wrong on it, not merely in principle: `lib.rs` names `time` and
-    `decimal` positively and their four backends negatively inside compound
+    `decimal` positively and their backends negatively inside compound
     predicates, and compound predicates are the norm in this workspace rather
     than the exotic case. A pattern that read only the bare form would miss
     every one of those sites, and would let
@@ -1326,9 +1326,9 @@ def main(architecture=None, testing=None, performance=None, nfr=None):
         unrun=(
             "performance.md's grading table goes unparsed, and every rule stated "
             "over it goes unrun: the off-path coverage comparison, and the "
-            "ungraded, undeclared and regraded checks. Over an empty grading every "
-            "flag the crate declares reads as ungraded, which reports thirty "
-            "problems where there is one"
+            "ungraded, undeclared and regraded checks. Over an empty grading "
+            "every flag the crate declares reads as ungraded, which reports one "
+            "problem per feature where there is one problem in total"
         ),
     )
 

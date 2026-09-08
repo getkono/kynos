@@ -301,10 +301,11 @@ class ImportTime(unittest.TestCase):
         reloaded, so the `gate` every other case here holds is untouched, and
         `sys.modules` is not written at all.
 
-        This is the one stdlib rebinding on this branch that happens *after*
-        import, and it ships rather than living in a validation script, so it is
-        worth saying why it is here and why it is not the thing decision 9
-        refused.
+        This is the one stdlib attribute this branch rebinds by hand, rather
+        than through a context manager that puts it back, and it ships rather
+        than living in a validation script -- so it is worth saying why it is
+        here and why it is not the thing decision 9 refused. The paragraph below
+        names every other write, context-managed or not.
         That decision rejected patching `gate.ARCHITECTURE` as an alternative
         to passing the documents to `main`, because it would have left every
         case mutating shared module state to reach a value the signature could
@@ -414,8 +415,8 @@ class GatePolarity(unittest.TestCase):
     The fragments are written for this file, with one exception: the compound
     predicate below is copied from `crates/kynos/src/lib.rs`, because a case
     about reading a nested `not(any(` should be a case about one this
-    repository writes. Sixty-three `all(`/`any(` sites and eighteen `not(`
-    sites make compound predicates the norm here rather than the exotic case.
+    repository writes. Compound predicates are routine here rather than the
+    exotic case, which is why a case about one belongs in this file.
 
     One known limit, recorded rather than fixed: the walk finds its attributes
     over the whole corpus, so an attribute written inside a *raw* string --
@@ -910,8 +911,9 @@ class Main(unittest.TestCase):
     `table or ""`, or written without its end marker, both gates stay green and
     the rule goes on reporting against text it was written to exclude. Every case
     below fails against a mutation of the thing it names and passes against the
-    code as written -- for most, a call site's guard; for two, a `main()`
-    parameter ignored; for three, a rule's own failure deleted.
+    code as written. That mutation is a call site's guard for some, a `main()`
+    parameter ignored for others, and a rule's own failure deleted for the
+    rest.
 
     The documents are this repository's own with one marker removed, and the
     corpora are the real ones. What is under test here is a *rule* rather than a
@@ -1093,6 +1095,19 @@ class Main(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertEqual(len(self.naming(failures, "in more than one row")), 1)
         self.assertIn("cookie", self.naming(failures, "in more than one row")[0])
+
+    def test_a_flag_graded_off_path_with_no_row_is_reported(self):
+        # The presence half of its `no row of` absence. The flag is moved out of
+        # the Full battery row and into the Off-path proof one, where the grade
+        # says a request cannot reach what it adds -- an argument, and no row of
+        # testing.md's off-path table makes it.
+        broken = gate.PERFORMANCE.replace("`cookie`, ", "", 1).replace(
+            "`decimal-big` |", "`decimal-big`, `cookie` |", 1
+        )
+        status, failures = self.report(performance=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(self.naming(failures, "no row of")), 1)
+        self.assertIn("cookie", self.naming(failures, "no row of")[0])
 
     def test_the_reported_marker_says_which_rules_stopped_running(self):
         # `section`'s `unrun` sentence, which the marker alone does not carry.
