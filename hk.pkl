@@ -76,6 +76,12 @@ hooks {
             // condition and cannot render `{{commit_msg_file}}`, so an `hk test`
             // case could neither exercise one nor run this step at all. In the
             // task, the exemption is covered by `mise run commits:test`.
+            //
+            // That suite reads the `check` line below out of this file and
+            // runs it as the `commit-msg` hook of a throwaway repository,
+            // driving a real `git merge` through it. So this step is not
+            // merely described there: rename it, delete it, or drop the
+            // `< {{commit_msg_file}}` redirect, and the suite fails.
             ["conventional-commit"] {
                 check = "mise run --quiet commits:message < {{commit_msg_file}}"
                 output_summary = "stdout"
