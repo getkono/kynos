@@ -130,6 +130,18 @@ own CI step for that reason — and the exclusion belongs on the coverage comman
 rather than on the nextest profile, because a profile-wide filter would remove
 the suite from every job that sets `NEXTEST_PROFILE`.
 
+That child `cargo` is not free of this repository's configuration, which is the
+half a snapshot's author has no reason to expect. `trybuild` generates a
+standalone workspace under `target/tests/trybuild/` and its manifest carries no
+`[profile]` section, so a profile written in the root `Cargo.toml` never reaches
+the fixtures — but cargo discovers *configuration* by walking up from the
+working directory, and that generated project sits inside this repository, so
+[`.cargo/config.toml`](../.cargo/config.toml) does reach it. The fixtures build
+at the dev profile declared there rather than at cargo's default, which is why
+`target/tests` is 2.3 GiB and not 11. Debug information is not what a snapshot
+records, so nothing about the suite's output turns on it; a change to that file
+that did reach the output would show up as every snapshot moving at once.
+
 Both coverage tasks carry it. `coverage:ci` always did; `coverage` did not,
 which mattered because `hooks:pre-push` runs that one — so every push ran the
 suite under exactly the instrumentation this paragraph says perturbs it.

@@ -576,6 +576,7 @@ open against a `kynos-otel` that may never be written.
 | reliability | Every test target is built at the feature sets its own `#[cfg]` gates decide, not only at all-on, default and baseline | `mise run lint:codecs`, six `-p kynos --all-targets` Clippy runs over `openapi31 + macros` and each optional codec in turn | `enforced` for the codec flags, which is where a per-feature-gated target lives today; a target gated on some other flag would need its set added to that list |
 | reliability | Tests are hermetic; no shared state, no ordering dependence, no retries | `cargo-nextest` process isolation, `retries = 0`, guarded by `crates/kynos/tests/hermeticity.rs` | `enforced` |
 | dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 30 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
+| dx | A worktree's `target/` stays near the 17 GiB [PR #126](https://github.com/getkono/kynos/pull/126) measured, against the 44 GiB before it | `mise run containment:check`, holding [`.cargo/config.toml`](../.cargo/config.toml) to declaring `profile.dev.debug` and `profile.dev.package."*".debug`, and to carrying no top-level table but `profile` | `partial`: it holds the cause and not the size. No job takes a `du -sh target` reading, so a build that grows for some other reason passes; the two keys' *values* are unchecked, and so are the two `CARGO_INCREMENTAL = "0"` task envs #126 added beside them. What it closes is the half nobody can review — below |
 | reliability | Panic recovery refuses to compile under `panic = "abort"` | `mise run panic:check` | `enforced` |
 | reliability | Commits follow Conventional Commits | `convco`, via git hook and CI | `enforced` |
 | compatibility | Every hand-rolled `Stream` implementation is private, except the one row in [`architecture.md`](architecture.md#public-api-surface), and there are exactly three of them | `mise run containment:check`, counting `Stream for` against the table and the two private sites its prose names | `enforced` |
@@ -587,6 +588,37 @@ open against a `kynos-otel` that may never be written.
 | compatibility | Public API item count is tracked as a budget | `cargo-public-api` count with a committed baseline | `needs-tooling` |
 | performance | The benchmark suite runs nightly with regression alerting | `kynos-bench`, so erosion surfaces as a trend rather than at release | `kynos-bench` |
 | performance | What each feature costs a linked artifact and in monomorphized IR | `mise run cost:features` over a fixed fixture at each feature, dedicated CI job, deltas against a committed baseline | `partial`: the trend goes to the job summary rather than failing the pull request, and no ceiling is set — one is set from a first recorded measurement, which is what the committed baselines are |
+
+**The build-footprint row is held by its cause, because the effect is a number
+nothing reads and the cause is one cargo will not report.** The figure is a
+first recorded measurement in the sense [Thresholds](#thresholds) requires
+rather than a ceiling anyone chose: PR #126 measured a worktree's `target/` at
+44 GiB before and 17 GiB after, and priced six profiles against each other in
+[`.cargo/config.toml`](../.cargo/config.toml), which is where that trade is
+argued and where it stays.
+
+What makes the row `partial` and not `planned` is that the profile producing
+the figure is now held, and the failure it is held against is the one a reviewer
+has no way to catch. Run against a scratch package: `[profile.dev] debgu = "…"`
+is `warning: unused config key profile.dev.debgu` and an exit status of **zero**,
+and `[profile.dve]` — a misspelled profile *table* — is not reported at all.
+Both builds finish `unoptimized + debuginfo`, and every other check in this
+repository stays green while the footprint returns. A file lost to a merge is
+the same silence with none of the warning.
+
+The gate refuses any top-level table but `profile` for a related reason rather
+than for this row's: cargo reads that file on every invocation under the
+repository, so a `[build] rustc-wrapper` or a `[source] replace-with` written
+there executes everywhere with nothing reporting it, and the file's own comment
+justifies its existence by the dev profile alone.
+
+The values are deliberately outside it, as are the `CARGO_INCREMENTAL` lines.
+`debug = 2` written over `line-tables-only` is a one-token diff on a line whose
+comment prices the alternatives, and a dropped `env` is a diff on the task that
+carried it; both are legible in review, which a key that has lost a letter is
+not. Pinning the value would also turn that file's own escape hatch — `cargo
+--config 'profile.dev.package."*".debug=2'`, offered there for reading a panic
+through `hyper` — into a setting someone has to argue with a gate about.
 
 **The re-export row is judged by where a path leads, not by a list of files.**
 A `pub use` of a foreign crate is a facade: `http/mod.rs` republishes
