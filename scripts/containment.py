@@ -223,7 +223,7 @@ def naming(*crates):
     return {path for path, text in FILES if pattern.search(text)}
 
 
-def claimed(sentence):
+def claimed(sentence, failures):
     """The number `architecture.md` writes into one of its count claims."""
     found = re.search(sentence, ARCHITECTURE)
     if found is None:
@@ -241,6 +241,47 @@ def claimed(sentence):
     return number
 
 
+def section(text, start, failures, end=None, unrun=""):
+    """`text` from `start` to `end`, or `None` with the missing marker reported.
+
+    What `.index()` was here, minus the raise. A marker is a heading or a table
+    header in a document someone is free to reword, and `.index()` answers a
+    reworded document with a `ValueError` that takes the process down: the gate
+    stops before it reports anything, and `containment_test.py` imports this
+    module, so the run that would have named the missing marker never starts
+    either. A rule whose text is gone is skipped instead, and said to be
+    skipped -- the discipline the off-path row loop already states for a row it
+    has just called untrustworthy.
+
+    `end` is looked for after `start`, and its absence is a failure too rather
+    than a fall back to the end of the document. A slice that silently widens is
+    the rule reading exactly the text it was written to exclude, which is worse
+    than a rule that says it did not run.
+
+    The first occurrence of each marker, which is `.index()`'s own semantics.
+
+    `unrun` is the caller's sentence, naming the document and the rule that goes
+    unchecked without the slice. The marker alone would leave a reader knowing
+    what is missing and not what stopped being held.
+    """
+    begin = text.find(start)
+    if begin < 0:
+        failures.append(
+            f"this gate slices a document at {start!r} and no longer finds it, "
+            f"so {unrun}"
+        )
+        return None
+    if end is None:
+        return text[begin:]
+    stop = text.find(end, begin)
+    if stop < 0:
+        failures.append(
+            f"this gate ends a slice at {end!r} and no longer finds it, so {unrun}"
+        )
+        return None
+    return text[begin:stop]
+
+
 def expand(entry):
     """`server/{accept,mod}.rs` -> `server/accept.rs`, `server/mod.rs`."""
     brace = re.search(r"\{([^}]*)\}", entry)
@@ -252,34 +293,52 @@ def expand(entry):
     ]
 
 
-# --- The runtime allowance table -------------------------------------------
-table = ARCHITECTURE[ARCHITECTURE.index("| Site | Names | Why it is not in `server/` |") :]
-rows = []
-for line in table.split("\n")[2:]:
-    if not line.startswith("|"):
-        break
-    rows.append(re.findall(r"`([^`]+)`", line.split("|")[1]))
+def permitted(path, allowed):
+    """Whether the `allowed` sites let `path` name tokio outside `server/`.
 
-stated = claimed(r"\*\*(\w+) rows, and the count is the check\.\*\*")
-if stated is not None and stated != len(rows):
-    failures.append(
-        f"architecture.md's allowance table claims {stated} rows and has {len(rows)}"
-    )
-
-allowed = {f"crates/kynos/src/{site.lstrip('/')}" for row in rows for entry in row for site in expand(entry)}
-
-
-def permitted(path):
+    The sites are a parameter rather than a global so the rule can be skipped
+    whole when the table they are read from is gone. An empty allowance is not a
+    narrower answer here: it is every file in the crate reported as an offender,
+    with the one failure that explains why buried under them.
+    """
     if path.startswith("crates/kynos/src/server/"):
         return True
     return any(path == site or path.startswith(site.rstrip("/") + "/") for site in allowed)
 
 
-if offenders := sorted(p for p in naming("tokio") if not permitted(p)):
-    failures.append(
-        "`tokio` is named outside `server/` at a site the allowance table does "
-        "not list:\n    " + "\n    ".join(offenders)
-    )
+# --- The runtime allowance table -------------------------------------------
+rows = []
+table = section(
+    ARCHITECTURE,
+    "| Site | Names | Why it is not in `server/` |",
+    failures,
+    unrun=(
+        "architecture.md's runtime allowance table goes unparsed, and with it "
+        "both rules stated over it: the row count the document itself calls the "
+        "check, and the `tokio` offender scan, which over an empty allowance "
+        "would report every site in the crate and bury the renamed heading that "
+        "caused it"
+    ),
+)
+if table is not None:
+    for line in table.split("\n")[2:]:
+        if not line.startswith("|"):
+            break
+        rows.append(re.findall(r"`([^`]+)`", line.split("|")[1]))
+
+    stated = claimed(r"\*\*(\w+) rows, and the count is the check\.\*\*", failures)
+    if stated is not None and stated != len(rows):
+        failures.append(
+            f"architecture.md's allowance table claims {stated} rows and has {len(rows)}"
+        )
+
+    allowed = {f"crates/kynos/src/{site.lstrip('/')}" for row in rows for entry in row for site in expand(entry)}
+
+    if offenders := sorted(p for p in naming("tokio") if not permitted(p, allowed)):
+        failures.append(
+            "`tokio` is named outside `server/` at a site the allowance table does "
+            "not list:\n    " + "\n    ".join(offenders)
+        )
 
 # --- The dependency graph ---------------------------------------------------
 UNDER = "under"
@@ -694,23 +753,38 @@ elif len(halves) == 2:
 # --- Hand-rolled `Stream` implementations -----------------------------------
 # Only the section that enumerates them. Collecting every link in the
 # document would let an unrelated mention anywhere else silently authorise a
-# new hand-rolled `Stream`.
-surface = ARCHITECTURE[ARCHITECTURE.index("### Public API surface") :]
-surface = surface[: surface.index("\n## ")]
-declared = set(re.findall(r"\]\(\.\./(crates/[^)]+\.rs)\)", surface))
+# new hand-rolled `Stream` -- which is also why a missing end marker fails here
+# rather than widening the slice to the foot of the document.
+surface = section(
+    ARCHITECTURE,
+    "### Public API surface",
+    failures,
+    "\n## ",
+    unrun=(
+        "architecture.md's list of the sites that may declare a hand-rolled "
+        "`Stream` goes unparsed, leaving nothing to check that every "
+        "implementation sits at one of them. The count of implementations is "
+        "still held, since it is read off the source rather than out of this "
+        "section"
+    ),
+)
 hand_rolled = {path for path, text in FILES if re.search(r"\bStream\s+for\b", text)}
 
-sites = claimed(r"\*\*One public row, (\w+) sites, and the count is the check\*\*")
+sites = claimed(
+    r"\*\*One public row, (\w+) sites, and the count is the check\*\*", failures
+)
 if sites is not None and sites != len(hand_rolled):
     failures.append(
         f"architecture.md claims {sites} hand-rolled `Stream` sites and there are "
         f"{len(hand_rolled)}:\n    " + "\n    ".join(sorted(hand_rolled))
     )
-if undeclared := sorted(hand_rolled - declared):
-    failures.append(
-        "a hand-rolled `Stream` sits where architecture.md names no site:\n    "
-        + "\n    ".join(undeclared)
-    )
+if surface is not None:
+    declared = set(re.findall(r"\]\(\.\./(crates/[^)]+\.rs)\)", surface))
+    if undeclared := sorted(hand_rolled - declared):
+        failures.append(
+            "a hand-rolled `Stream` sits where architecture.md names no site:\n    "
+            + "\n    ".join(undeclared)
+        )
 
 # --- The module-size budget -------------------------------------------------
 # AGENTS.md: a module becomes a directory once it exceeds ~400 lines excluding
@@ -764,7 +838,6 @@ elif int(budget.group(1)) != len(oversized):
 # whole purpose is catching the flag nobody noticed cannot rest on a parser that
 # can lose one.
 PERFORMANCE = (ROOT / "docs/performance.md").read_text()
-grading = PERFORMANCE[PERFORMANCE.index("| Grade | Owes | Flags |") :]
 # One grade is not self-executing. A full battery is owed to a suite that either
 # runs or does not; an aggregate owes nothing. An off-path proof is an argument,
 # and the failure it has is the one every argument has -- being graded and never
@@ -808,18 +881,32 @@ def off_path_coverage(off_path_graded, off_path_elements, grades):
     return []
 
 
-graded, off_path_graded, grades = [], [], []
-for line in grading.split("\n")[2:]:
-    if not line.startswith("|"):
-        break
-    cells = line.split("|")
-    flags = re.findall(r"`([^`]+)`", cells[3])
-    graded += flags
-    grades.append(cells[1].strip())
-    if cells[1].strip() == OFF_PATH_GRADE:
-        off_path_graded += flags
+grading = section(
+    PERFORMANCE,
+    "| Grade | Owes | Flags |",
+    failures,
+    unrun=(
+        "performance.md's grading table goes unparsed, and every rule stated "
+        "over it goes unrun: the off-path coverage comparison, and the "
+        "ungraded, undeclared and regraded checks. Over an empty grading every "
+        "flag the crate declares reads as ungraded, which reports thirty "
+        "problems where there is one"
+    ),
+)
 
-failures += off_path_coverage(off_path_graded, off_path_elements, grades)
+graded, off_path_graded, grades = [], [], []
+if grading is not None:
+    for line in grading.split("\n")[2:]:
+        if not line.startswith("|"):
+            break
+        cells = line.split("|")
+        flags = re.findall(r"`([^`]+)`", cells[3])
+        graded += flags
+        grades.append(cells[1].strip())
+        if cells[1].strip() == OFF_PATH_GRADE:
+            off_path_graded += flags
+
+    failures += off_path_coverage(off_path_graded, off_path_elements, grades)
 
 manifest = tomllib.loads((ROOT / "crates/kynos/Cargo.toml").read_text())
 flags = set(manifest["features"])
@@ -830,29 +917,33 @@ depended = {
     if member.startswith("dep:")
 }
 
-if ungraded := sorted(flags - set(graded)):
-    failures.append(
-        "crates/kynos declares a feature that performance.md's grading table "
-        "does not grade. Grading it is the argument the table exists to force: "
-        "a full battery, an off-path proof, or an aggregate that owes nothing "
-        "of its own:\n    " + "\n    ".join(ungraded)
-    )
+# The same guard again rather than one block around both halves: the loop above
+# binds `flags` to one row's flags and the manifest read binds it to the crate's
+# feature set, and these three comparisons want the second.
+if grading is not None:
+    if ungraded := sorted(flags - set(graded)):
+        failures.append(
+            "crates/kynos declares a feature that performance.md's grading table "
+            "does not grade. Grading it is the argument the table exists to force: "
+            "a full battery, an off-path proof, or an aggregate that owes nothing "
+            "of its own:\n    " + "\n    ".join(ungraded)
+        )
 
-if undeclared := sorted(set(graded) - flags):
-    failures.append(
-        "performance.md grades a flag that crates/kynos does not declare, so "
-        "the row names a battery nothing can be enabled to owe. Either the flag "
-        "was renamed and the row was not, or the row outlived the feature:\n    "
-        + "\n    ".join(undeclared)
-    )
+    if undeclared := sorted(set(graded) - flags):
+        failures.append(
+            "performance.md grades a flag that crates/kynos does not declare, so "
+            "the row names a battery nothing can be enabled to owe. Either the flag "
+            "was renamed and the row was not, or the row outlived the feature:\n    "
+            + "\n    ".join(undeclared)
+        )
 
-if regraded := sorted({flag for flag in graded if graded.count(flag) > 1}):
-    failures.append(
-        "performance.md grades a flag in more than one row, where the table "
-        "says every flag appears in exactly one column. Two grades are two "
-        "different batteries owed and nothing decides between them:\n    "
-        + "\n    ".join(regraded)
-    )
+    if regraded := sorted({flag for flag in graded if graded.count(flag) > 1}):
+        failures.append(
+            "performance.md grades a flag in more than one row, where the table "
+            "says every flag appears in exactly one column. Two grades are two "
+            "different batteries owed and nothing decides between them:\n    "
+            + "\n    ".join(regraded)
+        )
 
 # An optional dependency no feature names with `dep:` makes Cargo synthesise an
 # implicit feature for it: a flag the crate declares, absent from `[features]`,
