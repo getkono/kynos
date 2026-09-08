@@ -31,9 +31,13 @@ Nothing below forges a state file, and nothing below stands in for git. The
 fixtures build real repositories, reach a real merge with `git merge`, and one
 of them installs the `commit-msg` hook command that `hk.pkl` declares -- read
 out of `hk.pkl` rather than restated here, so that deleting the step, renaming
-it, moving it out of the `commit-msg` hook, or dropping its
-`< {{commit_msg_file}}` redirect fails these tests -- and then runs a real
-`git merge --no-ff` through it. That case is the reported symptom itself:
+it, moving it out of the `commit-msg` hook, dropping its
+`< {{commit_msg_file}}` redirect, or declaring in it any key beside the two
+this suite reads fails these tests -- and then runs a real `git merge --no-ff`
+through it. The last of those is an allowlist because hk decides whether a step
+runs at all from keys nothing here installs: `step_condition`, `condition`,
+`profiles`, `glob`, `exclude`, `dir` and `types` each leave the `check` line
+untouched and stop the step from running. That case is the reported symptom itself:
 before the fix, it is the `Not committing merge` the issue opens with. Its
 boundary is written down at the fixture: the command is wrapped in a two-line
 prologue the real hook does not have, so it proves git's ordering and not the
@@ -214,18 +218,23 @@ def braced_body(text, key, within=None):
 # and what makes each one safe. The list is here because this hazard has now
 # recurred three times -- `//` comments, then `/* */`, then `braced_body`'s two
 # lookups, then the `check` regex below -- and each repair covered the sites it
-# happened to know about. A reader adding a sixth read belongs in this list.
+# happened to know about. A reader adding a seventh read belongs in this list.
 #
 #   hk.pkl, via `declared_commit_msg_check`
 #     1. the `["commit-msg"]` hook              -- searched over `masked_source`
 #     2. the `["conventional-commit"]` step     -- searched over `masked_source`
 #     3. that step's `check = "..."` line       -- searched over `masked_source`
+#     4. the key names that step declares       -- scanned over `masked_source`
 #
 #   mise.toml, via `declared_merge_guard`
-#     4. the `[tasks."commits:message"]` header -- safe by construction
-#     5. that task's `run = '''` body              -- safe by construction
+#     5. the `[tasks."commits:message"]` header -- safe by construction
+#     6. that task's `run = '''` body              -- safe by construction
 #
-# 4 and 5 are safe for a reason that does not generalise, so it is written
+# 4 is the only one whose subject is a set of key names rather than a value,
+# and it is safe by the mask plus its allowlist rather than by the mask alone:
+# a key withdrawn by commenting it out gates nothing and must not be reported,
+# and a key hk grows later is one nothing here reads and must be. 5 and 6 are
+# safe for a reason that does not generalise, so it is written
 # down rather than assumed: a TOML comment begins with `#`, and both patterns
 # anchor to the start of a line at a position where they require `[` or `r`.
 # A commented-out `#[tasks."commits:message"]` or `# run = '''` cannot match.
@@ -251,21 +260,61 @@ def declared_check(step):
     return step[check.start(1) : check.end(1)]
 
 
+# The keys the `conventional-commit` step may declare: the command this suite
+# installs, and the one deciding where hk prints its output. An allowlist and
+# not a list of the keys that disarm the step, because that list is hk's rather
+# than this repository's. Measured on hk 1.53.0, each injected as a single line
+# into the real step: `step_condition`, `condition`, `profiles`, `glob`,
+# `exclude`, `dir` and `types` all leave `mise exec -- hk validate` green and
+# the `check` line untouched while `hk run commit-msg` exits 0 over a merge
+# subject, having run no step at all. Naming those seven would hold today's hk
+# and nothing after it.
+SANCTIONED_STEP_KEYS = frozenset({"check", "output_summary"})
+
+
+def unsanctioned_keys(step):
+    """The keys a step body declares beyond the ones this suite reads.
+
+    A function of its own for the reason `declared_check` is one: the real
+    `hk.pkl` declares nothing unsanctioned, so the properties worth holding
+    here -- that a commented-out key is not a declaration, that a block-valued
+    key carrying no `=` is a key all the same -- are invisible from the
+    repository's own configuration.
+
+    Read over the mask, like every other lookup into `hk.pkl` here. Both
+    spellings Pkl gives a key are matched at a line start: `name = value`, and
+    the block form `name { ... }` whose own entries are quoted keys rather than
+    identifiers and so report nothing of their own.
+    """
+    declared = re.findall(
+        r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*[={]", masked_source(step), re.MULTILINE
+    )
+    return sorted({key for key in declared if key not in SANCTIONED_STEP_KEYS})
+
+
 def declared_commit_msg_check():
     """The `check` command `hk.pkl` declares for the `conventional-commit` step.
 
     Read rather than restated, so the fixture that runs a real `git merge`
     through a real hook runs what the repository actually installs. Delete the
-    step, rename it, move it out of the `commit-msg` hook, or drop its
-    `< {{commit_msg_file}}` redirect, and the end-to-end case stops passing
-    instead of going on asserting a command no hook would run.
+    step, rename it, move it out of the `commit-msg` hook, drop its
+    `< {{commit_msg_file}}` redirect, or declare in it a key this suite does
+    not read, and the end-to-end case stops passing instead of going on
+    asserting a command no hook would run.
 
     The third of those is the one an unanchored search misses, and it is the
     one that disarms the gate most completely: a `conventional-commit` step
     declared under `pre-push` runs nothing at commit time, while still being
     findable by name anywhere in the file.
 
-    All three lookups run over `masked_source`, including the one for the
+    The fifth is the one containment alone cannot see. Every lookup here is
+    about *what* the step runs; hk decides *whether* it runs from keys none of
+    them read, and a step hk skips still hands this function a command the
+    end-to-end fixture will install, run a real merge through, and pass on.
+    Hence the allowlist: a key nothing here reads is a key these tests cannot
+    vouch for, whatever hk does with it.
+
+    Every lookup runs over `masked_source`, including the one for the
     `check` line itself. Commenting a line out and writing its replacement
     below is the ordinary shape of a configuration edit, and this function
     decides the command the end-to-end fixture installs -- so a `check` read
@@ -282,6 +331,15 @@ def declared_commit_msg_check():
     step = braced_body(text, '["conventional-commit"]', within=hook)
     if step is None:
         raise AssertionError("hk.pkl's `commit-msg` hook declares no `conventional-commit` step")
+    unsanctioned = unsanctioned_keys(step)
+    if unsanctioned:
+        raise AssertionError(
+            "hk.pkl's `conventional-commit` step declares "
+            + ", ".join(f"`{key}`" for key in unsanctioned)
+            + ", which this suite does not read: hk decides whether the step runs at "
+            "all from keys like these, so the command read here is one these tests "
+            "would install and run while the hook ran nothing"
+        )
     return declared_check(step)
 
 
