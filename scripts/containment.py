@@ -368,6 +368,26 @@ NAMED_BY = re.compile(r"`?(\w+(?:\s*::\s*\w+)*)`?")
 # for existence instead would make existence strictly weaker than the offender
 # scan, which this file requires to run over the same corpus its existence was
 # asked of, and would leave the row unable to say which polarity it holds.
+#
+# The cost, recorded because it is a narrowing and not a fix: what a cell
+# writing one polarity does not catch is the other. The `openapi31` row writes
+# the negation, so a positive `#[cfg(feature = "openapi31")]` at a site that row
+# does not allow now passes, where matching the string as text failed it.
+#
+# Forced rather than chosen. A cell writing both spellings is refused: the row
+# loop below holds every spelling to matching something, so the positive one
+# empties and fails the build. Run against the real tree, not assumed.
+#
+# And a tautology here, which is why the narrowing is affordable.
+# `kynos-openapi` declares `default = ["openapi31"]` and
+# `openapi32 = ["openapi31"]`, and both sites of the flag are the
+# `compile_error!` that refuses a build without it, so no build that compiles
+# has it off and a positive gate on it is code that cannot exist. The class has
+# never fired: `git log --all -S'cfg(feature = "openapi31")' -- crates/` returns
+# nothing. Restoring it means tolerating a stale gate *spelling* the way the row
+# loop already tolerates a stale *site* -- "a site claims a location, and
+# locations may empty out while the claim stays true" -- which is a change to
+# what a spelling claims, and belongs to whoever needs it rather than here.
 GATE = re.compile(r'`?feature\s*=\s*"([\w-]+)"`?')
 NEGATED_GATE = re.compile(r'`?not\(\s*feature\s*=\s*"([\w-]+)"\s*\)`?')
 # Where a predicate starts. `cfg_attr` is here because it writes a gate that
