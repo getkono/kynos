@@ -946,6 +946,28 @@ class Main(unittest.TestCase):
     it names is held by the two surface cases instead. A new absence assertion
     joins that inventory or it does not go in.
 
+    The third kind of mutation named above -- a rule's own failure deleted --
+    is now held across every document `main` takes: each `failures.append` in
+    `main` and in `claimed` that a rewritten `architecture.md`, `testing.md`,
+    `performance.md` or `nfr.md` can reach has a case below that makes it
+    appear. That was not true before, and the gap was not decorative. Silencing
+    the off-path offender scan -- the rule the second defect of #134 exists to
+    correct -- left both gates green, with `containment:check` printing that
+    every rule holds. The repair is cheap for the reason the absence pairs are
+    cheap, and this branch is what made it available: the documents are `main`'s
+    arguments, so one rewritten cell reaches one rule.
+
+    What that leaves unheld is named rather than implied. The rules stated over
+    the tree itself -- the dependency-graph stray scan, the
+    implicit-optional-dependency rule, the package-escape read, the parent
+    re-export scan and the placeholder scan -- read `FILES` or
+    `crates/kynos/Cargo.toml` off `ROOT` rather than a document, so no argument
+    reaches them. Silencing any one of their failures leaves both gates green,
+    which is the severity class worth holding rather than the one below, and a
+    stronger reason than the one that leaves the manifest rule's *guard*
+    unheld. Holding them means injecting the corpora rather than the documents,
+    which is a wider change to `main`'s contract than this branch made.
+
     The rule that cost a case: `main` reads `crates/kynos/Cargo.toml` off
     `ROOT`, so the implicit-optional-dependency check below the grading is not
     injectable, and a case claiming it survives a missing grading header could
