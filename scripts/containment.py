@@ -445,7 +445,23 @@ class Gate:
         return any(self.names(text, found) for found in ATTRIBUTE.finditer(text))
 
     def names(self, text, attribute):
-        """Whether one `attribute` names this flag at this polarity."""
+        """Whether one `attribute` names this flag at this polarity.
+
+        A `cfg_attr` is walked as far as its predicate and stops at the comma,
+        and that asymmetry is decided rather than incidental. "Compiles
+        nothing" is not what separates the two halves: `cfg_attr`
+        conditionally applies an *attribute*, so neither its predicate nor its
+        arguments conditionally compile the item, and the comment on the comma
+        branch below states the weaker of the two reasons for stopping there.
+        What separates them is what a row's spelling claims -- that the flag
+        varies the item the attribute sits on. A `cfg_attr` predicate does
+        vary it: under `#[cfg_attr(feature = "x", serde(default))]` the flag
+        decides how the item deserialises, so a row naming that flag has found
+        a site it is the proof for. The arguments after the comma decide
+        nothing. The flag in `#[cfg_attr(docsrs, doc(cfg(feature = "x")))]` is
+        being described in prose a documentation build renders, and reading
+        that as the gate was half of #134.
+        """
         # The parity of the `not(` groups enclosing each open paren, innermost
         # last. The attribute's own paren is already open, at even parity; the
         # walk ends when it closes, which is what keeps one attribute's
