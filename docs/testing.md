@@ -20,9 +20,10 @@ not that module also becomes a directory — the two halves of the layout rule a
 separate, and [`nfr.md`](nfr.md#the-module-size-budget) says why the second one
 is a prompt rather than a trigger. That is why unit tests appear at
 [`error/rejection/tests.rs`](../crates/kynos/src/error/rejection/tests.rs) beside
-a 727-line module, and at
+a module well past that line — eight rejection types, and a count that moves
+whenever one of them gains a status — and at
 [`middleware/compression/tests.rs`](../crates/kynos/src/middleware/compression/tests.rs)
-beside a 675-line one, rather than inline.
+beside another, rather than inline.
 
 The sibling file is the settled shape here even below that line — `di/`,
 `schema/` and `response/negotiate/` all keep one while sitting well under 400 —

@@ -50,10 +50,13 @@ use crate::{
 /// One response per declared status, each narrowing the shared [`Problem`]
 /// component to the type URI a rejection publishes.
 ///
-/// Every rejection in this module builds its problem with [`Problem::new`], so
-/// every one of them writes `about:blank` — which makes the narrowing a true
-/// statement rather than a guess, and states in the document what a client
-/// otherwise has to learn by receiving one.
+/// Every rejection *this* function describes builds its problem with
+/// [`Problem::new`], so every one of them writes `about:blank` — which makes
+/// the narrowing a true statement rather than a guess, and states in the
+/// document what a client otherwise has to learn by receiving one. The
+/// qualification is not idle: [`AuthRejection`] below reaches
+/// [`Problem::of_type`] for a 403 an authorizer named, which is why that one
+/// status does not come through here.
 ///
 /// The narrowing is also what lets a rejection meet a handler's error type on a
 /// status without either of them losing. Two narrowed problem responses union

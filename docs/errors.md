@@ -18,8 +18,11 @@ a problem document, and both appear in the operation's `responses` — because
 It covers what middleware refuses, too, and the description owes the same
 account of it. A `ShortCircuit` that *refuses* answers with a problem document,
 so the response it declares names `application/problem+json` and the `Problem`
-component. `error::problem::problem_response` writes that description for the
-eight interceptor short circuits and for the 500 a recovered panic contributes.
+component. `error::problem::problem_response` writes that description wherever the
+response says only that a problem document arrives: the eight interceptor short
+circuits, the 500 a recovered panic contributes, and the 403 `AuthRejection`
+declares, which is the one rejection status left wide for the reason
+[Rejections](#rejections) gives.
 `error::problem::narrowed_response` writes it wherever the response also states
 which `type` it may carry: for every extractor rejection, and — through the
 forwarding function in
