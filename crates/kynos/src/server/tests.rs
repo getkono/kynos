@@ -611,6 +611,56 @@ async fn shutdown_cancels_an_incomplete_tls_handshake() {
     }
 }
 
+/// A completed TLS handshake that then says nothing does not hold the drain.
+///
+/// The case above covers a handshake that never finished. This is the one that
+/// finished and fell silent: a pooled client's speculative pre-connect, or a
+/// scanner that opens a socket and stops. It is a connection with nothing in
+/// flight, so a drain must not wait for it.
+///
+/// It is the pin's failure mode, which is why it sits under the `http2` gate
+/// and not under `tls` alone. hyper's HTTP/2 server cannot finish a graceful
+/// shutdown before the client preface arrives -- `graceful_shutdown` in
+/// `State::Handshaking` only sets `close_pending` (`hyper` 1.11.0
+/// `src/proto/h2/server.rs`) -- so a connection pinned to `h2` the moment its
+/// handshake ended stays `Pending`, the accept loop's drain never finishes,
+/// `serve` waits out its whole shutdown timeout and returns
+/// `ShutdownTimeout`. Deriving the protocol from the first bytes had no such
+/// window: the driver owned the wait and cancelled its own read.
+///
+/// The client stream is held open across the assertion on purpose. Dropping it
+/// would close the socket, complete the connection through EOF, and pass
+/// whatever the server does with a client that stays.
+#[cfg(all(feature = "tls", feature = "http2"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_drains_a_tls_connection_that_never_speaks() {
+    use tokio_rustls::rustls::pki_types::ServerName;
+
+    let (address, authority, shutdown_sender, server) = tls_server(test_service()).await;
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let client = alpn_connector(authority.as_bytes(), &[b"h2"])
+        .connect(
+            ServerName::try_from("localhost").expect("valid DNS name"),
+            stream,
+        )
+        .await
+        .expect("the h2 handshake succeeds");
+
+    let _ = shutdown_sender.send(());
+    // Well inside `DEFAULT_SHUTDOWN_TIMEOUT`, so waiting the timeout out reads
+    // as this failing rather than as a slow drain.
+    tokio::time::timeout(std::time::Duration::from_secs(5), server)
+        .await
+        .expect("the drain completes rather than waiting out the shutdown timeout")
+        .expect("server task joins")
+        .expect("server exits cleanly");
+
+    drop(client);
+}
+
 #[cfg(feature = "tls")]
 #[test]
 fn mutual_tls_is_merged_into_every_security_alternative() {
@@ -977,7 +1027,7 @@ async fn a_client_contradicting_its_negotiated_protocol_is_refused() {
 /// Both ALPN cases need the same three parts -- an authority, the server
 /// identity it issued, and a bound listener -- and neither asserts anything
 /// about any of them, so the setup is written once here.
-#[cfg(all(feature = "tls", feature = "http1", feature = "http2"))]
+#[cfg(feature = "tls")]
 async fn tls_server(
     service: crate::router::service::Service<()>,
 ) -> (
@@ -1016,7 +1066,7 @@ async fn tls_server(
 ///
 /// The offer is the case's whole input: which identifier the handshake settles
 /// on is what the server pins its driver to.
-#[cfg(all(feature = "tls", feature = "http1", feature = "http2"))]
+#[cfg(feature = "tls")]
 fn alpn_connector(authority: &[u8], protocols: &[&[u8]]) -> tokio_rustls::TlsConnector {
     use tokio_rustls::rustls::{
         ClientConfig, RootCertStore,
@@ -1043,7 +1093,7 @@ fn alpn_connector(authority: &[u8], protocols: &[&[u8]]) -> tokio_rustls::TlsCon
 /// arrived with: the first is what the driver is pinned from and the second is
 /// what it actually spoke, so the two disagreeing is a visible failure rather
 /// than a served request.
-#[cfg(all(feature = "tls", feature = "http1", feature = "http2"))]
+#[cfg(feature = "tls")]
 fn negotiated_protocol_service() -> crate::router::service::Service<()> {
     let document = kynos_openapi::Document::new(
         kynos_openapi::SpecVersion::V3_1,
