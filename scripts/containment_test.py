@@ -902,14 +902,22 @@ class Main(unittest.TestCase):
     SITE_COUNT = re.compile(r"(\*\*One public row, )\w+( sites, and the count is the check\*\*)")
 
     def report(self, **documents):
-        """`main`'s status and what it reported, with its own output held."""
+        """`main`'s status and what it reported, with its own output held.
+
+        A failure is one `containment: ` line plus the indented lines under it,
+        joined: several of these messages name the offending paths below the
+        sentence, and a case asserting which path was reported has to see them.
+        """
         err, out = io.StringIO(), io.StringIO()
         with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
             status = gate.main(**documents)
-        head = "containment: "
-        return status, [
-            line[len(head) :] for line in err.getvalue().split("\n") if line.startswith(head)
-        ]
+        head, failures = "containment: ", []
+        for line in err.getvalue().split("\n"):
+            if line.startswith(head):
+                failures.append(line[len(head) :])
+            elif line.strip() and failures:
+                failures[-1] += "\n" + line
+        return status, failures
 
     def naming(self, failures, needle):
         return [failure for failure in failures if needle in failure]
@@ -924,12 +932,39 @@ class Main(unittest.TestCase):
         self.assertEqual(self.naming(failures, "allowance table claims"), [])
         self.assertEqual(self.naming(failures, "named outside `server/`"), [])
 
+    #: One of the three links the surface section declares, removed from the
+    #: whole document so that a widened slice cannot find it either. Without
+    #: this, skipping and widening are indistinguishable: the widened slice
+    #: holds every link the narrow one did, so both pass.
+    DECLARED_SITE = "crates/kynos/src/response/stream/sse.rs"
+
     def test_a_renamed_surface_heading_skips_the_declaration_check(self):
         broken = gate.ARCHITECTURE.replace(self.SURFACE, "### The public surface", 1)
+        broken = broken.replace(self.DECLARED_SITE, "crates/kynos/src/lib.rs")
         status, failures = self.report(architecture=broken)
         self.assertEqual(status, 1)
         self.assertEqual(len(self.naming(failures, self.SURFACE)), 1)
+        # Skipped, so the undeclared check does not run. Were the slice to fall
+        # back to the whole document -- `section(...) or architecture`, the
+        # shape a `.split(...)[-1]` regression takes -- it would run over a
+        # document that no longer declares the site above, and report it. That
+        # is the silent widening the design exists to prevent, and it is what
+        # separates the two here.
         self.assertEqual(self.naming(failures, "names no site"), [])
+
+    def test_a_widened_surface_slice_would_report_the_site_this_one_hides(self):
+        """The other half: that the fixture above can see a widened slice.
+
+        An assertion that a failure class is absent holds nothing unless some
+        input makes that class appear. This is that input -- the same document
+        with the heading left alone, so the slice is taken and the removed link
+        is missing from it.
+        """
+        broken = gate.ARCHITECTURE.replace(self.DECLARED_SITE, "crates/kynos/src/lib.rs")
+        status, failures = self.report(architecture=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(self.naming(failures, "names no site")), 1)
+        self.assertIn(self.DECLARED_SITE, self.naming(failures, "names no site")[0])
 
     def test_a_renamed_surface_heading_leaves_the_stated_site_count_held(self):
         broken = gate.ARCHITECTURE.replace(self.SURFACE, "### The public surface", 1)
