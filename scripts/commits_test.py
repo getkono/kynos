@@ -210,6 +210,47 @@ def braced_body(text, key, within=None):
     return None
 
 
+# Every place this suite reads a declaration out of `hk.pkl` or `mise.toml`,
+# and what makes each one safe. The list is here because this hazard has now
+# recurred three times -- `//` comments, then `/* */`, then `braced_body`'s two
+# lookups, then the `check` regex below -- and each repair covered the sites it
+# happened to know about. A reader adding a sixth read belongs in this list.
+#
+#   hk.pkl, via `declared_commit_msg_check`
+#     1. the `["commit-msg"]` hook              -- searched over `masked_source`
+#     2. the `["conventional-commit"]` step     -- searched over `masked_source`
+#     3. that step's `check = "..."` line       -- searched over `masked_source`
+#
+#   mise.toml, via `declared_merge_guard`
+#     4. the `[tasks."commits:message"]` header -- safe by construction
+#     5. that task's `run = '''` body              -- safe by construction
+#
+# 4 and 5 are safe for a reason that does not generalise, so it is written
+# down rather than assumed: a TOML comment begins with `#`, and both patterns
+# anchor to the start of a line at a position where they require `[` or `r`.
+# A commented-out `#[tasks."commits:message"]` or `# run = '''` cannot match.
+# What the body then captures is verbatim, which is correct twice over: a `#`
+# line inside `run = '''...'''` is shell to mise and shell to the fixture
+# alike, so there is nothing there to mask.
+def declared_check(step):
+    """The `check` command a step body declares, ignoring any commented ones.
+
+    A function of its own so it can be tested over a fragment: the property
+    that matters here -- a commented `check` above a live one is not the
+    declaration -- is invisible from the real `hk.pkl`, which has no commented
+    `check` to trip over. Held that way, the whole read would be covered only
+    by editing the repository's own configuration.
+
+    Located on the mask, sliced from the source: the mask neutralises `{` and
+    `}` inside a value, so the match's own text would come back with
+    `{{commit_msg_file}}` blanked away.
+    """
+    check = re.search(r'check\s*=\s*"(.*?)"\s*$', masked_source(step), re.MULTILINE)
+    if check is None:
+        raise AssertionError("the `conventional-commit` step declares no live `check`")
+    return step[check.start(1) : check.end(1)]
+
+
 def declared_commit_msg_check():
     """The `check` command `hk.pkl` declares for the `conventional-commit` step.
 
@@ -223,6 +264,16 @@ def declared_commit_msg_check():
     one that disarms the gate most completely: a `conventional-commit` step
     declared under `pre-push` runs nothing at commit time, while still being
     findable by name anywhere in the file.
+
+    All three lookups run over `masked_source`, including the one for the
+    `check` line itself. Commenting a line out and writing its replacement
+    below is the ordinary shape of a configuration edit, and this function
+    decides the command the end-to-end fixture installs -- so a `check` read
+    out of a comment is a command that fixture runs while hk runs something
+    else, and the case cannot tell. The match is located on the mask and the
+    text is sliced from the source, because the mask neutralises `{` and `}`
+    inside a value: read off the mask, the command comes back with
+    `{{commit_msg_file}}` blanked away.
     """
     text = (ROOT / "hk.pkl").read_text()
     hook = braced_body(text, '["commit-msg"]')
@@ -231,10 +282,7 @@ def declared_commit_msg_check():
     step = braced_body(text, '["conventional-commit"]', within=hook)
     if step is None:
         raise AssertionError("hk.pkl's `commit-msg` hook declares no `conventional-commit` step")
-    check = re.search(r'check\s*=\s*"(.*?)"\s*$', step, re.MULTILINE)
-    if check is None:
-        raise AssertionError("the `conventional-commit` step declares no `check`")
-    return check.group(1)
+    return declared_check(step)
 
 
 def declared_merge_guard():
@@ -243,6 +291,11 @@ def declared_merge_guard():
     Read for the reason the hook command is read out of `hk.pkl`: the case
     below runs the guard where `mise run` cannot put it, and running a
     restatement there would hold nothing.
+
+    No mask here, and that is entries 4 and 5 of the list above rather than an
+    oversight: both patterns anchor where a TOML comment's `#` would have to
+    be, so neither can match a commented-out line, and the captured body is
+    shell in which a `#` line means the same thing to mise and to the fixture.
     """
     text = (ROOT / "mise.toml").read_text()
     task = re.search(r'^\[tasks\."commits:message"\]\n(.*?)^\[', text, re.DOTALL | re.MULTILINE)
@@ -362,6 +415,49 @@ class BracedBody(unittest.TestCase):
         body = braced_body(text, '["b"]', within=braced_body(text, '["a"]'))
         self.assertIn("live", body)
         self.assertNotIn("commented", body)
+
+    def test_a_commented_check_is_not_the_declaration(self):
+        """The third lookup, over a fragment the real `hk.pkl` cannot provide.
+
+        Commenting a line out and writing its replacement below is the
+        ordinary shape of a configuration edit, and this is the read that
+        decides what the end-to-end fixture installs -- so a `check` taken
+        from a comment is a command that fixture runs while hk runs another.
+        """
+        step = (
+            '                // check = "mise run --quiet commits:message < {{f}}"\n'
+            '                check = "true"\n'
+        )
+        self.assertEqual(declared_check(step), "true")
+
+    def test_a_live_check_is_read_whole_past_a_commented_one(self):
+        step = (
+            '                // check = "the old command"\n'
+            '                check = "mise run --quiet commits:message < {{f}}"\n'
+        )
+        self.assertEqual(declared_check(step), "mise run --quiet commits:message < {{f}}")
+
+    def test_a_step_with_only_a_commented_check_declares_none(self):
+        step = '                // check = "mise run --quiet commits:message < {{f}}"\n'
+        with self.assertRaises(AssertionError):
+            declared_check(step)
+
+    def test_a_masked_match_can_be_sliced_back_out_of_the_source(self):
+        """Why the caller locates on the mask and slices the source.
+
+        The mask neutralises `{` and `}` inside a value, so reading a match's
+        group off the mask returns a command with `{{commit_msg_file}}`
+        blanked away. `declared_commit_msg_check` takes the offsets from the
+        mask and the characters from the source for exactly this reason.
+        """
+        source = 'check = "run < {{f}}"'
+        mask = masked_source(source)
+        self.assertEqual(len(mask), len(source))
+        found = re.search(r'check\s*=\s*"(.*?)"\s*$', mask)
+        masked = mask[found.start(1) : found.end(1)]
+        self.assertNotIn("{", masked)
+        self.assertNotIn("}", masked)
+        self.assertEqual(source[found.start(1) : found.end(1)], "run < {{f}}")
 
     def test_a_key_the_region_does_not_hold_is_absent(self):
         """What containment is for: a sibling block's step is not this one's."""
