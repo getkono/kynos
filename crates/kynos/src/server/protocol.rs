@@ -1,5 +1,6 @@
-//! HTTP/1 and HTTP/2 tuning, and the checks that reject an unusable
-//! combination before a socket is bound.
+//! HTTP/1 and HTTP/2 tuning, the two ALPN identifiers naming those protocols
+//! on the wire, and the checks that reject an unusable combination before a
+//! socket is bound.
 
 use std::time::Duration;
 
@@ -14,6 +15,20 @@ use crate::server::error::ServerError;
 /// sized from, so the two cannot part company.
 #[cfg(feature = "http1")]
 pub(crate) const MIN_HTTP1_BUFFER_SIZE: usize = 8_192;
+
+/// The ALPN protocol identifier for HTTP/2, as the IANA registry assigns it.
+///
+/// Named here rather than at either site that needs it, because both sides of
+/// one negotiation read it: `tls` offers it to the client, and `connection`
+/// compares what the handshake settled against it to pin the driver. Two
+/// spellings of the same identifier would let a connection be offered a
+/// protocol the driver then declines to recognise.
+#[cfg(feature = "http2")]
+pub(in crate::server) const ALPN_HTTP2: &[u8] = b"h2";
+
+/// The same, for HTTP/1.1.
+#[cfg(feature = "http1")]
+pub(in crate::server) const ALPN_HTTP1_1: &[u8] = b"http/1.1";
 
 /// HTTP/1 tuning.
 ///

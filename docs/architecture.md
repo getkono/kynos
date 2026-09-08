@@ -682,7 +682,7 @@ time; erasing every body through a boxed trait object behind a mutex allocates
 once per request for a body that is not shared. Those cost more per request
 than hyper's entire HTTP/1 codec, and none of them require replacing it.
 
-The second of the three is taken.
+The second of the three was the first taken.
 [`Connection`](../crates/kynos/src/extract/connection.rs) is built once per
 accepted socket and reference-counted onto each request, so a certificate chain
 is copied once per connection rather than once per request. It landed as the fix
@@ -715,11 +715,33 @@ reports no want for a read while that plaintext is buffered, so the codec's
 next read is served out of memory. What is left is one heap copy of the head,
 at most 24 bytes, and one extra poll through the TLS stack per connection — a
 socket-level per-connection figure, and so `kynos-bench`'s by the boundary
-[`performance.md`](performance.md#the-boundary) sets. It is deferred there
-rather than taken here, and filed as
-[#114](https://github.com/getkono/kynos/issues/114): one allocation per
-connection is not the syscall per connection the entry was written for, and the
-number is what decides it.
+[`performance.md`](performance.md#the-boundary) sets. It is still unmeasured,
+and the change is taken anyway
+([#114](https://github.com/getkono/kynos/issues/114)) — on the second thing the
+trace found rather than on the first. rustls settles the protocol during the
+handshake; a driver that reads it back off the first bytes of the stream is a
+second answer to a question that already has one, and the two could disagree.
+They did: a connection whose ALPN identifier said `h2` was served HTTP/1
+whenever its first bytes said so, which made the identifier a handler reads a
+claim the connection's own traffic could contradict. `serve_http` pins the
+driver from the negotiated identifier now. Nothing here claims a saving, and no
+test asserts one: what is asserted, over a real socket in
+`crates/kynos/src/server/tests.rs`, is which protocol a connection is served
+with.
+
+Only one of the two residuals goes with it, and the pin does not come free.
+Reading the head is what the sniff *owned*, not merely what it cost: a
+connection that has said nothing can be dropped mid-read, and hyper's HTTP/2
+server cannot be — `graceful_shutdown` before its handshake completes only sets
+`close_pending`, so a connection pinned to `h2` and then left silent holds a
+drain open until the shutdown timeout expires. A speculative pre-connect from a
+client pool is that connection. So the pin waits for one byte of its own before
+it builds the codec, which keeps the drop and hands the byte on
+(`connection.rs`, `FirstByte`). That wait is a poll, so the extra poll is not
+saved after all, and hyper-util wraps a pinned connection in `Rewind` either
+way. What is left is the heap copy: `read_version` collects up to 24 bytes into
+a `Vec`, and one byte lives inline. A connection with no ALPN waits for
+nothing and is built immediately, exactly as before.
 
 Erasing a body is not on the routing path at all. None of the seven allocations
 [`alloc.rs`](../crates/kynos/tests/alloc.rs) records for a static match is a
