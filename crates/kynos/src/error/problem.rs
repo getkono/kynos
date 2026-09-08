@@ -362,9 +362,8 @@ pub(crate) fn problem_response(
 /// which has no `contribution` method for exactly this reason. A URI supplied
 /// at run time could therefore reach the wire and nothing else, leaving the
 /// document saying `about:blank` about a response that says otherwise. Stated
-/// as a type, the same `const` reaches both halves: [`refusal_problem`] builds
-/// the body and [`refusal_response`] narrows the declaration, from this one
-/// constant.
+/// as a type, the same `const` reaches both halves: one function builds the
+/// body and one narrows the declaration, both reading this constant.
 ///
 /// The const has no default. It is the one thing this trait carries, and a
 /// marker that left it unwritten would compile, ship `about:blank`, declare

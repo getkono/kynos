@@ -203,7 +203,7 @@ impl<P, D> RateLimit<P, D, ()> {
     /// [`standard_fields`](RateLimit::standard_fields) does: it changes what
     /// every covered operation declares. Stated once, and read by both the
     /// response body and the description — see
-    /// [`ProblemType`](crate::error::problem::ProblemType) for why that cannot be a value.
+    /// [`ProblemType`] for why that cannot be a value.
     ///
     /// Available only on a limiter that has not named one, so a chain states
     /// the type at most once and a reader never has to find the last call

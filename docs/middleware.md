@@ -427,10 +427,14 @@ from the other would fail there.
 
 ### Naming the problem type a refusal carries
 
-A 429's RFC 9457 `type` was `about:blank`, which says *the status code is the
-whole story*. That is true of a generic refusal and false of a service that
-distinguishes a burst limit from a spent monthly allowance — a client branches on
+Every refusal Kynos ships answered with `about:blank`, which says *the status
+code is the whole story*. That is true of a generic refusal and false of a
+service that distinguishes a burst limit from a spent monthly allowance, or a
+503 from a concurrency cap from a 503 from anything else — a client branches on
 `type`, and there was nothing to branch on.
+
+`error::problem::ProblemType` is the marker, and every interceptor that answers
+with a refusal has a builder for it:
 
 ```rust,ignore
 struct Throttled;
@@ -442,6 +446,33 @@ impl ProblemType for Throttled {
 RateLimit::new(policy).problem_type::<Throttled>()
 ```
 
+| Interceptor | Refusal | Builder |
+| --- | --- | --- |
+| `RateLimit` | `RateLimited`, `RateLimitedFields` (429) | `problem_type` |
+| `BodySize` | `BodySizeExceeded` (413) | `problem_type` |
+| `Timeout` | `TimedOut` (408) | `problem_type` |
+| `Concurrency` | `AtCapacity` (503) | `problem_type` |
+| `Csrf` | `CrossSite` (403) | `problem_type` |
+| `Compression` | `NotAcceptable` (406) | `problem_type` |
+| `Decompression` | `Undecodable` (400, 413, 415) | `malformed_problem_type`, `too_large_problem_type`, `unsupported_coding_problem_type` |
+
+`Conditional`'s `NotModified` is absent because a 304 carries no body, and
+`Infallible` because it declares no status. Those are the two of the ten
+`ShortCircuit` implementations that have no problem document to name.
+
+**The marker goes on the refusal, not on the interceptor.** A `ProblemType`
+names one type URI, so a type answering with several statuses carries several
+markers: `Undecodable` takes three, one per status, and `Decompression` has a
+builder for each. One marker across all three would declare a malformed body and
+an unsupported coding the same problem type. Where an interceptor owns exactly
+one refusal the distinction is invisible, and it is the rule that decides the
+case where it is not.
+
+`Timeout<R>` is the escape hatch beside it and stays one. `problem_type` names
+the URI a `TimedOut` publishes; `answer_with` replaces the response type
+outright, for a service that wants its own `#[derive(ApiError)]` type carrying a
+`Retry-After` or a support identifier rather than just a URI.
+
 **It is a type-state, not a field on `Denial`.** What an interceptor declares is
 read from its associated types and never from a value it returned — that is the
 whole of why there is no `contribution` method. A URI carried on a `Denial`
@@ -450,6 +481,17 @@ would reach the wire and nothing else, leaving the declared 429 saying
 declaration-versus-behaviour defect the short-circuit sweep exists to catch, and
 adding a hook that produces it is not a feature. Stated as a type, the same
 `const` is read by `into_response` and by `Responses`, from one function.
+
+**Nor a per-decision override.** A `Decision::deny_as` choosing between a
+*declared* set of markers is a narrower question than the one above, and the
+answer is the same: what a covered operation declares is read from the
+interceptor's associated types, so the URI reaching the wire would be one of
+several the description could not tell apart at a given decision. A closed
+enumeration would let the description name all of them, and then a 429 declaring
+two types is a 429 a consumer cannot generate a branch for any better than
+`about:blank` — while the wire would still be choosing at run time, which is the
+thing the type-state exists to prevent. Naming the type on the mount is the
+decision that changes what an operation declares, and there is one of it.
 
 **Nor a `const` on `RateLimitPolicy`.** The trait is implemented by the
 application for a custom algorithm, but the shipped algorithm is `Quotas`, which

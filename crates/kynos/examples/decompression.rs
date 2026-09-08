@@ -15,7 +15,7 @@
 //!   -H 'content-type: application/json' -H 'content-encoding: gzip' --data-binary @-
 //! ```
 //!
-//! Four things are worth noticing:
+//! Five things are worth noticing:
 //!
 //! * **This is not `Accept-Encoding` in reverse.** RFC 9110 section 12.5.3's
 //!   `Accept-Encoding` is a client saying what it will *receive*, and it says
@@ -35,6 +35,13 @@
 //!   400 reach every covered operation because [`Undecodable`] is the
 //!   interceptor's `Short` type. A client generator therefore knows to expect
 //!   them without anyone remembering to write them down.
+//! * **Each refusal names its own RFC 9457 `type`, and there are three.** A
+//!   client branches on `type`, and `about:blank` says the status code is the
+//!   whole story — true of neither of these. So each is named with a marker of
+//!   its own, and the declared response narrows `type` to that URI rather than
+//!   merely exemplifying it: a body disagreeing with its own declaration fails
+//!   the conformance harness. One marker for all three would say a malformed
+//!   body and an unsupported coding are the same problem.
 //! * **What is stripped is stripped because it stopped being true.** Section
 //!   8.4 says the representation *is* the coded form, and that all other
 //!   metadata about it describes that form. Once the coded form is gone,
@@ -48,9 +55,37 @@
 use std::net::Ipv4Addr;
 
 use kynos::{
-    middleware::decompression::Decompression, prelude::*, response::status::Accepted,
-    server::Server,
+    error::problem::ProblemType, middleware::decompression::Decompression, prelude::*,
+    response::status::Accepted, server::Server,
 };
+
+/// What this service calls a coding it cannot decode.
+///
+/// A marker rather than a value: what an interceptor declares is read from its
+/// associated types, so a URI chosen per request would reach the wire and leave
+/// the description saying `about:blank` about it.
+struct UnknownCoding;
+
+impl ProblemType for UnknownCoding {
+    const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/unknown-coding");
+}
+
+/// What it calls a body that is not the coding it claimed.
+struct NotWhatItClaimed;
+
+impl ProblemType for NotWhatItClaimed {
+    const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/malformed-body");
+}
+
+/// What it calls a payload that expands past the limit.
+///
+/// The one an operator most wants told apart: a client whose batch is simply
+/// too big retries smaller, and a client sending a decompression bomb does not.
+struct Bomb;
+
+impl ProblemType for Bomb {
+    const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/decompression-bomb");
+}
 
 /// A batch of sensor readings.
 ///
@@ -82,11 +117,21 @@ async fn main() -> kynos::Result<()> {
         // the absolute limit already bounds what a request can cost, and a
         // ratio tight enough to be worth having under gzip refuses payloads
         // zstd produces legitimately. Set it once you have measured your own.
-        .intercept(Decompression::new(4 * 1024 * 1024));
+        .intercept(
+            Decompression::new(4 * 1024 * 1024)
+                // Three refusals, three URIs. Each builder is available only
+                // while its own refusal is unnamed, so they may be written in
+                // any order and none can be named twice.
+                .unsupported_coding_problem_type::<UnknownCoding>()
+                .malformed_problem_type::<NotWhatItClaimed>()
+                .too_large_problem_type::<Bomb>(),
+        );
 
     // 400, 413 and 415 are on every operation below, contributed by the
     // interceptor rather than written out by hand -- which is the property that
-    // makes them impossible to forget.
+    // makes them impossible to forget. Each one's schema narrows `type` to the
+    // URI named above, so a consumer reads which problem a status carries
+    // rather than only that it carries a problem.
     let document = router.openapi()?;
     println!("{}", document.to_json()?);
 
