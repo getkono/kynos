@@ -930,11 +930,21 @@ class Main(unittest.TestCase):
 
     One rule earns a case its place, and it is the rule two cases here were
     removed for failing: an assertion that a failure class is *absent* holds
-    nothing unless some input in this file makes that class appear. A rule that
-    ran and passed and a rule that never ran report the same nothing. So a case
-    asserting an absence is paired with one asserting the presence, over the
-    same document -- `test_a_widened_surface_slice_would_report_the_site_this_one_hides`
-    is that pairing -- or it does not stay.
+    nothing unless something can make that class appear. A rule that ran and
+    passed and a rule that never ran report the same nothing. So an absence
+    assertion stays only if a mutation of the rule it names is caught by it --
+    normally because a sibling case asserts the presence over the same document,
+    as `test_a_widened_surface_slice_would_report_the_site_this_one_hides` does.
+
+    That rule has been **swept across this suite**, not merely applied wherever
+    a review found an instance. Three separate rounds each repaired the one case
+    that prompted the finding and left the rest, and the third instance was the
+    cost of that. Every absence assertion below is now either paired with a
+    presence case or labelled in place as decorative, and there is one of the
+    latter: the `"names no site"` check in the end-marker case, which no input
+    here can falsify because a widened slice still holds every link. The class
+    it names is held by the two surface cases instead. A new absence assertion
+    joins that inventory or it does not go in.
 
     The rule that cost a case: `main` reads `crates/kynos/Cargo.toml` off
     `ROOT`, so the implicit-optional-dependency check below the grading is not
@@ -1003,6 +1013,37 @@ class Main(unittest.TestCase):
     #: holds every link the narrow one did, so both pass.
     DECLARED_SITE = "crates/kynos/src/response/stream/sse.rs"
 
+    def test_a_stated_row_count_that_does_not_match_the_table_is_reported(self):
+        # The presence half of the allowance case's `allowance table claims`
+        # absence. The count word has to be one `NUMBERS` can read, or
+        # `claimed` reports an unreadable count instead of the mismatch.
+        broken = re.sub(
+            r"\*\*(\w+) rows, and the count is the check\.\*\*",
+            "**Seven rows, and the count is the check.**",
+            gate.ARCHITECTURE,
+            count=1,
+        )
+        status, failures = self.report(architecture=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(self.naming(failures, "allowance table claims")), 1)
+
+    def test_a_tokio_site_the_table_stops_allowing_is_reported(self):
+        # The presence half of its `named outside `server/`` absence: one real
+        # allowed site is renamed to a path nothing occupies, so the file that
+        # names tokio there becomes an offender.
+        broken = gate.ARCHITECTURE.replace(
+            "| `response/stream/sse.rs` | `tokio::time::{Instant, Sleep, sleep}` |",
+            "| `x/y.rs` | `tokio::time::{Instant, Sleep, sleep}` |",
+            1,
+        )
+        status, failures = self.report(architecture=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(self.naming(failures, "named outside `server/`")), 1)
+        self.assertIn(
+            "crates/kynos/src/response/stream/sse.rs",
+            self.naming(failures, "named outside `server/`")[0],
+        )
+
     def test_a_renamed_surface_heading_skips_the_declaration_check(self):
         broken = gate.ARCHITECTURE.replace(self.SURFACE, "### The public surface", 1)
         broken = broken.replace(self.DECLARED_SITE, "crates/kynos/src/lib.rs")
@@ -1063,6 +1104,14 @@ class Main(unittest.TestCase):
         self.assertEqual(len(self.naming(failures, self.GRADING)), 1)
         for signature in ("does not grade", "does not declare", "in more than one row", "no row of"):
             self.assertEqual(self.naming(failures, signature), [], signature)
+        # And the coverage comparison must not run at all rather than run over
+        # an empty grading: moved out of the guard it reports that the
+        # `Off-path proof` row is gone, which is false -- the row is there and
+        # only the header changed -- and contradicts the `unrun` sentence
+        # printed beside it. That message class is held live by
+        # `OffPathCoverage` below, and this absence is falsifiable by the
+        # statement-move mutation the pull request's ledger names.
+        self.assertEqual(self.naming(failures, "no longer has a"), [])
 
     #: The Aggregate row, which the regrading case appends a flag to. Named as
     #: its own constant so the case says which row it writes into.
