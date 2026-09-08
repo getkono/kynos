@@ -59,8 +59,9 @@ use kynos::{
     router::service::Service,
 };
 
-/// The counter and the driver, shared so that a second counting target does
-/// not copy them. Including this module is what installs the allocator.
+/// The counter, the request builder and the driver, shared with
+/// `alloc_codecs.rs` so that the second counting target does not carry a copy
+/// of them. Including this module is what installs the allocator.
 #[path = "support/counting.rs"]
 mod counting;
 
