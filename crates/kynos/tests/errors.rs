@@ -212,8 +212,23 @@ impl Scopes for ReadReports {
 #[test]
 fn an_authenticated_extractor_rejects_with_the_auth_type() {
     head_rejects_with::<AuthRejection, App, Auth<Bearer<Claims>>>();
-    head_rejects_with::<AuthRejection, App, Scoped<Bearer<Claims>, ReadReports>>();
     // `MaybeAuth` too: a credential that is present and wrong is a 401 there as
     // much as here, so it raises the same rejection rather than a weaker one.
     head_rejects_with::<AuthRejection, App, MaybeAuth<Bearer<Claims>>>();
+}
+
+/// `Scoped` is the one guard whose rejection names its scope set.
+///
+/// The same two failures, wrapped: `Responses` is reached through the rejection
+/// type, so the scope set's `FORBIDDEN_TYPE` has to be readable from there or
+/// the wide 403 `AuthRejection` declares wins the union and the narrowing
+/// reaches no document. Pinned here because widening it back to `AuthRejection`
+/// compiles everywhere else and silently un-narrows every scoped operation.
+#[test]
+fn a_scoped_extractor_rejects_with_its_scope_sets_rejection() {
+    head_rejects_with::<
+        kynos::error::rejection::ScopedRejection<ReadReports>,
+        App,
+        Scoped<Bearer<Claims>, ReadReports>,
+    >();
 }

@@ -53,7 +53,7 @@ use kynos::{
     router::operation::Route,
     security::{
         Authenticates, Authenticator,
-        auth::{Auth, MaybeAuth},
+        auth::{Auth, MaybeAuth, Scoped, Scopes},
         carrier::{ApiKey, BearerToken},
         schemes::Bearer,
     },
@@ -146,6 +146,24 @@ struct Tokens;
 /// The problem type `Tokens` gives its own 403.
 const BANNED: &str = "https://example.test/problems/account-banned";
 
+/// The problem type a scope check refuses with, named twice: once on the scope
+/// set, which is what the *description* narrows to, and once at the call site
+/// in `authorize`, which is what reaches the wire.
+const INSUFFICIENT_SCOPE: &str = "https://example.test/problems/insufficient-scope";
+
+/// A scope set that names the refusal it can produce.
+///
+/// The declared 403 on the operation demanding it is a choice between this URI
+/// and `about:blank` — both, because `authorize` below reaches
+/// `AuthRejection::forbidden()` as well, and a description naming only this one
+/// would be a promise the second body breaks.
+struct ReadReports;
+
+impl Scopes for ReadReports {
+    const SCOPES: &'static [&'static str] = &["reports:read"];
+    const FORBIDDEN_TYPE: Option<&'static str> = Some(INSUFFICIENT_SCOPE);
+}
+
 impl<C: Sync> Authenticator<Bearer<Caller>, C> for Tokens {
     async fn authenticate(&self, presented: BearerToken, _: &C) -> Result<Caller, AuthRejection> {
         // No `strip_prefix("Bearer ")` here, and that is the point: the scheme
@@ -159,17 +177,36 @@ impl<C: Sync> Authenticator<Bearer<Caller>, C> for Tokens {
             // ban is. The type reaches the client verbatim, so it names a
             // class of refusal and not a fact about the caller.
             "tok_banned" => Err(AuthRejection::forbidden_as(BANNED)),
+            // Two callers who authenticate and then fail the scope check, one
+            // each way. Both bodies land on the same declared 403.
+            "tok_unscoped" => Ok(Caller {
+                subject: "user-unscoped".to_owned(),
+            }),
+            "tok_denied" => Ok(Caller {
+                subject: "user-denied".to_owned(),
+            }),
             _ => Err(AuthRejection::unauthenticated()),
         }
     }
 
+    /// The pair that makes the union necessary rather than merely richer.
+    ///
+    /// `ReadReports` names `INSUFFICIENT_SCOPE`, so the operation's 403 is
+    /// declared as a choice between that URI and `about:blank` — and this
+    /// refuses one caller with each. `assert_conformance` checks both bodies
+    /// against that one entry, so a declaration narrowed to either alone fails
+    /// against the other.
     async fn authorize(
         &self,
-        _: &Caller,
+        credential: &Caller,
         _: &'static [&'static str],
         _: &C,
     ) -> Result<(), AuthRejection> {
-        Ok(())
+        match credential.subject.as_str() {
+            "user-unscoped" => Err(AuthRejection::forbidden_as(INSUFFICIENT_SCOPE)),
+            "user-denied" => Err(AuthRejection::forbidden()),
+            _ => Ok(()),
+        }
     }
 }
 
@@ -368,6 +405,19 @@ async fn feed(caller: MaybeAuth<Bearer<Caller>>) -> Json<User> {
     })
 }
 
+/// Guarded by a credential *and* a scope set that names its refusal.
+///
+/// The one operation whose 403 is narrowed: `ReadReports::FORBIDDEN_TYPE` is
+/// what a description assembled from types can read of a URI an authorizer
+/// chooses at run time.
+#[kynos::get("/reports")]
+async fn reports(caller: Scoped<Bearer<Caller>, ReadReports>) -> Json<User> {
+    Json(User {
+        id: 4,
+        name: caller.into_inner().subject,
+    })
+}
+
 /// Guarded by a credential the derive wrote the carrier for.
 #[kynos::get("/usage")]
 async fn usage(Auth(caller): Auth<ServiceKey>) -> Json<User> {
@@ -489,6 +539,7 @@ fn service() -> kynos::Result<kynos::router::service::Service<App>> {
             moved,
             me,
             feed,
+            reports,
             usage,
             greeting
         ])
@@ -664,6 +715,15 @@ async fn exercise_the_operations(client: &TestClient<App>) {
         .await
         .assert_status(StatusCode::OK);
 
+    // A caller whose scopes are accepted, so the scoped guard's 200 is a
+    // response this fixture produced rather than a declaration nothing keeps.
+    client
+        .get("/reports")
+        .header("authorization", "Bearer tok_ok")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+
     // The derived carrier, reading the field the attribute named.
     client
         .get("/usage")
@@ -822,6 +882,33 @@ async fn exercise_the_rejections(client: &TestClient<App>) {
         .send()
         .await
         .assert_status(StatusCode::FORBIDDEN);
+
+    // Both bodies the scoped guard's 403 declares, checked against the one
+    // entry filed under that status. This pair is what proves the union was
+    // necessary: a declaration narrowed to `INSUFFICIENT_SCOPE` alone fails the
+    // second body, and one narrowed to `about:blank` alone fails the first.
+    client
+        .get("/reports")
+        .header("authorization", "Bearer tok_unscoped")
+        .send()
+        .await
+        .assert_status(StatusCode::FORBIDDEN)
+        .assert_problem_type(INSUFFICIENT_SCOPE);
+
+    client
+        .get("/reports")
+        .header("authorization", "Bearer tok_denied")
+        .send()
+        .await
+        .assert_status(StatusCode::FORBIDDEN)
+        .assert_problem_type("about:blank");
+
+    // And the 401 beside them, which narrows whatever the scope set declares.
+    client
+        .get("/reports")
+        .send()
+        .await
+        .assert_status(StatusCode::UNAUTHORIZED);
 
     // The derived carrier reads the declared field, so a key in the wrong one
     // is absent rather than accepted.

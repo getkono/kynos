@@ -1234,3 +1234,240 @@ fn a_shared_status_describes_both_halves_of_what_it_publishes() {
         "{response}"
     );
 }
+
+// --- Scope in what a 403 publishes ------------------------------------------
+//
+// `AuthRejection::forbidden_as` puts an application's own problem type on a 403
+// at run time. `Scopes::FORBIDDEN_TYPE` is the half a document assembled from
+// types can read: a scope set names the URI its refusal may carry, and the
+// operation's declared 403 narrows to a choice between that URI and
+// `about:blank` — never to the URI alone, because `AuthRejection::forbidden()`
+// stays available to every authorizer.
+//
+// A scope set naming none, and an argument naming no scope set at all, declare
+// the shared component. That is the widest thing declarable rather than a gap:
+// an authorizer under either may still put any URI on the wire.
+
+/// What a verified token yields.
+struct Claims;
+
+/// Refuses everything, because nothing here runs it: the assertions below read
+/// the *document*, and an authenticator is unreachable while one is built —
+/// which is the whole reason `FORBIDDEN_TYPE` is a const on the scope set.
+struct Tokens;
+
+impl<C: Sync> kynos::security::Authenticator<kynos::security::schemes::Bearer<Claims>, C>
+    for Tokens
+{
+    async fn authenticate(
+        &self,
+        presented: kynos::security::carrier::BearerToken,
+        context: &C,
+    ) -> Result<Claims, kynos::error::rejection::AuthRejection> {
+        let _ = (presented, context);
+        Err(kynos::error::rejection::AuthRejection::unauthenticated())
+    }
+
+    async fn authorize(
+        &self,
+        credential: &Claims,
+        scopes: &'static [&'static str],
+        context: &C,
+    ) -> Result<(), kynos::error::rejection::AuthRejection> {
+        let _ = (credential, scopes, context);
+        Err(kynos::error::rejection::AuthRejection::forbidden_as(
+            INSUFFICIENT_SCOPE,
+        ))
+    }
+}
+
+/// The application context the guarded operations below describe against.
+struct Guarded;
+
+impl kynos::security::Authenticates<kynos::security::schemes::Bearer<Claims>> for Guarded {
+    type Authenticator = Tokens;
+
+    fn authenticator(&self) -> &Self::Authenticator {
+        &Tokens
+    }
+}
+
+/// The refusal `Staff` names, and the one `Tokens` publishes.
+const INSUFFICIENT_SCOPE: &str = "https://errors.example.com/insufficient-scope";
+
+/// A scope set that names the refusal it can produce.
+struct Staff;
+
+impl kynos::security::auth::Scopes for Staff {
+    const SCOPES: &'static [&'static str] = &["admin"];
+    const FORBIDDEN_TYPE: Option<&'static str> = Some(INSUFFICIENT_SCOPE);
+}
+
+/// A scope set that names none, which is every one written before the const
+/// existed.
+struct ReadReports;
+
+impl kynos::security::auth::Scopes for ReadReports {
+    const SCOPES: &'static [&'static str] = &["reports:read"];
+}
+
+#[kynos::get("/admin/audit")]
+async fn audit(
+    caller: kynos::security::auth::Scoped<kynos::security::schemes::Bearer<Claims>, Staff>,
+) -> NoContent {
+    let _ = caller.into_inner();
+    NoContent
+}
+
+#[kynos::get("/reports")]
+async fn reports(
+    caller: kynos::security::auth::Scoped<kynos::security::schemes::Bearer<Claims>, ReadReports>,
+) -> NoContent {
+    let _ = caller.into_inner();
+    NoContent
+}
+
+#[kynos::get("/me")]
+async fn me(
+    caller: kynos::security::auth::Auth<kynos::security::schemes::Bearer<Claims>>,
+) -> NoContent {
+    let _ = caller.into_inner();
+    NoContent
+}
+
+/// A failure of the handler's own, answering with the status the guard already
+/// declares.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum AuditError {
+    #[error("that record is sealed")]
+    #[problem(
+        status = 403,
+        type = "https://errors.example.com/record-sealed",
+        title = "Record sealed"
+    )]
+    Sealed,
+}
+
+#[kynos::get("/admin/sealed")]
+async fn sealed(
+    caller: kynos::security::auth::Scoped<kynos::security::schemes::Bearer<Claims>, Staff>,
+) -> Result<NoContent, AuditError> {
+    let _ = caller.into_inner();
+    Err(AuditError::Sealed)
+}
+
+/// The schema declared for `status` on `path`, as JSON.
+fn declared_problem_schema(document: &Document, path: &str, status: &str) -> serde_json::Value {
+    declared_problem(&operation(document, path), status)["content"]
+        ["application/problem+json"]["schema"]
+        .clone()
+}
+
+/// The document the guarded operations emit.
+fn guarded_document() -> Document {
+    Router::<Guarded>::new()
+        .mount(kynos::routes![audit, reports, me, sealed])
+        .openapi()
+        .expect("a describable router")
+}
+
+/// A scope set naming a type declares that type *and* `about:blank`.
+///
+/// Both, and this is the whole soundness argument: an authorizer refusing a
+/// `Scoped<S, Staff>` may answer `AuthRejection::forbidden_as(INSUFFICIENT_SCOPE)`
+/// or the plain `AuthRejection::forbidden()`, and both bodies reach a client of
+/// this operation. Narrowing to the named URI alone would declare less than the
+/// operation sends, which is the one direction `emitted ⊇ observable` forbids —
+/// and it is a failure no document validator would report, because a document
+/// that under-declares still validates.
+#[test]
+fn a_scope_set_naming_a_forbidden_type_declares_it_beside_about_blank() {
+    let schema = declared_problem_schema(&guarded_document(), "/admin/audit", "403");
+
+    assert_eq!(
+        published(&schema),
+        vec!["about:blank".to_owned(), INSUFFICIENT_SCOPE.to_owned(),],
+        "{schema}"
+    );
+}
+
+/// A scope set naming none declares the shared component, as it always has.
+///
+/// Not `about:blank`, which would be the intuitive reading and is unsound: an
+/// authorizer under a scope set that named no type may still reach
+/// `forbidden_as` with a URI of its own, and only a schema every problem
+/// document satisfies is true of that. The const is opt-in precisely because
+/// naming one is the promise that makes the narrowing honest.
+#[test]
+fn a_scope_set_naming_no_forbidden_type_declares_what_it_always_did() {
+    let schema = declared_problem_schema(&guarded_document(), "/reports", "403");
+
+    assert_eq!(
+        schema["$ref"],
+        serde_json::json!("#/components/schemas/Problem"),
+        "{schema}"
+    );
+    assert!(published(&schema).is_empty(), "{schema}");
+}
+
+/// `Auth<S>` names no scope set, so its 403 has nothing to narrow to.
+///
+/// The seam is on `Scopes` rather than on `SecurityScheme` deliberately: a URI
+/// hung on the scheme would pin one name to every check made under it. `Auth`
+/// is the argument that pays for that choice, and this pins what it pays.
+#[test]
+fn an_unscoped_guard_declares_the_shared_component_for_its_403() {
+    let schema = declared_problem_schema(&guarded_document(), "/me", "403");
+
+    assert_eq!(
+        schema["$ref"],
+        serde_json::json!("#/components/schemas/Problem"),
+        "{schema}"
+    );
+}
+
+/// The 401 beside it narrows, and is not touched by any of this.
+///
+/// `AuthRejection::unauthenticated` has no URI field and is not getting one, so
+/// `about:blank` is a fact about every 401 a guard sends whatever its scope set
+/// declares.
+#[test]
+fn a_named_forbidden_type_leaves_the_401_narrowed_to_about_blank() {
+    let document = guarded_document();
+
+    for path in ["/admin/audit", "/reports", "/me"] {
+        let schema = declared_problem_schema(&document, path, "401");
+        assert_eq!(published(&schema), vec!["about:blank".to_owned()], "{path}");
+    }
+}
+
+/// The narrowed 403 unions with a handler error's 403 rather than losing to it.
+///
+/// This is what the union buys and the bare `$ref` cost. A guard declaring the
+/// shared component *wins* the whole entry — it admits every problem document,
+/// so the handler's `const` is discarded — while two narrowed sides flatten
+/// into a choice of three, each a `const` no other branch matches. That last
+/// clause is `oneOf`'s exactly-one rule, and it is why a `$ref` with no const
+/// can never be a branch.
+#[test]
+fn a_named_forbidden_type_meets_a_handler_errors_403_as_a_choice_of_three() {
+    let schema = declared_problem_schema(&guarded_document(), "/admin/sealed", "403");
+
+    assert_eq!(
+        published(&schema),
+        vec![
+            "about:blank".to_owned(),
+            INSUFFICIENT_SCOPE.to_owned(),
+            "https://errors.example.com/record-sealed".to_owned(),
+        ],
+        "{schema}"
+    );
+
+    // Three branches under `oneOf` rather than one flattened away, so a body
+    // carrying any of the three matches exactly one of them.
+    assert_eq!(
+        schema["oneOf"].as_array().map(Vec::len),
+        Some(3),
+        "{schema}"
+    );
+}

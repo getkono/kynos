@@ -398,6 +398,7 @@ re-walked. A second call would reuse the same maps and agree with itself.
 | 12 | A component is registered after everything it refers to | the same file, over a known nesting chain |
 | 13 | A derived error response narrows `Problem.type` to a `const`, and a status several variants share to a `oneOf` of them | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted `Responses`; the shapes themselves in [`error/problem.rs`](../crates/kynos/src/error/problem.rs) |
 | 14 | A status two contributors narrow publishes both; a contributor admitting every problem document publishes for both; a shape the rule cannot place changes nothing | [`tests/description.rs`](../crates/kynos/tests/description.rs) over the document and [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) over the wire; the rule itself in [`model/response/union.rs`](../crates/kynos-openapi/src/model/response/union.rs) |
+| 15 | A guard's 403 narrows to `about:blank` and the URI its scope set named, never to either alone | [`tests/description.rs`](../crates/kynos/tests/description.rs) over the document and [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) over one refusal of each shape; the const in [`security/auth.rs`](../crates/kynos/src/security/auth.rs) and what reads it in [`error/rejection.rs`](../crates/kynos/src/error/rejection.rs) |
 
 ## Rationale
 

@@ -50,6 +50,13 @@
 //! application's, so it is the one an authenticator may name. A 401 carries no
 //! type at all, because which credential check refused is a fact a caller
 //! cannot act on and an attacker would like to have.
+//!
+//! `ReadReports` says that URI a second time as `Scopes::FORBIDDEN_TYPE`, which
+//! is the only seam a document assembled from *types* has for a value chosen at
+//! run time. `/reports` then declares a 403 publishing that type or
+//! `about:blank`; every other guarded operation here names no scope set and
+//! declares the shared `Problem` component, which is the widest thing true of a
+//! refusal nothing has named.
 
 use std::{collections::HashMap, net::Ipv4Addr};
 
@@ -397,6 +404,14 @@ struct ReadReports;
 
 impl Scopes for ReadReports {
     const SCOPES: &'static [&'static str] = &["reports:read"];
+
+    // The same URI `Tokens::authorize` refuses with, said once more where a
+    // description can read it. `/reports` therefore declares a 403 publishing
+    // this type *or* `about:blank` -- both, because a plain
+    // `AuthRejection::forbidden()` is still something an authorizer may return,
+    // and a document naming only this URI would promise less than the operation
+    // sends.
+    const FORBIDDEN_TYPE: Option<&'static str> = Some(INSUFFICIENT_SCOPE);
 }
 
 /// Only a caller holding `reports:read` may see this.

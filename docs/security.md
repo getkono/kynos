@@ -85,20 +85,71 @@ Three things follow, all deliberate:
   passed without deliberately leaking it. A named refusal is a `const` an
   application declares once, the same bound the 401's challenge already carries.
 
-What an operation *declares* is a separate question. `Auth<S>`, `MaybeAuth<S>`
-and `Scoped<S, R>` describe themselves from the scheme type alone, so the
-authenticator is unreachable while the document is built: the declared 403 still
-refers to the shared `Problem` component and narrows nothing.
+### What the declaration can say about it
 
-It is the only rejection status that does. Every other one — including the 401
-beside it — narrows to `about:blank`, because every other rejection builds its
-problem with `Problem::new` and that URI is a fact about it. The 403 is not
-narrowed rather than not narrowable: a body carrying an application's own URI
-would fail a schema constrained to `about:blank`, and a description that
-declares less than the operation sends is the one direction
-[`middleware.md`](middleware.md#soundness-not-exactness)'s *emitted ⊇
-observable* forbids. Where a handler's own error type also names 403, the wide
-declaration is the one that survives, for the same reason.
+A URI chosen at run time has no path into a document assembled from types — but
+the *scope set* an operation demands is a type, and that is the seam.
+`Scopes::FORBIDDEN_TYPE` is a defaulted associated const beside `SCOPES`:
+
+```rust
+impl Scopes for ReadReports {
+    const SCOPES: &'static [&'static str] = &["reports:read"];
+    const FORBIDDEN_TYPE: Option<&'static str> = Some(INSUFFICIENT_SCOPE);
+}
+```
+
+A `Scoped<S, R>` argument whose `R` names one declares a 403 publishing **that
+URI or `about:blank`** — a `oneOf` of the two, each branch a `const`.
+
+**Both, never the named one alone**, and that is the whole soundness argument.
+`AuthRejection::forbidden()` stays available to every authorizer whatever its
+scope set declares, so both bodies are observable on the operation; a
+declaration naming only the application's URI would say less than the operation
+sends, which is the direction
+[`middleware.md`](middleware.md#soundness-not-exactness)'s *emitted ⊇ observable*
+forbids. It is also a failure no validator reports, because a document that
+under-declares still validates — which is why the pair of exchanges in
+[`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) drives one refusal each way
+against the one entry filed under that status.
+
+The const is a *promise*, and it covers the whole guard rather than the scope
+check alone: `Scoped` authenticates before it authorizes, so an `authenticate`
+that reaches `forbidden_as` with a third URI breaks it as surely as an
+`authorize` would. Nothing in the type system holds it — the conformance harness
+does, by checking each body against the schema declared for its status.
+
+A scope set naming none declares the shared `Problem` component, exactly as
+before. Not `about:blank`: an authorizer under such a scope set may still reach
+`forbidden_as` with any URI, and only a schema every problem document satisfies
+is true of that. Naming one is what makes the narrowing honest, which is why it
+is opt-in.
+
+### `Auth<S>` and `MaybeAuth<S>` still declare the component, deliberately
+
+Neither names a scope set. They are generic in the *scheme*, the authenticator
+is a value on the application's context, and it is unreachable while the
+document is built — so there is no type on either to hang a const on.
+
+The obvious place to put one instead is `SecurityScheme`, and that is the
+alternative this refuses. A `forbidden_type()` there would cover all three
+guards from the single site that builds the 403, and it would pin **one URI per
+scheme**: every check made under `Bearer` would name the same refusal, which is
+coarser than the per-check conditions the seam exists to express. A scope set is
+the finest type an operation already names, so it is where the const lives.
+
+The consequence is stated rather than hidden: on an `Auth<S>` or `MaybeAuth<S>`
+operation, a client reading the body of a named 403 sees a URI a client reading
+the description does not. `Scoped<S, R>` is how an application closes that, and
+`AuthRejection`'s own `Responses` — the one a hand-written extractor reaches —
+stays wide for the same reason it always was.
+
+Where a handler's own error type also names 403, the two meet under
+[`errors.md`](errors.md#where-the-union-happens)'s union rule: two narrowed
+sides flatten into a choice over every type either publishes, while a side
+admitting every problem document wins outright. That is why the narrowing has to
+reach the contributor that decides the status —
+`ScopedRejection<R>`, the rejection a `Scoped` argument raises — and not only
+the `Describe` beside it.
 
 ### What Kynos does not verify
 
@@ -118,6 +169,7 @@ What Kynos *does* ship is the part that is the same for everyone:
 | The `WWW-Authenticate` challenge | It is part of what the 401 *is*, and it has to match the description |
 | 401 and 403 on the operation | A guard that did not declare them would make the document wrong |
 | The `type` seam on a 403 | Which authorization rule refused is the application's to say, and nothing but the authorizer can say it |
+| `Scopes::FORBIDDEN_TYPE` | The description half of that seam: the scope set is the one type an operation names that a per-check refusal can be pinned to |
 
 ### Two carriers are refused, deliberately
 

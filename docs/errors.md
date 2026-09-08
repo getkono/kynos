@@ -21,8 +21,8 @@ so the response it declares names `application/problem+json` and the `Problem`
 component. `error::problem::problem_response` writes that description wherever the
 response says only that a problem document arrives: the eight interceptor short
 circuits, the 500 a recovered panic contributes, and the 403 `AuthRejection`
-declares, which is the one rejection status left wide for the reason
-[Rejections](#rejections) gives.
+declares where no scope set named a type for it, which is the one rejection
+status left wide for the reason [Rejections](#rejections) gives.
 `error::problem::narrowed_response` writes it wherever the response also states
 which `type` it may carry: for every extractor rejection, and — through the
 forwarding function in
@@ -212,6 +212,10 @@ publishes would declare less than the operation sends. One declaration in Kynos
 is that shape on purpose — `AuthRejection`'s 403, below — and an interceptor's
 contribution or a hand-written `Responses` may be too.
 
+The rule cuts both ways, which is why `Scopes::FORBIDDEN_TYPE` is read by
+`ScopedRejection<R>` rather than only by `Scoped`'s `Describe`: a narrowing on
+one contributor is erased by a wide one on another, whichever arrives first.
+
 **Not narrowed is not the same as admitting everything**, and the union keeps
 the two apart. A schema satisfied by nothing, an empty `oneOf`, and a `oneOf`
 mixing a bare `$ref` with a narrowed branch — which is satisfied by *neither*
@@ -234,7 +238,8 @@ All live in [`error::rejection`](../crates/kynos/src/error/rejection.rs).
 | `BodyRejection` | 400, 415, 422 | every body extractor, and `OneOf<L, R>` |
 | `NegotiationRejection` | 400, 406 | `Accept<T>` |
 | `RangeRejection` | 416 | `Range<T>::apply` |
-| `AuthRejection` | 401, 403 | `Auth<S>`, `Scoped<S, R>` |
+| `AuthRejection` | 401, 403 | `Auth<S>`, `MaybeAuth<S>` |
+| `ScopedRejection<R>` | 401, 403 | `Scoped<S, R>` |
 
 The split is the whole point. A single shared rejection type would be *sound* —
 it satisfies `emitted ⊇ observable` — but every operation would advertise every
@@ -267,19 +272,33 @@ the rejection carries that length and writes the field itself, as
 there is no per-operation string for a `Describe` to supply — which is what lets
 the header travel with the status wherever the status is declared from.
 
-`AuthRejection` is the one rejection whose problem `type` is not fixed, and its
-403 is the one status in this table the description does not narrow.
+`AuthRejection` is the one rejection whose problem `type` is not fixed.
 `AuthRejection::forbidden_as(type_uri)` puts an application's own URI on a 403,
 because only the application knows which of its rules refused; the 401 has no
 counterpart and is not getting one, since which credential check refused is a
 fact a client cannot act on. The argument is a `&'static str` and the
 constructor is a `const fn`, so a URI built from the request cannot be spliced
-in without deliberately leaking it. What the operation *declares* for that 403
-is still the shared `Problem` component: the narrowing above is built from types
-alone, and this URI is a value that arrives at run time. Every other rejection
-status narrows to `about:blank`; this one stays wide because admitting a URI
-nobody can name at description time is the only claim true of both bodies it may
-carry. The rest of the reasoning is in
+in without deliberately leaking it.
+
+What the operation *declares* for that 403 depends on whether a **type** named
+the URI. `AuthRejection` itself carries no scope set, so its 403 stays the
+shared `Problem` component — the only claim true of both bodies it may carry,
+and what `Auth<S>` and `MaybeAuth<S>` therefore declare.
+
+`ScopedRejection<R>` is the same two failures read against the scope set that
+demanded them, and it is what `Scoped<S, R>` raises. Where `R` names a
+`Scopes::FORBIDDEN_TYPE` the 403 narrows to a `oneOf` of that URI and
+`about:blank` — both, because `AuthRejection::forbidden()` stays available to
+every authorizer and declaring only the named one would say less than the
+operation sends.
+
+**It is a rejection type of its own for one reason, and the reason is the union
+rule below.** `Responses` is reached through the rejection, so the wide 403
+`AuthRejection` declares would be contributed beside any narrowing done
+elsewhere — and *a side that admits every problem document wins outright*. The
+narrowing has to be read by the contributor that decides the status.
+
+The rest of the reasoning is in
 [`security.md`](security.md#a-403-may-name-itself-a-401-may-not).
 
 An extractor that cannot fail says so with `Infallible`, whose `Responses`
