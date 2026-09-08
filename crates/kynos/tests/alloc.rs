@@ -184,6 +184,51 @@ fn depth_8() -> Service<()> {
         .expect("a describable router")
 }
 
+/// An interceptor that allocates a known amount, so that part of a count taken
+/// through it is fixed by construction rather than measured.
+///
+/// Two heap operations, deliberately one of each kind. `Vec::with_capacity` is
+/// one fresh allocation; extending past that capacity is one *reallocation*,
+/// because a `Vec` that outgrows its buffer asks the allocator to resize it
+/// rather than to hand out a second one. A counter that reported only the
+/// first would be counting half of what every ceiling in this target and in
+/// `alloc_codecs.rs` is recorded in.
+///
+/// [`black_box`](std::hint::black_box) is what keeps both from being optimized
+/// away: nothing reads the buffer, and a dead `Vec` is exactly the shape a
+/// compiler is free to delete.
+struct Calibrating;
+
+impl<C: Sync + 'static> Interceptor<C> for Calibrating {
+    type Reads = ();
+    type Adds = ();
+    type Short = Infallible;
+
+    async fn intercept(
+        &self,
+        request: Request,
+        reads: (),
+        context: &C,
+        next: Next<'_, C>,
+    ) -> Result<Continued<()>, Infallible> {
+        let _ = (reads, context);
+
+        let mut buffer = Vec::<u8>::with_capacity(1);
+        buffer.extend_from_slice(&[0, 0]);
+        drop(std::hint::black_box(buffer));
+
+        Ok(next.run(request).await)
+    }
+}
+
+/// The routing fixture with one calibrating layer in front of it.
+fn calibrated() -> Service<()> {
+    router()
+        .intercept(Calibrating)
+        .build(())
+        .expect("a describable router")
+}
+
 /// One row of the table below: a depth, the service that mounts that many
 /// layers, and what a request through it costs.
 ///
@@ -446,6 +491,63 @@ fn work_on_another_thread_is_not_counted() {
         "a region open on this thread counted {counted} allocation(s) that \
          another thread made; a count that carries the rest of the process is \
          not a measurement of the routing path"
+    );
+}
+
+/// What one request through [`calibrated`] costs, in full.
+///
+/// **The only equality over an absolute count in either counting target, and
+/// the reason there is one.** Every other number in this file and in
+/// `alloc_codecs.rs` is a ceiling compared with `<=`, so a reading that *fell*
+/// passes: a driver that quietly stopped counting part of what it counts reads
+/// as a cheaper router rather than as a broken instrument, and the leak
+/// replays read a uniform fall as still constant. Two of the operations
+/// counted below cannot fall without the instrument being wrong — one fresh
+/// allocation and one reallocation, made by [`Calibrating`] where the region
+/// can see them — so pinning the whole reading with an equality is what makes
+/// that failure red rather than green.
+///
+/// **The reallocation is the load-bearing half, and it is the only one in this
+/// request.** A `/ping` through one layer performs ten heap operations, of
+/// which exactly one is a resize and it is this fixture's — dropping
+/// `reallocations` from the driver's sum moves this reading to nine and moves
+/// nothing else in either target. That is precisely why the ceilings could not
+/// see such a driver before: with nothing on the routing path that grows a
+/// buffer, every count they hold was already reallocation-free.
+///
+/// The rest of the number is the routing path's [`STACKED_ALONE`] seven and
+/// the one boxed future a layer costs, both recorded above as ceilings; this
+/// is where they are held from *below* as well as from above. That also makes
+/// this the one number here that has to be re-read when a ceiling below it is
+/// lowered, which is the price of the only assertion in either target that a
+/// fall cannot pass.
+const CALIBRATED: usize = 10;
+
+/// The instrument's second invariant, and the one every ceiling in either
+/// counting target rests on: a count is *every* heap operation the region saw,
+/// fresh allocations and reallocations alike, over the whole of one request.
+///
+/// Filed here beside `work_on_another_thread_is_not_counted` rather than in
+/// `alloc_codecs.rs`, for the reason
+/// [`testing.md`](../../../docs/testing.md#the-allocation) gives for that one:
+/// the property belongs to `alloc_counter` and to the shared driver rather
+/// than to any fixture, so it is asserted once for both targets. Since #133
+/// there is one driver, which is what lets one assertion reach both — and is
+/// also why it has to exist, because a single edit to that driver now moves
+/// all forty-four recorded numbers at once and leaves the two files as
+/// comparable as they ever were.
+#[test]
+fn the_counter_reports_every_heap_operation_in_the_region() {
+    let counted = counted(&calibrated(), STACKED, STACKED_STATUS);
+
+    assert_eq!(
+        counted, CALIBRATED,
+        "one request through the calibrating layer cost {counted} against a \
+         recorded {CALIBRATED}; two of those are a fresh allocation and a \
+         reallocation the layer makes on purpose, so a reading that moved here \
+         is the driver measuring a different amount of one request than it \
+         did — and a fall is the direction every `<=` ceiling in this target \
+         and in alloc_codecs.rs would pass"
     );
 }
 
