@@ -222,9 +222,15 @@ def naming(*crates):
     return {path for path, text in FILES if pattern.search(text)}
 
 
-def claimed(sentence, failures):
-    """The number `architecture.md` writes into one of its count claims."""
-    found = re.search(sentence, ARCHITECTURE)
+def claimed(text, sentence, failures):
+    """The number `architecture.md` writes into one of its count claims.
+
+    The document is a parameter for the reason `main`'s are: a count that stays
+    held when the section beside it is gone is a claim about which rules a
+    missing marker costs, and that is only observable against a document
+    missing one.
+    """
+    found = re.search(sentence, text)
     if found is None:
         failures.append(
             f"architecture.md no longer states a count matching /{sentence}/, so "
@@ -971,7 +977,7 @@ def cargo_config_failures(text):
     return problems
 
 
-def main():
+def main(architecture=None, testing=None, performance=None, nfr=None):
     """Run every rule over this repository, and report what does not hold.
 
     Every rule body lives here rather than at module scope, so that importing
@@ -984,13 +990,25 @@ def main():
 
     `failures` is a local for the same reason. A module holding a failure list
     at import is a module that has already checked something.
+
+    The four documents default to this repository's own and are arguments so
+    that a case can hand one over with a marker removed, the way `scanned`
+    takes `exists`. What each rule *stops* checking when its marker is gone is
+    a decision this file makes four times over, and reading the documents off
+    module scope would leave all four of them assertable only by editing the
+    repository. The corpora stay as they are: a rule skipped for want of a
+    heading is still a claim about the real tree.
     """
+    architecture = ARCHITECTURE if architecture is None else architecture
+    testing = TESTING if testing is None else testing
+    performance = PERFORMANCE if performance is None else performance
+    nfr = NFR if nfr is None else nfr
     failures = []
 
     # --- The runtime allowance table ------------------------------------------
     rows = []
     table = section(
-        ARCHITECTURE,
+        architecture,
         "| Site | Names | Why it is not in `server/` |",
         failures,
         unrun=(
@@ -1007,7 +1025,9 @@ def main():
                 break
             rows.append(re.findall(r"`([^`]+)`", line.split("|")[1]))
 
-        stated = claimed(r"\*\*(\w+) rows, and the count is the check\.\*\*", failures)
+        stated = claimed(
+            architecture, r"\*\*(\w+) rows, and the count is the check\.\*\*", failures
+        )
         if stated is not None and stated != len(rows):
             failures.append(
                 f"architecture.md's allowance table claims {stated} rows and has {len(rows)}"
@@ -1040,7 +1060,7 @@ def main():
             failures.append(f"{description}, but it is also named in:\n    " + "\n    ".join(stray))
 
     # --- The off-path elements -----------------------------------------------
-    halves = TESTING.split(OFF_PATH_HEADER)
+    halves = testing.split(OFF_PATH_HEADER)
     if len(halves) != 2:
         failures.append(
             "testing.md no longer holds exactly one off-path table under the header "
@@ -1195,7 +1215,7 @@ def main():
     # that every rule holds. `testing.md` states the count for that reason, and
     # this compares it.
     elif len(halves) == 2:
-        stated = re.search(r"\*\*(\w+) rows, and the count is the check\.\*\*", TESTING)
+        stated = re.search(r"\*\*(\w+) rows, and the count is the check\.\*\*", testing)
         if stated is None:
             failures.append(
                 "testing.md no longer states how many rows its off-path table has, "
@@ -1221,7 +1241,7 @@ def main():
     # new hand-rolled `Stream` -- which is also why a missing end marker fails here
     # rather than widening the slice to the foot of the document.
     surface = section(
-        ARCHITECTURE,
+        architecture,
         "### Public API surface",
         failures,
         "\n## ",
@@ -1236,7 +1256,9 @@ def main():
     hand_rolled = {path for path, text in FILES if re.search(r"\bStream\s+for\b", text)}
 
     sites = claimed(
-        r"\*\*One public row, (\w+) sites, and the count is the check\*\*", failures
+        architecture,
+        r"\*\*One public row, (\w+) sites, and the count is the check\*\*",
+        failures,
     )
     if sites is not None and sites != len(hand_rolled):
         failures.append(
@@ -1258,7 +1280,7 @@ def main():
         if (ROOT / path).read_text().count("\n") > 400
     )
 
-    budget = re.search(r"a module-size budget of (\d+) files", NFR)
+    budget = re.search(r"a module-size budget of (\d+) files", nfr)
     if budget is None:
         failures.append("nfr.md no longer states the module-size budget")
     elif int(budget.group(1)) != len(oversized):
@@ -1271,7 +1293,7 @@ def main():
 
     # --- The feature grading -------------------------------------------------
     grading = section(
-        PERFORMANCE,
+        performance,
         "| Grade | Owes | Flags |",
         failures,
         unrun=(
@@ -1353,7 +1375,7 @@ def main():
         )
 
     # --- The count of measurement kinds --------------------------------------
-    failures += taxonomy_failures(PERFORMANCE)
+    failures += taxonomy_failures(performance)
 
     # --- Nothing a package compiles reaches outside the package --------------
     for package in sorted((ROOT / "crates").iterdir()):
