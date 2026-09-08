@@ -1382,6 +1382,19 @@ class Main(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertEqual(len(self.naming(failures, "nfr.md budgets 99 files")), 1)
 
+    def test_a_reworded_module_size_budget_claim_is_reported(self):
+        # The other half of the budget rule: the case above holds the
+        # comparison, this holds the sentence the comparison reads.
+        broken = re.sub(
+            r"a module-size budget of (\d+) files",
+            r"a module-size budget covering \1 files",
+            gate.NFR,
+        )
+        status, failures = self.report(nfr=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            len(self.naming(failures, "no longer states the module-size budget")), 1
+        )
 
 
 
