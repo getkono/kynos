@@ -216,6 +216,13 @@ const MISSED: &str = SHAPES[2].0;
 /// The answer *that* target has to give, from the same row.
 const MISSED_STATUS: StatusCode = SHAPES[2].1;
 
+/// The shape whose excess over the static match is what a capture costs, read
+/// out of [`SHAPES`] for the reason [`STACKED`] is.
+const CAPTURED: &str = SHAPES[1].0;
+
+/// The answer *that* target has to give, from the same row.
+const CAPTURED_STATUS: StatusCode = SHAPES[1].1;
+
 /// Every stack depth measured here, with what a request through it costs
 /// today.
 ///
@@ -466,14 +473,14 @@ fn the_routing_path_allocates_where_the_requirement_asks_for_nothing() {
 fn a_capture_is_what_a_path_parameter_costs() {
     let service = service();
 
-    let [
-        (ping, ping_status, _),
-        (users, users_status, _),
-        (nope, nope_status, _),
-    ] = SHAPES;
-    let matched = counted(&service, ping, ping_status);
-    let captured = counted(&service, users, users_status);
-    let missed = counted(&service, nope, nope_status);
+    // Each shape reaches this test through the const that names it, rather
+    // than by destructuring `SHAPES` — a row reordered above would rebind
+    // three positional names here and leave the test passing about the wrong
+    // three requests, which is the hazard `alloc_codecs.rs`'s `Table` is a
+    // named struct to avoid.
+    let matched = counted(&service, STACKED, STACKED_STATUS);
+    let captured = counted(&service, CAPTURED, CAPTURED_STATUS);
+    let missed = counted(&service, MISSED, MISSED_STATUS);
 
     assert!(
         captured > matched,
