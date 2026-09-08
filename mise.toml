@@ -275,7 +275,12 @@ cargo hack check --workspace --each-feature --all-targets \
 [tasks."cost:features"]
 description = "Measure what each feature costs a linked artifact and monomorphized IR"
 # The two sweep kinds `docs/performance.md` files as tasks rather than targets:
-# `.text` of a fixed fixture, and `cargo llvm-lines` over the same one.
+# `.text` of a fixed fixture, and `cargo llvm-lines` over the same one. Plus the
+# codec sweep below, which is the binary kind over the *other* fixture -- the one
+# that mounts a codec. It rides here rather than in a job of its own because it
+# is six more release builds on a sweep that already does fifty, and because a
+# reader comparing "what `json` costs a program that ignores it" against "what it
+# costs a program that mounts it" wants both numbers in one report.
 #
 # The two halves build at different profiles on purpose. `.text` is measured
 # at `--release`, which is the artifact that ships; the IR is counted at the
@@ -332,12 +337,31 @@ description = "The codegen half of the sweep alone"
 tools = { "cargo:cargo-llvm-lines" = "0.4.48" }
 run = "python3 scripts/cost_features.py --kind codegen"
 
+[tasks."cost:codecs"]
+description = "The codec half of the sweep alone: what mounting each codec costs"
+# Separable for `cost:codegen`'s reason, and cheaper than it: six release builds
+# rather than twenty-five, which is what makes re-reading this one question
+# affordable after a change to an extractor or a response codec.
+#
+# No `cargo-llvm-lines` pin, deliberately. This half weighs `.text` and never
+# counts IR, so pinning it would compile a tool from source for a task that
+# cannot use it -- the trade `cost:test`'s comment makes for the same reason.
+#
+# Not in `check` and not in `hooks:pre-push`, for `cost:features`' reason: it
+# compiles, and at `--release` with fat LTO. `check` runs `cost:test`, which
+# holds this script's parsers, its table reader and its ranking and builds
+# nothing.
+run = "python3 scripts/cost_features.py --kind codec"
+
 [tasks."cost:record"]
 description = "Record the measured deltas as the committed baseline"
 # The `fixtures:generate` idiom: the sweep compares when told to and writes when
 # told to, so a change in what a feature costs reaches review as a diff of the
 # recorded deltas rather than as a number someone retyped. Recording is a
 # deliberate act, per `docs/nfr.md#thresholds`.
+#
+# Writes all three baselines under `crates/kynos/cost/`, because it runs the
+# whole sweep. Recording one alone is `--kind` plus `KYNOS_COST=overwrite`.
 #
 # The `cargo-llvm-lines` pin is task-scoped for the reason given on
 # `cost:features` above.

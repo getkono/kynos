@@ -310,6 +310,14 @@ was never the exposure, since `unexpected_cfgs` validates one against the whole
 feature list wherever the file compiles at all. `202cfa5` is the class, and it
 was found by hand-linting the six sets before there was a task that did.
 
+A second target now sits at exactly those six sets and arrived after the task
+that lints them:
+[`cost/codec.rs`](../crates/kynos/cost/codec.rs), the fixture
+[`performance.md`](performance.md#the-taxonomy)'s codec sweep weighs. It is an
+example rather than a test, so `--all-targets` is what reaches it, and the sets
+it is *measured* at are the sets it is already linted at — which is why it
+needed no entry of its own.
+
 **A gap [`nfr.md`](nfr.md) documents is characterized.** Excluding a known-lossy
 shape from a generator keeps the property honest, but on its own it leaves the
 behaviour unrecorded: closing the gap turns nothing red, and widening it turns

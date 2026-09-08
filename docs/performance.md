@@ -60,7 +60,7 @@ What each kind of measurement proves that no other kind does.
 | Size guard | [`tests/size.rs`](../crates/kynos/tests/size.rs), or a sibling `tests.rs`, or beside the count that shares its fixture | `cargo nextest` | that a type or a future did not grow | in use for types, and for the dispatch future at [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) — which is the one future guarded, not every future |
 | Off-path proof | a sibling `tests.rs`, and a table [`containment:check`](../scripts/containment.py) reads | `python3 scripts/containment.py`, `cargo nextest` | that a feature is unreachable from the request path | in use, for the off-path flags and for the document, the registry, the validators and `jsonschema`: a table in [`testing.md`](testing.md#the-off-path-proof) held by `mise run containment:check`, plus the field witness in [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs); `describe` is the one off-path shape no row holds, and the emitters are held by the `yaml` flag's row rather than by one of their own |
 | Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | in use, via `mise run cost:features` over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs); reports a trend and sets no ceiling, and sees the generics that fixture instantiates rather than the whole surface — so a feature that grows the dependency graph can shrink this number by sharing instantiations out of upstream rlibs, and a negative row is a relocation rather than a saving |
-| Binary delta | a feature sweep | `.text` of a fixed fixture | what a feature costs a linked artifact | in use, over [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv); reports a trend and sets no ceiling. The fixture uses none of these features, so a zero row says the linker stripped — or the collector never instantiated — what nothing called, rather than that the feature is free to a program that uses it |
+| Binary delta | a feature sweep | `.text` of a fixed fixture | what a feature costs a linked artifact | in use, over [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv); reports a trend and sets no ceiling. The fixture uses none of these features, so a zero row says the linker stripped — or the collector never instantiated — what nothing called, rather than that the feature is free to a program that uses it. A second sweep answers the question that fixture structurally cannot, over [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv): what mounting a codec costs, weighed on a fixture that mounts one |
 
 **An allocation count needs its own target because a global allocator is
 process-wide.** Installing one in the library's unit-test binary would perturb
@@ -94,6 +94,18 @@ and compare artifacts, which no test harness can express, so they are a task —
 [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv) and
 [`cost/codegen.tsv`](../crates/kynos/cost/codegen.tsv), which
 `mise run cost:record` writes.
+
+**The codec sweep is the same task over a fixture that varies on purpose.**
+[`cost/codec.rs`](../crates/kynos/cost/codec.rs) mounts one operation each way
+per codec behind that codec's flag, over a transport floor mounted at every
+point, and its baseline row is that floor alone. Holding the program fixed is
+what makes `fixture.rs` attribute a delta to a feature; here the program is
+*meant* to differ, because "the operation that mounts the codec" is the thing
+being weighed and it cannot exist in a build with the flag off. The two fixtures
+therefore answer opposite questions and neither subsumes the other:
+`binary.tsv`'s `compression` row is +160 bytes and `codec.tsv`'s is +951556.
+`mise run cost:codecs` runs this half alone; `mise run cost:record` writes its
+baseline with the other two.
 
 ## The allocation
 
@@ -154,6 +166,23 @@ under a per-request shape precisely because a request never reaches it.
 against an operation with no body would report zero and mean nothing. The
 question the shape exists to answer is what the codec costs the operation that
 asked for it, against the same operation without it.
+
+Both halves of that bill now run.
+[`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) counts each
+codec on an operation that names it, and
+[`cost/codec.tsv`](../crates/kynos/cost/codec.tsv) records the `.text` delta of
+the fixture that mounts it: `protobuf` at +44112 bytes, `form` at +46256, `json`
+at +63936, `multipart` at +109568 and `compression` at +951556, over an 883900
+byte floor.
+
+**What those figures include is more than Kynos, and saying so is part of the
+measurement.** Mounting a codec pulls in the crate that implements it —
+`serde_json`, `serde_urlencoded`, `multer`, `prost`, `async-compression` — and
+the operation declares a payload type carrying two derives. `compression` is
+where the distinction stops being a caveat: nearly all of its ~950 KiB is the
+gzip, brotli and zstd backends, so the row prices the encoders rather than the
+interceptor over them. A figure that attributed that to the framework would be
+a wrong number rather than an imprecise one.
 
 ## The feature grading
 
