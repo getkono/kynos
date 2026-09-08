@@ -803,7 +803,7 @@ class TaxonomyCount(unittest.TestCase):
     document, not what `performance.md` happens to say today.
     """
 
-    #: The five kinds, in the order the shipped table writes them.
+    #: The kinds, in the order the shipped table writes them.
     KINDS = [
         "Allocation count",
         "Size guard",
