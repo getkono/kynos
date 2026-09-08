@@ -1070,6 +1070,25 @@ class Main(unittest.TestCase):
         finally:
             Path.read_text = unpatched
 
+    def rewriting(self, document, anchor, replacement):
+        """`document` with the first `anchor` rewritten, refusing a no-op.
+
+        For a fixture anchored on a detail of the document that is not what its
+        case is about -- the cells of the `uuid` off-path row, below. That row
+        may be rewritten in ways this gate accepts: writing the two paths out
+        where the cell braces them is one, and it turns every anchored
+        `replace` into a no-op at once. The cases then report `0 != 1` each,
+        none of them naming the row, over a documentation edit that is fine.
+        A fixture whose anchor IS its subject -- a header, a count sentence --
+        needs no guard, because a case that reports the header unfound has
+        named what moved.
+        """
+        if anchor not in document:
+            # `self.fail` rather than `assertIn`, whose message renders the
+            # whole document twice for want of a truncation.
+            self.fail(f"this fixture no longer anchors on: {anchor!r}")
+        return document.replace(anchor, replacement, 1)
+
     def naming(self, failures, needle):
         return [failure for failure in failures if needle in failure]
 
@@ -1323,8 +1342,8 @@ class Main(unittest.TestCase):
         # A cell lost with its pipe, which is what a hand-edited table does. The
         # row is refused before anything else reads it, so the row-count rule
         # fires beside this one; the shape failure is what is asserted.
-        broken = gate.TESTING.replace(
-            self.UUID_ROW, self.UUID_ELEMENT + self.UUID_NAMED_BY, 1
+        broken = self.rewriting(
+            gate.TESTING, self.UUID_ROW, self.UUID_ELEMENT + self.UUID_NAMED_BY
         )
         status, failures = self.report(testing=broken)
         self.assertEqual(status, 1)
@@ -1336,12 +1355,12 @@ class Main(unittest.TestCase):
         # A *Named only in* cell writing prose outside its backticks. The scan
         # scope is derived from these sites, so the cell is refused whole rather
         # than read for the half of it that still parses.
-        broken = gate.TESTING.replace(
+        broken = self.rewriting(
+            gate.TESTING,
             self.UUID_ROW,
             self.UUID_ELEMENT
             + self.UUID_NAMED_BY
             + " `schema/impls/mod.rs` and `schema/impls/identifier.rs` |",
-            1,
         )
         status, failures = self.report(testing=broken)
         self.assertEqual(status, 1)
@@ -1353,12 +1372,12 @@ class Main(unittest.TestCase):
         # One transposed letter in a crate name: every other check on the cell
         # passes, and the tree it derives matches no file, which would narrow
         # the row back to the home scope where its spellings are still written.
-        broken = gate.TESTING.replace(
+        broken = self.rewriting(
+            gate.TESTING,
             self.UUID_ROW,
             self.UUID_ELEMENT
             + self.UUID_NAMED_BY
             + " `crates/kynos-opanapi/src/schema/impls/mod.rs` |",
-            1,
         )
         status, failures = self.report(testing=broken)
         self.assertEqual(status, 1)
@@ -1376,10 +1395,10 @@ class Main(unittest.TestCase):
         # The same residue, in the cell that says what names the element. A
         # spelling dropped for having lost its backticks reads exactly like a
         # row with one spelling that holds.
-        broken = gate.TESTING.replace(
+        broken = self.rewriting(
+            gate.TESTING,
             self.UUID_ROW,
             self.UUID_ELEMENT + ' `uuid` and `feature = "uuid"` |' + self.UUID_SITES,
-            1,
         )
         status, failures = self.report(testing=broken)
         self.assertEqual(status, 1)
@@ -1391,10 +1410,10 @@ class Main(unittest.TestCase):
         # A renamed or mistyped spelling, and the row's other spelling still
         # matching: this is the case the one-at-a-time hold exists for, since a
         # union over the cell would report the row as holding.
-        broken = gate.TESTING.replace(
+        broken = self.rewriting(
+            gate.TESTING,
             self.UUID_ROW,
             self.UUID_ELEMENT + ' `uuidd`, `feature = "uuid"` |' + self.UUID_SITES,
-            1,
         )
         status, failures = self.report(testing=broken)
         self.assertEqual(status, 1)
@@ -1409,10 +1428,10 @@ class Main(unittest.TestCase):
         # fixture writes both faults at once -- a spelling nothing writes, and
         # sites narrowed to one file that leaves offenders standing -- so the
         # skip is the only thing between the row and a second failure.
-        broken = gate.TESTING.replace(
+        broken = self.rewriting(
+            gate.TESTING,
             self.UUID_ROW,
             self.UUID_ELEMENT + ' `uuidd`, `feature = "uuid"` |' + " `schema/mod.rs` |",
-            1,
         )
         status, failures = self.report(testing=broken)
         self.assertEqual(status, 1)
@@ -1424,10 +1443,10 @@ class Main(unittest.TestCase):
         # to correct: the row's sites are narrowed to one file, so every other
         # file naming the element is a site a request may now reach it from.
         site = "schema/mod.rs"
-        broken = gate.TESTING.replace(
+        broken = self.rewriting(
+            gate.TESTING,
             self.UUID_ROW,
             self.UUID_ELEMENT + self.UUID_NAMED_BY + f" `{site}` |",
-            1,
         )
         status, failures = self.report(testing=broken)
         self.assertEqual(status, 1)
