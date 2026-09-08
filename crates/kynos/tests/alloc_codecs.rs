@@ -46,15 +46,12 @@
 
 #![cfg(feature = "macros")]
 
-/// Declared here rather than reached for, for the reason [`alloc.rs`](alloc.rs)
-/// gives: `alloc_counter` installs nothing on its own behalf, so this line is
-/// the whole of what puts the counter in this binary.
-///
-/// Gated with the harness below, because a build with `macros` on and every
-/// codec off has nothing to count and no reason to carry a counting allocator.
-///
-/// There is a line to reach for once #111 lands — `support/counting.rs` carries
-/// the same static — and folding this one onto it is #133.
+/// The counter, the request builder and the driver, shared with
+/// [`alloc.rs`](alloc.rs) so that this target does not carry a second copy of
+/// them — nor of the rationale that says what they mean. Including this
+/// module is what installs the allocator, which is why it is gated with the
+/// harness below: a build with `macros` on and every codec off has nothing to
+/// count and no reason to carry a counting allocator.
 #[cfg(any(
     feature = "json",
     feature = "form",
@@ -62,8 +59,8 @@
     feature = "protobuf",
     feature = "compression"
 ))]
-#[global_allocator]
-static ALLOCATOR: alloc_counter::AllocCounterSystem = alloc_counter::AllocCounterSystem;
+#[path = "support/counting.rs"]
+mod counting;
 
 #[cfg(any(
     feature = "json",
@@ -73,10 +70,17 @@ static ALLOCATOR: alloc_counter::AllocCounterSystem = alloc_counter::AllocCounte
     feature = "compression"
 ))]
 mod harness {
-    //! The instrument every module below shares: one request builder, two
-    //! counted polls — one asserting a status, one a status and the coding the
-    //! response carries — and the four assertion bodies every body codec makes
-    //! about its own table.
+    //! The instrument every module below shares: the two counted drives — one
+    //! asserting a status, one a status and the coding the response carries —
+    //! over [`support/counting.rs`](support/counting.rs)'s driver, and the four
+    //! assertion bodies every body codec makes about its own table.
+    //!
+    //! The counter, the request builder and the driver come from that module
+    //! rather than from here, included with `#[path]` because an integration
+    //! binary is not a library. One driver is what makes the numbers in this
+    //! file and in `alloc.rs` comparable: a correction to a region in one of
+    //! them — a second poll admitted, the region moved around the request
+    //! build — is a correction to both, because there is only one region.
     //!
     //! Items of its own, and `support/mod.rs` is not the reason: its
     //! `Pending::call` is an `async fn` that allocates per request, so it could
@@ -84,28 +88,15 @@ mod harness {
     //! could never be built with `json` off — the build the `form`, `protobuf`
     //! and `compression` modules below have to be measurable in. It was never a
     //! candidate.
-    //!
-    //! The module this one does overlap is `support/counting.rs`, which #111
-    //! adds for precisely this purpose — a second counting target including it
-    //! with `#[path]` — and which already carries a `#[global_allocator]`, a
-    //! by-hand single-poll driver and a request builder: the three items
-    //! re-declared here. They are re-declared because that file is on another
-    //! branch and these two lanes were cut in parallel, and because the shapes
-    //! have still to be reconciled — `counting::counted` drives a `GET` with no
-    //! body and drops the response, where a codec measurement builds a method,
-    //! a content type and a body, asserts the status the count is of, and reads
-    //! the response back. Whichever of the two lands second folds this module
-    //! onto that one; #133 is where that is recorded.
 
-    use std::future::Future;
-    use std::pin::pin;
-    use std::task::{Context, Poll, Waker};
-
-    use alloc_counter::count_alloc;
+    #[cfg(feature = "compression")]
+    use kynos::http::header;
     use kynos::{
-        http::{HeaderValue, Method, Request, Response, StatusCode, body::Body, header},
+        http::{Request, StatusCode},
         router::service::Service,
     };
+
+    use crate::counting;
 
     /// One measured operation: how it reads in a failure, how its request is
     /// built, the status it has to answer with for the count to be of the
@@ -173,97 +164,6 @@ mod harness {
         }
     }
 
-    /// Builds one request, always outside a counted region.
-    ///
-    /// Parsing a target, boxing a body and interning a field value are the
-    /// caller's cost rather than the operation's — the line
-    /// [`alloc.rs`](alloc.rs) draws, for its reason. A `&'static [u8]` body is
-    /// what makes that true of the body too: the octets are in the binary, so
-    /// wrapping them copies nothing.
-    pub(crate) fn request(
-        method: Method,
-        target: &str,
-        content_type: Option<&'static str>,
-        body: &'static [u8],
-    ) -> Request {
-        let mut request = Request::new(if body.is_empty() {
-            Body::empty()
-        } else {
-            Body::from_bytes(bytes::Bytes::from_static(body))
-        });
-
-        *request.method_mut() = method;
-        *request.uri_mut() = target.parse().expect("a usable request target");
-
-        if let Some(content_type) = content_type {
-            request
-                .headers_mut()
-                .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-        }
-
-        request
-    }
-
-    /// Drives one request and reports the heap operations serving it made.
-    ///
-    /// Fresh allocations and reallocations both, so that growing a buffer
-    /// cannot pass as free.
-    ///
-    /// **The status is asserted, and that is what keeps a number
-    /// attributable.** A codec handed a body it declines answers 415 before a
-    /// byte is decoded, at a fraction of what decoding costs; recorded
-    /// unchecked, that would read as a cheap codec rather than as a fixture
-    /// that never reached one.
-    ///
-    /// The future is polled by hand rather than driven by a runtime, for
-    /// [`alloc.rs`](alloc.rs)'s reason: an executor running on the measuring
-    /// thread is counted along with the work it drives. Nothing in these
-    /// fixtures touches a socket, timer or task — a request body is octets
-    /// already in memory, and an encoder reads its input through an
-    /// `io::Cursor` — so every future here is ready on its first poll, and the
-    /// panic below says so rather than assuming it.
-    ///
-    /// The response is handed back rather than dropped here, so that a caller
-    /// with more to say about it than its status can say it before the drop —
-    /// which is outside the region either way.
-    fn driven<C>(
-        service: &Service<C>,
-        request: Request,
-        expected: StatusCode,
-    ) -> (usize, Response) {
-        // Before the region: naming the operation is the report's cost, not the
-        // operation's.
-        let operation = format!("{} {}", request.method(), request.uri().path());
-
-        let ((allocations, reallocations, _), polled) = count_alloc(|| {
-            let mut future = pin!(service.call(request));
-            future
-                .as_mut()
-                .poll(&mut Context::from_waker(Waker::noop()))
-        });
-        let allocations = allocations + reallocations;
-
-        let Poll::Ready(response) = polled else {
-            panic!(
-                "{operation} was not ready on its first poll; these fixtures \
-                 reach no socket, timer or task, so a pending future means a \
-                 codec now needs a runtime — and the count above stopped \
-                 measuring the whole of one request"
-            );
-        };
-
-        assert_eq!(
-            response.status(),
-            expected,
-            "{operation} answered {} rather than the {expected} this measurement \
-             is of; a request a codec declined never reached the codec, and its \
-             count records the refusal instead",
-            response.status()
-        );
-
-        (allocations, response)
-    }
-
     /// What one request cost, on an operation whose response carries no coding
     /// to check.
     ///
@@ -281,7 +181,7 @@ mod harness {
         feature = "protobuf"
     ))]
     fn counted<C>(service: &Service<C>, request: Request, expected: StatusCode) -> usize {
-        let (allocations, response) = driven(service, request, expected);
+        let (allocations, response) = counting::counted(service, request, expected);
 
         drop(response);
         allocations
@@ -302,7 +202,7 @@ mod harness {
         expected: StatusCode,
         coding: Option<&str>,
     ) -> usize {
-        let (allocations, response) = driven(service, request, expected);
+        let (allocations, response) = counting::counted(service, request, expected);
 
         let carried = response
             .headers()
@@ -478,7 +378,10 @@ mod json {
         router::service::Service,
     };
 
-    use crate::harness::{self, Table, request};
+    use crate::{
+        counting::request,
+        harness::{self, Table},
+    };
 
     /// The payload both directions carry.
     ///
@@ -649,7 +552,10 @@ mod form {
         router::service::Service,
     };
 
-    use crate::harness::{self, Table, request};
+    use crate::{
+        counting::request,
+        harness::{self, Table},
+    };
 
     /// The payload both directions carry, in the shape the JSON module uses so
     /// the two codecs are compared on the same value rather than on two.
@@ -816,7 +722,10 @@ mod multipart {
         router::service::Service,
     };
 
-    use crate::harness::{self, Table, request};
+    use crate::{
+        counting::request,
+        harness::{self, Table},
+    };
 
     /// The payload both directions carry.
     ///
@@ -1015,7 +924,10 @@ mod protobuf {
         router::service::Service,
     };
 
-    use crate::harness::{self, Table, request};
+    use crate::{
+        counting::request,
+        harness::{self, Table},
+    };
 
     /// The payload both directions carry, in the shape the JSON and form
     /// modules use so the three codecs are compared on the same value.
@@ -1192,7 +1104,7 @@ mod compression {
         router::service::Service,
     };
 
-    use crate::harness::{counted_carrying, request};
+    use crate::{counting::request, harness::counted_carrying};
 
     /// The octets the fixture serves, one buffer per size.
     ///
