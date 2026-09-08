@@ -5,11 +5,15 @@ Most of what is under test here takes text and returns a corpus, a set of paths
 or a list of patterns. The rules stated over those are not tested: they read the
 real tree, and running them is what `containment:check` is.
 
-`off_path_coverage` is the exception. It compares two documents and reads a
-grade out of one by name, so a name that has gone empties the compared set
-rather than the table -- the failure mode a parser has, in a rule. Its inputs
-are stated below rather than read off disk, since what is under test is what the
-rule does with a grading and a table and not what this repository's two say.
+Two rules are the exception, and both are here for the same property.
+`off_path_coverage` compares two documents and reads a grade out of one by
+name, so a name that has gone empties the compared set rather than the table --
+the failure mode a parser has, in a rule. `cargo_config_failures` reads a
+configuration file that nothing else in this repository observes, and the
+mistake it exists to catch is one cargo itself reports as a warning over a
+successful build, or does not report at all. Both have their inputs stated
+below rather than read off disk, since what is under test is what the rule does
+with a document or a config and not what this repository's own happen to say.
 
 The parsers are where a regression is silent. A rule that breaks reports a
 failure and exits one; a parser that breaks drops a spelling, a site or a whole
@@ -329,6 +333,101 @@ class OffPathCoverage(unittest.TestCase):
         failures = gate.off_path_coverage([], {"uuid"}, ["Full battery", "Off-path argument"])
         self.assertEqual(len(failures), 1)
         self.assertIn("no longer has a", failures[0])
+
+
+class CargoConfig(unittest.TestCase):
+    """What `.cargo/config.toml` must declare, and what it may not declare.
+
+    A rule rather than a parser, and here for `off_path_coverage`'s reason: its
+    failure mode is silence, and the silence is cargo's. A key that has lost a
+    letter is `warning: unused config key` and an exit status of zero; a
+    profile *table* that has lost one is not reported at all. Both were run
+    against a scratch package before the rule was written, and both finished
+    `unoptimized + debuginfo`. So every case below is a config the real tree
+    does not contain and every gate in `mise run check` compiles happily over.
+
+    The inputs are stated rather than read off disk, because what is under test
+    is what the rule does with a config file and not what this repository's one
+    says today.
+    """
+
+    #: The shape the repository ships: the two keys, and nothing else at all.
+    PROFILE = (
+        '[profile.dev]\ndebug = "line-tables-only"\n\n'
+        '[profile.dev.package."*"]\ndebug = false\n'
+    )
+
+    def test_the_shape_this_repository_ships_holds(self):
+        self.assertEqual(gate.cargo_config_failures(self.PROFILE), [])
+
+    def test_a_deleted_file_is_named_rather_than_skipped(self):
+        failures = gate.cargo_config_failures(None)
+        self.assertEqual(len(failures), 1)
+        self.assertIn(".cargo/config.toml", failures[0])
+
+    def test_a_file_that_is_not_toml_fails_rather_than_raising(self):
+        failures = gate.cargo_config_failures("[profile.dev\ndebug =\n")
+        self.assertEqual(len(failures), 1)
+        self.assertIn("TOML", failures[0])
+
+    def test_a_misspelled_key_is_a_missing_key(self):
+        config = self.PROFILE.replace("debug = \"line", "debgu = \"line")
+        failures = gate.cargo_config_failures(config)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("profile.dev.debug", failures[0])
+
+    def test_a_misspelled_profile_table_is_a_missing_key_too(self):
+        failures = gate.cargo_config_failures(self.PROFILE.replace("[profile.dev]", "[profile.dve]"))
+        self.assertEqual(len(failures), 1)
+        self.assertIn("profile.dev.debug", failures[0])
+
+    def test_a_dropped_dependency_profile_is_named_by_its_own_key(self):
+        failures = gate.cargo_config_failures('[profile.dev]\ndebug = "line-tables-only"\n')
+        self.assertEqual(len(failures), 1)
+        self.assertIn('profile.dev.package."*".debug', failures[0])
+
+    def test_a_misspelled_package_table_is_the_same_failure(self):
+        failures = gate.cargo_config_failures(self.PROFILE.replace("pack", "pcak"))
+        self.assertEqual(len(failures), 1)
+        self.assertIn('profile.dev.package."*".debug', failures[0])
+
+    def test_a_renamed_glob_leaves_no_dependency_profile(self):
+        failures = gate.cargo_config_failures(self.PROFILE.replace('."*"', '."hyper"'))
+        self.assertEqual(len(failures), 1)
+        self.assertIn('profile.dev.package."*".debug', failures[0])
+
+    def test_both_keys_gone_are_two_failures(self):
+        self.assertEqual(len(gate.cargo_config_failures("")), 2)
+
+    def test_a_build_table_is_refused_and_the_message_says_where_it_belongs(self):
+        failures = gate.cargo_config_failures(
+            self.PROFILE + '\n[build]\nrustc-wrapper = "sccache"\n'
+        )
+        self.assertEqual(len(failures), 1)
+        self.assertIn("build", failures[0])
+        self.assertIn("mise.toml", failures[0])
+
+    def test_a_source_replacement_is_refused(self):
+        failures = gate.cargo_config_failures(
+            self.PROFILE + '\n[source.crates-io]\nreplace-with = "mirror"\n'
+        )
+        self.assertEqual(len(failures), 1)
+        self.assertIn("source", failures[0])
+
+    def test_a_top_level_key_outside_any_table_is_refused_too(self):
+        failures = gate.cargo_config_failures('paths = ["../patched"]\n' + self.PROFILE)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("paths", failures[0])
+
+    def test_another_profile_is_not_a_foreign_table(self):
+        self.assertEqual(
+            gate.cargo_config_failures(self.PROFILE + "\n[profile.release]\nlto = true\n"),
+            [],
+        )
+
+    def test_a_missing_key_and_a_foreign_table_are_reported_together(self):
+        failures = gate.cargo_config_failures('[build]\njobs = 4\n')
+        self.assertEqual(len(failures), 3)
 
 
 if __name__ == "__main__":
