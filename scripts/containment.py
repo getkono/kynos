@@ -396,10 +396,16 @@ NAMED_BY = re.compile(r"`?(\w+(?:\s*::\s*\w+)*)`?")
 # what a spelling claims, and belongs to whoever needs it rather than here.
 GATE = re.compile(r'`?feature\s*=\s*"([\w-]+)"`?')
 NEGATED_GATE = re.compile(r'`?not\(\s*feature\s*=\s*"([\w-]+)"\s*\)`?')
-# Where a predicate starts. `cfg_attr` is here because it writes a gate that
-# compiles nothing -- `#[cfg_attr(docsrs, doc(cfg(feature = "x")))]` is a
-# documentation annotation -- and a walk that did not read it would take that
-# for the gate itself, which is half of #134.
+# Where a predicate starts. `cfg_attr` is here for its predicate, which
+# `Gate.names` argues is a gate: `#[cfg_attr(feature = "x", serde(default))]`
+# varies the item the attribute sits on, and that is what a row's spelling
+# claims. It is not here to keep the documentation annotation out, which is
+# what this comment used to say and what the measurement refutes -- dropping
+# `cfg_attr` from this pattern leaves `#[cfg_attr(docsrs,
+# doc(cfg(feature = "x")))]` reading `False` exactly as before, since a
+# `cfg`-only pattern cannot match `#[cfg_attr(` and the inner `cfg(` has no
+# `#[` in front of it. What excluding `cfg_attr` here loses is the predicate,
+# and nothing else.
 ATTRIBUTE = re.compile(r"#!?\[\s*(cfg_attr|cfg)\s*\(")
 # A `not(` group, which inverts the polarity of everything inside it.
 NEGATION = re.compile(r"\bnot\s*\(")
@@ -457,10 +463,21 @@ class Gate:
         varies the item the attribute sits on. A `cfg_attr` predicate does
         vary it: under `#[cfg_attr(feature = "x", serde(default))]` the flag
         decides how the item deserialises, so a row naming that flag has found
-        a site it is the proof for. The arguments after the comma decide
-        nothing. The flag in `#[cfg_attr(docsrs, doc(cfg(feature = "x")))]` is
-        being described in prose a documentation build renders, and reading
-        that as the gate was half of #134.
+        a site it is the proof for. The attributes applied after the comma
+        decide nothing about the item -- the flag in
+        `#[cfg_attr(docsrs, doc(cfg(feature = "x")))]` is being described in
+        prose a documentation build renders, and reading that as the gate was
+        half of #134.
+
+        With one shape where that is false, recorded rather than handled:
+        `#[cfg_attr(pred, cfg(feature = "x"))]` applies a `cfg`, which does
+        compile the item conditionally, and this returns `False` over it. No
+        `.rs` file in the workspace writes `cfg_attr` at all -- the only two
+        occurrences are prose in the two manifests, each recording a decision
+        not to adopt `docsrs` -- so the shape is unreachable here. Handling it
+        means walking into a nested `cfg(` at the outer polarity rather than
+        stopping at the comma, which is a decision for whoever writes the
+        first one.
         """
         # The parity of the `not(` groups enclosing each open paren, innermost
         # last. The attribute's own paren is already open, at even parity; the
@@ -483,9 +500,12 @@ class Gate:
                 parity.pop()
                 i += 1
             elif applies and text[i] == "," and len(parity) == 1:
-                # Only the first argument of a `cfg_attr` is a predicate.
-                # Everything after it applies attributes and compiles nothing,
-                # so a flag named there names no gate at either polarity.
+                # Only the first argument of a `cfg_attr` is a predicate. The
+                # attributes applied after it do not compile the item
+                # conditionally, so a flag named among them names no gate at
+                # either polarity -- unless one of those attributes is itself
+                # a `cfg`, which the docstring above records as the shape this
+                # returns `False` over and nothing in the workspace writes.
                 return False
             elif (end := literal_end(text, i)) is not None:
                 i = end

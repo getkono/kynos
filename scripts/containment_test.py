@@ -418,8 +418,14 @@ class GatePolarity(unittest.TestCase):
     repository writes. Compound predicates are routine here rather than the
     exotic case, which is why a case about one belongs in this file.
 
-    One known limit, recorded rather than fixed: the walk finds its attributes
-    over the whole corpus, so an attribute written inside a *raw* string --
+    Two known limits, recorded rather than fixed. The second is in
+    `Gate.names`' docstring: a `cfg` applied *by* a `cfg_attr`, as
+    `#[cfg_attr(pred, cfg(feature = "x"))]`, does compile its item
+    conditionally and the walk stops at the comma before reaching it. No `.rs`
+    file here writes `cfg_attr`, so no fragment below is that shape.
+
+    The first is here: the walk finds its attributes over the whole corpus, so
+    an attribute written inside a *raw* string --
     `const D: &str = r#"#[cfg(feature = "uuid")]"#;` -- is read as a gate. The
     substring match this replaced read it as one too, so nothing regressed, and
     the corpus a gate is asked of has to keep its literals because a flag name
