@@ -29,13 +29,19 @@ of them installs the `commit-msg` hook command that `hk.pkl` declares -- read
 out of `hk.pkl` rather than restated here, so that deleting the step, renaming
 it, moving it out of the `commit-msg` hook, or dropping its
 `< {{commit_msg_file}}` redirect fails these tests -- and then runs a real
-`git merge --no-ff` through it. That case is the reported symptom
-itself: before the fix, it is the `Not committing merge` the issue opens with.
+`git merge --no-ff` through it. That case is the reported symptom itself:
+before the fix, it is the `Not committing merge` the issue opens with. Its
+boundary is written down at the fixture: the command is wrapped in a two-line
+prologue the real hook does not have, so it proves git's ordering and not the
+environment hk supplies.
 
 One fixture is a linked worktree, because this repository is worked in linked
 worktrees and MERGE_HEAD lives under `.git/worktrees/<name>/` there. The
 task's guard has to be worktree-correct, and only a linked-worktree fixture
-holds it to that.
+holds it to that. One case in it runs the guard with no `GIT_DIR` supplied at
+all, which is the only place git's repository *discovery* is exercised --
+every other call exports one, and under an exported `GIT_DIR` the weaker
+spellings this guard was chosen over pass too.
 
 Run it as `mise run commits:test`, or directly. There is no Python test runner
 in this repository and `unittest` needs none.
@@ -166,6 +172,38 @@ def declared_commit_msg_check():
     return check.group(1)
 
 
+def declared_merge_guard():
+    """The shell body `mise.toml` declares for `[tasks."commits:message"]`.
+
+    Read for the reason the hook command is read out of `hk.pkl`: the case
+    below runs the guard where `mise run` cannot put it, and running a
+    restatement there would hold nothing.
+    """
+    text = (ROOT / "mise.toml").read_text()
+    task = re.search(r'^\[tasks\."commits:message"\]\n(.*?)^\[', text, re.DOTALL | re.MULTILINE)
+    if task is None:
+        raise AssertionError("mise.toml declares no `commits:message` task")
+    body = re.search(r"^run = '''\n(.*?)^'''", task.group(1), re.DOTALL | re.MULTILINE)
+    if body is None:
+        raise AssertionError("`commits:message` declares no multi-line `run` body")
+    return body.group(1)
+
+
+def convco_on_path():
+    """`PATH` with mise's convco on it, for the one call that bypasses mise.
+
+    `shell_gate` runs the task's body directly, so nothing has put the pinned
+    convco anywhere; resolving it here keeps that call on the same binary
+    every other case reaches through `mise run`.
+    """
+    located = subprocess.run(
+        ["mise", "which", "convco"], cwd=ROOT, capture_output=True, text=True
+    )
+    if located.returncode != 0:
+        raise AssertionError(f"mise cannot resolve convco: {located.stderr}")
+    return str(Path(located.stdout.strip()).parent) + os.pathsep + os.environ.get("PATH", "")
+
+
 class GateTestCase(unittest.TestCase):
     """A throwaway repository per test, and both halves of the rule over it."""
 
@@ -236,6 +274,31 @@ class GateTestCase(unittest.TestCase):
                 "GIT_DIR": str(git_dir or self.repository / ".git"),
                 "GIT_WORK_TREE": str(work_tree or self.repository),
             },
+            input=message,
+            capture_output=True,
+            text=True,
+        )
+
+    def shell_gate(self, message, cwd):
+        """The hook half again, but on git's *discovery* path.
+
+        Every other call exports `GIT_DIR`, which is what lets `mise run`
+        resolve `mise.toml` from the project root while the task reads a
+        throwaway repository. It also means the guard is never asked to find
+        the repository itself -- and finding it is the whole difference
+        between `--git-path` and the spellings it was chosen over.
+
+        `mise run` executes a task in its config's directory rather than the
+        caller's, so there is no way to put the task itself in this position.
+        What runs here is the `run` body `mise.toml` declares, read out of it,
+        with `GIT_DIR` and `GIT_WORK_TREE` absent and `cwd` inside the
+        repository under test -- which is the position git actually invokes a
+        `commit-msg` hook from.
+        """
+        return subprocess.run(
+            ["sh", "-c", declared_merge_guard()],
+            cwd=cwd,
+            env={**self.env, "PATH": convco_on_path()},
             input=message,
             capture_output=True,
             text=True,
@@ -338,6 +401,7 @@ class BothHalvesOverOneMerge(GateTestCase):
         self.assertAccepted(self.range_gate(self.base))
 
 
+
 class RealMergeThroughARealHook(GateTestCase):
     """The reported symptom, observed rather than cited.
 
@@ -359,10 +423,20 @@ class RealMergeThroughARealHook(GateTestCase):
 
         hook = self.repository / ".git" / "hooks" / "commit-msg"
         hook.parent.mkdir(parents=True, exist_ok=True)
-        # `--absolute-git-dir` before the `cd`, because the command has to run
-        # from the project root for mise to resolve `mise.toml` -- which is
-        # exactly the position `hk` runs it from in the real repository, where
-        # the two happen to be the same directory.
+        # The two prologue lines are this fixture's boundary, and they are what
+        # makes it pass. `mise run` resolves `mise.toml` from its config's
+        # directory, so the command has to run from the project root -- and
+        # once it does, `GIT_DIR` has to be carried in, because git does not
+        # export one to a `commit-msg` hook. In the real repository those two
+        # lines are unnecessary: hk already runs from the root, and that root
+        # is the repository being committed to.
+        #
+        # So what this case proves is git's ordering -- that MERGE_HEAD is
+        # written before `commit-msg` runs -- over the command `hk.pkl`
+        # actually declares. What it does not prove is that the step works in
+        # the environment hk hands it, since two lines of that environment are
+        # supplied here. `LinkedWorktree.test_the_guard_finds_the_repository_itself`
+        # is what covers the guard with no `GIT_DIR` supplied at all.
         command = declared_commit_msg_check().replace("{{commit_msg_file}}", '"$message"')
         hook.write_text(
             "#!/bin/sh\n"
@@ -432,6 +506,26 @@ class LinkedWorktree(GateTestCase):
         self.linked_git_dir = self.git(
             "rev-parse", "--absolute-git-dir", cwd=self.linked
         ).stdout.strip()
+
+    def test_the_guard_finds_the_repository_itself(self):
+        """The guard on git's discovery path, with no `GIT_DIR` supplied.
+
+        Every other case exports `GIT_DIR`, because that is what lets
+        `mise run` resolve `mise.toml` from the project root while the task
+        reads a throwaway repository. The cost is that the guard is never
+        asked to *find* the repository -- and finding it is the whole
+        difference between `--git-path` and the spellings it was chosen over.
+        Without this case, `[ -f "$GIT_DIR/MERGE_HEAD" ]` passes the suite,
+        while in the position git actually runs a `commit-msg` hook from --
+        cwd at the worktree top, `GIT_DIR` unset -- it exempts nothing.
+        """
+        self.git("merge", "--no-commit", "--no-ff", "topic", cwd=self.linked)
+        self.assertTrue(self.merge_head(cwd=self.linked), "no merge state in the linked worktree")
+        self.assertAccepted(self.shell_gate(MERGE_SUBJECT, cwd=self.linked))
+
+    def test_the_discovered_guard_still_checks_with_no_merge(self):
+        """The control: discovery must not become a blanket exemption."""
+        self.assertRejected(self.shell_gate(MERGE_SUBJECT, cwd=self.linked))
 
     def test_a_merge_in_a_linked_worktree_is_exempt(self):
         self.git("merge", "--no-commit", "--no-ff", "topic", cwd=self.linked)
