@@ -30,10 +30,12 @@ assert which rules ran rather than counting failures.
 running neither at import, which is what keeps a document nobody can read from
 killing the gate and this run with it.
 
-This docstring is the testing standard for `scripts/*.py`, and deliberately.
+This docstring is the testing standard for this file, and for a gate script's
+tests generally, and deliberately.
 `docs/testing.md` allocates a method to five kinds of *Rust* code and names
-`containment.py` only as a consumer of the tables it holds; neither this file
-nor `cost_features_test.py` has ever appeared in it. A gate script is tooling
+`containment.py` only as a consumer of the tables it holds; this file has never
+appeared in it, and neither has `cost_features_test.py`, which is held by its
+own gate and says nothing about this one. A gate script is tooling
 rather than shipped surface, and its tests are held by the gate that runs them,
 so there is no row here to write and none owed.
 
@@ -898,9 +900,10 @@ class Main(unittest.TestCase):
     the callers ask for it, which is a different claim and the one this file's
     subject rests on: with the helper in place and a call site written
     `table or ""`, or written without its end marker, both gates stay green and
-    the rule goes on reporting against text it was written to exclude. Every
-    case below fails against exactly that mutation and passes against the code
-    as written.
+    the rule goes on reporting against text it was written to exclude. Every case
+    below fails against a mutation of the thing it names and passes against the
+    code as written -- for most, a call site's guard; for two, a `main()`
+    parameter ignored; for three, a rule's own failure deleted.
 
     The documents are this repository's own with one marker removed, and the
     corpora are the real ones. What is under test here is a *rule* rather than a
@@ -912,7 +915,8 @@ class Main(unittest.TestCase):
     The assertions name the rules that must and must not have run rather than
     counting failures, so a case says what it holds and does not fail for a
     reason belonging to `containment:check`. Nothing here writes to the
-    repository or to module state.
+    repository, and the only process state it touches is `sys.stdout` and
+    `sys.stderr`, swapped by `contextlib.redirect_*`, which restores them.
 
     One rule earns a case its place, and it is the rule two cases here were
     removed for failing: an assertion that a failure class is *absent* holds
@@ -1023,6 +1027,12 @@ class Main(unittest.TestCase):
         # Without the end marker the slice runs to the foot of the document and
         # every link in it authorises a hand-rolled `Stream`, silently.
         self.assertEqual(len(self.naming(failures, repr("\n## "))), 1)
+        # `section` interpolates `unrun` twice, once per marker. The grading
+        # case holds the start message; this holds the end one.
+        self.assertIn("goes unparsed", self.naming(failures, repr("\n## "))[0])
+        # Decorative, deliberately and said so: a widened slice still holds
+        # every link, so this absence is not falsifiable here. What holds the
+        # class is the pair of surface cases above.
         self.assertEqual(self.naming(failures, "names no site"), [])
 
     def test_a_renamed_grading_header_skips_every_rule_over_the_grading(self):
@@ -1032,6 +1042,38 @@ class Main(unittest.TestCase):
         self.assertEqual(len(self.naming(failures, self.GRADING)), 1)
         for signature in ("does not grade", "does not declare", "in more than one row", "no row of"):
             self.assertEqual(self.naming(failures, signature), [], signature)
+
+    #: The Aggregate row, which the regrading case appends a flag to. Named as
+    #: its own constant so the case says which row it writes into.
+    AGGREGATE = "| Aggregate | nothing of its own; it is the union of what it enables |"
+
+    def test_a_flag_no_row_grades_is_reported(self):
+        # The presence half of the grading case's `does not grade` absence.
+        broken = gate.PERFORMANCE.replace("`cookie`, ", "", 1)
+        status, failures = self.report(performance=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(self.naming(failures, "does not grade")), 1)
+        self.assertIn("cookie", self.naming(failures, "does not grade")[0])
+
+    def test_a_graded_flag_the_crate_does_not_declare_is_reported(self):
+        # The presence half of its `does not declare` absence.
+        broken = gate.PERFORMANCE.replace("`cookie`", "`kooky`", 1)
+        status, failures = self.report(performance=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(self.naming(failures, "does not declare")), 1)
+        self.assertIn("kooky", self.naming(failures, "does not declare")[0])
+
+    def test_a_flag_graded_in_two_rows_is_reported(self):
+        # The presence half of its `in more than one row` absence.
+        broken = gate.PERFORMANCE.replace(
+            self.AGGREGATE + " `default`, `full` |",
+            self.AGGREGATE + " `default`, `full`, `cookie` |",
+            1,
+        )
+        status, failures = self.report(performance=broken)
+        self.assertEqual(status, 1)
+        self.assertEqual(len(self.naming(failures, "in more than one row")), 1)
+        self.assertIn("cookie", self.naming(failures, "in more than one row")[0])
 
     def test_the_reported_marker_says_which_rules_stopped_running(self):
         # `section`'s `unrun` sentence, which the marker alone does not carry.
