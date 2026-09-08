@@ -1,5 +1,5 @@
-//! The counting harness: the process-wide counter, and the one way a request
-//! is driven through it.
+//! The counting harness: the process-wide counter, the one way a request is
+//! built for it, and the one way it is driven through it.
 //!
 //! Included with `#[path]` rather than depended on, because an integration
 //! binary is not a library — the same reason
@@ -16,7 +16,7 @@ use std::task::{Context, Poll, Waker};
 
 use alloc_counter::{AllocCounterSystem, count_alloc};
 use kynos::{
-    http::{Method, Request, body::Body},
+    http::{HeaderValue, Method, Request, Response, StatusCode, body::Body, header},
     router::service::Service,
 };
 
@@ -26,7 +26,7 @@ use kynos::{
 #[global_allocator]
 static ALLOCATOR: AllocCounterSystem = AllocCounterSystem;
 
-/// Drives one request and reports the heap operations dispatch made.
+/// Drives one request and reports the heap operations serving it made.
 ///
 /// Fresh allocations and reallocations both, so that growing a buffer cannot
 /// pass as free. The request is built before the region opens, because parsing
@@ -34,11 +34,13 @@ static ALLOCATOR: AllocCounterSystem = AllocCounterSystem;
 /// and the response is dropped after the region closes for the same reason.
 ///
 /// **The future is polled directly rather than driven by a runtime, and that is
-/// what makes the number mean the routing path.** What the measuring thread
+/// what makes the number mean the measured path.** What the measuring thread
 /// allocates while the region is open is counted, so an executor driving the
 /// future on that thread is counted with it. There is nothing to schedule here:
-/// the fixture touches no socket, timer or task, so the future is ready on its
-/// first poll and the assertion below says so rather than assuming it.
+/// the fixtures touch no socket, timer or task — a request body is octets
+/// already in memory, and an encoder reads its input through an `io::Cursor` —
+/// so the future is ready on its first poll and the assertion below says so
+/// rather than assuming it.
 ///
 /// A runtime was once blamed for the count that moved, and `#[tokio::test]` was
 /// removed on that reading. Its worker threads were an instance of the cause
@@ -50,8 +52,23 @@ static ALLOCATOR: AllocCounterSystem = AllocCounterSystem;
 /// first request through a service costs exactly what the thousandth does —
 /// and a warm-up here would be the one construct able to hide a one-time cost
 /// introduced later.
-pub(crate) fn counted<C>(service: &Service<C>, target: &str) -> usize {
-    let request = request(target);
+///
+/// **The status is asserted, and that is what keeps a number attributable.** A
+/// codec handed a body it declines answers 415 before a byte is decoded, at a
+/// fraction of what decoding costs; recorded unchecked, that would read as a
+/// cheap codec rather than as a fixture that never reached one.
+///
+/// The response is handed back rather than dropped here, so that a caller with
+/// more to say about it than its status can say it before the drop — which is
+/// outside the region either way.
+pub(crate) fn counted<C>(
+    service: &Service<C>,
+    request: Request,
+    expected: StatusCode,
+) -> (usize, Response) {
+    // Before the region: naming the operation is the report's cost, not the
+    // operation's.
+    let operation = format!("{} {}", request.method(), request.uri().path());
 
     let ((allocations, reallocations, _), polled) = count_alloc(|| {
         let mut future = pin!(service.call(request));
@@ -63,25 +80,52 @@ pub(crate) fn counted<C>(service: &Service<C>, target: &str) -> usize {
 
     let Poll::Ready(response) = polled else {
         panic!(
-            "dispatch of {target} was not ready on its first poll; this fixture \
-             reaches no socket, timer or task, so a pending future means \
-             something on the routing path now needs a runtime — and the count \
-             above stopped measuring the whole of one request"
+            "{operation} was not ready on its first poll; these fixtures reach \
+             no socket, timer or task, so a pending future means something on \
+             the measured path now needs a runtime — and the count above \
+             stopped measuring the whole of one request"
         );
     };
 
-    drop(response);
-    allocations
+    assert_eq!(
+        response.status(),
+        expected,
+        "{operation} answered {} rather than the {expected} this measurement \
+         is of; a request a codec declined never reached the codec, and its \
+         count records the refusal instead",
+        response.status()
+    );
+
+    (allocations, response)
 }
 
-/// One `GET` against `target`, built.
+/// Builds one request, always outside a counted region.
 ///
-/// Its own function so that a measurement which is not a count — the width of
-/// the future dispatch returns — reaches the same request [`counted`] measures,
-/// rather than a second one built beside it.
-pub(crate) fn request(target: &str) -> Request {
-    let mut request = Request::new(Body::empty());
-    *request.method_mut() = Method::GET;
+/// Parsing a target, boxing a body and interning a field value are the
+/// caller's cost rather than the operation's — the line
+/// [`alloc.rs`](../alloc.rs) draws, for its reason. A `&'static [u8]` body is
+/// what makes that true of the body too: the octets are in the binary, so
+/// wrapping them copies nothing.
+pub(crate) fn request(
+    method: Method,
+    target: &str,
+    content_type: Option<&'static str>,
+    body: &'static [u8],
+) -> Request {
+    let mut request = Request::new(if body.is_empty() {
+        Body::empty()
+    } else {
+        Body::from_bytes(bytes::Bytes::from_static(body))
+    });
+
+    *request.method_mut() = method;
     *request.uri_mut() = target.parse().expect("a usable request target");
+
+    if let Some(content_type) = content_type {
+        request
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    }
+
     request
 }

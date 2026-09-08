@@ -52,7 +52,7 @@ use alloc_counter::count_alloc;
 use kynos::{
     Router,
     extract::params::path::Path,
-    http::Request,
+    http::{Method, Request, StatusCode},
     middleware::{Continued, Interceptor, Next},
     prelude::*,
     response::status::NoContent,
@@ -64,7 +64,7 @@ use kynos::{
 #[path = "support/counting.rs"]
 mod counting;
 
-use counting::{counted, request};
+use counting::request;
 
 /// Every shape measured here, with what it costs today.
 ///
@@ -72,14 +72,19 @@ use counting::{counted, request};
 /// so its excess over `/ping` is not the router's alone. Splitting the two is
 /// the attribution [`nfr.md`](../../../docs/nfr.md#routing) names as the next
 /// piece of work.
-const SHAPES: [(&str, usize); 3] = [
+///
+/// The status is the one the count has to be of, for the reason
+/// [`alloc_codecs.rs`](alloc_codecs.rs) gives: a request answered 404 where 204
+/// was meant is a count of a miss rather than of a match, and every ceiling
+/// here is a `<=` that such a count would pass under.
+const SHAPES: [(&str, StatusCode, usize); 3] = [
     // A static match, with no parameter to capture. Also the row `STACKED`
     // and the depth-0 stack ceiling are read from.
-    ("/ping", 7),
+    ("/ping", StatusCode::NO_CONTENT, 7),
     // One path parameter, captured and deserialized.
-    ("/users/7", 11),
+    ("/users/7", StatusCode::NO_CONTENT, 11),
     // A request matching no route at all.
-    ("/nope", 6),
+    ("/nope", StatusCode::NOT_FOUND, 6),
 ];
 
 #[derive(Schema, kynos::PathParams)]
@@ -107,6 +112,19 @@ fn router() -> Router<()> {
 
 fn service() -> Service<()> {
     router().build(()).expect("a describable router")
+}
+
+/// One `GET` against `target`, driven through the shared driver and dropped.
+///
+/// The shape every reading in this file is taken in. The region it is taken
+/// over is [`counting::counted`]'s, shared with `alloc_codecs.rs` so that a
+/// correction to one target's driver cannot leave the other behind.
+fn counted(service: &Service<()>, target: &str, expected: StatusCode) -> usize {
+    let (allocations, response) =
+        counting::counted(service, request(Method::GET, target, None, b""), expected);
+
+    drop(response);
+    allocations
 }
 
 /// An interceptor that forwards and does nothing else, so that what a stack
@@ -181,10 +199,21 @@ type Stack = (usize, fn() -> Service<()>, usize);
 /// cannot disagree about which shape is stacked.
 const STACKED: &str = SHAPES[0].0;
 
+/// The answer that target has to give for a count to be of the match, from the
+/// same row, for the reason [`SHAPES`] gives.
+const STACKED_STATUS: StatusCode = SHAPES[0].1;
+
 /// What that target costs with no stack in front of it, from the same row: the
 /// depth-0 ceiling below *is* the static match's, so re-measuring one moves
 /// both.
-const STACKED_ALONE: usize = SHAPES[0].1;
+const STACKED_ALONE: usize = SHAPES[0].2;
+
+/// The control every stack is read against: the request that matched no route,
+/// read out of [`SHAPES`] for the reason [`STACKED`] is.
+const MISSED: &str = SHAPES[2].0;
+
+/// The answer *that* target has to give, from the same row.
+const MISSED_STATUS: StatusCode = SHAPES[2].1;
 
 /// Every stack depth measured here, with what a request through it costs
 /// today.
@@ -247,7 +276,7 @@ const DISPATCH_FUTURE_BYTES: usize = 280;
 #[test]
 fn an_interceptor_stack_allocates_what_is_recorded_here() {
     for &(depth, build, ceiling) in &STACKS[1..] {
-        let counted = counted(&build(), STACKED);
+        let counted = counted(&build(), STACKED, STACKED_STATUS);
         assert!(
             counted <= ceiling,
             "a request through {depth} no-op interceptor(s) allocated \
@@ -274,9 +303,9 @@ fn an_interceptor_stack_allocates_what_is_recorded_here() {
 fn a_layer_costs_the_same_wherever_it_sits() {
     let [(_, empty, _), (_, four, _), (deepest, eight, _)] = STACKS;
     let (d0, d4, d8) = (
-        counted(&empty(), STACKED),
-        counted(&four(), STACKED),
-        counted(&eight(), STACKED),
+        counted(&empty(), STACKED, STACKED_STATUS),
+        counted(&four(), STACKED, STACKED_STATUS),
+        counted(&eight(), STACKED, STACKED_STATUS),
     );
 
     assert!(
@@ -304,7 +333,10 @@ fn a_layer_costs_the_same_wherever_it_sits() {
         d8 - d0
     );
 
-    let (missed_0, missed_8) = (counted(&empty(), "/nope"), counted(&eight(), "/nope"));
+    let (missed_0, missed_8) = (
+        counted(&empty(), MISSED, MISSED_STATUS),
+        counted(&eight(), MISSED, MISSED_STATUS),
+    );
     assert_eq!(
         missed_0, missed_8,
         "a request matching no route cost {missed_0} with no stack and \
@@ -342,9 +374,9 @@ fn a_chain_does_not_widen_the_dispatch_future() {
     // future carry its stack would have to delete this array first. Three
     // readings of one type cannot differ, so none is asserted against another.
     let futures = [
-        at_0.call(request(STACKED)),
-        at_4.call(request(STACKED)),
-        at_8.call(request(STACKED)),
+        at_0.call(request(Method::GET, STACKED, None, b"")),
+        at_4.call(request(Method::GET, STACKED, None, b"")),
+        at_8.call(request(Method::GET, STACKED, None, b"")),
     ];
     let [width, ..] = futures.map(|future| size_of_val(&future));
 
@@ -415,8 +447,8 @@ fn work_on_another_thread_is_not_counted() {
 fn the_routing_path_allocates_where_the_requirement_asks_for_nothing() {
     let service = service();
 
-    for (target, ceiling) in SHAPES {
-        let counted = counted(&service, target);
+    for (target, expected, ceiling) in SHAPES {
+        let counted = counted(&service, target, expected);
         assert!(
             counted <= ceiling,
             "{target} allocated {counted} times against a recorded {ceiling}; \
@@ -433,9 +465,14 @@ fn the_routing_path_allocates_where_the_requirement_asks_for_nothing() {
 fn a_capture_is_what_a_path_parameter_costs() {
     let service = service();
 
-    let matched = counted(&service, "/ping");
-    let captured = counted(&service, "/users/7");
-    let missed = counted(&service, "/nope");
+    let [
+        (ping, ping_status, _),
+        (users, users_status, _),
+        (nope, nope_status, _),
+    ] = SHAPES;
+    let matched = counted(&service, ping, ping_status);
+    let captured = counted(&service, users, users_status);
+    let missed = counted(&service, nope, nope_status);
 
     assert!(
         captured > matched,
@@ -465,14 +502,15 @@ fn a_capture_is_what_a_path_parameter_costs() {
 fn a_replayed_request_costs_what_the_first_one_did() {
     let service = service();
 
-    for (target, _) in SHAPES {
-        replayed(&service, target, target);
+    for (target, expected, _) in SHAPES {
+        replayed(&service, target, expected, target);
     }
 
     for &(depth, build, _) in &STACKS[1..] {
         replayed(
             &build(),
             STACKED,
+            STACKED_STATUS,
             &format!("{STACKED} behind {depth} no-op interceptor(s)"),
         );
     }
@@ -484,12 +522,12 @@ fn a_replayed_request_costs_what_the_first_one_did() {
 /// `target`, because the same target is replayed at three stack depths and a
 /// message naming only the path would not say which one moved. Both are built
 /// outside every counted region, so neither costs the measurement anything.
-fn replayed(service: &Service<()>, target: &str, described: &str) {
-    let first = counted(service, target);
+fn replayed(service: &Service<()>, target: &str, expected: StatusCode, described: &str) {
+    let first = counted(service, target, expected);
     let mut moved = Vec::new();
 
     for index in 0..10_000 {
-        let counted = counted(service, target);
+        let counted = counted(service, target, expected);
         if counted != first {
             moved.push((index, counted));
         }
