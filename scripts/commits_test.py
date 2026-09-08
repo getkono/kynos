@@ -121,11 +121,12 @@ def braced_body(text, key, within=None):
     unanchored search cannot tell those apart, and the difference is the whole
     gate.
 
-    Two regions are not code and are skipped, because a brace in either would
-    move the block's end and hand the caller a step from some other hook.
-    Double-quoted values, so a `{{commit_msg_file}}` cannot close the block
-    that holds it; and `//` comments, because the comments in that very block
-    discuss `{{commit_msg_file}}` in prose. Neither skip is exercised by
+    Three regions are not code and are skipped, because a brace in any of them
+    would move the block's end and hand the caller a step from some other
+    hook. Double-quoted values, so a `{{commit_msg_file}}` cannot close the
+    block that holds it; `//` comments, because the comments in that very
+    block discuss `{{commit_msg_file}}` in prose; and Pkl's `/* ... */`, for
+    the same reason and in the same block. None of the three is exercised by
     today's `hk.pkl`, which is exactly why `BracedBody` tests them directly:
     a scanner that breaks is what makes a containment check pass over a file
     it half read.
@@ -158,6 +159,14 @@ def braced_body(text, key, within=None):
         elif region.startswith("//", index):
             commented = True
             index += 1
+        elif region.startswith("/*", index):
+            # After the quoted check above, never before it: a glob such as
+            # `"**/*.rs"` carries `/*` in a value, and reading that as a
+            # comment would swallow the rest of the file.
+            closing = region.find("*/", index + 2)
+            if closing < 0:
+                return None
+            index = closing + 1
         elif character == "{":
             depth += 1
         elif character == "}":
@@ -254,6 +263,17 @@ class BracedBody(unittest.TestCase):
     def test_an_open_brace_in_a_comment_does_not_extend_the_block(self):
         """A's hazard. That block's comments discuss `{{commit_msg_file}}`."""
         body = braced_body('["a"] {\n  // prose mentioning a { brace\n}\n["b"] { y = 2 }', '["a"]')
+        self.assertNotIn('["b"]', body)
+
+    def test_an_open_brace_in_a_block_comment_does_not_extend_the_block(self):
+        """Pkl has `/* ... */` as well as `//`, and the same prose lives in both."""
+        body = braced_body('["a"] {\n  /* prose with a { brace */\n}\n["b"] { y = 2 }', '["a"]')
+        self.assertNotIn('["b"]', body)
+
+    def test_a_block_comment_marker_inside_a_value_is_not_a_comment(self):
+        """A glob such as `"**/*.rs"` carries `/*`, and this repository uses that shape."""
+        body = braced_body('["a"] {\n  g = "**/*.rs"\n  x = 1\n}\n["b"] { y = 2 }', '["a"]')
+        self.assertIn("x = 1", body)
         self.assertNotIn('["b"]', body)
 
     def test_a_closing_brace_in_a_comment_does_not_end_the_block(self):
