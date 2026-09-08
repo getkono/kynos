@@ -1099,6 +1099,7 @@ mod encoding_policy {
 mod decompression {
     use kynos::{
         Router,
+        error::problem::ProblemType,
         extract::{
             body::text::Text,
             params::header::{DecodeHeaders, EncodeHeaders, HeaderParams, Headers},
@@ -1402,5 +1403,116 @@ mod decompression {
 
         assert_eq!(reply.status, StatusCode::OK);
         assert_eq!(reply.text(), "kynos");
+    }
+
+    // --- The three problem types the three refusals name ------------------
+
+    /// One marker per refusal, which is the whole of why `Undecodable` takes
+    /// three parameters and not one.
+    struct UnknownCoding;
+    struct NotWhatItClaimed;
+    struct Bomb;
+
+    impl ProblemType for UnknownCoding {
+        const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/coding");
+    }
+
+    impl ProblemType for NotWhatItClaimed {
+        const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/malformed");
+    }
+
+    impl ProblemType for Bomb {
+        const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/bomb");
+    }
+
+    /// The three statuses publish three different URIs, on the wire and in the
+    /// declaration.
+    ///
+    /// The case one shared marker would pass and must not: it would put one URI
+    /// on all three, declaring a malformed body and an unsupported coding the
+    /// same problem type — and, now that the declaration is a `const` a
+    /// validator reads, declaring it to the conformance harness.
+    #[tokio::test]
+    async fn three_refusals_publish_three_types_on_both_halves() {
+        let service = Router::<App>::new()
+            .mount(kynos::routes![echo, fields])
+            .intercept(
+                Decompression::new(64)
+                    .unsupported_coding_problem_type::<UnknownCoding>()
+                    .malformed_problem_type::<NotWhatItClaimed>()
+                    .too_large_problem_type::<Bomb>(),
+            )
+            .build(App::new())
+            .expect("a describable router");
+
+        let refused = |coding: &'static str, body: String| {
+            let service = &service;
+            async move {
+                post(service, "/echo")
+                    .header("content-encoding", coding)
+                    .header("content-type", "text/plain")
+                    .body(body)
+                    .call()
+                    .await
+            }
+        };
+
+        let unsupported = refused("deflate", "anything".to_owned()).await;
+        assert_eq!(unsupported.status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        assert_eq!(
+            unsupported.json()["type"],
+            "https://errors.example.com/coding"
+        );
+
+        let malformed = refused("gzip", "this is not a gzip stream".to_owned()).await;
+        assert_eq!(malformed.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            malformed.json()["type"],
+            "https://errors.example.com/malformed"
+        );
+
+        let too_large = refused("identity", payload()).await;
+        assert_eq!(too_large.status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(too_large.json()["type"], "https://errors.example.com/bomb");
+
+        // And the declaration says the same three, keyed by the status each
+        // answers with. `contains` rather than equality: `/echo` takes a body,
+        // so its 400 and 415 are the union of this interceptor's branch with
+        // the extractor's `about:blank` one — which is the union rule working,
+        // and would be invisible if each status published one branch.
+        let declared = serde_json::to_value(service.openapi()).expect("a serializable document");
+        let responses = &declared["paths"]["/echo"]["post"]["responses"];
+
+        for (status, uri) in [
+            (400, "https://errors.example.com/malformed"),
+            (413, "https://errors.example.com/bomb"),
+            (415, "https://errors.example.com/coding"),
+        ] {
+            let published = published_types(
+                &responses[status.to_string()]["content"]["application/problem+json"]["schema"],
+            );
+
+            assert!(
+                published.iter().any(|declared| declared == uri),
+                "the declared {status} publishes {published:?}, not the {uri} the wire sent"
+            );
+        }
+    }
+
+    /// Every type URI one declared problem response narrows to.
+    ///
+    /// One branch is a bare `allOf`; several are a `oneOf` of them, which is
+    /// what a status an extractor also claims produces.
+    fn published_types(schema: &serde_json::Value) -> Vec<String> {
+        let narrowed = |branch: &serde_json::Value| {
+            branch["allOf"][1]["properties"]["type"]["const"]
+                .as_str()
+                .map(ToOwned::to_owned)
+        };
+
+        match schema["oneOf"].as_array() {
+            Some(branches) => branches.iter().filter_map(narrowed).collect(),
+            None => narrowed(schema).into_iter().collect(),
+        }
     }
 }

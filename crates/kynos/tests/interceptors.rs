@@ -622,10 +622,10 @@ async fn every_case() -> Vec<Case> {
     {
         use kynos::middleware::{compression::NotAcceptable, decompression::Undecodable};
 
-        cases.push(case(registry, NotAcceptable).await);
-        cases.push(case(registry, Undecodable::UnsupportedCoding).await);
-        cases.push(case(registry, Undecodable::Malformed).await);
-        cases.push(case(registry, Undecodable::TooLarge { limit: 64 }).await);
+        cases.push(case(registry, NotAcceptable::<()>::new()).await);
+        cases.push(case(registry, Undecodable::<(), (), ()>::unsupported_coding()).await);
+        cases.push(case(registry, Undecodable::<(), (), ()>::malformed()).await);
+        cases.push(case(registry, Undecodable::<(), (), ()>::too_large(64)).await);
     }
 
     #[cfg(feature = "cache")]
@@ -792,6 +792,14 @@ fn a_refusal_is_send_and_sync_whatever_marker_names_it() {
     assert_send_sync::<TimedOut<Unsendable>>();
     assert_send_sync::<AtCapacity<Unsendable>>();
     assert_send_sync::<CrossSite<Unsendable>>();
+
+    #[cfg(feature = "compression")]
+    {
+        use kynos::middleware::{compression::NotAcceptable, decompression::Undecodable};
+
+        assert_send_sync::<NotAcceptable<Unsendable>>();
+        assert_send_sync::<Undecodable<Unsendable, Unsendable, Unsendable>>();
+    }
 }
 
 /// A refusal and its interceptor keep their implementations whatever names the
@@ -814,4 +822,18 @@ fn naming_a_problem_type_costs_the_marker_no_derives() {
     assert_clone_and_debug::<BodySize<Bare>>();
     assert_clone_and_debug::<Concurrency<Bare>>();
     assert_clone_and_debug::<Csrf<Bare>>();
+
+    #[cfg(feature = "compression")]
+    {
+        use kynos::middleware::{
+            compression::{Compression, NotAcceptable},
+            decompression::{Decompression, Undecodable},
+        };
+
+        assert_refusal_traits::<NotAcceptable<Bare>>();
+        assert_refusal_traits::<Undecodable<Bare, Bare, Bare>>();
+
+        assert_clone_and_debug::<Compression<Bare>>();
+        assert_clone_and_debug::<Decompression<Bare, Bare, Bare>>();
+    }
 }
