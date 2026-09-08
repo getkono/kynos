@@ -184,6 +184,18 @@ fn depth_8() -> Service<()> {
         .expect("a describable router")
 }
 
+/// One transparent layer: the control the calibration below is read against.
+///
+/// The same depth as [`calibrated`] and the same builder, differing only in
+/// which interceptor is mounted, so that the difference between two readings
+/// taken through them is what [`Calibrating`] does and nothing else.
+fn depth_1() -> Service<()> {
+    router()
+        .intercept(Transparent)
+        .build(())
+        .expect("a describable router")
+}
+
 /// An interceptor that allocates a known amount, so that part of a count taken
 /// through it is fixed by construction rather than measured.
 ///
@@ -494,60 +506,79 @@ fn work_on_another_thread_is_not_counted() {
     );
 }
 
-/// What one request through [`calibrated`] costs, in full.
+/// What [`Calibrating`] adds to a request, by construction: one fresh
+/// allocation and one reallocation.
 ///
-/// **The only equality over an absolute count in either counting target, and
-/// the reason there is one.** Every other number in this file and in
-/// `alloc_codecs.rs` is a ceiling compared with `<=`, so a reading that *fell*
-/// passes: a driver that quietly stopped counting part of what it counts reads
-/// as a cheaper router rather than as a broken instrument, and the leak
-/// replays read a uniform fall as still constant. Two of the operations
-/// counted below cannot fall without the instrument being wrong — one fresh
-/// allocation and one reallocation, made by [`Calibrating`] where the region
-/// can see them — so pinning the whole reading with an equality is what makes
-/// that failure red rather than green.
-///
-/// **The reallocation is the load-bearing half, and it is the only one in this
-/// request.** A `/ping` through one layer performs ten heap operations, of
-/// which exactly one is a resize and it is this fixture's — dropping
-/// `reallocations` from the driver's sum moves this reading to nine and moves
-/// nothing else in either target. That is precisely why the ceilings could not
-/// see such a driver before: with nothing on the routing path that grows a
-/// buffer, every count they hold was already reallocation-free.
-///
-/// The rest of the number is the routing path's [`STACKED_ALONE`] seven and
-/// the one boxed future a layer costs, both recorded above as ceilings; this
-/// is where they are held from *below* as well as from above. That also makes
-/// this the one number here that has to be re-read when a ceiling below it is
-/// lowered, which is the price of the only assertion in either target that a
-/// fall cannot pass.
-const CALIBRATED: usize = 10;
+/// A constructed target rather than a recorded measurement — the only number
+/// in either counting target written down before it was read, which is what
+/// makes an equality over it defensible. Nothing re-reads it when a ceiling
+/// moves, because none of what it counts is the router's.
+const CALIBRATION: usize = 2;
 
 /// The instrument's second invariant, and the one every ceiling in either
 /// counting target rests on: a count is *every* heap operation the region saw,
-/// fresh allocations and reallocations alike, over the whole of one request.
+/// fresh allocations and reallocations alike.
+///
+/// **Stated as a delta rather than as an absolute, because an absolute would
+/// be mostly the router's.** One request through [`calibrated`] costs ten
+/// today, of which eight is the routing path's [`STACKED_ALONE`] and the boxed
+/// future one layer costs — both recorded above as ceilings, and both free to
+/// fall. Pinning the ten would turn a rustc or dependency bump that made the
+/// static match one allocation cheaper into a red *instrument* test: every
+/// ceiling would pass, both equalities over differences would pass, and this
+/// would be the only failure in either target, saying the driver had changed
+/// when the router had merely got cheaper. Reading it against a transparent
+/// layer at the same depth cancels all eight. What is left is what
+/// [`Calibrating`] does, which nothing outside this file can move — the
+/// arrangement [`performance.md`](../../../docs/performance.md#the-taxonomy)
+/// asks for, where relations outlive absolutes.
+///
+/// **Why no ceiling could see this.** Dropping `reallocations` from the
+/// driver's sum was measured to move nine `alloc_codecs.rs` compression
+/// readings down — gzip 27→26, 27→26, 31→27; br 42→41, 42→41, 48→45; zstd
+/// 21→20, 21→20, 24→21 — so reallocations are counted there, and often. What
+/// no *assertion* could see is that they fell: the ceilings are `<=`, the leak
+/// replays read a uniform fall as still constant, and the strict relations and
+/// the equalities over differences are all one-sided.
+///
+/// **What this cannot catch, since only a docblock can hold it.** The region
+/// is "construct the future, then poll it", and an `async fn`'s construction
+/// allocates nothing, so a narrowing of the region's *front* boundary moves no
+/// count — measured, by moving `Service::call` outside the region and watching
+/// both targets stay green. No fixture can reach that boundary either: the
+/// only handle one has on the inside is `Interceptor::intercept`, which is
+/// itself an `async fn`. It becomes a real hole the day dispatch boxes at call
+/// time rather than at poll time.
 ///
 /// Filed here beside `work_on_another_thread_is_not_counted` rather than in
-/// `alloc_codecs.rs`, for the reason
-/// [`testing.md`](../../../docs/testing.md#the-allocation) gives for that one:
-/// the property belongs to `alloc_counter` and to the shared driver rather
-/// than to any fixture, so it is asserted once for both targets. Since #133
-/// there is one driver, which is what lets one assertion reach both — and is
-/// also why it has to exist, because a single edit to that driver now moves
-/// all forty-four recorded numbers at once and leaves the two files as
-/// comparable as they ever were.
+/// `alloc_codecs.rs`, for that assertion's reason and by the precedent
+/// [`testing.md`](../../../docs/testing.md#hermeticity) sets: the property
+/// belongs to `alloc_counter` and to the shared driver rather than to any
+/// fixture, so it is asserted once for both targets. Since #133 there is one
+/// driver, which is what lets one assertion reach both — and is why it has to
+/// exist, because a single edit to that driver now moves every recorded number
+/// in both files at once and leaves the two as comparable as they ever were.
 #[test]
 fn the_counter_reports_every_heap_operation_in_the_region() {
-    let counted = counted(&calibrated(), STACKED, STACKED_STATUS);
+    let (plain, calibrating) = (
+        counted(&depth_1(), STACKED, STACKED_STATUS),
+        counted(&calibrated(), STACKED, STACKED_STATUS),
+    );
 
+    // Stated as an addition rather than as `calibrating - plain`, so a reading
+    // that fell below its control cannot underflow before its message is read
+    // — the form `a_layer_costs_the_same_wherever_it_sits` uses, for the same
+    // reason.
     assert_eq!(
-        counted, CALIBRATED,
-        "one request through the calibrating layer cost {counted} against a \
-         recorded {CALIBRATED}; two of those are a fresh allocation and a \
-         reallocation the layer makes on purpose, so a reading that moved here \
-         is the driver measuring a different amount of one request than it \
-         did — and a fall is the direction every `<=` ceiling in this target \
-         and in alloc_codecs.rs would pass"
+        calibrating,
+        plain + CALIBRATION,
+        "one calibrating layer added {} heap operation(s) to a request that \
+         cost {plain} through a transparent one, against the {CALIBRATION} it \
+         performs by construction — one fresh allocation and one \
+         reallocation. A driver that stopped counting either kind reports \
+         fewer here, and every `<=` ceiling in this target and in \
+         alloc_codecs.rs would pass it",
+        calibrating.saturating_sub(plain)
     );
 }
 
