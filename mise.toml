@@ -728,10 +728,11 @@ description = "Test that both halves of the commit rule agree about a merge"
 # `BothHalvesOverOneMerge`, because the range half is the one that moves under
 # maintenance. Not every case does: one class pins the single state where the
 # two are *supposed* to disagree, and the linked-worktree cases are about where
-# the guard looks rather than what convco says. A `.convco` holding `merges: true` flips it from exit 0 to
-# exit 1 over a merge subject while leaving the hook half untouched, and a
-# `[tools]` bump of convco can do the same; a suite that ran only the hook half
-# would stay green through it.
+# the guard looks rather than what convco says. A `.convco` holding
+# `merges: true` flips the range half from exit 0 to exit 1 over a merge
+# subject while leaving the hook half untouched, and a `[tools]` bump of
+# convco can do the same; a suite that ran only the hook half would stay green
+# through it.
 #
 # The cases build real repositories rather than forging state files: one runs
 # `git merge --squash` to assert the exemption has not widened past what the
