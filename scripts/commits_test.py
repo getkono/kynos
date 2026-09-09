@@ -35,11 +35,12 @@ throwaway repository's own `commit-msg` hook and drives real commits and a real
 `git merge --no-ff` through it, so hk resolves this repository's `hk.pkl`,
 decides for itself whether the `conventional-commit` step runs, and answers
 with an exit code. One reading subsumes every way the step can be turned off --
-renamed, deleted, moved under another hook, overridden by a merged duplicate
-entry, disabled by a module-level `skip_steps` or `skip_hooks`, replaced by a
-`shell`, a `prefix` or a `check` of `true`, turned into a fix-only run, or
-disarmed by an `hk.local.pkl` -- because none of those survives being asked
-what the hook actually did. The merge case in that class is the reported
+deleted, moved under another hook, overridden by a merged duplicate entry,
+disabled by a module-level `skip_steps` or `skip_hooks`, replaced by a `shell`,
+a `prefix` or a `check` of `true`, turned into a fix-only run, or disarmed by
+an `hk.local.pkl` -- because none of those survives being asked what the hook
+actually did. Renaming the step is not on that list: hk runs it under whatever
+name it carries, so a rename disarms nothing and the reading stays green. The merge case in that class is the reported
 symptom itself: before the fix, it is the `Not committing merge` the issue
 opens with.
 
@@ -450,15 +451,17 @@ class TheGateHkRuns(GateTestCase):
 
     That is one assertion about an outcome in place of an enumeration of
     causes, and it is why nothing here reads `hk.pkl` at all. Every way of
-    turning the step off is a way of turning the first reading green: renaming
-    the step, deleting it, moving it under another hook, dropping its
+    turning the step off is a way of turning the first reading green: deleting
+    the step, moving it under another hook, dropping its
     `< {{commit_msg_file}}` redirect, a `shell` or a `prefix` of `true`, a
     `check` of `true` on a merged duplicate `["conventional-commit"]` entry, a
     second `["commit-msg"]` hook entry, a module-level `skip_steps` or
     `skip_hooks`, a fix-only run, an `hk.local.pkl` in the project root, or a
     key hk has not shipped yet. A scan of the file's text can be blind to any
     of those; the exit code is blind to none of them, because it is the result
-    and they are the causes.
+    and they are the causes. Renaming the step is not one of them and this
+    class stays green through one, which is the right answer: hk runs the
+    step's `check` under any name.
 
     The second and third readings are what stop the first from being satisfied
     by a gate that refuses everything, which is the failure mode a

@@ -81,10 +81,12 @@ hooks {
             // `hk run commit-msg` as the `commit-msg` hook of a throwaway
             // repository and drives real commits and a real
             // `git merge --no-ff` through it, so hk resolves this file itself
-            // and answers with the exit code git obeys. Rename the step,
-            // delete it, move it under another hook or drop the
-            // `< {{commit_msg_file}}` redirect, and the suite fails on what
-            // the hook did rather than on what this file says.
+            // and answers with the exit code git obeys. Delete the step, move
+            // it under another hook or drop the `< {{commit_msg_file}}`
+            // redirect, and the suite fails on what the hook did rather than
+            // on what this file says. Renaming it is not one of those and the
+            // suite is right to stay green through one: measured, hk runs the
+            // step's `check` under whatever name it carries.
             //
             // Asking hk is what no reading of this file could replace. Pkl
             // merges entries that share a key and hk obeys the merged result,
