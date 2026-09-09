@@ -77,35 +77,39 @@ hooks {
             // case could neither exercise one nor run this step at all. In the
             // task, the exemption is covered by `mise run commits:test`.
             //
-            // That suite reads the `check` line below out of this file and
-            // runs it as the `commit-msg` hook of a throwaway repository,
-            // driving a real `git merge` through it. So this step is not
-            // merely described there: rename it, delete it, move it out of
-            // this hook or drop the `< {{commit_msg_file}}` redirect, and the
-            // suite fails. The scan is brace-matched and bounded to this
-            // block for the move -- a `conventional-commit` step declared
-            // under `pre-push` runs nothing at commit time while still being
-            // findable by name anywhere in the file.
+            // That suite does not restate this step. It installs
+            // `hk run commit-msg` as the `commit-msg` hook of a throwaway
+            // repository and drives real commits and a real
+            // `git merge --no-ff` through it, so hk resolves this file itself
+            // and answers with the exit code git obeys. Rename the step,
+            // delete it, move it under another hook or drop the
+            // `< {{commit_msg_file}}` redirect, and the suite fails on what
+            // the hook did rather than on what this file says.
             //
-            // Whether hk runs this step at all is asked of hk rather than
-            // read off this file, because no reading of this file can answer
-            // it. Pkl merges entries that share a key and hk obeys the merged
-            // result, so a second entry is the authoritative one and is
-            // invisible to a scan that resolves a key to its first. The suite
-            // holds `hk run commit-msg --plan --json` to reporting this step
-            // `included` and `hk config dump` to skipping no `commit-msg`
-            // hook -- two questions, because under a module-level
-            // `skip_hooks` the plan still reports `included`.
+            // Asking hk is what no reading of this file could replace. Pkl
+            // merges entries that share a key and hk obeys the merged result,
+            // so a second `["conventional-commit"]` entry is the
+            // authoritative one and is invisible to anything resolving a key
+            // to its first, and hk merges settings from sources that are not
+            // this file at all. An exit code is downstream of every one of
+            // them.
             //
-            // Measured on 1.53.0 against this file, over a non-conforming
-            // message: a `step_condition`, `condition`, `profiles`, `glob`,
-            // `exclude` or `types` key here, a `required` naming an unset
-            // variable, a module-level `skip_steps` or `skip_hooks`, a second
-            // `["conventional-commit"]` entry in this block, and a second
-            // `["commit-msg"]` entry beside this hook each leave
-            // `hk validate` green and the `check` below untouched while
-            // `hk run commit-msg` exits 0 having run no step. Each one now
-            // fails the suite.
+            // Measured on hk 1.53.0 against this file, over a non-conforming
+            // message on a one-parent commit: a `step_condition`, `condition`,
+            // `profiles`, `glob`, `exclude`, `types`, `shell`, `prefix` or
+            // `required` key on this step, a module-level `skip_steps` or
+            // `skip_hooks`, a second `["conventional-commit"]` entry in this
+            // block, and a second `["commit-msg"]` entry beside this hook each
+            // leave `hk validate` green and the `check` below untouched while
+            // letting that message through. Each one fails
+            // `mise run commits:test`.
+            //
+            // `glob`, `types` and `exclude` are in that list at *every* value,
+            // `glob = "*"` included: over a `commit-msg` hook the file set hk
+            // builds is the message file alone, so any of the three narrows
+            // this step's selection to nothing and hk skips it reporting
+            // `all files deleted before execution`. Selecting files is not how
+            // this step is scoped, and a value that reads as harmless is not.
             ["conventional-commit"] {
                 check = "mise run --quiet commits:message < {{commit_msg_file}}"
                 output_summary = "stdout"

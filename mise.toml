@@ -737,16 +737,18 @@ description = "Test that both halves of the commit rule agree about a merge"
 # `git merge --squash` to assert the exemption has not widened past what the
 # range form exempts, one is a linked worktree, because that is how this
 # repository is worked and MERGE_HEAD lives elsewhere there, and one installs
-# the `commit-msg` command `hk.pkl` declares -- read out of `hk.pkl`, so
-# deleting the step or dropping its redirect fails the suite -- and drives a
-# real `git merge --no-ff` through it. That last one is issue #132's own
+# `hk run commit-msg` itself as that repository's `commit-msg` hook and drives
+# a real `git merge --no-ff` through it. That last one is issue #132's own
 # symptom, so reverting this fix makes it print `Not committing merge`.
 #
-# Whether hk would run that step at all is asked of hk, through
-# `hk run commit-msg --plan --json` and `hk config dump`, rather than inferred
-# from the text of `hk.pkl`. A step turned off by a merged duplicate entry, or
-# by a module-level `skip_steps` or `skip_hooks`, is one no scan of that file
-# can see, and the fixture above would go on installing its command.
+# Whether hk would run that step at all is asked of hk, by reading the exit
+# code of that real hook run, rather than inferred from the text of `hk.pkl`.
+# Nothing is read out of `hk.pkl` and nothing is restated from it: hk resolves
+# its own configuration, so a step turned off by a merged duplicate entry, by
+# a module-level `skip_steps` or `skip_hooks`, or by a `shell` or a `prefix`
+# that runs something else, shows up in the answer rather than being missed by
+# a reading of the file. Deleting the step or dropping its redirect fails the
+# suite for the same reason.
 #
 # It is the slowest thing in `check` that compiles nothing: around fourteen
 # seconds, almost all of it spent in nested `mise run` invocations. That is
