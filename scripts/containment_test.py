@@ -1483,6 +1483,41 @@ class Main(unittest.TestCase):
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/unchecked.rs", reported[0])
 
+    def test_a_crate_confined_to_two_files_is_reported_outside_them(self):
+        # The other branch of the same loop, and the one no case reached. The
+        # row above is `UNDER` a tree; `sorted(found - where)` is what an
+        # `ONLY_IN` row runs, and it ran over an empty difference every time.
+        # So the `hyper` row could be widened to "anywhere" -- rewritten
+        # `UNDER, ""`, which every path starts with -- and the suite stayed
+        # green while the confinement held nothing. `unchecked.rs` is neither
+        # `server/connection.rs` nor `http/body.rs`.
+        corpus = self.appending(
+            "crates/kynos/src/unchecked.rs", "\nuse hyper::body::Incoming;\n"
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "`hyper` and `hyper-util` are named only in")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/unchecked.rs", reported[0])
+
+    def test_a_crate_confined_to_one_file_is_reported_outside_it(self):
+        # Each row of that loop is a separate claim and widening one says
+        # nothing about the others, so the branch being reached is not enough:
+        # with `tower` rewritten `UNDER, ""` its row holds nothing at all while
+        # the four beside it go on holding, and the run reports every rule
+        # holds. `http/body.rs` is not `unchecked.rs`, which is the one file
+        # this row allows.
+        corpus = self.appending(
+            "crates/kynos/src/http/body.rs", "\nuse tower::Service;\n"
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(
+            failures, "`tower` and `tower-service` are named only in `unchecked.rs`"
+        )
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/http/body.rs", reported[0])
+
     def test_a_renamed_surface_heading_skips_the_declaration_check(self):
         broken = gate.ARCHITECTURE.replace(self.SURFACE, "### The public surface", 1)
         broken = broken.replace(self.DECLARED_SITE, "crates/kynos/src/lib.rs")
