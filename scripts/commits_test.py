@@ -59,10 +59,11 @@ the hook is handed is the fixture's own message.
 One fixture is a linked worktree, because this repository is worked in linked
 worktrees and MERGE_HEAD lives under `.git/worktrees/<name>/` there. The
 task's guard has to be worktree-correct, and only a linked-worktree fixture
-holds it to that. One case in it runs the guard with no `GIT_DIR` supplied at
-all, which is the only place git's repository *discovery* is exercised --
-every other call exports one, and under an exported `GIT_DIR` the weaker
-spellings this guard was chosen over pass too.
+holds it to that. Two of its cases run the guard with no `GIT_DIR` supplied at
+all -- one over a merge in progress and one over none -- and they are the only
+place git's repository *discovery* is exercised. Every other call in this file
+exports a `GIT_DIR`, and under an exported one the weaker spellings this guard
+was chosen over pass too.
 
 Run it as `mise run commits:test`, or directly. There is no Python test runner
 in this repository and `unittest` needs none.
@@ -745,11 +746,13 @@ class LinkedWorktree(GateTestCase):
     def test_the_guard_finds_the_repository_itself(self):
         """The guard on git's discovery path, with no `GIT_DIR` supplied.
 
-        Every other case exports `GIT_DIR`, because that is what lets
-        `mise run` resolve `mise.toml` from the project root while the task
-        reads a throwaway repository. The cost is that the guard is never
-        asked to *find* the repository -- and finding it is the whole
-        difference between `--git-path` and the spellings it was chosen over.
+        Every case but this one and
+        `test_the_discovered_guard_still_checks_with_no_merge`, its control,
+        exports `GIT_DIR`, because that is what lets `mise run` resolve
+        `mise.toml` from the project root while the task reads a throwaway
+        repository. The cost is that the guard is never asked to *find* the
+        repository -- and finding it is the whole difference between
+        `--git-path` and the spellings it was chosen over.
         Without this case, `[ -f "$GIT_DIR/MERGE_HEAD" ]` passes the suite,
         while in the position git actually runs a `commit-msg` hook from --
         cwd at the worktree top, `GIT_DIR` unset -- it exempts nothing.
