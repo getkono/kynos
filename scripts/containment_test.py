@@ -1174,6 +1174,19 @@ class Main(unittest.TestCase):
     def naming(self, failures, needle):
         return [failure for failure in failures if needle in failure]
 
+    def test_a_fixture_whose_anchor_has_moved_fails_naming_the_anchor(self):
+        # `rewriting`'s guard, and the only case here about this file rather
+        # than about `containment.py`. Without it a documentation edit the gate
+        # accepts turns every anchored case below into `0 != 1`, none of them
+        # naming what moved -- which is the failure the guard was written for,
+        # and which nothing held.
+        with self.assertRaises(self.failureException) as caught:
+            self.rewriting("a document", "an anchor it does not hold", "x")
+        self.assertIn(
+            "this fixture no longer anchors on: 'an anchor it does not hold'",
+            str(caught.exception),
+        )
+
     def test_a_renamed_allowance_header_skips_the_row_count_and_the_tokio_scan(self):
         broken = gate.ARCHITECTURE.replace(self.ALLOWANCE, "| Site | Named | Why |", 1)
         status, failures = self.report(architecture=broken)
