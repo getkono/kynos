@@ -60,9 +60,12 @@ states a ceiling. Almost all of the time is `Main`: each of its cases calls
 `main()`, and each call re-runs every rule over the real tree, which is the
 rule half of what `containment:check` itself costs. The suites above it are
 free beside that -- they hand a parser some text and read what comes back,
-and the corpora they read are built once, at import. So a new `Main` case is
-priced at roughly one more run of the gate, and a suite that has stopped
-being affordable is shortened at `Main` rather than at the parsers.
+and the corpora they read are built once, at import. A `Main` case that
+rewrites one file of the corpus is priced with the rest of them:
+`Corpus.replacing` strips the file it rewrites and shares the other three
+hundred. So a new `Main` case is priced at roughly one more run of the gate,
+and a suite that has stopped being affordable is shortened at `Main` rather
+than at the parsers.
 """
 
 import contextlib
@@ -931,11 +934,11 @@ class Main(unittest.TestCase):
     rest.
 
     The documents are this repository's own with one marker removed, and the
-    corpora are the real ones. What is under test here is a *rule* rather than a
-    parser: the `tokio` scan is only wrong about the tree it reads, and a
-    synthetic tree would make the case a test of its own fixture. `main` takes
-    the documents as arguments for this reason, the way `scanned` takes
-    `exists`.
+    corpus is this repository's own with at most one file rewritten. What is
+    under test here is a *rule* rather than a parser: the `tokio` scan is only
+    wrong about the tree it reads, and a synthetic tree would make the case a
+    test of its own fixture. `main` takes both as arguments for this reason,
+    the way `scanned` takes `exists`.
 
     The assertions name the rules that must and must not have run rather than
     counting failures, so a case says what it holds and does not fail for a
@@ -997,16 +1000,15 @@ class Main(unittest.TestCase):
     instead. These three reads are not module constants, and no parameter
     would spare them.
 
-    What that leaves unheld is named rather than implied: the dependency-graph
-    stray scan, the parent re-export scan and the placeholder scan. All three
-    read `FILES`, which this module builds while it is being imported, so by
-    the time `main` runs the corpora are already what they are and neither an
-    argument nor a rebound read reaches them. Silencing
-    any one of their failures leaves both gates green, which is the severity
-    class worth holding rather than the one below, and a stronger reason than
-    the one that leaves the manifest rule's *guard* unheld. Holding them means
-    injecting the corpora, which is a wider change to `main`'s contract than
-    this branch made.
+    The three rules stated over the corpus and over no document at all -- the
+    dependency-graph stray scan, the parent re-export scan and the placeholder
+    scan -- are reached the same way, and are why `main` has a fifth argument.
+    While the corpus was built at import nothing a case could pass reached
+    them: by the time `main` ran it was already what the tree said, and neither
+    an argument nor a rebound read went back that far. Silencing any one of
+    their failures left both gates green, which is the severity class this file
+    exists for. Each has a case below that hands over this repository's tree
+    with one file rewritten, which is what `appending` is.
 
     The case the manifest rule cost, and why it stays gone rather than coming
     back: `test_the_manifest_rule_below_the_grading_still_runs` asserted that
@@ -1040,8 +1042,12 @@ class Main(unittest.TestCase):
     #: so a case does not depend on today's number.
     SITE_COUNT = re.compile(r"(\*\*One public row, )\w+( sites, and the count is the check\*\*)")
 
-    def report(self, **documents):
+    def report(self, **given):
         """`main`'s status and what it reported, with its own output held.
+
+        `given` is whichever of `main`'s arguments the case supplies -- one of
+        the four documents, or the corpus -- and the rest default to this
+        repository's own.
 
         A failure is one `containment: ` line plus the indented lines under it,
         joined: several of these messages name the offending paths below the
@@ -1049,7 +1055,7 @@ class Main(unittest.TestCase):
         """
         err, out = io.StringIO(), io.StringIO()
         with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
-            status = gate.main(**documents)
+            status = gate.main(**given)
         head, failures = "containment: ", []
         for line in err.getvalue().split("\n"):
             if line.startswith(head):
@@ -1068,9 +1074,8 @@ class Main(unittest.TestCase):
         reaches those, so the read is what a case reaches instead.
 
         Scoped to one path, restored whether the body raises or not, and
-        reaching nothing another case can observe: the corpora and the four
-        documents were read at import and are already what they are, which is
-        the same reason the three rules stated over `FILES` stay unheld.
+        reaching nothing another case can observe: the four documents and the
+        default corpus were read at import and are already what they are.
         """
         target = gate.ROOT / path
         unpatched = Path.read_text
@@ -1107,6 +1112,21 @@ class Main(unittest.TestCase):
             # whole document twice for want of a truncation.
             self.fail(f"this fixture no longer anchors on: {anchor!r}")
         return document.replace(anchor, replacement, 1)
+
+    def appending(self, path, addition):
+        """The real corpus with `addition` at the foot of `path`.
+
+        What a document argument is for the rules stated over a document:
+        `main` takes the corpus, so every rule but the one under test goes on
+        reading exactly what it reads over the real tree and the case asserts
+        one new failure.
+
+        No anchor guard, for the reason `rewriting`'s docstring gives one:
+        appending cannot silently miss. A file this repository has moved is a
+        `KeyError` naming the path, which is the sentence a guard would have
+        written.
+        """
+        return gate.WORKSPACE.replacing(path, gate.WORKSPACE.raw[path] + addition)
 
     def naming(self, failures, needle):
         return [failure for failure in failures if needle in failure]
@@ -1184,6 +1204,21 @@ class Main(unittest.TestCase):
             "crates/kynos/src/response/stream/sse.rs",
             self.naming(failures, "named outside `server/`")[0],
         )
+
+    def test_a_crate_named_outside_the_tree_its_row_allows_is_reported(self):
+        # The dependency-graph stray scan, which reads the corpus and no
+        # document: the five rules in that loop are written in this file rather
+        # than read out of `architecture.md`, so a corpus is the only thing a
+        # case can hand it. `matchit` is the router's, and `unchecked.rs` is not
+        # under `router/`.
+        corpus = self.appending(
+            "crates/kynos/src/unchecked.rs", '\nuse matchit::Router;\n'
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "may be named only under `router/`")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/unchecked.rs", reported[0])
 
     def test_a_renamed_surface_heading_skips_the_declaration_check(self):
         broken = gate.ARCHITECTURE.replace(self.SURFACE, "### The public surface", 1)
@@ -1587,6 +1622,36 @@ class Main(unittest.TestCase):
         reported = self.naming(failures, "resolves outside crates/kynos")
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/lib.rs reads '../../../README.md'", reported[0])
+
+    def test_a_pub_use_of_a_module_the_same_file_declares_is_reported(self):
+        # The parent re-export scan. `http/body.rs` is not `lib.rs`, which is
+        # the one file the rule exempts, and the module is declared in the same
+        # file so the `pub use` names a second path to an item of ours.
+        corpus = self.appending(
+            "crates/kynos/src/http/body.rs",
+            "\nmod probe_mod;\npub use probe_mod::Thing;\n",
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "re-publishes one of our own items")
+        self.assertEqual(len(reported), 1)
+        self.assertIn(
+            "crates/kynos/src/http/body.rs: pub use probe_mod::...", reported[0]
+        )
+
+    def test_a_todo_body_is_reported(self):
+        # The placeholder scan. Written as a body rather than in a doc example,
+        # which is where every `todo!()` the tree really holds sits and which
+        # `strip` has already removed by the time the rule runs.
+        corpus = self.appending(
+            "crates/kynos/src/unchecked.rs",
+            "\npub fn probe() -> u8 {\n    todo!()\n}\n",
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "stands in for a body")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/unchecked.rs", reported[0])
 
     def test_a_misspelled_dev_profile_table_is_reported(self):
         # `cargo_config_failures`, reached through the one line of `main` that
