@@ -501,10 +501,13 @@ mint a registry anywhere. The second is a `feature = "…"` gate, written as the
 `#[cfg]` attribute writes it, for an element whose whole contribution is what a
 gate compiles — a flag is not a Rust name, so there is nothing else to name it
 by. A gate is read as the predicate around it rather than as the text of it, so
-a spelling matches only where the enclosing `#[cfg]`, `#![cfg]` or `cfg_attr`
-names the flag at the polarity the cell wrote; a spelling may therefore be
-written negated, as `not(feature = "…")`, and then matches only what the flag
-compiles by being *off*. The `openapi31` row is the case that needs it, since
+a spelling matches only where the enclosing `#[cfg]`, `#![cfg]`, `cfg_attr` or
+`cfg!` names the flag at the polarity the cell wrote; a spelling may therefore
+be written negated, as `not(feature = "…")`, and then matches only what the flag
+compiles by being *off*. The macro is in that list because it is the form that
+compiles in *every* configuration and branches at run time, so what it guards is
+on the request path in every build; a rule anchored on the attribute forms alone
+read it as naming no flag and let the site past in silence. The `openapi31` row is the case that needs it, since
 both of its sites are the `compile_error!` that refuses a build without the
 flag. The two are matched over different text, and the string literals are the
 whole of the difference: an identifier over source with its comments, its
