@@ -44,11 +44,11 @@ symptom itself: before the fix, it is the `Not committing merge` the issue
 opens with.
 
 Running the real gate is hermetic because the git environment that hook hands
-hk is the fixture's own, spelled absolutely. hk finds `hk.pkl` and `mise.toml`
-by where it runs, so it runs at the project root -- and git spells the
-environment it gives a hook relative to the work tree it invoked the hook
-from, so `GIT_DIR` and the `GIT_INDEX_FILE` git exports itself are both
-resolved before that move. Every git read the step then makes -- including the
+hk is the fixture's own, spelled absolutely. hk finds `hk.pkl` by where it
+runs, so it runs at the project root -- and git spells the environment it
+gives a hook relative to the work tree it invoked the hook from, so `GIT_DIR`,
+`GIT_WORK_TREE` and the `GIT_INDEX_FILE` git exports itself are all resolved
+before that move. Every git read the step then makes -- including the
 `git rev-parse --git-path MERGE_HEAD` the exemption is spelled as -- follows
 `GIT_DIR` to the throwaway repository instead. A developer with a merge of
 their own in progress therefore runs this suite to the same answer as one with
@@ -480,33 +480,40 @@ class TheGateHkRuns(GateTestCase):
         hook.parent.mkdir(parents=True, exist_ok=True)
         # The prologue is this fixture's boundary, and it is what makes the
         # fixture hermetic rather than what makes it pass. hk resolves `hk.pkl`
-        # and `mise.toml` from where it runs, so it has to run at the project
-        # root -- and every git path has to be absolute before that `cd`,
-        # because git spells the environment it hands a hook relative to the
-        # work tree it invoked the hook from. In the real repository none of
-        # this is needed: hk already runs from the root, and that root is the
-        # repository being committed to.
+        # from where it runs, so it has to run at the project root -- and every
+        # git path has to be absolute before that `cd`, because git spells the
+        # environment it hands a hook relative to the work tree it invoked the
+        # hook from. In the real repository none of this is needed: hk already
+        # runs from the root, and that root is the repository being committed
+        # to.
         #
-        # Absolutising is the whole reason this is hermetic, and the three
-        # names carry different weight:
+        # Absolutising is the whole reason this is hermetic, and the four names
+        # carry different weight:
         #
         # `GIT_DIR` is the one the exemption reads. The step's guard is
         # `git rev-parse --git-path MERGE_HEAD`, and under the fixture's
         # `GIT_DIR` that resolves inside the fixture, so somebody running
         # `mise run check` in the middle of a merge of their own gets the same
-        # three answers as somebody running it on a clean tree.
+        # answers as somebody running it on a clean tree.
         #
-        # `GIT_WORK_TREE` is deliberately *not* exported, and that is the one
-        # asymmetry here. git does not export one, so the work tree of the
-        # fixture's `GIT_DIR` stays the directory hk runs in -- the project
-        # root -- which is exactly what the fixture needs: hk runs a step's
-        # command from the repository root it resolves, and the step's command
-        # is `mise run`, which has to land where `mise.toml` is. Pinning the
-        # work tree to the fixture instead makes hk run the step in the
-        # fixture, where mise reports `no tasks defined`. What the mismatched
-        # pair costs is that hk's own staged-status read compares the
-        # fixture's index against the project root's files; what it buys is
-        # that every git read the *step* makes follows `GIT_DIR` home.
+        # `GIT_WORK_TREE` is what makes hk's file set a real commit's. hk reads
+        # the repository's staged and modified files through git's work tree,
+        # and with none exported the work tree of the fixture's `GIT_DIR` is
+        # wherever hk runs -- the project root -- so the fixture's index is
+        # compared against another repository's files and the set comes out
+        # empty. Measured on hk 1.53.0 under `HK_LOG=debug`: `DEBUG files: {}`
+        # unpinned, against `DEBUG files: {"change-4.md", "change-4.rs"}`
+        # pinned. `stage_a_change` says what an empty set would cost, and
+        # `test_the_step_is_selected_over_the_files_the_commit_stages` holds
+        # this line.
+        #
+        # `MISE_CONFIG_FILE` is the price of pinning the work tree, and the one
+        # non-git name here. hk runs a step's command from the repository root
+        # it resolves, so a pinned work tree lands `mise run` in the fixture,
+        # where mise reports `no tasks defined in <fixture>`. Naming this
+        # repository's own `mise.toml` absolutely puts the task back where
+        # every other case runs it, since mise runs a task in its config's
+        # directory rather than the caller's.
         #
         # `GIT_INDEX_FILE` git *does* export, as `.git/index` relative to the
         # fixture. Past the `cd` that spelling names the project root's index
@@ -526,11 +533,15 @@ class TheGateHkRuns(GateTestCase):
             'message="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"\n'
             'GIT_DIR="$(git rev-parse --absolute-git-dir)"\n'
             "export GIT_DIR\n"
+            'GIT_WORK_TREE="$(git rev-parse --show-toplevel)"\n'
+            "export GIT_WORK_TREE\n"
             'if [ -n "${GIT_INDEX_FILE:-}" ]; then\n'
             '  GIT_INDEX_FILE="$(cd "$(dirname "$GIT_INDEX_FILE")" && pwd)/'
             '$(basename "$GIT_INDEX_FILE")"\n'
             "  export GIT_INDEX_FILE\n"
             "fi\n"
+            'MISE_CONFIG_FILE="' + str(ROOT / "mise.toml") + '"\n'
+            "export MISE_CONFIG_FILE\n"
             'cd "' + str(ROOT) + '" || exit 1\n'
             'exec "' + hk_binary() + '" run commit-msg "$message"\n'
         )
@@ -542,20 +553,18 @@ class TheGateHkRuns(GateTestCase):
         A commit needs something to commit, and these cases drive real
         `git commit` and `git merge` invocations, so the fixture supplies it.
 
-        What the staged files do *not* do is exercise hk's file selection, and
-        that wants saying because it reads as though they should. Measured on
-        hk 1.53.0 under `HK_LOG=debug`: over a `commit-msg` hook the file set
-        hk builds is the message file alone -- `files: {"MSG"}`, the staged
-        sources absent -- and it runs this step over `0 files`. A `glob`,
-        `types` or `exclude` key on the step therefore narrows that set to
-        nothing at *every* value, `glob = "*"` included, and hk skips the step
-        reporting `all files deleted before execution`.
-
-        The residual, so this class's claim is not read as larger than it is:
-        those three keys are caught here on the fixture's file set rather than
-        on a real commit's, where the message file is one hk resolves against
-        the directory it runs in. `hk.pkl` records the same where the keys
-        would be declared.
+        These two files are also hk's file set, which is what a `glob`, a
+        `types` or an `exclude` key on the step would be matched against.
+        Measured on hk 1.53.0 under `HK_LOG=debug`, here and through a real
+        `commit-msg` hook over a real `git commit` alike: the set hk builds for
+        this hook is the commit's staged files, and the message file is not in
+        it. So a value that selects them leaves the step running -- which is
+        why `glob = "*"` is not a disarm -- and a value that selects none of
+        them makes hk skip the step reporting `no file matches for step`,
+        which is one. Both are the verdicts a real commit gets, and the
+        prologue's `GIT_WORK_TREE` is what they depend on:
+        `test_the_step_is_selected_over_the_files_the_commit_stages` fails if
+        hk stops seeing these files.
         """
         self.changes += 1
         source = self.repository / f"change-{self.changes}.rs"
