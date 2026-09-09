@@ -1203,10 +1203,26 @@ class Main(unittest.TestCase):
     from one whose whole cost is a silent pass, and only the second kind is
     worth paying for.
 
-    `main`'s success path -- `return 0` and the report line -- is held by
-    `containment:check` rather than here, which is the right allocation:
-    running every rule over the intact tree is what that gate is, and repeating
-    it here would make this file fail for its reasons.
+    `main`'s success path is held here as well as by `containment:check`, and
+    the split is which half of it each holds. The *report line* -- the counts
+    and the sentence -- stays that gate's, because running every rule over the
+    intact tree and printing what it found is what that gate is. The
+    *emptiness* is this file's, and until a mutation pass said so it was held
+    by neither: every other case below asserts `status == 1` and then filters
+    the failures by a needle, so a rule reporting something *else* over this
+    repository's own tree is invisible to all of them at once -- the needle
+    still finds its one failure and the extra lines go unread. That is a whole
+    class of regression, over-reporting, with nothing on it.
+
+    `containment:check` catches such a rule by going red and says only that; a
+    case here says which rule, in the file whose subject is the rules.
+    `Corpus.naming` reading `sources` rather than `files` is the mutation that
+    measured the gap: eleven offender lines over the pristine tree, and a green
+    suite beside them.
+
+    It does mean a genuine breakage in the tree reds this file as well as that
+    gate. That is the cost, and it is the smaller one: a suite that cannot see
+    a rule over-report holds only the half of each rule that fires.
     """
 
     ALLOWANCE = "| Site | Names | Why it is not in `server/` |"
@@ -1357,6 +1373,26 @@ class Main(unittest.TestCase):
             with self.reading("crates/kynos/Cargo.toml", lambda text: text):
                 raise RuntimeError("what a failing case does")
         self.assertIs(Path.read_text, original)
+
+    def test_the_unmodified_tree_reports_nothing(self):
+        # The one case here that hands `main` nothing at all, and the only one
+        # that reads the failure list whole rather than through a needle. What
+        # it holds is the emptiness: every rule below is asked what it reports
+        # over a broken input, and none of them is asked what it reports over
+        # an intact one, so a rule that over-reports goes unseen by the lot.
+        #
+        # Non-vacuous, and measured rather than argued: `Corpus.naming` reading
+        # `sources` rather than `files` -- one word -- puts eleven offender
+        # lines under the dependency-graph scan over this repository's own
+        # tree, and every other case in this file stays green through it. This
+        # one goes red and names the rule.
+        #
+        # The corpus rules are the ones this reaches that no document argument
+        # would: `naming`'s own word boundaries, the views `Corpus.__init__`
+        # derives, and every rule stated over `files` where `sources` would
+        # have done. The status is asserted with the failures rather than
+        # separately so that a red run prints what was reported.
+        self.assertEqual(self.report(), (0, []))
 
     def test_a_renamed_allowance_header_skips_the_row_count_and_the_tokio_scan(self):
         broken = gate.ARCHITECTURE.replace(self.ALLOWANCE, "| Site | Named | Why |", 1)
