@@ -626,6 +626,45 @@ class GatePolarity(unittest.TestCase):
         self.assertTrue(self.matcher('`not(feature = "uuid")`').search(source))
         self.assertTrue(self.matcher('`feature = "uuid"`').named(source))
 
+    def test_a_cfg_macro_is_a_gate_whatever_delimiters_it_opens(self):
+        # A macro invocation may be delimited `(`, `{` or `[`, and `rustc`
+        # compiles all three: `cfg!{feature = "uuid"}` and
+        # `cfg![feature = "uuid"]` gate a build exactly as the parenthesised
+        # form does. Anchored on `(` alone the other two read as no gate at
+        # all, which is the silent pass this pattern exists to close and the
+        # same one the attribute anchoring was.
+        for source in (
+            'pub fn gated() -> bool {\n    cfg!{feature = "uuid"}\n}\n',
+            'pub fn gated() -> bool {\n    cfg![feature = "uuid"]\n}\n',
+        ):
+            self.assertTrue(self.matcher('`feature = "uuid"`').search(source))
+            self.assertTrue(self.matcher('`feature = "uuid"`').named(source))
+
+    def test_a_braced_cfg_macro_ends_at_the_delimiter_that_opened_it(self):
+        # The walk's half of the case above. A predicate opened on `{` closes
+        # on `}`, and a walk counting parentheses alone would run past the end
+        # of the macro into the code below it -- so this holds the polarity
+        # rather than the match: `not(` inside a braced predicate is the
+        # negation it is, and the positive spelling does not match it.
+        source = 'pub fn absent() -> bool {\n    cfg!{not(feature = "uuid")}\n}\n'
+        self.assertFalse(self.matcher('`feature = "uuid"`').search(source))
+        self.assertTrue(self.matcher('`not(feature = "uuid")`').search(source))
+        self.assertTrue(self.matcher('`feature = "uuid"`').named(source))
+
+    def test_an_attribute_written_with_other_delimiters_is_not_a_gate(self):
+        # The asymmetry, and it is Rust's rather than this pattern's. `rustc`
+        # rejects `#[cfg{...}]` and `#[cfg[...]]` -- "wrong meta list
+        # delimiters", with a `help` naming `(` and `)` -- so the delimiter
+        # freedom above belongs to the macro form alone, and the four
+        # attribute alternatives stay anchored on `(`. Widening them would
+        # read a gate into source no build compiles.
+        for source in (
+            '#[cfg{feature = "uuid"}]\nfn f() {}\n',
+            '#[cfg[feature = "uuid"]]\nfn f() {}\n',
+        ):
+            self.assertFalse(self.matcher('`feature = "uuid"`').search(source))
+            self.assertFalse(self.matcher('`feature = "uuid"`').named(source))
+
     def test_a_rust_negation_before_a_cfg_macro_is_not_a_predicate_negation(self):
         # `!cfg!(feature = "openapi32")`, which this workspace writes five
         # times. The `!` is Rust's operator applied to the `bool` the macro
