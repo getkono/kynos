@@ -459,18 +459,23 @@ description = "Verify every crate is named only where its owner allows"
 run = "python3 scripts/containment.py"
 
 [tasks."containment:test"]
-description = "Test the parsers the containment gate reads its tables with"
-# The gate above is only as good as what it reads, and what it reads passes
-# through four parsers: two that take a table cell apart and two that take a
-# source file apart. A rule that breaks says so and exits one; a parser that
-# breaks drops a spelling, a site or a region of a file, and the gate goes on
-# printing `every rule holds` over a table it half read. All three of the
-# defects `fc1bf1d` fixed were exactly that, and none of them was reachable
-# from any input the tree happens to contain.
+description = "Test what the containment gate reads its tables and its tree with"
+# The gate above is only as good as what it reads. Most of what this suite
+# holds is the parsers -- the ones that take a table cell apart and the ones
+# that take a source file apart: a rule that breaks says so and exits one,
+# while a parser that breaks drops a spelling, a site or a region of a file and
+# the gate goes on printing `every rule holds` over a table it half read. All
+# three of the defects `fc1bf1d` fixed were exactly that, and none of them was
+# reachable from any input the tree happens to contain.
+#
+# The rest is `main` itself, which the parsers say nothing about: which rules
+# stop running when a document loses the marker they slice it at, and which
+# rules a corpus reaches that no document does. A rule silenced there leaves
+# both gates green, which is the same failure with none of the parsing in it.
 #
 # `unittest` from the standard library and no test runner. There is no
 # `pytest`, no `tox` and no `requirements.txt` in this repository, and taking
-# a dependency to hold four pure functions is the worse trade.
+# a dependency to hold a few hundred lines of pure Python is the worse trade.
 #
 # `-B` because `.gitignore` has no `__pycache__` entry, and a check that
 # leaves an untracked directory behind is a check people learn to work around.
@@ -681,9 +686,10 @@ description = "Run all pre-push checks"
 # Both were first caught in CI, which is a slower place to learn it.
 #
 # `containment:test` follows `containment:check` wherever it goes. The gate is
-# only as good as the parsers under it, and a parser that breaks is what makes
-# the gate pass silently -- so a push carrying a green gate over a broken parser
-# is exactly what the pair is here to refuse.
+# only as good as the parsers under it and the wiring that runs them, and both
+# fail the same way: a parser that drops a spelling and a rule that stops being
+# reached both leave the gate printing that every rule holds. A push carrying a
+# green gate over either is what the pair is here to refuse.
 #
 # `lint:codecs` is here rather than left to CI because the defect it catches is
 # invisible to the two lint passes above it, and a push is the last point where
