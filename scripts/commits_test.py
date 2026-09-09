@@ -20,31 +20,37 @@ one state where the halves *disagree*, and the linked-worktree cases reach the
 hook half alone because what they are about is where the guard looks, not what
 convco says. Running only the hook half everywhere would leave the range
 half's verdicts asserted in prose, and the range half is the one that moves
-under maintenance: a `.convco` holding
-`merges: true` -- the very switch behind `no_merge_commits` -- flips
-`convco check BASE..HEAD` from exit 0 to exit 1 over a merge subject while
-leaving the hook half untouched, and a `[tools]` bump of convco can do the
-same. That is issue #132 with its sign flipped, and a suite that runs one half
-cannot see it.
+under maintenance: a `.convco` holding `merges: true` -- the very switch behind
+`no_merge_commits` -- flips `convco check BASE..HEAD` from exit 0 to exit 1
+over a merge subject while leaving the hook half untouched, and a `[tools]`
+bump of convco can do the same. That is issue #132 with its sign flipped, and a
+suite that runs one half cannot see it.
 
 Nothing below forges a state file, and nothing below stands in for git. The
-fixtures build real repositories, reach a real merge with `git merge`, and one
-of them installs the `commit-msg` hook command that `hk.pkl` declares -- read
-out of `hk.pkl` rather than restated here, so that deleting the step, renaming
-it, moving it out of the `commit-msg` hook, or dropping its
-`< {{commit_msg_file}}` redirect fails these tests -- and then runs a real
-`git merge --no-ff` through it. That case is the reported symptom itself:
-before the fix, it is the `Not committing merge` the issue opens with. Its
-boundary is written down at the fixture: the command is wrapped in a two-line
-prologue the real hook does not have, so it proves git's ordering and not the
-environment hk supplies.
+fixtures build real repositories and reach a real merge with `git merge`.
 
-Whether hk would run that step at all is a different question, and it is put
-to hk rather than inferred from the text of its configuration:
-`HkWouldRunTheStep` holds `hk run commit-msg --plan --json` to reporting the
-step `included`, and `hk config dump` to skipping no hook named `commit-msg`.
-A step hk skips still hands the fixture above a command to install and pass a
-merge through, while the hook a commit reaches runs nothing.
+Whether the gate is armed at all is settled by its outcome rather than by
+reading `hk.pkl`. `TheGateHkRuns` installs the pinned `hk run commit-msg` as a
+throwaway repository's own `commit-msg` hook and drives real commits and a real
+`git merge --no-ff` through it, so hk resolves this repository's `hk.pkl`,
+decides for itself whether the `conventional-commit` step runs, and answers
+with an exit code. One reading subsumes every way the step can be turned off --
+renamed, deleted, moved under another hook, overridden by a merged duplicate
+entry, disabled by a module-level `skip_steps` or `skip_hooks`, replaced by a
+`shell`, a `prefix` or a `check` of `true`, turned into a fix-only run, or
+disarmed by an `hk.local.pkl` -- because none of those survives being asked
+what the hook actually did. The merge case in that class is the reported
+symptom itself: before the fix, it is the `Not committing merge` the issue
+opens with.
+
+Running the real gate is hermetic because `GIT_DIR` is the fixture's own
+throughout. hk finds `hk.pkl` and `mise.toml` by where it runs, so it runs at
+the project root; every git read the step then makes -- including the
+`git rev-parse --git-path MERGE_HEAD` the exemption is spelled as -- follows
+`GIT_DIR` to the throwaway repository instead. A developer with a merge of
+their own in progress therefore runs this suite to the same answer as one with
+none, and nothing is written into the repository being tested: the only file
+the hook is handed is the fixture's own message.
 
 One fixture is a linked worktree, because this repository is worked in linked
 worktrees and MERGE_HEAD lives under `.git/worktrees/<name>/` there. The
@@ -58,7 +64,6 @@ Run it as `mise run commits:test`, or directly. There is no Python test runner
 in this repository and `unittest` needs none.
 """
 
-import json
 import os
 import re
 import subprocess
@@ -120,209 +125,54 @@ def scrubbed_environment():
     return {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
 
 
-# The characters a quoted value must not be able to contribute to a scan: two
-# that open or close a block, and two that start a comment.
-STRUCTURAL = "{}/*"
+def hermetic_environment():
+    """The environment every fixture, every tool lookup and the gate itself run in.
 
-
-def masked_source(region):
-    """`region` with comments blanked and quoted values neutralised, index for index.
-
-    Every replacement is one character wide and newlines are preserved, so an
-    offset into the mask is the same offset into `region`: a caller searches
-    the mask and slices the source.
-
-    The two kinds of span are treated differently on purpose. A comment is not
-    code, so it is blanked entirely and nothing can be *found* in one. A
-    quoted span is code -- in Pkl a block's own key is a quoted string -- so it
-    stays findable, and only the characters that could open a block, close one
-    or begin a comment are replaced. A value can then never be structure, and
-    `["commit-msg"]` is still something `find` can locate.
-
-    Block comments do not nest, and the first `*/` ends one. That is not a
-    simplification: `/* a /* b */ { */` is a syntax error to Pkl itself, which
-    `mise exec -- hk validate` rejects with `expected identifier, got LBrace`,
-    so no file hk accepts can distinguish a nesting scanner from this one.
+    `HERMETIC` over the `GIT_*` scrub, and then every inherited `HK_*` name
+    removed as well. The second half is not housekeeping either: `HK_SKIP_STEPS`
+    and `HK_SKIP_HOOK` in somebody's shell each make `hk run commit-msg` exit 0
+    having run nothing, and the subject of these cases is what this repository
+    declares rather than what one machine's shell overrides. That escape hatch
+    is committed nowhere and must not answer for the repository.
+    `TheGateHkRuns.test_an_exported_hk_skip_does_not_reach_the_gate` holds it.
     """
-    masked = []
-    index = 0
-    length = len(region)
-    while index < length:
-        pair = region[index : index + 2]
-        if pair == "//":
-            end = region.find("\n", index)
-            end = length if end < 0 else end
-            masked.append(" " * (end - index))
-            index = end
-        elif pair == "/*":
-            closing = region.find("*/", index + 2)
-            end = length if closing < 0 else closing + 2
-            masked.append("".join(" " if c != "\n" else "\n" for c in region[index:end]))
-            index = end
-        elif region[index] == '"':
-            masked.append('"')
-            index += 1
-            while index < length:
-                character = region[index]
-                if character == "\\":
-                    masked.append("  ")
-                    index += 2
-                    continue
-                masked.append(" " if character in STRUCTURAL else character)
-                index += 1
-                if character == '"':
-                    break
-        else:
-            masked.append(region[index])
-            index += 1
-    return "".join(masked)
+    return {
+        key: value
+        for key, value in {**scrubbed_environment(), **HERMETIC}.items()
+        if not key.startswith("HK_")
+    }
 
 
-def braced_body(text, key, within=None):
-    """The `{ ... }` that follows `key` in `text`, by matching braces.
-
-    Brace-matched rather than pattern-matched, and `within` is a slice rather
-    than a hint, because what the caller needs is *containment*: a step named
-    somewhere in the file is not a step attached to the hook that runs it. An
-    unanchored search cannot tell those apart, and the difference is the whole
-    gate.
-
-    The search and the scan both run over `masked_source`, which is what makes
-    that true of the *lookup* and not only of the brace counting. Skipping
-    comments inside the depth loop alone left both `find` calls reading raw
-    text, so a step that existed only as a commented-out block was located and
-    returned as a live declaration -- and the end-to-end fixture could not
-    notice, because it installs as its hook the string this function read.
-    A scan that finds nothing fails loudly; one that finds the wrong block
-    reports green, and that is the failure this exists for.
-
-    Returns None when `key` is absent from the code of the region searched.
-    """
-    region = text if within is None else within
-    mask = masked_source(region)
-    offset = mask.find(key)
-    if offset < 0:
-        return None
-    opening = mask.find("{", offset + len(key))
-    if opening < 0:
-        return None
-
-    depth = 0
-    for index in range(opening, len(mask)):
-        if mask[index] == "{":
-            depth += 1
-        elif mask[index] == "}":
-            depth -= 1
-            if depth == 0:
-                return region[opening + 1 : index]
-    return None
-
-
-# Every place this suite reads a declaration out of `hk.pkl` or `mise.toml`,
-# and what makes each one safe. The list is here because this hazard has
-# recurred -- `//` comments, then `/* */`, then `braced_body`'s two lookups,
-# then the `check` regex below -- and each repair covered the sites it happened
-# to know about. A reader adding a read belongs in this list.
+# The one place this suite reads a declaration out of another file, and what
+# makes it safe. `LinkedWorktree` runs the `commits:message` body where
+# `mise run` cannot put it -- cwd inside the repository under test, no `GIT_DIR`
+# exported -- and running a restatement there would hold nothing.
 #
-# Each read is named and none is numbered, because the numbering is the part
-# that went wrong: a read was inserted in the middle of the list, every read
-# after it shifted, and a docstring citing two of them by position went on
-# pointing at the pair it used to name -- one of which had become the read it
-# was saying was unlike itself. A name survives an insertion, a deletion and a
-# reordering; an ordinal survives none of the three, and the prose that cites
-# it fails silently rather than loudly.
+# Nothing is read out of `hk.pkl`. What that file declares is no longer any of
+# this suite's business: `TheGateHkRuns` hands hk the message and reads the exit
+# code, so hk resolves its own configuration and every disarm shows up in the
+# answer rather than in a scan. The scanner that used to make those reads safe
+# -- a comment- and string-aware mask, a brace matcher, and the class of cases
+# that held the two of them to it -- went with them.
 #
-#   hk.pkl, via `declared_commit_msg_check`
-#     the hook lookup -- `["commit-msg"]`, searched over `masked_source`
-#     the step lookup -- `["conventional-commit"]`, searched over `masked_source`
-#     the check lookup -- that step's `check = "..."`, searched over `masked_source`
-#
-#   mise.toml, via `declared_merge_guard`
-#     the task header -- `[tasks."commits:message"]`, safe by construction
-#     the task body -- that task's `run = '''`, safe by construction
-#
-# Every read here is about *what* the step runs. Whether hk runs it is not
-# read out of `hk.pkl` at all -- `HkWouldRunTheStep` asks hk -- so no entry
-# above has that as its subject.
-#
-# The task header and the task body are safe for a reason that does not
-# generalise, so it is written down rather than assumed: a TOML comment begins
-# with `#`, and both patterns anchor to the start of a line at a position where
-# they require `[` or `r`. A commented-out `#[tasks."commits:message"]` or
-# `# run = '''` cannot match. What the body then captures is verbatim, which is
-# correct twice over: a `#` line inside `run = '''...'''` is shell to mise and
-# shell to the fixture alike, so there is nothing there to mask.
-def declared_check(step):
-    """The `check` command a step body declares, ignoring any commented ones.
-
-    A function of its own so it can be tested over a fragment: the property
-    that matters here -- a commented `check` above a live one is not the
-    declaration -- is invisible from the real `hk.pkl`, which has no commented
-    `check` to trip over. Held that way, the whole read would be covered only
-    by editing the repository's own configuration.
-
-    Located on the mask, sliced from the source: the mask neutralises `{` and
-    `}` inside a value, so the match's own text would come back with
-    `{{commit_msg_file}}` blanked away.
-    """
-    check = re.search(r'check\s*=\s*"(.*?)"\s*$', masked_source(step), re.MULTILINE)
-    if check is None:
-        raise AssertionError("the `conventional-commit` step declares no live `check`")
-    return step[check.start(1) : check.end(1)]
-
-
-def declared_commit_msg_check():
-    """The `check` command `hk.pkl` declares for the `conventional-commit` step.
-
-    Read rather than restated, so the fixture that runs a real `git merge`
-    through a real hook runs what the repository actually installs. Delete the
-    step, rename it, move it out of the `commit-msg` hook, drop its
-    `< {{commit_msg_file}}` redirect, and the end-to-end case stops passing
-    instead of going on asserting a command no hook would run.
-
-    Moving it out is the one an unanchored search misses, and it is the one
-    that disarms the gate most completely: a `conventional-commit` step
-    declared under `pre-push` runs nothing at commit time, while still being
-    findable by name anywhere in the file.
-
-    Every lookup here is about *what* the step runs. hk decides *whether* it
-    runs, and a step hk skips still hands this function a command the
-    end-to-end fixture will install, run a real merge through, and pass on --
-    so that question is put to hk in `HkWouldRunTheStep` rather than inferred
-    from the keys this step happens to declare.
-
-    Every lookup runs over `masked_source`, including the one for the
-    `check` line itself. Commenting a line out and writing its replacement
-    below is the ordinary shape of a configuration edit, and this function
-    decides the command the end-to-end fixture installs -- so a `check` read
-    out of a comment is a command that fixture runs while hk runs something
-    else, and the case cannot tell. The match is located on the mask and the
-    text is sliced from the source, because the mask neutralises `{` and `}`
-    inside a value: read off the mask, the command comes back with
-    `{{commit_msg_file}}` blanked away.
-    """
-    text = (ROOT / "hk.pkl").read_text()
-    hook = braced_body(text, '["commit-msg"]')
-    if hook is None:
-        raise AssertionError("hk.pkl declares no `commit-msg` hook")
-    step = braced_body(text, '["conventional-commit"]', within=hook)
-    if step is None:
-        raise AssertionError("hk.pkl's `commit-msg` hook declares no `conventional-commit` step")
-    return declared_check(step)
-
-
+# The read below is safe for a reason that does not generalise, so it is
+# written down rather than assumed: a TOML comment begins with `#`, and both
+# patterns anchor to the start of a line at a position where they require `[`
+# or `r`. A commented-out `#[tasks."commits:message"]` or `# run = '''` cannot
+# match. What the body then captures is verbatim, which is correct twice over:
+# a `#` line inside `run = '''...'''` is shell to mise and shell to the fixture
+# alike, so there is nothing there to mask.
 def declared_merge_guard():
     """The shell body `mise.toml` declares for `[tasks."commits:message"]`.
 
-    Read for the reason the hook command is read out of `hk.pkl`: the case
-    below runs the guard where `mise run` cannot put it, and running a
-    restatement there would hold nothing.
+    Read rather than restated, because `LinkedWorktree` runs this body where
+    `mise run` cannot put it -- cwd inside the repository under test, with no
+    `GIT_DIR` exported -- and running a restatement there would hold nothing.
 
-    No mask here, and that is the task header and the task body of the list
-    above rather than an oversight: both patterns anchor where a TOML
-    comment's `#` would have to be, so neither can match a commented-out line,
-    and the captured body is shell in which a `#` line means the same thing to
-    mise and to the fixture.
+    No mask here, and that is the comment above rather than an oversight: both
+    patterns anchor where a TOML comment's `#` would have to be, so neither can
+    match a commented-out line, and the captured body is shell in which a `#`
+    line means the same thing to mise and to the fixture.
     """
     text = (ROOT / "mise.toml").read_text()
     task = re.search(r'^\[tasks\."commits:message"\]\n(.*?)^\[', text, re.DOTALL | re.MULTILINE)
@@ -340,376 +190,41 @@ def convco_on_path():
     `shell_gate` runs the task's body directly, so nothing has put the pinned
     convco anywhere; resolving it here keeps that call on the same binary
     every other case reaches through `mise run`.
+
+    Resolved under `hermetic_environment` for the reason everything else runs
+    under it, and failing through `check=True` rather than through a raise of
+    its own: a hand-written raise that no case reaches is one more thing that
+    can be switched off without anything noticing, and `CalledProcessError`
+    carries the same command and the same exit code.
     """
     located = subprocess.run(
-        ["mise", "which", "convco"], cwd=ROOT, capture_output=True, text=True
+        ["mise", "which", "convco"],
+        cwd=ROOT,
+        env=hermetic_environment(),
+        capture_output=True,
+        text=True,
+        check=True,
     )
-    if located.returncode != 0:
-        raise AssertionError(f"mise cannot resolve convco: {located.stderr}")
     return str(Path(located.stdout.strip()).parent) + os.pathsep + os.environ.get("PATH", "")
 
 
 def hk_binary():
     """The pinned hk, resolved the way `convco_on_path` resolves convco.
 
-    Asked of mise rather than of `PATH`, so the answers below come from the
-    `hk` version `[tools]` pins -- which is the one whose plan format and
-    whose settings these assertions were measured against.
+    Asked of mise rather than of `PATH`, so the gate the cases below drive is
+    the `hk` version `[tools]` pins -- which is the one whose behaviour these
+    assertions were measured against. Under `hermetic_environment` and failing
+    through `check=True`, for the two reasons `convco_on_path` gives.
     """
-    located = subprocess.run(["mise", "which", "hk"], cwd=ROOT, capture_output=True, text=True)
-    if located.returncode != 0:
-        raise AssertionError(f"mise cannot resolve hk: {located.stderr}")
-    return located.stdout.strip()
-
-
-def hk_answer(*arguments):
-    """One hk subcommand's JSON answer about this repository's configuration.
-
-    Run from the project root, because that is where hk finds `hk.pkl`, and
-    under an environment with every `GIT_*` and `HK_*` name removed. The
-    subject of these questions is what this repository declares: `HK_SKIP_HOOK`
-    in somebody's shell is that machine's escape hatch and is not committed
-    anywhere, and the global and system git configuration go to `os.devnull`
-    because hk merges git config into its settings and a `[hk]` section in a
-    `~/.gitconfig` must not answer for the repository.
-
-    Every failure is loud. An hk that exits non-zero, or stdout that is not
-    the document hk documents, leaves the question unanswered -- and an
-    unanswered question about whether a gate is armed must not read as yes.
-    """
-    environment = {
-        key: value
-        for key, value in {**scrubbed_environment(), **HERMETIC}.items()
-        if not key.startswith("HK_")
-    }
-    asked = subprocess.run(
-        [hk_binary(), *arguments],
+    located = subprocess.run(
+        ["mise", "which", "hk"],
         cwd=ROOT,
-        env=environment,
+        env=hermetic_environment(),
         capture_output=True,
         text=True,
+        check=True,
     )
-    spelled = "hk " + " ".join(arguments)
-    if asked.returncode != 0:
-        raise AssertionError(
-            f"`{spelled}` exited {asked.returncode}\n"
-            f"stdout:\n{asked.stdout}\nstderr:\n{asked.stderr}"
-        )
-    try:
-        return json.loads(asked.stdout)
-    except json.JSONDecodeError as unreadable:
-        raise AssertionError(
-            f"`{spelled}` did not answer with JSON: {unreadable}\n"
-            f"stdout:\n{asked.stdout}\nstderr:\n{asked.stderr}"
-        ) from unreadable
-
-
-def commit_msg_plan():
-    """hk's plan for the `commit-msg` hook, over a message nothing reads.
-
-    `hk run commit-msg` requires the message file git hands its hook, and
-    `--plan` prints what would run instead of running it, so the file's
-    contents reach nothing. It holds the merge subject anyway, because that is
-    the message this whole suite is about.
-    """
-    with tempfile.TemporaryDirectory() as scratch:
-        message = Path(scratch) / "COMMIT_EDITMSG"
-        message.write_text(MERGE_SUBJECT)
-        return hk_answer("run", "commit-msg", "--plan", "--json", str(message))
-
-
-def planned_status(plan, step):
-    """The status hk's plan gives `step`, refusing a document it cannot read.
-
-    Defensive about the shape and silent about none of it: hk owns this format
-    and may change it, and every shape this cannot read is one where "the step
-    is included" would be an answer nothing measured.
-
-    A plan holding no step of that name is an error rather than an absence,
-    because that is what deleting the step, moving it to another hook and
-    renaming it each look like -- and the renamed case has a step whose status
-    a laxer reading would return.
-    """
-    steps = plan.get("steps")
-    if not isinstance(steps, list):
-        raise AssertionError(f"hk's plan carries no list of steps: {plan!r}")
-    for planned in steps:
-        if isinstance(planned, dict) and planned.get("name") == step:
-            status = planned.get("status")
-            if not isinstance(status, str):
-                raise AssertionError(f"hk's plan gives `{step}` no status: {planned!r}")
-            return status
-    named = [planned.get("name") for planned in steps if isinstance(planned, dict)]
-    raise AssertionError(f"hk's plan holds no step named `{step}`; it names {named}")
-
-
-def skipped_hooks(configuration):
-    """The hooks hk's effective configuration skips.
-
-    An absent setting is an error and not an empty list. The safe answer to
-    this question is "none", so a shape the setting cannot be found in -- hk
-    renaming it, or dropping it from the dump -- is the one shape that would
-    pass silently for as long as it lasted.
-    """
-    if "skip_hooks" not in configuration:
-        raise AssertionError(
-            "hk's effective configuration carries no `skip_hooks`: the setting "
-            f"this reads has been renamed or removed, and its keys are "
-            f"{sorted(configuration)}"
-        )
-    return configuration["skip_hooks"]
-
-
-class BracedBody(unittest.TestCase):
-    """The scanner `hk.pkl`'s containment promise rests on, over its own inputs.
-
-    Nothing else here reaches the regions `braced_body` masks: today's
-    `hk.pkl` has balanced braces in its values and its comments alike, so a
-    scanner that masked none of them would pass every other case in this file.
-    That is the shape `containment_test.py` already tests its own scanner for,
-    and the reason `mise.toml` gives for running that suite beside its gate --
-    a gate is only as good as the parser under it, and a parser that breaks is
-    what makes the gate pass silently.
-
-    The fragments below are written for this file rather than captured. Each
-    is the minimum that reaches a branch: enough pkl to be recognisable, and a
-    brace where a scanner would trip.
-    """
-
-    def test_a_block_is_returned_without_its_own_braces(self):
-        self.assertEqual(braced_body('["a"] {inside}', '["a"]'), "inside")
-
-    def test_a_nested_block_does_not_end_the_outer_one(self):
-        """The end is asserted, not just the contents.
-
-        Returning at the first `}` -- the implementation `braced_body` exists
-        to replace -- yields a body that still holds `["b"]` and still lacks
-        `["c"]`, so the two containment assertions alone leave it green.
-        """
-        body = braced_body('["a"] {\n  ["b"] { x = 1 }\n}\n["c"] { y = 2 }', '["a"]')
-        self.assertIn('["b"]', body)
-        self.assertIn("x = 1 }", body)
-        self.assertNotIn('["c"]', body)
-
-    def test_an_open_brace_in_a_comment_does_not_extend_the_block(self):
-        """A's hazard. That block's comments discuss `{{commit_msg_file}}`."""
-        body = braced_body('["a"] {\n  // prose mentioning a { brace\n}\n["b"] { y = 2 }', '["a"]')
-        self.assertNotIn('["b"]', body)
-
-    def test_an_open_brace_in_a_block_comment_does_not_extend_the_block(self):
-        """Pkl has `/* ... */` as well as `//`, and the same prose lives in both."""
-        body = braced_body('["a"] {\n  /* prose with a { brace */\n}\n["b"] { y = 2 }', '["a"]')
-        self.assertNotIn('["b"]', body)
-
-    def test_a_block_comment_marker_inside_a_value_is_not_a_comment(self):
-        """A glob such as `"**/*.rs"` carries `/*`, and this repository uses that shape."""
-        body = braced_body('["a"] {\n  g = "**/*.rs"\n  x = 1\n}\n["b"] { y = 2 }', '["a"]')
-        self.assertIn("x = 1", body)
-        self.assertNotIn('["b"]', body)
-
-    def test_a_closing_brace_in_a_comment_does_not_end_the_block(self):
-        body = braced_body('["a"] {\n  // prose mentioning a } brace\n  x = 1\n}', '["a"]')
-        self.assertIn("x = 1", body)
-
-    def test_a_brace_in_a_quoted_value_does_not_close_the_block(self):
-        """Unbalanced on purpose. Balanced braces in a value hold nothing:
-        a scanner that counted them would return the same body."""
-        body = braced_body('["a"] {\n  c = "run < }"\n  x = 1\n}', '["a"]')
-        self.assertIn("x = 1", body)
-
-    def test_a_comment_marker_inside_a_quoted_value_is_not_a_comment(self):
-        body = braced_body('["a"] {\n  c = "https://example.invalid"\n  x = 1\n}', '["a"]')
-        self.assertIn("x = 1", body)
-
-    def test_an_escaped_quote_does_not_end_a_quoted_value(self):
-        body = braced_body('["a"] {\n  c = "a \\" }"\n  x = 1\n}', '["a"]')
-        self.assertIn("x = 1", body)
-
-    def test_a_key_that_exists_only_in_a_comment_is_not_found(self):
-        """The search runs over the mask too, not just the brace counting.
-
-        Commenting a block out is how a step is disabled, so a commented one
-        must not read as a declaration. When only the depth loop skipped
-        comments, this returned the commented block's body and the end-to-end
-        fixture could not object -- it installs whatever this returns.
-        """
-        # A live sibling follows, so a search over raw text does not merely
-        # return None here -- it finds the commented key and then the *next*
-        # real brace, and hands back a body belonging to something else.
-        text = '["a"] {\n  // ["b"] { c = "commented" }\n  ["c"] { c = "other" }\n}'
-        self.assertIsNone(braced_body(text, '["b"]', within=braced_body(text, '["a"]')))
-
-    def test_a_commented_brace_between_a_key_and_its_block_is_not_the_opening(self):
-        """The step lookup runs over the mask for the reason the hook lookup does."""
-        # Asserted exactly: a raw lookup opens at the *commented* brace, and
-        # the body it returns still holds `live` -- it just starts too early.
-        text = '["a"] {\n  ["b"] /* { */ { c = "live" }\n}'
-        body = braced_body(text, '["b"]', within=braced_body(text, '["a"]'))
-        self.assertEqual(body, ' c = "live" ')
-
-    def test_a_live_key_is_found_past_a_commented_copy_of_itself(self):
-        """And the mask must not hide the real one behind the commented one."""
-        text = '["a"] {\n  // ["b"] { c = "commented" }\n  ["b"] { c = "live" }\n}'
-        body = braced_body(text, '["b"]', within=braced_body(text, '["a"]'))
-        self.assertIn("live", body)
-        self.assertNotIn("commented", body)
-
-    def test_a_commented_check_is_not_the_declaration(self):
-        """The check lookup, over a fragment the real `hk.pkl` cannot provide.
-
-        Commenting a line out and writing its replacement below is the
-        ordinary shape of a configuration edit, and this is the read that
-        decides what the end-to-end fixture installs -- so a `check` taken
-        from a comment is a command that fixture runs while hk runs another.
-        """
-        step = (
-            '                // check = "mise run --quiet commits:message < {{f}}"\n'
-            '                check = "true"\n'
-        )
-        self.assertEqual(declared_check(step), "true")
-
-    def test_a_live_check_is_read_whole_past_a_commented_one(self):
-        step = (
-            '                // check = "the old command"\n'
-            '                check = "mise run --quiet commits:message < {{f}}"\n'
-        )
-        self.assertEqual(declared_check(step), "mise run --quiet commits:message < {{f}}")
-
-    def test_a_step_with_only_a_commented_check_declares_none(self):
-        step = '                // check = "mise run --quiet commits:message < {{f}}"\n'
-        with self.assertRaises(AssertionError):
-            declared_check(step)
-
-    def test_a_masked_match_can_be_sliced_back_out_of_the_source(self):
-        """Why the caller locates on the mask and slices the source.
-
-        The mask neutralises `{` and `}` inside a value, so reading a match's
-        group off the mask returns a command with `{{commit_msg_file}}`
-        blanked away. `declared_commit_msg_check` takes the offsets from the
-        mask and the characters from the source for exactly this reason.
-        """
-        source = 'check = "run < {{f}}"'
-        mask = masked_source(source)
-        self.assertEqual(len(mask), len(source))
-        found = re.search(r'check\s*=\s*"(.*?)"\s*$', mask)
-        masked = mask[found.start(1) : found.end(1)]
-        self.assertNotIn("{", masked)
-        self.assertNotIn("}", masked)
-        self.assertEqual(source[found.start(1) : found.end(1)], "run < {{f}}")
-
-    def test_a_key_the_region_does_not_hold_is_absent(self):
-        """What containment is for: a sibling block's step is not this one's."""
-        text = '["a"] {\n  ["step"] { x = 1 }\n}\n["b"] {\n  ["other"] { y = 2 }\n}'
-        self.assertIsNone(braced_body(text, '["other"]', within=braced_body(text, '["a"]')))
-        self.assertIsNotNone(braced_body(text, '["step"]', within=braced_body(text, '["a"]')))
-
-    def test_an_unterminated_block_is_absent_rather_than_truncated(self):
-        self.assertIsNone(braced_body('["a"] {\n  x = 1\n', '["a"]'))
-
-
-class HkWouldRunTheStep(unittest.TestCase):
-    """Whether hk runs the step, asked of hk rather than inferred from its file.
-
-    Every read this suite makes out of `hk.pkl` is about *what* the
-    `conventional-commit` step runs: the end-to-end fixture installs that
-    command and drives a real merge through it. None of them says *whether* hk
-    would run the step at all, and a step hk skips still hands that fixture a
-    command to install, run and pass on while the real hook runs nothing.
-
-    Inferring the answer from the file's text does not work, and the reason is
-    structural rather than a matter of covering more keys. Pkl merges object
-    entries that share a key and hk applies the merged result, so a second
-    `["conventional-commit"]` entry carrying `step_condition = "false"`, or a
-    second `["commit-msg"]` entry beside this hook's, is authoritative to hk
-    and invisible to any scan that resolves a key to its first occurrence. hk
-    also reads settings that are not in the step at all -- module-level
-    `skip_steps` and `skip_hooks` -- which no reading of a step can see.
-
-    So hk is asked, twice, because one question does not answer the other.
-    `hk run commit-msg --plan --json` reports per step whether this hook would
-    include it, which is where a skipped step, a renamed one, a step moved to
-    another hook and both merged-entry shapes surface. `hk config dump`
-    reports the settings hk merged from every source, which is where a skipped
-    *hook* surfaces -- under `skip_hooks = List("commit-msg")` the plan still
-    reports this step `included` while `hk run commit-msg` exits 0 having run
-    nothing.
-    """
-
-    def test_hk_plans_to_run_the_conventional_commit_step(self):
-        """hk's own answer for this repository, over this repository's file."""
-        self.assertEqual(
-            planned_status(commit_msg_plan(), "conventional-commit"),
-            "included",
-            "hk does not plan to run the `conventional-commit` step of the "
-            "`commit-msg` hook, so the command the fixtures read out of "
-            "`hk.pkl` is one no commit would run",
-        )
-
-    def test_hk_skips_no_hook_named_commit_msg(self):
-        """The half of the same question the plan cannot see."""
-        self.assertNotIn(
-            "commit-msg",
-            skipped_hooks(hk_answer("config", "dump")),
-            "hk's effective configuration skips the `commit-msg` hook, so no "
-            "step declared under it runs whatever the plan for it says",
-        )
-
-    def test_a_step_hk_plans_to_skip_is_reported_as_skipped(self):
-        """Invisible from this repository's own `hk.pkl`, which is not disarmed.
-
-        The document below is hk 1.53.0's, emitted in a throwaway export with
-        `step_condition = "false"` inserted into the real step: `hk validate`
-        green, the `check` line untouched, and `hk run commit-msg` exit 0 over
-        a merge subject having run no step.
-        """
-        skipped = {
-            "hook": "commit-msg",
-            "runType": "check",
-            "steps": [
-                {
-                    "name": "conventional-commit",
-                    "status": "skipped",
-                    "orderIndex": 0,
-                    "reasons": [
-                        {
-                            "kind": "condition_false",
-                            "detail": "step_condition evaluated to false: false",
-                        }
-                    ],
-                    "fileCount": 0,
-                }
-            ],
-        }
-        self.assertEqual(planned_status(skipped, "conventional-commit"), "skipped")
-
-    def test_a_plan_naming_no_such_step_is_an_error(self):
-        """Deleting the step, moving it out of the hook, or renaming it.
-
-        Measured on hk 1.53.0: with the step deleted, and again with it moved
-        under `pre-push`, the plan for `commit-msg` is `"steps": []`; renamed,
-        it carries the new name alone. Reading a status off whichever step is
-        present would report `included` for the renamed case, which is the one
-        shape here that has a step to read.
-        """
-        for plan in (
-            {"hook": "commit-msg", "steps": []},
-            {
-                "hook": "commit-msg",
-                "steps": [{"name": "conventional-commit-renamed", "status": "included"}],
-            },
-        ):
-            with self.assertRaises(AssertionError):
-                planned_status(plan, "conventional-commit")
-
-    def test_a_configuration_carrying_no_skip_hooks_is_an_error(self):
-        """A renamed setting must not read as "nothing is skipped".
-
-        The safe answer to this question is an empty list, so a shape the
-        setting cannot be found in is the one shape that would pass silently
-        for as long as it lasted.
-        """
-        with self.assertRaises(AssertionError):
-            skipped_hooks({"skip_steps": []})
+    return located.stdout.strip()
 
 
 class GateTestCase(unittest.TestCase):
@@ -720,7 +235,7 @@ class GateTestCase(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.repository = Path(directory.name)
 
-        self.env = {**scrubbed_environment(), **HERMETIC}
+        self.env = hermetic_environment()
         self.git("-c", "init.defaultBranch=main", "init", "-q", ".")
 
     # -- the repositories -------------------------------------------------
@@ -909,54 +424,158 @@ class BothHalvesOverOneMerge(GateTestCase):
         self.assertAccepted(self.range_gate(self.base))
 
 
-class RealMergeThroughARealHook(GateTestCase):
-    """The reported symptom, observed rather than cited.
+class TheGateHkRuns(GateTestCase):
+    """The gate hk actually runs, asked what it did rather than what it declares.
 
     Issue #132 is `git merge` printing `Not committing merge; use 'git commit'
     to complete the merge.` The ordering the whole fix rests on -- that git
-    writes MERGE_HEAD before it runs `commit-msg` -- was supported by a reading
-    of `builtin/merge.c`. Here it is an observation: a real merge, through the
-    real hook command, in a repository that exists for eight lines.
+    writes MERGE_HEAD before it runs `commit-msg` -- was once supported by a
+    reading of `builtin/merge.c`. Here it is an observation: a real merge,
+    through the real gate, in a repository that exists for the length of one
+    case.
 
-    The hook runs the command `hk.pkl` declares, read out of `hk.pkl`. It is
-    written into the *fixture's* `.git/hooks`, which is that repository's own
-    and is deleted with it. Nothing is installed into this clone, and no
-    `--local` git config is written anywhere.
+    The hook installed below is `hk run commit-msg`, so hk reads this
+    repository's own `hk.pkl`, resolves whatever the `commit-msg` hook declares
+    after Pkl has merged every entry that shares a key and after every setting
+    hk merges from every source, decides for itself whether to run the step,
+    and answers with an exit code that `git commit` and `git merge` obey. Three
+    readings of that one exit code are what this class is:
+
+        no merge, a non-conforming subject   -> the commit is refused
+        no merge, a Conventional subject     -> the commit is written
+        a merge in progress, its own subject -> the merge commit is written
+
+    That is one assertion about an outcome in place of an enumeration of
+    causes, and it is why nothing here reads `hk.pkl` at all. Every way of
+    turning the step off is a way of turning the first reading green: renaming
+    the step, deleting it, moving it under another hook, dropping its
+    `< {{commit_msg_file}}` redirect, a `shell` or a `prefix` of `true`, a
+    `check` of `true` on a merged duplicate `["conventional-commit"]` entry, a
+    second `["commit-msg"]` hook entry, a module-level `skip_steps` or
+    `skip_hooks`, a fix-only run, an `hk.local.pkl` in the project root, or a
+    key hk has not shipped yet. A scan of the file's text can be blind to any
+    of those; the exit code is blind to none of them, because it is the result
+    and they are the causes.
+
+    The second and third readings are what stop the first from being satisfied
+    by a gate that refuses everything, which is the failure mode a
+    disarm-detector has instead of the one it replaced.
+
+    Nothing is installed into this clone and no `--local` git config is written
+    anywhere: the hook is the *fixture's* own `.git/hooks/commit-msg`, and it
+    is deleted with the fixture. `GIT_DIR` is the fixture's too, so the merge
+    state hk's step reads is the fixture's merge state and never the state of
+    the repository the suite is being run in.
     """
 
     def setUp(self):
         super().setUp()
-        self.base = self.diverging_branches()
+        self.changes = 0
+        self.diverging_branches_carrying_files()
 
         hook = self.repository / ".git" / "hooks" / "commit-msg"
         hook.parent.mkdir(parents=True, exist_ok=True)
-        # The two prologue lines are this fixture's boundary, and they are what
-        # makes it pass. `mise run` resolves `mise.toml` from its config's
-        # directory, so the command has to run from the project root -- and
-        # once it does, `GIT_DIR` has to be carried in, because git does not
-        # export one to a `commit-msg` hook. In the real repository those two
-        # lines are unnecessary: hk already runs from the root, and that root
-        # is the repository being committed to.
+        # The prologue is this fixture's boundary, and it is what makes the
+        # fixture hermetic rather than what makes it pass. hk resolves `hk.pkl`
+        # and `mise.toml` from where it runs, so it has to run at the project
+        # root -- and once it does, `GIT_DIR` has to be carried in, because git
+        # does not export an absolute one to a `commit-msg` hook. In the real
+        # repository neither line is needed: hk already runs from the root, and
+        # that root is the repository being committed to.
         #
-        # So what this case proves is git's ordering -- that MERGE_HEAD is
-        # written before `commit-msg` runs -- over the command `hk.pkl`
-        # actually declares. What it does not prove is that the step works in
-        # the environment hk hands it, since two lines of that environment are
-        # supplied here. `LinkedWorktree.test_the_guard_finds_the_repository_itself`
-        # is what covers the guard with no `GIT_DIR` supplied at all.
-        command = declared_commit_msg_check().replace("{{commit_msg_file}}", '"$message"')
+        # Carrying `GIT_DIR` in is also the whole reason this is hermetic. The
+        # step's exemption is `git rev-parse --git-path MERGE_HEAD`, and under
+        # the fixture's `GIT_DIR` that resolves inside the fixture. Somebody
+        # running `mise run check` in the middle of their own merge gets the
+        # same three answers as somebody running it on a clean tree.
         hook.write_text(
             "#!/bin/sh\n"
             'GIT_DIR="$(git rev-parse --absolute-git-dir)"\n'
             "export GIT_DIR\n"
             'message="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"\n'
             'cd "' + str(ROOT) + '" || exit 1\n'
-            "exec " + command + "\n"
+            'exec "' + hk_binary() + '" run commit-msg "$message"\n'
         )
         hook.chmod(0o755)
 
-    def test_a_real_merge_completes_through_the_hook(self):
-        """`git merge --no-ff` writes its own merge commit. Issue #132, closed."""
+    def stage_a_change(self):
+        """One Rust source and one Markdown document, staged.
+
+        A commit needs something to commit, and these cases drive real
+        `git commit` and `git merge` invocations, so the fixture supplies it.
+
+        What the staged files do *not* do is exercise hk's file selection, and
+        that wants saying because it reads as though they should. Measured on
+        hk 1.53.0 under `HK_LOG=debug`: over a `commit-msg` hook the file set
+        hk builds is the message file alone -- `files: {"MSG"}`, the staged
+        sources absent -- and it runs this step over `0 files`. A `glob`,
+        `types` or `exclude` key on the step therefore narrows that set to
+        nothing at *every* value, `glob = "*"` included, and hk skips the step
+        reporting `all files deleted before execution`.
+
+        The residual, so this class's claim is not read as larger than it is:
+        those three keys are caught here on the fixture's file set rather than
+        on a real commit's, where the message file is one hk resolves against
+        the directory it runs in. `hk.pkl` records the same where the keys
+        would be declared.
+        """
+        self.changes += 1
+        source = self.repository / f"change-{self.changes}.rs"
+        source.write_text(f"pub fn change_{self.changes}() {{}}\n")
+        document = self.repository / f"change-{self.changes}.md"
+        document.write_text(f"# change {self.changes}\n")
+        self.git("add", source.name, document.name)
+
+    def diverging_branches_carrying_files(self):
+        """`diverging_branches`, with a file on every commit and no range.
+
+        The ancestor is not returned because no case here walks a range, and
+        the sides are not empty because the merge has to carry a file across
+        for the step to have anything to select.
+        """
+        self.stage_a_change()
+        self.git("commit", "-q", "--no-verify", "-m", "feat: the common ancestor")
+        self.git("switch", "-q", "-c", "topic")
+        self.stage_a_change()
+        self.git("commit", "-q", "--no-verify", "-m", "feat: the topic side")
+        self.git("switch", "-q", "main")
+        self.stage_a_change()
+        self.git("commit", "-q", "--no-verify", "-m", "feat: the trunk side")
+
+    def commit(self, subject, environment=None):
+        """One ordinary commit, carrying a change, put to the gate hk runs."""
+        self.stage_a_change()
+        return subprocess.run(
+            ["git", "commit", "-m", subject],
+            cwd=self.repository,
+            env=environment or self.env,
+            capture_output=True,
+            text=True,
+        )
+
+    def assert_refused(self, attempt, before):
+        self.assertNotEqual(
+            attempt.returncode,
+            0,
+            f"the gate hk runs let the subject past\n"
+            f"stdout:\n{attempt.stdout}\nstderr:\n{attempt.stderr}",
+        )
+        self.assertIn(
+            REJECTION,
+            attempt.stdout + attempt.stderr,
+            "the gate hk runs exited non-zero without convco reporting on the "
+            f"subject\nstdout:\n{attempt.stdout}\nstderr:\n{attempt.stderr}",
+        )
+        self.assertEqual(before, self.git("rev-parse", "HEAD").stdout.strip())
+
+    def test_a_real_merge_completes_through_the_gate(self):
+        """`git merge --no-ff` writes its own merge commit. Issue #132, closed.
+
+        The exemption, end to end: git writes MERGE_HEAD, runs `commit-msg`,
+        hk runs the step, the step reads the file git wrote, and the merge
+        commit exists. Every link is real, and the ordering the fix rests on is
+        observed here rather than cited.
+        """
         merged = subprocess.run(
             ["git", "merge", "--no-ff", "topic"],
             cwd=self.repository,
@@ -974,26 +593,48 @@ class RealMergeThroughARealHook(GateTestCase):
         self.assertEqual(len(parents), 3, "the merge did not produce a two-parent commit")
         self.assertFalse(self.merge_head(), "the merge left a merge in progress")
 
-        # And the half that walks a range agrees about what the hook let past.
-        self.assertAccepted(self.range_gate(self.base))
-
-    def test_the_hook_still_refuses_an_ordinary_commit(self):
-        """The control. Without it the case above passes for a dead hook.
+    def test_the_gate_refuses_a_merge_subject_with_no_merge_in_progress(self):
+        """The reading every disarm turns green, and the one that catches them.
 
         A one-parent commit carrying a merge-shaped subject has to be refused,
-        and `HEAD` has to be where it was.
+        by convco's own words, with `HEAD` where it was. A step hk does not run
+        -- for any of the reasons in this class's docstring -- fails here and
+        nowhere else.
         """
+        self.assertFalse(self.merge_head(), "the fixture left a merge in progress")
         before = self.git("rev-parse", "HEAD").stdout.strip()
-        refused = subprocess.run(
-            ["git", "commit", "--allow-empty", "-m", "Merge branch 'nothing'"],
-            cwd=self.repository,
-            env=self.env,
-            capture_output=True,
-            text=True,
+        self.assert_refused(self.commit("Merge branch 'nothing'"), before)
+
+    def test_the_gate_accepts_a_conventional_subject(self):
+        """The reading that stops the one above from passing for a gate that
+        refuses everything -- a `check` of `false` rather than of `true`."""
+        before = self.git("rev-parse", "HEAD").stdout.strip()
+        written = self.commit(CONVENTIONAL_SUBJECT.strip())
+        self.assertEqual(
+            written.returncode,
+            0,
+            f"the gate hk runs refused a Conventional Commit\n"
+            f"stdout:\n{written.stdout}\nstderr:\n{written.stderr}",
         )
-        self.assertNotEqual(refused.returncode, 0, "the hook let a one-parent merge subject past")
-        self.assertIn(REJECTION, refused.stdout + refused.stderr)
-        self.assertEqual(before, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertNotEqual(before, self.git("rev-parse", "HEAD").stdout.strip())
+
+    def test_an_exported_hk_skip_does_not_reach_the_gate(self):
+        """`HK_SKIP_STEPS` in somebody's shell is not this repository's answer.
+
+        Measured on hk 1.53.0: exported into `hk run commit-msg`, both
+        `HK_SKIP_STEPS=conventional-commit` and `HK_SKIP_HOOK=commit-msg` make
+        it exit 0 over a merge subject having run nothing. That escape hatch is
+        committed nowhere, so `hermetic_environment` strips the whole `HK_*`
+        namespace before any fixture sees it -- and this is the case that holds
+        the strip, since every other case here would pass without it.
+        """
+        exported = mock.patch.dict(os.environ, {"HK_SKIP_STEPS": "conventional-commit"})
+        exported.start()
+        self.addCleanup(exported.stop)
+        before = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assert_refused(
+            self.commit("Merge branch 'nothing'", environment=hermetic_environment()), before
+        )
 
 
 class LinkedWorktree(GateTestCase):
@@ -1180,7 +821,7 @@ class AmbientGitEnvironment(GateTestCase):
         subprocess.run(
             ["git", "-c", "init.defaultBranch=main", "init", "-q", "."],
             cwd=self.decoy,
-            env={**scrubbed_environment(), **HERMETIC},
+            env=hermetic_environment(),
             capture_output=True,
             check=True,
         )
@@ -1205,7 +846,7 @@ class AmbientGitEnvironment(GateTestCase):
         return subprocess.run(
             ["git", *arguments],
             cwd=self.decoy,
-            env={**scrubbed_environment(), **HERMETIC},
+            env=hermetic_environment(),
             capture_output=True,
             text=True,
         )
