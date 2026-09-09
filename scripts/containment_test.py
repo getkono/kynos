@@ -471,6 +471,34 @@ class GatePolarity(unittest.TestCase):
             )
         )
 
+    def test_either_polarity_names_the_flag_for_the_offender_scan(self):
+        # `named`, which is what the offender scan asks and the one question
+        # here that reads no polarity: a site naming the flag is a site the row
+        # has to cover, whichever way its gate reads.
+        matcher = self.matcher('`feature = "uuid"`')
+        self.assertTrue(matcher.named('#[cfg(feature = "uuid")]\nfn f() {}\n'))
+        self.assertTrue(matcher.named('#[cfg(not(feature = "uuid"))]\nfn f() {}\n'))
+
+    def test_a_negated_cell_names_the_flag_at_either_polarity_too(self):
+        # The same, from the other cell. A row writing the negation is asking
+        # about the same file the positive one is.
+        matcher = self.matcher('`not(feature = "openapi31")`')
+        self.assertTrue(
+            matcher.named('#[cfg(not(feature = "openapi31"))]\ncompile_error!("no");\n')
+        )
+        self.assertTrue(matcher.named('#[cfg(feature = "openapi31")]\nfn f() {}\n'))
+
+    def test_a_documentation_annotation_names_the_flag_at_no_polarity(self):
+        # Blind to the polarity, and not to the predicate: the annotation
+        # compiles nothing in any configuration, so it is a site of nothing at
+        # either polarity. Reading `named` as a text match passes this fixture
+        # and reinstates the false positive half of #134.
+        self.assertFalse(
+            self.matcher('`feature = "uuid"`').named(
+                '#[cfg_attr(docsrs, doc(cfg(feature = "uuid")))]\npub fn f() {}\n'
+            )
+        )
+
     def test_a_documentation_annotation_is_not_a_gate(self):
         self.assertFalse(
             self.matcher('`feature = "uuid"`').search(

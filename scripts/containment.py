@@ -439,36 +439,36 @@ NAMED_BY = re.compile(r"`?(\w+(?:\s*::\s*\w+)*)`?")
 # rule. `feature = "x"` names what the flag compiles when it is on;
 # `not(feature = "x")` names what it compiles when it is off, which is the whole
 # of what the `openapi31` row has to hold -- both of its sites are
-# `#[cfg(not(feature = "openapi31"))] compile_error!`. Reading either polarity
-# for existence instead would make existence strictly weaker than the offender
-# scan, which this file requires to run over the same corpus its existence was
-# asked of, and would leave the row unable to say which polarity it holds.
+# `#[cfg(not(feature = "openapi31"))] compile_error!`. A cell read at either
+# polarity could not say which one it holds, and saying so is what it is for.
 #
-# The cost, recorded because it is a narrowing and not a fix: what a cell
-# writing one polarity does not catch is the other. The `openapi31` row writes
-# the negation, so a positive `#[cfg(feature = "openapi31")]` at a site that row
-# does not allow now passes, where matching the string as text failed it.
+# That is the *existence* check. The offender scan reads no polarity at all, and
+# the two questions are split for that reason: `Gate.search` answers the cell's
+# claim, `Gate.named` answers whether a site names the flag. What a site owes a
+# row does not turn on which way its gate reads -- `not(feature = "x")` compiles
+# code in every build the flag is off in, and the row's reason either covers
+# that build or does not cover the site. Reading the polarity in both places
+# left a cell catching one half of its own claim, and for the four rows whose
+# element has no companion identifier -- `test-util`, `time`, `decimal`,
+# `openapi31` -- there was nothing else to catch the other half, so the loss was
+# total. Negated gates are idiom here rather than a corner: `lib.rs` writes four.
 #
-# Forced rather than chosen. A cell writing both spellings is refused: the row
-# loop below holds every spelling to matching something, so the positive one
-# empties and fails the build. Run against the real tree, not assumed.
+# Existence stays the narrower of the two, which is the safe direction: a row
+# cannot be held up by a mention the offender scan would not have counted.
 #
-# And a tautology here, which is why the narrowing is affordable.
-# `kynos-openapi` declares `default = ["openapi31"]` and
-# `openapi32 = ["openapi31"]`, and both sites of the flag are the
-# `compile_error!` that refuses a build without it, so no build that compiles
-# has it off and a positive gate on it is code that cannot exist. Nothing in the
-# two trees this row is scanned in has ever written the positive form, and
-# `git log --all -S'cfg(feature = "openapi31")' -- crates/` returns nothing --
-# though that string is blind to a multi-line predicate, and one exists:
-# `crates/kynos/tests/matrix.rs` writes the flag positively inside a
+# A cell writing both spellings is refused all the same, and by the row loop
+# rather than by a rule about cells: every spelling is held to matching
+# something, so over this tree the positive `openapi31` spelling empties and
+# fails the build. Run against the real tree, not assumed. `kynos-openapi`
+# declares `default = ["openapi31"]` and `openapi32 = ["openapi31"]`, and both
+# sites of the flag are the `compile_error!` that refuses a build without it, so
+# no build that compiles has it off and a positive gate on it is code that
+# cannot exist. `git log --all -S'cfg(feature = "openapi31")' -- crates/`
+# returns nothing -- though that string is blind to a multi-line predicate, and
+# one exists: `crates/kynos/tests/matrix.rs` writes the flag positively inside a
 # `#![cfg(all(...))]`, and `-S` is blind to any compound predicate rather than
 # only to one broken across lines. That file is under `crates/kynos/tests/`,
 # outside both scanned trees, so the row is unaffected and the idiom is real.
-# Restoring the class means tolerating a stale gate *spelling* the way the row
-# loop already tolerates a stale *site* -- "a site claims a location, and
-# locations may empty out while the claim stays true" -- which is a change to
-# what a spelling claims, and belongs to whoever needs it rather than here.
 GATE = re.compile(r'`?feature\s*=\s*"([\w-]+)"`?')
 NEGATED_GATE = re.compile(r'`?not\(\s*feature\s*=\s*"([\w-]+)"\s*\)`?')
 # Where a predicate starts. `cfg_attr` is here for its predicate, which
@@ -489,18 +489,23 @@ NEGATION = re.compile(r"\bnot\s*\(")
 class Gate:
     """One gate spelling, matched against the `#[cfg]` predicate around it.
 
-    `.search(text)` like a compiled pattern's, so every call site that had one
-    is unchanged -- a bool rather than a match object, since all three consumers
-    read it in boolean context.
+    `.search(text)` like a compiled pattern's -- a bool rather than a match
+    object, since every consumer reads it in boolean context -- and `.named`
+    beside it for the one caller that must not read a polarity. `Name` answers
+    both for an identifier spelling, so the row loop asks every spelling the
+    same two questions.
 
     Text matching could not answer what a gate spelling asks. `feature = "uuid"`
     is written by the gate; by `not(feature = "uuid")`, which compiles code only
     where the flag is *off*; and by `#[cfg_attr(docsrs, doc(cfg(...)))]`, which
     compiles nothing in any configuration. All three read alike as text, so an
     offender scan over one reported a row broken by the other two. The predicate
-    is read instead: every `#[cfg(`, `#![cfg(` and `#[cfg_attr(` is walked with
-    its parentheses balanced, and the flag counts only where the parity of the
-    `not(` groups enclosing it is the one the spelling asked for.
+    is read instead: every `#[cfg(`, `#![cfg(`, `#[cfg_attr(` and
+    `#![cfg_attr(` is walked with its parentheses balanced, and `search` counts
+    the flag only where the parity of the `not(` groups enclosing it is the one
+    the spelling asked for. `named` counts it at either parity and nowhere
+    else, which is what separates a polarity a cell claims from a flag a file
+    names.
 
     Anchoring on `#[cfg(feature = "x")]` instead was measured against this tree
     and is wrong on it, not merely in principle: `lib.rs` names `time` and
@@ -525,8 +530,35 @@ class Gate:
         """Whether any attribute in `text` names this flag at this polarity."""
         return any(self.names(text, found) for found in ATTRIBUTE.finditer(text))
 
-    def names(self, text, attribute):
-        """Whether one `attribute` names this flag at this polarity.
+    def named(self, text):
+        """Whether any attribute in `text` names this flag at either polarity.
+
+        What the offender scan asks, where `search` is what the existence check
+        asks. A cell states a polarity and the existence check holds it to that
+        one, because that is the claim the cell makes. Whether a *site* is one
+        the row has to cover is a different question and does not turn on the
+        polarity: `not(feature = "x")` names the flag and couples the file to
+        it, and what it compiles exists in every build the flag is off in --
+        which is a build the row's reason says nothing about. Reading the
+        polarity here answered half of what a row claims, and for a row whose
+        element has no companion identifier -- `test-util`, `time`, `decimal`,
+        `openapi31` -- it answered none of it.
+
+        Blind to the polarity alone, and not a text match. A
+        `#[cfg_attr(docsrs, doc(cfg(feature = "x")))]` compiles nothing in any
+        configuration and names the flag at no polarity, which is the false
+        positive half of #134 and stays fixed.
+        """
+        return any(
+            self.names(text, found, polarity=False)
+            for found in ATTRIBUTE.finditer(text)
+        )
+
+    def names(self, text, attribute, polarity=True):
+        """Whether one `attribute` names this flag, at this polarity or at any.
+
+        `polarity=False` is `named`'s question: the flag counts wherever the
+        walk reaches it, whatever the parity of the `not(` groups around it.
 
         A `cfg_attr` is walked as far as its predicate and stops at the comma,
         and that asymmetry is decided rather than incidental. "Compiles
@@ -565,7 +597,7 @@ class Gate:
                 parity.append(not parity[-1])
                 i = found.end()
             elif found := self.pattern.match(text, i):
-                if parity[-1] == self.negated:
+                if not polarity or parity[-1] == self.negated:
                     return True
                 i = found.end()
             elif text[i] == "(":
@@ -590,6 +622,28 @@ class Gate:
         # the walk runs to the end of the text reporting nothing -- the posture
         # `test_module_spans` takes for the same reason.
         return False
+
+
+class Name:
+    """One identifier spelling, matched as the text it is.
+
+    `Gate`'s counterpart, and it exists so that the row loop can ask every
+    spelling both of its questions without asking which kind it holds. A name
+    has no polarity to read, so "does anything write this spelling" and "does
+    anything outside the row's sites write it" are the same question here and
+    two questions in `Gate`.
+    """
+
+    def __init__(self, pattern):
+        self.pattern = pattern
+
+    def search(self, text):
+        """Whether `text` writes this spelling."""
+        return self.pattern.search(text) is not None
+
+    def named(self, text):
+        """The same question. There is no polarity in a name to be blind to."""
+        return self.search(text)
 
 
 BACKTICKED = re.compile(r"`([^`]+)`")
@@ -645,9 +699,11 @@ def token(cell):
     elements sharing a reason written twice.
 
     A gate spelling may be written negated -- `not(feature = "x")` -- and then
-    matches only where the flag compiles code by being *off*. Its matcher is a
+    exists only where the flag compiles code by being *off*. Its matcher is a
     `Gate` rather than a compiled pattern, because the spelling is a claim about
-    the `#[cfg]` predicate around the string and not about the string.
+    the `#[cfg]` predicate around the string and not about the string. An
+    identifier's matcher is a `Name`, which answers the same two questions a
+    `Gate` does with the same answer, since a name has no polarity.
 
     Which corpus a spelling is matched over is `gate` in each triple: an
     identifier over `sources`, a gate over `gate_sources`. The two differ in
@@ -683,7 +739,7 @@ def token(cell):
             segments = [re.escape(part.strip()) for part in readable.group(1).split("::")]
             pattern = r"\s*::\s*".join(segments)
             spellings.append(
-                (readable.group(1), re.compile(r"\b" + pattern + r"\b"), False)
+                (readable.group(1), Name(re.compile(r"\b" + pattern + r"\b")), False)
             )
     return spellings
 
@@ -1330,12 +1386,18 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
         # row cannot be held up by a mention the offender scan would not have
         # counted. A file counts as naming the element if any one spelling matches
         # it, in that spelling's own text.
+        #
+        # `named` rather than `search`, which is the one place the two differ: a
+        # gate spelling states a polarity and is held to it above, where what is
+        # under test is the cell's claim, and reads either polarity here, where
+        # what is under test is the site. A flag named negatively is a flag this
+        # file compiles code on.
         named = sorted(
             {
                 path
                 for _, pattern, gate in spellings
                 for path, text in (corpus.gate_files if gate else corpus.files)
-                if any(path.startswith(tree) for tree in trees) and pattern.search(text)
+                if any(path.startswith(tree) for tree in trees) and pattern.named(text)
             }
         )
         if offenders := [path for path in named if path not in allowance]:
