@@ -656,6 +656,43 @@ class TheGateHkRuns(GateTestCase):
         )
         self.assertNotEqual(before, self.git("rev-parse", "HEAD").stdout.strip())
 
+    def test_the_step_is_selected_over_the_files_the_commit_stages(self):
+        """hk's file set here is a real commit's, which is its staged files.
+
+        hk builds a `commit-msg` step's file set from the repository the hook
+        was invoked for, and that set is the commit's staged and modified
+        files -- the message file is not in it. The set is what a `glob`, a
+        `types` or an `exclude` key on the step would be matched against, so a
+        fixture whose set comes out empty answers for all three at every
+        value: it reports `glob = "*"`, which selects everything staged and
+        disarms nothing, exactly as it reports a `glob` matching no file,
+        which disarms the gate outright.
+
+        Read out of hk's own `HK_LOG=debug` line rather than inferred,
+        because the exit code the rest of this class reads cannot see it: with
+        no file-selecting key declared, hk runs the step over an empty set as
+        readily as over a full one, and the gate refuses the subject either
+        way.
+        """
+        before = self.git("rev-parse", "HEAD").stdout.strip()
+        attempt = self.commit(
+            "Merge branch 'nothing'", environment={**self.env, "HK_LOG": "debug"}
+        )
+        self.assert_refused(attempt, before)
+        selected = re.search(r"^DEBUG files: \{(.*)\}$", attempt.stderr, re.MULTILINE)
+        self.assertIsNotNone(
+            selected,
+            f"hk logged no file set to read\nstderr:\n{attempt.stderr}",
+        )
+        for name in (f"change-{self.changes}.rs", f"change-{self.changes}.md"):
+            self.assertIn(
+                name,
+                selected.group(1),
+                "hk selected none of the files this commit staged, so this "
+                "fixture answers for a `glob`, `types` or `exclude` key at "
+                f"every value\nhk selected: {{{selected.group(1)}}}",
+            )
+
     def test_an_exported_hk_skip_does_not_reach_the_gate(self):
         """`HK_SKIP_STEPS` in somebody's shell is not this repository's answer.
 
