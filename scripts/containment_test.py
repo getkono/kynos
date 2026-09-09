@@ -1041,6 +1041,9 @@ class Main(unittest.TestCase):
     #: `architecture.md`'s count of hand-rolled `Stream` sites, read as written
     #: so a case does not depend on today's number.
     SITE_COUNT = re.compile(r"(\*\*One public row, )\w+( sites, and the count is the check\*\*)")
+    #: Where `probing` writes its gate: a file the tree does not have, under a
+    #: directory no off-path row allows a feature gate in.
+    PROBE = "crates/kynos/src/router/probe.rs"
 
     def report(self, **given):
         """`main`'s status and what it reported, with its own output held.
@@ -1112,6 +1115,18 @@ class Main(unittest.TestCase):
             # whole document twice for want of a truncation.
             self.fail(f"this fixture no longer anchors on: {anchor!r}")
         return document.replace(anchor, replacement, 1)
+
+    def probing(self, attribute):
+        """The real corpus with one gated function at a site no row allows.
+
+        `router/` is where no off-path row's *Named only in* cell reaches for a
+        feature gate, and the file is one the tree does not have, so nothing
+        else in the corpus moves and the only rule the fixture reaches is the
+        offender scan of the row whose flag `attribute` names.
+        """
+        return gate.WORKSPACE.replacing(
+            self.PROBE, f"{attribute}\npub fn probe() {{}}\n"
+        )
 
     def appending(self, path, addition):
         """The real corpus with `addition` at the foot of `path`.
@@ -1510,6 +1525,40 @@ class Main(unittest.TestCase):
         offenders = [line.strip() for line in reported[0].split("\n")[1:] if line.strip()]
         self.assertTrue(offenders)
         self.assertNotIn(gate.OFF_PATH_SCOPE + site, offenders)
+
+    def test_a_flag_named_at_a_site_no_row_allows_is_reported(self):
+        # The offender scan again, reached through the corpus rather than
+        # through the table, and over a gate-only row: `test-util` has no
+        # companion identifier, so the gate is the whole of what names it and
+        # the row's cell allows `lib.rs` alone.
+        status, failures = self.report(
+            corpus=self.probing('#[cfg(feature = "test-util")]')
+        )
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "is off the request path")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("`test-util` feature", reported[0])
+        self.assertIn(self.PROBE, reported[0])
+
+    def test_a_flag_named_negatively_at_a_site_no_row_allows_is_reported(self):
+        # The same site and the same flag, gated on the flag being *off*. The
+        # row says a request cannot reach the element, and a
+        # `not(feature = "x")` names the flag and couples the site to it just
+        # as the positive form does: what it compiles is code that exists in
+        # every build the flag is off in, which is a build the row's reason
+        # says nothing about. Reading the polarity here narrowed the scan to
+        # one half of what a row claims, and for the four gate-only rows --
+        # `test-util`, `time`, `decimal`, `openapi31` -- there is no companion
+        # identifier to catch the other half, so the loss was total. Negated
+        # gates are live idiom in this workspace: `lib.rs` writes four.
+        status, failures = self.report(
+            corpus=self.probing('#[cfg(not(feature = "test-util"))]')
+        )
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "is off the request path")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("`test-util` feature", reported[0])
+        self.assertIn(self.PROBE, reported[0])
 
     def test_an_emptied_off_path_table_is_reported(self):
         # Every row dropped, header and separator left standing. Each per-row
