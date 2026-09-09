@@ -1995,6 +1995,49 @@ class Main(unittest.TestCase):
             "crates/kynos/src/http/body.rs: pub use probe_mod::...", reported[0]
         )
 
+    def test_a_pub_use_of_crate_self_or_super_is_reported(self):
+        # The three literal heads beside what the file declares.
+        # `DECLARED_MODULE` finds a module the same file opens, and `crate`,
+        # `self` and `super` name our own items while declaring nothing -- so
+        # dropping them leaves the rule holding only the shape the case above
+        # already writes, and every `pub use crate::…` in the crate goes
+        # unreported. All three in one fixture, since a case naming one leaves
+        # the other two droppable.
+        corpus = self.appending(
+            "crates/kynos/src/http/body.rs",
+            "\npub use crate::http::Body as A;\n"
+            "pub use self::Body as B;\n"
+            "pub use super::Body as C;\n",
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "re-publishes one of our own items")
+        self.assertEqual(len(reported), 1)
+        for head in ("crate", "self", "super"):
+            self.assertIn(
+                f"crates/kynos/src/http/body.rs: pub use {head}::...", reported[0]
+            )
+
+    def test_a_pub_use_in_lib_rs_is_exempt(self):
+        # The one exemption the scan makes, and the sibling of the presence
+        # case above: the same two lines in `http/body.rs` are reported, and in
+        # a `lib.rs` they are the crate root doing what CLAUDE.md says only it
+        # may -- "the crate root and `kynos::prelude` are the only curated
+        # shortcuts". Nothing distinguished an exemption from a rule that never
+        # fires, so deleting the branch cost nothing here.
+        #
+        # Held against a fixture rather than left to the intact-tree case
+        # above. That case catches the deletion today, and only because some
+        # `lib.rs` in this workspace happens to write such a `pub use`: a
+        # rename tomorrow takes the hold away without touching the rule or the
+        # case, and the failure it prints names every re-export in the crate
+        # rather than the branch that stopped guarding them.
+        corpus = self.appending(
+            "crates/kynos/src/lib.rs",
+            "\nmod probe_mod;\npub use probe_mod::Thing;\npub use crate::http::Body as A;\n",
+        )
+        self.assertEqual(self.report(corpus=corpus), (0, []))
+
     def test_a_todo_body_is_reported(self):
         # The placeholder scan. Written as a body rather than in a doc example,
         # which is where every `todo!()` the tree really holds sits and which
