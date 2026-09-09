@@ -1074,12 +1074,22 @@ class Main(unittest.TestCase):
     That rule has been **swept across this suite**, not merely applied wherever
     a review found an instance. Three separate rounds each repaired the one case
     that prompted the finding and left the rest, and the third instance was the
-    cost of that. Every absence assertion below is now either paired with a
-    presence case or labelled in place as decorative, and there is one of the
-    latter: the `"names no site"` check in the end-marker case, which no input
-    here can falsify because a widened slice still holds every link. The class
-    it names is held by the two surface cases instead. A new absence assertion
-    joins that inventory or it does not go in.
+    cost of that. Every absence assertion below is now paired with a presence
+    case, or held by a mutation of the control flow it is an assertion about,
+    or labelled in place as decorative.
+
+    The second of those three is what the two `"is off the request path"`
+    absences in the off-path row loop are, and the inventory named only the
+    other two while they were in it. Each says that a row this rule has just
+    called untrustworthy is not *also* scanned for offenders, and what each
+    catches is the deletion of the `continue` that skips the scan: with either
+    one gone, the row is scanned against a match set the same run has already
+    reported as wrong, and the case fails. Run, not assumed.
+
+    Of the third there is one: the `"names no site"` check in the end-marker
+    case, which no input here can falsify because a widened slice still holds
+    every link. The class it names is held by the two surface cases instead. A
+    new absence assertion joins one of the three or it does not go in.
 
     The third kind of mutation named above -- a rule's own failure deleted --
     is held across every document `main` takes, and across both shapes `main`
