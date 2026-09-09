@@ -1299,12 +1299,22 @@ class Main(unittest.TestCase):
 
         Used on a source file as well as on a document, since a manifest key
         can move for the same reason a table cell can.
+
+        The guard is the load-bearing half and the only half. The `replace`
+        rewrote the first occurrence alone, and that count held nothing:
+        instrumenting this helper to fail on an anchor occurring other than
+        once left the whole suite green, so every caller anchors on a marker
+        its document writes exactly once and the limit could not be observed.
+        A caller that some day anchors on a marker written twice will rewrite
+        both, which is the case to write a count into this guard for -- there
+        is none today, and a limit nothing can falsify is the kind of detail
+        this file removes rather than keeps.
         """
         if anchor not in document:
             # `self.fail` rather than `assertIn`, whose message renders the
             # whole document twice for want of a truncation.
             self.fail(f"this fixture no longer anchors on: {anchor!r}")
-        return document.replace(anchor, replacement, 1)
+        return document.replace(anchor, replacement)
 
     def probing(self, written):
         """The real corpus with one feature gate at a site no row allows.
