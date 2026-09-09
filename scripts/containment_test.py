@@ -1483,6 +1483,41 @@ class Main(unittest.TestCase):
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/unchecked.rs", reported[0])
 
+    def test_a_crate_name_matches_as_a_word_and_not_as_a_substring(self):
+        # `Corpus.naming`'s word boundaries, which every rule in the loop below
+        # and the `tokio` scan above are all stated through: one pattern, so
+        # dropping them reports files that name no dependency at all. `h2` is
+        # the shortest token in the table and the most substring-prone, which
+        # is why the case is written on it.
+        #
+        # Both boundaries, since they drop one at a time: `h2_frames` holds
+        # the trailing one and `frames_h2` the leading one, and a fixture with
+        # only the first leaves `(h2|httparse)\b` matching nothing new.
+        #
+        # Both halves in one case too, so the absence is falsifiable by the
+        # rule and not only by the mutation: the same file names `h2` for real
+        # below and is reported for it.
+        #
+        # Held against a fixture rather than left to the intact-tree case
+        # above. That case catches the mutation today, and only because three
+        # files in this workspace happen to spell `h2` inside a longer
+        # identifier; a rename tomorrow takes the hold away without touching
+        # either the rule or the case.
+        inside = self.appending(
+            "crates/kynos/src/unchecked.rs",
+            "\nfn h2_frames() -> usize {\n    0\n}\nfn frames_h2() {}\n",
+        )
+        self.assertEqual(self.report(corpus=inside), (0, []))
+
+        whole = self.appending(
+            "crates/kynos/src/unchecked.rs", "\nuse h2::client::SendRequest;\n"
+        )
+        status, failures = self.report(corpus=whole)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "`h2` and `httparse` are never named")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/unchecked.rs", reported[0])
+
     def test_a_crate_confined_to_two_files_is_reported_outside_them(self):
         # The other branch of the same loop, and the one no case reached. The
         # row above is `UNDER` a tree; `sorted(found - where)` is what an
