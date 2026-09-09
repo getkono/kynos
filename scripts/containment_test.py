@@ -334,8 +334,10 @@ class ImportTime(unittest.TestCase):
         imported at all, and undoing either would undo the import; `sys.stdout`
         and `sys.stderr`, swapped here and in `Main.report` by
         `contextlib.redirect_*`, which restores them on the way out; and
-        `pathlib.Path.read_text`, restored below. The first two are on master
-        and predate this branch.
+        `pathlib.Path.read_text`, rebound in two places -- here, restored in
+        the `finally` below, and by `Main.reading`, restored in its own, which
+        `Main`'s two restore cases hold. The first two are on master and
+        predate this branch.
         """
         source = Path(gate.__file__).read_text()
         unpatched = Path.read_text
@@ -971,8 +973,13 @@ class Main(unittest.TestCase):
     The assertions name the rules that must and must not have run rather than
     counting failures, so a case says what it holds and does not fail for a
     reason belonging to `containment:check`. Nothing here writes to the
-    repository, and the only process state it touches is `sys.stdout` and
-    `sys.stderr`, swapped by `contextlib.redirect_*`, which restores them.
+    repository. The process state it touches is `sys.stdout` and `sys.stderr`,
+    swapped by `contextlib.redirect_*`, which restores them, and
+    `pathlib.Path.read_text`, rebound by `reading` below for the length of one
+    call and restored in a `finally` -- which the two cases above hold, since a
+    patch that leaked would leave every later case reading through a closure
+    belonging to a case that has finished. `ImportTime`'s docstring inventories
+    both, and everything else this file writes outside its own namespace.
 
     One rule earns a case its place, and it is the rule two cases here were
     removed for failing: an assertion that a failure class is *absent* holds
@@ -1186,6 +1193,27 @@ class Main(unittest.TestCase):
             "this fixture no longer anchors on: 'an anchor it does not hold'",
             str(caught.exception),
         )
+
+    def test_the_read_patch_is_put_back(self):
+        # `reading`'s restore, which is the whole of this file's claim to
+        # leaving `pathlib` as it found it. A leak here is invisible: the patch
+        # rewrites one path and passes every other read through, so a case that
+        # inherited it would go on passing while every read in the process ran
+        # through a closure belonging to a case that has finished.
+        original = Path.read_text
+        with self.reading("crates/kynos/Cargo.toml", lambda text: text):
+            self.assertIsNot(Path.read_text, original)
+        self.assertIs(Path.read_text, original)
+
+    def test_the_read_patch_is_put_back_when_the_body_raises(self):
+        # The `finally`, which is the half a failing case reaches. Without it
+        # the patch outlives the first case whose body raises -- which is any
+        # case that fails inside the block -- and nothing observes it.
+        original = Path.read_text
+        with self.assertRaises(RuntimeError):
+            with self.reading("crates/kynos/Cargo.toml", lambda text: text):
+                raise RuntimeError("what a failing case does")
+        self.assertIs(Path.read_text, original)
 
     def test_a_renamed_allowance_header_skips_the_row_count_and_the_tokio_scan(self):
         broken = gate.ARCHITECTURE.replace(self.ALLOWANCE, "| Site | Named | Why |", 1)
