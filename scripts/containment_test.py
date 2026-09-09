@@ -423,11 +423,16 @@ class GatePolarity(unittest.TestCase):
     `feature = "x"` is written by the gate, by its negation, by a `cfg_attr`
     that compiles nothing in any configuration, and by any nesting of the
     three. Matched as text a spelling could tell none of them apart, so a
-    `#[cfg(not(feature = "uuid"))]` in a file the `uuid` row does not allow
-    failed the build over code that exists only when `uuid` is off. Read as a
-    predicate instead: each `#[cfg(`, `#![cfg(` and `#[cfg_attr(` is walked
-    with its parentheses balanced, and the flag is matched at the polarity the
-    cell asked for.
+    `#[cfg_attr(docsrs, doc(cfg(feature = "uuid")))]` in a file the `uuid` row
+    does not allow failed the build over an annotation no build compiles
+    anything from. Read as a predicate instead: each `#[cfg(`, `#![cfg(`,
+    `#[cfg_attr(` and `#![cfg_attr(` -- the four forms `ATTRIBUTE` matches --
+    is walked with its parentheses balanced, and `search` matches the flag at
+    the polarity the cell asked for.
+
+    `named` is the same walk reading no polarity, and is what the offender scan
+    asks: a cell states a polarity as its own claim, and a *site* names the
+    flag whichever way its gate reads.
 
     The fragments are written for this file, with one exception: the compound
     predicate below is copied from `crates/kynos/src/lib.rs`, because a case
