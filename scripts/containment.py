@@ -481,13 +481,46 @@ NEGATED_GATE = re.compile(r'`?not\(\s*feature\s*=\s*"([\w-]+)"\s*\)`?')
 # `cfg`-only pattern cannot match `#[cfg_attr(` and the inner `cfg(` has no
 # `#[` in front of it. What excluding `cfg_attr` here loses is the predicate,
 # and nothing else.
-ATTRIBUTE = re.compile(r"#!?\[\s*(cfg_attr|cfg)\s*\(")
+#
+# The `cfg!` macro is the one form here that is not an attribute, and is why
+# this pattern is named for the predicate rather than for the attribute around
+# it: what the two questions below read is a `cfg` predicate, and Rust writes
+# one inside four attributes and one macro. `cfg!` compiles in every
+# configuration and branches at run time, so what it guards is code every build
+# emits -- more of the request path than either attribute form compiles, not
+# less -- and a file writing one is coupled to the flag it names. Anchoring on
+# `#[` read it as naming no gate at all, which is a silent pass of the class
+# the polarity defect was, landing on the same four rows: `test-util`, `time`,
+# `decimal` and `openapi31` hold a gate spelling and nothing else in their
+# *Named by* cell, so no companion identifier catches the site by another
+# spelling.
+#
+# One pattern, so both questions read it, and that is decided rather than
+# incidental. The predicate inside a `cfg!` is the predicate inside a `#[cfg]`
+# -- `not(`, `all(`, `any(` and all -- so one walk answers both and `search`
+# reads the polarity the cell asked for. Feeding `named` alone would invert the
+# order the two are kept in: existence is the narrower of the pair so that a
+# row cannot be held up by a mention the offender scan would not have counted,
+# and a form only `named` read would call a cell stale over a spelling live
+# code writes. The `!` in `!cfg!(feature = "x")` is Rust's operator on the
+# expanded `bool` and sits outside the predicate, so it reads as no negation --
+# which is right, since the gate names the flag positively and the branch is
+# what inverts.
+#
+# Live idiom rather than a shape invented for this pattern: `crates/` writes
+# eleven `cfg!(feature = "…")`. None of them fires over this tree, and that was
+# established before the pattern changed rather than after. Every one names
+# `openapi32`, which no off-path row names at all; ten are under
+# `crates/kynos-macros/src/`, a tree no row's sites reach and so no row's scope
+# covers; and the three written in a `tests.rs` sibling are held out of
+# `gate_files` besides.
+PREDICATE = re.compile(r"#!?\[\s*(cfg_attr|cfg)\s*\(|\bcfg!\s*\(")
 # A `not(` group, which inverts the polarity of everything inside it.
 NEGATION = re.compile(r"\bnot\s*\(")
 
 
 class Gate:
-    """One gate spelling, matched against the `#[cfg]` predicate around it.
+    """One gate spelling, matched against the `cfg` predicate around it.
 
     `.search(text)` like a compiled pattern's -- a bool rather than a match
     object, since every consumer reads it in boolean context -- and `.named`
@@ -499,13 +532,15 @@ class Gate:
     is written by the gate; by `not(feature = "uuid")`, which compiles code only
     where the flag is *off*; and by `#[cfg_attr(docsrs, doc(cfg(...)))]`, which
     compiles nothing in any configuration. All three read alike as text, so an
-    offender scan over one reported a row broken by the other two. The predicate
-    is read instead: every `#[cfg(`, `#![cfg(`, `#[cfg_attr(` and
-    `#![cfg_attr(` is walked with its parentheses balanced, and `search` counts
-    the flag only where the parity of the `not(` groups enclosing it is the one
-    the spelling asked for. `named` counts it at either parity and nowhere
-    else, which is what separates a polarity a cell claims from a flag a file
-    names.
+    offender scan over one reported a row broken by the other two. It is also
+    written by `cfg!(feature = "uuid")`, which is not an attribute at all and
+    compiles in *every* configuration. The predicate is read instead: every
+    `#[cfg(`, `#![cfg(`, `#[cfg_attr(`, `#![cfg_attr(` and `cfg!(` -- the five
+    forms `PREDICATE` matches -- is walked with its parentheses balanced, and
+    `search` counts the flag only where the parity of the `not(` groups
+    enclosing it is the one the spelling asked for. `named` counts it at either
+    parity and nowhere else, which is what separates a polarity a cell claims
+    from a flag a file names.
 
     Anchoring on `#[cfg(feature = "x")]` instead was measured against this tree
     and is wrong on it, not merely in principle: `lib.rs` names `time` and
@@ -527,11 +562,11 @@ class Gate:
         self.pattern = re.compile(r'feature\s*=\s*"' + re.escape(flag) + r'"')
 
     def search(self, text):
-        """Whether any attribute in `text` names this flag at this polarity."""
-        return any(self.names(text, found) for found in ATTRIBUTE.finditer(text))
+        """Whether any predicate in `text` names this flag at this polarity."""
+        return any(self.names(text, found) for found in PREDICATE.finditer(text))
 
     def named(self, text):
-        """Whether any attribute in `text` names this flag at either polarity.
+        """Whether any predicate in `text` names this flag at either polarity.
 
         What the offender scan asks, where `search` is what the existence check
         asks. A cell states a polarity and the existence check holds it to that
@@ -551,11 +586,11 @@ class Gate:
         """
         return any(
             self.names(text, found, polarity=False)
-            for found in ATTRIBUTE.finditer(text)
+            for found in PREDICATE.finditer(text)
         )
 
-    def names(self, text, attribute, polarity=True):
-        """Whether one `attribute` names this flag, at this polarity or at any.
+    def names(self, text, opened, polarity=True):
+        """Whether one `opened` predicate names this flag, at this polarity or at any.
 
         `polarity=False` is `named`'s question: the flag counts wherever the
         walk reaches it, whatever the parity of the `not(` groups around it.
@@ -587,11 +622,11 @@ class Gate:
         first one.
         """
         # The parity of the `not(` groups enclosing each open paren, innermost
-        # last. The attribute's own paren is already open, at even parity; the
-        # walk ends when it closes, which is what keeps one attribute's
-        # predicate from running into the code below it.
-        parity, i, n = [False], attribute.end(), len(text)
-        applies = attribute.group(1) == "cfg_attr"
+        # last. The predicate's own paren is already open, at even parity; the
+        # walk ends when it closes, which is what keeps one predicate from
+        # running into the code below it.
+        parity, i, n = [False], opened.end(), len(text)
+        applies = opened.group(1) == "cfg_attr"
         while i < n and parity:
             if found := NEGATION.match(text, i):
                 parity.append(not parity[-1])

@@ -421,14 +421,17 @@ class GatePolarity(unittest.TestCase):
 
     A gate is a claim about code a build compiles, and the string
     `feature = "x"` is written by the gate, by its negation, by a `cfg_attr`
-    that compiles nothing in any configuration, and by any nesting of the
-    three. Matched as text a spelling could tell none of them apart, so a
+    that compiles nothing in any configuration, by a `cfg!` that compiles in
+    every one of them, and by any nesting of the four. Matched as text a
+    spelling could tell none of them apart, so a
     `#[cfg_attr(docsrs, doc(cfg(feature = "uuid")))]` in a file the `uuid` row
     does not allow failed the build over an annotation no build compiles
-    anything from. Read as a predicate instead: each `#[cfg(`, `#![cfg(`,
-    `#[cfg_attr(` and `#![cfg_attr(` -- the four forms `ATTRIBUTE` matches --
-    is walked with its parentheses balanced, and `search` matches the flag at
-    the polarity the cell asked for.
+    anything from; anchored on `#[` a spelling could not see the `cfg!` at all,
+    which is the opposite error and the worse one, since it passes in silence.
+    Read as a predicate instead: each `#[cfg(`, `#![cfg(`, `#[cfg_attr(`,
+    `#![cfg_attr(` and `cfg!(` -- the five forms `PREDICATE` matches -- is
+    walked with its parentheses balanced, and `search` matches the flag at the
+    polarity the cell asked for.
 
     `named` is the same walk reading no polarity, and is what the offender scan
     asks: a cell states a polarity as its own claim, and a *site* names the
