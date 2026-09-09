@@ -108,7 +108,7 @@ def test_module_spans(text):
         rest = text[match.end() :]
         if not rest.startswith("{"):
             # `mod tests;`, whose body is the sibling file `under_test` holds
-            # out of `FILES` separately.
+            # out of `files` separately.
             spans.append((match.start(), match.end() + rest.startswith(";")))
             continue
         depth, end = 0, len(text)
@@ -184,42 +184,109 @@ RAW_SOURCES = [
     for path in sorted((crate / "src").rglob("*.rs"))
 ]
 
-SOURCES = [(path, strip(text)) for path, text in RAW_SOURCES]
-
-
 def under_test(path):
     name = path.rsplit("/", 1)[-1]
     return name == "tests.rs" or name.endswith("_tests.rs")
 
 
-# What every rule here is stated over: the code that a request can run. Test
-# modules are dropped, inline by `strip` and as sibling files here.
-FILES = [(path, text) for path, text in SOURCES if not under_test(path)]
+def substituted(pairs, path, text):
+    """`pairs` with `path` reading as `text`, appended if it is not one of them."""
+    replaced = [(name, text if name == path else body) for name, body in pairs]
+    if any(name == path for name, _ in pairs):
+        return replaced
+    return replaced + [(path, text)]
 
-# The same two corpora for the one rule that needs a string literal back. A
-# `#[cfg(feature = "x")]` gate writes the flag name as a literal, so the corpus
-# above cannot see one at all; raw text can, but it also sees the flag named in
-# every comment, every rustdoc example and every `#[cfg(test)]` module beside
-# the code -- and a gate found in one of those holds a row up on a mention no
-# build reads, which is the false-positive class `strip()` exists to remove. So
-# this pair drops exactly what the pair above drops, minus the literals.
-GATE_SOURCES = [(path, strip(text, literals=False)) for path, text in RAW_SOURCES]
 
-GATE_FILES = [(path, text) for path, text in GATE_SOURCES if not under_test(path)]
+class Corpus:
+    """The tree of `.rs` files every rule stated over the source is stated over.
+
+    Four views of one tree, and each rule takes the one it can defend:
+
+    * `files` is the code a request can run, and is what most rules read. Test
+      modules are dropped, inline by `strip` and as sibling files by
+      `under_test`.
+    * `sources` is the same with the sibling test files kept, and is what a
+      spelling's *existence* is asked of: a mint spelling earns its place in a
+      cell by being reachable, not by being reached.
+    * `gate_files` and `gate_sources` are those two with string literals kept,
+      for the one rule that needs one back. A `#[cfg(feature = "x")]` gate
+      writes the flag name as a literal, so the two above cannot see one at
+      all; raw text can, but it also sees the flag named in every comment,
+      every rustdoc example and every `#[cfg(test)]` module beside the code --
+      and a gate found in one of those holds a row up on a mention no build
+      reads, which is the false-positive class `strip()` exists to remove. So
+      this pair drops exactly what the pair above drops, minus the literals.
+    * `raw` is what each file says before any of that, keyed by path. The
+      module-size budget counts the lines a reader sees rather than the lines
+      left after a corpus has cut a test module out of the middle.
+
+    An object `main` takes rather than five module constants, and for the
+    reason `main` takes its documents. Three rules here state their whole claim
+    over `files` -- the dependency-graph stray scan, the parent re-export scan
+    and the placeholder scan -- and while the corpus was built at import there
+    was nothing a case could hand them: by the time `main` ran, the corpus was
+    already what the tree said. Silencing any one of those three left both
+    gates green, which is this file's worst outcome, and it was the reason the
+    suite named them unheld. `replacing` is what a case hands over instead.
+    """
+
+    def __init__(self, raw, sources=None, gate_sources=None):
+        """`raw` is `(path, text)` pairs, or anything `dict` accepts.
+
+        The two derived lists are parameters so `replacing` can fill them in
+        rather than strip three hundred files again to rewrite one.
+        """
+        self.raw = dict(raw)
+        pairs = list(self.raw.items())
+        if sources is None:
+            sources = [(path, strip(text)) for path, text in pairs]
+        if gate_sources is None:
+            gate_sources = [(path, strip(text, literals=False)) for path, text in pairs]
+        self.sources = sources
+        self.gate_sources = gate_sources
+        self.files = [(path, text) for path, text in sources if not under_test(path)]
+        self.gate_files = [(path, text) for path, text in gate_sources if not under_test(path)]
+
+    def naming(self, *crates):
+        """The files naming any of `crates` as an identifier."""
+        pattern = re.compile(r"\b(" + "|".join(crates) + r")\b")
+        return {path for path, text in self.files if pattern.search(text)}
+
+    def replacing(self, path, text):
+        """This corpus with `path` reading as `text`, and nothing else stripped again.
+
+        A path the corpus does not hold is added, so a case may inject a file
+        the tree does not have as readily as rewrite one it does.
+
+        Every other file keeps the text it already has, which is what makes a
+        case over one of these precise as well as cheap: every rule but the one
+        under test reads exactly what it reads over the real tree, so the case
+        asserts one new failure rather than the hundred a corpus of one file
+        would produce.
+
+        The order the files come back in is not load-bearing -- every rule
+        stated over a corpus sorts its offenders or collects them into a set --
+        so a file the corpus did not hold goes on the end.
+        """
+        return Corpus(
+            self.raw | {path: text},
+            substituted(self.sources, path, strip(text)),
+            substituted(self.gate_sources, path, strip(text, literals=False)),
+        )
+
+
+#: This repository's own tree, and the corpus every rule reads when `main` is
+#: given no other. Built at import, which costs the file reads and no rule: what
+#: a rule does with it is `main`'s, and every one of them is stated there.
+WORKSPACE = Corpus(RAW_SOURCES)
 
 # What a failure says a spelling was looked for in, keyed by whether it is a
 # gate. Two corpora are two claims, and a message naming neither leaves a
 # reviewer guessing which text the rule read.
-CORPUS = {
+LOOKED_IN = {
     False: "with comments, string literals and inline `#[cfg(test)]` modules removed",
     True: "with comments and inline `#[cfg(test)]` modules removed and string literals kept",
 }
-
-
-def naming(*crates):
-    """The files naming any of `crates` as an identifier."""
-    pattern = re.compile(r"\b(" + "|".join(crates) + r")\b")
-    return {path for path, text in FILES if pattern.search(text)}
 
 
 #: The sentence two documents state a table's row count in, and the one
@@ -583,7 +650,7 @@ def token(cell):
     the `#[cfg]` predicate around the string and not about the string.
 
     Which corpus a spelling is matched over is `gate` in each triple: an
-    identifier over `SOURCES`, a gate over `GATE_SOURCES`. The two differ in
+    identifier over `sources`, a gate over `gate_sources`. The two differ in
     the literals alone. A gate matched over the stripped text would name
     nothing anywhere, since a flag name is a literal and the rule would read
     every `#[cfg]` in the workspace as absent and every feature row as
@@ -699,9 +766,11 @@ def scanned(allowance, exists=None):
 # split, and never up without someone editing the ledger and saying why.
 #
 # "Excluding tests" is satisfied by the layout rule rather than by parsing:
-# `FILES` already drops every `tests.rs`, and the convention puts a module's
-# tests in one. A module keeping an inline `mod tests` would have those lines
-# counted, which is the right pressure -- the same rule says to move them out.
+# the corpus's `files` already drops every `tests.rs`, and the convention puts a
+# module's tests in one. A module keeping an inline `mod tests` would have those
+# lines counted, which is the right pressure -- the same rule says to move them
+# out, and the count is read off `raw` so an inline module is not cut out of the
+# middle of the file before its lines are counted.
 #
 # Counted with `count("\n")` rather than `len(split("\n"))`: every file here
 # ends in a newline, so splitting yields one empty trailing element and a file
@@ -883,7 +952,7 @@ def taxonomy_failures(text):
 # paths resolve, and `cargo package`'s own verify step does not build test
 # targets.
 #
-# Read from the raw source rather than from `FILES`, whose text has had its
+# Read from the file on disk rather than from the corpus, whose text has had its
 # string literals stripped, and over every `.rs` file in each package rather
 # than `src/` alone -- a test target is published too.
 # Resolved against the reading file: `include_bytes!` and `include_str!` take a
@@ -1048,7 +1117,7 @@ def cargo_config_failures(text):
     return problems
 
 
-def main(architecture=None, testing=None, performance=None, nfr=None):
+def main(architecture=None, testing=None, performance=None, nfr=None, corpus=None):
     """Run every rule over this repository, and report what does not hold.
 
     Every rule body lives here rather than at module scope, so that importing
@@ -1067,9 +1136,17 @@ def main(architecture=None, testing=None, performance=None, nfr=None):
     takes `exists`. What each rule *stops* checking when its marker is gone is
     a decision this file makes four times over, and reading the documents off
     module scope would leave all four of them assertable only by editing the
-    repository. The corpora stay as they are: a rule skipped for want of a
-    heading is still a claim about the real tree.
+    repository.
+
+    `corpus` is the fifth argument and the same argument. The rules stated over
+    the source read it rather than a module constant, so a case can hand over
+    this repository's tree with one file rewritten -- `Corpus.replacing` -- and
+    reach a rule whose whole claim is about what the tree says. Three of them
+    were reachable no other way while the corpus was a constant: by the time
+    `main` ran it was already what the tree said, and silencing any one of the
+    three left both gates green.
     """
+    corpus = WORKSPACE if corpus is None else corpus
     architecture = ARCHITECTURE if architecture is None else architecture
     testing = TESTING if testing is None else testing
     performance = PERFORMANCE if performance is None else performance
@@ -1104,7 +1181,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None):
 
         allowed = {f"crates/kynos/src/{site.lstrip('/')}" for row in rows for entry in row for site in expand(entry)}
 
-        if offenders := sorted(p for p in naming("tokio") if not permitted(p, allowed)):
+        if offenders := sorted(p for p in corpus.naming("tokio") if not permitted(p, allowed)):
             failures.append(
                 "`tokio` is named outside `server/` at a site the allowance table does "
                 "not list:\n    " + "\n    ".join(offenders)
@@ -1123,7 +1200,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None):
         (("tower", "tower_service"), ONLY_IN, {"crates/kynos/src/unchecked.rs"},
          "`tower` and `tower-service` are named only in `unchecked.rs`"),
     ]:
-        found = naming(*crates)
+        found = corpus.naming(*crates)
         stray = sorted(f for f in found if not f.startswith(where)) if rule == UNDER else sorted(found - where)
         if stray:
             failures.append(f"{description}, but it is also named in:\n    " + "\n    ".join(stray))
@@ -1201,21 +1278,21 @@ def main(architecture=None, testing=None, performance=None, nfr=None):
         # as above -- because a site claims a location, and locations may empty out
         # while the claim stays true.)
         #
-        # Existence is asked of `SOURCES`, not `FILES`: a mint spelling earns its
+        # Existence is asked of `sources`, not `files`: a mint spelling earns its
         # place in a cell by being reachable, not by being reached, so the row is at
         # its strongest when no file a request can run writes it at all.
         # `Registry::default` is that case -- it is written only in a sibling test
         # file, which is exactly the row holding.
         #
         # Sibling test files, and not every test: `strip()` has already dropped the
-        # inline `#[cfg(test)] mod` bodies from `SOURCES` and from `GATE_SOURCES`
+        # inline `#[cfg(test)] mod` bodies from `sources` and from `gate_sources`
         # alike, so the corpus this widens to is exactly the `tests.rs` siblings
-        # `under_test` holds out of `FILES`. That is the layout rule's corpus rather
+        # `under_test` holds out of `files`. That is the layout rule's corpus rather
         # than an approximation of it -- a module's tests belong in a sibling -- and
         # lifting the inline removal would re-admit the comment and literal mentions
         # `strip()` exists to drop.
         #
-        # A gate spelling is asked of `GATE_SOURCES` for the reason `token` gives:
+        # A gate spelling is asked of `gate_sources` for the reason `token` gives:
         # the flag name is a string literal, invisible in the stripped text, so
         # that corpus is the same source with its literals kept. Its comments and
         # inline test modules go all the same -- a gate is a claim about code a
@@ -1225,7 +1302,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None):
             for spelling, pattern, gate in spellings
             if not any(
                 any(path.startswith(tree) for tree in trees) and pattern.search(text)
-                for path, text in (GATE_SOURCES if gate else SOURCES)
+                for path, text in (corpus.gate_sources if gate else corpus.sources)
             )
         ]
         if stale:
@@ -1233,7 +1310,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None):
                 failures.append(
                     f"testing.md's off-path table names {element} with "
                     f"`{spelling}`, and nothing under {scope} writes that spelling "
-                    f"{CORPUS[gate]}, sibling test files included. The row holds "
+                    f"{LOOKED_IN[gate]}, sibling test files included. The row holds "
                     "nothing under it: either the element was renamed and the cell "
                     "was not, or it now lives outside the scope this row's own "
                     "sites reach, which is a site to add rather than a spelling to "
@@ -1257,7 +1334,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None):
             {
                 path
                 for _, pattern, gate in spellings
-                for path, text in (GATE_FILES if gate else FILES)
+                for path, text in (corpus.gate_files if gate else corpus.files)
                 if any(path.startswith(tree) for tree in trees) and pattern.search(text)
             }
         )
@@ -1322,7 +1399,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None):
             "section"
         ),
     )
-    hand_rolled = {path for path, text in FILES if re.search(r"\bStream\s+for\b", text)}
+    hand_rolled = {path for path, text in corpus.files if re.search(r"\bStream\s+for\b", text)}
 
     sites = claimed(
         architecture,
@@ -1345,8 +1422,8 @@ def main(architecture=None, testing=None, performance=None, nfr=None):
     # --- The module-size budget ----------------------------------------------
     oversized = sorted(
         path
-        for path, _ in FILES
-        if (ROOT / path).read_text().count("\n") > 400
+        for path, _ in corpus.files
+        if corpus.raw[path].count("\n") > 400
     )
 
     budget = re.search(r"a module-size budget of (\d+) files", nfr)
@@ -1471,7 +1548,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None):
 
     # --- Parent re-exports ---------------------------------------------------
     reexports = []
-    for path, text in FILES:
+    for path, text in corpus.files:
         if path.endswith("/lib.rs"):
             continue
         own = set(DECLARED_MODULE.findall(text)) | {"crate", "self", "super"}
@@ -1488,7 +1565,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None):
         )
 
     # --- Placeholder bodies --------------------------------------------------
-    if placeholders := sorted(path for path, text in FILES if PLACEHOLDER.search(text)):
+    if placeholders := sorted(path for path, text in corpus.files if PLACEHOLDER.search(text)):
         failures.append(
             "a `todo!()` stands in for a body, and the exception that allowed one "
             "lapsed when the API-skeleton milestone ended:\n    " + "\n    ".join(placeholders)
@@ -1505,7 +1582,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None):
     if failures:
         return 1
     print(
-        f"containment: {len(FILES)} source files, {len(rows)} allowance rows, "
+        f"containment: {len(corpus.files)} source files, {len(rows)} allowance rows, "
         f"{off_path_rows} off-path rows, {len(graded)} graded features, "
         "every rule holds"
     )
