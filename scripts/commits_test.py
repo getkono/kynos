@@ -593,9 +593,8 @@ class TheGateHkRuns(GateTestCase):
         self.stage_a_change()
         self.git("commit", "-q", "--no-verify", "-m", "feat: the trunk side")
 
-    def commit(self, subject, environment=None):
-        """One ordinary commit, carrying a change, put to the gate hk runs."""
-        self.stage_a_change()
+    def attempt_commit(self, subject, environment=None):
+        """`git commit` over whatever is staged, put to the gate hk runs."""
         return subprocess.run(
             ["git", "commit", "-m", subject],
             cwd=self.repository,
@@ -603,6 +602,11 @@ class TheGateHkRuns(GateTestCase):
             capture_output=True,
             text=True,
         )
+
+    def commit(self, subject, environment=None):
+        """One ordinary commit, carrying a change, put to the gate hk runs."""
+        self.stage_a_change()
+        return self.attempt_commit(subject, environment)
 
     def assert_refused(self, attempt, before):
         self.assertNotEqual(
@@ -705,6 +709,27 @@ class TheGateHkRuns(GateTestCase):
                 "fixture answers for a `glob`, `types` or `exclude` key at "
                 f"every value\nhk selected: {{{selected.group(1)}}}",
             )
+
+    def test_the_gate_refuses_over_a_commit_staging_one_unfamiliar_file(self):
+        """The gate must not depend on what the commit in front of it stages.
+
+        hk skips a step when no file in the commit matches its selection, so a
+        `glob`, a `types` or an `exclude` narrower than a commit disarms the
+        gate for that commit while leaving it armed for the next one. The
+        reading above cannot see that: it stages a `.rs` and a `.md`, and a
+        value selecting either of those leaves the step running.
+
+        This commit stages one file with an extension nothing globs, so any
+        narrowing value lets its subject through and fails here. `glob = "*"`
+        still selects it, which is why that value stays green -- it selects
+        every commit's files and arms the gate for all of them, which is what
+        this step needs and what a narrower value does not give it.
+        """
+        before = self.git("rev-parse", "HEAD").stdout.strip()
+        unfamiliar = self.repository / "change-unfamiliar.gate-fixture"
+        unfamiliar.write_text("one staged file that no ordinary glob names\n")
+        self.git("add", unfamiliar.name)
+        self.assert_refused(self.attempt_commit("Merge branch 'nothing'"), before)
 
     def test_an_exported_hk_skip_does_not_reach_the_gate(self):
         """`HK_SKIP_STEPS` in somebody's shell is not this repository's answer.
