@@ -602,6 +602,45 @@ class GatePolarity(unittest.TestCase):
         )
         self.assertTrue(self.matcher('`feature = "uuid"`').search(source))
 
+    def test_a_cfg_macro_is_a_gate(self):
+        # `cfg!(...)`, the fifth form. It is not an attribute and compiles in
+        # every configuration, which is exactly why it counts: it expands to a
+        # `bool` and branches at run time, so what it guards is code the build
+        # emitted whichever way the flag reads. A file writing one is coupled
+        # to the flag as firmly as one writing the attribute, and reading only
+        # the attribute forms let such a site past the offender scan in
+        # silence -- the outcome `containment.py` names as its worst.
+        source = 'pub fn gated() -> bool {\n    cfg!(feature = "uuid")\n}\n'
+        self.assertTrue(self.matcher('`feature = "uuid"`').search(source))
+        self.assertTrue(self.matcher('`feature = "uuid"`').named(source))
+
+    def test_a_cfg_macro_reads_its_polarity_like_an_attribute(self):
+        # The predicate inside a `cfg!` is the predicate inside a `#[cfg]`, so
+        # one walk answers both and a negated macro is negated for `search`
+        # and named all the same for `named`.
+        source = 'pub fn absent() -> bool {\n    cfg!(not(feature = "uuid"))\n}\n'
+        self.assertFalse(self.matcher('`feature = "uuid"`').search(source))
+        self.assertTrue(self.matcher('`not(feature = "uuid")`').search(source))
+        self.assertTrue(self.matcher('`feature = "uuid"`').named(source))
+
+    def test_a_rust_negation_before_a_cfg_macro_is_not_a_predicate_negation(self):
+        # `!cfg!(feature = "openapi32")`, which this workspace writes five
+        # times. The `!` is Rust's operator applied to the `bool` the macro
+        # expanded to, and it is outside the predicate: the gate names the
+        # flag positively and a cell writing the negation does not match it.
+        source = 'if !cfg!(feature = "uuid") {\n    unreachable!()\n}\n'
+        self.assertTrue(self.matcher('`feature = "uuid"`').search(source))
+        self.assertFalse(self.matcher('`not(feature = "uuid")`').search(source))
+
+    def test_a_macro_whose_name_merely_ends_in_cfg_is_not_one(self):
+        # The word boundary. `feature = "…"` is not reserved to `cfg`, and a
+        # macro somebody else wrote is not a gate on the build.
+        self.assertFalse(
+            self.matcher('`feature = "uuid"`').search(
+                'let d = mycfg!(feature = "uuid");\n'
+            )
+        )
+
     def test_an_attribute_written_with_escaped_quotes_is_not_a_gate(self):
         # Named for what it holds: the flag pattern wants an unescaped quote
         # after the `=`, and a Rust string literal spelling an attribute has a
@@ -1248,16 +1287,20 @@ class Main(unittest.TestCase):
             self.fail(f"this fixture no longer anchors on: {anchor!r}")
         return document.replace(anchor, replacement, 1)
 
-    def probing(self, attribute):
-        """The real corpus with one gated function at a site no row allows.
+    def probing(self, written):
+        """The real corpus with one feature gate at a site no row allows.
 
         `router/` is where no off-path row's *Named only in* cell reaches for a
         feature gate, and the file is one the tree does not have, so nothing
         else in the corpus moves and the only rule the fixture reaches is the
-        offender scan of the row whose flag `attribute` names.
+        offender scan of the row whose flag `written` names.
+
+        `written` is a whole line rather than an attribute, because a gate is
+        not only an attribute: a `cfg!` is an expression and has to be written
+        as one. What follows it is an item either way.
         """
         return gate.WORKSPACE.replacing(
-            self.PROBE, f"{attribute}\npub fn probe() {{}}\n"
+            self.PROBE, f"{written}\npub fn probe() {{}}\n"
         )
 
     def appending(self, path, addition):
@@ -1719,6 +1762,30 @@ class Main(unittest.TestCase):
         # gates are live idiom in this workspace: `lib.rs` writes four.
         status, failures = self.report(
             corpus=self.probing('#[cfg(not(feature = "test-util"))]')
+        )
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "is off the request path")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("`test-util` feature", reported[0])
+        self.assertIn(self.PROBE, reported[0])
+
+    def test_a_flag_named_by_a_cfg_macro_at_a_site_no_row_allows_is_reported(self):
+        # The third form of the same gate at the same site, and the one the
+        # attribute-anchored pattern could not see. `cfg!` compiles in every
+        # configuration and branches at run time, so what it guards is on the
+        # request path in every build -- which is more than either attribute
+        # form can say, and the row's reason has to cover it. It lands on the
+        # four gate-only rows the polarity defect landed on, for the same
+        # reason: `test-util`, `time`, `decimal` and `openapi31` have no
+        # companion identifier to catch the site by another spelling.
+        #
+        # Live idiom rather than a shape invented here: the workspace writes
+        # eleven `cfg!(feature = "…")`, all naming `openapi32`, all under
+        # `crates/kynos-macros/src/` or in a `tests.rs` sibling -- outside
+        # every row's scope and outside `gate_files` -- which is why the tree
+        # stays silent while this `crates/kynos/src/` site does not.
+        status, failures = self.report(
+            corpus=self.probing('const GATED: bool = cfg!(feature = "test-util");')
         )
         self.assertEqual(status, 1)
         reported = self.naming(failures, "is off the request path")
