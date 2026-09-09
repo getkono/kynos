@@ -72,6 +72,7 @@ import contextlib
 import io
 import re
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -333,11 +334,13 @@ class ImportTime(unittest.TestCase):
         an untracked `scripts/__pycache__/`, the second is how `containment` is
         imported at all, and undoing either would undo the import; `sys.stdout`
         and `sys.stderr`, swapped here and in `Main.report` by
-        `contextlib.redirect_*`, which restores them on the way out; and
+        `contextlib.redirect_*`, which restores them on the way out;
         `pathlib.Path.read_text`, rebound in two places -- here, restored in
         the `finally` below, and by `Main.reading`, restored in its own, which
-        `Main`'s two restore cases hold. The first two are on master and
-        predate this branch.
+        `Main`'s two restore cases hold; and one temporary directory per
+        `Published` case, made by `tempfile` outside this repository and
+        removed by `addCleanup`. The first two are on master and predate this
+        branch.
         """
         source = Path(gate.__file__).read_text()
         unpatched = Path.read_text
@@ -976,6 +979,57 @@ class TaxonomyCount(unittest.TestCase):
             statuses=["in use", "in use", "in use", "in use", "planned"],
         )
         self.assertEqual(len(gate.taxonomy_failures(document)), 2)
+
+
+class Published(unittest.TestCase):
+    """Which files of a package a published archive would carry.
+
+    The one suite here whose fixture is a directory rather than text, and it
+    has to be: `published` takes a package and walks it, so what a case hands
+    it is a package. Written into a temporary directory, removed on the way
+    out, and never inside this repository.
+
+    Both skips under test are ones no file here reaches. `target/` sits at the
+    workspace root and never inside `crates/<name>/`, so nothing in this tree
+    exercises the skip that drops one -- but a `CARGO_TARGET_DIR` pointed
+    inside a package is enough to produce one, and what it would feed the
+    escape rule is a build script's generated sources, every `include!` of
+    which resolves outside the package by construction. The skip stays, and
+    this is where it is reachable.
+    """
+
+    def package(self, exclude, *paths):
+        """A package holding `paths`, with `exclude` in its manifest."""
+        holder = tempfile.TemporaryDirectory()
+        self.addCleanup(holder.cleanup)
+        root = Path(holder.name)
+        entries = ", ".join(f'"{entry}"' for entry in exclude)
+        (root / "Cargo.toml").write_text(
+            f'[package]\nname = "probe"\nexclude = [{entries}]\n'
+        )
+        for relative in paths:
+            source = root / relative
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_text("pub fn probe() {}\n")
+        return root
+
+    def published(self, root):
+        return sorted(source.relative_to(root).as_posix() for source in gate.published(root))
+
+    def test_a_source_the_manifest_excludes_is_not_published(self):
+        root = self.package(["benches"], "src/lib.rs", "benches/one.rs")
+        self.assertEqual(self.published(root), ["src/lib.rs"])
+
+    def test_a_sibling_that_shares_an_excluded_name_is_published(self):
+        # The `+ "/"`: an `exclude` is a path segment prefix, and reading it as
+        # a string prefix exempts a directory nobody excluded -- which is a
+        # file that ships with the archive and reaches outside it unchecked.
+        root = self.package(["benches"], "src/lib.rs", "benches_old/one.rs")
+        self.assertEqual(self.published(root), ["benches_old/one.rs", "src/lib.rs"])
+
+    def test_nothing_under_a_target_directory_is_published(self):
+        root = self.package([], "src/lib.rs", "target/debug/build/probe/out/rows.rs")
+        self.assertEqual(self.published(root), ["src/lib.rs"])
 
 
 class Main(unittest.TestCase):

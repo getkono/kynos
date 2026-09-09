@@ -1034,6 +1034,13 @@ def published(package):
     exempt = re.findall(r'"([^"]*)"', manifest.group(1)) if manifest else []
     for source in sorted(package.rglob("*.rs")):
         relative = source.relative_to(package).as_posix()
+        # Unreachable over this layout: `target/` sits at the workspace root
+        # and never inside `crates/<name>/`. Kept all the same, because a
+        # `CARGO_TARGET_DIR` pointed inside a package is all it takes to put
+        # one there, and what the walk would then read is a build script's
+        # generated sources -- whose every `include!` resolves outside the
+        # package by construction, so the escape rule below would report a
+        # tree of them. `Published` in the test file is where it is reachable.
         if "target" in source.relative_to(package).parts:
             continue
         if any(relative == entry or relative.startswith(entry.rstrip("/") + "/") for entry in exempt):
