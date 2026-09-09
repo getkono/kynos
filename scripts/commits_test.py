@@ -43,9 +43,12 @@ what the hook actually did. The merge case in that class is the reported
 symptom itself: before the fix, it is the `Not committing merge` the issue
 opens with.
 
-Running the real gate is hermetic because `GIT_DIR` is the fixture's own
-throughout. hk finds `hk.pkl` and `mise.toml` by where it runs, so it runs at
-the project root; every git read the step then makes -- including the
+Running the real gate is hermetic because the git environment that hook hands
+hk is the fixture's own, spelled absolutely. hk finds `hk.pkl` and `mise.toml`
+by where it runs, so it runs at the project root -- and git spells the
+environment it gives a hook relative to the work tree it invoked the hook
+from, so `GIT_DIR` and the `GIT_INDEX_FILE` git exports itself are both
+resolved before that move. Every git read the step then makes -- including the
 `git rev-parse --git-path MERGE_HEAD` the exemption is spelled as -- follows
 `GIT_DIR` to the throwaway repository instead. A developer with a merge of
 their own in progress therefore runs this suite to the same answer as one with
@@ -478,21 +481,56 @@ class TheGateHkRuns(GateTestCase):
         # The prologue is this fixture's boundary, and it is what makes the
         # fixture hermetic rather than what makes it pass. hk resolves `hk.pkl`
         # and `mise.toml` from where it runs, so it has to run at the project
-        # root -- and once it does, `GIT_DIR` has to be carried in, because git
-        # does not export an absolute one to a `commit-msg` hook. In the real
-        # repository neither line is needed: hk already runs from the root, and
-        # that root is the repository being committed to.
+        # root -- and every git path has to be absolute before that `cd`,
+        # because git spells the environment it hands a hook relative to the
+        # work tree it invoked the hook from. In the real repository none of
+        # this is needed: hk already runs from the root, and that root is the
+        # repository being committed to.
         #
-        # Carrying `GIT_DIR` in is also the whole reason this is hermetic. The
-        # step's exemption is `git rev-parse --git-path MERGE_HEAD`, and under
-        # the fixture's `GIT_DIR` that resolves inside the fixture. Somebody
-        # running `mise run check` in the middle of their own merge gets the
-        # same three answers as somebody running it on a clean tree.
+        # Absolutising is the whole reason this is hermetic, and the three
+        # names carry different weight:
+        #
+        # `GIT_DIR` is the one the exemption reads. The step's guard is
+        # `git rev-parse --git-path MERGE_HEAD`, and under the fixture's
+        # `GIT_DIR` that resolves inside the fixture, so somebody running
+        # `mise run check` in the middle of a merge of their own gets the same
+        # three answers as somebody running it on a clean tree.
+        #
+        # `GIT_WORK_TREE` is deliberately *not* exported, and that is the one
+        # asymmetry here. git does not export one, so the work tree of the
+        # fixture's `GIT_DIR` stays the directory hk runs in -- the project
+        # root -- which is exactly what the fixture needs: hk runs a step's
+        # command from the repository root it resolves, and the step's command
+        # is `mise run`, which has to land where `mise.toml` is. Pinning the
+        # work tree to the fixture instead makes hk run the step in the
+        # fixture, where mise reports `no tasks defined`. What the mismatched
+        # pair costs is that hk's own staged-status read compares the
+        # fixture's index against the project root's files; what it buys is
+        # that every git read the *step* makes follows `GIT_DIR` home.
+        #
+        # `GIT_INDEX_FILE` git *does* export, as `.git/index` relative to the
+        # fixture. Past the `cd` that spelling names the project root's index
+        # instead, and hk reads its staged status for the fixture's repository
+        # out of it before it runs any step. Measured on hk 1.53.0: the objects
+        # that index refers to are in the other repository, so hk dies with
+        # `failed to get staged statuses ... NotFound (-3)` and every case here
+        # fails. It only ever failed in a plain clone, which is what CI checks
+        # out: in a linked worktree `.git` is a file rather than a directory,
+        # `.git/index` cannot be opened at all, and libgit2 falling back to no
+        # index is what kept this class green where it is developed. That
+        # asymmetry is the residual, and it points one way: a regression of
+        # this line is caught in a plain clone and passes in a worktree, so it
+        # is CI that holds it rather than the tree it is written in.
         hook.write_text(
             "#!/bin/sh\n"
+            'message="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"\n'
             'GIT_DIR="$(git rev-parse --absolute-git-dir)"\n'
             "export GIT_DIR\n"
-            'message="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"\n'
+            'if [ -n "${GIT_INDEX_FILE:-}" ]; then\n'
+            '  GIT_INDEX_FILE="$(cd "$(dirname "$GIT_INDEX_FILE")" && pwd)/'
+            '$(basename "$GIT_INDEX_FILE")"\n'
+            "  export GIT_INDEX_FILE\n"
+            "fi\n"
             'cd "' + str(ROOT) + '" || exit 1\n'
             'exec "' + hk_binary() + '" run commit-msg "$message"\n'
         )
