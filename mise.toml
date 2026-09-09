@@ -750,11 +750,13 @@ description = "Test that both halves of the commit rule agree about a merge"
 # a reading of the file. Deleting the step or dropping its redirect fails the
 # suite for the same reason.
 #
-# It is the slowest thing in `check` that compiles nothing: around fourteen
-# seconds, almost all of it spent in nested `mise run` invocations. That is
-# worth its three placements -- `check`, `hooks:pre-push` and the CI `lint`
-# job -- because every one of those is somewhere the two halves could already
-# have diverged, but it is the figure to weigh if the suite grows again.
+# It is the slowest thing in `check` that compiles nothing: twenty-two to
+# thirty-four seconds over eight runs here, the spread tracking what else the
+# machine was doing, almost all of it spent in nested `mise run` invocations
+# and in the real `hk` the gate cases drive. That is worth its three
+# placements -- `check`, `hooks:pre-push` and the CI `lint` job -- because
+# every one of those is somewhere the two halves could already have diverged,
+# but it is the figure to weigh if the suite grows again.
 #
 # A duration and not a count of anything. Every count this task's comment has
 # carried has gone wrong: the number of cases, and then the number of nested
