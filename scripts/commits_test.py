@@ -40,9 +40,9 @@ disabled by a module-level `skip_steps` or `skip_hooks`, replaced by a `shell`,
 a `prefix` or a `check` of `true`, turned into a fix-only run, or disarmed by
 an `hk.local.pkl` -- because none of those survives being asked what the hook
 actually did. Renaming the step is not on that list: hk runs it under whatever
-name it carries, so a rename disarms nothing and the reading stays green. The merge case in that class is the reported
-symptom itself: before the fix, it is the `Not committing merge` the issue
-opens with.
+name it carries, so a rename disarms nothing and the reading stays green. The
+merge case in that class is the reported symptom itself: before the fix, it is
+the `Not committing merge` the issue opens with.
 
 Running the real gate is hermetic because the git environment that hook hands
 hk is the fixture's own, spelled absolutely. hk finds `hk.pkl` by where it
