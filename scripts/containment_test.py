@@ -649,6 +649,34 @@ class AllowedSites(unittest.TestCase):
 REAL = {"crates/kynos/src/", "crates/kynos-openapi/src/", "crates/kynos-macros/src/"}
 
 
+class Permitted(unittest.TestCase):
+    """Which files the allowance table lets name `tokio` outside `server/`.
+
+    An allowed site is a path *segment* prefix and not a string prefix, which
+    is what the third case holds: an allowance for `runtime/` that also
+    permitted `runtimefoo.rs` would grant a file nobody wrote a row for, and
+    the row it was granted under would go on reading as the check.
+    """
+
+    #: Written for this file: a directory site, which is the shape a row's
+    #: brace expansion yields several of and the only shape a prefix can be
+    #: read wrongly for.
+    ALLOWED = {"crates/kynos/src/runtime"}
+
+    def test_the_server_module_is_permitted_whatever_the_table_says(self):
+        self.assertTrue(gate.permitted("crates/kynos/src/server/accept.rs", set()))
+
+    def test_an_allowed_site_permits_the_files_under_it(self):
+        self.assertTrue(
+            gate.permitted("crates/kynos/src/runtime/spawn.rs", self.ALLOWED)
+        )
+
+    def test_a_sibling_that_shares_an_allowed_site_s_name_is_not_permitted(self):
+        self.assertFalse(
+            gate.permitted("crates/kynos/src/runtimefoo.rs", self.ALLOWED)
+        )
+
+
 class Scanned(unittest.TestCase):
     """The trees a row's own sites put it in reach of, and which of them exist.
 
