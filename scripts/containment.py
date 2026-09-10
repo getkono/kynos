@@ -46,7 +46,6 @@ NUMBERS = {
     "Fifteen": 15,
     "Sixteen": 16,
 }
-failures = []
 
 
 CHAR_LITERAL = re.compile(r"'(\\.|[^\\'])'")
@@ -109,7 +108,7 @@ def test_module_spans(text):
         rest = text[match.end() :]
         if not rest.startswith("{"):
             # `mod tests;`, whose body is the sibling file `under_test` holds
-            # out of `FILES` separately.
+            # out of `files` separately.
             spans.append((match.start(), match.end() + rest.startswith(";")))
             continue
         depth, end = 0, len(text)
@@ -185,47 +184,128 @@ RAW_SOURCES = [
     for path in sorted((crate / "src").rglob("*.rs"))
 ]
 
-SOURCES = [(path, strip(text)) for path, text in RAW_SOURCES]
-
-
 def under_test(path):
     name = path.rsplit("/", 1)[-1]
     return name == "tests.rs" or name.endswith("_tests.rs")
 
 
-# What every rule here is stated over: the code that a request can run. Test
-# modules are dropped, inline by `strip` and as sibling files here.
-FILES = [(path, text) for path, text in SOURCES if not under_test(path)]
+def substituted(pairs, path, text):
+    """`pairs` with `path` reading as `text`, appended if it is not one of them."""
+    replaced = [(name, text if name == path else body) for name, body in pairs]
+    if any(name == path for name, _ in pairs):
+        return replaced
+    return replaced + [(path, text)]
 
-# The same two corpora for the one rule that needs a string literal back. A
-# `#[cfg(feature = "x")]` gate writes the flag name as a literal, so the corpus
-# above cannot see one at all; raw text can, but it also sees the flag named in
-# every comment, every rustdoc example and every `#[cfg(test)]` module beside
-# the code -- and a gate found in one of those holds a row up on a mention no
-# build reads, which is the false-positive class `strip()` exists to remove. So
-# this pair drops exactly what the pair above drops, minus the literals.
-GATE_SOURCES = [(path, strip(text, literals=False)) for path, text in RAW_SOURCES]
 
-GATE_FILES = [(path, text) for path, text in GATE_SOURCES if not under_test(path)]
+class Corpus:
+    """The tree of `.rs` files every rule stated over the source is stated over.
+
+    Four views of one tree, and each rule takes the one it can defend:
+
+    * `files` is the code a request can run, and is what most rules read. Test
+      modules are dropped, inline by `strip` and as sibling files by
+      `under_test`.
+    * `sources` is the same with the sibling test files kept, and is what a
+      spelling's *existence* is asked of: a mint spelling earns its place in a
+      cell by being reachable, not by being reached.
+    * `gate_files` and `gate_sources` are those two with string literals kept,
+      for the one rule that needs one back. A `#[cfg(feature = "x")]` gate
+      writes the flag name as a literal, so the two above cannot see one at
+      all; raw text can, but it also sees the flag named in every comment,
+      every rustdoc example and every `#[cfg(test)]` module beside the code --
+      and a gate found in one of those holds a row up on a mention no build
+      reads, which is the false-positive class `strip()` exists to remove. So
+      this pair drops exactly what the pair above drops, minus the literals.
+    * `raw` is what each file says before any of that, keyed by path. The
+      module-size budget counts the lines a reader sees rather than the lines
+      left after a corpus has cut a test module out of the middle.
+
+    An object `main` takes rather than five module constants, and for the
+    reason `main` takes its documents. Three rules here state their whole claim
+    over `files` -- the dependency-graph stray scan, the parent re-export scan
+    and the placeholder scan -- and while the corpus was built at import there
+    was nothing a case could hand them: by the time `main` ran, the corpus was
+    already what the tree said. Silencing any one of those three left both
+    gates green, which is this file's worst outcome, and it was the reason the
+    suite named them unheld. `replacing` is what a case hands over instead.
+    """
+
+    def __init__(self, raw, sources=None, gate_sources=None):
+        """`raw` is `(path, text)` pairs, or anything `dict` accepts.
+
+        The two derived lists are parameters so `replacing` can fill them in
+        rather than strip three hundred files again to rewrite one.
+        """
+        self.raw = dict(raw)
+        pairs = list(self.raw.items())
+        if sources is None:
+            sources = [(path, strip(text)) for path, text in pairs]
+        if gate_sources is None:
+            gate_sources = [(path, strip(text, literals=False)) for path, text in pairs]
+        self.sources = sources
+        self.gate_sources = gate_sources
+        self.files = [(path, text) for path, text in sources if not under_test(path)]
+        self.gate_files = [(path, text) for path, text in gate_sources if not under_test(path)]
+
+    def naming(self, *crates):
+        """The files naming any of `crates` as an identifier."""
+        pattern = re.compile(r"\b(" + "|".join(crates) + r")\b")
+        return {path for path, text in self.files if pattern.search(text)}
+
+    def replacing(self, path, text):
+        """This corpus with `path` reading as `text`, and nothing else stripped again.
+
+        A path the corpus does not hold is added, so a case may inject a file
+        the tree does not have as readily as rewrite one it does.
+
+        Every other file keeps the text it already has, which is what makes a
+        case over one of these precise as well as cheap: every rule but the one
+        under test reads exactly what it reads over the real tree, so the case
+        asserts one new failure rather than the hundred a corpus of one file
+        would produce.
+
+        The order the files come back in is not load-bearing -- every rule
+        stated over a corpus sorts its offenders or collects them into a set --
+        so a file the corpus did not hold goes on the end.
+        """
+        return Corpus(
+            self.raw | {path: text},
+            substituted(self.sources, path, strip(text)),
+            substituted(self.gate_sources, path, strip(text, literals=False)),
+        )
+
+
+#: This repository's own tree, and the corpus every rule reads when `main` is
+#: given no other. Built at import, which costs the file reads and no rule: what
+#: a rule does with it is `main`'s, and every one of them is stated there.
+WORKSPACE = Corpus(RAW_SOURCES)
 
 # What a failure says a spelling was looked for in, keyed by whether it is a
 # gate. Two corpora are two claims, and a message naming neither leaves a
 # reviewer guessing which text the rule read.
-CORPUS = {
+LOOKED_IN = {
     False: "with comments, string literals and inline `#[cfg(test)]` modules removed",
     True: "with comments and inline `#[cfg(test)]` modules removed and string literals kept",
 }
 
 
-def naming(*crates):
-    """The files naming any of `crates` as an identifier."""
-    pattern = re.compile(r"\b(" + "|".join(crates) + r")\b")
-    return {path for path, text in FILES if pattern.search(text)}
+#: The sentence two documents state a table's row count in, and the one
+#: sentence this file reads out of two of them: `architecture.md`'s allowance
+#: table and `testing.md`'s off-path table each write it over their own table.
+#: A module constant for the reason `TAXONOMY_CLAIM` and `OFF_PATH_HEADER` are:
+#: an anchor spelled at its call site is an anchor spelled twice.
+ROW_COUNT_CLAIM = r"\*\*(\w+) rows, and the count is the check\.\*\*"
 
 
-def claimed(sentence):
-    """The number `architecture.md` writes into one of its count claims."""
-    found = re.search(sentence, ARCHITECTURE)
+def claimed(text, sentence, failures):
+    """The number `architecture.md` writes into one of its count claims.
+
+    The document is a parameter for the reason `main`'s are: a count that stays
+    held when the section beside it is gone is a claim about which rules a
+    missing marker costs, and that is only observable against a document
+    missing one.
+    """
+    found = re.search(sentence, text)
     if found is None:
         failures.append(
             f"architecture.md no longer states a count matching /{sentence}/, so "
@@ -241,6 +321,47 @@ def claimed(sentence):
     return number
 
 
+def section(text, start, failures, end=None, unrun=""):
+    """`text` from `start` to `end`, or `None` with the missing marker reported.
+
+    What `.index()` was here, minus the raise. A marker is a heading or a table
+    header in a document someone is free to reword, and `.index()` answers a
+    reworded document with a `ValueError` that takes the process down: the gate
+    stops before it reports anything, and `containment_test.py` imports this
+    module, so the run that would have named the missing marker never starts
+    either. A rule whose text is gone is skipped instead, and said to be
+    skipped -- the discipline the off-path row loop already states for a row it
+    has just called untrustworthy.
+
+    `end` is looked for after `start`, and its absence is a failure too rather
+    than a fall back to the end of the document. A slice that silently widens is
+    the rule reading exactly the text it was written to exclude, which is worse
+    than a rule that says it did not run.
+
+    The first occurrence of each marker, which is `.index()`'s own semantics.
+
+    `unrun` is the caller's sentence, naming the document and the rule that goes
+    unchecked without the slice. The marker alone would leave a reader knowing
+    what is missing and not what stopped being held.
+    """
+    begin = text.find(start)
+    if begin < 0:
+        failures.append(
+            f"this gate slices a document at {start!r} and no longer finds it, "
+            f"so {unrun}"
+        )
+        return None
+    if end is None:
+        return text[begin:]
+    stop = text.find(end, begin)
+    if stop < 0:
+        failures.append(
+            f"this gate ends a slice at {end!r} and no longer finds it, so {unrun}"
+        )
+        return None
+    return text[begin:stop]
+
+
 def expand(entry):
     """`server/{accept,mod}.rs` -> `server/accept.rs`, `server/mod.rs`."""
     brace = re.search(r"\{([^}]*)\}", entry)
@@ -252,54 +373,22 @@ def expand(entry):
     ]
 
 
-# --- The runtime allowance table -------------------------------------------
-table = ARCHITECTURE[ARCHITECTURE.index("| Site | Names | Why it is not in `server/` |") :]
-rows = []
-for line in table.split("\n")[2:]:
-    if not line.startswith("|"):
-        break
-    rows.append(re.findall(r"`([^`]+)`", line.split("|")[1]))
+def permitted(path, allowed):
+    """Whether the `allowed` sites let `path` name tokio outside `server/`.
 
-stated = claimed(r"\*\*(\w+) rows, and the count is the check\.\*\*")
-if stated is not None and stated != len(rows):
-    failures.append(
-        f"architecture.md's allowance table claims {stated} rows and has {len(rows)}"
-    )
-
-allowed = {f"crates/kynos/src/{site.lstrip('/')}" for row in rows for entry in row for site in expand(entry)}
-
-
-def permitted(path):
+    The sites are a parameter rather than a global so the rule can be skipped
+    whole when the table they are read from is gone. An empty allowance is not a
+    narrower answer here: it is every file in the crate reported as an offender,
+    with the one failure that explains why buried under them.
+    """
     if path.startswith("crates/kynos/src/server/"):
         return True
     return any(path == site or path.startswith(site.rstrip("/") + "/") for site in allowed)
 
 
-if offenders := sorted(p for p in naming("tokio") if not permitted(p)):
-    failures.append(
-        "`tokio` is named outside `server/` at a site the allowance table does "
-        "not list:\n    " + "\n    ".join(offenders)
-    )
-
 # --- The dependency graph ---------------------------------------------------
 UNDER = "under"
 ONLY_IN = "only in"
-for crates, rule, where, description in [
-    (("hyper", "hyper_util"), ONLY_IN,
-     {"crates/kynos/src/server/connection.rs", "crates/kynos/src/http/body.rs"},
-     "`hyper` and `hyper-util` are named only in `server/connection.rs` and `http/body.rs`"),
-    (("rustls", "tokio_rustls"), UNDER, "crates/kynos/src/server/tls/",
-     "`tokio-rustls` and `rustls` are named only under `server/tls/`"),
-    (("matchit",), UNDER, "crates/kynos/src/router/",
-     "`matchit` may be named only under `router/`"),
-    (("h2", "httparse"), ONLY_IN, set(), "`h2` and `httparse` are never named"),
-    (("tower", "tower_service"), ONLY_IN, {"crates/kynos/src/unchecked.rs"},
-     "`tower` and `tower-service` are named only in `unchecked.rs`"),
-]:
-    found = naming(*crates)
-    stray = sorted(f for f in found if not f.startswith(where)) if rule == UNDER else sorted(found - where)
-    if stray:
-        failures.append(f"{description}, but it is also named in:\n    " + "\n    ".join(stray))
 
 # --- The off-path elements ---------------------------------------------------
 # `performance.md` grades the document model, the emitters, the validators and
@@ -346,12 +435,277 @@ NAMED_BY = re.compile(r"`?(\w+(?:\s*::\s*\w+)*)`?")
 # an element whose whole contribution is what a gate compiles has no crate or
 # type to be named by, and the gate is the only thing that names it.
 #
-# Matched as text, so it cannot tell a gate from its negation or from a
-# `cfg_attr` that compiles nothing: #134. The `openapi31` row is why that is not
-# a one-line narrowing -- both of its sites are
-# `#[cfg(not(feature = "openapi31"))] compile_error!`, so a pattern that reads
-# only the positive form empties the one row that has nothing else to hold.
+# Two spellings, because polarity is a property of the cell rather than of the
+# rule. `feature = "x"` names what the flag compiles when it is on;
+# `not(feature = "x")` names what it compiles when it is off, which is the whole
+# of what the `openapi31` row has to hold -- both of its sites are
+# `#[cfg(not(feature = "openapi31"))] compile_error!`. A cell read at either
+# polarity could not say which one it holds, and saying so is what it is for.
+#
+# That is the *existence* check. The offender scan reads no polarity at all, and
+# the two questions are split for that reason: `Gate.search` answers the cell's
+# claim, `Gate.named` answers whether a site names the flag. What a site owes a
+# row does not turn on which way its gate reads -- `not(feature = "x")` compiles
+# code in every build the flag is off in, and the row's reason either covers
+# that build or does not cover the site. Reading the polarity in both places
+# left a cell catching one half of its own claim, and for the four rows whose
+# element has no companion identifier -- `test-util`, `time`, `decimal`,
+# `openapi31` -- there was nothing else to catch the other half, so the loss was
+# total. Negated gates are idiom here rather than a corner: `lib.rs` writes four.
+#
+# Existence stays the narrower of the two, which is the safe direction: a row
+# cannot be held up by a mention the offender scan would not have counted.
+#
+# A cell writing both spellings is refused all the same, and by the row loop
+# rather than by a rule about cells: every spelling is held to matching
+# something, so over this tree the positive `openapi31` spelling empties and
+# fails the build. Run against the real tree, not assumed. `kynos-openapi`
+# declares `default = ["openapi31"]` and `openapi32 = ["openapi31"]`, and both
+# sites of the flag are the `compile_error!` that refuses a build without it, so
+# no build that compiles has it off and a positive gate on it is code that
+# cannot exist. `git log --all -S'cfg(feature = "openapi31")' -- crates/`
+# returns nothing -- though that string is blind to a multi-line predicate, and
+# one exists: `crates/kynos/tests/matrix.rs` writes the flag positively inside a
+# `#![cfg(all(...))]`, and `-S` is blind to any compound predicate rather than
+# only to one broken across lines. That file is under `crates/kynos/tests/`,
+# outside both scanned trees, so the row is unaffected and the idiom is real.
 GATE = re.compile(r'`?feature\s*=\s*"([\w-]+)"`?')
+NEGATED_GATE = re.compile(r'`?not\(\s*feature\s*=\s*"([\w-]+)"\s*\)`?')
+# Where a predicate starts. `cfg_attr` is here for its predicate, which
+# `Gate.names` argues is a gate: `#[cfg_attr(feature = "x", serde(default))]`
+# varies the item the attribute sits on, and that is what a row's spelling
+# claims. It is not here to keep the documentation annotation out, which is
+# what this comment used to say and what the measurement refutes -- dropping
+# `cfg_attr` from this pattern leaves `#[cfg_attr(docsrs,
+# doc(cfg(feature = "x")))]` reading `False` exactly as before, since a
+# `cfg`-only pattern cannot match `#[cfg_attr(` and the inner `cfg(` has no
+# `#[` in front of it. What excluding `cfg_attr` here loses is the predicate,
+# and nothing else.
+#
+# The `cfg!` macro is the one form here that is not an attribute, and is why
+# this pattern is named for the predicate rather than for the attribute around
+# it: what the two questions below read is a `cfg` predicate, and Rust writes
+# one inside four attributes and one macro. `cfg!` compiles in every
+# configuration and branches at run time, so what it guards is code every build
+# emits -- more of the request path than either attribute form compiles, not
+# less -- and a file writing one is coupled to the flag it names. Anchoring on
+# `#[` read it as naming no gate at all, which is a silent pass of the class
+# the polarity defect was, landing on the same four rows: `test-util`, `time`,
+# `decimal` and `openapi31` hold a gate spelling and nothing else in their
+# *Named by* cell, so no companion identifier catches the site by another
+# spelling.
+#
+# One pattern, so both questions read it, and that is decided rather than
+# incidental. The predicate inside a `cfg!` is the predicate inside a `#[cfg]`
+# -- `not(`, `all(`, `any(` and all -- so one walk answers both and `search`
+# reads the polarity the cell asked for. Feeding `named` alone would invert the
+# order the two are kept in: existence is the narrower of the pair so that a
+# row cannot be held up by a mention the offender scan would not have counted,
+# and a form only `named` read would call a cell stale over a spelling live
+# code writes. The `!` in `!cfg!(feature = "x")` is Rust's operator on the
+# expanded `bool` and sits outside the predicate, so it reads as no negation --
+# which is right, since the gate names the flag positively and the branch is
+# what inverts.
+#
+# Live idiom rather than a shape invented for this pattern: `crates/` writes
+# eleven `cfg!(feature = "…")`. None of them fires over this tree, and that was
+# established before the pattern changed rather than after. Every one names
+# `openapi32`, which no off-path row names at all; ten are under
+# `crates/kynos-macros/src/`, a tree no row's sites reach and so no row's scope
+# covers; and the three written in a `tests.rs` sibling are held out of
+# `gate_files` besides.
+#
+# The macro alternative accepts all three delimiters and the attribute
+# alternatives accept only `(`, which is Rust's asymmetry rather than this
+# pattern's. A macro invocation may be delimited `(`, `{` or `[` -- `rustc`
+# compiles `cfg!{feature = "x"}` and `cfg![feature = "x"]` as readily as the
+# parenthesised form -- while `#[cfg{...}]` is refused outright with "wrong
+# meta list delimiters". Requiring the paren everywhere read two of the three
+# macro spellings as no gate at all; widening the attribute forms to match
+# would read a gate into source no build compiles.
+#
+# The macro alternative also requires the name to stand bare. A word boundary
+# stops `mycfg!` and nothing else, because it fires after `:` and after `$` as
+# readily as after a space -- so `other::cfg!(...)` and `$cfg!(...)`, both of
+# which `rustc` compiles, read as gates under one. Neither is this gate: a path
+# resolves to whatever macro the named module exports, a metavariable to
+# whatever the caller passed, and text alone resolves neither. The lookbehind
+# refuses all three prefixes. It trades that pair for a miss should someone
+# re-export `core::cfg` under a path and gate on it, which is the direction a
+# scan reading text should err in when it cannot tell a gate from a namesake.
+PREDICATE = re.compile(r"#!?\[\s*(cfg_attr|cfg)\s*\(|(?<![\w:$])cfg!\s*([({\[])")
+#: What closes each delimiter a predicate may open. Only the outermost one
+#: varies: every group nested inside a `cfg` predicate is a parenthesised
+#: `not(`, `all(` or `any(`, so the walk closes on this one at depth one and on
+#: `)` everywhere below it.
+CLOSING = {"(": ")", "{": "}", "[": "]"}
+# A `not(` group, which inverts the polarity of everything inside it.
+NEGATION = re.compile(r"\bnot\s*\(")
+
+
+class Gate:
+    """One gate spelling, matched against the `cfg` predicate around it.
+
+    `.search(text)` like a compiled pattern's -- a bool rather than a match
+    object, since every consumer reads it in boolean context -- and `.named`
+    beside it for the one caller that must not read a polarity. `Name` answers
+    both for an identifier spelling, so the row loop asks every spelling the
+    same two questions.
+
+    Text matching could not answer what a gate spelling asks. `feature = "uuid"`
+    is written by the gate; by `not(feature = "uuid")`, which compiles code only
+    where the flag is *off*; and by `#[cfg_attr(docsrs, doc(cfg(...)))]`, which
+    compiles nothing in any configuration. All three read alike as text, so an
+    offender scan over one reported a row broken by the other two. It is also
+    written by `cfg!(feature = "uuid")`, which is not an attribute at all and
+    compiles in *every* configuration. The predicate is read instead: every
+    `#[cfg(`, `#![cfg(`, `#[cfg_attr(`, `#![cfg_attr(` and `cfg!` under any of
+    its three delimiters -- what `PREDICATE` matches -- is walked with its
+    delimiters balanced, and `search` counts the flag only where the parity of
+    the `not(` groups enclosing it is the one the spelling asked for. `named` counts it at either
+    parity and nowhere else, which is what separates a polarity a cell claims
+    from a flag a file names.
+
+    Anchoring on `#[cfg(feature = "x")]` instead was measured against this tree
+    and is wrong on it, not merely in principle: `lib.rs` names `time` and
+    `decimal` positively and their backends negatively inside compound
+    predicates, and compound predicates are the norm in this workspace rather
+    than the exotic case. A pattern that read only the bare form would miss
+    every one of those sites, and would let
+    `#[cfg(all(feature = "uuid", debug_assertions))]` past the offender scan --
+    the silent pass this file names as its worst outcome.
+
+    `literal_end` balances the parentheses, which is what keeps a paren inside a
+    string literal from desynchronising the walk. The corpus a gate is read
+    against keeps its literals, because the flag name is one.
+    """
+
+    def __init__(self, flag, negated):
+        self.flag = flag
+        self.negated = negated
+        self.pattern = re.compile(r'feature\s*=\s*"' + re.escape(flag) + r'"')
+
+    def search(self, text):
+        """Whether any predicate in `text` names this flag at this polarity."""
+        return any(self.names(text, found) for found in PREDICATE.finditer(text))
+
+    def named(self, text):
+        """Whether any predicate in `text` names this flag at either polarity.
+
+        What the offender scan asks, where `search` is what the existence check
+        asks. A cell states a polarity and the existence check holds it to that
+        one, because that is the claim the cell makes. Whether a *site* is one
+        the row has to cover is a different question and does not turn on the
+        polarity: `not(feature = "x")` names the flag and couples the file to
+        it, and what it compiles exists in every build the flag is off in --
+        which is a build the row's reason says nothing about. Reading the
+        polarity here answered half of what a row claims, and for a row whose
+        element has no companion identifier -- `test-util`, `time`, `decimal`,
+        `openapi31` -- it answered none of it.
+
+        Blind to the polarity alone, and not a text match. A
+        `#[cfg_attr(docsrs, doc(cfg(feature = "x")))]` compiles nothing in any
+        configuration and names the flag at no polarity, which is the false
+        positive half of #134 and stays fixed.
+        """
+        return any(
+            self.names(text, found, polarity=False)
+            for found in PREDICATE.finditer(text)
+        )
+
+    def names(self, text, opened, polarity=True):
+        """Whether one `opened` predicate names this flag, at this polarity or at any.
+
+        `polarity=False` is `named`'s question: the flag counts wherever the
+        walk reaches it, whatever the parity of the `not(` groups around it.
+
+        A `cfg_attr` is walked as far as its predicate and stops at the comma,
+        and that asymmetry is decided rather than incidental. "Compiles
+        nothing" is not what separates the two halves: `cfg_attr`
+        conditionally applies an *attribute*, so neither its predicate nor its
+        arguments conditionally compile the item, and the comment on the comma
+        branch below states the weaker of the two reasons for stopping there.
+        What separates them is what a row's spelling claims -- that the flag
+        varies the item the attribute sits on. A `cfg_attr` predicate does
+        vary it: under `#[cfg_attr(feature = "x", serde(default))]` the flag
+        decides how the item deserialises, so a row naming that flag has found
+        a site it is the proof for. The attributes applied after the comma
+        decide nothing about the item -- the flag in
+        `#[cfg_attr(docsrs, doc(cfg(feature = "x")))]` is being described in
+        prose a documentation build renders, and reading that as the gate was
+        half of #134.
+
+        With one shape where that is false, recorded rather than handled:
+        `#[cfg_attr(pred, cfg(feature = "x"))]` applies a `cfg`, which does
+        compile the item conditionally, and this returns `False` over it. No
+        `.rs` file in the workspace writes `cfg_attr` at all -- `grep -rn
+        cfg_attr crates/` finds it only in manifest prose recording a decision
+        not to adopt `docsrs` -- so the shape is unreachable here. Handling it
+        means walking into a nested `cfg(` at the outer polarity rather than
+        stopping at the comma, which is a decision for whoever writes the
+        first one.
+        """
+        # The parity of the `not(` groups enclosing each open paren, innermost
+        # last. The predicate's own paren is already open, at even parity; the
+        # walk ends when it closes, which is what keeps one predicate from
+        # running into the code below it.
+        parity, i, n = [False], opened.end(), len(text)
+        # The delimiter the predicate opened on, which is `(` for every
+        # attribute form and any of the three for the macro.
+        closes = CLOSING[text[i - 1]]
+        applies = opened.group(1) == "cfg_attr"
+        while i < n and parity:
+            if found := NEGATION.match(text, i):
+                parity.append(not parity[-1])
+                i = found.end()
+            elif found := self.pattern.match(text, i):
+                if not polarity or parity[-1] == self.negated:
+                    return True
+                i = found.end()
+            elif text[i] == "(":
+                parity.append(parity[-1])
+                i += 1
+            elif text[i] == (closes if len(parity) == 1 else ")"):
+                parity.pop()
+                i += 1
+            elif applies and text[i] == "," and len(parity) == 1:
+                # Only the first argument of a `cfg_attr` is a predicate. The
+                # attributes applied after it do not compile the item
+                # conditionally, so a flag named among them names no gate at
+                # either polarity -- unless one of those attributes is itself
+                # a `cfg`, which the docstring above records as the shape this
+                # returns `False` over and nothing in the workspace writes.
+                return False
+            elif (end := literal_end(text, i)) is not None:
+                i = end
+            else:
+                i += 1
+        # Parentheses that never balance are a file that does not compile, and
+        # the walk runs to the end of the text reporting nothing -- the posture
+        # `test_module_spans` takes for the same reason.
+        return False
+
+
+class Name:
+    """One identifier spelling, matched as the text it is.
+
+    `Gate`'s counterpart, and it exists so that the row loop can ask every
+    spelling both of its questions without asking which kind it holds. A name
+    has no polarity to read, so "does anything write this spelling" and "does
+    anything outside the row's sites write it" are the same question here and
+    two questions in `Gate`.
+    """
+
+    def __init__(self, pattern):
+        self.pattern = pattern
+
+    def search(self, text):
+        """Whether `text` writes this spelling."""
+        return self.pattern.search(text) is not None
+
+    def named(self, text):
+        """The same question. There is no polarity in a name to be blind to."""
+        return self.search(text)
 
 
 BACKTICKED = re.compile(r"`([^`]+)`")
@@ -380,7 +734,7 @@ def backticked(cell):
 
 
 def token(cell):
-    """One `(spelling, regex, gate)` per spelling in a *Named by* cell, or `None`.
+    """One `(spelling, matcher, gate)` per spelling in a *Named by* cell, or `None`.
 
     `None` loudly rather than a pattern that cannot match: a cell this function
     guesses at compiles to an escaped literal nothing in Rust source contains,
@@ -406,8 +760,15 @@ def token(cell):
     and `` `uuid`, `feature = "uuid"` `` is one element with two names, not two
     elements sharing a reason written twice.
 
+    A gate spelling may be written negated -- `not(feature = "x")` -- and then
+    exists only where the flag compiles code by being *off*. Its matcher is a
+    `Gate` rather than a compiled pattern, because the spelling is a claim about
+    the `#[cfg]` predicate around the string and not about the string. An
+    identifier's matcher is a `Name`, which answers the same two questions a
+    `Gate` does with the same answer, since a name has no polarity.
+
     Which corpus a spelling is matched over is `gate` in each triple: an
-    identifier over `SOURCES`, a gate over `GATE_SOURCES`. The two differ in
+    identifier over `sources`, a gate over `gate_sources`. The two differ in
     the literals alone. A gate matched over the stripped text would name
     nothing anywhere, since a flag name is a literal and the rule would read
     every `#[cfg]` in the workspace as absent and every feature row as
@@ -428,11 +789,11 @@ def token(cell):
     for entry in entries or [cell]:
         for spelling in expand(entry.strip()):
             spelling = spelling.strip()
-            if gate := GATE.fullmatch(spelling):
-                flag = re.escape(gate.group(1))
-                spellings.append(
-                    (spelling, re.compile(r'feature\s*=\s*"' + flag + r'"'), True)
-                )
+            if named := GATE.fullmatch(spelling):
+                spellings.append((spelling, Gate(named.group(1), negated=False), True))
+                continue
+            if named := NEGATED_GATE.fullmatch(spelling):
+                spellings.append((spelling, Gate(named.group(1), negated=True), True))
                 continue
             readable = NAMED_BY.fullmatch(spelling)
             if readable is None:
@@ -440,7 +801,7 @@ def token(cell):
             segments = [re.escape(part.strip()) for part in readable.group(1).split("::")]
             pattern = r"\s*::\s*".join(segments)
             spellings.append(
-                (readable.group(1), re.compile(r"\b" + pattern + r"\b"), False)
+                (readable.group(1), Name(re.compile(r"\b" + pattern + r"\b")), False)
             )
     return spellings
 
@@ -516,202 +877,6 @@ def scanned(allowance, exists=None):
     return sorted(trees), sorted(tree for tree in trees if not exists(tree))
 
 
-halves = TESTING.split(OFF_PATH_HEADER)
-if len(halves) != 2:
-    failures.append(
-        "testing.md no longer holds exactly one off-path table under the header "
-        "this rule reads, so nothing states which elements a request may not "
-        "reach"
-    )
-
-off_path_rows = 0
-# Every backticked token an *Element* cell writes, which is where a row says
-# which flag it is the proof for. Read from the same rows the rest of this loop
-# checks, so a row cannot satisfy the grading below without also being held
-# above: the feature grading compares against this set further down.
-off_path_elements = set()
-for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
-    if not line.startswith("|"):
-        break
-    # `strip("|")` before the split, so the outer pipes do not yield two empty
-    # cells and shift every column by one.
-    cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-    if len(cells) != 4:
-        failures.append(f"testing.md's off-path table has a malformed row: {line.strip()}")
-        continue
-
-    element, named_by, where, reason = cells
-    off_path_rows += 1
-    off_path_elements |= set(re.findall(r"`([^`]+)`", element))
-    allowance = allowed_sites(where)
-    if allowance is None:
-        failures.append(
-            f"testing.md's off-path table allows {element} in {where}, which "
-            "this rule cannot read as a comma-separated list of backticked "
-            "paths. The row holds nothing until it can, and it holds it "
-            "nowhere: the trees this row is scanned in are derived from these "
-            "sites, so an unreadable cell is an unscanned crate rather than an "
-            "unchecked path"
-        )
-        continue
-    trees, missing = scanned(allowance)
-    if missing:
-        failures.append(
-            f"testing.md's off-path table allows {element} in a crate that "
-            "does not exist, so the tree derived from that site is scanned for "
-            "nothing and the row narrows back to " + OFF_PATH_SCOPE + " without "
-            "saying so. Either the crate was renamed and the cell was not, or "
-            "the site is a typo. The row's sites go unchecked meanwhile:\n    "
-            + "\n    ".join(missing)
-        )
-        continue
-    scope = ", ".join(trees)
-    spellings = token(named_by)
-    if spellings is None:
-        failures.append(
-            f"testing.md's off-path table names {element} with {named_by}, "
-            "which this rule cannot read as an identifier or a path of them. "
-            "The row holds nothing until it can: teach the rule the token, or "
-            "write one it already knows. The row's sites go unchecked "
-            "meanwhile"
-        )
-        continue
-
-    # Every spelling is held to naming something, one at a time rather than as
-    # a union. A union hides a stale spelling behind a live one: with the cell
-    # written `Registry::{new,defualt}`, `new` keeps the row's match set
-    # non-empty and the typo is swallowed, so the row goes on reporting that a
-    # registry is off the request path while `Registry::default()` mints one
-    # anywhere. A spelling is a claim about a name, and a name nothing in the
-    # workspace writes is a rename or a typo rather than an element nothing
-    # reaches. (Stale *sites* stay tolerated, deliberately -- subset semantics,
-    # as above -- because a site claims a location, and locations may empty out
-    # while the claim stays true.)
-    #
-    # Existence is asked of `SOURCES`, not `FILES`: a mint spelling earns its
-    # place in a cell by being reachable, not by being reached, so the row is at
-    # its strongest when no file a request can run writes it at all.
-    # `Registry::default` is that case -- it is written only in a sibling test
-    # file, which is exactly the row holding.
-    #
-    # Sibling test files, and not every test: `strip()` has already dropped the
-    # inline `#[cfg(test)] mod` bodies from `SOURCES` and from `GATE_SOURCES`
-    # alike, so the corpus this widens to is exactly the `tests.rs` siblings
-    # `under_test` holds out of `FILES`. That is the layout rule's corpus rather
-    # than an approximation of it -- a module's tests belong in a sibling -- and
-    # lifting the inline removal would re-admit the comment and literal mentions
-    # `strip()` exists to drop.
-    #
-    # A gate spelling is asked of `GATE_SOURCES` for the reason `token` gives:
-    # the flag name is a string literal, invisible in the stripped text, so
-    # that corpus is the same source with its literals kept. Its comments and
-    # inline test modules go all the same -- a gate is a claim about code a
-    # build compiles, and a flag named in a comment is not one.
-    stale = [
-        (spelling, gate)
-        for spelling, pattern, gate in spellings
-        if not any(
-            any(path.startswith(tree) for tree in trees) and pattern.search(text)
-            for path, text in (GATE_SOURCES if gate else SOURCES)
-        )
-    ]
-    if stale:
-        for spelling, gate in stale:
-            failures.append(
-                f"testing.md's off-path table names {element} with "
-                f"`{spelling}`, and nothing under {scope} writes that spelling "
-                f"{CORPUS[gate]}, sibling test files included. The row holds "
-                "nothing under it: either the element was renamed and the cell "
-                "was not, or it now lives outside the scope this row's own "
-                "sites reach, which is a site to add rather than a spelling to "
-                "keep. The row's sites go unchecked until the cell is repaired"
-            )
-        # One failure per row. A cell this rule has just called untrustworthy
-        # does not also get to render a verdict on the sites: the offender scan
-        # under a stale spelling reports against a match set nobody should
-        # believe, and a reviewer handed two failures repairs the second by
-        # editing the row the first says is already wrong. The message above
-        # says the sites went unchecked, so the skip is stated rather than
-        # inferred from a passing build.
-        continue
-
-    # The offender scan, over the request-runnable half of each corpus a
-    # spelling asked for -- the same corpus its existence was asked of, so a
-    # row cannot be held up by a mention the offender scan would not have
-    # counted. A file counts as naming the element if any one spelling matches
-    # it, in that spelling's own text.
-    named = sorted(
-        {
-            path
-            for _, pattern, gate in spellings
-            for path, text in (GATE_FILES if gate else FILES)
-            if any(path.startswith(tree) for tree in trees) and pattern.search(text)
-        }
-    )
-    if offenders := [path for path in named if path not in allowance]:
-        failures.append(
-            f"{element} is off the request path, and {named_by} is named at a "
-            "site testing.md's off-path table does not allow. The row says a "
-            f"request cannot reach it because {reason}. Either that reason "
-            "covers the site below and the row should say so, or a request can "
-            "now reach it:\n    " + "\n    ".join(offenders)
-        )
-
-if len(halves) == 2 and not off_path_rows:
-    failures.append(
-        "testing.md's off-path table has no rows, so it holds nothing. An "
-        "element that stopped being off-path is retired by arguing it in "
-        "performance.md's allocation, not by emptying the table"
-    )
-
-# The row *set* needs holding as well as the rows. Every check above runs per
-# row, so a row that is deleted -- or cut off early, which one blank line in
-# the middle of the table does, since the loop breaks on the first line that is
-# not a row -- takes its element out of the gate while the run still reports
-# that every rule holds. `testing.md` states the count for that reason, and
-# this compares it.
-elif len(halves) == 2:
-    stated = re.search(r"\*\*(\w+) rows, and the count is the check\.\*\*", TESTING)
-    if stated is None:
-        failures.append(
-            "testing.md no longer states how many rows its off-path table has, "
-            "so a row can be dropped without failing this gate"
-        )
-    else:
-        expected = NUMBERS.get(stated.group(1).capitalize())
-        if expected is None:
-            failures.append(
-                f"testing.md writes an unreadable off-path row count: "
-                f"{stated.group(1)!r}"
-            )
-        elif expected != off_path_rows:
-            failures.append(
-                f"testing.md claims {expected} off-path rows and the table has "
-                f"{off_path_rows}. Adding an element means saying so there; "
-                "losing one means a row was dropped or the table was cut short"
-            )
-
-# --- Hand-rolled `Stream` implementations -----------------------------------
-# Only the section that enumerates them. Collecting every link in the
-# document would let an unrelated mention anywhere else silently authorise a
-# new hand-rolled `Stream`.
-surface = ARCHITECTURE[ARCHITECTURE.index("### Public API surface") :]
-surface = surface[: surface.index("\n## ")]
-declared = set(re.findall(r"\]\(\.\./(crates/[^)]+\.rs)\)", surface))
-hand_rolled = {path for path, text in FILES if re.search(r"\bStream\s+for\b", text)}
-
-sites = claimed(r"\*\*One public row, (\w+) sites, and the count is the check\*\*")
-if sites is not None and sites != len(hand_rolled):
-    failures.append(
-        f"architecture.md claims {sites} hand-rolled `Stream` sites and there are "
-        f"{len(hand_rolled)}:\n    " + "\n    ".join(sorted(hand_rolled))
-    )
-if undeclared := sorted(hand_rolled - declared):
-    failures.append(
-        "a hand-rolled `Stream` sits where architecture.md names no site:\n    "
-        + "\n    ".join(undeclared)
-    )
-
 # --- The module-size budget -------------------------------------------------
 # AGENTS.md: a module becomes a directory once it exceeds ~400 lines excluding
 # tests. Files still over that line are a debt, and `nfr.md` writes down how
@@ -719,31 +884,17 @@ if undeclared := sorted(hand_rolled - declared):
 # split, and never up without someone editing the ledger and saying why.
 #
 # "Excluding tests" is satisfied by the layout rule rather than by parsing:
-# `FILES` already drops every `tests.rs`, and the convention puts a module's
-# tests in one. A module keeping an inline `mod tests` would have those lines
-# counted, which is the right pressure -- the same rule says to move them out.
+# the corpus's `files` already drops every `tests.rs`, and the convention puts a
+# module's tests in one. A module keeping an inline `mod tests` would have those
+# lines counted, which is the right pressure -- the same rule says to move them
+# out, and the count is read off `raw` so an inline module is not cut out of the
+# middle of the file before its lines are counted.
 #
 # Counted with `count("\n")` rather than `len(split("\n"))`: every file here
 # ends in a newline, so splitting yields one empty trailing element and a file
 # of exactly 400 lines would be read as 401 and reported as past a line it has
 # not passed.
 NFR = (ROOT / "docs/nfr.md").read_text()
-oversized = sorted(
-    path
-    for path, _ in FILES
-    if (ROOT / path).read_text().count("\n") > 400
-)
-
-budget = re.search(r"a module-size budget of (\d+) files", NFR)
-if budget is None:
-    failures.append("nfr.md no longer states the module-size budget")
-elif int(budget.group(1)) != len(oversized):
-    failures.append(
-        f"nfr.md budgets {budget.group(1)} files over ~400 lines and there are "
-        f"{len(oversized)}. Splitting one means lowering the budget in the same "
-        "commit; adding one means arguing for it there.\n    "
-        + "\n    ".join(oversized)
-    )
 
 # --- The feature grading -----------------------------------------------------
 # `docs/performance.md` grades every flag `crates/kynos` declares, and the grade
@@ -764,7 +915,6 @@ elif int(budget.group(1)) != len(oversized):
 # whole purpose is catching the flag nobody noticed cannot rest on a parser that
 # can lose one.
 PERFORMANCE = (ROOT / "docs/performance.md").read_text()
-grading = PERFORMANCE[PERFORMANCE.index("| Grade | Owes | Flags |") :]
 # One grade is not self-executing. A full battery is owed to a suite that either
 # runs or does not; an aggregate owes nothing. An off-path proof is an argument,
 # and the failure it has is the one every argument has -- being graded and never
@@ -807,69 +957,6 @@ def off_path_coverage(off_path_graded, off_path_elements, grades):
         ]
     return []
 
-
-graded, off_path_graded, grades = [], [], []
-for line in grading.split("\n")[2:]:
-    if not line.startswith("|"):
-        break
-    cells = line.split("|")
-    flags = re.findall(r"`([^`]+)`", cells[3])
-    graded += flags
-    grades.append(cells[1].strip())
-    if cells[1].strip() == OFF_PATH_GRADE:
-        off_path_graded += flags
-
-failures += off_path_coverage(off_path_graded, off_path_elements, grades)
-
-manifest = tomllib.loads((ROOT / "crates/kynos/Cargo.toml").read_text())
-flags = set(manifest["features"])
-depended = {
-    member[len("dep:") :]
-    for members in manifest["features"].values()
-    for member in members
-    if member.startswith("dep:")
-}
-
-if ungraded := sorted(flags - set(graded)):
-    failures.append(
-        "crates/kynos declares a feature that performance.md's grading table "
-        "does not grade. Grading it is the argument the table exists to force: "
-        "a full battery, an off-path proof, or an aggregate that owes nothing "
-        "of its own:\n    " + "\n    ".join(ungraded)
-    )
-
-if undeclared := sorted(set(graded) - flags):
-    failures.append(
-        "performance.md grades a flag that crates/kynos does not declare, so "
-        "the row names a battery nothing can be enabled to owe. Either the flag "
-        "was renamed and the row was not, or the row outlived the feature:\n    "
-        + "\n    ".join(undeclared)
-    )
-
-if regraded := sorted({flag for flag in graded if graded.count(flag) > 1}):
-    failures.append(
-        "performance.md grades a flag in more than one row, where the table "
-        "says every flag appears in exactly one column. Two grades are two "
-        "different batteries owed and nothing decides between them:\n    "
-        + "\n    ".join(regraded)
-    )
-
-# An optional dependency no feature names with `dep:` makes Cargo synthesise an
-# implicit feature for it: a flag the crate declares, absent from `[features]`,
-# and so invisible to the three comparisons above. Its own failure rather than a
-# fourth entry in `ungraded`, because the remedy differs -- write the `dep:`, do
-# not add a table row.
-if implicit := sorted(
-    name
-    for name, spec in manifest["dependencies"].items()
-    if isinstance(spec, dict) and spec.get("optional") and name not in depended
-):
-    failures.append(
-        "an optional dependency of crates/kynos is named by no `dep:`, so Cargo "
-        "synthesises a feature for it that `[features]` does not list and this "
-        "rule cannot count against the grading. Name it from the feature that "
-        "needs it as `dep:`:\n    " + "\n    ".join(implicit)
-    )
 
 # --- The count of measurement kinds ------------------------------------------
 # `performance.md` opens by saying how many of the kinds in its taxonomy run
@@ -975,8 +1062,6 @@ def taxonomy_failures(text):
     return problems
 
 
-failures += taxonomy_failures(PERFORMANCE)
-
 # --- Nothing a package compiles reaches outside the package ------------------
 # `cargo package` copies a package directory and nothing above it, so a path
 # literal that climbs out of one names a file the archive cannot carry. Two
@@ -985,7 +1070,7 @@ failures += taxonomy_failures(PERFORMANCE)
 # paths resolve, and `cargo package`'s own verify step does not build test
 # targets.
 #
-# Read from the raw source rather than from `FILES`, whose text has had its
+# Read from the file on disk rather than from the corpus, whose text has had its
 # string literals stripped, and over every `.rs` file in each package rather
 # than `src/` alone -- a test target is published too.
 # Resolved against the reading file: `include_bytes!` and `include_str!` take a
@@ -1011,34 +1096,19 @@ def published(package):
     exempt = re.findall(r'"([^"]*)"', manifest.group(1)) if manifest else []
     for source in sorted(package.rglob("*.rs")):
         relative = source.relative_to(package).as_posix()
+        # Unreachable over this layout: `target/` sits at the workspace root
+        # and never inside `crates/<name>/`. Kept all the same, because a
+        # `CARGO_TARGET_DIR` pointed inside a package is all it takes to put
+        # one there, and what the walk would then read is a build script's
+        # generated sources -- whose every `include!` resolves outside the
+        # package by construction, so the escape rule below would report a
+        # tree of them. `Published` in the test file is where it is reachable.
         if "target" in source.relative_to(package).parts:
             continue
         if any(relative == entry or relative.startswith(entry.rstrip("/") + "/") for entry in exempt):
             continue
         yield source
 
-
-for package in sorted((ROOT / "crates").iterdir()):
-    if not (package / "Cargo.toml").is_file():
-        continue
-    for source in published(package):
-        text = source.read_text()
-        reached = (
-            [(source.parent, literal) for literal in INCLUDED.findall(text)]
-            + [(package, literal.lstrip("/")) for literal in CONCATENATED.findall(text)]
-            + [(package, "/".join(JOIN.findall(chain))) for chain in JOINED.findall(text)]
-        )
-        for base, literal in reached:
-            if Path(os.path.normpath(base / literal)).is_relative_to(package):
-                continue
-            failures.append(
-                f"{source.relative_to(ROOT).as_posix()} reads {literal!r}, which "
-                f"resolves outside {package.relative_to(ROOT).as_posix()}. A "
-                "published archive carries the package directory and nothing "
-                "above it, so this names a file the archive cannot hold: either "
-                "keep what it reads inside the package, or `exclude` the target "
-                "and say in the manifest why the assertion is the repository's"
-            )
 
 # --- Parent re-exports ------------------------------------------------------
 # AGENTS.md: submodules are `pub` with no parent re-exports, so every item has
@@ -1058,23 +1128,6 @@ for package in sorted((ROOT / "crates").iterdir()):
 DECLARED_MODULE = re.compile(r"\bmod\s+(\w+)\s*[;{]")
 REEXPORT = re.compile(r"^[ \t]*pub\s+use\s+(\w+)", re.MULTILINE)
 
-reexports = []
-for path, text in FILES:
-    if path.endswith("/lib.rs"):
-        continue
-    own = set(DECLARED_MODULE.findall(text)) | {"crate", "self", "super"}
-    reexports += [
-        f"{path}: pub use {head}::..."
-        for head in REEXPORT.findall(text)
-        if head in own
-    ]
-
-if reexports:
-    failures.append(
-        "a `pub use` re-publishes one of our own items, giving it a second path "
-        "where the layout rule allows exactly one:\n    " + "\n    ".join(sorted(reexports))
-    )
-
 # --- Placeholder bodies -----------------------------------------------------
 # AGENTS.md permits a `todo!()` body only during the pre-v1 API-skeleton
 # milestone, where the surface is designed ahead of its implementation so it can
@@ -1089,12 +1142,6 @@ if reexports:
 # own code, and `strip()` has already removed doc comments by the time this runs.
 # The word boundary keeps the rule off a macro that merely ends in `todo!`.
 PLACEHOLDER = re.compile(r"\btodo!")
-
-if placeholders := sorted(path for path, text in FILES if PLACEHOLDER.search(text)):
-    failures.append(
-        "a `todo!()` stands in for a body, and the exception that allowed one "
-        "lapsed when the API-skeleton milestone ended:\n    " + "\n    ".join(placeholders)
-    )
 
 # --- The dev build profile ---------------------------------------------------
 # `.cargo/config.toml` is what keeps a worktree's `target/` near the 17 GiB
@@ -1195,30 +1242,490 @@ def cargo_config_failures(text):
     return problems
 
 
-failures += cargo_config_failures(
-    CARGO_CONFIG.read_text() if CARGO_CONFIG.is_file() else None
-)
+def main(architecture=None, testing=None, performance=None, nfr=None, corpus=None):
+    """Run every rule over this repository, and report what does not hold.
 
+    Every rule body lives here rather than at module scope, so that importing
+    this module runs none of them. `containment_test.py` imports it to hold the
+    parsers above to their own cases, and a rule that raised at import time took
+    that run down with the tree it was reading -- reporting the parsers as
+    untested exactly when a parser was what broke. What is still read at import
+    is the corpora and the documents above, which costs a few file reads and no
+    build; what is deferred is every rule stated over them.
 
-# --- Report -----------------------------------------------------------------
-# Under the guard so this module can be imported. `containment_test.py` holds
-# the parsers above to their own cases, and a module that exits on a broken
-# rule would take the test run down with the tree it was reading -- reporting
-# the parsers as untested exactly when a parser is what broke. The rules
-# themselves still run on import, which costs a few file reads and no build.
-#
-# Which is only half of what the guard is meant to buy, and #134 is the rest:
-# the three bare `.index()` slices above raise rather than failing, so renaming
-# `| Grade | Owes | Flags |` in `performance.md` kills this script *and* the
-# test run that would have reported it. The fix is a `def main()`, which
-# reindents every rule body and so does not belong on a branch changing what
-# the rules say.
-if __name__ == "__main__":
+    `failures` is a local for the same reason. A module holding a failure list
+    at import is a module that has already checked something.
+
+    The four documents default to this repository's own and are arguments so
+    that a case can hand one over with a marker removed, the way `scanned`
+    takes `exists`. What each rule *stops* checking when its marker is gone is
+    a decision this file makes four times over, and reading the documents off
+    module scope would leave all four of them assertable only by editing the
+    repository.
+
+    `corpus` is the fifth argument and the same argument. The rules stated over
+    the source read it rather than a module constant, so a case can hand over
+    this repository's tree with one file rewritten -- `Corpus.replacing` -- and
+    reach a rule whose whole claim is about what the tree says. Three of them
+    were reachable no other way while the corpus was a constant: by the time
+    `main` ran it was already what the tree said, and silencing any one of the
+    three left both gates green.
+    """
+    corpus = WORKSPACE if corpus is None else corpus
+    architecture = ARCHITECTURE if architecture is None else architecture
+    testing = TESTING if testing is None else testing
+    performance = PERFORMANCE if performance is None else performance
+    nfr = NFR if nfr is None else nfr
+    failures = []
+
+    # --- The runtime allowance table ------------------------------------------
+    rows = []
+    table = section(
+        architecture,
+        "| Site | Names | Why it is not in `server/` |",
+        failures,
+        unrun=(
+            "architecture.md's runtime allowance table goes unparsed, and with it "
+            "both rules stated over it: the row count the document itself calls the "
+            "check, and the `tokio` offender scan, which over an empty allowance "
+            "would report every site in the crate and bury the renamed heading that "
+            "caused it"
+        ),
+    )
+    if table is not None:
+        for line in table.split("\n")[2:]:
+            if not line.startswith("|"):
+                break
+            rows.append(re.findall(r"`([^`]+)`", line.split("|")[1]))
+
+        stated = claimed(architecture, ROW_COUNT_CLAIM, failures)
+        if stated is not None and stated != len(rows):
+            failures.append(
+                f"architecture.md's allowance table claims {stated} rows and has {len(rows)}"
+            )
+
+        allowed = {f"crates/kynos/src/{site.lstrip('/')}" for row in rows for entry in row for site in expand(entry)}
+
+        if offenders := sorted(p for p in corpus.naming("tokio") if not permitted(p, allowed)):
+            failures.append(
+                "`tokio` is named outside `server/` at a site the allowance table does "
+                "not list:\n    " + "\n    ".join(offenders)
+            )
+
+    # --- The dependency graph ------------------------------------------------
+    for crates, rule, where, description in [
+        (("hyper", "hyper_util"), ONLY_IN,
+         {"crates/kynos/src/server/connection.rs", "crates/kynos/src/http/body.rs"},
+         "`hyper` and `hyper-util` are named only in `server/connection.rs` and `http/body.rs`"),
+        (("rustls", "tokio_rustls"), UNDER, "crates/kynos/src/server/tls/",
+         "`tokio-rustls` and `rustls` are named only under `server/tls/`"),
+        (("matchit",), UNDER, "crates/kynos/src/router/",
+         "`matchit` may be named only under `router/`"),
+        (("h2", "httparse"), ONLY_IN, set(), "`h2` and `httparse` are never named"),
+        (("tower", "tower_service"), ONLY_IN, {"crates/kynos/src/unchecked.rs"},
+         "`tower` and `tower-service` are named only in `unchecked.rs`"),
+    ]:
+        found = corpus.naming(*crates)
+        stray = sorted(f for f in found if not f.startswith(where)) if rule == UNDER else sorted(found - where)
+        if stray:
+            failures.append(f"{description}, but it is also named in:\n    " + "\n    ".join(stray))
+
+    # --- The off-path elements -----------------------------------------------
+    halves = testing.split(OFF_PATH_HEADER)
+    if len(halves) != 2:
+        failures.append(
+            "testing.md no longer holds exactly one off-path table under the header "
+            "this rule reads, so nothing states which elements a request may not "
+            "reach"
+        )
+
+    off_path_rows = 0
+    # Every backticked token an *Element* cell writes, which is where a row says
+    # which flag it is the proof for. Read from the same rows the rest of this loop
+    # checks, so a row cannot satisfy the grading below without also being held
+    # above: the feature grading compares against this set further down.
+    off_path_elements = set()
+    for line in (halves[1] if len(halves) == 2 else "").split("\n")[2:]:
+        if not line.startswith("|"):
+            break
+        # `strip("|")` before the split, so the outer pipes do not yield two empty
+        # cells and shift every column by one.
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) != 4:
+            failures.append(f"testing.md's off-path table has a malformed row: {line.strip()}")
+            continue
+
+        element, named_by, where, reason = cells
+        off_path_rows += 1
+        off_path_elements |= set(re.findall(r"`([^`]+)`", element))
+        allowance = allowed_sites(where)
+        if allowance is None:
+            failures.append(
+                f"testing.md's off-path table allows {element} in {where}, which "
+                "this rule cannot read as a comma-separated list of backticked "
+                "paths. The row holds nothing until it can, and it holds it "
+                "nowhere: the trees this row is scanned in are derived from these "
+                "sites, so an unreadable cell is an unscanned crate rather than an "
+                "unchecked path"
+            )
+            continue
+        trees, missing = scanned(allowance)
+        if missing:
+            failures.append(
+                f"testing.md's off-path table allows {element} in a crate that "
+                "does not exist, so the tree derived from that site is scanned for "
+                "nothing and the row narrows back to " + OFF_PATH_SCOPE + " without "
+                "saying so. Either the crate was renamed and the cell was not, or "
+                "the site is a typo. The row's sites go unchecked meanwhile:\n    "
+                + "\n    ".join(missing)
+            )
+            continue
+        scope = ", ".join(trees)
+        spellings = token(named_by)
+        if spellings is None:
+            failures.append(
+                f"testing.md's off-path table names {element} with {named_by}, "
+                "which this rule cannot read as an identifier or a path of them. "
+                "The row holds nothing until it can: teach the rule the token, or "
+                "write one it already knows. The row's sites go unchecked "
+                "meanwhile"
+            )
+            continue
+
+        # Every spelling is held to naming something, one at a time rather than as
+        # a union. A union hides a stale spelling behind a live one: with the cell
+        # written `Registry::{new,defualt}`, `new` keeps the row's match set
+        # non-empty and the typo is swallowed, so the row goes on reporting that a
+        # registry is off the request path while `Registry::default()` mints one
+        # anywhere. A spelling is a claim about a name, and a name nothing in the
+        # workspace writes is a rename or a typo rather than an element nothing
+        # reaches. (Stale *sites* stay tolerated, deliberately -- subset semantics,
+        # as above -- because a site claims a location, and locations may empty out
+        # while the claim stays true.)
+        #
+        # Existence is asked of `sources`, not `files`: a mint spelling earns its
+        # place in a cell by being reachable, not by being reached, so the row is at
+        # its strongest when no file a request can run writes it at all.
+        # `Registry::default` is that case -- it is written only in a sibling test
+        # file, which is exactly the row holding.
+        #
+        # Sibling test files, and not every test: `strip()` has already dropped the
+        # inline `#[cfg(test)] mod` bodies from `sources` and from `gate_sources`
+        # alike, so the corpus this widens to is exactly the `tests.rs` siblings
+        # `under_test` holds out of `files`. That is the layout rule's corpus rather
+        # than an approximation of it -- a module's tests belong in a sibling -- and
+        # lifting the inline removal would re-admit the comment and literal mentions
+        # `strip()` exists to drop.
+        #
+        # A gate spelling is asked of `gate_sources` for the reason `token` gives:
+        # the flag name is a string literal, invisible in the stripped text, so
+        # that corpus is the same source with its literals kept. Its comments and
+        # inline test modules go all the same -- a gate is a claim about code a
+        # build compiles, and a flag named in a comment is not one.
+        stale = [
+            (spelling, gate)
+            for spelling, pattern, gate in spellings
+            if not any(
+                any(path.startswith(tree) for tree in trees) and pattern.search(text)
+                for path, text in (corpus.gate_sources if gate else corpus.sources)
+            )
+        ]
+        if stale:
+            for spelling, gate in stale:
+                failures.append(
+                    f"testing.md's off-path table names {element} with "
+                    f"`{spelling}`, and nothing under {scope} writes that spelling "
+                    f"{LOOKED_IN[gate]}, sibling test files included. The row holds "
+                    "nothing under it: either the element was renamed and the cell "
+                    "was not, or it now lives outside the scope this row's own "
+                    "sites reach, which is a site to add rather than a spelling to "
+                    "keep. The row's sites go unchecked until the cell is repaired"
+                )
+            # One failure per row. A cell this rule has just called untrustworthy
+            # does not also get to render a verdict on the sites: the offender scan
+            # under a stale spelling reports against a match set nobody should
+            # believe, and a reviewer handed two failures repairs the second by
+            # editing the row the first says is already wrong. The message above
+            # says the sites went unchecked, so the skip is stated rather than
+            # inferred from a passing build.
+            continue
+
+        # The offender scan, over the request-runnable half of each corpus a
+        # spelling asked for -- the same corpus its existence was asked of, so a
+        # row cannot be held up by a mention the offender scan would not have
+        # counted. A file counts as naming the element if any one spelling matches
+        # it, in that spelling's own text.
+        #
+        # `named` rather than `search`, which is the one place the two differ: a
+        # gate spelling states a polarity and is held to it above, where what is
+        # under test is the cell's claim, and reads either polarity here, where
+        # what is under test is the site. A flag named negatively is a flag this
+        # file compiles code on.
+        named = sorted(
+            {
+                path
+                for _, pattern, gate in spellings
+                for path, text in (corpus.gate_files if gate else corpus.files)
+                if any(path.startswith(tree) for tree in trees) and pattern.named(text)
+            }
+        )
+        if offenders := [path for path in named if path not in allowance]:
+            failures.append(
+                f"{element} is off the request path, and {named_by} is named at a "
+                "site testing.md's off-path table does not allow. The row says a "
+                f"request cannot reach it because {reason}. Either that reason "
+                "covers the site below and the row should say so, or a request can "
+                "now reach it:\n    " + "\n    ".join(offenders)
+            )
+
+    if len(halves) == 2 and not off_path_rows:
+        failures.append(
+            "testing.md's off-path table has no rows, so it holds nothing. An "
+            "element that stopped being off-path is retired by arguing it in "
+            "performance.md's allocation, not by emptying the table"
+        )
+
+    # The row *set* needs holding as well as the rows. Every check above runs per
+    # row, so a row that is deleted -- or cut off early, which one blank line in
+    # the middle of the table does, since the loop breaks on the first line that is
+    # not a row -- takes its element out of the gate while the run still reports
+    # that every rule holds. `testing.md` states the count for that reason, and
+    # this compares it.
+    elif len(halves) == 2:
+        stated = re.search(ROW_COUNT_CLAIM, testing)
+        if stated is None:
+            failures.append(
+                "testing.md no longer states how many rows its off-path table has, "
+                "so a row can be dropped without failing this gate"
+            )
+        else:
+            expected = NUMBERS.get(stated.group(1).capitalize())
+            if expected is None:
+                failures.append(
+                    f"testing.md writes an unreadable off-path row count: "
+                    f"{stated.group(1)!r}"
+                )
+            elif expected != off_path_rows:
+                failures.append(
+                    f"testing.md claims {expected} off-path rows and the table has "
+                    f"{off_path_rows}. Adding an element means saying so there; "
+                    "losing one means a row was dropped or the table was cut short"
+                )
+
+    # --- Hand-rolled `Stream` implementations ---------------------------------
+    # Only the section that enumerates them. Collecting every link in the
+    # document would let an unrelated mention anywhere else silently authorise a
+    # new hand-rolled `Stream` -- which is also why a missing end marker fails here
+    # rather than widening the slice to the foot of the document.
+    surface = section(
+        architecture,
+        "### Public API surface",
+        failures,
+        "\n## ",
+        unrun=(
+            "architecture.md's list of the sites that may declare a hand-rolled "
+            "`Stream` goes unparsed, leaving nothing to check that every "
+            "implementation sits at one of them. The count of implementations is "
+            "still held, since it is read off the source rather than out of this "
+            "section"
+        ),
+    )
+    hand_rolled = {path for path, text in corpus.files if re.search(r"\bStream\s+for\b", text)}
+
+    sites = claimed(
+        architecture,
+        r"\*\*One public row, (\w+) sites, and the count is the check\*\*",
+        failures,
+    )
+    if sites is not None and sites != len(hand_rolled):
+        failures.append(
+            f"architecture.md claims {sites} hand-rolled `Stream` sites and there are "
+            f"{len(hand_rolled)}:\n    " + "\n    ".join(sorted(hand_rolled))
+        )
+    if surface is not None:
+        declared = set(re.findall(r"\]\(\.\./(crates/[^)]+\.rs)\)", surface))
+        if undeclared := sorted(hand_rolled - declared):
+            failures.append(
+                "a hand-rolled `Stream` sits where architecture.md names no site:\n    "
+                + "\n    ".join(undeclared)
+            )
+
+    # --- The module-size budget ----------------------------------------------
+    oversized = sorted(
+        path
+        for path, _ in corpus.files
+        if corpus.raw[path].count("\n") > 400
+    )
+
+    budget = re.search(r"a module-size budget of (\d+) files", nfr)
+    if budget is None:
+        failures.append("nfr.md no longer states the module-size budget")
+    elif int(budget.group(1)) != len(oversized):
+        failures.append(
+            f"nfr.md budgets {budget.group(1)} files over ~400 lines and there are "
+            f"{len(oversized)}. Splitting one means lowering the budget in the same "
+            "commit; adding one means arguing for it there.\n    "
+            + "\n    ".join(oversized)
+        )
+
+    # --- The feature grading -------------------------------------------------
+    grading = section(
+        performance,
+        "| Grade | Owes | Flags |",
+        failures,
+        unrun=(
+            "performance.md's grading table goes unparsed, and every rule stated "
+            "over it goes unrun: the off-path coverage comparison, and the "
+            "ungraded, undeclared and regraded checks. Over an empty grading "
+            "every flag the crate declares reads as ungraded, which reports one "
+            "problem per feature where there is one problem in total"
+        ),
+    )
+
+    graded, off_path_graded, grades = [], [], []
+    if grading is not None:
+        for line in grading.split("\n")[2:]:
+            if not line.startswith("|"):
+                break
+            cells = line.split("|")
+            flags = re.findall(r"`([^`]+)`", cells[3])
+            graded += flags
+            grades.append(cells[1].strip())
+            if cells[1].strip() == OFF_PATH_GRADE:
+                off_path_graded += flags
+
+        failures += off_path_coverage(off_path_graded, off_path_elements, grades)
+
+    manifest = tomllib.loads((ROOT / "crates/kynos/Cargo.toml").read_text())
+    flags = set(manifest["features"])
+    depended = {
+        member[len("dep:") :]
+        for members in manifest["features"].values()
+        for member in members
+        if member.startswith("dep:")
+    }
+
+    # The same guard again rather than one block around both halves: the loop above
+    # binds `flags` to one row's flags and the manifest read binds it to the crate's
+    # feature set, and these three comparisons want the second.
+    if grading is not None:
+        if ungraded := sorted(flags - set(graded)):
+            failures.append(
+                "crates/kynos declares a feature that performance.md's grading table "
+                "does not grade. Grading it is the argument the table exists to force: "
+                "a full battery, an off-path proof, or an aggregate that owes nothing "
+                "of its own:\n    " + "\n    ".join(ungraded)
+            )
+
+        if undeclared := sorted(set(graded) - flags):
+            failures.append(
+                "performance.md grades a flag that crates/kynos does not "
+                "declare, so the row names a battery nothing can be enabled to "
+                "owe. Either the flag was renamed and the row was not, or the "
+                "row outlived the feature:\n    "
+                + "\n    ".join(undeclared)
+            )
+
+        if regraded := sorted({flag for flag in graded if graded.count(flag) > 1}):
+            failures.append(
+                "performance.md grades a flag in more than one row, where the table "
+                "says every flag appears in exactly one column. Two grades are two "
+                "different batteries owed and nothing decides between them:\n    "
+                + "\n    ".join(regraded)
+            )
+
+    # An optional dependency no feature names with `dep:` makes Cargo synthesise an
+    # implicit feature for it: a flag the crate declares, absent from `[features]`,
+    # and so invisible to the three comparisons above. Its own failure rather than a
+    # fourth entry in `ungraded`, because the remedy differs -- write the `dep:`, do
+    # not add a table row.
+    if implicit := sorted(
+        name
+        for name, spec in manifest["dependencies"].items()
+        if isinstance(spec, dict) and spec.get("optional") and name not in depended
+    ):
+        failures.append(
+            "an optional dependency of crates/kynos is named by no `dep:`, so Cargo "
+            "synthesises a feature for it that `[features]` does not list and this "
+            "rule cannot count against the grading. Name it from the feature that "
+            "needs it as `dep:`:\n    " + "\n    ".join(implicit)
+        )
+
+    # --- The count of measurement kinds --------------------------------------
+    failures += taxonomy_failures(performance)
+
+    # --- Nothing a package compiles reaches outside the package --------------
+    for package in sorted((ROOT / "crates").iterdir()):
+        if not (package / "Cargo.toml").is_file():
+            continue
+        for source in published(package):
+            text = source.read_text()
+            reached = (
+                [(source.parent, literal) for literal in INCLUDED.findall(text)]
+                + [(package, literal.lstrip("/")) for literal in CONCATENATED.findall(text)]
+                + [(package, "/".join(JOIN.findall(chain))) for chain in JOINED.findall(text)]
+            )
+            for base, literal in reached:
+                if Path(os.path.normpath(base / literal)).is_relative_to(package):
+                    continue
+                failures.append(
+                    f"{source.relative_to(ROOT).as_posix()} reads {literal!r}, which "
+                    f"resolves outside {package.relative_to(ROOT).as_posix()}. A "
+                    "published archive carries the package directory and nothing "
+                    "above it, so this names a file the archive cannot hold: either "
+                    "keep what it reads inside the package, or `exclude` the target "
+                    "and say in the manifest why the assertion is the repository's"
+                )
+
+    # --- Parent re-exports ---------------------------------------------------
+    reexports = []
+    for path, text in corpus.files:
+        if path.endswith("/lib.rs"):
+            continue
+        own = set(DECLARED_MODULE.findall(text)) | {"crate", "self", "super"}
+        reexports += [
+            f"{path}: pub use {head}::..."
+            for head in REEXPORT.findall(text)
+            if head in own
+        ]
+
+    if reexports:
+        failures.append(
+            "a `pub use` re-publishes one of our own items, giving it a second path "
+            "where the layout rule allows exactly one:\n    " + "\n    ".join(sorted(reexports))
+        )
+
+    # --- Placeholder bodies --------------------------------------------------
+    if placeholders := sorted(path for path, text in corpus.files if PLACEHOLDER.search(text)):
+        failures.append(
+            "a `todo!()` stands in for a body, and the exception that allowed one "
+            "lapsed when the API-skeleton milestone ended:\n    " + "\n    ".join(placeholders)
+        )
+
+    # --- The dev build profile -----------------------------------------------
+    failures += cargo_config_failures(
+        CARGO_CONFIG.read_text() if CARGO_CONFIG.is_file() else None
+    )
+
+    # --- Report ---------------------------------------------------------------
     for failure in failures:
         print(f"containment: {failure}", file=sys.stderr)
     if failures:
-        sys.exit(1)
+        return 1
     print(
-        f"containment: {len(FILES)} source files, {len(rows)} allowance rows, "
-        f"{off_path_rows} off-path rows, {len(graded)} graded features, every rule holds"
+        f"containment: {len(corpus.files)} source files, {len(rows)} allowance rows, "
+        f"{off_path_rows} off-path rows, {len(graded)} graded features, "
+        "every rule holds"
     )
+    return 0
+
+
+# Nothing above this line has checked anything: the rules run from `main()` and
+# nowhere else, so importing this module costs the file reads at the top of it
+# and no more. That is the other half of what this guard was always meant to
+# buy, and until #134 it bought only the first: `containment_test.py` imports
+# this module, and a rule raising over a reworded document took that run down
+# with the tree it was reading, reporting the parsers as untested exactly when a
+# parser was what broke. `section()` closed the raise; this closes the import.
+if __name__ == "__main__":
+    sys.exit(main())
