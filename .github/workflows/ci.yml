@@ -83,6 +83,12 @@ jobs:
       - name: Test the cost sweep's parsers and report
         run: mise run cost:test
 
+      # Here rather than in the `commits` job below, which the rule is about:
+      # that job is `if: github.event_name == 'pull_request'`, so a task placed
+      # there would not run on a push to master.
+      - name: Test that the commit rule's two halves agree
+        run: mise run commits:test
+
   test:
     name: Tests
     runs-on: ubuntu-latest

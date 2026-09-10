@@ -66,6 +66,22 @@ hooks {
     }
     ["commit-msg"] {
         steps {
+            // A merge in progress is exempt, and the exemption lives inside
+            // the task rather than in a `step_condition` here: hk's `exec()`
+            // raises on a non-zero exit, so the natural spelling of "skip when
+            // MERGE_HEAD resolves" would fail the hook on every commit that is
+            // not a merge, and `hk test` renders no `{{commit_msg_file}}` to
+            // exercise a condition with.
+            //
+            // `mise run commits:test` covers this step without restating it: it
+            // installs `hk run commit-msg` as a throwaway repository's own hook
+            // and drives a real `git merge --no-ff` through it, so hk resolves
+            // this file itself and answers with the exit code git obeys. That
+            // reading is downstream of every way the step can be turned off --
+            // a merged duplicate entry, a module-level `skip_steps`, a `glob`
+            // selecting none of a commit's staged files -- which no reading of
+            // this file's text would catch. A rename is not one of them, and
+            // the suite is right to stay green through one.
             ["conventional-commit"] {
                 check = "mise run --quiet commits:message < {{commit_msg_file}}"
                 output_summary = "stdout"

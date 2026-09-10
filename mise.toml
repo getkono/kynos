@@ -651,6 +651,7 @@ run = [
   { task = "containment:check" },
   { task = "containment:test" },
   { task = "cost:test" },
+  { task = "commits:test" },
   { task = "docs:check" },
   { task = "panic:check" },
   { task = "features:check" },
@@ -660,7 +661,39 @@ run = [
 [tasks."commits:message"]
 description = "Validate one Conventional Commit message from stdin"
 quiet = true
-run = "convco check --from-stdin"
+# The merge exemption has to be stated here, because convco states it as a
+# property of the commit and this task is only ever given a message.
+# `convco check <range>` drops a merge by parent count, and a bare message has
+# no parents -- so the two spellings of this repository's one rule disagreed
+# about every merge, and `git merge` could not write its own merge commit.
+#
+# It cannot be pushed back into convco: the `--from-stdin` branch of
+# `convco check` returns before `--ignore-message-pattern` is consulted, in
+# 0.7.0 and in 0.7.1 alike. Nor into `hk.pkl` -- see the note on the step.
+#
+# MERGE_HEAD is the parent count, read at the only moment this task can read
+# anything: git writes it before running the commit-msg hook and removes it
+# once the commit exists.
+#
+# A test for the *file*, not `git rev-parse --verify --quiet MERGE_HEAD`, which
+# resolves a ref -- a branch or tag of that name would exempt a one-parent
+# commit that `commits:check` rejects, losing this gate in the direction
+# opposite to the one it was written to fix. `--git-path` is also what survives
+# a linked worktree, and this repository is worked in linked worktrees.
+#
+# Squash, cherry-pick, revert and rebase are deliberately not exempted: each
+# produces a one-parent commit that `commits:check` does check.
+#
+# One case this cannot reach: amending an *existing* merge commit runs the hook
+# with MERGE_HEAD already gone over a commit that still has two parents, so the
+# gate rejects what `commits:check` exempts. `--no-verify` remains the escape.
+# Recorded in `docs/nfr.md`.
+run = '''
+if [ -f "$(git rev-parse --git-path MERGE_HEAD)" ]; then
+  exit 0
+fi
+convco check --from-stdin
+'''
 
 [tasks."commits:check"]
 description = "Validate an explicit or outgoing commit range"
@@ -676,6 +709,36 @@ else
   echo "No commits to validate."
 fi
 '''
+
+[tasks."commits:test"]
+description = "Test that both halves of the commit rule agree about a merge"
+# The two tasks above state one rule through two instruments that cannot see
+# the same thing, and when they disagree neither one fails: both keep exiting
+# zero over every commit written by hand, and the divergence surfaces only at
+# the next merge, where the fix that looks available is `--no-verify`. So
+# `BothHalvesOverOneMerge` puts each verdict to both halves over the same
+# commit. The range half is the one that moves under maintenance -- a `.convco`
+# holding `merges: true`, or a `[tools]` bump of convco, changes what it
+# accepts and leaves the hook half untouched.
+#
+# The cases build real repositories rather than forging state files: one is a
+# linked worktree, because that is how this repository is worked and MERGE_HEAD
+# lives elsewhere there, and one installs `hk run commit-msg` as that
+# repository's own `commit-msg` hook and drives a real `git merge --no-ff`
+# through it -- issue #132's own symptom, so reverting this fix makes it print
+# `Not committing merge`. Whether hk runs the step is read out of that exit
+# code rather than out of the text of `hk.pkl`, so a step disarmed by any means
+# shows up in the answer.
+#
+# It compiles nothing but is not free -- most of its time goes on nested
+# `mise run` invocations and the real `hk` -- which is worth its three
+# placements, since each is somewhere the two halves could already have
+# diverged.
+#
+# `unittest` from the standard library: this repository has no Python test
+# runner, and taking a dependency to drive git through subprocess is the worse
+# trade. `-B` because `.gitignore` has no `__pycache__` entry.
+run = "python3 -B scripts/commits_test.py"
 
 [tasks."hooks:pre-push"]
 description = "Run all pre-push checks"
@@ -695,6 +758,10 @@ description = "Run all pre-push checks"
 # invisible to the two lint passes above it, and a push is the last point where
 # its author is still the one looking. The six builds it adds are `-p kynos` at
 # small feature sets, which is the cheap end of what this list already runs.
+#
+# `commits:test` follows `commits:check` for the reason `containment:test`
+# follows its gate: a push is the last point where the person who wrote the
+# messages is still looking at them.
 run = [
   { task = "format:check" },
   { task = "lint" },
@@ -705,4 +772,5 @@ run = [
   { task = "containment:check" },
   { task = "containment:test" },
   { task = "commits:check" },
+  { task = "commits:test" },
 ]
