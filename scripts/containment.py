@@ -523,7 +523,17 @@ NEGATED_GATE = re.compile(r'`?not\(\s*feature\s*=\s*"([\w-]+)"\s*\)`?')
 # meta list delimiters". Requiring the paren everywhere read two of the three
 # macro spellings as no gate at all; widening the attribute forms to match
 # would read a gate into source no build compiles.
-PREDICATE = re.compile(r"#!?\[\s*(cfg_attr|cfg)\s*\(|\bcfg!\s*([({\[])")
+#
+# The macro alternative also requires the name to stand bare. A word boundary
+# stops `mycfg!` and nothing else, because it fires after `:` and after `$` as
+# readily as after a space -- so `other::cfg!(...)` and `$cfg!(...)`, both of
+# which `rustc` compiles, read as gates under one. Neither is this gate: a path
+# resolves to whatever macro the named module exports, a metavariable to
+# whatever the caller passed, and text alone resolves neither. The lookbehind
+# refuses all three prefixes. It trades that pair for a miss should someone
+# re-export `core::cfg` under a path and gate on it, which is the direction a
+# scan reading text should err in when it cannot tell a gate from a namesake.
+PREDICATE = re.compile(r"#!?\[\s*(cfg_attr|cfg)\s*\(|(?<![\w:$])cfg!\s*([({\[])")
 #: What closes each delimiter a predicate may open. Only the outermost one
 #: varies: every group nested inside a `cfg` predicate is a parenthesised
 #: `not(`, `all(` or `any(`, so the walk closes on this one at depth one and on
