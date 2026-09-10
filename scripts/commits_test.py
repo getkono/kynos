@@ -133,18 +133,28 @@ def scrubbed_environment():
 def hermetic_environment():
     """The environment every fixture, every tool lookup and the gate itself run in.
 
-    `HERMETIC` over the `GIT_*` scrub, and then every inherited `HK_*` name
-    removed as well. The second half is not housekeeping either: `HK_SKIP_STEPS`
-    and `HK_SKIP_HOOK` in somebody's shell each make `hk run commit-msg` exit 0
-    having run nothing, and the subject of these cases is what this repository
-    declares rather than what one machine's shell overrides. That escape hatch
-    is committed nowhere and must not answer for the repository.
-    `TheGateHkRuns.test_an_exported_hk_skip_does_not_reach_the_gate` holds it.
+    `HERMETIC` over the `GIT_*` scrub, and then every inherited `HK_*` and
+    `CONVCO_*` name removed as well. That half is not housekeeping either.
+    `HK_SKIP_STEPS` and `HK_SKIP_HOOK` in somebody's shell each make
+    `hk run commit-msg` exit 0 having run nothing; `CONVCO_MERGES` is the
+    switch behind `no_merge_commits`, and exported it flips
+    `convco check BASE..HEAD` over a merge subject. Each is an escape hatch
+    committed nowhere, and the subject of these cases is what this repository
+    declares rather than what one machine's shell overrides.
+
+    Both namespaces are stripped rather than enumerated, because a tool's
+    environment surface grows between releases and a list of names would go
+    stale silently. `range_gate` sets the one `CONVCO_*` name the suite needs,
+    `CONVCO_RANGE`, back explicitly after the strip.
+
+    `TheGateHkRuns.test_an_exported_hk_skip_does_not_reach_the_gate` and
+    `BothHalvesOverOneMerge.test_an_exported_convco_override_does_not_reach_either_half`
+    hold the two halves of this.
     """
     return {
         key: value
         for key, value in {**scrubbed_environment(), **HERMETIC}.items()
-        if not key.startswith("HK_")
+        if not (key.startswith("HK_") or key.startswith("CONVCO_"))
     }
 
 
