@@ -3,7 +3,7 @@
 //!
 //! The allocation-count kind in
 //! [`performance.md`](../../../docs/performance.md#the-taxonomy), and one of
-//! the two targets that document says own the global allocator. It is a target
+//! the four targets that document says own the global allocator. It is a target
 //! of its own rather than a sibling `tests.rs` beside the router because a
 //! `#[global_allocator]` is process-wide: installed in the library's unit-test
 //! binary it would count, and slow, every other unit test in it.
@@ -52,19 +52,20 @@ use alloc_counter::count_alloc;
 use kynos::{
     Router,
     extract::params::path::Path,
-    http::Request,
+    http::{Method, Request, StatusCode},
     middleware::{Continued, Interceptor, Next},
     prelude::*,
     response::status::NoContent,
     router::service::Service,
 };
 
-/// The counter and the driver, shared so that a second counting target does
-/// not copy them. Including this module is what installs the allocator.
+/// The counter, the request builder and the driver, shared with
+/// `alloc_codecs.rs` so that the second counting target does not carry a copy
+/// of them. Including this module is what installs the allocator.
 #[path = "support/counting.rs"]
 mod counting;
 
-use counting::{counted, request};
+use counting::request;
 
 /// Every shape measured here, with what it costs today.
 ///
@@ -72,14 +73,19 @@ use counting::{counted, request};
 /// so its excess over `/ping` is not the router's alone. Splitting the two is
 /// the attribution [`nfr.md`](../../../docs/nfr.md#routing) names as the next
 /// piece of work.
-const SHAPES: [(&str, usize); 3] = [
+///
+/// The status is the one the count has to be of, for the reason
+/// [`alloc_codecs.rs`](alloc_codecs.rs) gives: a request answered 404 where 204
+/// was meant is a count of a miss rather than of a match, and every ceiling
+/// here is a `<=` that such a count would pass under.
+const SHAPES: [(&str, StatusCode, usize); 3] = [
     // A static match, with no parameter to capture. Also the row `STACKED`
     // and the depth-0 stack ceiling are read from.
-    ("/ping", 7),
+    ("/ping", StatusCode::NO_CONTENT, 7),
     // One path parameter, captured and deserialized.
-    ("/users/7", 11),
+    ("/users/7", StatusCode::NO_CONTENT, 11),
     // A request matching no route at all.
-    ("/nope", 6),
+    ("/nope", StatusCode::NOT_FOUND, 6),
 ];
 
 #[derive(Schema, kynos::PathParams)]
@@ -107,6 +113,19 @@ fn router() -> Router<()> {
 
 fn service() -> Service<()> {
     router().build(()).expect("a describable router")
+}
+
+/// One `GET` against `target`, driven through the shared driver and dropped.
+///
+/// The shape every reading in this file is taken in. The region it is taken
+/// over is [`counting::counted`]'s, shared with `alloc_codecs.rs` so that a
+/// correction to one target's driver cannot leave the other behind.
+fn counted(service: &Service<()>, target: &str, expected: StatusCode) -> usize {
+    let (allocations, response) =
+        counting::counted(service, request(Method::GET, target, None, b""), expected);
+
+    drop(response);
+    allocations
 }
 
 /// An interceptor that forwards and does nothing else, so that what a stack
@@ -165,6 +184,67 @@ fn depth_8() -> Service<()> {
         .expect("a describable router")
 }
 
+/// One transparent layer: the control the calibration below is read against.
+///
+/// The same depth as [`calibrated`] and the same builder, differing only in
+/// which interceptor is mounted, so that the difference between two readings
+/// taken through them is what [`Calibrating`] does and nothing else. What
+/// makes that hold is that the erased chain boxes each layer's future with one
+/// `Box::pin` whose cost does not depend on how large that future is, and both
+/// interceptors declare the same associated types — so the layer itself costs
+/// the same in both. True today, and pinned by nothing.
+fn depth_1() -> Service<()> {
+    router()
+        .intercept(Transparent)
+        .build(())
+        .expect("a describable router")
+}
+
+/// An interceptor that allocates a known amount, so that part of a count taken
+/// through it is fixed by construction rather than measured.
+///
+/// Two heap operations, deliberately one of each kind. `Vec::with_capacity` is
+/// one fresh allocation; extending past that capacity is one *reallocation*,
+/// because a `Vec` that outgrows its buffer asks the allocator to resize it
+/// rather than to hand out a second one. A counter that reported only the
+/// first would be counting half of what every ceiling in this target and in
+/// `alloc_codecs.rs` is recorded in.
+///
+/// [`black_box`](std::hint::black_box) is what keeps both from being optimized
+/// away: nothing reads the buffer, and a dead `Vec` is exactly the shape a
+/// compiler is free to delete.
+struct Calibrating;
+
+impl<C: Sync + 'static> Interceptor<C> for Calibrating {
+    type Reads = ();
+    type Adds = ();
+    type Short = Infallible;
+
+    async fn intercept(
+        &self,
+        request: Request,
+        reads: (),
+        context: &C,
+        next: Next<'_, C>,
+    ) -> Result<Continued<()>, Infallible> {
+        let _ = (reads, context);
+
+        let mut buffer = Vec::<u8>::with_capacity(1);
+        buffer.extend_from_slice(&[0, 0]);
+        drop(std::hint::black_box(buffer));
+
+        Ok(next.run(request).await)
+    }
+}
+
+/// The routing fixture with one calibrating layer in front of it.
+fn calibrated() -> Service<()> {
+    router()
+        .intercept(Calibrating)
+        .build(())
+        .expect("a describable router")
+}
+
 /// One row of the table below: a depth, the service that mounts that many
 /// layers, and what a request through it costs.
 ///
@@ -181,10 +261,28 @@ type Stack = (usize, fn() -> Service<()>, usize);
 /// cannot disagree about which shape is stacked.
 const STACKED: &str = SHAPES[0].0;
 
+/// The answer that target has to give for a count to be of the match, from the
+/// same row, for the reason [`SHAPES`] gives.
+const STACKED_STATUS: StatusCode = SHAPES[0].1;
+
 /// What that target costs with no stack in front of it, from the same row: the
 /// depth-0 ceiling below *is* the static match's, so re-measuring one moves
 /// both.
-const STACKED_ALONE: usize = SHAPES[0].1;
+const STACKED_ALONE: usize = SHAPES[0].2;
+
+/// The control every stack is read against: the request that matched no route,
+/// read out of [`SHAPES`] for the reason [`STACKED`] is.
+const MISSED: &str = SHAPES[2].0;
+
+/// The answer *that* target has to give, from the same row.
+const MISSED_STATUS: StatusCode = SHAPES[2].1;
+
+/// The shape whose excess over the static match is what a capture costs, read
+/// out of [`SHAPES`] for the reason [`STACKED`] is.
+const CAPTURED: &str = SHAPES[1].0;
+
+/// The answer *that* target has to give, from the same row.
+const CAPTURED_STATUS: StatusCode = SHAPES[1].1;
 
 /// Every stack depth measured here, with what a request through it costs
 /// today.
@@ -247,7 +345,7 @@ const DISPATCH_FUTURE_BYTES: usize = 280;
 #[test]
 fn an_interceptor_stack_allocates_what_is_recorded_here() {
     for &(depth, build, ceiling) in &STACKS[1..] {
-        let counted = counted(&build(), STACKED);
+        let counted = counted(&build(), STACKED, STACKED_STATUS);
         assert!(
             counted <= ceiling,
             "a request through {depth} no-op interceptor(s) allocated \
@@ -274,9 +372,9 @@ fn an_interceptor_stack_allocates_what_is_recorded_here() {
 fn a_layer_costs_the_same_wherever_it_sits() {
     let [(_, empty, _), (_, four, _), (deepest, eight, _)] = STACKS;
     let (d0, d4, d8) = (
-        counted(&empty(), STACKED),
-        counted(&four(), STACKED),
-        counted(&eight(), STACKED),
+        counted(&empty(), STACKED, STACKED_STATUS),
+        counted(&four(), STACKED, STACKED_STATUS),
+        counted(&eight(), STACKED, STACKED_STATUS),
     );
 
     assert!(
@@ -304,7 +402,10 @@ fn a_layer_costs_the_same_wherever_it_sits() {
         d8 - d0
     );
 
-    let (missed_0, missed_8) = (counted(&empty(), "/nope"), counted(&eight(), "/nope"));
+    let (missed_0, missed_8) = (
+        counted(&empty(), MISSED, MISSED_STATUS),
+        counted(&eight(), MISSED, MISSED_STATUS),
+    );
     assert_eq!(
         missed_0, missed_8,
         "a request matching no route cost {missed_0} with no stack and \
@@ -342,9 +443,9 @@ fn a_chain_does_not_widen_the_dispatch_future() {
     // future carry its stack would have to delete this array first. Three
     // readings of one type cannot differ, so none is asserted against another.
     let futures = [
-        at_0.call(request(STACKED)),
-        at_4.call(request(STACKED)),
-        at_8.call(request(STACKED)),
+        at_0.call(request(Method::GET, STACKED, None, b"")),
+        at_4.call(request(Method::GET, STACKED, None, b"")),
+        at_8.call(request(Method::GET, STACKED, None, b"")),
     ];
     let [width, ..] = futures.map(|future| size_of_val(&future));
 
@@ -409,14 +510,108 @@ fn work_on_another_thread_is_not_counted() {
     );
 }
 
+/// What [`Calibrating`] adds to a request, by construction: one fresh
+/// allocation and one reallocation.
+///
+/// A constructed target rather than a recorded measurement: it is what
+/// [`Calibrating`]'s body does, not what a run reported. That is the ground
+/// for holding it at an equality, and it is the ground
+/// [`nfr.md`](../../../docs/nfr.md#routing) already gives for holding body
+/// erasure at one — "because a count under either would mean the boxing had
+/// stopped happening". A count under this one would mean the counting had.
+/// It is also why nothing re-reads it when a ceiling moves: none of what it
+/// counts is the router's.
+///
+/// Confirmed against the instrument all the same, the way every recorded
+/// number here was read: set to zero, and the delta transcribed out of the
+/// failure. Two at baseline (`cargo nextest run -p kynos --test alloc`) and
+/// two with `--all-features`, the two configurations this target is built at.
+const CALIBRATION: usize = 2;
+
+/// The instrument's second invariant, and the one every ceiling in either
+/// counting target rests on: a count is *every* heap operation the region saw,
+/// fresh allocations and reallocations alike.
+///
+/// **Stated as a delta rather than as an absolute, because an absolute would
+/// be mostly the router's.** One request through [`calibrated`] costs ten
+/// today, of which eight is the routing path's [`STACKED_ALONE`] and the boxed
+/// future one layer costs — both recorded above as ceilings, and both free to
+/// fall. Pinning the ten would turn a rustc or dependency bump that made the
+/// static match one allocation cheaper into a red *instrument* test: every
+/// ceiling would pass, both equalities over differences would pass, and this
+/// would be the only failure in either target, saying the driver had changed
+/// when the router had merely got cheaper. Reading it against a transparent
+/// layer at the same depth cancels all eight. What is left is what
+/// [`Calibrating`] does, which nothing outside this file can move — the
+/// arrangement [`performance.md`](../../../docs/performance.md#thresholds)
+/// asks for, where relations outlive absolutes.
+///
+/// **Why no ceiling could see this.** Dropping `reallocations` from the
+/// driver's sum was measured to move nine `alloc_codecs.rs` compression
+/// readings down — gzip 27→26, 27→26, 31→27; br 42→41, 42→41, 48→45; zstd
+/// 21→20, 21→20, 24→21 — so reallocations are counted there, and often. What
+/// no *assertion* could see is that they fell: the ceilings are `<=`, the leak
+/// replays read a uniform fall as still constant, and the strict relations and
+/// the equalities over differences are all one-sided.
+///
+/// **What this cannot catch, since only a docblock can hold it.** A delta
+/// cancels any shift the two readings share. A driver that under-reported
+/// *every* request by the same amount would be invisible here — and to every
+/// ceiling, which a fall passes, and to every relation, which a common shift
+/// leaves standing. The absolute this replaced did catch that, and buying the
+/// sensitivity back costs a red test on each genuine routing-path
+/// improvement, which is the treadmill the delta exists to remove. The blind
+/// spot is accepted and written down rather than closed.
+///
+/// The region's *front* boundary is the concrete case. It is "construct the
+/// future, then poll it", and an `async fn`'s construction allocates nothing,
+/// so narrowing there shifts both readings by zero — measured, by moving
+/// `Service::call` outside the region and watching both targets stay green.
+/// No fixture can reach that boundary either: the only handle one has on the
+/// inside is `Interceptor::intercept`, which is itself an `async fn`. It
+/// becomes a real hole the day dispatch boxes at call time rather than at poll
+/// time.
+///
+/// Filed here beside `work_on_another_thread_is_not_counted` rather than in
+/// `alloc_codecs.rs`, for that assertion's reason and by the precedent
+/// [`testing.md`](../../../docs/testing.md#hermeticity) sets: the property
+/// belongs to `alloc_counter` and to the shared driver rather than to any
+/// fixture, so it is asserted once for both targets. Since #133 there is one
+/// driver, which is what lets one assertion reach both — and is why it has to
+/// exist, because a single edit to that driver now moves every recorded number
+/// in both files at once and leaves the two as comparable as they ever were.
+#[test]
+fn the_counter_reports_every_heap_operation_in_the_region() {
+    let (plain, calibrating) = (
+        counted(&depth_1(), STACKED, STACKED_STATUS),
+        counted(&calibrated(), STACKED, STACKED_STATUS),
+    );
+
+    // Stated as an addition rather than as `calibrating - plain`, so a reading
+    // that fell below its control cannot underflow before its message is read
+    // — the form `a_layer_costs_the_same_wherever_it_sits` uses, for the same
+    // reason.
+    assert_eq!(
+        calibrating,
+        plain + CALIBRATION,
+        "one calibrating layer added {} heap operation(s) to a request that \
+         cost {plain} through a transparent one, against the {CALIBRATION} it \
+         performs by construction — one fresh allocation and one \
+         reallocation. A driver that stopped counting one of the two kinds \
+         reports fewer here, and every `<=` ceiling in this target and in \
+         alloc_codecs.rs would pass it",
+        calibrating.saturating_sub(plain)
+    );
+}
+
 /// The record. Named so it reads as one: each ceiling is what the path costs
 /// today, and none of them is zero.
 #[test]
 fn the_routing_path_allocates_where_the_requirement_asks_for_nothing() {
     let service = service();
 
-    for (target, ceiling) in SHAPES {
-        let counted = counted(&service, target);
+    for (target, expected, ceiling) in SHAPES {
+        let counted = counted(&service, target, expected);
         assert!(
             counted <= ceiling,
             "{target} allocated {counted} times against a recorded {ceiling}; \
@@ -433,9 +628,19 @@ fn the_routing_path_allocates_where_the_requirement_asks_for_nothing() {
 fn a_capture_is_what_a_path_parameter_costs() {
     let service = service();
 
-    let matched = counted(&service, "/ping");
-    let captured = counted(&service, "/users/7");
-    let missed = counted(&service, "/nope");
+    // Each shape reaches this test through the const that names it, rather
+    // than by destructuring `SHAPES` here. That centralises the row-position
+    // binding rather than removing it — `STACKED`, `CAPTURED` and `MISSED` are
+    // still `SHAPES[0].0`, `[1].0` and `[2].0` — but it puts the binding in one
+    // place, beside the doc that says which shape each names, instead of
+    // three hundred lines away in a destructure that would silently rebind
+    // `matched`, `captured` and `missed` and leave this test passing about the
+    // wrong three requests. Removing it outright wants named fields, which is
+    // what `alloc_codecs.rs`'s `Table` is a struct rather than a
+    // `[Measured; 5]` for.
+    let matched = counted(&service, STACKED, STACKED_STATUS);
+    let captured = counted(&service, CAPTURED, CAPTURED_STATUS);
+    let missed = counted(&service, MISSED, MISSED_STATUS);
 
     assert!(
         captured > matched,
@@ -465,14 +670,15 @@ fn a_capture_is_what_a_path_parameter_costs() {
 fn a_replayed_request_costs_what_the_first_one_did() {
     let service = service();
 
-    for (target, _) in SHAPES {
-        replayed(&service, target, target);
+    for (target, expected, _) in SHAPES {
+        replayed(&service, target, expected, target);
     }
 
     for &(depth, build, _) in &STACKS[1..] {
         replayed(
             &build(),
             STACKED,
+            STACKED_STATUS,
             &format!("{STACKED} behind {depth} no-op interceptor(s)"),
         );
     }
@@ -484,12 +690,12 @@ fn a_replayed_request_costs_what_the_first_one_did() {
 /// `target`, because the same target is replayed at three stack depths and a
 /// message naming only the path would not say which one moved. Both are built
 /// outside every counted region, so neither costs the measurement anything.
-fn replayed(service: &Service<()>, target: &str, described: &str) {
-    let first = counted(service, target);
+fn replayed(service: &Service<()>, target: &str, expected: StatusCode, described: &str) {
+    let first = counted(service, target, expected);
     let mut moved = Vec::new();
 
     for index in 0..10_000 {
-        let counted = counted(service, target);
+        let counted = counted(service, target, expected);
         if counted != first {
             moved.push((index, counted));
         }
