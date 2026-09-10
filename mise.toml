@@ -664,34 +664,25 @@ quiet = true
 #
 # It cannot be pushed back into convco: the `--from-stdin` branch of
 # `convco check` returns before `--ignore-message-pattern` is consulted, in
-# 0.7.0 and in 0.7.1 alike, so no flag, `.convco` file or version bump reaches
-# it. Nor into `hk.pkl` -- see the note on the step that calls this.
+# 0.7.0 and in 0.7.1 alike. Nor into `hk.pkl` -- see the note on the step.
 #
 # MERGE_HEAD is the parent count, read at the only moment this task can read
 # anything: git writes it before running the commit-msg hook and removes it
-# once the commit exists, and its lines are the extra parents of the commit
-# about to be written.
+# once the commit exists.
 #
-# It is a test for the *file*, not `git rev-parse --verify --quiet MERGE_HEAD`,
-# which resolves a ref. `git branch MERGE_HEAD`, `git tag MERGE_HEAD` and
-# `git update-ref refs/MERGE_HEAD HEAD` each make that probe exit 0 with no
-# merge in progress, and the gate would then exempt a one-parent commit that
-# `commits:check` and the `commits` CI job reject -- a silent, total loss of
-# this gate, in the direction opposite to the one it was written to fix.
-# `--git-path` is also the spelling that survives a linked worktree, where the
-# file is under `.git/worktrees/<name>/` rather than `.git/`, and this
-# repository is worked in linked worktrees.
+# A test for the *file*, not `git rev-parse --verify --quiet MERGE_HEAD`, which
+# resolves a ref -- a branch or tag of that name would exempt a one-parent
+# commit that `commits:check` rejects, losing this gate in the direction
+# opposite to the one it was written to fix. `--git-path` is also what survives
+# a linked worktree, and this repository is worked in linked worktrees.
 #
-# Squash, cherry-pick, revert and rebase are deliberately not exempted. Each
-# produces a one-parent commit that `commits:check` and the `commits` CI job do
-# check, so exempting them here would make this half accept what that half
-# rejects -- the reported bug with its sign flipped.
+# Squash, cherry-pick, revert and rebase are deliberately not exempted: each
+# produces a one-parent commit that `commits:check` does check.
 #
-# One case this cannot reach: amending or rewording an *existing* merge commit
-# runs the hook with MERGE_HEAD already gone over a commit that still has two
-# parents, so the gate rejects what `commits:check` exempts. Nothing at
-# commit-msg time separates it from committing on top of a merge, and
-# `--no-verify` remains the escape. Recorded in `docs/nfr.md`.
+# One case this cannot reach: amending an *existing* merge commit runs the hook
+# with MERGE_HEAD already gone over a commit that still has two parents, so the
+# gate rejects what `commits:check` exempts. `--no-verify` remains the escape.
+# Recorded in `docs/nfr.md`.
 run = '''
 if [ -f "$(git rev-parse --git-path MERGE_HEAD)" ]; then
   exit 0
@@ -717,60 +708,31 @@ fi
 [tasks."commits:test"]
 description = "Test that both halves of the commit rule agree about a merge"
 # The two tasks above state one rule through two instruments that cannot see
-# the same thing: `commits:check` gives convco a range, where a merge is
-# dropped by parent count, and `commits:message` gives it one message, where
-# there is no parent count to drop by. Nothing else holds them to the same
-# answer, and when they disagree neither one fails -- both keep exiting zero
-# over every commit written by hand, and the divergence surfaces only at the
-# next merge, where the fix that looks available is `--no-verify`.
+# the same thing, and when they disagree neither one fails: both keep exiting
+# zero over every commit written by hand, and the divergence surfaces only at
+# the next merge, where the fix that looks available is `--no-verify`. So
+# `BothHalvesOverOneMerge` puts each verdict to both halves over the same
+# commit. The range half is the one that moves under maintenance -- a `.convco`
+# holding `merges: true`, or a `[tools]` bump of convco, changes what it
+# accepts and leaves the hook half untouched.
 #
-# So the verdicts are put to both halves over the same commit, in
-# `BothHalvesOverOneMerge`, because the range half is the one that moves under
-# maintenance. Not every case does: one class pins the single state where the
-# two are *supposed* to disagree, and the linked-worktree cases are about where
-# the guard looks rather than what convco says. A `.convco` holding
-# `merges: true` flips the range half from exit 0 to exit 1 over a merge
-# subject while leaving the hook half untouched, and a `[tools]` bump of
-# convco can do the same; a suite that ran only the hook half would stay green
-# through it.
+# The cases build real repositories rather than forging state files: one is a
+# linked worktree, because that is how this repository is worked and MERGE_HEAD
+# lives elsewhere there, and one installs `hk run commit-msg` as that
+# repository's own `commit-msg` hook and drives a real `git merge --no-ff`
+# through it -- issue #132's own symptom, so reverting this fix makes it print
+# `Not committing merge`. Whether hk runs the step is read out of that exit
+# code rather than out of the text of `hk.pkl`, so a step disarmed by any means
+# shows up in the answer.
 #
-# The cases build real repositories rather than forging state files: one runs
-# `git merge --squash` to assert the exemption has not widened past what the
-# range form exempts, one is a linked worktree, because that is how this
-# repository is worked and MERGE_HEAD lives elsewhere there, and one installs
-# `hk run commit-msg` itself as that repository's `commit-msg` hook and drives
-# a real `git merge --no-ff` through it. That last one is issue #132's own
-# symptom, so reverting this fix makes it print `Not committing merge`.
+# It compiles nothing but is not free -- most of its time goes on nested
+# `mise run` invocations and the real `hk` -- which is worth its three
+# placements, since each is somewhere the two halves could already have
+# diverged.
 #
-# Whether hk would run that step at all is asked of hk, by reading the exit
-# code of that real hook run, rather than inferred from the text of `hk.pkl`.
-# Nothing is read out of `hk.pkl` and nothing is restated from it: hk resolves
-# its own configuration, so a step turned off by a merged duplicate entry, by
-# a module-level `skip_steps` or `skip_hooks`, or by a `shell` or a `prefix`
-# that runs something else, shows up in the answer rather than being missed by
-# a reading of the file. Deleting the step or dropping its redirect fails the
-# suite for the same reason.
-#
-# It is the slowest thing in `check` that compiles nothing: twenty-two to
-# thirty-four seconds over eight runs here, the spread tracking what else the
-# machine was doing, almost all of it spent in nested `mise run` invocations
-# and in the real `hk` the gate cases drive. That is worth its three
-# placements -- `check`, `hooks:pre-push` and the CI `lint` job -- because
-# every one of those is somewhere the two halves could already have diverged,
-# but it is the figure to weigh if the suite grows again.
-#
-# A duration and not a count of anything. Every count this task's comment has
-# carried has gone wrong: the number of cases, and then the number of nested
-# invocations, which was wrong when it was written. A wall-clock reading
-# measures the thing itself and nothing here would fail if a census drifted.
-#
-# `unittest` from the standard library and no test runner. There is no
-# `pytest`, no `tox` and no `requirements.txt` in this repository, and taking
-# a dependency to drive git and convco through subprocess is the worse trade.
-#
-# `-B` because `.gitignore` has no `__pycache__` entry, and a check that
-# leaves an untracked directory behind is a check people learn to work around.
-# The test file sets `sys.dont_write_bytecode` too, for a direct `python3` run.
+# `unittest` from the standard library: this repository has no Python test
+# runner, and taking a dependency to drive git through subprocess is the worse
+# trade. `-B` because `.gitignore` has no `__pycache__` entry.
 run = "python3 -B scripts/commits_test.py"
 
 [tasks."hooks:pre-push"]
@@ -792,9 +754,8 @@ description = "Run all pre-push checks"
 # small feature sets, which is the cheap end of what this list already runs.
 #
 # `commits:test` follows `commits:check` for the reason `containment:test`
-# follows its gate: it is the only thing holding the range form below and the
-# commit-msg hook to the same answer about a merge, and a push is the last
-# point where the person who wrote the messages is still looking at them.
+# follows its gate: a push is the last point where the person who wrote the
+# messages is still looking at them.
 run = [
   { task = "format:check" },
   { task = "lint" },

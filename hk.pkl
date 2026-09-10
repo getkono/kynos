@@ -66,59 +66,22 @@ hooks {
     }
     ["commit-msg"] {
         steps {
-            // A merge in progress is exempt from this rule, and the exemption
-            // lives inside the task rather than in a `step_condition` here.
-            // hk's `exec()` returns a command's stdout and raises on a non-zero
-            // exit, and `src/step/execution.rs` propagates that with `?`, so the
-            // natural spelling of "skip when MERGE_HEAD resolves" would fail the
-            // hook on every commit that is not a merge; only a literal
-            // `Bool(false)` skips a step. And `src/test_runner.rs` evaluates no
-            // condition and cannot render `{{commit_msg_file}}`, so an `hk test`
-            // case could neither exercise one nor run this step at all. In the
-            // task, the exemption is covered by `mise run commits:test`.
+            // A merge in progress is exempt, and the exemption lives inside
+            // the task rather than in a `step_condition` here: hk's `exec()`
+            // raises on a non-zero exit, so the natural spelling of "skip when
+            // MERGE_HEAD resolves" would fail the hook on every commit that is
+            // not a merge, and `hk test` renders no `{{commit_msg_file}}` to
+            // exercise a condition with.
             //
-            // That suite does not restate this step. It installs
-            // `hk run commit-msg` as the `commit-msg` hook of a throwaway
-            // repository and drives real commits and a real
-            // `git merge --no-ff` through it, so hk resolves this file itself
-            // and answers with the exit code git obeys. Delete the step, move
-            // it under another hook or drop the `< {{commit_msg_file}}`
-            // redirect, and the suite fails on what the hook did rather than
-            // on what this file says. Renaming it is not one of those and the
-            // suite is right to stay green through one: measured, hk runs the
-            // step's `check` under whatever name it carries.
-            //
-            // Asking hk is what no reading of this file could replace. Pkl
-            // merges entries that share a key and hk obeys the merged result,
-            // so a second `["conventional-commit"]` entry is the
-            // authoritative one and is invisible to anything resolving a key
-            // to its first, and hk merges settings from sources that are not
-            // this file at all. An exit code is downstream of every one of
-            // them.
-            //
-            // Measured on hk 1.53.0 against this file, over a non-conforming
-            // message on a one-parent commit: a `step_condition`, `condition`,
-            // `profiles`, `shell`, `prefix` or `required` key on this step, a
-            // module-level `skip_steps` or `skip_hooks`, a second
-            // `["conventional-commit"]` entry in this block, and a second
-            // `["commit-msg"]` entry beside this hook each leave `hk validate`
-            // green and the `check` below untouched while letting that message
-            // through. Each one fails `mise run commits:test`.
-            //
-            // `glob`, `types` and `exclude` join that list at the values that
-            // select nothing, and only there. Measured the same way, through a
-            // real `commit-msg` hook over a real `git commit`: the file set hk
-            // builds for this hook is the commit's *staged* files --
-            // `DEBUG files: {"hk.pkl", "probe.txt"}` under `HK_LOG=debug`, the
-            // message file not among them. So `glob = "*"` selects them, the
-            // step runs and the gate stays armed, while
-            // `glob = "*.no-such-extension"` selects none, hk skips the step
-            // reporting `no file matches for step`, and the message goes
-            // through. `mise run commits:test` fails on the narrowing values
-            // and passes on `glob = "*"`, which is the right answer to each.
-            // Selecting files is still not how this step is scoped: a value
-            // matching everything staged today matches nothing on the commit
-            // that stages only what it leaves out.
+            // `mise run commits:test` covers this step without restating it: it
+            // installs `hk run commit-msg` as a throwaway repository's own hook
+            // and drives a real `git merge --no-ff` through it, so hk resolves
+            // this file itself and answers with the exit code git obeys. That
+            // reading is downstream of every way the step can be turned off --
+            // a merged duplicate entry, a module-level `skip_steps`, a `glob`
+            // selecting none of a commit's staged files -- which no reading of
+            // this file's text would catch. A rename is not one of them, and
+            // the suite is right to stay green through one.
             ["conventional-commit"] {
                 check = "mise run --quiet commits:message < {{commit_msg_file}}"
                 output_summary = "stdout"

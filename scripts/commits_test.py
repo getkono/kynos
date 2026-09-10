@@ -1,72 +1,21 @@
-"""Tests that this repository's one rule about commit messages holds the same
-way in both of the instruments that state it, over the input that made them
-disagree: a merge.
+"""Tests that this repository's one rule about commit messages -- Conventional
+Commits, merge commits exempt -- holds the same way in both instruments that
+state it, over the input that made them disagree: a merge.
 
-The rule is "Conventional Commits, merge commits exempt", and it is stated
-twice, through instruments that cannot see the same thing.
+`commits:check` hands convco a range, where a merge is dropped by parent count.
+`commits:message` hands convco one message, where there is no parent count, so
+the task has to supply the exemption itself. `BothHalvesOverOneMerge` puts each
+verdict to both halves over the same commit; `TheAmendResidual` pins the one
+state where they are meant to disagree.
 
-`commits:check` hands convco a range, and convco drops a merge from the walk by
-parent count -- `revwalk.filter(|c| c.parent_count() <= 1)`, driven by
-`no_merge_commits: !config.merges`. `commits:message` hands convco one message
-on stdin, and a bare message carries no parent count, so the exemption cannot
-exist on that path unless the task supplies it. Nor can convco be told to: the
-`--from-stdin` branch of `convco check` returns before
-`--ignore-message-pattern` is ever consulted.
+Nothing here forges a state file or stands in for git: the fixtures build real
+repositories and reach a real merge. `TheGateHkRuns` installs the pinned
+`hk run commit-msg` as a throwaway repository's own `commit-msg` hook, so
+whether the step is armed is answered by an exit code rather than by a reading
+of `hk.pkl`. One fixture is a linked worktree, where MERGE_HEAD lives under
+`.git/worktrees/<name>/` and the guard still has to find it.
 
-So both halves are run here. `BothHalvesOverOneMerge` puts each verdict to
-both, over the same commit, and that is where the two are held to agree. It is
-not a universal, and cannot be: `TheAmendResidual` exists precisely to pin the
-one state where the halves *disagree*, and the linked-worktree cases reach the
-hook half alone because what they are about is where the guard looks, not what
-convco says. Running only the hook half everywhere would leave the range
-half's verdicts asserted in prose, and the range half is the one that moves
-under maintenance: a `.convco` holding `merges: true` -- the very switch behind
-`no_merge_commits` -- flips `convco check BASE..HEAD` from exit 0 to exit 1
-over a merge subject while leaving the hook half untouched, and a `[tools]`
-bump of convco can do the same. That is issue #132 with its sign flipped, and a
-suite that runs one half cannot see it.
-
-Nothing below forges a state file, and nothing below stands in for git. The
-fixtures build real repositories and reach a real merge with `git merge`.
-
-Whether the gate is armed at all is settled by its outcome rather than by
-reading `hk.pkl`. `TheGateHkRuns` installs the pinned `hk run commit-msg` as a
-throwaway repository's own `commit-msg` hook and drives real commits and a real
-`git merge --no-ff` through it, so hk resolves this repository's `hk.pkl`,
-decides for itself whether the `conventional-commit` step runs, and answers
-with an exit code. One reading subsumes every way the step can be turned off --
-deleted, moved under another hook, overridden by a merged duplicate entry,
-disabled by a module-level `skip_steps` or `skip_hooks`, replaced by a `shell`,
-a `prefix` or a `check` of `true`, turned into a fix-only run, or disarmed by
-an `hk.local.pkl` -- because none of those survives being asked what the hook
-actually did. Renaming the step is not on that list: hk runs it under whatever
-name it carries, so a rename disarms nothing and the reading stays green. The
-merge case in that class is the reported symptom itself: before the fix, it is
-the `Not committing merge` the issue opens with.
-
-Running the real gate is hermetic because the git environment that hook hands
-hk is the fixture's own, spelled absolutely. hk finds `hk.pkl` by where it
-runs, so it runs at the project root -- and git spells the environment it
-gives a hook relative to the work tree it invoked the hook from, so `GIT_DIR`,
-`GIT_WORK_TREE` and the `GIT_INDEX_FILE` git exports itself are all resolved
-before that move. Every git read the step then makes -- including the
-`git rev-parse --git-path MERGE_HEAD` the exemption is spelled as -- follows
-`GIT_DIR` to the throwaway repository instead. A developer with a merge of
-their own in progress therefore runs this suite to the same answer as one with
-none, and nothing is written into the repository being tested: the only file
-the hook is handed is the fixture's own message.
-
-One fixture is a linked worktree, because this repository is worked in linked
-worktrees and MERGE_HEAD lives under `.git/worktrees/<name>/` there. The
-task's guard has to be worktree-correct, and only a linked-worktree fixture
-holds it to that. Two of its cases run the guard with no `GIT_DIR` supplied at
-all -- one over a merge in progress and one over none -- and they are the only
-place git's repository *discovery* is exercised. Every other call in this file
-exports a `GIT_DIR`, and under an exported one the weaker spellings this guard
-was chosen over pass too.
-
-Run it as `mise run commits:test`, or directly. There is no Python test runner
-in this repository and `unittest` needs none.
+Run as `mise run commits:test`, or directly.
 """
 
 import os
@@ -78,27 +27,18 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-# A `.pyc` written beside the scripts would be an untracked directory in every
-# working tree that ran these tests, and `.gitignore` has no entry for one. The
-# task passes `-B` for the same reason; this covers a direct `python3` run.
+# `.gitignore` has no `__pycache__` entry. The task passes `-B` for the same
+# reason; this covers a direct `python3` run.
 sys.dont_write_bytecode = True
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Hermetic by construction: no user or system git configuration reaches these
-# repositories, and identity is supplied rather than discovered, so a machine
-# with no `user.email` set runs them the same as one that has.
-#
-# The inherited `GIT_*` variables go too, and that one is not defensive
-# housekeeping. `commits:test` runs from `hooks:pre-push`, which git invokes
-# with a git environment already exported -- `GIT_INDEX_FILE`, `GIT_PREFIX` and
-# `GIT_EXEC_PATH` are all present in a hook today, and `GIT_DIR`,
-# `GIT_WORK_TREE`, `GIT_OBJECT_DIRECTORY` and `GIT_COMMON_DIR` are exported by
-# other git entry points and by anyone who exports them by hand. Any one of
-# them redirects the fixture's own `git init` and `git commit` at whatever it
-# names, which for that hook is the repository being pushed. A test that writes
-# into the tree that invoked it is the failure this scrub exists to make
-# impossible, rather than to make unlikely. `AmbientGitEnvironment` holds it.
+# No user or system git configuration reaches these repositories, and identity
+# is supplied rather than discovered. The inherited `GIT_*` names go too:
+# `commits:test` runs from `hooks:pre-push`, where git has already exported an
+# environment naming the repository being pushed, and any one of those names
+# would redirect the fixture's own `git init` at it. `AmbientGitEnvironment`
+# holds the scrub.
 HERMETIC = {
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_SYSTEM": os.devnull,
@@ -106,11 +46,8 @@ HERMETIC = {
     "GIT_AUTHOR_EMAIL": "commit-gate-tests@invalid",
     "GIT_COMMITTER_NAME": "Commit Gate Tests",
     "GIT_COMMITTER_EMAIL": "commit-gate-tests@invalid",
-    # `git merge` opens an editor for its message when it thinks it is
-    # interactive. It does not think so here, because these pipes are not a
-    # terminal -- but that is a property of how the suite happens to be run,
-    # and the cases that complete a real merge would hang rather than fail if
-    # it ever stopped holding. Stated, so it is not left to be inferred.
+    # Without this, a `git merge` that thought it was interactive would open an
+    # editor and hang rather than fail. Not left to the pipes not being a tty.
     "GIT_MERGE_AUTOEDIT": "no",
 }
 
@@ -119,9 +56,9 @@ CONVENTIONAL_SUBJECT = "fix(hooks): complete the merge by hand\n"
 SQUASH_SUBJECT = "Squashed commit of the following:\n"
 
 # convco's own words when a subject is not a Conventional Commit. Asserted on
-# rather than a bare non-zero exit, because a non-zero exit is also what an
-# absent convco (127), a broken task file or a mise failure produce -- and each
-# of those would let both reject-cases pass for a reason unrelated to the rule.
+# rather than a bare non-zero exit, which is also what an absent convco (127) or
+# a broken task file produces -- each of which would pass a reject-case for a
+# reason unrelated to the rule.
 REJECTION = "first line doesn't match"
 
 
@@ -133,23 +70,12 @@ def scrubbed_environment():
 def hermetic_environment():
     """The environment every fixture, every tool lookup and the gate itself run in.
 
-    `HERMETIC` over the `GIT_*` scrub, and then every inherited `HK_*` and
-    `CONVCO_*` name removed as well. That half is not housekeeping either.
-    `HK_SKIP_STEPS` and `HK_SKIP_HOOK` in somebody's shell each make
-    `hk run commit-msg` exit 0 having run nothing; `CONVCO_MERGES` is the
-    switch behind `no_merge_commits`, and exported it flips
-    `convco check BASE..HEAD` over a merge subject. Each is an escape hatch
-    committed nowhere, and the subject of these cases is what this repository
-    declares rather than what one machine's shell overrides.
-
-    Both namespaces are stripped rather than enumerated, because a tool's
-    environment surface grows between releases and a list of names would go
-    stale silently. `range_gate` sets the one `CONVCO_*` name the suite needs,
-    `CONVCO_RANGE`, back explicitly after the strip.
-
-    `TheGateHkRuns.test_an_exported_hk_skip_does_not_reach_the_gate` and
-    `BothHalvesOverOneMerge.test_an_exported_convco_override_does_not_reach_either_half`
-    hold the two halves of this.
+    `HERMETIC` over the `GIT_*` scrub, then every inherited `HK_*` and
+    `CONVCO_*` name removed too: `HK_SKIP_STEPS`, `HK_SKIP_HOOK` and
+    `CONVCO_MERGES` are each an escape hatch committed nowhere, and these cases
+    are about what this repository declares rather than what a shell overrides.
+    Whole namespaces rather than a list of names, which would go stale.
+    `range_gate` sets the one name the suite needs, `CONVCO_RANGE`, back after.
     """
     return {
         key: value
@@ -158,36 +84,17 @@ def hermetic_environment():
     }
 
 
-# The one place this suite reads a declaration out of another file, and what
-# makes it safe. `LinkedWorktree` runs the `commits:message` body where
-# `mise run` cannot put it -- cwd inside the repository under test, no `GIT_DIR`
-# exported -- and running a restatement there would hold nothing.
-#
-# Nothing is read out of `hk.pkl`. What that file declares is no longer any of
-# this suite's business: `TheGateHkRuns` hands hk the message and reads the exit
-# code, so hk resolves its own configuration and every disarm shows up in the
-# answer rather than in a scan. The scanner that used to make those reads safe
-# -- a comment- and string-aware mask, a brace matcher, and the class of cases
-# that held the two of them to it -- went with them.
-#
-# The read below is safe for a reason that does not generalise, so it is
-# written down rather than assumed: a TOML comment begins with `#`, and both
-# patterns anchor to the start of a line at a position where they require `[`
-# or `r`. A commented-out `#[tasks."commits:message"]` or `# run = '''` cannot
-# match. What the body then captures is verbatim, which is correct twice over:
-# a `#` line inside `run = '''...'''` is shell to mise and shell to the fixture
-# alike, so there is nothing there to mask.
+# The one place this suite reads a declaration out of another file. It is safe
+# for a reason that does not generalise, so it is written down: both patterns
+# anchor to the start of a line where they require `[` or `r`, so a commented-out
+# `#[tasks."commits:message"]` or `# run = '''` cannot match, and the body they
+# capture is shell in which a `#` line means the same to mise and to the fixture.
 def declared_merge_guard():
     """The shell body `mise.toml` declares for `[tasks."commits:message"]`.
 
     Read rather than restated, because `LinkedWorktree` runs this body where
     `mise run` cannot put it -- cwd inside the repository under test, with no
-    `GIT_DIR` exported -- and running a restatement there would hold nothing.
-
-    No mask here, and that is the comment above rather than an oversight: both
-    patterns anchor where a TOML comment's `#` would have to be, so neither can
-    match a commented-out line, and the captured body is shell in which a `#`
-    line means the same thing to mise and to the fixture.
+    `GIT_DIR` exported -- and a restatement there would hold nothing.
     """
     text = (ROOT / "mise.toml").read_text()
     task = re.search(r'^\[tasks\."commits:message"\]\n(.*?)^\[', text, re.DOTALL | re.MULTILINE)
@@ -203,14 +110,8 @@ def convco_on_path():
     """`PATH` with mise's convco on it, for the one call that bypasses mise.
 
     `shell_gate` runs the task's body directly, so nothing has put the pinned
-    convco anywhere; resolving it here keeps that call on the same binary
-    every other case reaches through `mise run`.
-
-    Resolved under `hermetic_environment` for the reason everything else runs
-    under it, and failing through `check=True` rather than through a raise of
-    its own: a hand-written raise that no case reaches is one more thing that
-    can be switched off without anything noticing, and `CalledProcessError`
-    carries the same command and the same exit code.
+    convco anywhere; resolving it here keeps that call on the same binary every
+    other case reaches through `mise run`.
     """
     located = subprocess.run(
         ["mise", "which", "convco"],
@@ -226,10 +127,8 @@ def convco_on_path():
 def hk_binary():
     """The pinned hk, resolved the way `convco_on_path` resolves convco.
 
-    Asked of mise rather than of `PATH`, so the gate the cases below drive is
-    the `hk` version `[tools]` pins -- which is the one whose behaviour these
-    assertions were measured against. Under `hermetic_environment` and failing
-    through `check=True`, for the two reasons `convco_on_path` gives.
+    Asked of mise rather than of `PATH`, so the gate these cases drive is the
+    `hk` version `[tools]` pins.
     """
     located = subprocess.run(
         ["mise", "which", "hk"],
@@ -270,10 +169,8 @@ class GateTestCase(unittest.TestCase):
         """Two branches with a commit each after their common ancestor.
 
         Returns the ancestor, which is the base every range assertion is taken
-        from. Empty commits, because what the merge has to be is
-        non-fast-forward, not conflicted: the state the hook sees is the same
-        either way, and a conflict would need file contents that say nothing
-        about the rule.
+        from. Empty commits: the merge has to be non-fast-forward, not
+        conflicted, and the state the hook sees is the same either way.
         """
         self.git("commit", "-q", "--allow-empty", "-m", "feat: the common ancestor")
         base = self.git("rev-parse", "HEAD").stdout.strip()
@@ -288,9 +185,7 @@ class GateTestCase(unittest.TestCase):
 
         `--git-path` rather than `.git/MERGE_HEAD`, because in a linked
         worktree the file is under `.git/worktrees/<name>/`. And a path test
-        rather than `git rev-parse --verify MERGE_HEAD`, because that resolves
-        a *ref*: a branch or tag of that name answers it with no merge in
-        progress at all. `RefNamedMergeHead` holds the task to the same.
+        rather than `rev-parse --verify MERGE_HEAD`, which resolves a *ref*.
         """
         located = self.git("rev-parse", "--git-path", "MERGE_HEAD", cwd=cwd)
         return (Path(cwd or self.repository) / located.stdout.strip()).is_file()
@@ -301,8 +196,7 @@ class GateTestCase(unittest.TestCase):
         """The hook half: `commits:message` over one message.
 
         Run from the project root, so mise resolves `mise.toml`, with `GIT_DIR`
-        and `GIT_WORK_TREE` redirected at the throwaway repository -- which is
-        what lets both facts hold at once.
+        and `GIT_WORK_TREE` redirected at the throwaway repository.
         """
         return subprocess.run(
             ["mise", "run", "--quiet", "commits:message"],
@@ -320,18 +214,12 @@ class GateTestCase(unittest.TestCase):
     def shell_gate(self, message, cwd):
         """The hook half again, but on git's *discovery* path.
 
-        Every other call exports `GIT_DIR`, which is what lets `mise run`
-        resolve `mise.toml` from the project root while the task reads a
-        throwaway repository. It also means the guard is never asked to find
-        the repository itself -- and finding it is the whole difference
-        between `--git-path` and the spellings it was chosen over.
-
-        `mise run` executes a task in its config's directory rather than the
-        caller's, so there is no way to put the task itself in this position.
-        What runs here is the `run` body `mise.toml` declares, read out of it,
-        with `GIT_DIR` and `GIT_WORK_TREE` absent and `cwd` inside the
-        repository under test -- which is the position git actually invokes a
-        `commit-msg` hook from.
+        Every other call exports `GIT_DIR`, so the guard is never asked to find
+        the repository itself -- which is the whole difference between
+        `--git-path` and the spellings it was chosen over. `mise run` executes a
+        task in its config's directory, so the task itself cannot be put here;
+        what runs is the `run` body read out of `mise.toml`, with no `GIT_DIR`
+        and `cwd` where git actually invokes a `commit-msg` hook from.
         """
         return subprocess.run(
             ["sh", "-c", declared_merge_guard()],
@@ -345,8 +233,8 @@ class GateTestCase(unittest.TestCase):
     def range_gate(self, base, git_dir=None, work_tree=None):
         """The range half: `commits:check` over `base..HEAD`.
 
-        The same task the `commits` CI job and `hooks:pre-push` run, driven
-        through the `CONVCO_RANGE` branch it already carries for exactly this.
+        The same task the `commits` CI job and `hooks:pre-push` run, through
+        the `CONVCO_RANGE` branch it already carries.
         """
         return subprocess.run(
             ["mise", "run", "--quiet", "commits:check"],
@@ -371,11 +259,8 @@ class GateTestCase(unittest.TestCase):
         )
 
     def assertRejected(self, result):
-        """Rejected *by the rule*, not merely exited non-zero.
-
-        A missing convco exits 127 and a broken task file exits 1, and either
-        would let this pass without the rule being consulted at all.
-        """
+        """Rejected *by the rule*, not merely exited non-zero: a missing convco
+        exits 127 and a broken task file exits 1."""
         self.assertNotEqual(
             result.returncode,
             0,
@@ -392,11 +277,9 @@ class GateTestCase(unittest.TestCase):
 class BothHalvesOverOneMerge(GateTestCase):
     """The rule, asserted on both instruments over the same commits.
 
-    This is the case that makes `commits:test`'s name true. Every other class
-    below tests the hook half against some state; this one tests that the two
-    halves reach the same verdict, which is the property the whole change
-    exists to establish and the only one that catches a regression on the
-    range side.
+    Every other class tests the hook half against some state; this one tests
+    that the two halves reach the same verdict, which is the property the change
+    exists to establish and the only one that catches a range-side regression.
     """
 
     def setUp(self):
@@ -418,20 +301,10 @@ class BothHalvesOverOneMerge(GateTestCase):
     def test_an_exported_convco_override_does_not_reach_either_half(self):
         """`CONVCO_MERGES` in somebody's shell is not this repository's answer.
 
-        convco reads its option surface from the environment as well as from
-        `.convco`, and `CONVCO_MERGES` is the switch behind `no_merge_commits`
-        -- the one this file's module docstring names as the reason the range
-        half is run at all. Exported, it turns `convco check BASE..HEAD` from
-        exit 0 to exit 1 over a merge subject, so the reading above stops
-        meaning what this repository declares and starts meaning what one
-        machine's shell overrides. That is the same escape hatch as
-        `HK_SKIP_STEPS`, one tool along, and it is committed nowhere.
-
-        So `hermetic_environment` strips the inherited `CONVCO_*` namespace,
-        and `range_gate` sets the one name it needs -- `CONVCO_RANGE` -- back
-        explicitly afterwards. Held here rather than beside the `HK_*` case
-        because the range half is what the leak reaches: every case in this
-        file passes without the strip except the two this one stands in for.
+        It is the switch behind `no_merge_commits`: exported, it turns
+        `convco check BASE..HEAD` from exit 0 to exit 1 over a merge subject.
+        `hermetic_environment` strips the namespace, and this is the case that
+        holds the strip on the range half.
         """
         exported = mock.patch.dict(os.environ, {"CONVCO_MERGES": "true"})
         exported.start()
@@ -446,9 +319,8 @@ class BothHalvesOverOneMerge(GateTestCase):
     def test_both_halves_reject_the_same_one_parent_merge_subject(self):
         """A subject spelled `Merge ...` on a one-parent commit is not exempt.
 
-        This is the guard that keeps the exemption keyed on the state rather
-        than on the words, and it is asserted on both halves because a fix that
-        widened one of them would be invisible in the other.
+        The exemption is keyed on the state, not the words. Asserted on both
+        halves, since a fix widening one would be invisible in the other.
         """
         self.assertRejected(self.gate(MERGE_SUBJECT))
         self.git("commit", "-q", "--allow-empty", "--no-verify", "-m", MERGE_SUBJECT.strip())
@@ -457,10 +329,9 @@ class BothHalvesOverOneMerge(GateTestCase):
     def test_both_halves_accept_a_conventional_commit(self):
         """The baseline, on both halves, over the same commit.
 
-        The subject put to the hook half is then written and walked by the
-        range half, rather than the range half walking whatever the fixture
-        happened to leave at HEAD -- which is what "over the same commit"
-        has to mean for every case in this class if it is to mean it for any.
+        The subject put to the hook half is then written and walked by the range
+        half, rather than the range half walking whatever the fixture left at
+        HEAD -- which is what "over the same commit" has to mean here.
         """
         self.assertAccepted(self.gate(CONVENTIONAL_SUBJECT))
         self.git("commit", "-q", "--allow-empty", "--no-verify", "-m", CONVENTIONAL_SUBJECT.strip())
@@ -470,47 +341,28 @@ class BothHalvesOverOneMerge(GateTestCase):
 class TheGateHkRuns(GateTestCase):
     """The gate hk actually runs, asked what it did rather than what it declares.
 
-    Issue #132 is `git merge` printing `Not committing merge; use 'git commit'
-    to complete the merge.` The ordering the whole fix rests on -- that git
-    writes MERGE_HEAD before it runs `commit-msg` -- was once supported by a
-    reading of `builtin/merge.c`. Here it is an observation: a real merge,
-    through the real gate, in a repository that exists for the length of one
-    case.
-
     The hook installed below is `hk run commit-msg`, so hk reads this
-    repository's own `hk.pkl`, resolves whatever the `commit-msg` hook declares
-    after Pkl has merged every entry that shares a key and after every setting
-    hk merges from every source, decides for itself whether to run the step,
-    and answers with an exit code that `git commit` and `git merge` obey. Three
-    readings of that one exit code are what this class is:
+    repository's own `hk.pkl`, resolves it after Pkl and hk have merged every
+    source, decides for itself whether to run the step, and answers with an exit
+    code `git commit` and `git merge` obey. Three readings of that exit code:
 
         no merge, a non-conforming subject   -> the commit is refused
         no merge, a Conventional subject     -> the commit is written
         a merge in progress, its own subject -> the merge commit is written
 
-    That is one assertion about an outcome in place of an enumeration of
-    causes, and it is why nothing here reads `hk.pkl` at all. Every way of
-    turning the step off is a way of turning the first reading green: deleting
-    the step, moving it under another hook, dropping its
-    `< {{commit_msg_file}}` redirect, a `shell` or a `prefix` of `true`, a
-    `check` of `true` on a merged duplicate `["conventional-commit"]` entry, a
-    second `["commit-msg"]` hook entry, a module-level `skip_steps` or
-    `skip_hooks`, a fix-only run, an `hk.local.pkl` in the project root, or a
-    key hk has not shipped yet. A scan of the file's text can be blind to any
-    of those; the exit code is blind to none of them, because it is the result
-    and they are the causes. Renaming the step is not one of them and this
-    class stays green through one, which is the right answer: hk runs the
-    step's `check` under any name.
+    That is one assertion about an outcome in place of an enumeration of causes,
+    and it is why nothing here reads `hk.pkl`. Every way of turning the step off
+    -- deleting it, moving it under another hook, dropping its redirect, a
+    duplicate entry, `skip_steps`, `skip_hooks`, an `hk.local.pkl` -- turns the
+    first reading green. A rename is not one of them, and this class is right to
+    stay green through one: hk runs the step's `check` under any name. The other
+    two readings stop the first from being satisfied by a gate refusing
+    everything. The third is issue #132 itself: before the fix it prints
+    `Not committing merge`.
 
-    The second and third readings are what stop the first from being satisfied
-    by a gate that refuses everything, which is the failure mode a
-    disarm-detector has instead of the one it replaced.
-
-    Nothing is installed into this clone and no `--local` git config is written
-    anywhere: the hook is the *fixture's* own `.git/hooks/commit-msg`, and it
-    is deleted with the fixture. `GIT_DIR` is the fixture's too, so the merge
-    state hk's step reads is the fixture's merge state and never the state of
-    the repository the suite is being run in.
+    Nothing is installed into this clone: the hook is the *fixture's* own, and
+    `GIT_DIR` is the fixture's, so the merge state the step reads is never the
+    state of the repository the suite runs in.
     """
 
     def setUp(self):
@@ -520,77 +372,36 @@ class TheGateHkRuns(GateTestCase):
 
         hook = self.repository / ".git" / "hooks" / "commit-msg"
         hook.parent.mkdir(parents=True, exist_ok=True)
-        # The prologue is this fixture's boundary, and it is what makes the
-        # fixture hermetic rather than what makes it pass. hk resolves `hk.pkl`
-        # from where it runs, so it has to run at the project root -- and every
-        # git path has to be absolute before that `cd`, because git spells the
-        # environment it hands a hook relative to the work tree it invoked the
-        # hook from. In the real repository none of this is needed: hk already
-        # runs from the root, and that root is the repository being committed
-        # to.
+        # The prologue is what makes this fixture hermetic. hk resolves
+        # `hk.pkl` from where it runs, so it has to run at the project root --
+        # and git spells the environment it hands a hook relative to the work
+        # tree it invoked the hook from, so every git path has to be absolute
+        # before that `cd`. In the real repository none of this is needed.
         #
-        # Absolutising is the whole reason this is hermetic, and the four names
-        # carry different weight:
+        # `GIT_DIR` is the one the exemption reads, so a developer with a merge
+        # of their own in progress gets the same answers as one without.
         #
-        # `GIT_DIR` is the one the exemption reads. The step's guard is
-        # `git rev-parse --git-path MERGE_HEAD`, and under the fixture's
-        # `GIT_DIR` that resolves inside the fixture, so somebody running
-        # `mise run check` in the middle of a merge of their own gets the same
-        # answers as somebody running it on a clean tree.
+        # `GIT_WORK_TREE` is what makes hk's file set a real commit's: unpinned,
+        # the fixture's index is compared against the project root's files and
+        # the set comes out empty.
+        # `test_the_step_is_selected_over_the_files_the_commit_stages` holds it.
         #
-        # `GIT_WORK_TREE` is what makes hk's file set a real commit's. hk reads
-        # the repository's staged and modified files through git's work tree,
-        # and with none exported the work tree of the fixture's `GIT_DIR` is
-        # wherever hk runs -- the project root -- so the fixture's index is
-        # compared against another repository's files and the set comes out
-        # empty. Measured on hk 1.53.0 under `HK_LOG=debug`: `DEBUG files: {}`
-        # unpinned, against `DEBUG files: {"change-4.md", "change-4.rs"}`
-        # pinned. `stage_a_change` says what an empty set would cost, and
-        # `test_the_step_is_selected_over_the_files_the_commit_stages` holds
-        # this line.
+        # `MISE_CONFIG_FILE` is the price of pinning the work tree: hk runs the
+        # step's command from the work tree, where mise reports `no tasks
+        # defined`. Naming this repository's `mise.toml` puts the task back --
+        # though in `$HOME` rather than at `ROOT`, since a config named by that
+        # variable does not set the task's directory the way a discovered one
+        # does. Nothing asserted here depends on that directory; convco's own
+        # config discovery is the residual, and its `CONVCO_*` names are
+        # stripped in `hermetic_environment`.
         #
-        # `MISE_CONFIG_FILE` is the price of pinning the work tree, and the one
-        # non-git name here. hk runs a step's command from the repository root
-        # it resolves, so a pinned work tree lands `mise run` in the fixture,
-        # where mise reports `no tasks defined in <fixture>`. Naming this
-        # repository's own `mise.toml` absolutely puts the task back.
-        #
-        # It does not put it back where the other cases run it, and the
-        # difference is worth writing down because it is not what a reading of
-        # mise would suggest. A *discovered* config makes mise run a task in
-        # that config's directory; a config named by `MISE_CONFIG_FILE` makes
-        # it run in `$HOME`. Measured on this mise: the same file discovered
-        # from a subdirectory runs the task in the file's directory, and passed
-        # by name runs it in `$HOME`, following `$HOME` when `$HOME` moves.
-        # So this class's `commits:message` runs in the home directory, where
-        # `gate()` runs it at `ROOT`.
-        #
-        # Nothing the reading asserts depends on that directory: convco is
-        # handed the message on stdin, and the git state it reads is the
-        # fixture's through the absolute names above. The residual is convco's
-        # *config* discovery, which is by directory -- a `.convco` in a home
-        # directory reaches this class where one at `ROOT` would not. It is a
-        # false-failure channel only, and pinning `CONVCO_CONFIG` at an empty
-        # file would close it; that is filed rather than done here, because the
-        # outcome-shaped case which would hold it needs `$HOME` redirected and
-        # the tool lookups pinned back, and this class exists to stop asserting
-        # on the environment and start asserting on the exit code. The
-        # inherited `CONVCO_*` names, which reach the same options without
-        # needing a directory, are stripped -- see `hermetic_environment`.
-        #
-        # `GIT_INDEX_FILE` git *does* export, as `.git/index` relative to the
-        # fixture. Past the `cd` that spelling names the project root's index
-        # instead, and hk reads its staged status for the fixture's repository
-        # out of it before it runs any step. Measured on hk 1.53.0: the objects
-        # that index refers to are in the other repository, so hk dies with
-        # `failed to get staged statuses ... NotFound (-3)` and every case here
-        # fails. It only ever failed in a plain clone, which is what CI checks
-        # out: in a linked worktree `.git` is a file rather than a directory,
-        # `.git/index` cannot be opened at all, and libgit2 falling back to no
-        # index is what kept this class green where it is developed. That
-        # asymmetry is the residual, and it points one way: a regression of
-        # this line is caught in a plain clone and passes in a worktree, so it
-        # is CI that holds it rather than the tree it is written in.
+        # `GIT_INDEX_FILE` git exports relative to the fixture, and past the
+        # `cd` that names the project root's index instead -- whose objects are
+        # in another repository, so hk dies with `failed to get staged
+        # statuses`. It fails that way only in a plain clone: in a linked
+        # worktree `.git/index` cannot be opened at all and libgit2 falls back
+        # to no index. So it is CI that holds this line, not the tree it is
+        # written in.
         hook.write_text(
             "#!/bin/sh\n"
             'message="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"\n'
@@ -613,21 +424,11 @@ class TheGateHkRuns(GateTestCase):
     def stage_a_change(self):
         """One Rust source and one Markdown document, staged.
 
-        A commit needs something to commit, and these cases drive real
-        `git commit` and `git merge` invocations, so the fixture supplies it.
-
-        These two files are also hk's file set, which is what a `glob`, a
-        `types` or an `exclude` key on the step would be matched against.
-        Measured on hk 1.53.0 under `HK_LOG=debug`, here and through a real
-        `commit-msg` hook over a real `git commit` alike: the set hk builds for
-        this hook is the commit's staged files, and the message file is not in
-        it. So a value that selects them leaves the step running -- which is
-        why `glob = "*"` is not a disarm -- and a value that selects none of
-        them makes hk skip the step reporting `no file matches for step`,
-        which is one. Both are the verdicts a real commit gets, and the
-        prologue's `GIT_WORK_TREE` is what they depend on:
-        `test_the_step_is_selected_over_the_files_the_commit_stages` fails if
-        hk stops seeing these files.
+        These cases drive real `git commit` and `git merge`, which need
+        something to commit. The two files are also hk's file set for this hook
+        -- the commit's staged files, the message file not among them -- which
+        is what a `glob`, `types` or `exclude` key on the step is matched
+        against, and what makes a narrowing value show up as a disarm.
         """
         self.changes += 1
         source = self.repository / f"change-{self.changes}.rs"
@@ -639,9 +440,8 @@ class TheGateHkRuns(GateTestCase):
     def diverging_branches_carrying_files(self):
         """`diverging_branches`, with a file on every commit and no range.
 
-        The ancestor is not returned because no case here walks a range, and
-        the sides are not empty because the merge has to carry a file across
-        for the step to have anything to select.
+        No ancestor, since no case here walks a range; no empty commits, since
+        the merge has to carry a file across for the step to select.
         """
         self.stage_a_change()
         self.git("commit", "-q", "--no-verify", "-m", "feat: the common ancestor")
@@ -685,10 +485,9 @@ class TheGateHkRuns(GateTestCase):
     def test_a_real_merge_completes_through_the_gate(self):
         """`git merge --no-ff` writes its own merge commit. Issue #132, closed.
 
-        The exemption, end to end: git writes MERGE_HEAD, runs `commit-msg`,
-        hk runs the step, the step reads the file git wrote, and the merge
-        commit exists. Every link is real, and the ordering the fix rests on is
-        observed here rather than cited.
+        The exemption end to end, every link real: git writes MERGE_HEAD, runs
+        `commit-msg`, hk runs the step, the step reads the file git wrote. The
+        ordering the fix rests on is observed here rather than cited.
         """
         merged = subprocess.run(
             ["git", "merge", "--no-ff", "topic"],
@@ -710,10 +509,8 @@ class TheGateHkRuns(GateTestCase):
     def test_the_gate_refuses_a_merge_subject_with_no_merge_in_progress(self):
         """The reading every disarm turns green, and the one that catches them.
 
-        A one-parent commit carrying a merge-shaped subject has to be refused,
-        by convco's own words, with `HEAD` where it was. A step hk does not run
-        -- for any of the reasons in this class's docstring -- fails here and
-        nowhere else.
+        A one-parent commit carrying a merge-shaped subject has to be refused by
+        convco's own words, with `HEAD` where it was.
         """
         self.assertFalse(self.merge_head(), "the fixture left a merge in progress")
         before = self.git("rev-parse", "HEAD").stdout.strip()
@@ -735,20 +532,12 @@ class TheGateHkRuns(GateTestCase):
     def test_the_step_is_selected_over_the_files_the_commit_stages(self):
         """hk's file set here is a real commit's, which is its staged files.
 
-        hk builds a `commit-msg` step's file set from the repository the hook
-        was invoked for, and that set is the commit's staged and modified
-        files -- the message file is not in it. The set is what a `glob`, a
-        `types` or an `exclude` key on the step would be matched against, so a
-        fixture whose set comes out empty answers for all three at every
-        value: it reports `glob = "*"`, which selects everything staged and
-        disarms nothing, exactly as it reports a `glob` matching no file,
-        which disarms the gate outright.
-
-        Read out of hk's own `HK_LOG=debug` line rather than inferred,
-        because the exit code the rest of this class reads cannot see it: with
-        no file-selecting key declared, hk runs the step over an empty set as
-        readily as over a full one, and the gate refuses the subject either
-        way.
+        The set is what a `glob`, `types` or `exclude` key would be matched
+        against, so a fixture whose set came out empty would answer the same for
+        a value selecting everything as for one selecting nothing. Read out of
+        hk's `HK_LOG=debug` line rather than inferred, because the exit code the
+        rest of this class reads cannot see it: hk runs the step over an empty
+        set as readily as a full one.
         """
         before = self.git("rev-parse", "HEAD").stdout.strip()
         attempt = self.commit(
@@ -772,17 +561,12 @@ class TheGateHkRuns(GateTestCase):
     def test_the_gate_refuses_over_a_commit_staging_one_unfamiliar_file(self):
         """The gate must not depend on what the commit in front of it stages.
 
-        hk skips a step when no file in the commit matches its selection, so a
-        `glob`, a `types` or an `exclude` narrower than a commit disarms the
-        gate for that commit while leaving it armed for the next one. The
-        reading above cannot see that: it stages a `.rs` and a `.md`, and a
-        value selecting either of those leaves the step running.
-
-        This commit stages one file with an extension nothing globs, so any
-        narrowing value lets its subject through and fails here. `glob = "*"`
-        still selects it, which is why that value stays green -- it selects
-        every commit's files and arms the gate for all of them, which is what
-        this step needs and what a narrower value does not give it.
+        hk skips a step when no staged file matches its selection, so a value
+        narrower than a commit disarms the gate for that commit and leaves it
+        armed for the next. The reading above cannot see that: it stages a `.rs`
+        and a `.md`. This commit stages one file nothing globs, so any narrowing
+        value lets its subject through and fails here, while `glob = "*"` stays
+        green because it arms the gate for every commit.
         """
         before = self.git("rev-parse", "HEAD").stdout.strip()
         unfamiliar = self.repository / "change-unfamiliar.gate-fixture"
@@ -793,12 +577,9 @@ class TheGateHkRuns(GateTestCase):
     def test_an_exported_hk_skip_does_not_reach_the_gate(self):
         """`HK_SKIP_STEPS` in somebody's shell is not this repository's answer.
 
-        Measured on hk 1.53.0: exported into `hk run commit-msg`, both
-        `HK_SKIP_STEPS=conventional-commit` and `HK_SKIP_HOOK=commit-msg` make
-        it exit 0 over a merge subject having run nothing. That escape hatch is
-        committed nowhere, so `hermetic_environment` strips the whole `HK_*`
-        namespace before any fixture sees it -- and this is the case that holds
-        the strip, since every other case here would pass without it.
+        Exported into `hk run commit-msg`, it and `HK_SKIP_HOOK` each make it
+        exit 0 having run nothing. `hermetic_environment` strips the namespace,
+        and this is the case that holds the strip.
         """
         exported = mock.patch.dict(os.environ, {"HK_SKIP_STEPS": "conventional-commit"})
         exported.start()
@@ -812,10 +593,9 @@ class TheGateHkRuns(GateTestCase):
 class LinkedWorktree(GateTestCase):
     """The guard has to be worktree-correct, because this repository is worktrees.
 
-    In a linked worktree MERGE_HEAD is under `.git/worktrees/<name>/`, not
-    `.git/`. A guard spelled against `.git/MERGE_HEAD` reports "no merge"
-    throughout a real merge here, and every plain-`git init` fixture in this
-    file would stay green while it did.
+    MERGE_HEAD is under `.git/worktrees/<name>/` here, not `.git/`. A guard
+    spelled against `.git/MERGE_HEAD` reports "no merge" throughout a real merge
+    while every plain-`git init` fixture in this file stays green.
     """
 
     def setUp(self):
@@ -830,16 +610,10 @@ class LinkedWorktree(GateTestCase):
     def test_the_guard_finds_the_repository_itself(self):
         """The guard on git's discovery path, with no `GIT_DIR` supplied.
 
-        Every case but this one and
-        `test_the_discovered_guard_still_checks_with_no_merge`, its control,
-        exports `GIT_DIR`, because that is what lets `mise run` resolve
-        `mise.toml` from the project root while the task reads a throwaway
-        repository. The cost is that the guard is never asked to *find* the
-        repository -- and finding it is the whole difference between
-        `--git-path` and the spellings it was chosen over.
-        Without this case, `[ -f "$GIT_DIR/MERGE_HEAD" ]` passes the suite,
-        while in the position git actually runs a `commit-msg` hook from --
-        cwd at the worktree top, `GIT_DIR` unset -- it exempts nothing.
+        Every case but this one and its control exports `GIT_DIR`, so the guard
+        is never asked to *find* the repository. Without this case
+        `[ -f "$GIT_DIR/MERGE_HEAD" ]` passes the suite, while in the position
+        git actually runs a `commit-msg` hook from it exempts nothing.
         """
         self.git("merge", "--no-commit", "--no-ff", "topic", cwd=self.linked)
         self.assertTrue(self.merge_head(cwd=self.linked), "no merge state in the linked worktree")
@@ -871,11 +645,10 @@ class RefNamedMergeHead(GateTestCase):
     """A ref called MERGE_HEAD is not a merge, and must not be read as one.
 
     `git rev-parse --verify --quiet MERGE_HEAD` -- the spelling this task
-    carried first -- resolves a *ref*, so a branch, a tag or a bare
-    `refs/MERGE_HEAD` of that name makes it exit 0 with no merge anywhere. The
-    gate would then exempt a one-parent commit that `commits:check` and the
-    `commits` CI job reject, which is a silent and total loss of the gate in
-    the direction opposite to the one it was written to fix.
+    carried first -- resolves a *ref*, so a branch, tag or bare
+    `refs/MERGE_HEAD` makes it exit 0 with no merge anywhere. The gate would
+    then exempt a one-parent commit that `commits:check` rejects: a silent,
+    total loss of the gate, opposite to what it was written to fix.
     """
 
     def setUp(self):
@@ -910,10 +683,9 @@ class NoMergeInProgress(GateTestCase):
     def test_a_squash_merge_leaves_no_merge_head_and_stays_checked(self):
         """`git merge --squash` is not a merge as far as this rule is concerned.
 
-        It writes SQUASH_MSG and no MERGE_HEAD, runs no commit-msg hook of its
-        own, and the commit it leads to has one parent -- which `commits:check`
-        and the `commits` CI job do check. So its default message has to be
-        rejected here, or the hook would pass what CI fails.
+        It writes SQUASH_MSG and no MERGE_HEAD, and the commit it leads to has
+        one parent -- which `commits:check` does check. So its default message
+        has to be rejected here, or the hook would pass what CI fails.
         """
         self.git("merge", "--squash", "topic")
         self.assertFalse(self.merge_head(), "a squash merge wrote MERGE_HEAD")
@@ -933,16 +705,12 @@ class NoMergeInProgress(GateTestCase):
 class TheAmendResidual(GateTestCase):
     """The one divergence this fix cannot reach, pinned so it cannot move unseen.
 
-    Amending or rewording an existing merge commit runs the hook with
-    MERGE_HEAD already gone, over a commit that still has two parents. The
-    hook half rejects it; the range half exempts it. `docs/nfr.md` and
-    `mise.toml` both state this, and until this case existed nothing held it --
-    so a change closing it, or widening it, would have left both documents
-    silently wrong.
-
-    If this case fails because the hook half now *accepts*, the residual is
-    closed and both documents want editing. If it fails the other way, the
-    exemption has been lost somewhere and the range half is what to read next.
+    Amending or rewording an existing merge commit runs the hook with MERGE_HEAD
+    already gone, over a commit that still has two parents: the hook half
+    rejects it, the range half exempts it. `docs/nfr.md` and `mise.toml` both
+    state this. If this case fails because the hook half now *accepts*, the
+    residual is closed and both documents want editing; if it fails the other
+    way, the exemption has been lost somewhere.
     """
 
     def setUp(self):
@@ -963,28 +731,14 @@ class TheAmendResidual(GateTestCase):
 class AmbientGitEnvironment(GateTestCase):
     """The fixtures must not follow a git environment the caller exported.
 
-    This is the case that makes the scrub a rule rather than a habit.
-    `commits:test` runs from `hooks:pre-push`, which git invokes with a git
-    environment already in place, and the repository that environment names is
-    the one being pushed. A fixture that inherited it would `git init` and
-    `git commit` into somebody's working tree while they pushed it.
-
-    Four variables are exported, not one, because the scrub's claim is over the
-    whole `GIT_*` namespace and a guard that only exports `GIT_DIR` would stay
-    green if the scrub were narrowed to name two variables by hand.
-    `GIT_OBJECT_DIRECTORY` and `GIT_INDEX_FILE` each leave their own trace:
-    the first sends the fixture's commit objects to the decoy, and the second
-    creates a file that does not otherwise exist.
-
-    `mock.patch.dict` mutates this process's own `os.environ`, which is safe
-    because `unittest` runs cases serially in one thread; it is undone by
-    `addCleanup` whatever the case does.
-
-    What holds the scrub is the three decoy assertions and the merge state,
-    and nothing else here could: `gate()` sets `GIT_DIR` and `GIT_WORK_TREE`
-    outright, so putting a message through it would pass under any scrub at
-    all, including none. The subject of this class is the fixture's
-    environment, so the fixture is what it asserts on.
+    `commits:test` runs from `hooks:pre-push`, where git has already exported an
+    environment naming the repository being pushed; a fixture that inherited it
+    would `git init` and `git commit` into somebody's working tree while they
+    pushed it. Four variables rather than one, because the scrub's claim is over
+    the whole namespace: `GIT_OBJECT_DIRECTORY` and `GIT_INDEX_FILE` each leave
+    their own trace in the decoy. The assertions are on the fixture rather than
+    through `gate()`, which sets `GIT_DIR` outright and would pass under no
+    scrub at all.
     """
 
     def setUp(self):
@@ -1041,8 +795,8 @@ class AmbientGitEnvironment(GateTestCase):
             self.decoy_index.exists(),
             "the fixture wrote the index the ambient GIT_INDEX_FILE names",
         )
-        # The merge state is the fourth reading, and the only one that depends
-        # on the fixture's *refs* rather than on the decoy's contents.
+        # The fourth reading, and the only one that depends on the fixture's
+        # *refs* rather than on the decoy's contents.
         self.assertTrue(self.merge_head(), "the fixture did not reach a merge state")
 
 

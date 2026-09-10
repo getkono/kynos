@@ -83,12 +83,9 @@ jobs:
       - name: Test the cost sweep's parsers and report
         run: mise run cost:test
 
-      # And once more: it runs git and convco over throwaway repositories and
-      # compiles nothing. Here rather than in the `commits` job below, even
-      # though that job is what the rule is about: that job is
-      # `if: github.event_name == 'pull_request'`, so a task placed there would
-      # not run on a push to master, and the comment above -- that these jobs
-      # between them run every task in `check` -- would stop being true.
+      # Here rather than in the `commits` job below, which the rule is about:
+      # that job is `if: github.event_name == 'pull_request'`, so a task placed
+      # there would not run on a push to master.
       - name: Test that the commit rule's two halves agree
         run: mise run commits:test
 
