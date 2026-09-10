@@ -500,18 +500,41 @@ does when one element has more than one spelling that reaches it:
 mint a registry anywhere. The second is a `feature = "…"` gate, written as the
 `#[cfg]` attribute writes it, for an element whose whole contribution is what a
 gate compiles — a flag is not a Rust name, so there is nothing else to name it
-by. A gate is read as the predicate around it rather than as the text of it, so
-a spelling matches only where the enclosing `#[cfg]`, `#![cfg]`, `cfg_attr` or
-`cfg!` names the flag at the polarity the cell wrote; a spelling may therefore
-be written negated, as `not(feature = "…")`, and then matches only what the flag
-compiles by being *off*. The macro is in that list because it is the form that
-compiles in *every* configuration and branches at run time, so what it guards is
-on the request path in every build; a rule anchored on the attribute forms alone
-read it as naming no flag and let the site past in silence. The `openapi31` row is the case that needs it, since
-both of its sites are the `compile_error!` that refuses a build without the
-flag. The two are matched over different text, and the string literals are the
-whole of the difference: an identifier over source with its comments, its
-literals and its inline `#[cfg(test)]` modules removed, a gate over the same
+by. A gate is read as the predicate around it rather than as the text of it: the
+enclosing `#[cfg]`, `#![cfg]`, `cfg_attr` or `cfg!` is walked with its
+delimiters balanced, and the flag counts where that walk reaches it.
+
+The two questions a row asks read that walk at different strictnesses, and the
+difference is what a cell's polarity does and does not buy. Whether the cell's
+own claim is still live is polarity-exact: the spelling matches only where the
+predicate names the flag at the polarity the cell wrote, so a spelling may be
+written negated, as `not(feature = "…")`, and then matches only what the flag
+compiles by being *off*. The `openapi31` row is the case that needs the negated
+spelling, since both of its sites are the `compile_error!` that refuses a build
+without the flag. Whether a *site* names the flag is polarity-blind: the
+offender scan reports a disallowed site naming the flag at either polarity,
+because being off-path is a matter of naming the flag at all, and a cell states
+a polarity as the row's own claim rather than as a filter over the tree. So the
+positive `test-util` cell reports a disallowed
+`#[cfg(not(feature = "test-util"))]`, and the negated `openapi31` cell reports a
+disallowed `#[cfg(feature = "openapi31")]`. Write the cell at the polarity the
+row's reason is about, and do not expect it to exempt the other polarity from
+the offender scan.
+
+The macro is in that list because it is the form that compiles in *every*
+configuration and branches at run time, so what it guards is on the request path
+in every build; a rule anchored on the attribute forms alone read it as naming
+no flag and let the site past in silence. It is read under any of the three
+delimiters a macro invocation may take, since `cfg!{…}` and `cfg![…]` gate a
+build exactly as `cfg!(…)` does, while the attribute forms are read only under
+`(` — `#[cfg{…}]` is not source `rustc` accepts. The name must stand bare:
+`other::cfg!`, and the `macro_rules!` metavariable `$cfg!`, resolve to whatever
+the module exports or the caller passed, which a scan reading text cannot tell
+from the gate, so neither is read as one.
+
+The two kinds of token are matched over different text, and the string literals
+are the whole of the difference: an identifier over source with its comments,
+its literals and its inline `#[cfg(test)]` modules removed, a gate over the same
 source with the literals kept, because the flag name is one. Comments go from
 both corpora. A gate written in a comment or a rustdoc example is a mention no
 build compiles, and a rule reading one would report a row as holding on the
