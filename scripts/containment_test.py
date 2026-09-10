@@ -1349,6 +1349,15 @@ class Main(unittest.TestCase):
         named what moved. Nor does one with no anchor at all: appending to a
         source cannot miss.
 
+        Every incidental anchor in this file goes through it, and not only the
+        `uuid` ones: `DECLARED_SITE`, the `` `cookie` `` grade, the Aggregate
+        row and one real allowed site in the `tokio` table are all details the
+        cases that name them are not about. Two of those replaced *every*
+        occurrence rather than the first, which this helper could not express
+        while it passed a count; it no longer passes one, so it expresses them.
+        Each anchor is written once in its document today, which is why routing
+        them changed no fixture -- the guard is what they gain.
+
         Used on a source file as well as on a document, since a manifest key
         can move for the same reason a table cell can.
 
@@ -1525,10 +1534,10 @@ class Main(unittest.TestCase):
         # The presence half of its `named outside `server/`` absence: one real
         # allowed site is renamed to a path nothing occupies, so the file that
         # names tokio there becomes an offender.
-        broken = gate.ARCHITECTURE.replace(
+        broken = self.rewriting(
+            gate.ARCHITECTURE,
             "| `response/stream/sse.rs` | `tokio::time::{Instant, Sleep, sleep}` |",
             "| `x/y.rs` | `tokio::time::{Instant, Sleep, sleep}` |",
-            1,
         )
         status, failures = self.report(architecture=broken)
         self.assertEqual(status, 1)
@@ -1640,7 +1649,7 @@ class Main(unittest.TestCase):
 
     def test_a_renamed_surface_heading_skips_the_declaration_check(self):
         broken = gate.ARCHITECTURE.replace(self.SURFACE, "### The public surface", 1)
-        broken = broken.replace(self.DECLARED_SITE, "crates/kynos/src/lib.rs")
+        broken = self.rewriting(broken, self.DECLARED_SITE, "crates/kynos/src/lib.rs")
         status, failures = self.report(architecture=broken)
         self.assertEqual(status, 1)
         self.assertEqual(len(self.naming(failures, self.SURFACE)), 1)
@@ -1660,7 +1669,9 @@ class Main(unittest.TestCase):
         with the heading left alone, so the slice is taken and the removed link
         is missing from it.
         """
-        broken = gate.ARCHITECTURE.replace(self.DECLARED_SITE, "crates/kynos/src/lib.rs")
+        broken = self.rewriting(
+            gate.ARCHITECTURE, self.DECLARED_SITE, "crates/kynos/src/lib.rs"
+        )
         status, failures = self.report(architecture=broken)
         self.assertEqual(status, 1)
         self.assertEqual(len(self.naming(failures, "names no site")), 1)
@@ -1713,7 +1724,7 @@ class Main(unittest.TestCase):
 
     def test_a_flag_no_row_grades_is_reported(self):
         # The presence half of the grading case's `does not grade` absence.
-        broken = gate.PERFORMANCE.replace("`cookie`, ", "", 1)
+        broken = self.rewriting(gate.PERFORMANCE, "`cookie`, ", "")
         status, failures = self.report(performance=broken)
         self.assertEqual(status, 1)
         self.assertEqual(len(self.naming(failures, "does not grade")), 1)
@@ -1721,7 +1732,7 @@ class Main(unittest.TestCase):
 
     def test_a_graded_flag_the_crate_does_not_declare_is_reported(self):
         # The presence half of its `does not declare` absence.
-        broken = gate.PERFORMANCE.replace("`cookie`", "`kooky`", 1)
+        broken = self.rewriting(gate.PERFORMANCE, "`cookie`", "`kooky`")
         status, failures = self.report(performance=broken)
         self.assertEqual(status, 1)
         self.assertEqual(len(self.naming(failures, "does not declare")), 1)
@@ -1729,10 +1740,10 @@ class Main(unittest.TestCase):
 
     def test_a_flag_graded_in_two_rows_is_reported(self):
         # The presence half of its `in more than one row` absence.
-        broken = gate.PERFORMANCE.replace(
+        broken = self.rewriting(
+            gate.PERFORMANCE,
             self.AGGREGATE + " `default`, `full` |",
             self.AGGREGATE + " `default`, `full`, `cookie` |",
-            1,
         )
         status, failures = self.report(performance=broken)
         self.assertEqual(status, 1)
@@ -1744,8 +1755,10 @@ class Main(unittest.TestCase):
         # the Full battery row and into the Off-path proof one, where the grade
         # says a request cannot reach what it adds -- an argument, and no row of
         # testing.md's off-path table makes it.
-        broken = gate.PERFORMANCE.replace("`cookie`, ", "", 1).replace(
-            "`decimal-big` |", "`decimal-big`, `cookie` |", 1
+        broken = self.rewriting(
+            self.rewriting(gate.PERFORMANCE, "`cookie`, ", ""),
+            "`decimal-big` |",
+            "`decimal-big`, `cookie` |",
         )
         status, failures = self.report(performance=broken)
         self.assertEqual(status, 1)
