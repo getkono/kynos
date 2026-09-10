@@ -1445,9 +1445,17 @@ class Main(unittest.TestCase):
         #
         # Non-vacuous, and measured rather than argued: `Corpus.naming` reading
         # `sources` rather than `files` -- one word -- puts eleven offender
-        # lines under the dependency-graph scan over this repository's own
-        # tree, and every other case in this file stays green through it. This
-        # one goes red and names the rule.
+        # lines over this repository's own tree. Nine of them are the `tokio`
+        # allowance scan's, over the `tests.rs` siblings that word restores to
+        # the corpus, and two are the `hyper`/`hyper-util` and `rustls`
+        # confinements'; the dependency-graph scan is two of the three
+        # failures rather than all of them.
+        #
+        # Two other cases go red on it now, and did not when this was written:
+        # `test_a_crate_name_matches_as_a_word_and_not_as_a_substring` and
+        # `test_a_pub_use_in_lib_rs_is_exempt` each assert `(0, [])` over an
+        # appended real corpus, so each detects the same class. The disclosure
+        # is written beside both.
         #
         # The corpus rules are the ones this reaches that no document argument
         # would: `naming`'s own word boundaries, the views `Corpus.__init__`
@@ -1565,6 +1573,21 @@ class Main(unittest.TestCase):
         # files in this workspace happen to spell `h2` inside a longer
         # identifier; a rename tomorrow takes the hold away without touching
         # either the rule or the case.
+        #
+        # This asserts the failure list whole over a real corpus, so it is a
+        # second detector for the over-reporting class
+        # `test_the_unmodified_tree_reports_nothing` above was written for,
+        # and reds on mutations that have nothing to do with `Corpus.naming`'s word boundaries.
+        # Measured on six: `Corpus.naming` reading `sources` for `files` or
+        # losing its word boundaries, the re-export scan's `lib.rs` exemption
+        # disabled, either the `tower` or the `hyper`/`hyper-util` confinement
+        # emptied, and `permitted`'s `server/` branch deleted. Every one reds
+        # this case, the other detector and the intact-tree case together, so
+        # a red here can misname its cause -- read the intact-tree case's
+        # verdict first. That cost is the one the intact-tree case states and
+        # accepts, and it is accepted here rather than designed away: an
+        # absence asserted through a needle instead would hand this rule back
+        # the blindness that case closes.
         inside = self.appending(
             "crates/kynos/src/unchecked.rs",
             "\nfn h2_frames() -> usize {\n    0\n}\nfn frames_h2() {}\n",
@@ -2129,6 +2152,21 @@ class Main(unittest.TestCase):
         # rename tomorrow takes the hold away without touching the rule or the
         # case, and the failure it prints names every re-export in the crate
         # rather than the branch that stopped guarding them.
+        #
+        # This asserts the failure list whole over a real corpus, so it is a
+        # second detector for the over-reporting class
+        # `test_the_unmodified_tree_reports_nothing` above was written for,
+        # and reds on mutations that have nothing to do with the `lib.rs` exemption.
+        # Measured on six: `Corpus.naming` reading `sources` for `files` or
+        # losing its word boundaries, the re-export scan's `lib.rs` exemption
+        # disabled, either the `tower` or the `hyper`/`hyper-util` confinement
+        # emptied, and `permitted`'s `server/` branch deleted. Every one reds
+        # this case, the other detector and the intact-tree case together, so
+        # a red here can misname its cause -- read the intact-tree case's
+        # verdict first. That cost is the one the intact-tree case states and
+        # accepts, and it is accepted here rather than designed away: an
+        # absence asserted through a needle instead would hand this rule back
+        # the blindness that case closes.
         corpus = self.appending(
             "crates/kynos/src/lib.rs",
             "\nmod probe_mod;\npub use probe_mod::Thing;\npub use crate::http::Body as A;\n",
