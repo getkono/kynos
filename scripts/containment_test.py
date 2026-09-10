@@ -674,14 +674,27 @@ class GatePolarity(unittest.TestCase):
         self.assertTrue(self.matcher('`feature = "uuid"`').search(source))
         self.assertFalse(self.matcher('`not(feature = "uuid")`').search(source))
 
-    def test_a_macro_whose_name_merely_ends_in_cfg_is_not_one(self):
-        # The word boundary. `feature = "…"` is not reserved to `cfg`, and a
-        # macro somebody else wrote is not a gate on the build.
-        self.assertFalse(
-            self.matcher('`feature = "uuid"`').search(
-                'let d = mycfg!(feature = "uuid");\n'
-            )
-        )
+    def test_a_macro_name_carrying_anything_before_cfg_is_not_this_gate(self):
+        # `feature = "…"` is not reserved to `cfg`, and a macro somebody else
+        # wrote is not a gate on the build. Three shapes put something in
+        # front of the name, and a word boundary stops only the first of them:
+        # `mycfg!` is a different identifier; `other::cfg!` is a path this scan
+        # cannot resolve, since a module may export any macro under that name;
+        # and `$cfg!` is a `macro_rules!` metavariable, where the macro
+        # actually invoked is whatever the caller passed. `rustc` compiles the
+        # last two, so both are shapes real source may hold.
+        #
+        # `search` reading one as a gate lets a stale cell read live in
+        # silence, and `named` reading one lets the offender scan report a
+        # file that gates nothing. This tree writes all 19 of its `cfg!` calls
+        # bare, so the narrowing is inert on it.
+        for source in (
+            'let d = mycfg!(feature = "uuid");\n',
+            'let d = other::cfg!(feature = "uuid");\n',
+            'let d = $cfg!(feature = "uuid");\n',
+        ):
+            self.assertFalse(self.matcher('`feature = "uuid"`').search(source))
+            self.assertFalse(self.matcher('`feature = "uuid"`').named(source))
 
     def test_an_attribute_written_with_escaped_quotes_is_not_a_gate(self):
         # Named for what it holds: the flag pattern wants an unescaped quote
