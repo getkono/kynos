@@ -405,6 +405,34 @@ class BothHalvesOverOneMerge(GateTestCase):
         self.assertEqual(len(parents), 3, "the fixture did not write a two-parent commit")
         self.assertAccepted(self.range_gate(self.base))
 
+    def test_an_exported_convco_override_does_not_reach_either_half(self):
+        """`CONVCO_MERGES` in somebody's shell is not this repository's answer.
+
+        convco reads its option surface from the environment as well as from
+        `.convco`, and `CONVCO_MERGES` is the switch behind `no_merge_commits`
+        -- the one this file's module docstring names as the reason the range
+        half is run at all. Exported, it turns `convco check BASE..HEAD` from
+        exit 0 to exit 1 over a merge subject, so the reading above stops
+        meaning what this repository declares and starts meaning what one
+        machine's shell overrides. That is the same escape hatch as
+        `HK_SKIP_STEPS`, one tool along, and it is committed nowhere.
+
+        So `hermetic_environment` strips the inherited `CONVCO_*` namespace,
+        and `range_gate` sets the one name it needs -- `CONVCO_RANGE` -- back
+        explicitly afterwards. Held here rather than beside the `HK_*` case
+        because the range half is what the leak reaches: every case in this
+        file passes without the strip except the two this one stands in for.
+        """
+        exported = mock.patch.dict(os.environ, {"CONVCO_MERGES": "true"})
+        exported.start()
+        self.addCleanup(exported.stop)
+        self.env = hermetic_environment()
+
+        self.git("merge", "--no-commit", "--no-ff", "topic")
+        self.assertAccepted(self.gate(MERGE_SUBJECT))
+        self.git("commit", "-q", "--no-verify", "-m", MERGE_SUBJECT.strip())
+        self.assertAccepted(self.range_gate(self.base))
+
     def test_both_halves_reject_the_same_one_parent_merge_subject(self):
         """A subject spelled `Merge ...` on a one-parent commit is not exempt.
 
