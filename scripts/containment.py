@@ -514,7 +514,21 @@ NEGATED_GATE = re.compile(r'`?not\(\s*feature\s*=\s*"([\w-]+)"\s*\)`?')
 # `crates/kynos-macros/src/`, a tree no row's sites reach and so no row's scope
 # covers; and the three written in a `tests.rs` sibling are held out of
 # `gate_files` besides.
-PREDICATE = re.compile(r"#!?\[\s*(cfg_attr|cfg)\s*\(|\bcfg!\s*\(")
+#
+# The macro alternative accepts all three delimiters and the attribute
+# alternatives accept only `(`, which is Rust's asymmetry rather than this
+# pattern's. A macro invocation may be delimited `(`, `{` or `[` -- `rustc`
+# compiles `cfg!{feature = "x"}` and `cfg![feature = "x"]` as readily as the
+# parenthesised form -- while `#[cfg{...}]` is refused outright with "wrong
+# meta list delimiters". Requiring the paren everywhere read two of the three
+# macro spellings as no gate at all; widening the attribute forms to match
+# would read a gate into source no build compiles.
+PREDICATE = re.compile(r"#!?\[\s*(cfg_attr|cfg)\s*\(|\bcfg!\s*([({\[])")
+#: What closes each delimiter a predicate may open. Only the outermost one
+#: varies: every group nested inside a `cfg` predicate is a parenthesised
+#: `not(`, `all(` or `any(`, so the walk closes on this one at depth one and on
+#: `)` everywhere below it.
+CLOSING = {"(": ")", "{": "}", "[": "]"}
 # A `not(` group, which inverts the polarity of everything inside it.
 NEGATION = re.compile(r"\bnot\s*\(")
 
@@ -535,10 +549,10 @@ class Gate:
     offender scan over one reported a row broken by the other two. It is also
     written by `cfg!(feature = "uuid")`, which is not an attribute at all and
     compiles in *every* configuration. The predicate is read instead: every
-    `#[cfg(`, `#![cfg(`, `#[cfg_attr(`, `#![cfg_attr(` and `cfg!(` -- the five
-    forms `PREDICATE` matches -- is walked with its parentheses balanced, and
-    `search` counts the flag only where the parity of the `not(` groups
-    enclosing it is the one the spelling asked for. `named` counts it at either
+    `#[cfg(`, `#![cfg(`, `#[cfg_attr(`, `#![cfg_attr(` and `cfg!` under any of
+    its three delimiters -- what `PREDICATE` matches -- is walked with its
+    delimiters balanced, and `search` counts the flag only where the parity of
+    the `not(` groups enclosing it is the one the spelling asked for. `named` counts it at either
     parity and nowhere else, which is what separates a polarity a cell claims
     from a flag a file names.
 
@@ -626,6 +640,9 @@ class Gate:
         # walk ends when it closes, which is what keeps one predicate from
         # running into the code below it.
         parity, i, n = [False], opened.end(), len(text)
+        # The delimiter the predicate opened on, which is `(` for every
+        # attribute form and any of the three for the macro.
+        closes = CLOSING[text[i - 1]]
         applies = opened.group(1) == "cfg_attr"
         while i < n and parity:
             if found := NEGATION.match(text, i):
@@ -638,7 +655,7 @@ class Gate:
             elif text[i] == "(":
                 parity.append(parity[-1])
                 i += 1
-            elif text[i] == ")":
+            elif text[i] == (closes if len(parity) == 1 else ")"):
                 parity.pop()
                 i += 1
             elif applies and text[i] == "," and len(parity) == 1:

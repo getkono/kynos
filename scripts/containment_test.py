@@ -429,9 +429,9 @@ class GatePolarity(unittest.TestCase):
     anything from; anchored on `#[` a spelling could not see the `cfg!` at all,
     which is the opposite error and the worse one, since it passes in silence.
     Read as a predicate instead: each `#[cfg(`, `#![cfg(`, `#[cfg_attr(`,
-    `#![cfg_attr(` and `cfg!(` -- the five forms `PREDICATE` matches -- is
-    walked with its parentheses balanced, and `search` matches the flag at the
-    polarity the cell asked for.
+    `#![cfg_attr(` and `cfg!` under any of its three delimiters -- what
+    `PREDICATE` matches -- is walked with its delimiters balanced, and `search`
+    matches the flag at the polarity the cell asked for.
 
     `named` is the same walk reading no polarity, and is what the offender scan
     asks: a cell states a polarity as its own claim, and a *site* names the
