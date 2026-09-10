@@ -553,9 +553,30 @@ class TheGateHkRuns(GateTestCase):
         # non-git name here. hk runs a step's command from the repository root
         # it resolves, so a pinned work tree lands `mise run` in the fixture,
         # where mise reports `no tasks defined in <fixture>`. Naming this
-        # repository's own `mise.toml` absolutely puts the task back where
-        # every other case runs it, since mise runs a task in its config's
-        # directory rather than the caller's.
+        # repository's own `mise.toml` absolutely puts the task back.
+        #
+        # It does not put it back where the other cases run it, and the
+        # difference is worth writing down because it is not what a reading of
+        # mise would suggest. A *discovered* config makes mise run a task in
+        # that config's directory; a config named by `MISE_CONFIG_FILE` makes
+        # it run in `$HOME`. Measured on this mise: the same file discovered
+        # from a subdirectory runs the task in the file's directory, and passed
+        # by name runs it in `$HOME`, following `$HOME` when `$HOME` moves.
+        # So this class's `commits:message` runs in the home directory, where
+        # `gate()` runs it at `ROOT`.
+        #
+        # Nothing the reading asserts depends on that directory: convco is
+        # handed the message on stdin, and the git state it reads is the
+        # fixture's through the absolute names above. The residual is convco's
+        # *config* discovery, which is by directory -- a `.convco` in a home
+        # directory reaches this class where one at `ROOT` would not. It is a
+        # false-failure channel only, and pinning `CONVCO_CONFIG` at an empty
+        # file would close it; that is filed rather than done here, because the
+        # outcome-shaped case which would hold it needs `$HOME` redirected and
+        # the tool lookups pinned back, and this class exists to stop asserting
+        # on the environment and start asserting on the exit code. The
+        # inherited `CONVCO_*` names, which reach the same options without
+        # needing a directory, are stripped -- see `hermetic_environment`.
         #
         # `GIT_INDEX_FILE` git *does* export, as `.git/index` relative to the
         # fixture. Past the `cd` that spelling names the project root's index
