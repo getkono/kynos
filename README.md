@@ -6,6 +6,8 @@
 [![MSRV](https://img.shields.io/badge/MSRV-1.85-blue)](#msrv)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+> Status (Sept 10, 2026): Being actively developed. We are steadily pushing and stabilizing features. Breaking changes will only be for bugfixes and correctness. Everything obvious has been working from internal use.
+
 > The API is pre-1.0 and most of it freezes with this release — see [what this
 > release freezes](#what-this-release-freezes) for which parts, and which are
 > still expected to move. Contributions with human oversight are welcome; we
