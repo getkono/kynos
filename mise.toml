@@ -776,7 +776,9 @@ description = "Test that both halves of the commit rule agree about a merge"
 #
 # `unittest` from the standard library: this repository has no Python test
 # runner, and taking a dependency to drive git through subprocess is the worse
-# trade. `-B` for the reason `cost:test` gives.
+# trade. The file imports nothing from `scripts/`; `-B` keeps the task
+# matching `cost:test` and `containment:test`, and keeps a later import from
+# `scripts/` writing nothing.
 #
 # The `python` pin is task-scoped for the reason given on `cost:features`
 # above.
