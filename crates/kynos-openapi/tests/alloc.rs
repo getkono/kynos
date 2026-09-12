@@ -284,19 +284,39 @@ fn wide(value: usize) -> u128 {
     u128::try_from(value).expect("a count fits in 128 bits")
 }
 
-/// Serializes once and reports both what it allocated and how large it was.
+/// Runs one operation in a counted region and reports the heap operations it
+/// made, alongside whatever it produced.
 ///
 /// Fresh allocations and reallocations summed, so that growing a buffer cannot
-/// pass as free. The `expect`, the `len` and the `drop` are all outside the
-/// region: what is counted is the serialization and nothing around it.
+/// pass as free. **This is the one place in the file that sums them**, and both
+/// stages below read through it: two copies of the expression are two things to
+/// hold and one of them can drift, so
+/// [`the_counter_reports_every_heap_operation_in_the_region`] holds it once for
+/// both. That is the arrangement `kynos`'s counting targets arrived at in #133
+/// and #145, in this crate's smaller form.
+///
+/// The result is handed back rather than unwrapped here, because an `expect`, a
+/// `len` and a `drop` are what a caller does with a reading and not what
+/// producing it cost. Every one of them then sits outside the region by
+/// construction rather than by care at two call sites.
+fn counted<T>(operation: impl FnOnce() -> T) -> (usize, T) {
+    let ((allocations, reallocations, _), produced) = count_alloc(operation);
+
+    (allocations + reallocations, produced)
+}
+
+/// Serializes once and reports both what it allocated and how large it was.
+///
+/// The `expect`, the `len` and the `drop` are all outside the region: what is
+/// counted is the serialization and nothing around it.
 fn counted_json(document: &Document) -> (usize, usize) {
-    let ((allocations, reallocations, _), emitted) = count_alloc(|| document.to_json());
+    let (allocations, emitted) = counted(|| document.to_json());
 
     let emitted = emitted.expect("a fixture is representable in JSON");
     let bytes = emitted.len();
     drop(emitted);
 
-    (allocations + reallocations, bytes)
+    (allocations, bytes)
 }
 
 /// Emits once at 3.1 and reports what it allocated.
@@ -315,13 +335,12 @@ fn counted_json(document: &Document) -> (usize, usize) {
 /// is all that is left. A blocker-free fixture is chosen for the larger of two
 /// readings, then, rather than for the longer of two walks.
 fn counted_emit(document: &Document) -> usize {
-    let ((allocations, reallocations, _), emitted) =
-        count_alloc(|| document.emit(SpecVersion::V3_1));
+    let (allocations, emitted) = counted(|| document.emit(SpecVersion::V3_1));
 
     let emitted = emitted.expect("a fixture built at 3.1 downgrades to 3.1");
     drop(emitted);
 
-    allocations + reallocations
+    allocations
 }
 
 /// Asserts that `readings` grows by strictly less than the square of the size
@@ -679,4 +698,101 @@ fn a_repeated_emission_costs_what_the_first_one_did() {
             );
         }
     }
+}
+
+/// A fixture whose heap operations are fixed by construction rather than
+/// measured: one fresh allocation and one reallocation.
+///
+/// Deliberately one of each kind. `Vec::with_capacity` is one fresh allocation;
+/// extending past that capacity is one *reallocation*, because a `Vec` that
+/// outgrows its buffer asks the allocator to resize it rather than to hand out
+/// a second one. A driver that reported only the first would be counting half
+/// of what [`counted`] says it counts.
+///
+/// [`black_box`](std::hint::black_box) is what keeps both from being optimized
+/// away: nothing reads the buffer, and a dead `Vec` is exactly the shape a
+/// compiler is free to delete. The buffer is returned rather than dropped here,
+/// so that its teardown lands outside the region exactly as every other
+/// caller's does.
+fn calibrating() -> Vec<u8> {
+    let mut buffer = Vec::<u8>::with_capacity(1);
+    buffer.extend_from_slice(&[0, 0]);
+
+    std::hint::black_box(buffer)
+}
+
+/// What [`calibrating`] costs, by construction: one fresh allocation and one
+/// reallocation.
+///
+/// A constructed target rather than a recorded measurement: it is what
+/// [`calibrating`]'s body does, not what a run reported. That is the ground for
+/// holding it at an equality where every number in [`SIZES`] is a ceiling —
+/// those record what an emitter costs today and are meant to be beaten, and
+/// this records what the instrument must report, which no improvement to this
+/// crate can lower.
+///
+/// Confirmed against the instrument all the same, the way all nine recorded
+/// numbers were: set to zero, and the reading transcribed out of the failure.
+/// Two at baseline (`cargo nextest run -p kynos-openapi --test alloc`) and two
+/// with `--all-features`, the two feature sets this target is *run* at — the
+/// same two [`EMIT_CEILINGS`] is recorded at, and the only item in the file
+/// that needed a `#[cfg]` to hold both.
+const CALIBRATION: usize = 2;
+
+/// The instrument's second invariant, and the one every number above rests on:
+/// a count is *every* heap operation the region saw, fresh allocations and
+/// reallocations alike.
+///
+/// **Nothing else here could see this, because every assertion above is
+/// one-sided.** The nine recorded numbers are ceilings compared with `<=`, so a
+/// count that *falls* passes; `stays_sub_quadratic` compares one reading with
+/// another, so a uniform fall leaves every growth factor where it was; and
+/// `a_repeated_emission_costs_what_the_first_one_did` asserts two readings
+/// agree, which a consistently wrong driver satisfies perfectly. Measured,
+/// before this assertion existed: dropping `reallocations` from both summing
+/// sites left this target at 8 run, 8 passed — at baseline and at
+/// `--all-features` alike.
+///
+/// **The absolute rather than a delta, which is not the form
+/// [`kynos`'s counting target](../../kynos/tests/alloc.rs) uses.** There the
+/// region is a whole request, so a reading is mostly the routing path's
+/// irreducible cost, and pinning it would turn every genuine routing
+/// improvement into a red *instrument* test; the calibration is read against a
+/// control at the same depth to cancel that. Here the region is the closure
+/// handed to [`counted`] and nothing else, so a fixture is the entire content
+/// of its own reading and there is no baseline to cancel. A control would be a
+/// second region asserted to cost zero, subtracted from this one — ceremony
+/// around `2 - 0`.
+///
+/// **What the absolute buys, and what it still cannot see.** It buys the case a
+/// delta gives up: a driver under-reporting *every* region by the same amount
+/// is invisible to a difference and is red here. What stays invisible is a
+/// driver correct on a two-operation region and wrong on a larger one — one
+/// that dropped every operation past some count, say, or every allocation above
+/// some size. No fixture of a fixed cost can reach that, and widening this one
+/// would only move the boundary rather than remove it. The ceilings above bound
+/// it from the other side, since a driver that under-reported the emitter would
+/// have to under-report it consistently to keep
+/// `a_repeated_emission_costs_what_the_first_one_did` green.
+///
+/// It is filed here rather than restated per stage because since the fold above
+/// there is one summing site, which is what lets one assertion reach both — and
+/// is why it has to exist, since a single edit to [`counted`] now moves every
+/// recorded number in this file at once. It does not restate
+/// `work_on_another_thread_is_not_counted`, for the reason the module
+/// documentation gives above: that property is `alloc_counter`'s rather than
+/// any driver's, and is held once for the workspace.
+#[test]
+fn the_counter_reports_every_heap_operation_in_the_region() {
+    let (allocations, buffer) = counted(calibrating);
+    drop(buffer);
+
+    assert_eq!(
+        allocations, CALIBRATION,
+        "a region performing {CALIBRATION} heap operations by construction — \
+         one fresh allocation and one reallocation — was counted at \
+         {allocations}. A driver that stopped counting one of the two kinds \
+         reports fewer here, and every ceiling recorded above would pass it, as \
+         would both growth relations and the repeat-invariance check"
+    );
 }
