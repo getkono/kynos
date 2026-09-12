@@ -27,8 +27,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-# `.gitignore` has no `__pycache__` entry. The task passes `-B` for the same
-# reason; this covers a direct `python3` run.
+# A run writes no `.pyc` into the tree it reads, and `.gitignore` covers the
+# imports no task controls. The task passes `-B` for the same reason; this
+# covers a direct `python3` run.
 sys.dont_write_bytecode = True
 
 ROOT = Path(__file__).resolve().parent.parent

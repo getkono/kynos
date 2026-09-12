@@ -36,3 +36,7 @@ cost-report.md
 cost-binary.tsv
 cost-codec.tsv
 cost-codegen.tsv
+
+# Bytecode an import from scripts/ writes. The mise tasks run with `-B`; a
+# direct `import containment` or an editor's test runner does not.
+__pycache__/

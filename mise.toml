@@ -413,8 +413,8 @@ description = "Test the cost sweep's parsers and its report"
 # `pytest`, no `tox` and no `requirements.txt` in this repository, and taking
 # a dependency to hold a few pure functions is the worse trade.
 #
-# `-B` because `.gitignore` has no `__pycache__` entry, and a check that
-# leaves an untracked directory behind is a check people learn to work around.
+# `-B` so a run writes no bytecode into the tree it tests. `.gitignore` covers
+# the imports no task controls, and this keeps the task from being one of them.
 # The test file sets `sys.dont_write_bytecode` too, for a direct `python3` run.
 #
 # The `python` pin is task-scoped for the reason given on `cost:features`
@@ -512,8 +512,8 @@ description = "Test what the containment gate reads its tables and its tree with
 # `pytest`, no `tox` and no `requirements.txt` in this repository, and taking
 # a dependency to hold a few hundred lines of pure Python is the worse trade.
 #
-# `-B` because `.gitignore` has no `__pycache__` entry, and a check that
-# leaves an untracked directory behind is a check people learn to work around.
+# `-B` so a run writes no bytecode into the tree it tests. `.gitignore` covers
+# the imports no task controls, and this keeps the task from being one of them.
 # The test file sets `sys.dont_write_bytecode` too, for a direct `python3` run.
 #
 # The `python` pin is task-scoped for the reason given on `cost:features`
@@ -776,7 +776,7 @@ description = "Test that both halves of the commit rule agree about a merge"
 #
 # `unittest` from the standard library: this repository has no Python test
 # runner, and taking a dependency to drive git through subprocess is the worse
-# trade. `-B` because `.gitignore` has no `__pycache__` entry.
+# trade. `-B` for the reason `cost:test` gives.
 #
 # The `python` pin is task-scoped for the reason given on `cost:features`
 # above.
