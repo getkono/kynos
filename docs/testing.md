@@ -318,6 +318,21 @@ example rather than a test, so `--all-targets` is what reaches it, and the sets
 it is *measured* at are the sets it is already linted at — which is why it
 needed no entry of its own.
 
+A fourth shape is a *dependency's* feature forced on: one no manifest in the
+workspace asks for, and that Cargo unifies in anyway from whatever graph a
+downstream program builds. [`mise run test:arbitrary-precision`](../mise.toml)
+builds `kynos-openapi`'s library with `serde_json/arbitrary_precision` on, under
+which a `serde_json::Number` serializes as a one-field struct only serde_json's
+own serializer reads back as a number — so how `to_yaml` handles one is
+observable there and nowhere else. It runs `emit::tests::yaml` alone, with
+`--no-tests=fail` so a rename cannot leave it passing over nothing, because
+parsing breaks separately under that graph: a numeric keyword inside an untagged
+enum such as `RefOr` fails to deserialize, and the property round-trips fail on
+that before emission is reached — filed as
+[#163](https://github.com/getkono/kynos/issues/163). A dev-dependency asking for
+the feature is the shorter spelling and the wrong one here, since it unifies into
+every `--all-targets` build and leaves the default number path untested.
+
 **A gap [`nfr.md`](nfr.md) documents is characterized.** Excluding a known-lossy
 shape from a generator keeps the property honest, but on its own it leaves the
 behaviour unrecorded: closing the gap turns nothing red, and widening it turns
