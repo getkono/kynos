@@ -150,8 +150,17 @@ mod yaml {
             assert_eq!(format!("{number:?}"), format!("{expected:?}"), "{digits}");
         }
 
-        let error = number_from_digits("1e+400").expect_err("beyond any float");
-        assert!(error.to_string().contains("1e+400"), "{error}");
+        // Refused for two causes under one message: digits beyond any float,
+        // and a token-shaped object built by hand whose string is no number.
+        for digits in ["1e+400", "abc"] {
+            let error = number_from_digits(digits).expect_err("no float holds it");
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "a number serde_json holds as `{digits}` cannot be emitted as a YAML number"
+                ),
+            );
+        }
     }
 
     /// `restore` rewrites a mapping only when it is exactly a token holding
@@ -201,7 +210,10 @@ mod yaml {
         }
 
         let error = restore(&mut token(Value::from("1e+400"))).expect_err("beyond any float");
-        assert!(error.to_string().contains("1e+400"), "{error}");
+        assert_eq!(
+            error.to_string(),
+            "a number serde_json holds as `1e+400` cannot be emitted as a YAML number"
+        );
     }
 }
 
