@@ -312,6 +312,38 @@ mod schema {
                     ),
                     "`deserialize_with` reads or writes this variant",
                 ),
+                // The tuple, newtype and tuple-variant shapes emit every member
+                // whatever its skip attributes say, so a skipped member there
+                // is still described and its override still contradicts it.
+                case(
+                    "`serialize_with` on a skipped member of a tuple struct",
+                    quote::quote!(
+                        struct Pair(
+                            u64,
+                            #[serde(skip_deserializing, serialize_with = "as_string")] u64,
+                        );
+                    ),
+                    "`serialize_with` reads or writes this field",
+                ),
+                case(
+                    "`serialize_with` on the skipped member of a newtype",
+                    quote::quote!(
+                        struct Sku(#[serde(skip_deserializing, serialize_with = "as_string")] u64);
+                    ),
+                    "`serialize_with` reads or writes this field",
+                ),
+                case(
+                    "`serialize_with` on a skipped member of a tuple variant",
+                    quote::quote!(
+                        enum Reading {
+                            Count(
+                                u64,
+                                #[serde(skip_deserializing, serialize_with = "as_string")] u64,
+                            ),
+                        }
+                    ),
+                    "`serialize_with` reads or writes this field",
+                ),
             ],
             expand_inner,
         );
