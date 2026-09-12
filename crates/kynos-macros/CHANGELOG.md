@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/getkono/kynos/compare/kynos-macros-v0.1.0...kynos-macros-v0.2.0) - 2026-09-12
+
+### Documentation
+
+- *(errors)* say what the branch title is, and where the dedup drops it
+
+### Fixed
+
+- *(kynos)* narrow each derived error response to the type it publishes
+- *(macros)* unindent the paragraph rustdoc reads as a code block
+
 ## [0.1.0](https://github.com/getkono/kynos/releases/tag/kynos-macros-v0.1.0) - 2026-08-29
 
 ### Added
