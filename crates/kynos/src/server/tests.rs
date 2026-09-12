@@ -1303,6 +1303,74 @@ fn a_mutual_tls_build_installs_no_process_wide_provider() {
     );
 }
 
+/// A *usable* caller-installed provider is the one that serves.
+///
+/// The negative case below shows a caller's provider being consulted by
+/// refusing to build on it, which says nothing about a server that starts. This
+/// is the positive half, and the two are not the same claim: "a FIPS or
+/// hardware-backed provider still wins" is a promise about traffic, so what
+/// holds it has to be traffic.
+///
+/// The discriminator is the cipher suite. Both providers list
+/// `TLS13_AES_256_GCM_SHA384` first, so a server on the installed provider --
+/// restricted to `ChaCha20` and nothing else -- settles on a suite a server on
+/// Kynos's own `aws-lc-rs` would not have chosen, against a client whose offer
+/// is deliberately left wide so the intersection is the server's restriction
+/// alone. `ring` rather than a doctored `aws-lc-rs` because it is a different
+/// provider, which is the situation being claimed.
+#[cfg(all(feature = "tls", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_usable_caller_installed_provider_is_the_one_that_serves() {
+    use tokio_rustls::rustls::{
+        CipherSuite, ClientConfig,
+        crypto::{CryptoProvider, ring},
+        pki_types::ServerName,
+    };
+
+    CryptoProvider {
+        cipher_suites: vec![ring::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256],
+        ..ring::default_provider()
+    }
+    .install_default()
+    .expect("no other test in this process installed a provider");
+
+    let (address, authority, shutdown_sender, server) = tls_server(test_service()).await;
+
+    let mut client =
+        ClientConfig::builder_with_provider(std::sync::Arc::new(ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .expect("ring serves the default protocol versions")
+            .with_root_certificates(trust_anchors(authority.as_bytes()))
+            .with_no_client_auth();
+    client.alpn_protocols = vec![b"http/1.1".to_vec()];
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let stream = tokio_rustls::TlsConnector::from(std::sync::Arc::new(client))
+        .connect(
+            ServerName::try_from("localhost").expect("valid DNS name"),
+            stream,
+        )
+        .await
+        .expect("the handshake completes on the installed provider");
+
+    let negotiated = stream
+        .get_ref()
+        .1
+        .negotiated_cipher_suite()
+        .expect("a completed handshake settled a cipher suite");
+    assert_eq!(
+        negotiated.suite(),
+        CipherSuite::TLS13_CHACHA20_POLY1305_SHA256,
+        "the server served on the provider the caller installed, not on Kynos's own"
+    );
+
+    drop(stream);
+    let _ = shutdown_sender.send(());
+    server.await.expect("server task joins").expect("serves");
+}
+
 /// A provider a caller installed is the one `build` runs on, and a provider
 /// that can serve nothing is reported rather than panicked on.
 ///
