@@ -29,10 +29,12 @@ impl Document {
     ///
     /// # Errors
     ///
-    /// Returns an error only if a number is beyond the range of a 64-bit
-    /// float. That can happen only when `serde_json`'s `arbitrary_precision`
-    /// feature is unified into the build: without it, `serde_json` holds no
-    /// such number to begin with.
+    /// Returns an error only if a number cannot be written as a YAML number:
+    /// either it is beyond the range of a 64-bit float, or a value holds an
+    /// object shaped like `serde_json`'s private number token whose string is
+    /// no number at all. Both can happen only when `serde_json`'s
+    /// `arbitrary_precision` feature is unified into the build: without it,
+    /// `serde_json` holds no such number, and gives that key no meaning.
     #[cfg(feature = "yaml")]
     pub fn to_yaml(&self) -> Result<String, serde_yaml_ng::Error> {
         // Only a build that writes numbers as token mappings pays for, or is
@@ -144,8 +146,10 @@ mod yaml_numbers {
         }
         match digits.parse::<f64>() {
             Ok(float) if float.is_finite() => Ok(Number::from(float)),
+            // Digits beyond any float, or a token-shaped object built by hand
+            // whose string is no number: neither has a YAML number to be.
             _ => Err(serde_yaml_ng::Error::custom(format_args!(
-                "a number beyond the range of a YAML float cannot be emitted: {digits}"
+                "a number serde_json holds as `{digits}` cannot be emitted as a YAML number"
             ))),
         }
     }
