@@ -392,6 +392,29 @@ fn an_all_unit_enum_keeps_the_compact_shape() {
     );
 }
 
+/// One field of each kind `required` tells apart: always present, optional by
+/// its type, and optional because serde's wire form lets it be absent.
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Draft {
+    plain: u64,
+    maybe: Option<u64>,
+    #[serde(default)]
+    defaulted: u64,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    elided: String,
+}
+
+/// `required` names only what serde always reads and writes.
+///
+/// An `Option` may be absent because its type says so. A `#[serde(default)]`
+/// field may be absent from what is read, and a `skip_serializing_if` field
+/// from what is written. Listing either would describe a document the type
+/// never demands.
+#[test]
+fn required_lists_only_what_serde_always_reads_and_writes() {
+    assert_eq!(emitted::<Draft>()["required"], serde_json::json!(["plain"]));
+}
+
 // --- What a derived error response declares ---------------------------------
 //
 // A problem body carries the type URI the declaration named, so the response
