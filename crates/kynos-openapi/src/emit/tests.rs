@@ -136,6 +136,7 @@ mod yaml {
         for (digits, expected) in [
             ("42", Number::from(42u64)),
             ("-7", Number::from(-7i64)),
+            ("-9223372036854775808", Number::from(i64::MIN)),
             ("-0", Number::from(-0.0)),
             ("0.5", Number::from(0.5)),
             ("1e+140", Number::from(1e140)),
