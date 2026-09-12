@@ -160,6 +160,16 @@ mod schema {
                 ),
                 "an untagged enum",
             ),
+            case(
+                "`serialize_with` on a field, whose wire form its type no longer predicts",
+                quote::quote!(
+                    struct Reading {
+                        #[serde(serialize_with = "as_string")]
+                        count: u64,
+                    }
+                ),
+                "does not predict",
+            ),
         ]
     }
 
@@ -200,6 +210,123 @@ mod schema {
             !error.to_string().contains("untagged enum"),
             "a struct was refused with a sentence about enums: {error}"
         );
+    }
+
+    /// Each of serde's three wire-form overrides is refused wherever serde
+    /// accepts it, on a field and on a variant alike.
+    ///
+    /// One row per key and placement, each written out: the ledger's single row
+    /// proves the site fires, and this proves the scan reaches every key and
+    /// names the one that was written.
+    #[test]
+    fn every_wire_form_override_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "`with` on a field",
+                    quote::quote!(
+                        struct Reading {
+                            #[serde(with = "as_string")]
+                            count: u64,
+                        }
+                    ),
+                    "`with` reads or writes this field",
+                ),
+                case(
+                    "`serialize_with` on a field",
+                    quote::quote!(
+                        struct Reading {
+                            #[serde(serialize_with = "as_string")]
+                            count: u64,
+                        }
+                    ),
+                    "`serialize_with` reads or writes this field",
+                ),
+                case(
+                    "`deserialize_with` on a field",
+                    quote::quote!(
+                        struct Reading {
+                            #[serde(deserialize_with = "from_string")]
+                            count: u64,
+                        }
+                    ),
+                    "`deserialize_with` reads or writes this field",
+                ),
+                case(
+                    "`with` on a variant",
+                    quote::quote!(
+                        enum Reading {
+                            #[serde(with = "as_string")]
+                            Count(u64),
+                        }
+                    ),
+                    "`with` reads or writes this variant",
+                ),
+                case(
+                    "`serialize_with` on a variant",
+                    quote::quote!(
+                        enum Reading {
+                            #[serde(serialize_with = "as_string")]
+                            Count(u64),
+                        }
+                    ),
+                    "`serialize_with` reads or writes this variant",
+                ),
+                case(
+                    "`deserialize_with` on a variant",
+                    quote::quote!(
+                        enum Reading {
+                            #[serde(deserialize_with = "from_string")]
+                            Count(u64),
+                        }
+                    ),
+                    "`deserialize_with` reads or writes this variant",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// A wire-form override on something no schema describes is left alone.
+    ///
+    /// The refusal exists because the schema would describe a value the wire
+    /// never carries. A skipped field, and every field of a skipped variant,
+    /// are in no schema at all, so there is nothing for the override to
+    /// contradict.
+    #[test]
+    fn a_wire_form_override_on_an_undescribed_field_is_left_alone() {
+        for declaration in [
+            quote::quote!(
+                struct Reading {
+                    total: u64,
+                    #[serde(skip, with = "as_string")]
+                    count: u64,
+                }
+            ),
+            quote::quote!(
+                #[serde(tag = "kind")]
+                enum Reading {
+                    Total {
+                        total: u64,
+                    },
+                    #[serde(skip)]
+                    Count {
+                        #[serde(with = "as_string")]
+                        count: u64,
+                    },
+                }
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+
+            if let Err(error) = expand_inner(&input) {
+                assert!(
+                    !error.to_string().contains("does not predict"),
+                    "an override nothing describes was refused: {error}"
+                );
+            }
+        }
     }
 }
 
