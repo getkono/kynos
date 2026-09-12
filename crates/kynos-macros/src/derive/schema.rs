@@ -446,14 +446,22 @@ fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
 /// predicts.
 ///
 /// Refused on every field and variant the schema describes, which is
-/// everywhere serde accepts the three keys. A skipped field, a `PhantomData`
-/// and every field of a skipped variant are in no schema, so an override on
-/// one of them contradicts nothing and is left alone.
+/// everywhere serde accepts the three keys. A skipped named field, a named
+/// `PhantomData` and every field of a skipped variant are in no schema, so an
+/// override on one of them contradicts nothing and is left alone.
+///
+/// An unnamed field has no such exemption. The newtype, tuple and tuple-variant
+/// shapes describe every member whatever its skip attributes say, so an
+/// override on any of them contradicts what is published.
 fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
     fn fields(fields: &Fields) -> Vec<(&[syn::Attribute], &'static str)> {
+        let described: fn(&&Field) -> bool = match fields {
+            Fields::Named(_) => |field| is_described(field),
+            Fields::Unnamed(_) | Fields::Unit => |_| true,
+        };
         fields
             .iter()
-            .filter(|field| is_described(field))
+            .filter(described)
             .map(|field| (field.attrs.as_slice(), "field"))
             .collect()
     }
