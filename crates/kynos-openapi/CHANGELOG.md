@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/getkono/kynos/compare/kynos-openapi-v0.1.0...kynos-openapi-v0.2.0) - 2026-09-12
+
+### Added
+
+- *(openapi)* union two narrowed problem responses on a shared status
+
+### Documentation
+
+- *(tests)* say which feature sets a calibration was read at
+- *(openapi)* state the union's third case where the rule is documented
+- *(openapi)* say what the unread arm actually knows
+- *(openapi)* put the empty-oneOf note on the arm that answers it
+
+### Fixed
+
+- *(openapi)* adopt only a side that provably admits every document
+- *(openapi)* compare a header parameter's name the way HTTP compares one
+
 ## [0.1.0](https://github.com/getkono/kynos/releases/tag/kynos-openapi-v0.1.0) - 2026-08-29
 
 ### Added
