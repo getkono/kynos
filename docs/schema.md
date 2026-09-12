@@ -270,6 +270,7 @@ and writes:
 | `#[serde(tag = "...")]` | `oneOf` of objects each carrying the tag as a `const` property beside the variant's own, plus a `discriminator`. A newtype variant has no properties to sit beside, so it becomes an `allOf` of a tag-only object and its payload |
 | `#[serde(tag = "...", content = "...")]` | the same, with the payload under the content property, which a unit variant omits |
 | `#[serde(untagged)]` | **refused** |
+| a `#[serde(other)]` variant | **refused**: it accepts every tag the enum does not name, and only 3.2's `defaultMapping`, which the derive does not emit, could say so |
 
 `discriminator` is emitted exactly when a tag is present, because that is when
 there is a property every branch carries for a consumer to switch on.
@@ -469,6 +470,10 @@ re-walked. A second call would reuse the same maps and agree with itself.
 | 14 | A status two contributors narrow publishes both; a contributor admitting every problem document publishes for both; a shape the rule cannot place changes nothing | [`tests/description.rs`](../crates/kynos/tests/description.rs) over the document and [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) over the wire; the rule itself in [`model/response/union.rs`](../crates/kynos-openapi/src/model/response/union.rs) |
 | 15 | A flattened field's schema names every member it constrains, or the field says `#[schema(open)]` and contributes the parent's `unevaluatedProperties` | the `Flatten` bound the `Schema` derive asserts per flattened field, snapshotted in `tests/ui/macros/schema_flatten_map.rs` and `tests/ui/traits/flatten.rs`; the emitted shape and the value it accepts in [`tests/flatten.rs`](../crates/kynos/tests/flatten.rs), against the `jsonschema` validator |
 | 16 | A guard's 403 narrows to `about:blank` and the URI its scope set named, never to either alone | [`tests/description.rs`](../crates/kynos/tests/description.rs) over the document and [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) over one refusal of each shape; the const in [`security/auth.rs`](../crates/kynos/src/security/auth.rs) and what reads it in [`error/rejection.rs`](../crates/kynos/src/error/rejection.rs) |
+| 17 | A described field or variant whose wire form serde's `with`, `serialize_with` or `deserialize_with` decides is refused, and every member of a tuple, newtype or tuple variant counts as described; a skipped named field, or any field of a skipped variant, is left alone | the derive's ledger in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs), and `tests/ui/macros/schema_serialize_with.rs` for the wording |
+| 18 | A `#[serde(other)]` catch-all variant is refused in every build, skipped or not | the same ledger, and `tests/ui/macros/schema_catch_all_variant.rs` for the wording |
+| 19 | `required` omits a field that is an `Option`, carries `#[serde(default)]`, or belongs to a struct carrying `#[serde(default)]`, and names every other described field; `skip_serializing_if` is accepted only beside one of those | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema and a read of the same type |
+| 20 | `skip_serializing_if` on a non-`Option` field with no `#[serde(default)]` on the field or its struct is refused, since serde then omits the field on write and requires it on read | the derive's ledger in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs), and `tests/ui/macros/schema_skip_serializing_if_without_default.rs` for the wording |
 
 ## Rationale
 

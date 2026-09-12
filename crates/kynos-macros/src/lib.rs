@@ -199,7 +199,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///
 /// Reads the serde attributes already on the type — `rename_all`, `skip`,
 /// `flatten`, `tag`, `content` — so the schema and the wire form come from one
-/// declaration.
+/// declaration. A field is left out of `required` when it is an `Option`,
+/// carries `#[serde(default)]`, or belongs to a struct carrying
+/// `#[serde(default)]`, because the wire form then allows it to be absent both
+/// ways; `skip_serializing_if` is accepted only alongside one of those.
 ///
 /// Constraints go on fields, and the grammar is exactly the keys of
 /// [`Constraints`](https://docs.rs/kynos/latest/kynos/schema/constraints/struct.Constraints.html)
@@ -223,9 +226,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///
 /// # Rejected, because serde and the schema would disagree
 ///
-/// - `#[serde(with = ...)]`, `serialize_with`, `deserialize_with` on a field.
-///   The wire form no longer follows from the Rust type, so a schema derived
-///   from the Rust type would be a lie. Supply `#[schema(...)]` explicitly.
+/// - `#[serde(with = ...)]`, `serialize_with`, `deserialize_with` on a field or
+///   a variant. The wire form no longer follows from the Rust type, so a schema
+///   derived from the Rust type would be a lie. Give the value a newtype whose
+///   own `Serialize`, `Deserialize` and `Schema` agree on that form instead.
 /// - `#[serde(untagged)]` enums. `anyOf` with no discriminator is ambiguous to
 ///   decode, and the tie-break is inexpressible. Use an internally or
 ///   adjacently tagged enum, which becomes a `discriminator`.
@@ -239,10 +243,12 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   field is the opt-in that keeps the map: it says the object really is open,
 ///   and the map's values become the parent's `unevaluatedProperties`, the one
 ///   keyword that sees annotations across an `allOf`.
-/// - `#[serde(default)]` or `skip_serializing_if` on a non-`Option` field,
-///   which would make `required` a lie.
-/// - A `#[serde(other)]` catch-all variant under `openapi31` alone, which needs
-///   3.2's `defaultMapping` to describe.
+/// - A `#[serde(other)]` catch-all variant, which only 3.2's `defaultMapping`
+///   could describe and the derive does not emit.
+/// - `skip_serializing_if` on a non-`Option` field with no `#[serde(default)]`
+///   on the field or its struct. serde may leave the field out of what it
+///   writes but still requires it on read, so no `required` list is true in
+///   both directions. Add `#[serde(default)]` beside it or on the struct.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)

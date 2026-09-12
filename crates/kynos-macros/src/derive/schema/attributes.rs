@@ -154,6 +154,27 @@ pub(super) fn open_span(field: &Field) -> Option<Span> {
     found
 }
 
+/// The first of `keys` a `#[serde(...)]` list names, and where it is written.
+///
+/// Shaped like [`open_span`]: the span is the key itself, and shape errors in
+/// the list are serde's to report, so this raises none.
+pub(super) fn serde_key_span(attrs: &[syn::Attribute], keys: &[&str]) -> Option<(String, Span)> {
+    let mut found = None;
+    for attr in attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        let _ = attr.parse_nested_meta(|meta| {
+            let named = meta.path.get_ident().map(ToString::to_string);
+            if let Some(key) = named.filter(|key| found.is_none() && keys.contains(&key.as_str())) {
+                found = Some((key, meta.path.span()));
+            }
+            skip_value(&meta)
+        });
+    }
+    found
+}
+
 pub(super) fn is_open(field: &Field) -> bool {
     open_span(field).is_some()
 }
@@ -161,11 +182,17 @@ pub(super) fn is_open(field: &Field) -> bool {
 /// Whether a property must be present.
 ///
 /// An `Option` is optional because the type says so, and a field with a serde
-/// `default` or a `skip_serializing_if` is optional because the wire form says
-/// so. Anything else is required, which is what makes `required` follow from
-/// the declaration rather than from an annotation that could contradict it.
-pub(super) fn is_required(field: &Field) -> bool {
-    !is_option(&field.ty) && !serde_flag(&field.attrs, &["default", "skip_serializing_if"])
+/// `default` of its own, or in a struct whose container carries one, is
+/// optional because the wire form says so in both directions: serde fills the
+/// missing field from `Default` on read. Anything else is required, which is
+/// what makes `required` follow from the declaration rather than from an
+/// annotation that could contradict it.
+///
+/// `skip_serializing_if` is not read here: it only lets a field be absent from
+/// what is written, and `reject_read_required_skip` refuses it wherever this
+/// rule says the field is still required on read.
+pub(super) fn is_required(field: &Field, container: &Container) -> bool {
+    !is_option(&field.ty) && !container.default && !serde_flag(&field.attrs, &["default"])
 }
 
 pub(super) fn is_option(ty: &Type) -> bool {
