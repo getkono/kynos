@@ -112,7 +112,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         // entry `absorb` or `absorb_router` dropped has already failed the
         // build above, so no half of a mount reaches this unpaired.
         #[cfg(feature = "docs")]
-        docs::render(&self.mounted, &document)?;
+        docs::render::render(&self.mounted, &document)?;
 
         let mut matcher = matchit::Router::new();
         let mut paths: Vec<PathEntry<C>> = Vec::new();
