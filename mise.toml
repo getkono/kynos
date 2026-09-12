@@ -374,6 +374,7 @@ description = "The codec half of the sweep alone: what mounting each codec costs
 # compiles, and at `--release` with fat LTO. `check` runs `cost:test`, which
 # holds this script's parsers, its table reader and its ranking and builds
 # nothing.
+#
 # The `python` pin is task-scoped for the reason given on `cost:features`
 # above.
 tools = { python = "3.11.16" }
@@ -415,6 +416,7 @@ description = "Test the cost sweep's parsers and its report"
 # `-B` because `.gitignore` has no `__pycache__` entry, and a check that
 # leaves an untracked directory behind is a check people learn to work around.
 # The test file sets `sys.dont_write_bytecode` too, for a direct `python3` run.
+#
 # The `python` pin is task-scoped for the reason given on `cost:features`
 # above.
 tools = { python = "3.11.16" }
@@ -485,6 +487,7 @@ description = "Verify every crate is named only where its owner allows"
 # wrong is not hypothetical: a first cut desynchronised on a char literal in
 # `http/etag.rs` and quietly stopped seeing code at all, reporting that every
 # rule held.
+#
 # The `python` pin is task-scoped for the reason given on `cost:features`
 # above.
 tools = { python = "3.11.16" }
@@ -512,6 +515,7 @@ description = "Test what the containment gate reads its tables and its tree with
 # `-B` because `.gitignore` has no `__pycache__` entry, and a check that
 # leaves an untracked directory behind is a check people learn to work around.
 # The test file sets `sys.dont_write_bytecode` too, for a direct `python3` run.
+#
 # The `python` pin is task-scoped for the reason given on `cost:features`
 # above.
 tools = { python = "3.11.16" }
@@ -773,6 +777,7 @@ description = "Test that both halves of the commit rule agree about a merge"
 # `unittest` from the standard library: this repository has no Python test
 # runner, and taking a dependency to drive git through subprocess is the worse
 # trade. `-B` because `.gitignore` has no `__pycache__` entry.
+#
 # The `python` pin is task-scoped for the reason given on `cost:features`
 # above.
 tools = { python = "3.11.16" }
