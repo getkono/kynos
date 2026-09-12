@@ -382,11 +382,11 @@ mod schema {
             let input: syn::DeriveInput =
                 syn::parse2(declaration).expect("the case itself must parse");
 
+            // Expansion must succeed outright: checking only that the error is
+            // not this refusal would pass for a declaration refused for any
+            // other reason.
             if let Err(error) = expand_inner(&input) {
-                assert!(
-                    !error.to_string().contains("does not predict"),
-                    "an override nothing describes was refused: {error}"
-                );
+                panic!("an override nothing describes must expand, and was refused: {error}");
             }
         }
     }
