@@ -171,3 +171,68 @@ fn an_open_flattened_map_hoists_its_values_to_unevaluated_properties() {
         "the map's values reached the parent's `additionalProperties`: {schema}"
     );
 }
+
+/// Both compositions on one container, which is the case the keyword was
+/// chosen for.
+///
+/// `Audit` contributes `at` through a `$ref`, and the map contributes whatever
+/// is left. `additionalProperties` hoisted to the parent would see only the
+/// parent's own `properties` and so refuse `at`; `unevaluatedProperties` also
+/// sees the `properties` annotation the `$ref` produced. That difference is the
+/// whole reason the second keyword was chosen, and until this case existed
+/// nothing exercised it.
+#[derive(Schema, Serialize)]
+struct Both {
+    id: u64,
+    #[serde(flatten)]
+    audit: Audit,
+    #[serde(flatten)]
+    #[schema(open)]
+    extra: BTreeMap<String, String>,
+}
+
+fn both() -> Both {
+    Both {
+        id: 1,
+        audit: Audit {
+            at: "2026-01-01T00:00:00Z".to_owned(),
+        },
+        extra: BTreeMap::from([("k".to_owned(), "v".to_owned())]),
+    }
+}
+
+/// A closed flattened struct and an open flattened map compose.
+#[test]
+fn an_open_map_beside_a_flattened_struct_accepts_what_each_contributes() {
+    let refusals = refusals(&both());
+    assert!(
+        refusals.is_empty(),
+        "the type cannot produce an instance its own description accepts: {refusals:?}\n\
+         schema: {}",
+        emitted::<Both>()
+    );
+}
+
+/// And composing them weakens neither.
+///
+/// The converse of the case above. A description that merely admitted every
+/// member would pass that one, so this separates them from both sides: a member
+/// the map contributed still answers to the map's value schema, and the
+/// flattened struct's own property is still required.
+#[test]
+fn an_open_map_beside_a_flattened_struct_weakens_neither() {
+    let schema = emitted::<Both>();
+    let validator =
+        jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
+
+    assert!(
+        !validator.is_valid(&serde_json::json!({
+            "id": 1, "at": "2026-01-01T00:00:00Z", "k": 2
+        })),
+        "a member contributed by a `BTreeMap<String, String>` was accepted as a number: {schema}"
+    );
+    assert!(
+        !validator.is_valid(&serde_json::json!({ "id": 1, "k": "v" })),
+        "the flattened struct's own required property was not required: {schema}"
+    );
+}
