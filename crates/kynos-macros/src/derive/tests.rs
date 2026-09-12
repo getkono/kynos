@@ -181,6 +181,20 @@ mod schema {
                 ),
                 "does not predict",
             ),
+            case(
+                "a `#[serde(other)]` catch-all, which only 3.2's `defaultMapping` could describe",
+                quote::quote!(
+                    #[serde(tag = "kind")]
+                    enum Event {
+                        Created {
+                            id: u64,
+                        },
+                        #[serde(other)]
+                        Unknown,
+                    }
+                ),
+                "`#[serde(other)]` accepts",
+            ),
         ]
     }
 
@@ -343,6 +357,35 @@ mod schema {
                 );
             }
         }
+    }
+
+    /// A catch-all the schema skips is refused all the same.
+    ///
+    /// Unlike a wire-form override, `#[serde(other)]` is not about the
+    /// variant's own branch: `skip_serializing` keeps that branch out of the
+    /// schema, but deserialization still routes every tag the enum does not
+    /// name to it, so the schema's closed `oneOf` still disagrees with what the
+    /// type accepts.
+    #[test]
+    fn a_catch_all_on_a_skipped_variant_is_still_refused() {
+        each_case_is_refused(
+            vec![case(
+                "a `#[serde(other)]` catch-all that is never serialized",
+                quote::quote!(
+                    #[serde(tag = "kind")]
+                    enum Event {
+                        Created {
+                            id: u64,
+                        },
+                        #[serde(skip_serializing)]
+                        #[serde(other)]
+                        Unknown,
+                    }
+                ),
+                "`#[serde(other)]` accepts",
+            )],
+            expand_inner,
+        );
     }
 }
 
