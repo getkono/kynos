@@ -1218,6 +1218,87 @@ fn tls_rejects_repeated_sni_names() {
     ));
 }
 
+/// `TlsConfig::build` with no crypto provider installed anywhere.
+///
+/// rustls resolves the process-level provider from the `aws-lc-rs` and `ring`
+/// features of whatever `rustls` the graph unified on, and *panics* when zero
+/// or two of them are compiled in. Cargo features are additive, so a dependency
+/// that wants `ring` for its own reasons puts the whole graph in that state and
+/// no downstream manifest can leave it. The provider Kynos builds on therefore
+/// has to be one Kynos names, and this is the case saying that a build with
+/// nothing installed still reaches it.
+#[cfg(feature = "tls")]
+#[test]
+fn tls_builds_on_a_provider_kynos_names_rather_than_one_it_resolves() {
+    assert!(
+        tokio_rustls::rustls::crypto::CryptoProvider::get_default().is_none(),
+        "the premise of this case is that nothing installed a default provider"
+    );
+
+    let identity = server_identity();
+
+    crate::server::tls::TlsConfig::from_pem(
+        identity.certificate.as_bytes(),
+        identity.key.as_bytes(),
+    )
+    .expect("server identity parses")
+    .build()
+    .expect("a TLS runtime builds with no provider installed by anyone");
+}
+
+/// A provider a caller installed is the one `build` runs on, and a provider
+/// that can serve nothing is reported rather than panicked on.
+///
+/// Both halves are one case because one provider shows them: a provider with no
+/// cipher suites is usable for nothing, so a `build` that succeeds cannot have
+/// consulted it, and a `build` that panics has not reported it. rustls's own
+/// `ServerConfig::builder` does the second -- it unwraps the protocol-version
+/// check -- from inside a function whose signature already carries a
+/// `TlsError`.
+///
+/// `install_default` writes a process-wide static that accepts one write. That
+/// is shared state only within a process, and nextest gives each test its own,
+/// so this case observes a default nothing else in the suite can have touched.
+/// It rests on the property `tests/hermeticity.rs` holds the runner to rather
+/// than making an exception to it.
+#[cfg(feature = "tls")]
+#[test]
+fn a_caller_installed_crypto_provider_is_the_one_build_runs_on() {
+    let unusable = tokio_rustls::rustls::crypto::CryptoProvider {
+        cipher_suites: Vec::new(),
+        ..tokio_rustls::rustls::crypto::aws_lc_rs::default_provider()
+    };
+    unusable
+        .install_default()
+        .expect("no other test in this process installed a provider");
+
+    let identity = server_identity();
+    let error = crate::server::tls::TlsConfig::from_pem(
+        identity.certificate.as_bytes(),
+        identity.key.as_bytes(),
+    )
+    .expect("server identity parses")
+    .build()
+    .expect_err("a provider that serves nothing cannot build a TLS runtime");
+
+    assert!(
+        !matches!(
+            error,
+            crate::server::tls::error::TlsError::Pem { .. }
+                | crate::server::tls::error::TlsError::EmptyPem { .. }
+                | crate::server::tls::error::TlsError::PrivateKey(_)
+                | crate::server::tls::error::TlsError::ServerName(_)
+                | crate::server::tls::error::TlsError::ClientVerifier(_)
+                | crate::server::tls::error::TlsError::ZeroHandshakeTimeout
+        ),
+        "an unusable provider is its own failure, not a certificate one: {error}"
+    );
+    assert!(
+        std::error::Error::source(&error).is_some(),
+        "rustls's account of why the provider is unusable must survive as a cause"
+    );
+}
+
 /// A PEM certificate and the key that signs for it.
 ///
 /// Minted here rather than committed. A published archive is immutable, so a
