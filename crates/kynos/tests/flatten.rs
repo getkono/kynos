@@ -11,6 +11,11 @@
 //! parent composes the field's schema rather than naming it — and a composed
 //! schema that constrains *every* member of the instance then reaches the
 //! members the parent declared itself.
+//!
+//! A flattened map is the shape that does it, because a map names no member at
+//! all. `kynos::schema::Flatten` is what refuses one outright; `#[schema(open)]`
+//! is the declaration that the object really is open, and the case below is what
+//! holds the description it then emits to the JSON the type actually writes.
 
 // `test-util` carries the JSON Schema validator, which is what makes this a
 // check against an oracle rather than an assertion about the emitter written
@@ -22,10 +27,22 @@ use std::collections::BTreeMap;
 use kynos::{Schema, schema::Schema as SchemaTrait};
 use serde::Serialize;
 
-/// The schema `T` emits, as JSON.
+/// The schema `T` emits, with everything it refers to reachable from the root.
+///
+/// A flattened *named* type resolves to a `$ref` into `#/components/schemas`,
+/// so the components the registry collected travel beside the body or the
+/// validator has nothing to follow the reference to.
 fn emitted<T: SchemaTrait>() -> serde_json::Value {
     let mut registry = kynos::schema::registry::Registry::new();
-    serde_json::to_value(T::schema(&mut registry)).expect("a schema serializes")
+    let body = T::schema(&mut registry);
+
+    let mut root = serde_json::to_value(body).expect("a schema serializes");
+    let components =
+        serde_json::to_value(registry.into_components()).expect("the components serialize");
+    root.as_object_mut()
+        .expect("a derived schema is an object")
+        .insert("components".to_owned(), components);
+    root
 }
 
 /// Every way `value` fails the schema its own type emits.
@@ -41,12 +58,36 @@ fn refusals<T: SchemaTrait + Serialize>(value: &T) -> Vec<String> {
         .collect()
 }
 
-/// A struct whose extra members are a map, with the members it declares itself.
+/// A type that names its members, which is what makes it flattenable.
+#[derive(Schema, Serialize)]
+struct Audit {
+    at: String,
+}
+
+/// The closed case: a flattened struct, composed through a `$ref`.
+#[derive(Schema, Serialize)]
+struct Audited {
+    id: u64,
+    #[serde(flatten)]
+    audit: Audit,
+}
+
+/// The open case: a flattened map, which names no member and says so.
 #[derive(Schema, Serialize)]
 struct Thing {
     id: u64,
     #[serde(flatten)]
+    #[schema(open)]
     extra: BTreeMap<String, String>,
+}
+
+fn audited() -> Audited {
+    Audited {
+        id: 1,
+        audit: Audit {
+            at: "2026-01-01T00:00:00Z".to_owned(),
+        },
+    }
 }
 
 fn thing() -> Thing {
@@ -56,12 +97,30 @@ fn thing() -> Thing {
     }
 }
 
-/// The declared members survive the flattened map.
+/// A flattened struct describes the object the type writes.
 ///
-/// The map's value schema describes the members the map contributes and says
-/// nothing about `id`, which the parent declared and typed itself.
+/// The asymmetry that makes the map case hard: a named type resolves to a
+/// `$ref`, whose target carries `properties` of its own and constrains nothing
+/// it does not name, so composing it with `allOf` is already correct.
 #[test]
-fn a_flattened_map_leaves_the_parents_own_properties_alone() {
+fn a_flattened_struct_leaves_the_parents_own_properties_alone() {
+    let refusals = refusals(&audited());
+    assert!(
+        refusals.is_empty(),
+        "the type cannot produce an instance its own description accepts: {refusals:?}\n\
+         schema: {}",
+        emitted::<Audited>()
+    );
+}
+
+/// An open flattened map describes the object the type writes.
+///
+/// The declared `id` is a member the parent named, so the map's value schema
+/// must not reach it. `unevaluatedProperties` is the keyword that says so: it
+/// sees the `properties` annotation across the `allOf`, which
+/// `additionalProperties` does not.
+#[test]
+fn an_open_flattened_map_leaves_the_parents_own_properties_alone() {
     let refusals = refusals(&thing());
     assert!(
         refusals.is_empty(),
@@ -73,11 +132,11 @@ fn a_flattened_map_leaves_the_parents_own_properties_alone() {
 
 /// The map's values are still described.
 ///
-/// The opposite failure to the one above, and the reason the repair cannot be
-/// to drop the flattened schema: a member the map contributed must still be
-/// held to the map's value type.
+/// The opposite failure, and the reason the repair cannot be to drop the
+/// flattened schema: a member the map contributed must still be held to the
+/// map's value type.
 #[test]
-fn a_flattened_map_still_constrains_the_members_it_contributes() {
+fn an_open_flattened_map_still_constrains_the_members_it_contributes() {
     let schema = emitted::<Thing>();
     let validator =
         jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
@@ -85,5 +144,30 @@ fn a_flattened_map_still_constrains_the_members_it_contributes() {
     assert!(
         !validator.is_valid(&serde_json::json!({ "id": 1, "k": 2 })),
         "a member contributed by a `BTreeMap<String, String>` was accepted as a number: {schema}"
+    );
+}
+
+/// The keyword the open case emits, named rather than only exercised.
+///
+/// `unevaluatedProperties` and not `additionalProperties`: the second is
+/// defined against its own schema object's `properties`, so hoisting the map's
+/// value schema there would be correct for a lone flattened map and wrong the
+/// moment a second flattened field contributed properties through a `$ref`.
+#[test]
+fn an_open_flattened_map_hoists_its_values_to_unevaluated_properties() {
+    let schema = emitted::<Thing>();
+
+    assert_eq!(
+        schema["unevaluatedProperties"],
+        serde_json::json!({ "type": "string" }),
+        "{schema}"
+    );
+    assert!(
+        schema["allOf"][0]["additionalProperties"].is_null(),
+        "the map's `additionalProperties` stayed inside the `allOf` branch: {schema}"
+    );
+    assert!(
+        schema["additionalProperties"].is_null(),
+        "the map's values reached the parent's `additionalProperties`: {schema}"
     );
 }

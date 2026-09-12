@@ -7,7 +7,7 @@ use kynos_openapi::{
     model::schema::types::{SchemaType, TypeSet},
 };
 
-use crate::schema::{Schema, impls::with_object, registry::Registry};
+use crate::schema::{Flatten, Schema, impls::with_object, registry::Registry};
 
 /// Widens `schema` to admit `null`.
 ///
@@ -82,3 +82,13 @@ macro_rules! transparent {
 // `name` delegates too: a `Box<User>` and a `User` are the same component, and
 // registering them separately would put the same schema in the document twice.
 transparent!(Box, Arc);
+
+// The schema is `T`'s, so whether it names its members is `T`'s answer too — a
+// wrapper that delegates the description cannot change what the description
+// says. Written out rather than folded into `transparent!`, because rustc
+// prints the implementations of an unsatisfied trait at their source: inside
+// the macro they arrive as one `$ty<T>` line plus a note naming `transparent`,
+// which puts an internal macro in a message a reader has no way to act on.
+impl<T: Flatten> Flatten for Box<T> {}
+
+impl<T: Flatten> Flatten for Arc<T> {}

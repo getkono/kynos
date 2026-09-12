@@ -9,7 +9,7 @@ use kynos_openapi::{
     model::schema::types::{SchemaType, TypeSet},
 };
 
-use crate::schema::{MapKey, Schema, registry::Registry};
+use crate::schema::{Flatten, MapKey, Schema, registry::Registry};
 
 /// The registry is only touched by implementations that have members to
 /// resolve, so the ones checked here can be driven without one being built.
@@ -30,6 +30,8 @@ fn object_of<T: Schema>() -> SchemaObject {
 fn describable<T: Schema>() {}
 
 fn keyable<T: MapKey>() {}
+
+fn flattenable<T: Flatten>() {}
 
 #[test]
 fn primitives_carry_their_type_and_format() {
@@ -401,6 +403,36 @@ fn every_standard_type_the_docs_promise_is_describable() {
 #[test]
 fn a_string_is_a_map_key() {
     keyable::<String>();
+}
+
+/// A type whose `Schema` is written by hand, saying so.
+///
+/// `Flatten` is unsealed for exactly this: the derive covers the shapes it
+/// emits, and a hand-written description that also names its members has to be
+/// able to claim the same thing.
+struct Audit;
+
+impl Schema for Audit {
+    fn schema(_registry: &mut Registry) -> OpenApiSchema {
+        let mut object = SchemaObject::default();
+        object.ty = Some(TypeSet::One(SchemaType::Object));
+        object
+            .properties
+            .insert("at".to_owned(), OpenApiSchema::of_type(SchemaType::String));
+        OpenApiSchema::Object(Box::new(object))
+    }
+}
+
+impl Flatten for Audit {}
+
+/// The bound a flattened field is checked against, and the wrappers that carry
+/// it across.
+#[test]
+fn a_type_that_names_its_members_can_be_flattened() {
+    flattenable::<Audit>();
+    // `Box<T>` and `Arc<T>` are `T`'s description, so they are `T`'s answer.
+    flattenable::<Box<Audit>>();
+    flattenable::<Arc<Audit>>();
 }
 
 /// `Box<T>` and `Arc<T>` are `T` on the wire, so they must not mint a second

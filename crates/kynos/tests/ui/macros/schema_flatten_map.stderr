@@ -3,3 +3,26 @@ error[E0277]: `BTreeMap<std::string::String, std::string::String>` cannot be fla
    |
 11 |     extra: BTreeMap<String, String>,
    |            ^^^^^^^^^^^^^^^^^^^^^^^^ does not name its members
+   |
+   = help: the trait `kynos::schema::Flatten` is not implemented for `BTreeMap<std::string::String, std::string::String>`
+   = note: a flattened field's members become the parent's own, so its schema has to name them; a map names none, so its values would reach the properties the object declared itself
+   = note: give it a named field of its own, or add `#[schema(open)]` beside `#[serde(flatten)]` to say the object really is open -- the values then become the object's `unevaluatedProperties`
+help: the following other types implement trait `kynos::schema::Flatten`
+  --> tests/ui/macros/schema_flatten_map.rs:7:10
+   |
+ 7 | #[derive(kynos::Schema, serde::Serialize)]
+   |          ^^^^^^^^^^^^^ `Thing`
+   |
+  ::: src/schema/impls/wrapper.rs
+   |
+   | impl<T: Flatten> Flatten for Box<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Box<T>`
+   |
+   | impl<T: Flatten> Flatten for Arc<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Arc<T>`
+note: required by a bound in `is_flattenable`
+  --> tests/ui/macros/schema_flatten_map.rs:11:12
+   |
+11 |     extra: BTreeMap<String, String>,
+   |            ^^^^^^^^ required by this bound in `is_flattenable`
+   = note: this error originates in the derive macro `kynos::Schema` (in Nightly builds, run with -Z macro-backtrace for more info)
