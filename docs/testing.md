@@ -460,7 +460,7 @@ halve.
 
 | Element | Named by | Named only in | Why a request cannot reach it |
 | --- | --- | --- | --- |
-| the emitted document | `Document` | `router/describe.rs`, `router/docs/render.rs`, `router/install.rs`, `router/mod.rs`, `router/service.rs`, `server/describe.rs`, `server/tls/document.rs`, `test/conformance.rs`, `unchecked/describe.rs` | every site builds it, annotates it, or hands it back to the application. `docs::render::render` serializes it once while the router is built, so the endpoint serving a description holds finished bytes rather than a `Document`, and `Service` reads it back only through `Service::openapi` |
+| the emitted document | `Document` | `router/describe.rs`, `router/docs/render.rs`, `router/install.rs`, `router/mod.rs`, `router/service.rs`, `server/describe.rs`, `server/tls/document.rs`, `test/conformance.rs`, `unchecked/describe.rs` | every site builds it, annotates it, or hands it back to the application, and not one of the nine serves a request. `docs::render::render` serializes it once while the router is built, so the endpoint serving a description holds finished bytes rather than a `Document`, and `Service` reads it back only through `Service::openapi` |
 | the schema registry | `Registry::{new,default}` | `router/describe.rs` | the one registry a build mints is consumed by `describe`, which has finished before a service exists to accept a request |
 | the document validators | `Validator` | `router/describe.rs` | a description is validated where it is built. The build either fails or drops the validator, and nothing on the request path holds one to run |
 | the JSON Schema interpreter | `jsonschema` | `test/conformance.rs` | it is behind `test-util` and exists to check an observed response against the description. The request parser is the other projection of the same declaration and interprets no schema |
@@ -611,14 +611,29 @@ the callee the `Request`, and an `Observer` is handed a `Duration` and a
 pins is the stored half — the table's own shape — and that is what a new field
 on it would change.
 
-Neither does the pair compose into "a request cannot reach a `Document`". The
-naming rule is per *file*, and three of the sites the document row allows —
-`unchecked.rs`, `server/mod.rs` and `router/docs/mod.rs` — serve requests
-themselves, so a new use of `Document` *inside* one of them is allowed by the
-row and invisible to the witness. Read the two together as what they are: a
-per-file naming rule, plus a ratchet on the dispatch table's fields. Narrowing
-the allowance below file granularity is what would close that, and is filed as
-[#131](https://github.com/getkono/kynos/issues/131).
+What the pair does compose into is **no file the document row allows serves a
+request**. Three of the sites it allowed once did — `unchecked.rs`,
+`server/mod.rs` and `router/docs/mod.rs` — and a new use of `Document` inside
+one of them was allowed by the row and invisible to the witness, which is
+[#131](https://github.com/getkono/kynos/issues/131). Each was split in two, and
+the row allows only the describing half: `unchecked/describe.rs`,
+`server/describe.rs` and `router/docs/render.rs`. None of those three holds a
+handler, a layer, an endpoint or an accept loop, so putting a `Document` beside
+the code that answers `/openapi.json` now fails the build rather than passing
+it. That is the one direction the split had to earn, and it is why
+`router/docs/render.rs` exists as a file at all: the endpoint holds finished
+`Bytes`, and the function that produced them is somewhere the endpoint is not.
+
+It still does not compose into "a request cannot reach a `Document`", and the
+gap is the granularity rather than the sites. The rule is per *file*, so what
+keeps the three describing halves off the request path is that nothing in them
+is reached from one — the row's reason, argued, not a property the rule checks.
+Each is kept to the members the row is about so that the argument stays one
+reading long, but a request-serving item added to one of them would be allowed
+by the row exactly as before. Narrowing the allowance below file granularity
+would close that, and needs the rule to parse Rust rather than grep it. Read
+the two together as what they are: a per-file naming rule over files that
+describe and do not serve, plus a ratchet on the dispatch table's fields.
 
 That is narrower than "nothing reaches an erased callee", and deliberately.
 `Service` is above the table: it owns the `Document` and hands the request to a
