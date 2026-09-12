@@ -734,7 +734,7 @@ fn calibrating() -> Vec<u8> {
 /// Confirmed against the instrument all the same, the way all nine recorded
 /// numbers were: set to zero, and the reading transcribed out of the failure.
 /// Two at baseline (`cargo nextest run -p kynos-openapi --test alloc`) and two
-/// with `--all-features`, the two configurations this target is built at — the
+/// with `--all-features`, the two feature sets this target is *run* at — the
 /// same two [`EMIT_CEILINGS`] is recorded at, and the only item in the file
 /// that needed a `#[cfg]` to hold both.
 const CALIBRATION: usize = 2;

@@ -132,8 +132,9 @@ fn calibrating() -> Body {
 ///
 /// Confirmed against the instrument all the same, the way both recorded rows
 /// were: set to zero, and the delta transcribed out of the failure. Two at
-/// baseline and two with `--all-features`, which is every shape this ungated
-/// target is built at.
+/// baseline and two with `--all-features`, the two feature sets this target is
+/// *run* at — `features:targets` type-checks it at more, and the module
+/// documentation says why none of them can move a reading here.
 const CALIBRATION: usize = 2;
 
 /// The instrument's invariant, and the one both numbers above rest on: a count
