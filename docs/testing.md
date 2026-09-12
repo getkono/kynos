@@ -81,7 +81,7 @@ attribute outlived its reason and went with it.
 | [`cache.rs`](../crates/kynos/tests/cache.rs) | that a hit is served, that a response stating no lifetime is not, and that a `Conditional` over a `Cache` answers with no body — properties of a *sequence* of requests |
 | [`compile/panic_recovery.rs`](../crates/kynos/tests/compile/panic_recovery.rs) | `catch_panics` refuses to compile under `panic = "abort"` |
 | [`metaschema.rs`](../crates/kynos/tests/metaschema.rs) | that an emitted document validates against the OAI's own published meta-schema, read from `references/` — the one assertion this repository does not write itself |
-| [`ledger.rs`](../crates/kynos/tests/ledger.rs) | the derives and route attributes `kynos-macros` declares, counted against the sets `derives.rs` and `pipeline.rs` witness |
+| [`ledger.rs`](../crates/kynos/tests/ledger.rs) | the derives and route attributes `kynos-macros` declares, counted against the sets `derives.rs` and `pipeline.rs` witness; and each attribute the `Schema` derive's rustdoc lists as refused, named against its `ui/macros/` snapshot |
 | [`src/server/tests.rs`](../crates/kynos/src/server/tests.rs) | the runtime-I/O row's allocation: a real socket, over accept, shutdown, drain and TLS. It is a sibling `tests.rs` rather than an integration target because it reaches internals no public path exposes |
 
 `metaschema.rs` and `ledger.rs` are the two targets `crates/kynos/Cargo.toml`
