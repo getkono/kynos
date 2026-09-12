@@ -39,6 +39,66 @@ fn a_document_using_no_three_two_construct_has_no_blockers() {
     assert!(downgrade::three_two_only_constructs(&document()).is_empty());
 }
 
+/// YAML emission, whatever `serde_json` features the build unifies.
+///
+/// Cargo unifies features across a whole dependency graph, so a program can be
+/// built with `serde_json/arbitrary_precision` on without asking for it. These
+/// hold in the default graph too, but that is not where they can fail:
+/// `mise run test:arbitrary-precision` runs this module under the graph that
+/// switch is on in.
+#[cfg(feature = "yaml")]
+mod yaml {
+    use serde_yaml_ng::{Number, Value};
+
+    use super::document;
+
+    /// A JSON number reaches YAML as a number, at the top of a value and
+    /// nested inside one.
+    ///
+    /// `x-wide` is beyond `u64`, which `serde_json` holds as a float without the
+    /// feature and as its digits with it; either way YAML gets the float.
+    /// `x-code` is the control: a string of digits stays a string.
+    #[test]
+    fn a_json_number_emits_as_a_yaml_number() {
+        let mut document = document();
+        for (key, value) in [
+            ("x-limit", serde_json::json!(42)),
+            ("x-offset", serde_json::json!(-7)),
+            ("x-ratio", serde_json::json!(0.5)),
+            (
+                "x-wide",
+                serde_json::from_str("18446744073709551616").expect("a JSON number"),
+            ),
+            ("x-nested", serde_json::json!({"tiers": [1, 2.5]})),
+            ("x-code", serde_json::json!("42")),
+        ] {
+            document.extensions.0.insert(key.to_owned(), value);
+        }
+
+        let yaml = document.to_yaml().expect("every number here fits a float");
+        let emitted: Value = serde_yaml_ng::from_str(&yaml).expect("emitted YAML parses");
+
+        for (node, expected) in [
+            (&emitted["x-limit"], Number::from(42u64)),
+            (&emitted["x-offset"], Number::from(-7i64)),
+            (&emitted["x-ratio"], Number::from(0.5)),
+            (
+                &emitted["x-wide"],
+                Number::from(18_446_744_073_709_551_616.0),
+            ),
+            (&emitted["x-nested"]["tiers"][0], Number::from(1u64)),
+            (&emitted["x-nested"]["tiers"][1], Number::from(2.5)),
+        ] {
+            assert_eq!(node, &Value::Number(expected), "in:\n{yaml}");
+        }
+        assert_eq!(
+            emitted["x-code"],
+            Value::String("42".to_owned()),
+            "in:\n{yaml}"
+        );
+    }
+}
+
 /// One case per 3.2-only construct, and the exact location it is reported at.
 ///
 /// `properties.rs` checks emission against `three_two_only_constructs` itself:

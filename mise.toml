@@ -156,6 +156,42 @@ run = "cargo nextest run --workspace --all-targets -E 'not binary(ui)'"
 description = "Run doc tests, which carry the compile-fail guarantees"
 run = "cargo test --workspace --all-features --doc"
 
+[tasks."test:arbitrary-precision"]
+description = "Test YAML emission with serde_json's arbitrary_precision forced on"
+# Cargo unifies features across the whole build graph, so any dependency asking
+# for `serde_json/arbitrary_precision` turns it on for this crate too, and with
+# it every `serde_json::Number` serializes as a one-field struct that only
+# serde_json's own serializer reads back as a number. No manifest here asks for
+# it, so without this task no build the repository runs has the switch on and
+# `to_yaml`'s handling of it is never observed.
+#
+# `serde_json/arbitrary_precision` is `--features`' dependency spelling: a
+# feature of `kynos-openapi`'s `serde_json` dependency, turned on for this one
+# invocation. Not a dev-dependency, which would unify into every
+# `--workspace --all-targets` build and leave the default number path untested.
+#
+# Filtered to the library's `emit::tests::yaml` module, because the rest of the
+# crate is red under this graph for a different defect: parsing. serde buffers
+# an untagged enum such as `RefOr`, or a struct with a `#[serde(flatten)]` field,
+# into its private `Content` before reading it; with the switch on serde_json
+# hands that buffer a number as a map, and `Content` cannot read a map back as
+# an integer or a float. So a document whose Schema Object carries a numeric
+# keyword, such as `maximum`, fails to deserialize, and the property round-trips
+# in `tests/properties.rs` fail on it before emission is ever reached.
+#
+# `--no-tests=fail` so that renaming or moving the module turns this task red
+# rather than letting it pass over nothing.
+#
+# Incremental compilation is off for the reason `features:check` gives: no other
+# invocation names this feature set, so a session written here is one nothing
+# else reads.
+env = { CARGO_INCREMENTAL = "0" }
+run = '''
+cargo nextest run -p kynos-openapi --lib \
+  --features yaml,serde_json/arbitrary_precision \
+  --no-tests=fail -E 'test(/^emit::tests::yaml::/)'
+'''
+
 [tasks."features:check"]
 description = "Lint every reachable feature combination"
 # Kynos gates the OpenAPI 3.2 object model, every optional codec and the escape
@@ -693,6 +729,7 @@ run = [
   { task = "commits:test" },
   { task = "docs:check" },
   { task = "panic:check" },
+  { task = "test:arbitrary-precision" },
   { task = "features:check" },
   { task = "features:targets" },
 ]
