@@ -89,6 +89,10 @@ fn every_rejected_schema_attribute_has_a_case() {
             "`#[serde(other)]`",
             "macros/schema_catch_all_variant.stderr",
         ),
+        (
+            "`skip_serializing_if` on a non-`Option` field",
+            "macros/schema_skip_serializing_if_without_default.stderr",
+        ),
     ];
     const HEADING: &str = "# Rejected, because serde and the schema would disagree";
 

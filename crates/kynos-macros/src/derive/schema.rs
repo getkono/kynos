@@ -31,8 +31,8 @@ mod attributes;
 mod shape;
 
 use attributes::{
-    constraints, field_name, is_described, is_flattened, is_open, is_required, is_skipped,
-    open_span, serde_key_span, variant_name,
+    constraints, field_name, is_described, is_flattened, is_open, is_option, is_required,
+    is_skipped, open_span, serde_flag, serde_key_span, variant_name,
 };
 use shape::{enum_body, struct_body};
 
@@ -83,6 +83,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     reject_untagged(input)?;
     reject_wire_form_overrides(input)?;
     reject_catch_all(input)?;
+    reject_read_required_skip(input)?;
     check_constraints(input)?;
 
     let name = &input.ident;
@@ -517,6 +518,51 @@ fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
                  3.2's `discriminator.defaultMapping` can say where those go, which this derive \
                  does not emit. Name every variant the API accepts, or publish the value as \
                  `Unchecked` on purpose",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `skip_serializing_if` on a field serde still requires on read has no
+/// truthful `required`.
+///
+/// serde may leave such a field out of what it writes, and rejects a document
+/// without it on read, so listing it in `required` misdescribes a response and
+/// leaving it out misdescribes a request. Beside an `Option` or a
+/// `#[serde(default)]` the field may be absent both ways, which is what lets
+/// [`is_required`] leave it out. Only named fields are checked, since only an
+/// object has a `required` list; a skipped field or a field of a skipped
+/// variant is in no schema.
+fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
+    let groups: Vec<&Fields> = match &input.data {
+        Data::Struct(data) => vec![&data.fields],
+        Data::Enum(data) => data
+            .variants
+            .iter()
+            .filter(|variant| !is_skipped(&variant.attrs))
+            .map(|variant| &variant.fields)
+            .collect(),
+        // Refused at the top of `expand_inner`.
+        Data::Union(_) => Vec::new(),
+    };
+
+    let named = groups.into_iter().filter_map(|fields| match fields {
+        Fields::Named(named) => Some(&named.named),
+        Fields::Unnamed(_) | Fields::Unit => None,
+    });
+
+    for field in named.flatten().filter(|field| is_described(field)) {
+        if is_option(&field.ty) || serde_flag(&field.attrs, &["default"]) {
+            continue;
+        }
+        if let Some((_, span)) = serde_key_span(&field.attrs, &["skip_serializing_if"]) {
+            return Err(syn::Error::new(
+                span,
+                "`skip_serializing_if` lets serde leave this field out of what it writes, but \
+                 without `#[serde(default)]` serde still requires it on read, so no `required` \
+                 list is true in both directions. Add `#[serde(default)]` beside it, or make the \
+                 field an `Option`",
             ));
         }
     }
