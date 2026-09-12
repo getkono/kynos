@@ -348,6 +348,75 @@ An enum with no deprecated variant is untouched. The alternative was emitting
 nothing and leaving the description disagreeing with the type it came from,
 which is the failure this codebase treats as worse than a verbose shape: nobody
 can see it.
+
+## Flattening
+
+`#[serde(flatten)]` makes a field's members the *parent's* members, so the
+parent cannot name them — it composes the field's schema into its own `allOf`
+instead. That composition is only correct when the flattened schema names every
+member it constrains, and `allOf` is why: `additionalProperties` is defined
+against the `properties` and `patternProperties` of **its own** schema object,
+and a branch of an `allOf` has neither, so the keyword reaches every member of
+the instance including the ones the parent declared itself.
+
+A map is the shape that hits it. It has no fixed member names to put in
+`properties`, so its whole description *is* `additionalProperties` — and
+flattening one used to emit an object requiring `id: u64` to be a string.
+
+**So a flattened field's type must implement
+[`Flatten`](https://docs.rs/kynos/latest/kynos/schema/trait.Flatten.html).** The
+`Schema` derive asserts the bound once per flattened field, in a `const _`
+witness spanned at the field's type, so the refusal lands where it was written.
+The derive implements the marker for the shapes whose description is an object
+naming its members: a struct with named fields, and an enum whose every `oneOf`
+branch is such an object. `Box<T>` and `Arc<T>` carry `T`'s answer across, and
+the trait is unsealed so a hand-written `Schema` doing the same can say so.
+serde offers nothing to read here: `flatten` never leaves `serde_derive` and
+what enforces it is a runtime serializer, so the type-level surface has to be
+Kynos's own.
+
+### `#[schema(open)]`, when the object really is open
+
+A flattened map is a real shape, and refusing it outright would remove it with
+no way back. `#[schema(open)]` on the flattened field is the declaration that
+the object admits members nothing names. It drops the bound and changes what is
+emitted: the flattened schema's `additionalProperties` is hoisted onto the
+parent as `unevaluatedProperties`.
+
+```rust,ignore
+#[derive(Schema, Serialize)]
+struct Thing {
+    id: u64,
+    #[serde(flatten)]
+    #[schema(open)]
+    extra: BTreeMap<String, String>,
+}
+```
+
+```json
+{ "type": "object",
+  "properties": { "id": { "type": "integer", "format": "uint64", "minimum": 0 } },
+  "required": ["id"],
+  "unevaluatedProperties": { "type": "string" } }
+```
+
+`unevaluatedProperties` rather than `additionalProperties` because it is the one
+keyword that sees `properties` annotations *across* an `allOf`. Hoisting to
+`additionalProperties` would be correct for a lone flattened map and wrong the
+moment a second flattened field contributed properties through a `$ref`.
+
+The attribute may appear once per object — there is one
+`unevaluatedProperties` to supply — and only on a flattened field, since an
+ordinary field is a single property whose own schema already states what it
+admits. Both are compile errors.
+
+One thing is lost deliberately: a map whose key type constrains
+`propertyNames` contributes no key constraint through an open flatten. Inside
+the `allOf` branch `propertyNames` names the parent's own properties too, which
+is the defect above in its other form, and `patternProperties` — which could
+express it — is not emitted. The key constraint is dropped rather than moved, so
+the description stays weaker than the type instead of contradicting it.
+
 ## The order components are emitted in
 
 A description is emitted in **insertion order**, and insertion order is fixed by
@@ -398,7 +467,8 @@ re-walked. A second call would reuse the same maps and agree with itself.
 | 12 | A component is registered after everything it refers to | the same file, over a known nesting chain |
 | 13 | A derived error response narrows `Problem.type` to a `const`, and a status several variants share to a `oneOf` of them | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted `Responses`; the shapes themselves in [`error/problem.rs`](../crates/kynos/src/error/problem.rs) |
 | 14 | A status two contributors narrow publishes both; a contributor admitting every problem document publishes for both; a shape the rule cannot place changes nothing | [`tests/description.rs`](../crates/kynos/tests/description.rs) over the document and [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) over the wire; the rule itself in [`model/response/union.rs`](../crates/kynos-openapi/src/model/response/union.rs) |
-| 15 | A guard's 403 narrows to `about:blank` and the URI its scope set named, never to either alone | [`tests/description.rs`](../crates/kynos/tests/description.rs) over the document and [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) over one refusal of each shape; the const in [`security/auth.rs`](../crates/kynos/src/security/auth.rs) and what reads it in [`error/rejection.rs`](../crates/kynos/src/error/rejection.rs) |
+| 15 | A flattened field's schema names every member it constrains, or the field says `#[schema(open)]` and contributes the parent's `unevaluatedProperties` | the `Flatten` bound the `Schema` derive asserts per flattened field, snapshotted in `tests/ui/macros/schema_flatten_map.rs` and `tests/ui/traits/flatten.rs`; the emitted shape and the value it accepts in [`tests/flatten.rs`](../crates/kynos/tests/flatten.rs), against the `jsonschema` validator |
+| 16 | A guard's 403 narrows to `about:blank` and the URI its scope set named, never to either alone | [`tests/description.rs`](../crates/kynos/tests/description.rs) over the document and [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) over one refusal of each shape; the const in [`security/auth.rs`](../crates/kynos/src/security/auth.rs) and what reads it in [`error/rejection.rs`](../crates/kynos/src/error/rejection.rs) |
 
 ## Rationale
 

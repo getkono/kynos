@@ -222,5 +222,49 @@ pub trait MapKey: Schema {
 
 impl MapKey for String {}
 
+/// A type whose schema names its own members, so it can be flattened into
+/// another object.
+///
+/// `#[serde(flatten)]` makes a field's members the *parent's* members, so the
+/// parent composes the field's schema rather than naming it. A schema that
+/// constrains every member it does not name — `additionalProperties` on a map,
+/// the permissive schema — then reaches the members the parent declared itself,
+/// and the object ends up refusing the JSON its own type writes.
+///
+/// The marker is Kynos's own because serde has no type-level surface to read:
+/// `Serialize` is one method, `flatten` is an internal flag that never leaves
+/// `serde_derive`, and what enforces it is a runtime serializer. Bounding a
+/// flattened field by this trait is what turns that into a compile error at the
+/// field that wrote it.
+///
+/// Derived beside [`Schema`] for the shapes whose description is an object
+/// naming its members: a struct with named fields, and an enum serde tags.
+/// Unsealed, for the reason [`MapKey`] is — a hand-written [`Schema`] that does
+/// the same thing has to be able to say so.
+///
+/// ```no_run
+/// # use kynos::schema::{Flatten, Schema};
+/// # struct Audit;
+/// # impl Schema for Audit {
+/// #     fn schema(_: &mut kynos::schema::registry::Registry) -> kynos::openapi::Schema {
+/// #         todo!()
+/// #     }
+/// # }
+/// // `Audit::schema` returns an object whose `properties` names `created_at`
+/// // and `created_by`, and which constrains no other member. Flattening it
+/// // therefore adds exactly those two to whatever carries it.
+/// impl Flatten for Audit {}
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be flattened into another object",
+    label = "does not name its members",
+    note = "a flattened field's members become the parent's own, so its schema has to name them; a \
+            map names none, so its values would reach the properties the object declared itself",
+    note = "give it a named field of its own, or add `#[schema(open)]` beside `#[serde(flatten)]` \
+            to say the object really is open -- the values then become the object's \
+            `unevaluatedProperties`"
+)]
+pub trait Flatten: Schema {}
+
 #[cfg(test)]
 mod tests;

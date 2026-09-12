@@ -217,6 +217,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// decimal types behind their features, or a newtype with its own `Schema`.
 /// A constraint on one field is `pattern`; a claim about a type is the type's.
 ///
+/// `open` is the one member of `#[schema(...)]` that is not a constraint. It
+/// goes on a `#[serde(flatten)]` field to say that the object really does admit
+/// members nothing names, which is the only thing a flattened map can mean.
+///
 /// # Rejected, because serde and the schema would disagree
 ///
 /// - `#[serde(with = ...)]`, `serialize_with`, `deserialize_with` on a field.
@@ -225,8 +229,16 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// - `#[serde(untagged)]` enums. `anyOf` with no discriminator is ambiguous to
 ///   decode, and the tie-break is inexpressible. Use an internally or
 ///   adjacently tagged enum, which becomes a `discriminator`.
-/// - `#[serde(flatten)]` onto a map-typed field, which forces
-///   `additionalProperties: true` on the parent.
+/// - `#[serde(flatten)]` onto a field whose schema names none of its members,
+///   which a map's does not. Its `additionalProperties` is defined against the
+///   `properties` of its own schema object, and composing it into the parent's
+///   `allOf` leaves it none — so the map's *value* schema would apply to the
+///   properties the parent declared itself. Refused by a
+///   [`Flatten`](https://docs.rs/kynos/latest/kynos/schema/trait.Flatten.html)
+///   bound the expansion asserts per flattened field. `#[schema(open)]` on that
+///   field is the opt-in that keeps the map: it says the object really is open,
+///   and the map's values become the parent's `unevaluatedProperties`, the one
+///   keyword that sees annotations across an `allOf`.
 /// - `#[serde(default)]` or `skip_serializing_if` on a non-`Option` field,
 ///   which would make `required` a lie.
 /// - A `#[serde(other)]` catch-all variant under `openapi31` alone, which needs

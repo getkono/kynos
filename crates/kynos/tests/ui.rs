@@ -107,6 +107,7 @@ fn every_guided_diagnostic_has_a_snapshot() {
         ("Carries", "traits/carries.stderr"),
         ("Describe", "traits/describe.stderr"),
         ("EndpointMeta", "traits/endpoint_meta.stderr"),
+        ("Flatten", "traits/flatten.stderr"),
         ("FromRequest", "antipattern/raw_request_extractor.stderr"),
         (
             "FromRequestParts",

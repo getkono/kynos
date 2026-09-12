@@ -1,7 +1,7 @@
 use super::{
     Comma, Container, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant, constraints,
     deprecate, described, doc_string, field_name, is_deprecated, is_described, is_flattened,
-    is_required, is_skipped, quote, variant_name,
+    is_open, is_required, is_skipped, quote, variant_name,
 };
 
 /// A struct's schema, which its fields decide.
@@ -78,9 +78,49 @@ pub(super) fn object_body(
             let wire = field_name(field, container);
 
             if is_flattened(field) {
+                if is_open(field) {
+                    // `#[schema(open)]` is the declaration that this object
+                    // really is open, which is the only thing a flattened map
+                    // can be: it names no member, so its value schema has to
+                    // reach every member nothing else described.
+                    //
+                    // `additionalProperties` cannot say that from inside an
+                    // `allOf` branch -- it is defined against the `properties`
+                    // of its own schema object, and there are none there, so it
+                    // would apply to the members this object declared itself.
+                    // `unevaluatedProperties` is the one keyword that sees
+                    // annotations across `allOf`, so it lands on the parent.
+                    return quote! {
+                        {
+                            let mut flattened = registry.resolve::<#ty>();
+                            if let ::kynos::openapi::Schema::Object(open) = &mut flattened {
+                                keywords.unevaluated_properties =
+                                    open.additional_properties.take();
+                                // A key constraint has nowhere to go. Inside the
+                                // branch `propertyNames` names this object's own
+                                // properties too, and `patternProperties` is not
+                                // emitted -- so it is dropped, leaving a schema
+                                // weaker than the type rather than one that
+                                // contradicts it. `docs/schema.md` records it.
+                                open.property_names = ::core::option::Option::None;
+                            }
+                            keywords
+                                .all_of
+                                .get_or_insert_with(::std::vec::Vec::new)
+                                .push(flattened);
+                        }
+                    };
+                }
+
                 // A flattened field's properties belong to this object, and which
                 // ones they are is only known once its own schema is built. `allOf`
                 // is the composition that says so without naming them.
+                //
+                // Which is sound only because the field's type is
+                // `kynos::schema::Flatten`, asserted by the witness
+                // `flatten_witnesses` emits: a schema constraining members it
+                // does not name would reach this object's own properties from
+                // inside the branch.
                 return quote! {
                     keywords
                         .all_of

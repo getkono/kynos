@@ -126,6 +126,30 @@ mod schema {
                 "is not part of the `#[schema(...)]` grammar",
             ),
             case(
+                "`#[schema(open)]` on a second flattened field of one container",
+                quote::quote!(
+                    struct Thing {
+                        #[serde(flatten)]
+                        #[schema(open)]
+                        extra: BTreeMap<String, String>,
+                        #[serde(flatten)]
+                        #[schema(open)]
+                        more: BTreeMap<String, String>,
+                    }
+                ),
+                "may appear once per container",
+            ),
+            case(
+                "`#[schema(open)]` on a field that is not flattened",
+                quote::quote!(
+                    struct Thing {
+                        #[schema(open)]
+                        extra: BTreeMap<String, String>,
+                    }
+                ),
+                "only a flattened field has anything",
+            ),
+            case(
                 "an untagged enum, which has no describable decoding rule",
                 quote::quote!(
                     #[serde(untagged)]
