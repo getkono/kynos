@@ -1223,14 +1223,150 @@ class PythonFloor(unittest.TestCase):
         )
         self.assertEqual(len(failures), 2)
 
-    def test_the_declared_floor_is_not_below_the_runtime_one(self):
-        # The one case here about the number rather than the rule, and it holds
-        # the decision that picked it. `containment.py` imports `tomllib`,
-        # which is 3.11, so the floor these five files happen to *parse* under
-        # -- 3.9 -- is a number the gate script itself cannot run at. Declaring
-        # it would put the declared floor and the real one in disagreement from
-        # the first commit, and this is what refuses that edit.
-        self.assertGreaterEqual(gate.PYTHON_FLOOR, (3, 11))
+    # There is deliberately no case here asserting what `gate.PYTHON_FLOOR` is.
+    # One was written -- `assertGreaterEqual(gate.PYTHON_FLOOR, (3, 11))` -- and
+    # it was a third hardcoded copy of the number rather than a check on it: the
+    # only edit it could refuse was one that had already agreed with it. What
+    # holds the number now is `PythonPins` below, which compares the floor
+    # against the `python` pin that decides what actually runs, so lowering the
+    # floor alone reports and lowering both is a commit a reader sees. The
+    # runtime half -- that `import tomllib` at the head of `containment.py`
+    # needs 3.11 whatever the grammar allows -- is held by nothing here and by
+    # nothing anywhere else either: it is held by the gate running under the
+    # pin, where a pin below 3.11 fails at that import before a rule runs.
+    # `containment.py`'s own comment on `PYTHON_FLOOR` records that.
+
+
+class PythonPins(unittest.TestCase):
+    """Whether `mise.toml` still pins the floor `containment.py` declares.
+
+    The other half of `PythonFloor`, and the half that was written in nine
+    places with nothing holding them together. A rule rather than a parser, and
+    with the sharpest silence of any of them: setting `PYTHON_FLOOR` two minors
+    above every pin printed `every rule holds` and left every case here green,
+    and so did a ninth task under `scripts/` carrying no pin at all.
+
+    The configurations are stated rather than read off disk, for `CargoConfig`'s
+    reason: what is under test is what the rule does with a `mise.toml`, not
+    what this repository's own says today. `Main` below reaches the real one.
+    """
+
+    def config(self, *tasks):
+        """A `mise.toml` declaring `tasks`, each `(name, run, pin)`."""
+        blocks = []
+        for name, run, pin in tasks:
+            block = f'[tasks."{name}"]\n'
+            if pin is not None:
+                block += f'tools = {{ python = "{pin}" }}\n'
+            blocks.append(block + f'run = "{run}"\n')
+        return "\n".join(blocks)
+
+    def failures(self, *tasks, scripts=("probe.py",), floor=(3, 11), exempt=()):
+        return gate.python_pin_failures(
+            self.config(*tasks), set(scripts), floor, frozenset(exempt)
+        )
+
+    def test_a_pinned_task_running_a_script_holds(self):
+        self.assertEqual(
+            self.failures(("probe", "python3 scripts/probe.py", "3.11.16")), []
+        )
+
+    def test_a_script_task_with_no_pin_is_named(self):
+        failures = self.failures(("probe", "python3 scripts/probe.py", None))
+        self.assertEqual(len(failures), 1)
+        self.assertIn("probe", failures[0])
+        self.assertIn("pins no `python`", failures[0])
+
+    def test_two_tasks_pinning_different_versions_are_named_with_their_versions(self):
+        failures = self.failures(
+            ("first", "python3 scripts/probe.py", "3.11.16"),
+            ("second", "python3 scripts/probe.py", "3.11.15"),
+        )
+        disagreement = [f for f in failures if "more than one" in f]
+        self.assertEqual(len(disagreement), 1)
+        self.assertIn("3.11.16: first", disagreement[0])
+        self.assertIn("3.11.15: second", disagreement[0])
+
+    def test_a_pin_whose_minor_is_not_the_floor_is_named(self):
+        # The mutation this rule was written for: the declaration moves and the
+        # interpreter does not, or the other way round, and until this nothing
+        # in either gate could see it.
+        failures = self.failures(("probe", "python3 scripts/probe.py", "3.13.2"))
+        self.assertEqual(len(failures), 1)
+        self.assertIn("declares a floor of 3.11", failures[0])
+
+    def test_a_pin_that_names_no_minor_version_is_named(self):
+        failures = self.failures(("probe", "python3 scripts/probe.py", "latest"))
+        self.assertEqual(len(failures), 1)
+        self.assertIn("can read a minor version out of it", failures[0])
+
+    def test_a_pin_on_a_task_that_runs_no_script_is_named(self):
+        failures = self.failures(("probe", "cargo test", "3.11.16"))
+        self.assertEqual(len(failures), 1)
+        self.assertIn("runs no file from scripts/", failures[0])
+
+    def test_an_inline_interpreter_no_exemption_names_is_named(self):
+        failures = self.failures(("probe", "python3 -c 'print(1)'", None))
+        self.assertEqual(len(failures), 1)
+        self.assertIn("something other than a file in scripts/", failures[0])
+
+    def test_an_exempted_inline_interpreter_is_not_named(self):
+        # The presence pair for the case above: an exemption that silenced
+        # nothing would leave that one green whether it worked or not.
+        self.assertEqual(
+            self.failures(("probe", "python3 -c 'print(1)'", None), exempt=("probe",)),
+            [],
+        )
+
+    def test_an_exemption_naming_a_task_that_runs_no_interpreter_is_named(self):
+        failures = self.failures(("probe", "cargo test", None), exempt=("probe",))
+        self.assertEqual(len(failures), 1)
+        self.assertIn("outlived its argument", failures[0])
+
+    def test_a_script_a_task_runs_that_the_floor_rule_never_read_is_named(self):
+        # What holds the floor rule's own file set, which nothing else can. The
+        # rule is handed the files that rule read; a narrowed glob reaches this
+        # as a script a task runs and the floor rule does not.
+        failures = self.failures(
+            ("probe", "python3 scripts/probe.py", "3.11.16"), scripts=("other.py",)
+        )
+        self.assertEqual(len(failures), 1)
+        self.assertIn("the floor rule never read", failures[0])
+        self.assertIn("probe.py: run by probe", failures[0])
+
+    def test_a_nested_script_a_task_runs_is_named_by_its_path(self):
+        failures = self.failures(
+            ("probe", "python3 scripts/gates/probe.py", "3.11.16"), scripts=("probe.py",)
+        )
+        self.assertEqual(len(failures), 1)
+        self.assertIn("gates/probe.py: run by probe", failures[0])
+
+    def test_a_file_no_task_runs_is_deliberately_not_named(self):
+        # Recorded rather than decorative: a module imported by a script rather
+        # than run as one is a shape this rule has no reason to refuse, and the
+        # floor rule reads it either way. The case above is what makes this
+        # absence falsifiable -- the same comparison in the other direction does
+        # report.
+        self.assertEqual(
+            self.failures(
+                ("probe", "python3 scripts/probe.py", "3.11.16"),
+                scripts=("probe.py", "helper.py"),
+            ),
+            [],
+        )
+
+    def test_a_file_that_is_not_toml_fails_rather_than_raising(self):
+        failures = gate.python_pin_failures('[tasks."x"\nrun =\n', {"probe.py"})
+        self.assertEqual(len(failures), 1)
+        self.assertIn("TOML", failures[0])
+
+    def test_a_quoted_task_key_is_read(self):
+        # The reason the file is parsed rather than scanned. Every task key in
+        # the real `mise.toml` is quoted, and a task this rule cannot see is a
+        # task whose missing pin it reports as absent because it never looked.
+        failures = self.failures(("cost:features", "python3 scripts/probe.py", None))
+        self.assertEqual(len(failures), 1)
+        self.assertIn("cost:features", failures[0])
 
 
 class Main(unittest.TestCase):
@@ -2343,6 +2479,25 @@ class Main(unittest.TestCase):
         self.assertEqual(status, 1)
         needle = f"scripts/cost_features.py does not parse at Python {floor}"
         self.assertEqual(len(self.naming(failures, needle)), 1)
+
+    def test_a_script_task_that_stops_pinning_the_python_floor_is_reported(self):
+        # `python_pin_failures`, reached through the one line of `main` that
+        # calls it: the fourth `failures += helper(...)`, and the rule whose
+        # whole subject is a file `main` opens while it runs. `reading` is what
+        # a case reaches it with, as for `.cargo/config.toml` below.
+        pin = 'tools = { python = "3.11.16" }\n'
+        with self.reading(
+            "mise.toml",
+            lambda text: self.rewriting(
+                text, pin + 'run = "python3 -B scripts/commits_test.py"',
+                'run = "python3 -B scripts/commits_test.py"',
+            ),
+        ):
+            status, failures = self.report()
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "pins no `python`")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("commits:test", reported[0])
 
 
 if __name__ == "__main__":
