@@ -37,6 +37,7 @@ cost-binary.tsv
 cost-codec.tsv
 cost-codegen.tsv
 
-# Bytecode an import from scripts/ writes. The mise tasks run with `-B`; a
-# direct `import containment` or an editor's test runner does not.
+# Bytecode an import from scripts/ writes. No task writes any: the gates run
+# their script as `__main__`, which is never cached, and the test tasks pass
+# `-B`. A direct `import containment` or an editor's test runner does.
 __pycache__/
