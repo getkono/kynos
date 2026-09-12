@@ -39,6 +39,32 @@ fn a_document_using_no_three_two_construct_has_no_blockers() {
     assert!(downgrade::three_two_only_constructs(&document()).is_empty());
 }
 
+/// An extension key that repeats a model field is written as `serde_yaml_ng`
+/// writes the model: beside the field, not in place of it.
+///
+/// A document carrying one is malformed, since an extension's name starts with
+/// `x-`, but emitting it must not silently drop the field it collides with. A
+/// route through an intermediate `serde_yaml_ng::Value` would, because a
+/// mapping holds one value per key. Outside `mod yaml` on purpose: under
+/// `test:arbitrary-precision` that route is the one taken, and the two sides
+/// differ there by design.
+#[cfg(feature = "yaml")]
+#[test]
+fn an_extension_repeating_a_model_field_leaves_the_field_in_place() {
+    let mut document = document();
+    document
+        .extensions
+        .0
+        .insert("info".to_owned(), serde_json::json!(1));
+
+    assert_eq!(
+        document
+            .to_yaml()
+            .expect("the document is representable in YAML"),
+        serde_yaml_ng::to_string(&document).expect("the model serializes to YAML")
+    );
+}
+
 /// YAML emission, whatever `serde_json` features the build unifies.
 ///
 /// Cargo unifies features across a whole dependency graph, so a program can be
