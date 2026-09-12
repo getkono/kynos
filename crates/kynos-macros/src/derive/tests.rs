@@ -149,6 +149,17 @@ mod schema {
                 ),
                 "only a flattened field has anything",
             ),
+        ]
+    }
+
+    /// The serde attributes whose wire form the schema could not follow.
+    ///
+    /// A second function rather than more rows in the first, for the reason
+    /// `security_scheme`'s `oauth2_ledger` gives: one list of every diagnostic
+    /// had outgrown what Clippy will accept. These are the refusals the
+    /// derive's rustdoc lists as serde and the schema disagreeing.
+    fn serde_ledger() -> Vec<Case> {
+        vec![
             case(
                 "an untagged enum, which has no describable decoding rule",
                 quote::quote!(
@@ -176,11 +187,16 @@ mod schema {
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(serde_ledger(), expand_inner);
     }
 
     #[test]
     fn every_schema_diagnostic_has_a_case() {
-        every_diagnostic_has_a_case("schema.rs", include_str!("schema.rs"), ledger().len());
+        every_diagnostic_has_a_case(
+            "schema.rs",
+            include_str!("schema.rs"),
+            ledger().len() + serde_ledger().len(),
+        );
     }
 
     /// `#[serde(untagged)]` on a struct is serde's diagnostic to raise, not ours.
