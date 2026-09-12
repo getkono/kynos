@@ -1284,10 +1284,9 @@ fn a_mutual_tls_build_installs_no_process_wide_provider() {
     );
 
     let issued = authority();
-    let client_authentication = crate::server::tls::ClientCertificateConfig::from_pem_roots(
-        issued.certificate.as_bytes(),
-    )
-    .expect("CA parses");
+    let client_authentication =
+        crate::server::tls::ClientCertificateConfig::from_pem_roots(issued.certificate.as_bytes())
+            .expect("CA parses");
 
     crate::server::tls::TlsConfig::from_pem(
         issued.server.certificate.as_bytes(),

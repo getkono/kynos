@@ -170,7 +170,8 @@ impl TlsConfig {
                     .add(certificate)
                     .map_err(|error| TlsError::ClientVerifier(Box::new(error)))?;
             }
-            let mut verifier = WebPkiClientVerifier::builder(Arc::new(roots));
+            let mut verifier =
+                WebPkiClientVerifier::builder_with_provider(Arc::new(roots), Arc::clone(&provider));
             if !client.crls.is_empty() {
                 verifier = verifier.with_crls(client.crls);
             }
@@ -201,14 +202,16 @@ impl TlsConfig {
 
 /// The crypto provider every rustls configuration here is built on.
 ///
-/// Named rather than resolved. The implicit constructors -- `ServerConfig`'s
-/// and `ClientConfig`'s -- derive the process-level provider from the
-/// `aws-lc-rs` and `ring` features of whatever `rustls` the graph unified on,
-/// and panic when zero or two of them are compiled in. Cargo features are
-/// additive, so one dependency enabling `ring` for its own reasons puts every
-/// dependent in that state and no downstream manifest can leave it; the panic
-/// then lands inside [`TlsConfig::build`], whose signature already carries a
-/// [`TlsError`].
+/// Named rather than resolved. rustls's implicit constructors -- `ServerConfig`'s
+/// and `ClientConfig`'s `builder`, and `WebPkiClientVerifier`'s -- derive the
+/// process-level provider from the `aws-lc-rs` and `ring` features of whatever
+/// `rustls` the graph unified on, and panic when zero or two of them are
+/// compiled in. Cargo features are additive, so one dependency enabling `ring`
+/// for its own reasons puts every dependent in that state and no downstream
+/// manifest can leave it; the panic then lands inside [`TlsConfig::build`],
+/// whose signature already carries a [`TlsError`]. Every rustls value built
+/// here therefore takes this provider explicitly -- all three constructors, not
+/// the two on the path without a client certificate.
 ///
 /// A caller that installed a default still wins, which is what keeps a FIPS or
 /// hardware-backed provider reachable. Otherwise the choice is Kynos's, and
@@ -216,7 +219,10 @@ impl TlsConfig {
 /// named explicitly so the provider chosen here is always compiled in.
 ///
 /// Nothing is installed as a side effect: a library that writes a process-wide
-/// static takes a decision away from the binary that owns it.
+/// static takes a decision away from the binary that owns it. That is what the
+/// implicit constructors do on their way through -- they install what they
+/// resolved -- and it is why avoiding them matters even where the graph is
+/// unambiguous and they would not have panicked.
 pub(in crate::server) fn crypto_provider() -> Arc<CryptoProvider> {
     CryptoProvider::get_default().map_or_else(
         || Arc::new(tokio_rustls::rustls::crypto::aws_lc_rs::default_provider()),
