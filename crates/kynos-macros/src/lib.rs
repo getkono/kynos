@@ -242,8 +242,8 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   keyword that sees annotations across an `allOf`.
 /// - `#[serde(default)]` or `skip_serializing_if` on a non-`Option` field,
 ///   which would make `required` a lie.
-/// - A `#[serde(other)]` catch-all variant under `openapi31` alone, which needs
-///   3.2's `defaultMapping` to describe.
+/// - A `#[serde(other)]` catch-all variant, which only 3.2's `defaultMapping`
+///   could describe and the derive does not emit.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)

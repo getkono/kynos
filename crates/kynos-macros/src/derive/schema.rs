@@ -82,6 +82,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     }
     reject_untagged(input)?;
     reject_wire_form_overrides(input)?;
+    reject_catch_all(input)?;
     check_constraints(input)?;
 
     let name = &input.ident;
@@ -482,6 +483,32 @@ fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
                      never carries. Give the value a newtype whose own `Serialize` and \
                      `Deserialize` produce that form and whose own `Schema` describes it"
                 ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `#[serde(other)]` makes an enum accept every tag it does not name.
+///
+/// The schema's `oneOf` lists only the named ones, and only OpenAPI 3.2's
+/// `discriminator.defaultMapping` can say where the rest go. This derive emits
+/// no `defaultMapping`, so every build refuses the attribute rather than 3.1
+/// alone. Every variant is checked, skipped ones included: `skip_serializing`
+/// keeps a catch-all out of the schema, not out of deserialization.
+fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
+    let Data::Enum(data) = &input.data else {
+        return Ok(());
+    };
+
+    for variant in &data.variants {
+        if let Some((_, span)) = serde_key_span(&variant.attrs, &["other"]) {
+            return Err(syn::Error::new(
+                span,
+                "`#[serde(other)]` accepts every tag this enum does not name, and only OpenAPI \
+                 3.2's `discriminator.defaultMapping` can say where those go, which this derive \
+                 does not emit. Name every variant the API accepts, or publish the value as \
+                 `Unchecked` on purpose",
             ));
         }
     }

@@ -1,0 +1,5 @@
+error: `#[serde(other)]` accepts every tag this enum does not name, and only OpenAPI 3.2's `discriminator.defaultMapping` can say where those go, which this derive does not emit. Name every variant the API accepts, or publish the value as `Unchecked` on purpose
+  --> tests/ui/macros/schema_catch_all_variant.rs:10:13
+   |
+10 |     #[serde(other)]
+   |             ^^^^^
