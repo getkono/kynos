@@ -457,6 +457,16 @@ mod schema {
                     elided: String,
                 }
             ),
+            // A container `default` fills every missing field from `Default`
+            // on read, so each field is as absent-tolerant as a field-level
+            // `default` would make it.
+            quote::quote!(
+                #[serde(default)]
+                struct Draft {
+                    #[serde(skip_serializing_if = "String::is_empty")]
+                    elided: String,
+                }
+            ),
         ] {
             let input: syn::DeriveInput =
                 syn::parse2(declaration).expect("the case itself must parse");

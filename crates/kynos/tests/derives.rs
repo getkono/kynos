@@ -422,6 +422,28 @@ fn required_lists_only_what_serde_always_reads_and_writes() {
     );
 }
 
+/// A container `#[serde(default)]`, which serde honours by filling every
+/// missing field from the struct's own `Default`.
+#[derive(Default, Schema, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct Settings {
+    retries: u64,
+    label: String,
+}
+
+/// Under a container `default`, no field is required.
+///
+/// serde reads `{}` into `Settings::default()`, so a `required` list naming
+/// any field would call a document invalid that the type accepts.
+#[test]
+fn a_container_default_leaves_every_field_optional() {
+    assert_eq!(emitted::<Settings>().get("required"), None);
+    assert!(
+        serde_json::from_str::<Settings>("{}").is_ok(),
+        "an empty document must read under a container default"
+    );
+}
+
 // --- What a derived error response declares ---------------------------------
 //
 // A problem body carries the type URI the declaration named, so the response
