@@ -35,10 +35,15 @@ impl Document {
     /// such number to begin with.
     #[cfg(feature = "yaml")]
     pub fn to_yaml(&self) -> Result<String, serde_yaml_ng::Error> {
-        let mut value = serde_yaml_ng::to_value(self)?;
-        if yaml_numbers::serialized_as_token() {
-            yaml_numbers::restore(&mut value)?;
+        // Only a build that writes numbers as token mappings pays for, or is
+        // changed by, the detour through a `Value`: a mapping there holds one
+        // value per key, where the model's own serialization writes every key
+        // it is given.
+        if !yaml_numbers::serialized_as_token() {
+            return serde_yaml_ng::to_string(self);
         }
+        let mut value = serde_yaml_ng::to_value(self)?;
+        yaml_numbers::restore(&mut value)?;
         serde_yaml_ng::to_string(&value)
     }
 
