@@ -97,6 +97,35 @@ mod yaml {
             "in:\n{yaml}"
         );
     }
+
+    /// Each spelling of digits becomes the number `serde_json` holds for the
+    /// same text with `arbitrary_precision` off.
+    ///
+    /// Compared through `Debug` too, because `Number`'s equality reads `-0.0`
+    /// and `0.0` as one value, and the sign is what the `-0` row is for.
+    #[test]
+    fn digits_become_the_number_serde_json_holds_without_arbitrary_precision() {
+        use crate::emit::yaml_numbers::number_from_digits;
+
+        for (digits, expected) in [
+            ("42", Number::from(42u64)),
+            ("-7", Number::from(-7i64)),
+            ("-0", Number::from(-0.0)),
+            ("0.5", Number::from(0.5)),
+            ("1e+140", Number::from(1e140)),
+            (
+                "18446744073709551616",
+                Number::from(18_446_744_073_709_551_616.0),
+            ),
+        ] {
+            let number = number_from_digits(digits).expect("a number a float can hold");
+            assert_eq!(number, expected, "{digits}");
+            assert_eq!(format!("{number:?}"), format!("{expected:?}"), "{digits}");
+        }
+
+        let error = number_from_digits("1e+400").expect_err("beyond any float");
+        assert!(error.to_string().contains("1e+400"), "{error}");
+    }
 }
 
 /// One case per 3.2-only construct, and the exact location it is reported at.
