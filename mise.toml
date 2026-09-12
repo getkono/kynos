@@ -177,7 +177,8 @@ description = "Test YAML emission with serde_json's arbitrary_precision forced o
 # hands that buffer a number as a map, and `Content` cannot read a map back as
 # an integer or a float. So a document whose Schema Object carries a numeric
 # keyword, such as `maximum`, fails to deserialize, and the property round-trips
-# in `tests/properties.rs` fail on it before emission is ever reached.
+# in `tests/properties.rs` fail on it before emission is ever reached. That
+# defect is #163; the filter can widen once it is fixed.
 #
 # `--no-tests=fail` so that renaming or moving the module turns this task red
 # rather than letting it pass over nothing.

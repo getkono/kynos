@@ -328,9 +328,10 @@ observable there and nowhere else. It runs `emit::tests::yaml` alone, with
 `--no-tests=fail` so a rename cannot leave it passing over nothing, because
 parsing breaks separately under that graph: a numeric keyword inside an untagged
 enum such as `RefOr` fails to deserialize, and the property round-trips fail on
-that before emission is reached. A dev-dependency asking for the feature is the
-shorter spelling and the wrong one here, since it unifies into every
-`--all-targets` build and leaves the default number path untested.
+that before emission is reached — filed as
+[#163](https://github.com/getkono/kynos/issues/163). A dev-dependency asking for
+the feature is the shorter spelling and the wrong one here, since it unifies into
+every `--all-targets` build and leaves the default number path untested.
 
 **A gap [`nfr.md`](nfr.md) documents is characterized.** Excluding a known-lossy
 shape from a generator keeps the property honest, but on its own it leaves the
