@@ -323,7 +323,30 @@ description = "Measure what each feature costs a linked artifact and monomorphiz
 # and a reader comparing this file against `mise.lock` is not looking at a
 # gap. The seven `[tools]` entries are locked because each of them resolves to
 # a downloaded file that a checksum can pin.
-tools = { "cargo:cargo-llvm-lines" = "0.4.48" }
+#
+# `python` is pinned here, and on every other task that runs a file from
+# `scripts/`, because until this pin there was no such thing as the interpreter
+# those five files run under: `python3` resolved to whatever the machine or the
+# runner image happened to ship. `containment.py` declares the floor --
+# `PYTHON_FLOOR`, 3.11, which is what the `tomllib` import at the head of it
+# already required -- and checks the scripts against it. This is the other half
+# of that number, and neither half closes the gap alone: the check states what
+# is allowed and cannot make anybody run the version it names, while a pin makes
+# what runs deterministic and states nothing, so a contributor on a newer
+# interpreter raises the floor with nothing reporting it. Raising it deliberately
+# means moving `PYTHON_FLOOR` and every line repeating it below in one commit.
+#
+# Task-scoped rather than `[tools]`, and for the cost the entry above is
+# task-scoped over rather than for the `cargo:` backend's reason. Two of
+# `ci.yml`'s nine jobs run a task from `scripts/`: `lint`, which runs four of
+# them, and `cost`, which runs this one. A third, `package`, pipes `cargo
+# metadata` through a `python3 -c` one-liner, which is not a file in `scripts/`
+# and is held to no floor. A `[tools]` entry would download and activate a
+# Python for the six jobs that run none at all.
+#
+# The patch version is pinned like every other tool in this file. The floor is
+# the minor; the patch is what keeps two machines on the same interpreter.
+tools = { "cargo:cargo-llvm-lines" = "0.4.48", python = "3.11.16" }
 run = "python3 scripts/cost_features.py"
 
 [tasks."cost:codegen"]
@@ -332,9 +355,9 @@ description = "The codegen half of the sweep alone"
 # half whose profile is the surprising one -- running it alone is how a reader
 # checks that claim without paying for twenty-five fat-LTO release builds.
 #
-# The `cargo-llvm-lines` pin is task-scoped for the reason given on
-# `cost:features` above.
-tools = { "cargo:cargo-llvm-lines" = "0.4.48" }
+# The `cargo-llvm-lines` and `python` pins are task-scoped for the reasons
+# given on `cost:features` above.
+tools = { "cargo:cargo-llvm-lines" = "0.4.48", python = "3.11.16" }
 run = "python3 scripts/cost_features.py --kind codegen"
 
 [tasks."cost:codecs"]
@@ -351,6 +374,9 @@ description = "The codec half of the sweep alone: what mounting each codec costs
 # compiles, and at `--release` with fat LTO. `check` runs `cost:test`, which
 # holds this script's parsers, its table reader and its ranking and builds
 # nothing.
+# The `python` pin is task-scoped for the reason given on `cost:features`
+# above.
+tools = { python = "3.11.16" }
 run = "python3 scripts/cost_features.py --kind codec"
 
 [tasks."cost:record"]
@@ -363,9 +389,9 @@ description = "Record the measured deltas as the committed baseline"
 # Writes all three baselines under `crates/kynos/cost/`, because it runs the
 # whole sweep. Recording one alone is `--kind` plus `KYNOS_COST=overwrite`.
 #
-# The `cargo-llvm-lines` pin is task-scoped for the reason given on
-# `cost:features` above.
-tools = { "cargo:cargo-llvm-lines" = "0.4.48" }
+# The `cargo-llvm-lines` and `python` pins are task-scoped for the reasons
+# given on `cost:features` above.
+tools = { "cargo:cargo-llvm-lines" = "0.4.48", python = "3.11.16" }
 env = { KYNOS_COST = "overwrite" }
 run = "python3 scripts/cost_features.py"
 
@@ -389,6 +415,9 @@ description = "Test the cost sweep's parsers and its report"
 # `-B` because `.gitignore` has no `__pycache__` entry, and a check that
 # leaves an untracked directory behind is a check people learn to work around.
 # The test file sets `sys.dont_write_bytecode` too, for a direct `python3` run.
+# The `python` pin is task-scoped for the reason given on `cost:features`
+# above.
+tools = { python = "3.11.16" }
 run = "python3 -B scripts/cost_features_test.py"
 
 [tasks."fixtures:generate"]
@@ -456,6 +485,9 @@ description = "Verify every crate is named only where its owner allows"
 # wrong is not hypothetical: a first cut desynchronised on a char literal in
 # `http/etag.rs` and quietly stopped seeing code at all, reporting that every
 # rule held.
+# The `python` pin is task-scoped for the reason given on `cost:features`
+# above.
+tools = { python = "3.11.16" }
 run = "python3 scripts/containment.py"
 
 [tasks."containment:test"]
@@ -480,6 +512,9 @@ description = "Test what the containment gate reads its tables and its tree with
 # `-B` because `.gitignore` has no `__pycache__` entry, and a check that
 # leaves an untracked directory behind is a check people learn to work around.
 # The test file sets `sys.dont_write_bytecode` too, for a direct `python3` run.
+# The `python` pin is task-scoped for the reason given on `cost:features`
+# above.
+tools = { python = "3.11.16" }
 run = "python3 -B scripts/containment_test.py"
 
 [tasks."docs:check"]
@@ -738,6 +773,9 @@ description = "Test that both halves of the commit rule agree about a merge"
 # `unittest` from the standard library: this repository has no Python test
 # runner, and taking a dependency to drive git through subprocess is the worse
 # trade. `-B` because `.gitignore` has no `__pycache__` entry.
+# The `python` pin is task-scoped for the reason given on `cost:features`
+# above.
+tools = { python = "3.11.16" }
 run = "python3 -B scripts/commits_test.py"
 
 [tasks."hooks:pre-push"]

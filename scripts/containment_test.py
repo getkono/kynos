@@ -1131,6 +1131,108 @@ class Published(unittest.TestCase):
         self.assertEqual(self.published(root), ["src/lib.rs"])
 
 
+class PythonFloor(unittest.TestCase):
+    """Which scripts are reported as having raised the grammar floor.
+
+    A rule rather than a parser, and here for `CargoConfig`'s reason: its
+    failure mode is silence. A file written in newer grammar runs perfectly for
+    whoever wrote it and is a `SyntaxError` before any rule or any case runs
+    for everybody else, which is the shape of #134's import-time defect one
+    layer down. Nothing in this repository reported it until this rule, and the
+    only record that the floor had already moved once is a commit message.
+
+    The floor is stated per case rather than taken from `gate.PYTHON_FLOOR`,
+    and that is not the usual preference for stated inputs -- it is forced.
+    Syntax that violates a floor is syntax some interpreter cannot parse at
+    all, so a case written against the real floor of 3.11 would assert one
+    thing on 3.12 and another on the pinned interpreter itself, where PEP 695
+    is not grammar the parser has. A floor of 3.9 with a `match` statement over
+    it is the same claim and reads identically on every interpreter the pin
+    allows. `Main` below is what holds the real number.
+    """
+
+    #: A `match` statement: 3.10 grammar, which every interpreter that can run
+    #: this file parses and which `feature_version=(3, 9)` refuses.
+    MATCHED = "def read(value):\n    match value:\n        case 1:\n            return 1\n"
+    #: Grammar no version has: a file that is broken rather than new.
+    BROKEN = "def read(:\n"
+
+    def failures(self, *scripts, floor=(3, 9)):
+        return gate.python_floor_failures(scripts, floor)
+
+    def test_a_script_that_parses_at_the_floor_is_not_named(self):
+        self.assertEqual(self.failures(("scripts/probe.py", "value = 1\n")), [])
+
+    def test_a_script_written_above_the_floor_is_named(self):
+        failures = self.failures(("scripts/probe.py", self.MATCHED))
+        self.assertEqual(len(failures), 1)
+        self.assertIn("scripts/probe.py", failures[0])
+
+    def test_the_floor_it_stopped_holding_is_named(self):
+        self.assertIn(
+            "does not parse at Python 3.9",
+            self.failures(("scripts/probe.py", self.MATCHED))[0],
+        )
+
+    def test_the_version_it_needs_is_reported_rather_than_a_mismatch(self):
+        self.assertIn(
+            "it needs 3.10", self.failures(("scripts/probe.py", self.MATCHED))[0]
+        )
+
+    def test_the_line_the_grammar_stops_at_is_reported(self):
+        # Over the broken source rather than the newer one. Where CPython
+        # reports a `match` statement it will not accept is the end of the
+        # block rather than its head, and which line that is has moved between
+        # versions -- so a case anchored on it would hold the interpreter's
+        # choice and not this rule's reporting of it.
+        self.assertIn(
+            "line 3 is where it stops",
+            self.failures(("scripts/probe.py", "value = 1\n\n" + self.BROKEN))[0],
+        )
+
+    def test_a_script_that_parses_at_no_version_is_reported_rather_than_raising(self):
+        # The `SyntaxError` is caught for `cargo_config_failures`' reason: a
+        # rule that takes the process down takes the test run with it, and a
+        # script nothing can read is exactly when the other rules have to go on
+        # reporting. Without the `except`, this case is an error rather than a
+        # failure and it is `containment:test` that stops running, not the one
+        # rule that could not read one file.
+        failures = self.failures(("scripts/probe.py", self.BROKEN))
+        self.assertEqual(len(failures), 1)
+        self.assertIn("parses at no version", failures[0])
+
+    def test_a_broken_script_is_not_reported_as_merely_newer(self):
+        # The pair to the case above, and the reason the rule writes two
+        # sentences rather than one: the remedies differ -- repair the line, or
+        # raise the pin -- and a rule that ran them together would tell half
+        # its readers to bump an interpreter over a typo.
+        self.assertNotIn("it needs", self.failures(("scripts/probe.py", self.BROKEN))[0])
+
+    def test_a_script_holding_the_floor_beside_one_that_does_not_is_not_named(self):
+        failures = self.failures(
+            ("scripts/held.py", "value = 1\n"),
+            ("scripts/raised.py", self.MATCHED),
+        )
+        self.assertEqual(len(failures), 1)
+        self.assertIn("scripts/raised.py", failures[0])
+
+    def test_two_scripts_over_the_floor_are_two_failures(self):
+        failures = self.failures(
+            ("scripts/first.py", self.MATCHED),
+            ("scripts/second.py", self.MATCHED),
+        )
+        self.assertEqual(len(failures), 2)
+
+    def test_the_declared_floor_is_not_below_the_runtime_one(self):
+        # The one case here about the number rather than the rule, and it holds
+        # the decision that picked it. `containment.py` imports `tomllib`,
+        # which is 3.11, so the floor these five files happen to *parse* under
+        # -- 3.9 -- is a number the gate script itself cannot run at. Declaring
+        # it would put the declared floor and the real one in disagreement from
+        # the first commit, and this is what refuses that edit.
+        self.assertGreaterEqual(gate.PYTHON_FLOOR, (3, 11))
+
+
 class Main(unittest.TestCase):
     """What each rule stops checking when the marker it reads is gone.
 
@@ -2220,6 +2322,27 @@ class Main(unittest.TestCase):
             1,
         )
 
+    def test_a_script_written_above_the_declared_python_floor_is_reported(self):
+        # `python_floor_failures`, reached through the one line of `main` that
+        # calls it: the third `failures += helper(...)`, and the third rule
+        # whose helper has a suite of its own while nothing holds the call. The
+        # rule opens `scripts/` while `main` runs, so `reading` is what a case
+        # reaches, the same way the `.cargo/config.toml` case above does.
+        #
+        # A PEP 695 `type` statement rather than the `match` statement
+        # `PythonFloor` uses, because the floor here is the real one and 3.11
+        # accepts `match`. Which of the rule's two sentences comes back depends
+        # on the interpreter -- 3.12 and later name the version, the pinned
+        # 3.11 can parse it at no version and says so -- so what is asserted is
+        # the half both of them write.
+        floor = ".".join(str(part) for part in gate.PYTHON_FLOOR)
+        with self.reading(
+            "scripts/cost_features.py", lambda text: text + "\ntype Raised = int\n"
+        ):
+            status, failures = self.report()
+        self.assertEqual(status, 1)
+        needle = f"scripts/cost_features.py does not parse at Python {floor}"
+        self.assertEqual(len(self.naming(failures, needle)), 1)
 
 
 if __name__ == "__main__":

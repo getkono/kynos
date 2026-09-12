@@ -16,6 +16,7 @@ A rule matched over genuinely raw text reads a renamed flag off a stale
 comment and reports the row as holding.
 """
 
+import ast
 import os
 import re
 import sys
@@ -1241,6 +1242,103 @@ def cargo_config_failures(text):
         )
     return problems
 
+# --- The Python floor --------------------------------------------------------
+# What grammar the files under `scripts/` are written in. A declaration rather
+# than a measurement: until something states a floor it is whatever the newest
+# syntax anyone has happened to write, and the only record that this one had
+# already moved was a commit message on #144, where an f-string was rewritten so
+# the file would parse under an interpreter nobody had named.
+#
+# 3.11 rather than the 3.9 grammar these five files happen to parse under.
+# `import tomllib` at the head of this file is 3.11, so the *runtime* floor was
+# already this one whatever the grammar allowed, and declaring 3.9 would publish
+# a number the gate script itself cannot run at.
+#
+# The number is written twice deliberately -- here, and as the `python` pin on
+# every mise task that runs one of these files -- because neither half closes
+# the gap alone. The pin makes what runs deterministic and declares nothing, so
+# a contributor on a newer interpreter still raises the floor with nothing
+# reporting it. This check declares what is allowed and cannot make the pinned
+# interpreter the one anybody runs. A change to one is a change to both.
+PYTHON_FLOOR = (3, 11)
+SCRIPTS = ROOT / "scripts"
+
+
+def refused_at(source, path, version):
+    """The `SyntaxError` parsing `source` at `version` raises, or `None`.
+
+    Returned rather than raised, for the reason `cargo_config_failures` gives:
+    a rule that takes the process down takes the test run with it. A script the
+    interpreter cannot read is exactly when the rest of this gate has to go on
+    reporting.
+    """
+    try:
+        ast.parse(source, filename=path, feature_version=version)
+    except SyntaxError as error:
+        return error
+    return None
+
+
+def python_floor_failures(scripts, floor=PYTHON_FLOOR):
+    """Which of `scripts` stopped parsing at `floor`, and what each one needs.
+
+    `scripts` is `(path, source)` pairs, opened by `main` rather than read here
+    for the reason its docstring gives: importing this module runs no rule.
+
+    `floor` is an argument so that a case can state its own, the way the rules
+    above take the documents they are stated over. It has to be one: the syntax
+    that violates a floor is by definition syntax the interpreter under the
+    case may be too old to parse, so a suite pinned to this module's constant
+    could assert only what the newest CPython accepts.
+
+    Each file that fails is re-parsed at every minor version between `floor`
+    and this interpreter's own, and the first that accepts it is the version
+    the message reports. `testing.md#cross-cutting` is the argument for naming
+    it rather than saying that two version numbers differ: five files are held
+    here, and a mismatch leaves the reader to find which one moved and how far.
+
+    A file that parses at none of them gets its own sentence. It is either
+    broken or written in grammar newer than the interpreter running this gate,
+    and from in here the two are the same observation -- `ast` cannot parse
+    syntax the running CPython never implemented, so the search has no answer
+    to give above `sys.version_info`.
+    """
+    stated, running = f"3.{floor[1]}", f"3.{sys.version_info.minor}"
+    problems = []
+    for path, source in scripts:
+        refused = refused_at(source, path, floor)
+        if refused is None:
+            continue
+        needs = next(
+            (
+                f"3.{minor}"
+                for minor in range(floor[1] + 1, sys.version_info.minor + 1)
+                if refused_at(source, path, (3, minor)) is None
+            ),
+            None,
+        )
+        stops = f"line {refused.lineno} is where it stops: {refused.msg}"
+        if needs is None:
+            problems.append(
+                f"{path} does not parse at Python {stated}, which is the floor "
+                "scripts/ is held to, and it parses at no version up to this "
+                f"interpreter's own ({running}) either -- {stops}. Either the "
+                "file is broken, or it is written in grammar newer than the "
+                "interpreter running this gate, which the `python` pin on the "
+                f"script tasks in mise.toml fixes at {stated}. Repair the line, "
+                "or raise the pin and this floor in the same commit"
+            )
+        else:
+            problems.append(
+                f"{path} does not parse at Python {stated}, which is the floor "
+                f"scripts/ is held to: it needs {needs} -- {stops}. Every task "
+                f"that runs this file pins {stated}, so the interpreter CI reads "
+                "it under is not the one that wrote it. Write the line in "
+                f"grammar {stated} accepts, or raise the pin on the script tasks "
+                "in mise.toml and this floor in the same commit"
+            )
+    return problems
+
 
 def main(architecture=None, testing=None, performance=None, nfr=None, corpus=None):
     """Run every rule over this repository, and report what does not hold.
@@ -1705,6 +1803,12 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
     # --- The dev build profile -----------------------------------------------
     failures += cargo_config_failures(
         CARGO_CONFIG.read_text() if CARGO_CONFIG.is_file() else None
+    )
+
+    # --- The Python floor -----------------------------------------------------
+    failures += python_floor_failures(
+        (path.relative_to(ROOT).as_posix(), path.read_text())
+        for path in sorted(SCRIPTS.glob("*.py"))
     )
 
     # --- Report ---------------------------------------------------------------
