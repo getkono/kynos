@@ -152,6 +152,56 @@ mod yaml {
         let error = number_from_digits("1e+400").expect_err("beyond any float");
         assert!(error.to_string().contains("1e+400"), "{error}");
     }
+
+    /// `restore` rewrites a mapping only when it is exactly a token holding
+    /// digits, reaches one inside a tag, and lets a refused conversion out.
+    ///
+    /// Over hand-built values, so it holds in both graphs: no document the
+    /// model builds puts a token under a tag, beside another key, or over a
+    /// non-string, and those are the arms a walk gets wrong without failing.
+    #[test]
+    fn restore_rewrites_exactly_a_token_mapping() {
+        use serde_yaml_ng::{
+            Mapping,
+            value::{Tag, TaggedValue},
+        };
+
+        use crate::emit::yaml_numbers::restore;
+
+        const TOKEN: &str = "$serde_json::private::Number";
+        let token = |digits: Value| -> Value {
+            Value::Mapping([(Value::from(TOKEN), digits)].into_iter().collect())
+        };
+        let tagged = |value: Value| -> Value {
+            Value::Tagged(Box::new(TaggedValue {
+                tag: Tag::new("Variant"),
+                value,
+            }))
+        };
+
+        let mut under_a_tag = tagged(token(Value::from("42")));
+        restore(&mut under_a_tag).expect("42 is a number");
+        assert_eq!(under_a_tag, tagged(Value::Number(Number::from(42u64))));
+
+        for untouched in [
+            Value::Mapping(
+                [
+                    (Value::from(TOKEN), Value::from("42")),
+                    (Value::from("x-other"), Value::Null),
+                ]
+                .into_iter()
+                .collect::<Mapping>(),
+            ),
+            token(Value::Number(Number::from(42u64))),
+        ] {
+            let mut walked = untouched.clone();
+            restore(&mut walked).expect("nothing here is converted");
+            assert_eq!(walked, untouched);
+        }
+
+        let error = restore(&mut token(Value::from("1e+400"))).expect_err("beyond any float");
+        assert!(error.to_string().contains("1e+400"), "{error}");
+    }
 }
 
 /// One case per 3.2-only construct, and the exact location it is reported at.
