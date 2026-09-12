@@ -1,0 +1,5 @@
+error[E0277]: `BTreeMap<std::string::String, std::string::String>` cannot be flattened into another object
+ --> tests/ui/traits/flatten.rs:7:22
+  |
+7 |     is_flattenable::<std::collections::BTreeMap<String, String>>();
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ does not name its members

@@ -1,0 +1,5 @@
+error[E0277]: `BTreeMap<std::string::String, std::string::String>` cannot be flattened into another object
+  --> tests/ui/macros/schema_flatten_map.rs:11:12
+   |
+11 |     extra: BTreeMap<String, String>,
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^ does not name its members
