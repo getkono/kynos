@@ -195,6 +195,16 @@ mod schema {
                 ),
                 "`#[serde(other)]` accepts",
             ),
+            case(
+                "`skip_serializing_if` on a field serde still requires on read",
+                quote::quote!(
+                    struct Draft {
+                        #[serde(skip_serializing_if = "String::is_empty")]
+                        elided: String,
+                    }
+                ),
+                "still requires it on read",
+            ),
         ]
     }
 
@@ -418,6 +428,43 @@ mod schema {
             )],
             expand_inner,
         );
+    }
+
+    /// `skip_serializing_if` is accepted wherever serde may leave the field out
+    /// in both directions, or never reads it at all.
+    ///
+    /// Beside an `Option` or a `#[serde(default)]`, an absent field reads as
+    /// well as it writes, so `required` can leave it out truthfully. A field
+    /// that is never read is in no schema, so nothing can disagree with it.
+    #[test]
+    fn skip_serializing_if_beside_an_option_or_a_default_is_accepted() {
+        for declaration in [
+            quote::quote!(
+                struct Draft {
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    maybe: Option<u64>,
+                }
+            ),
+            quote::quote!(
+                struct Draft {
+                    #[serde(default, skip_serializing_if = "String::is_empty")]
+                    elided: String,
+                }
+            ),
+            quote::quote!(
+                struct Draft {
+                    #[serde(skip_deserializing, skip_serializing_if = "String::is_empty")]
+                    elided: String,
+                }
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+
+            if let Err(error) = expand_inner(&input) {
+                panic!("a field serde may omit in both directions must expand: {error}");
+            }
+        }
     }
 }
 
