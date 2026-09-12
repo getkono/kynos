@@ -1095,8 +1095,7 @@ fn alpn_connector(authority: &[u8], protocols: &[&[u8]]) -> tokio_rustls::TlsCon
 /// crate features and panics when that is ambiguous, which is the whole of what
 /// [`a_caller_installed_crypto_provider_is_the_one_build_runs_on`] covers on
 /// the server side. The harness would panic the same way under the same graph,
-/// so both ends go through
-/// [`crate::server::tls::crypto_provider`].
+/// so both ends go through the same named provider.
 #[cfg(feature = "tls")]
 fn client_config_builder() -> tokio_rustls::rustls::ConfigBuilder<
     tokio_rustls::rustls::ClientConfig,

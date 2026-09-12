@@ -52,8 +52,8 @@ pub enum TlsError {
     /// offers. The provider Kynos supplies serves both, so this is reachable
     /// only through one a caller installed as the process default: a suite list
     /// covering neither version, or key-exchange groups none of those suites can
-    /// use. The underlying library resolves the same condition by panicking;
-    /// the variant exists so that configuring a server reports it instead.
+    /// use. rustls's own constructors meet that condition by panicking; this
+    /// variant exists so that configuring a server reports it instead.
     #[error("the TLS crypto provider serves none of the enabled protocol versions")]
     CryptoProvider(#[source] Cause),
     /// A TLS duration was zero.
