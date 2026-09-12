@@ -472,6 +472,7 @@ re-walked. A second call would reuse the same maps and agree with itself.
 | 16 | A guard's 403 narrows to `about:blank` and the URI its scope set named, never to either alone | [`tests/description.rs`](../crates/kynos/tests/description.rs) over the document and [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) over one refusal of each shape; the const in [`security/auth.rs`](../crates/kynos/src/security/auth.rs) and what reads it in [`error/rejection.rs`](../crates/kynos/src/error/rejection.rs) |
 | 17 | A described field or variant whose wire form serde's `with`, `serialize_with` or `deserialize_with` decides is refused; one no schema describes is left alone | the derive's ledger in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs), and `tests/ui/macros/schema_serialize_with.rs` for the wording |
 | 18 | A `#[serde(other)]` catch-all variant is refused in every build, skipped or not | the same ledger, and `tests/ui/macros/schema_catch_all_variant.rs` for the wording |
+| 19 | `required` omits a field that is an `Option` or carries `#[serde(default)]` or `skip_serializing_if`, and names every other described field | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema |
 
 ## Rationale
 

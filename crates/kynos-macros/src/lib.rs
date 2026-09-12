@@ -199,7 +199,9 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///
 /// Reads the serde attributes already on the type — `rename_all`, `skip`,
 /// `flatten`, `tag`, `content` — so the schema and the wire form come from one
-/// declaration.
+/// declaration. A field is left out of `required` when it is an `Option`, or
+/// carries `#[serde(default)]` or `skip_serializing_if`, because the wire form
+/// then allows it to be absent.
 ///
 /// Constraints go on fields, and the grammar is exactly the keys of
 /// [`Constraints`](https://docs.rs/kynos/latest/kynos/schema/constraints/struct.Constraints.html)
@@ -240,8 +242,6 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   field is the opt-in that keeps the map: it says the object really is open,
 ///   and the map's values become the parent's `unevaluatedProperties`, the one
 ///   keyword that sees annotations across an `allOf`.
-/// - `#[serde(default)]` or `skip_serializing_if` on a non-`Option` field,
-///   which would make `required` a lie.
 /// - A `#[serde(other)]` catch-all variant, which only 3.2's `defaultMapping`
 ///   could describe and the derive does not emit.
 #[proc_macro_derive(Schema, attributes(schema))]
