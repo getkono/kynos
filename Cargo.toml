@@ -82,6 +82,13 @@ proc-macro2 = "1.0.101"
 proptest = "1.11.0"
 quote = "1.0.40"
 rust_decimal = { version = "1.42.1", default-features = false }
+# The hostile graph `server/tls/` exists to survive, declared so the suite runs
+# under it. Nothing in `src/` names it -- it reaches the library through
+# `tokio-rustls` -- but a dev-dependency asking the same `rustls` for `ring`
+# unifies the two provider features onto one copy, which is the state that made
+# the implicit constructors panic. `default-features = false` so the feature
+# list is only what the graph is being put into.
+rustls = { version = "0.23.43", default-features = false }
 serde = "1.0.219"
 serde_json = "1.0.145"
 serde_urlencoded = "0.7.1"

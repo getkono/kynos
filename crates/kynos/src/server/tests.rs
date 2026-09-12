@@ -1258,6 +1258,50 @@ fn tls_builds_on_a_provider_kynos_names_rather_than_one_it_resolves() {
     .expect("server identity parses")
     .build()
     .expect("a TLS runtime builds with no provider installed by anyone");
+
+    assert!(
+        tokio_rustls::rustls::crypto::CryptoProvider::get_default().is_none(),
+        "naming a provider must not install one: the process default is the binary's to set"
+    );
+}
+
+/// The same two claims, on the path a client certificate adds.
+///
+/// `require_client_certificate` puts a second rustls constructor in `build` --
+/// the client verifier's -- and rustls resolves *its* provider the same
+/// implicit way, so a fix that reaches only the `ServerConfig` half leaves the
+/// panic on the mutual-TLS path and starts writing the process-wide static
+/// there. The install half needs no ambiguous graph to see, which is why it is
+/// what this case asserts: after an mutual-TLS `build`, an application that
+/// calls `install_default` with its own FIPS or hardware-backed provider must
+/// still win, and it cannot if Kynos got there first.
+#[cfg(feature = "tls")]
+#[test]
+fn a_mutual_tls_build_installs_no_process_wide_provider() {
+    assert!(
+        tokio_rustls::rustls::crypto::CryptoProvider::get_default().is_none(),
+        "the premise of this case is that nothing installed a default provider"
+    );
+
+    let issued = authority();
+    let client_authentication = crate::server::tls::ClientCertificateConfig::from_pem_roots(
+        issued.certificate.as_bytes(),
+    )
+    .expect("CA parses");
+
+    crate::server::tls::TlsConfig::from_pem(
+        issued.server.certificate.as_bytes(),
+        issued.server.key.as_bytes(),
+    )
+    .expect("server identity parses")
+    .require_client_certificate(client_authentication)
+    .build()
+    .expect("a mutual-TLS runtime builds with no provider installed by anyone");
+
+    assert!(
+        tokio_rustls::rustls::crypto::CryptoProvider::get_default().is_none(),
+        "configuring client-certificate verification must not install a process default either"
+    );
 }
 
 /// A provider a caller installed is the one `build` runs on, and a provider
