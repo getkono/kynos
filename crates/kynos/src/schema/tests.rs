@@ -414,8 +414,10 @@ struct Audit;
 
 impl Schema for Audit {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
-        let mut object = SchemaObject::default();
-        object.ty = Some(TypeSet::One(SchemaType::Object));
+        let mut object = SchemaObject {
+            ty: Some(TypeSet::One(SchemaType::Object)),
+            ..SchemaObject::default()
+        };
         object
             .properties
             .insert("at".to_owned(), OpenApiSchema::of_type(SchemaType::String));

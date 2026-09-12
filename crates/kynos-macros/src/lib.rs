@@ -221,7 +221,6 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// goes on a `#[serde(flatten)]` field to say that the object really does admit
 /// members nothing names, which is the only thing a flattened map can mean.
 ///
-
 /// # Rejected, because serde and the schema would disagree
 ///
 /// - `#[serde(with = ...)]`, `serialize_with`, `deserialize_with` on a field.
