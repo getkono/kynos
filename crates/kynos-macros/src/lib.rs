@@ -223,9 +223,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///
 /// # Rejected, because serde and the schema would disagree
 ///
-/// - `#[serde(with = ...)]`, `serialize_with`, `deserialize_with` on a field.
-///   The wire form no longer follows from the Rust type, so a schema derived
-///   from the Rust type would be a lie. Supply `#[schema(...)]` explicitly.
+/// - `#[serde(with = ...)]`, `serialize_with`, `deserialize_with` on a field or
+///   a variant. The wire form no longer follows from the Rust type, so a schema
+///   derived from the Rust type would be a lie. Give the value a newtype whose
+///   own `Serialize`, `Deserialize` and `Schema` agree on that form instead.
 /// - `#[serde(untagged)]` enums. `anyOf` with no discriminator is ambiguous to
 ///   decode, and the tie-break is inexpressible. Use an internally or
 ///   adjacently tagged enum, which becomes a `discriminator`.

@@ -154,6 +154,27 @@ pub(super) fn open_span(field: &Field) -> Option<Span> {
     found
 }
 
+/// The first of `keys` a `#[serde(...)]` list names, and where it is written.
+///
+/// Shaped like [`open_span`]: the span is the key itself, and shape errors in
+/// the list are serde's to report, so this raises none.
+pub(super) fn serde_key_span(attrs: &[syn::Attribute], keys: &[&str]) -> Option<(String, Span)> {
+    let mut found = None;
+    for attr in attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        let _ = attr.parse_nested_meta(|meta| {
+            let named = meta.path.get_ident().map(ToString::to_string);
+            if let Some(key) = named.filter(|key| found.is_none() && keys.contains(&key.as_str())) {
+                found = Some((key, meta.path.span()));
+            }
+            skip_value(&meta)
+        });
+    }
+    found
+}
+
 pub(super) fn is_open(field: &Field) -> bool {
     open_span(field).is_some()
 }

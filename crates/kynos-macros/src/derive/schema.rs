@@ -32,7 +32,7 @@ mod shape;
 
 use attributes::{
     constraints, field_name, is_described, is_flattened, is_open, is_required, is_skipped,
-    open_span, variant_name,
+    open_span, serde_key_span, variant_name,
 };
 use shape::{enum_body, struct_body};
 
@@ -61,6 +61,10 @@ const COUNTS: &[&str] = &["min_length", "max_length", "min_items", "max_items"];
 /// Keys written alone, with no value.
 const FLAGS: &[&str] = &["unique_items", "open"];
 
+/// serde's keys that hand a value to a function instead of its own
+/// `Serialize` and `Deserialize`.
+const WIRE_FORM_OVERRIDES: &[&str] = &["with", "serialize_with", "deserialize_with"];
+
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
     match expand_inner(&input) {
@@ -77,6 +81,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         ));
     }
     reject_untagged(input)?;
+    reject_wire_form_overrides(input)?;
     check_constraints(input)?;
 
     let name = &input.ident;
@@ -430,6 +435,53 @@ fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
                 "an untagged enum has no describable decoding rule: `anyOf` without a \
                  discriminator is ambiguous, and serde's first-match tie-break cannot be \
                  expressed. Use `#[serde(tag = \"...\")]`, which becomes a `discriminator`",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A value serde reads or writes through a function has no schema the type
+/// predicts.
+///
+/// Refused on every field and variant the schema describes, which is
+/// everywhere serde accepts the three keys. A skipped field, a `PhantomData`
+/// and every field of a skipped variant are in no schema, so an override on
+/// one of them contradicts nothing and is left alone.
+fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
+    fn fields(fields: &Fields) -> Vec<(&[syn::Attribute], &'static str)> {
+        fields
+            .iter()
+            .filter(|field| is_described(field))
+            .map(|field| (field.attrs.as_slice(), "field"))
+            .collect()
+    }
+
+    let described = match &input.data {
+        Data::Struct(data) => fields(&data.fields),
+        Data::Enum(data) => data
+            .variants
+            .iter()
+            .filter(|variant| !is_skipped(&variant.attrs))
+            .flat_map(|variant| {
+                std::iter::once((variant.attrs.as_slice(), "variant"))
+                    .chain(fields(&variant.fields))
+            })
+            .collect(),
+        // Refused at the top of `expand_inner`.
+        Data::Union(_) => Vec::new(),
+    };
+
+    for (attrs, noun) in described {
+        if let Some((key, span)) = serde_key_span(attrs, WIRE_FORM_OVERRIDES) {
+            return Err(syn::Error::new(
+                span,
+                format!(
+                    "`{key}` reads or writes this {noun} in a form its Rust type does not \
+                     predict, so a schema derived from the type would describe a value the wire \
+                     never carries. Give the value a newtype whose own `Serialize` and \
+                     `Deserialize` produce that form and whose own `Schema` describes it"
+                ),
             ));
         }
     }
