@@ -1,6 +1,6 @@
 use super::{
-    COUNTS, Container, Field, Lit, LitFloat, LitInt, NUMERIC, Span, TokenStream2, Type, Variant,
-    quote, skip_value, string_value,
+    COUNTS, Container, Field, Lit, LitFloat, LitInt, NUMERIC, Span, Spanned, TokenStream2, Type,
+    Variant, quote, skip_value, string_value,
 };
 
 /// The wire name of a field: serde's `rename` if it has one, the container's
@@ -144,10 +144,8 @@ pub(super) fn open_span(field: &Field) -> Option<Span> {
         // Shape errors in the list are `check_constraints`' to report, so this
         // reads the one key it wants and stays silent about the rest.
         let _ = attr.parse_nested_meta(|meta| {
-            if let Some(key) = meta.path.get_ident()
-                && key == "open"
-            {
-                found = Some(key.span());
+            if meta.path.is_ident("open") {
+                found = Some(meta.path.span());
                 return Ok(());
             }
             skip_value(&meta)
