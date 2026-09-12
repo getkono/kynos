@@ -111,6 +111,21 @@ fn every_rejected_schema_attribute_has_a_case() {
         RECORDED.len()
     );
 
+    // Every entry names exactly one recorded refusal. Counting entries alone
+    // lets an unbacked entry stand in for a deleted one whose fragment another
+    // entry now mentions in passing.
+    for entry in &entries {
+        let recorded = RECORDED
+            .iter()
+            .filter(|(fragment, _)| entry.contains(fragment))
+            .count();
+        assert_eq!(
+            recorded, 1,
+            "an entry under `{HEADING}` names {recorded} recorded refusal(s), and each names \
+             exactly one: {entry:?}"
+        );
+    }
+
     for (fragment, snapshot) in RECORDED {
         let naming = entries
             .iter()
