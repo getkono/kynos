@@ -1,4 +1,4 @@
-error: `skip_serializing_if` lets serde leave this field out of what it writes, but without `#[serde(default)]` serde still requires it on read, so no `required` list is true in both directions. Add `#[serde(default)]` beside it, or make the field an `Option`
+error: `skip_serializing_if` lets serde leave this field out of what it writes, but without a `#[serde(default)]` on the field or its struct serde still requires it on read, so no `required` list is true in both directions. Add `#[serde(default)]` beside it or on the struct, or make the field an `Option`
  --> tests/ui/macros/schema_skip_serializing_if_without_default.rs:8:13
   |
 8 |     #[serde(skip_serializing_if = "String::is_empty")]

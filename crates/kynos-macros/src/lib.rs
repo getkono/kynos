@@ -199,10 +199,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///
 /// Reads the serde attributes already on the type — `rename_all`, `skip`,
 /// `flatten`, `tag`, `content` — so the schema and the wire form come from one
-/// declaration. A field is left out of `required` when it is an `Option` or
-/// carries `#[serde(default)]`, because the wire form then allows it to be
-/// absent both ways; `skip_serializing_if` is accepted only alongside one of
-/// those.
+/// declaration. A field is left out of `required` when it is an `Option`,
+/// carries `#[serde(default)]`, or belongs to a struct carrying
+/// `#[serde(default)]`, because the wire form then allows it to be absent both
+/// ways; `skip_serializing_if` is accepted only alongside one of those.
 ///
 /// Constraints go on fields, and the grammar is exactly the keys of
 /// [`Constraints`](https://docs.rs/kynos/latest/kynos/schema/constraints/struct.Constraints.html)
@@ -245,10 +245,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   keyword that sees annotations across an `allOf`.
 /// - A `#[serde(other)]` catch-all variant, which only 3.2's `defaultMapping`
 ///   could describe and the derive does not emit.
-/// - `skip_serializing_if` on a non-`Option` field without `#[serde(default)]`.
-///   serde may leave the field out of what it writes but still requires it on
-///   read, so no `required` list is true in both directions. Add
-///   `#[serde(default)]` beside it.
+/// - `skip_serializing_if` on a non-`Option` field with no `#[serde(default)]`
+///   on the field or its struct. serde may leave the field out of what it
+///   writes but still requires it on read, so no `required` list is true in
+///   both directions. Add `#[serde(default)]` beside it or on the struct.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)

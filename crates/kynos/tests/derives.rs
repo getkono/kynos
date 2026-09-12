@@ -423,18 +423,22 @@ fn required_lists_only_what_serde_always_reads_and_writes() {
 }
 
 /// A container `#[serde(default)]`, which serde honours by filling every
-/// missing field from the struct's own `Default`.
+/// missing field from the struct's own `Default`. `label` also carries
+/// `skip_serializing_if`, which the container `default` makes absent-tolerant
+/// on read as well as on write.
 #[derive(Default, Schema, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 struct Settings {
     retries: u64,
+    #[serde(skip_serializing_if = "String::is_empty")]
     label: String,
 }
 
 /// Under a container `default`, no field is required.
 ///
 /// serde reads `{}` into `Settings::default()`, so a `required` list naming
-/// any field would call a document invalid that the type accepts.
+/// any field would call a document invalid that the type accepts, and a
+/// `skip_serializing_if` field under it is accepted rather than refused.
 #[test]
 fn a_container_default_leaves_every_field_optional() {
     assert_eq!(emitted::<Settings>().get("required"), None);

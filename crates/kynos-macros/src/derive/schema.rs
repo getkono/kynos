@@ -31,8 +31,8 @@ mod attributes;
 mod shape;
 
 use attributes::{
-    constraints, field_name, is_described, is_flattened, is_open, is_option, is_required,
-    is_skipped, open_span, serde_flag, serde_key_span, variant_name,
+    constraints, field_name, is_described, is_flattened, is_open, is_required, is_skipped,
+    open_span, serde_flag, serde_key_span, variant_name,
 };
 use shape::{enum_body, struct_body};
 
@@ -529,9 +529,10 @@ fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
 ///
 /// serde may leave such a field out of what it writes, and rejects a document
 /// without it on read, so listing it in `required` misdescribes a response and
-/// leaving it out misdescribes a request. Beside an `Option` or a
-/// `#[serde(default)]` the field may be absent both ways, which is what lets
-/// [`is_required`] leave it out. Only named fields are checked, since only an
+/// leaving it out misdescribes a request. An `Option`, a field-level
+/// `#[serde(default)]` or a struct's container `#[serde(default)]` lets the
+/// field be absent both ways, which is what lets [`is_required`] leave it out;
+/// this refusal reads that same rule, so the two cannot disagree. Only named fields are checked, since only an
 /// object has a `required` list; a skipped field or a field of a skipped
 /// variant is in no schema.
 fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
@@ -552,17 +553,19 @@ fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
         Fields::Unnamed(_) | Fields::Unit => None,
     });
 
+    let container = Container::read(input);
+
     for field in named.flatten().filter(|field| is_described(field)) {
-        if is_option(&field.ty) || serde_flag(&field.attrs, &["default"]) {
+        if !is_required(field, &container) {
             continue;
         }
         if let Some((_, span)) = serde_key_span(&field.attrs, &["skip_serializing_if"]) {
             return Err(syn::Error::new(
                 span,
                 "`skip_serializing_if` lets serde leave this field out of what it writes, but \
-                 without `#[serde(default)]` serde still requires it on read, so no `required` \
-                 list is true in both directions. Add `#[serde(default)]` beside it, or make the \
-                 field an `Option`",
+                 without a `#[serde(default)]` on the field or its struct serde still requires it \
+                 on read, so no `required` list is true in both directions. Add \
+                 `#[serde(default)]` beside it or on the struct, or make the field an `Option`",
             ));
         }
     }
@@ -580,6 +583,10 @@ struct Container {
     tag: Option<String>,
     content: Option<String>,
     doc: Option<String>,
+    /// A container `#[serde(default)]`, which serde fills every missing field
+    /// from. serde accepts it only on a struct with named fields, so it is
+    /// never set for any other shape.
+    default: bool,
 }
 
 impl Container {
@@ -610,6 +617,9 @@ impl Container {
                 Ok(())
             });
         }
+
+        container.default = matches!(&input.data, Data::Struct(data) if matches!(data.fields, Fields::Named(_)))
+            && serde_flag(&input.attrs, &["default"]);
 
         container
     }

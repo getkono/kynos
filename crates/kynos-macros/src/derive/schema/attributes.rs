@@ -182,15 +182,17 @@ pub(super) fn is_open(field: &Field) -> bool {
 /// Whether a property must be present.
 ///
 /// An `Option` is optional because the type says so, and a field with a serde
-/// `default` is optional because the wire form says so in both directions.
-/// Anything else is required, which is what makes `required` follow from the
-/// declaration rather than from an annotation that could contradict it.
+/// `default` of its own, or in a struct whose container carries one, is
+/// optional because the wire form says so in both directions: serde fills the
+/// missing field from `Default` on read. Anything else is required, which is
+/// what makes `required` follow from the declaration rather than from an
+/// annotation that could contradict it.
 ///
 /// `skip_serializing_if` is not read here: it only lets a field be absent from
-/// what is written, and `reject_read_required_skip` refuses it wherever neither
-/// of the above makes the field absent on read as well.
-pub(super) fn is_required(field: &Field) -> bool {
-    !is_option(&field.ty) && !serde_flag(&field.attrs, &["default"])
+/// what is written, and `reject_read_required_skip` refuses it wherever this
+/// rule says the field is still required on read.
+pub(super) fn is_required(field: &Field, container: &Container) -> bool {
+    !is_option(&field.ty) && !container.default && !serde_flag(&field.attrs, &["default"])
 }
 
 pub(super) fn is_option(ty: &Type) -> bool {
