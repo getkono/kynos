@@ -13,6 +13,7 @@ use std::{
 
 use tokio_rustls::rustls::{
     RootCertStore, ServerConfig as RustlsServerConfig,
+    crypto::CryptoProvider,
     pki_types::{CertificateDer, CertificateRevocationListDer, pem::PemObject},
     server::WebPkiClientVerifier,
 };
@@ -147,8 +148,10 @@ impl TlsConfig {
     }
 
     pub(in crate::server) fn build(self) -> std::result::Result<TlsRuntime, TlsError> {
-        let builder = RustlsServerConfig::builder();
-        let provider = builder.crypto_provider().clone();
+        let provider = crypto_provider();
+        let builder = RustlsServerConfig::builder_with_provider(Arc::clone(&provider))
+            .with_safe_default_protocol_versions()
+            .map_err(|error| TlsError::CryptoProvider(Box::new(error)))?;
         let default = certified_key(&provider, self.default_certificate)?;
         let mut by_name = BTreeMap::new();
         for material in self.sni_certificates {
@@ -194,6 +197,31 @@ impl TlsConfig {
             handshake_timeout: self.handshake_timeout,
         })
     }
+}
+
+/// The crypto provider every rustls configuration here is built on.
+///
+/// Named rather than resolved. The implicit constructors -- `ServerConfig`'s
+/// and `ClientConfig`'s -- derive the process-level provider from the
+/// `aws-lc-rs` and `ring` features of whatever `rustls` the graph unified on,
+/// and panic when zero or two of them are compiled in. Cargo features are
+/// additive, so one dependency enabling `ring` for its own reasons puts every
+/// dependent in that state and no downstream manifest can leave it; the panic
+/// then lands inside [`TlsConfig::build`], whose signature already carries a
+/// [`TlsError`].
+///
+/// A caller that installed a default still wins, which is what keeps a FIPS or
+/// hardware-backed provider reachable. Otherwise the choice is Kynos's, and
+/// `tokio-rustls` is declared with `default-features = false` and `aws-lc-rs`
+/// named explicitly so the provider chosen here is always compiled in.
+///
+/// Nothing is installed as a side effect: a library that writes a process-wide
+/// static takes a decision away from the binary that owns it.
+pub(in crate::server) fn crypto_provider() -> Arc<CryptoProvider> {
+    CryptoProvider::get_default().map_or_else(
+        || Arc::new(tokio_rustls::rustls::crypto::aws_lc_rs::default_provider()),
+        Arc::clone,
+    )
 }
 
 #[derive(Clone)]

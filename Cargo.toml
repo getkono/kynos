@@ -89,7 +89,18 @@ serde_yaml_ng = "0.10.0"
 syn = "2.0.106"
 thiserror = "2.0.19"
 tokio = "1.53.1"
-tokio-rustls = "0.26.4"
+# `server/tls/` names the crypto provider rather than letting rustls resolve one
+# from crate features, so the provider it names has to be compiled in rather
+# than inherited: the defaults are `logging`, `tls12` and `aws_lc_rs`, and
+# leaving them on would mean the right provider is present only for as long as
+# nobody else in the graph enables `ring` as well. `tls12` and `logging` are the
+# other two defaults, kept because dropping either is a behaviour change this
+# declaration is not making.
+tokio-rustls = { version = "0.26.4", default-features = false, features = [
+  "aws-lc-rs",
+  "logging",
+  "tls12",
+] }
 tower = "0.5.2"
 tower-service = "0.3.3"
 tracing = "0.1.41"

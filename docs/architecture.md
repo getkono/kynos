@@ -170,6 +170,18 @@ by naming the row X displaces rather than by arguing that X is good.
   and the rustls connection separable rather than fusing them into one opaque
   stream, so a second backend stays an additive change. No public trait
   abstracts the backend, today or later.
+- **Kynos names the crypto provider rather than resolving one.** rustls derives
+  its process-level provider from the `aws-lc-rs` and `ring` features of
+  whatever copy of itself the graph unified on, and *panics* when zero or two
+  are compiled in. Features are additive, so one dependency enabling `ring` for
+  its own reasons puts every dependent in that state, and no downstream
+  manifest can undo it. `server/tls/` therefore builds on `aws-lc-rs` by name,
+  and `tokio-rustls` is declared with `default-features = false` so that
+  provider is guaranteed present rather than inherited. A caller that installed
+  a default first still wins — that is how a FIPS or hardware-backed provider
+  stays reachable without a rustls type entering a Kynos signature — and a
+  provider that can serve nothing is reported as `TlsError::CryptoProvider`
+  rather than panicked on.
 
 ### The graph
 
@@ -183,7 +195,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | tokio adapters for the driver | `hyper-util` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs) | built |
 | HTTP/1 parsing | `httparse` | never — reached through `hyper` | built |
 | HTTP/2 framing | `h2` | never — reached through `hyper` | built |
-| TLS | `rustls`, via `tokio-rustls` | [`server/tls/`](../crates/kynos/src/server/tls/) | built |
+| TLS | `rustls`, via `tokio-rustls`, on the `aws-lc-rs` provider it names | [`server/tls/`](../crates/kynos/src/server/tls/) | built |
 | Route matching | `matchit` | [`router/`](../crates/kynos/src/router/) | built |
 | JSON Schema instance validation | `jsonschema` | [`test/conformance.rs`](../crates/kynos/src/test/conformance.rs), gated on `test-util` | built |
 | Percent-encoding | `percent-encoding` | [`__private/uri.rs`](../crates/kynos/src/__private/uri.rs) | built |

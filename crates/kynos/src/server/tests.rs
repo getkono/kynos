@@ -735,9 +735,8 @@ fn mutual_tls_rejects_an_existing_incompatible_component() {
 async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
     use http_body_util::{BodyExt as _, Empty};
     use hyper_util::rt::TokioIo;
-    use tokio_rustls::rustls::{
-        ClientConfig,
-        pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject as _},
+    use tokio_rustls::rustls::pki_types::{
+        CertificateDer, PrivateKeyDer, ServerName, pem::PemObject as _,
     };
 
     let issued = authority();
@@ -770,7 +769,7 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
     let server = tokio::spawn(bound.serve());
 
     let anonymous_connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(
-        ClientConfig::builder()
+        client_config_builder()
             .with_root_certificates(trust_anchors(ca))
             .with_no_client_auth(),
     ));
@@ -805,7 +804,7 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
         .expect("client chain parses");
     let client_key =
         PrivateKeyDer::from_pem_slice(issued.client.key.as_bytes()).expect("client key parses");
-    let mut client_config = ClientConfig::builder()
+    let mut client_config = client_config_builder()
         .with_root_certificates(trust_anchors(ca))
         .with_client_auth_cert(client_certificates, client_key)
         .expect("client identity is valid");
@@ -1082,14 +1081,30 @@ async fn tls_server(
 /// on is what the server pins its driver to.
 #[cfg(feature = "tls")]
 fn alpn_connector(authority: &[u8], protocols: &[&[u8]]) -> tokio_rustls::TlsConnector {
-    use tokio_rustls::rustls::ClientConfig;
-
-    let mut config = ClientConfig::builder()
+    let mut config = client_config_builder()
         .with_root_certificates(trust_anchors(authority))
         .with_no_client_auth();
     config.alpn_protocols = protocols.iter().map(|protocol| protocol.to_vec()).collect();
 
     tokio_rustls::TlsConnector::from(std::sync::Arc::new(config))
+}
+
+/// A client configuration builder on the provider the server side names.
+///
+/// `ClientConfig::builder` resolves the process-level crypto provider from
+/// crate features and panics when that is ambiguous, which is the whole of what
+/// [`a_caller_installed_crypto_provider_is_the_one_build_runs_on`] covers on
+/// the server side. The harness would panic the same way under the same graph,
+/// so both ends go through
+/// [`crate::server::tls::crypto_provider`].
+#[cfg(feature = "tls")]
+fn client_config_builder() -> tokio_rustls::rustls::ConfigBuilder<
+    tokio_rustls::rustls::ClientConfig,
+    tokio_rustls::rustls::WantsVerifier,
+> {
+    tokio_rustls::rustls::ClientConfig::builder_with_provider(crate::server::tls::crypto_provider())
+        .with_safe_default_protocol_versions()
+        .expect("the named provider serves the default protocol versions")
 }
 
 /// The PEM authority in `certificate`, as a store a client can verify against.
