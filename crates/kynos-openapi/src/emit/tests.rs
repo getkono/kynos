@@ -135,6 +135,7 @@ mod yaml {
 
         for (digits, expected) in [
             ("42", Number::from(42u64)),
+            ("18446744073709551615", Number::from(u64::MAX)),
             ("-7", Number::from(-7i64)),
             ("-9223372036854775808", Number::from(i64::MIN)),
             ("-0", Number::from(-0.0)),
@@ -203,6 +204,14 @@ mod yaml {
                 .collect::<Mapping>(),
             ),
             token(Value::Number(Number::from(42u64))),
+            // One key over one string, which is a token's shape and a
+            // reference's too: only the key tells them apart.
+            Value::Mapping(
+                [(Value::from("$ref"), Value::from("#/components/schemas/Foo"))]
+                    .into_iter()
+                    .collect::<Mapping>(),
+            ),
+            Value::Bool(true),
         ] {
             let mut walked = untouched.clone();
             restore(&mut walked).expect("nothing here is converted");
