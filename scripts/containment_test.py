@@ -1942,6 +1942,37 @@ class Main(unittest.TestCase):
         self.assertTrue(offenders)
         self.assertNotIn(gate.OFF_PATH_SCOPE + site, offenders)
 
+    def test_a_document_beside_the_code_that_serves_a_request_is_reported(self):
+        # The offender scan over the three files #131 split. Each served a
+        # request and was a site the document row allowed, so a new `Document`
+        # in one of them passed the gate -- serializing on every `/openapi.json`
+        # request was a green build. The split moved the describing half out
+        # and the row now allows only that half, so what is held is that each
+        # serving half is outside the row: put one of these back on it, or
+        # move `render` home, and this case is the one that goes red.
+        #
+        # One corpus probing all three rather than a gate run apiece: the row
+        # reports every offender in one failure, so each file is read off its
+        # lines and the case costs one run of the gate like its neighbours.
+        paths = (
+            "crates/kynos/src/router/docs/mod.rs",
+            "crates/kynos/src/server/mod.rs",
+            "crates/kynos/src/unchecked.rs",
+        )
+        corpus = gate.WORKSPACE
+        for path in paths:
+            corpus = corpus.replacing(
+                path, corpus.raw[path] + "\npub(crate) fn probe(_: &Document) {}\n"
+            )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "is off the request path")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("`Document`", reported[0])
+        offenders = [line.strip() for line in reported[0].split("\n")[1:] if line.strip()]
+        for path in paths:
+            self.assertIn(path, offenders)
+
     def test_a_flag_named_at_a_site_no_row_allows_is_reported(self):
         # The offender scan again, reached through the corpus rather than
         # through the table, and over a gate-only row: `test-util` has no
