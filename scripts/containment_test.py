@@ -1948,8 +1948,9 @@ class Main(unittest.TestCase):
         # in one of them passed the gate -- serializing on every `/openapi.json`
         # request was a green build. The split moved the describing half out
         # and the row now allows only that half, so what is held is that each
-        # serving half is outside the row: put one of these back on it, or
-        # move `render` home, and this case is the one that goes red.
+        # serving half is outside the row: put one of these back on it -- which
+        # moving `render` home would also require -- and this case is the one
+        # that goes red.
         #
         # One corpus probing all three rather than a gate run apiece: the row
         # reports every offender in one failure, so each file is read off its
