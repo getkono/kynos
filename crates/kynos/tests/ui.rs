@@ -118,6 +118,7 @@ fn every_guided_diagnostic_has_a_snapshot() {
         ("IntoResponse", "antipattern/bare_status_code.stderr"),
         ("Languages", "traits/languages.stderr"),
         ("MapKey", "traits/map_key.stderr"),
+        ("OpenMap", "traits/open_map.stderr"),
         ("Provides", "antipattern/inject_without_provider.stderr"),
         ("Rangeable", "traits/rangeable.stderr"),
         ("RequestContent", "traits/request_content.stderr"),

@@ -174,28 +174,43 @@ fn schema_bounded_generics(input: &DeriveInput) -> syn::Generics {
 /// downstream code happens to name it. `schema_bounded_generics` also records
 /// why field-type predicates were rejected once already.
 ///
-/// A field carrying `#[schema(open)]` is exempt, because that attribute is the
-/// declaration that the object really is open and `object_body` describes it
-/// with `unevaluatedProperties` instead.
+/// A field carrying `#[schema(open)]` is bounded by `kynos::schema::OpenMap`
+/// instead. That attribute is the declaration that the object really is open,
+/// and `object_body` describes it by hoisting the field's `additionalProperties`
+/// to `unevaluatedProperties` — which only a map described in place has to
+/// hoist, since anything reached through a `$ref` would carry its own into the
+/// `allOf`.
 fn flatten_witnesses(input: &DeriveInput, generics: &syn::Generics) -> TokenStream2 {
     let (impl_generics, _, where_clause) = generics.split_for_impl();
 
     let witnesses = field_groups(input)
         .into_iter()
         .flat_map(Fields::iter)
-        .filter(|field| is_described(field) && is_flattened(field) && !is_open(field))
+        .filter(|field| is_described(field) && is_flattened(field))
         .map(|field| {
             let ty = &field.ty;
             // Spanned at the field's type, so the refusal points at what was
             // written rather than at the derive.
-            quote_spanned! {ty.span()=>
-                const _: () = {
-                    #[allow(dead_code, deprecated)]
-                    fn flattened_fields_name_their_members #impl_generics () #where_clause {
-                        fn is_flattenable<T: ::kynos::schema::Flatten + ?Sized>() {}
-                        is_flattenable::<#ty>();
-                    }
-                };
+            if is_open(field) {
+                quote_spanned! {ty.span()=>
+                    const _: () = {
+                        #[allow(dead_code, deprecated)]
+                        fn open_fields_are_maps_described_in_place #impl_generics () #where_clause {
+                            fn is_open_map<T: ::kynos::schema::OpenMap + ?Sized>() {}
+                            is_open_map::<#ty>();
+                        }
+                    };
+                }
+            } else {
+                quote_spanned! {ty.span()=>
+                    const _: () = {
+                        #[allow(dead_code, deprecated)]
+                        fn flattened_fields_name_their_members #impl_generics () #where_clause {
+                            fn is_flattenable<T: ::kynos::schema::Flatten + ?Sized>() {}
+                            is_flattenable::<#ty>();
+                        }
+                    };
+                }
             }
         });
 
