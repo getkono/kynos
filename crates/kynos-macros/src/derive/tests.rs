@@ -359,6 +359,30 @@ mod schema {
             }
         )));
     }
+
+    /// A transparent struct does not claim to be flattenable.
+    ///
+    /// serde writes a `#[serde(transparent)]` struct as its one field's value,
+    /// so what flattening it contributes is that field's members, not the
+    /// struct's. Named fields are the shape of the declaration and say nothing
+    /// about the wire, and a transparent wrapper over a map would otherwise
+    /// carry the map straight past the bound.
+    #[test]
+    fn a_transparent_struct_does_not_claim_flatten() {
+        // The same declaration without the attribute does claim it, so the
+        // case isolates the attribute rather than the shape.
+        assert!(claims_flatten(quote::quote!(
+            struct Labels {
+                inner: BTreeMap<String, String>,
+            }
+        )));
+        assert!(!claims_flatten(quote::quote!(
+            #[serde(transparent)]
+            struct Labels {
+                inner: BTreeMap<String, String>,
+            }
+        )));
+    }
 }
 
 mod api_error {
