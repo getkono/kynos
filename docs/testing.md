@@ -460,7 +460,7 @@ halve.
 
 | Element | Named by | Named only in | Why a request cannot reach it |
 | --- | --- | --- | --- |
-| the emitted document | `Document` | `router/describe.rs`, `router/docs/render.rs`, `router/install.rs`, `router/mod.rs`, `router/service.rs`, `server/describe.rs`, `server/tls/document.rs`, `test/conformance.rs`, `unchecked/describe.rs` | every site builds it, annotates it, or hands it back to the application, and not one of the nine serves a request. `docs::render::render` serializes it once while the router is built, so the endpoint serving a description holds finished bytes rather than a `Document`, and `Service` reads it back only through `Service::openapi` |
+| the emitted document | `Document` | `router/describe.rs`, `router/docs/render.rs`, `router/install.rs`, `router/mod.rs`, `router/service.rs`, `server/describe.rs`, `server/tls/document.rs`, `test/conformance.rs`, `unchecked/describe.rs` | every site builds it, annotates it, or hands it back to the application. `docs::render::render` serializes it once while the router is built, so the endpoint serving a description holds finished bytes rather than a `Document`. Two sites also serve a request, so for them the reason is an argument the rule does not check: `router/describe.rs` builds the per-request closure where the document is in scope and moves only the dispatch table into it, and `router/service.rs`'s `Service` owns the document and hands it back only through `Service::openapi` |
 | the schema registry | `Registry::{new,default}` | `router/describe.rs` | the one registry a build mints is consumed by `describe`, which has finished before a service exists to accept a request |
 | the document validators | `Validator` | `router/describe.rs` | a description is validated where it is built. The build either fails or drops the validator, and nothing on the request path holds one to run |
 | the JSON Schema interpreter | `jsonschema` | `test/conformance.rs` | it is behind `test-util` and exists to check an observed response against the description. The request parser is the other projection of the same declaration and interprets no schema |
@@ -611,8 +611,8 @@ the callee the `Request`, and an `Observer` is handed a `Duration` and a
 pins is the stored half — the table's own shape — and that is what a new field
 on it would change.
 
-What the pair does compose into is **no file the document row allows serves a
-request**. Three of the sites it allowed once did — `unchecked.rs`,
+What the pair does compose into is **none of the three describing halves split
+out for #131 serves a request**. The files they came from do — `unchecked.rs`,
 `server/mod.rs` and `router/docs/mod.rs` — and a new use of `Document` inside
 one of them was allowed by the row and invisible to the witness, which is
 [#131](https://github.com/getkono/kynos/issues/131). Each was split in two, and
