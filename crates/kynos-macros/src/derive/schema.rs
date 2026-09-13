@@ -215,8 +215,13 @@ fn flatten_witnesses(input: &DeriveInput, generics: &syn::Generics) -> TokenStre
 ///
 /// A container carrying `#[schema(open)]` is excluded whatever its shape: its
 /// own `unevaluatedProperties` would, one level up, reach the members the outer
-/// object declared.
+/// object declared. So is a `#[serde(transparent)]` one, whose wire form is its
+/// one field's value rather than an object naming the fields it declares.
 fn flattens(input: &DeriveInput, container: &Container) -> bool {
+    if container.transparent {
+        return false;
+    }
+
     let groups = field_groups(input);
     if groups.iter().flat_map(|group| group.iter()).any(is_open) {
         return false;
@@ -446,6 +451,9 @@ struct Container {
     rename_all: Option<String>,
     tag: Option<String>,
     content: Option<String>,
+    /// `#[serde(transparent)]`: the wire form is the one field's value, not an
+    /// object of the fields the declaration names.
+    transparent: bool,
     doc: Option<String>,
 }
 
@@ -472,6 +480,7 @@ impl Container {
                     "rename_all" => container.rename_all = string_value(&meta)?,
                     "tag" => container.tag = string_value(&meta)?,
                     "content" => container.content = string_value(&meta)?,
+                    "transparent" => container.transparent = true,
                     _ => skip_value(&meta)?,
                 }
                 Ok(())
