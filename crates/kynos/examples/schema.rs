@@ -12,11 +12,13 @@
 //!   the schema derive reads the same declaration, so the wire form and the
 //!   description come from one place and cannot drift. There is no parallel
 //!   `#[schema(rename_all = ...)]` to forget.
-//! * **`#[schema(...)]` carries constraints and nothing else.** Its keys are
-//!   exactly the fields of [`Constraints`](kynos::schema::constraints), so the
-//!   attribute and the type it fills cannot disagree. `format` is rejected: a
-//!   constraint is a business rule about one field, and a format is a claim
+//! * **`#[schema(...)]` carries constraints, plus `open`.** Its constraint keys
+//!   are exactly the fields of [`Constraints`](kynos::schema::constraints), so
+//!   the attribute and the type it fills cannot disagree. `format` is rejected:
+//!   a constraint is a business rule about one field, and a format is a claim
 //!   about what a type *is*. See [`scalars.rs`](scalars.rs) for the latter.
+//!   `open` is the one key that is not a constraint: on a flattened map it says
+//!   the object admits members nothing names, which `Product::attributes` shows.
 //! * **A map key is a trait, not an annotation.** JSON object keys are strings,
 //!   so `MapKey` produces the key's *constraints* rather than its schema —
 //!   string-ness is then true by construction rather than a promise nothing
@@ -99,6 +101,18 @@ struct Product {
     #[deprecated(note = "use `tags`; the note stays in Rust and never reaches the description")]
     #[schema(max_length = 120)]
     keywords: Option<String>,
+
+    /// Whatever else a supplier attaches, as members of the product itself.
+    ///
+    /// `#[serde(flatten)]` puts the entries beside `displayName` rather than
+    /// under a property of their own, and `#[schema(open)]` says the object
+    /// admits them: the map's values become `unevaluatedProperties`, which only
+    /// reaches members the properties above did not name. Without `open` a
+    /// flattened map does not compile, because its value schema would reach
+    /// those properties too.
+    #[serde(flatten)]
+    #[schema(open)]
+    attributes: HashMap<String, String>,
 }
 
 /// How a product was priced.
@@ -175,6 +189,7 @@ async fn get_catalogue() -> Json<Catalogue> {
         // rather than inventing a second one only the description reads.
         #[allow(deprecated)]
         keywords: None,
+        attributes: HashMap::from([("switches".to_owned(), "tactile".to_owned())]),
     };
 
     Json(Catalogue {
