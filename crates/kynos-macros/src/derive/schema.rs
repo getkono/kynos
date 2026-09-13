@@ -24,8 +24,9 @@
 //!
 //! `open` is the one member that is not a constraint, which is why the list is
 //! no longer the `Constraints` keys alone. It says how a `#[serde(flatten)]`
-//! field composes rather than what a value may be, and every other flattened
-//! field is bounded by `kynos::schema::Flatten` instead.
+//! field composes rather than what a value may be. An open field is bounded by
+//! `kynos::schema::OpenMap`, and every other flattened field by
+//! `kynos::schema::Flatten`.
 
 mod attributes;
 mod shape;

@@ -379,9 +379,17 @@ Kynos's own.
 
 A flattened map is a real shape, and refusing it outright would remove it with
 no way back. `#[schema(open)]` on the flattened field is the declaration that
-the object admits members nothing names. It drops the bound and changes what is
-emitted: the flattened schema's `additionalProperties` is hoisted onto the
-parent as `unevaluatedProperties`.
+the object admits members nothing names. It swaps the `Flatten` bound for
+[`OpenMap`](https://docs.rs/kynos/latest/kynos/schema/trait.OpenMap.html) and
+changes what is emitted: the flattened schema's `additionalProperties` is
+hoisted onto the parent as `unevaluatedProperties`.
+
+The hoist needs the map's own schema object in hand, which is what `OpenMap`
+asks for. `HashMap` and `BTreeMap` implement it, as does a `Box` or `Arc` of
+one. A named type — a newtype over a map, or a struct with an open field of its
+own — resolves to a `$ref`: there is nothing to hoist, and the
+`additionalProperties` of the schema it refers to would reach the parent's
+properties from inside the `allOf`. So it is a compile error at the field.
 
 ```rust,ignore
 #[derive(Schema, Serialize)]
@@ -397,6 +405,7 @@ struct Thing {
 { "type": "object",
   "properties": { "id": { "type": "integer", "format": "uint64", "minimum": 0 } },
   "required": ["id"],
+  "allOf": [{ "type": "object" }],
   "unevaluatedProperties": { "type": "string" } }
 ```
 
@@ -415,7 +424,9 @@ One thing is lost deliberately: a map whose key type constrains
 the `allOf` branch `propertyNames` names the parent's own properties too, which
 is the defect above in its other form, and `patternProperties` — which could
 express it — is not emitted. The key constraint is dropped rather than moved, so
-the description stays weaker than the type instead of contradicting it.
+the description stays weaker than the type instead of contradicting it. The
+`allOf` keeps what is left of the map's schema, `{ "type": "object" }`, which
+asserts nothing the parent does not.
 
 ## The order components are emitted in
 

@@ -219,7 +219,11 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///
 /// `open` is the one member of `#[schema(...)]` that is not a constraint. It
 /// goes on a `#[serde(flatten)]` field to say that the object really does admit
-/// members nothing names, which is the only thing a flattened map can mean.
+/// members nothing names, which is the only thing a flattened map can mean. The
+/// field's type must implement
+/// [`OpenMap`](https://docs.rs/kynos/latest/kynos/schema/trait.OpenMap.html) — a
+/// `HashMap` or `BTreeMap`, not a type that refers to one — and a key type's
+/// `propertyNames` does not survive it.
 ///
 /// # Rejected, because serde and the schema would disagree
 ///
@@ -238,7 +242,9 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   bound the expansion asserts per flattened field. `#[schema(open)]` on that
 ///   field is the opt-in that keeps the map: it says the object really is open,
 ///   and the map's values become the parent's `unevaluatedProperties`, the one
-///   keyword that sees annotations across an `allOf`.
+///   keyword that sees annotations across an `allOf`. The same bound holds the
+///   payload of an internally tagged enum's newtype variant, which is composed
+///   beside the tag in an `allOf` the same way.
 /// - `#[serde(default)]` or `skip_serializing_if` on a non-`Option` field,
 ///   which would make `required` a lie.
 /// - A `#[serde(other)]` catch-all variant under `openapi31` alone, which needs
