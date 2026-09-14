@@ -193,7 +193,7 @@ fn flatten_witnesses(
 ) -> TokenStream2 {
     let (impl_generics, _, where_clause) = generics.split_for_impl();
 
-    let flattened = field_groups(input)
+    let flattened = described_groups(input)
         .into_iter()
         .flat_map(Fields::iter)
         .filter(|field| is_described(field) && is_flattened(field));
@@ -261,7 +261,7 @@ fn flattens(input: &DeriveInput, container: &Container) -> bool {
         return false;
     }
 
-    let groups = field_groups(input);
+    let groups = described_groups(input);
     if groups.iter().flat_map(|group| group.iter()).any(is_open) {
         return false;
     }
@@ -369,6 +369,25 @@ fn field_groups(input: &DeriveInput) -> Vec<&Fields> {
             .map(|variant| &variant.fields)
             .collect(),
         Data::Union(_) => Vec::new(),
+    }
+}
+
+/// The field groups the emitted schema describes: every group but a skipped
+/// variant's.
+///
+/// serde never writes a `#[serde(skip)]` variant, so no branch is emitted for it
+/// and its fields reach neither a flatten witness nor the `Flatten` decision.
+/// `check_constraints` still reads [`field_groups`], because a malformed
+/// attribute is an error wherever it is written.
+fn described_groups(input: &DeriveInput) -> Vec<&Fields> {
+    match &input.data {
+        Data::Enum(data) => data
+            .variants
+            .iter()
+            .filter(|variant| !is_skipped(&variant.attrs))
+            .map(|variant| &variant.fields)
+            .collect(),
+        _ => field_groups(input),
     }
 }
 
