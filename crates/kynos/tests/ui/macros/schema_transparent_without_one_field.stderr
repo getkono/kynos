@@ -1,4 +1,4 @@
-error: `#[serde(transparent)]` writes one field's value, and `Schema` describes the one field no `skip`, `skip_serializing`, `skip_deserializing` or `PhantomData` leaves out; this struct has 2, so serde may write one field and read another, or a field the schema cannot name. Leave exactly one such field, and mark every other `#[serde(skip)]`
+error: `#[serde(transparent)]` makes serde write through the one field without `skip` or `skip_serializing` and read through the one field without `skip`, `skip_deserializing` or `default`, and a schema is true of both only when they are the same field; this struct writes through 2 fields and reads through `value`. Leave one field serde both writes and reads, and mark every other `#[serde(skip)]`
  --> tests/ui/macros/schema_transparent_without_one_field.rs:8:9
   |
 8 | #[serde(transparent)]

@@ -264,11 +264,12 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   fields or variants no longer predict. Implement `Schema` by hand, describing
 ///   the type serde converts through. `#[serde(remote = ...)]` is accepted,
 ///   since its fields mirror the type it names.
-/// - `#[serde(transparent)]` on a struct without exactly one field that no
-///   `skip`, `skip_serializing`, `skip_deserializing` or `PhantomData` leaves
-///   out. serde picks the field per direction, so it may write one field and
-///   read another, and no one schema is true of both. Mark every other field
-///   `#[serde(skip)]`.
+/// - `#[serde(transparent)]` on a struct serde may write and read through
+///   different fields. serde writes through the field without `skip` or
+///   `skip_serializing` and reads through the field without `skip`,
+///   `skip_deserializing` or a field-level `default`, so where either direction
+///   picks one field, the other must pick the same one. Where neither picks one,
+///   serde refuses the struct itself. Mark every other field `#[serde(skip)]`.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)
