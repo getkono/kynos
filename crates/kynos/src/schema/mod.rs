@@ -287,11 +287,12 @@ pub trait Flatten: Schema {}
 ///
 /// Implemented for [`HashMap`](std::collections::HashMap) and
 /// [`BTreeMap`](std::collections::BTreeMap), and carried across `Box<T>` and
-/// `Arc<T>`. Also for [`Unchecked`](unchecked::Unchecked), which has no
-/// `additionalProperties` to hoist and so leaves the object open — the route for
-/// arbitrary JSON beside an object's own members. Unsealed, for the reason
-/// [`MapKey`] is — a hand-written [`Schema`] that claims no component name and
-/// describes an object by `additionalProperties` alone has to be able to say so.
+/// `Arc<T>`. Also for [`Unchecked`](unchecked::Unchecked) over one of those or
+/// over a `serde_json::Map`, which has no `additionalProperties` to hoist and so
+/// leaves the object open — the route for arbitrary JSON beside an object's own
+/// members. Unsealed, for the reason [`MapKey`] is — a hand-written [`Schema`]
+/// that claims no component name and describes an object by
+/// `additionalProperties` alone has to be able to say so.
 ///
 /// A key constraint does not survive the hoist. Inside the `allOf` branch
 /// `propertyNames` would name the parent's own properties too, so it is dropped:

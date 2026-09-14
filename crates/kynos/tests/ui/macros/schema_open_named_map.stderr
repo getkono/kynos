@@ -17,6 +17,7 @@ help: the trait `OpenMap` is not implemented for `Labels`
              Box<T>
              HashMap<K, V, S>
              Unchecked<T>
+             Unchecked<serde_json::map::Map<std::string::String, serde_json::value::Value>>
 note: required by a bound in `is_open_map`
   --> tests/ui/macros/schema_open_named_map.rs:15:12
    |

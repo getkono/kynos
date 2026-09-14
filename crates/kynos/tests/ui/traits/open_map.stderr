@@ -13,6 +13,7 @@ error[E0277]: `std::string::String` cannot be flattened with `#[schema(open)]`
             Box<T>
             HashMap<K, V, S>
             Unchecked<T>
+            Unchecked<serde_json::map::Map<std::string::String, serde_json::value::Value>>
 note: required by a bound in `is_open_map`
  --> tests/ui/traits/open_map.rs:4:19
   |
