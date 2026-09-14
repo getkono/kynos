@@ -261,10 +261,29 @@ mod schema {
         ]
     }
 
+    /// The refusals that depend on how an enum's variants are tagged.
+    ///
+    /// A third function for the reason `serde_ledger` gives: that list is at
+    /// the length Clippy accepts.
+    fn variant_ledger() -> Vec<Case> {
+        vec![case(
+            "a skipped non-`Option` member of an adjacently tagged newtype variant",
+            quote::quote!(
+                #[serde(tag = "t", content = "c")]
+                enum Reading {
+                    Count(u64),
+                    Hidden(#[serde(skip)] u64),
+                }
+            ),
+            "writes the variant as its tag alone",
+        )]
+    }
+
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
         each_case_is_refused(serde_ledger(), expand_inner);
+        each_case_is_refused(variant_ledger(), expand_inner);
     }
 
     #[test]
@@ -272,7 +291,7 @@ mod schema {
         every_diagnostic_has_a_case(
             "schema.rs",
             include_str!("schema.rs"),
-            ledger().len() + serde_ledger().len(),
+            ledger().len() + serde_ledger().len() + variant_ledger().len(),
         );
     }
 
@@ -441,6 +460,15 @@ mod schema {
             quote::quote!(
                 #[serde(transparent)]
                 struct Pair(u64, #[serde(skip, with = "as_string")] u64);
+            ),
+            // serde neither writes nor reads through a transparent tuple's
+            // unpicked member, whatever it skips, as with its named twin.
+            quote::quote!(
+                #[serde(transparent)]
+                struct Pair(
+                    u64,
+                    #[serde(default, skip_serializing, with = "as_string")] u64,
+                );
             ),
             quote::quote!(
                 struct Reading {
@@ -1159,6 +1187,51 @@ mod schema {
         );
     }
 
+    /// A skipped member of an adjacently tagged newtype variant is refused
+    /// unless its type is an `Option`, however the skip is spelt.
+    ///
+    /// serde writes such a variant as the tag alone and reads it only beside
+    /// its content, which an `Option` member alone may leave out.
+    #[test]
+    fn every_skipped_adjacently_tagged_payload_is_refused_unless_optional() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "`skip` on an adjacently tagged newtype-variant member",
+                    quote::quote!(
+                        #[serde(tag = "t", content = "c")]
+                        enum Reading {
+                            Hidden(#[serde(skip)] u64),
+                        }
+                    ),
+                    "`skip` leaves out the only member",
+                ),
+                case(
+                    "`skip_serializing` beside `skip_deserializing` on that member",
+                    quote::quote!(
+                        #[serde(tag = "t", content = "c")]
+                        enum Reading {
+                            Hidden(#[serde(skip_serializing, skip_deserializing)] String),
+                        }
+                    ),
+                    "`skip_serializing` leaves out the only member",
+                ),
+                case(
+                    "`skip` on a member whose path type is not an `Option`",
+                    quote::quote!(
+                        #[serde(tag = "t", content = "c", rename_all = "snake_case")]
+                        enum Reading {
+                            Count(u64),
+                            Hidden(#[serde(skip)] std::vec::Vec<u64>),
+                        }
+                    ),
+                    "`skip` leaves out the only member",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
     /// Every member skip serde honours in both directions expands.
     ///
     /// Each row is a placement the refusal must not reach: a newtype struct,
@@ -1218,6 +1291,32 @@ mod schema {
             quote::quote!(
                 #[serde(transparent)]
                 struct Handle(u64, #[serde(default, skip_serializing)] u64);
+            ),
+            // A container `default` fills every missing trailing element.
+            quote::quote!(
+                #[serde(default)]
+                struct Tally(u64, #[serde(skip_serializing_if = "is_zero")] u64);
+            ),
+            // A skipped newtype variant serde reads back as it writes: an
+            // `Option` member under adjacent tagging, and any member under
+            // external or internal tagging.
+            quote::quote!(
+                #[serde(tag = "t", content = "c")]
+                enum Reading {
+                    Hidden(#[serde(skip)] Option<u64>),
+                }
+            ),
+            quote::quote!(
+                enum Reading {
+                    Hidden(#[serde(skip)] u64),
+                }
+            ),
+            quote::quote!(
+                #[serde(tag = "t")]
+                enum Reading {
+                    Total(Audit),
+                    Hidden(#[serde(skip)] u64),
+                }
             ),
         ] {
             let input: syn::DeriveInput =
