@@ -733,6 +733,25 @@ fn an_enum_of_names_counts_a_skipped_newtype_variant_as_a_name() {
     );
 }
 
+// `Duration` has no schema and `String` is not `Flatten`, so both were compile
+// errors while the derive still described the member serde skips.
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Elapsed(u64, #[serde(skip)] std::time::Duration);
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "t")]
+enum Remark {
+    Shown(Payload),
+    Hidden(#[serde(skip)] String),
+}
+
+/// A member serde never writes or reads asks nothing of its type.
+#[test]
+fn a_skipped_member_needs_no_schema_of_its_own() {
+    implements_schema::<Elapsed>();
+    implements_schema::<Remark>();
+}
+
 // --- What a derived error response declares ---------------------------------
 //
 // A problem body carries the type URI the declaration named, so the response
