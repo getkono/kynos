@@ -601,6 +601,16 @@ mod schema {
                     extra: HashMap<String, String>,
                 }
             ),
+            // A transparent struct is its one field's value, which serde
+            // writes whatever `skip_serializing_if` says, so there is no
+            // `required` list for the field to contradict.
+            quote::quote!(
+                #[serde(transparent)]
+                struct Draft {
+                    #[serde(skip_serializing_if = "String::is_empty")]
+                    elided: String,
+                }
+            ),
             // The same rule inside an internally tagged struct variant: an
             // `Option` field may be absent both ways.
             quote::quote!(
