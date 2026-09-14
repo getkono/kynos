@@ -14,9 +14,9 @@ use super::{
 /// helper, so the field described here is the one that refusal accepted.
 ///
 /// A newtype is transparent, because serde makes it so: `Sku(String)` is a
-/// string on the wire and describing it as anything else would be a claim the
-/// serializer contradicts. A longer tuple is the array serde writes, and a unit
-/// struct is `null`.
+/// string on the wire, under what its member declares, and describing it as
+/// anything else would be a claim the serializer contradicts. A longer tuple is
+/// the array serde writes, and a unit struct is `null`.
 pub(super) fn struct_body(fields: &Fields, container: &Container) -> TokenStream2 {
     if let (true, Some(field)) = (container.transparent, transparent_member(fields)) {
         return member_schema(field);
@@ -25,8 +25,7 @@ pub(super) fn struct_body(fields: &Fields, container: &Container) -> TokenStream
     match fields {
         Fields::Named(named) => object_body(&named.named, container, None),
         Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => {
-            let ty = &unnamed.unnamed[0].ty;
-            quote!(registry.resolve::<#ty>())
+            member_schema(&unnamed.unnamed[0])
         }
         Fields::Unnamed(unnamed) => tuple_body(&unnamed.unnamed),
         Fields::Unit => quote! {
@@ -38,15 +37,12 @@ pub(super) fn struct_body(fields: &Fields, container: &Container) -> TokenStream
 }
 
 /// A tuple's schema: a closed array of the members serde does not skip both
-/// ways, bounded below by the fewest serde reads. With no member left there is
-/// no `prefixItems`, which may not be empty.
+/// ways, each under what it declares, bounded below by the fewest serde reads.
+/// With no member left there is no `prefixItems`, which may not be empty.
 pub(super) fn tuple_body(fields: &Punctuated<Field, Comma>) -> TokenStream2 {
     let positions = positional_members(fields);
     let fewest = min_items(&positions);
-    let members = positions.iter().map(|field| {
-        let ty = &field.ty;
-        quote!(registry.resolve::<#ty>())
-    });
+    let members = positions.iter().map(|field| member_schema(field));
     let prefix = (!positions.is_empty()).then(|| {
         quote!(keywords.prefix_items = ::core::option::Option::Some(::std::vec![#(#members),*]);)
     });
@@ -377,17 +373,15 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
     }
 }
 
-/// The schema of what a variant carries, or nothing for a unit variant, which
-/// a newtype variant whose member serde skips is on the wire.
+/// The schema of what a variant carries, a newtype variant's under what its
+/// member declares, or nothing for a unit variant, which a newtype variant
+/// whose member serde skips is on the wire.
 pub(super) fn payload(fields: &Fields, container: &Container) -> Option<TokenStream2> {
     match fields {
         Fields::Unit => None,
         Fields::Named(named) => Some(object_body(&named.named, container, None)),
         Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => {
-            (!is_unit_like(fields)).then(|| {
-                let ty = &unnamed.unnamed[0].ty;
-                quote!(registry.resolve::<#ty>())
-            })
+            (!is_unit_like(fields)).then(|| member_schema(&unnamed.unnamed[0]))
         }
         Fields::Unnamed(unnamed) => Some(tuple_body(&unnamed.unnamed)),
     }
