@@ -101,6 +101,10 @@ fn every_rejected_schema_attribute_has_a_case() {
             "`#[serde(transparent)]`",
             "macros/schema_transparent_without_one_field.stderr",
         ),
+        (
+            "`skip_deserializing` alone",
+            "macros/schema_tuple_member_skipped_one_way.stderr",
+        ),
     ];
     const HEADING: &str = "# Rejected, because serde and the schema would disagree";
 

@@ -204,7 +204,9 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// `#[serde(default)]`, because the wire form then allows it to be absent both
 /// ways; `skip_serializing_if` is accepted only alongside one of those. A
 /// `transparent` struct is described by its one described field, with that
-/// field's constraints, and keeps its own component name, as a newtype does.
+/// field's constraints, and keeps its own component name, as a newtype does. A
+/// tuple is the array of the members serde does not skip both ways, and a
+/// newtype variant whose member serde skips is the unit variant serde writes.
 ///
 /// Constraints go on fields, and the grammar is exactly the keys of
 /// [`Constraints`](https://docs.rs/kynos/latest/kynos/schema/constraints/struct.Constraints.html)
@@ -269,6 +271,13 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   out. serde picks the field per direction, so it may write one field and
 ///   read another, and no one schema is true of both. Mark every other field
 ///   `#[serde(skip)]`.
+/// - `#[serde(skip_serializing)]` or `skip_deserializing` alone on a member of a
+///   tuple struct, a tuple variant or a newtype variant, or `skip_serializing_if`
+///   on a tuple member other than the last one carrying `#[serde(default)]`. A
+///   position, or a variant's payload, is there or not as a whole, so serde
+///   would write one shape and read another. `#[serde(skip)]` leaves the member
+///   out both ways; a newtype struct is exempt, since serde ignores all three
+///   there.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)

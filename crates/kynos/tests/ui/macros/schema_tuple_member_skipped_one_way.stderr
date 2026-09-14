@@ -1,0 +1,5 @@
+error: `skip_serializing` leaves this member out in one direction only, and a tuple position or a newtype variant's payload is on the wire or not as a whole, so serde would write one shape and read another. Use `#[serde(skip)]` to leave it out both ways, or give the type named fields
+ --> tests/ui/macros/schema_tuple_member_skipped_one_way.rs:8:23
+  |
+8 | struct P(u64, #[serde(skip_serializing)] u64);
+  |                       ^^^^^^^^^^^^^^^^
