@@ -240,6 +240,23 @@ mod schema {
                 ),
                 "`#[serde(transparent)]` writes one field's value",
             ),
+            case(
+                "`skip_serializing` alone on a tuple member, which serde writes one way only",
+                quote::quote!(
+                    struct Pair(u64, #[serde(skip_serializing)] u64);
+                ),
+                "leaves this member out in one direction only",
+            ),
+            case(
+                "`skip_serializing_if` on a tuple member that is not the last one",
+                quote::quote!(
+                    struct Reading(
+                        #[serde(default, skip_serializing_if = "is_zero")] u64,
+                        #[serde(default)] String,
+                    );
+                ),
+                "`skip_serializing_if` on a tuple member is refused unless",
+            ),
         ]
     }
 
@@ -785,6 +802,191 @@ mod schema {
             )],
             expand_inner,
         );
+    }
+
+    /// A member serde leaves out in one direction only is refused wherever it
+    /// holds a position or a variant's payload, under each key and tagging.
+    ///
+    /// One row per key and placement: the ledger's single row proves the site
+    /// fires, and this proves the walk reaches every placement and names the
+    /// key that was written.
+    #[test]
+    fn every_one_way_member_skip_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "`skip_serializing` on a tuple member",
+                    quote::quote!(
+                        struct Pair(u64, #[serde(skip_serializing)] u64);
+                    ),
+                    "`skip_serializing` leaves this member out in one direction only",
+                ),
+                case(
+                    "`skip_deserializing` on a tuple member",
+                    quote::quote!(
+                        struct Pair(#[serde(skip_deserializing)] u64, String);
+                    ),
+                    "`skip_deserializing` leaves this member out in one direction only",
+                ),
+                case(
+                    "`skip_serializing` on a tuple-variant member",
+                    quote::quote!(
+                        enum Reading {
+                            Count(u64, #[serde(skip_serializing)] u64),
+                        }
+                    ),
+                    "`skip_serializing` leaves this member out in one direction only",
+                ),
+                case(
+                    "`skip_deserializing` on a tuple-variant member",
+                    quote::quote!(
+                        enum Reading {
+                            Count(#[serde(skip_deserializing)] u64, u64),
+                        }
+                    ),
+                    "`skip_deserializing` leaves this member out in one direction only",
+                ),
+                case(
+                    "`skip_serializing` on an externally tagged newtype-variant member",
+                    quote::quote!(
+                        enum Reading {
+                            Count(#[serde(skip_serializing)] u64),
+                        }
+                    ),
+                    "`skip_serializing` leaves this member out in one direction only",
+                ),
+                case(
+                    "`skip_deserializing` on an adjacently tagged newtype-variant member",
+                    quote::quote!(
+                        #[serde(tag = "t", content = "c")]
+                        enum Reading {
+                            Count(#[serde(skip_deserializing)] u64),
+                        }
+                    ),
+                    "`skip_deserializing` leaves this member out in one direction only",
+                ),
+                case(
+                    "`skip_serializing` on an internally tagged newtype-variant member",
+                    quote::quote!(
+                        #[serde(tag = "t")]
+                        enum Reading {
+                            Count(#[serde(skip_serializing)] Audit),
+                        }
+                    ),
+                    "`skip_serializing` leaves this member out in one direction only",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// `skip_serializing_if` on a tuple member is refused unless it is the last
+    /// position and carries `#[serde(default)]`, on a tuple struct and a tuple
+    /// variant alike.
+    #[test]
+    fn every_misplaced_skip_serializing_if_on_a_tuple_member_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "`skip_serializing_if` on a member a later position follows",
+                    quote::quote!(
+                        struct Reading(
+                            #[serde(default, skip_serializing_if = "is_zero")] u64,
+                            #[serde(default)] String,
+                        );
+                    ),
+                    "`skip_serializing_if` on a tuple member is refused unless",
+                ),
+                case(
+                    "`skip_serializing_if` on the last member, without a default",
+                    quote::quote!(
+                        struct Reading(u64, #[serde(skip_serializing_if = "is_zero")] u64);
+                    ),
+                    "`skip_serializing_if` on a tuple member is refused unless",
+                ),
+                case(
+                    "`skip_serializing_if` on a tuple-variant member a later position follows",
+                    quote::quote!(
+                        enum Reading {
+                            Count(
+                                #[serde(default, skip_serializing_if = "is_zero")] u64,
+                                #[serde(default)] u64,
+                            ),
+                        }
+                    ),
+                    "`skip_serializing_if` on a tuple member is refused unless",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// Every member skip serde honours in both directions expands.
+    ///
+    /// Each row is a placement the refusal must not reach: a newtype struct,
+    /// whose skips serde ignores; a member skipped both ways, however it is
+    /// spelt; a trailing `skip_serializing_if` beside its default, last among
+    /// the positions even when a skipped member follows it; a newtype
+    /// variant's `skip_serializing_if`, which serde ignores; a skipped
+    /// variant; and a transparent struct, which holds no positions.
+    #[test]
+    fn a_member_skip_serde_honours_both_ways_is_accepted() {
+        for declaration in [
+            quote::quote!(
+                struct Sku(#[serde(skip_serializing)] u64);
+            ),
+            quote::quote!(
+                struct Sku(#[serde(skip_deserializing)] u64);
+            ),
+            quote::quote!(
+                struct Sku(#[serde(skip_serializing_if = "is_zero")] u64);
+            ),
+            quote::quote!(
+                struct Pair(#[serde(skip)] u64, String);
+            ),
+            quote::quote!(
+                struct Pair(
+                    u64,
+                    #[serde(skip_serializing)]
+                    #[serde(skip_deserializing)]
+                    u64,
+                );
+            ),
+            quote::quote!(
+                struct Tally(u64, #[serde(default, skip_serializing_if = "is_zero")] u64);
+            ),
+            quote::quote!(
+                struct Tally(
+                    u64,
+                    #[serde(default, skip_serializing_if = "is_zero")] u64,
+                    #[serde(skip)] u64,
+                );
+            ),
+            quote::quote!(
+                enum Reading {
+                    Count(#[serde(skip_serializing_if = "is_zero")] u64),
+                }
+            ),
+            quote::quote!(
+                #[serde(tag = "t")]
+                enum Reading {
+                    Total(Audit),
+                    #[serde(skip)]
+                    Count(#[serde(skip_serializing)] u64, u64),
+                }
+            ),
+            quote::quote!(
+                #[serde(transparent)]
+                struct Handle(u64, #[serde(skip_serializing)] u64);
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+
+            if let Err(error) = expand_inner(&input) {
+                panic!("a member skip serde honours both ways must expand: {error}");
+            }
+        }
     }
 
     /// Whether the expansion claims `kynos::schema::Flatten` for the input.
