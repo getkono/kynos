@@ -1718,6 +1718,43 @@ fn a_permissive_schema_below_a_media_type_is_not_unchecked() {
     assert_eq!(unchecked_locations(&document), Vec::<String>::new());
 }
 
+/// A header described by `content` is walked into its media type.
+///
+/// The generator gives a content-form header an empty media type, so no
+/// property run puts a schema there. Both places a header is written are
+/// held: under a response, and as a reusable component.
+#[test]
+fn an_unchecked_schema_under_a_header_content_is_reported() {
+    use crate::model::{body::media_type::MediaType, parameter::header::Header, reference::RefOr};
+
+    let header = || Header::with_content("application/json", MediaType::new(annotated()));
+
+    let mut document = document_with_body(Schema::of_type(SchemaType::Object));
+    if let Some(PathItem {
+        post: Some(operation),
+        ..
+    }) = document.paths.items.get_mut("/ingest")
+    {
+        let mut response = Response::new("ok");
+        response
+            .headers
+            .insert("X-Trace".to_owned(), RefOr::Item(header()));
+        operation.responses = Responses::new().with(200, response);
+    }
+    document
+        .components
+        .headers
+        .insert("Trace".to_owned(), RefOr::Item(header()));
+
+    assert_eq!(
+        unchecked_locations(&document),
+        [
+            "#/components/headers/Trace/content/application~1json/schema",
+            "#/paths/~1ingest/post/responses/200/headers/X-Trace/content/application~1json/schema",
+        ]
+    );
+}
+
 /// The containers a generated document does not reach are walked too.
 ///
 /// The property in `tests/properties.rs` covers every container its generator
