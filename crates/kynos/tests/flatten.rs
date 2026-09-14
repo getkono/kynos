@@ -26,7 +26,13 @@ use std::collections::BTreeMap;
 
 use kynos::{
     Schema,
-    schema::{MapKey, Schema as SchemaTrait, constraints::Constraints},
+    openapi::{
+        Schema as OpenApiSchema, SchemaObject,
+        model::schema::types::{SchemaType, TypeSet},
+    },
+    schema::{
+        MapKey, OpenMap, Schema as SchemaTrait, constraints::Constraints, registry::Registry,
+    },
 };
 use serde::Serialize;
 
@@ -379,5 +385,64 @@ fn an_open_map_in_an_adjacently_tagged_variant_leaves_the_variants_properties_al
             "kind": "Counted", "data": { "id": 1, "name": "n", "k": "v" }
         })),
         "a member contributed by a `BTreeMap<String, u64>` was accepted as a string: {schema}"
+    );
+}
+
+/// A map described by hand rather than by a standard map's own implementation.
+///
+/// `OpenMap` is unsealed so a type like this can claim what `HashMap` and
+/// `BTreeMap` claim: no component name, and an object described by
+/// `additionalProperties` alone. The hoist reads that schema object rather than
+/// the type, so this holds it to the documented contract and not to the two maps.
+#[derive(Serialize)]
+struct Headers(BTreeMap<String, String>);
+
+impl SchemaTrait for Headers {
+    fn schema(_registry: &mut Registry) -> OpenApiSchema {
+        OpenApiSchema::Object(Box::new(SchemaObject {
+            ty: Some(TypeSet::One(SchemaType::Object)),
+            additional_properties: Some(Box::new(OpenApiSchema::of_type(SchemaType::String))),
+            ..SchemaObject::default()
+        }))
+    }
+}
+
+impl OpenMap for Headers {}
+
+#[derive(Schema, Serialize)]
+struct Request {
+    id: u64,
+    #[serde(flatten)]
+    #[schema(open)]
+    headers: Headers,
+}
+
+#[test]
+fn a_hand_written_open_map_is_hoisted_like_a_standard_one() {
+    assert!(<Headers as SchemaTrait>::name().is_none());
+
+    let request = Request {
+        id: 1,
+        headers: Headers(BTreeMap::from([("k".to_owned(), "v".to_owned())])),
+    };
+    let refusals = refusals(&request);
+    assert!(
+        refusals.is_empty(),
+        "the type cannot produce an instance its own description accepts: {refusals:?}\n\
+         schema: {}",
+        emitted::<Request>()
+    );
+
+    let schema = emitted::<Request>();
+    assert_eq!(
+        schema["unevaluatedProperties"],
+        serde_json::json!({ "type": "string" }),
+        "{schema}"
+    );
+    let validator =
+        jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
+    assert!(
+        !validator.is_valid(&serde_json::json!({ "id": 1, "k": 2 })),
+        "a member contributed by `Headers` was accepted as a number: {schema}"
     );
 }
