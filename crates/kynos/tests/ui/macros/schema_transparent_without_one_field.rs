@@ -1,15 +1,15 @@
-//! A transparent struct serde writes through both fields and reads through
-//! `value` alone, since `extra` has a default: no one field is both. serde
-//! accepts this declaration for `Deserialize`, so the
-//! refusal is the derive's own. The control is
-//! `pass/schema_transparent_one_field`.
+//! A transparent struct serde writes through `a`, since `b` is skipped on
+//! write, and reads through `b`, since `a` is skipped on read. serde accepts it
+//! under both derives, and no one schema is true of both directions. The
+//! control is `pass/schema_transparent_one_field`.
 
-#[derive(kynos::Schema, serde::Deserialize)]
+#[derive(kynos::Schema, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
-struct Reading {
-    value: u64,
-    #[serde(default)]
-    extra: String,
+struct Split {
+    #[serde(skip_deserializing)]
+    a: u64,
+    #[serde(skip_serializing)]
+    b: String,
 }
 
 fn main() {}

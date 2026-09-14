@@ -624,19 +624,18 @@ fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
     Ok(())
 }
 
-/// A `#[serde(transparent)]` struct is described by the one field serde both
-/// writes and reads through, and refused where serde may pick a different field
-/// each way.
+/// A `#[serde(transparent)]` struct serde writes through one field and reads
+/// through another is refused.
 ///
 /// serde picks per direction, from the attributes alone ([`transparent_members`]):
 /// it writes through the field without `skip` or `skip_serializing`, reads
 /// through the field without `skip`, `skip_deserializing` or a field-level
-/// `default`, and never through a `PhantomData`. This derive cannot see which of
-/// serde's derives sit beside it, so it accepts only the struct whose two
-/// directions pick the same single field -- [`transparent_member`], which
-/// `struct_body` describes -- and refuses one whose directions pick different
-/// fields, or where one direction picks a single field and the other none or
-/// several. Where neither direction picks a single field, serde refuses the
+/// `default`, and never through a `PhantomData`. Where each direction picks a
+/// single field and the two differ, no one schema is true of the struct, and it
+/// is refused. Everything else is [`transparent_member`]'s, which `struct_body`
+/// describes. Where only one direction picks a single field, serde refuses the
+/// other derive by itself, so the struct compiles with that direction's derive
+/// alone and the field is true of it. Where neither does, serde refuses the
 /// struct for either derive, and a second error here would restate it; that
 /// covers a unit struct too, and an enum is serde's to refuse.
 fn reject_transparent_without_one_field(input: &DeriveInput) -> syn::Result<()> {
@@ -646,30 +645,28 @@ fn reject_transparent_without_one_field(input: &DeriveInput) -> syn::Result<()> 
     let Some((_, span)) = serde_key_span(&input.attrs, &["transparent"]) else {
         return Ok(());
     };
-    if transparent_member(&data.fields).is_some() {
-        return Ok(());
-    }
     let (written, read) = transparent_members(&data.fields);
-    if !matches!((written.as_slice(), read.as_slice()), ([_], _) | (_, [_])) {
+    let ([written], [read]) = (written.as_slice(), read.as_slice()) else {
+        return Ok(());
+    };
+    if std::ptr::eq(*written, *read) {
         return Ok(());
     }
 
-    let label = |members: &[&Field]| match members {
-        [] => "no field".to_owned(),
-        [member] => member.ident.as_ref().map_or_else(
+    let label = |member: &Field| {
+        member.ident.as_ref().map_or_else(
             || {
                 let index = data
                     .fields
                     .iter()
-                    .position(|field| std::ptr::eq(field, *member))
+                    .position(|field| std::ptr::eq(field, member))
                     .unwrap_or_default();
                 format!("field {index}")
             },
             |ident| format!("`{ident}`"),
-        ),
-        several => format!("{} fields", several.len()),
+        )
     };
-    let (writes, reads) = (label(&written), label(&read));
+    let (writes, reads) = (label(written), label(read));
 
     Err(syn::Error::new(
         span,

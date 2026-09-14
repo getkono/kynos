@@ -6,11 +6,12 @@ use super::{
 
 /// A struct's schema, which its fields decide.
 ///
-/// A `#[serde(transparent)]` struct is the schema of the one field serde both
-/// writes and reads through, whichever shape declares it, because that field's
-/// value is all the wire carries. `reject_transparent_without_one_field` refuses
-/// the struct where serde picks a different field each way, reading the same
-/// helper, so the field described here is the one that refusal accepted.
+/// A `#[serde(transparent)]` struct is the schema of its transparent field,
+/// whichever shape declares it: the field serde both writes and reads through,
+/// or the single field of the one direction serde can derive, because that
+/// field's value is all the wire carries. `reject_transparent_without_one_field`
+/// refuses the struct where the two directions pick different fields, and reads
+/// the same picks, so no field described here is one that refusal refused.
 ///
 /// A newtype is transparent, because serde makes it so: `Sku(String)` is a
 /// string on the wire and describing it as anything else would be a claim the

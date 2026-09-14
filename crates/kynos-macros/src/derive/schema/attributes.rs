@@ -139,12 +139,20 @@ pub(super) fn transparent_members(fields: &Fields) -> (Vec<&Field>, Vec<&Field>)
     )
 }
 
-/// The one field a `#[serde(transparent)]` struct is both written and read
-/// through, when serde picks the same single field each way.
+/// The one field a `#[serde(transparent)]` struct is described by: the field
+/// both directions pick, or the single field of the one direction that picks
+/// one.
+///
+/// serde refuses a derive whose direction has no single candidate, so where only
+/// one direction picks a single field the struct compiles with that direction's
+/// derive alone, and the field is all serde writes, or reads. Two different
+/// single picks give no field, and `reject_transparent_without_one_field`
+/// refuses that struct.
 pub(super) fn transparent_member(fields: &Fields) -> Option<&Field> {
     let (written, read) = transparent_members(fields);
     match (written.as_slice(), read.as_slice()) {
-        ([written], [read]) if std::ptr::eq(*written, *read) => Some(*written),
+        ([written], [read]) => std::ptr::eq(*written, *read).then_some(*written),
+        ([only], _) | (_, [only]) => Some(*only),
         _ => None,
     }
 }
