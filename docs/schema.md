@@ -372,8 +372,13 @@ naming its members: a struct with named fields, and an enum whose every `oneOf`
 branch is such an object. It does not for a container carrying `#[schema(open)]`
 or `#[serde(transparent)]`, an externally tagged enum with a unit variant, or an
 internally tagged enum with a newtype variant, and a `#[serde(skip)]` variant
-counts toward none of these. `Box<T>` and `Arc<T>` carry `T`'s answer across, and
-the trait is unsealed so a hand-written `Schema` doing the same can say so.
+counts toward none of these. `Box<T>` and `Arc<T>` carry `T`'s answer across,
+`Problem` implements it so a problem document can carry extension members of
+its own type, and the trait is unsealed so a hand-written `Schema` doing the
+same can say so. `Problem`'s `additionalProperties: true` does reach the
+parent's members from inside the `allOf`, and permits them — which is why a
+schema admitting every member it does not name is flattenable, and one
+constraining them is not.
 serde offers nothing to read here: `flatten` never leaves `serde_derive` and
 what enforces it is a runtime serializer, so the type-level surface has to be
 Kynos's own.

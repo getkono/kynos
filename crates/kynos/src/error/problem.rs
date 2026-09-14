@@ -17,7 +17,7 @@ use kynos_openapi::{
 use crate::{
     http::{HeaderValue, StatusCode, body::Body, header},
     response::IntoResponse,
-    schema::{Schema, registry::Registry},
+    schema::{Flatten, Schema, registry::Registry},
 };
 
 #[cfg(test)]
@@ -307,6 +307,14 @@ impl Schema for Problem {
         ComponentName::new("Problem").ok()
     }
 }
+
+/// Flattenable, so a problem type can carry its extension members as fields of
+/// its own.
+///
+/// The schema names the five registered members and admits every other one, so
+/// from inside the carrying object's `allOf` it permits the members that object
+/// declares rather than refusing them.
+impl Flatten for Problem {}
 
 /// The description of one response carrying a problem document.
 ///
