@@ -557,3 +557,48 @@ fn an_open_unchecked_field_still_constrains_the_parents_own_properties() {
         "the parent's own required property was not required: {schema}"
     );
 }
+
+/// A flattened `Problem` beside an open map, the one neighbour where the
+/// problem's `additionalProperties: true` does any work.
+#[derive(Schema, Serialize)]
+struct Throttled {
+    #[serde(flatten)]
+    problem: kynos::Problem,
+    #[serde(flatten)]
+    #[schema(open)]
+    limits: BTreeMap<String, u64>,
+}
+
+/// A flattened `Problem` beside an open map describes the object the type
+/// writes, and leaves the map's values unchecked.
+///
+/// `Problem`'s `additionalProperties: true` marks every member evaluated, the
+/// map's included, so the hoisted `unevaluatedProperties` has nothing left to
+/// constrain. Without the keyword the problem's own extension member would fall
+/// to the map's value schema and be refused. `docs/schema.md` records the
+/// looseness, which this pins.
+#[test]
+fn a_flattened_problem_beside_an_open_map_leaves_the_maps_values_unchecked() {
+    let throttled = Throttled {
+        problem: kynos::Problem::new(kynos::http::StatusCode::TOO_MANY_REQUESTS)
+            .with_extension("retry", serde_json::json!("later")),
+        limits: BTreeMap::from([("remaining".to_owned(), 0)]),
+    };
+    let refusals = refusals(&throttled);
+    assert!(
+        refusals.is_empty(),
+        "the type cannot produce an instance its own description accepts: {refusals:?}\n\
+         schema: {}",
+        emitted::<Throttled>()
+    );
+
+    let schema = emitted::<Throttled>();
+    let validator =
+        jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
+    assert!(
+        validator.is_valid(&serde_json::json!({
+            "type": "about:blank", "status": 429, "remaining": "many"
+        })),
+        "a string under a map key was refused, so the recorded looseness no longer holds: {schema}"
+    );
+}
