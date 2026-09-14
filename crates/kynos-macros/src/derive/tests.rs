@@ -1392,6 +1392,218 @@ mod schema {
         );
     }
 
+    /// A named field serde reads and never writes is refused wherever serde
+    /// still requires it on read, by the rule `skip_serializing_if` meets.
+    ///
+    /// `skip_serializing` alone is `skip_serializing_if` with a condition that
+    /// always holds: serde leaves the field out of every object it writes, and
+    /// without a default refuses an object without it on read. One row per
+    /// placement: a struct, a struct variant under each tagging, and a
+    /// flattened struct, which no default covers.
+    #[test]
+    fn a_named_field_serde_requires_but_never_writes_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "`skip_serializing` alone on a struct field with no default",
+                    quote::quote!(
+                        struct Draft {
+                            plain: u64,
+                            #[serde(skip_serializing)]
+                            elided: u64,
+                        }
+                    ),
+                    "`skip_serializing` lets serde leave this field out of what it writes",
+                ),
+                case(
+                    "`skip_serializing` alone on an externally tagged variant field",
+                    quote::quote!(
+                        enum Event {
+                            Created {
+                                at: u64,
+                                #[serde(skip_serializing)]
+                                note: u64,
+                            },
+                        }
+                    ),
+                    "`skip_serializing` lets serde leave this field out of what it writes",
+                ),
+                case(
+                    "`skip_serializing` alone on an internally tagged variant field",
+                    quote::quote!(
+                        #[serde(tag = "kind")]
+                        enum Event {
+                            Created {
+                                at: u64,
+                                #[serde(skip_serializing)]
+                                note: u64,
+                            },
+                        }
+                    ),
+                    "`skip_serializing` lets serde leave this field out of what it writes",
+                ),
+                case(
+                    "`skip_serializing` alone on an adjacently tagged variant field",
+                    quote::quote!(
+                        #[serde(tag = "kind", content = "body")]
+                        enum Event {
+                            Created {
+                                at: u64,
+                                #[serde(skip_serializing)]
+                                note: u64,
+                            },
+                        }
+                    ),
+                    "`skip_serializing` lets serde leave this field out of what it writes",
+                ),
+                case(
+                    "`skip_serializing` alone on a flattened struct, beside a default",
+                    quote::quote!(
+                        struct Wrapper {
+                            id: u64,
+                            #[serde(flatten, default, skip_serializing)]
+                            audit: Audit,
+                        }
+                    ),
+                    "`skip_serializing` on a flattened field is refused unless it is \
+                     `#[schema(open)]`",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// On a named field serde reads and never writes, the overrides serde
+    /// reads through are refused, as they are inside a variant serde never
+    /// writes.
+    #[test]
+    fn a_read_override_on_a_named_field_serde_never_writes_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "`deserialize_with` on a field serde never writes",
+                    quote::quote!(
+                        struct Reading {
+                            total: u64,
+                            #[serde(skip_serializing, default, deserialize_with = "from_string")]
+                            count: u64,
+                        }
+                    ),
+                    "`deserialize_with` reads or writes this field",
+                ),
+                case(
+                    "`with` on a field serde never writes",
+                    quote::quote!(
+                        struct Reading {
+                            total: u64,
+                            #[serde(skip_serializing, default, with = "as_string")]
+                            count: u64,
+                        }
+                    ),
+                    "`with` reads or writes this field",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// A named field serde skips in one direction expands wherever one schema is
+    /// true of both.
+    ///
+    /// Read and never written, it is a property `required` leaves out beside an
+    /// `Option` or a default, a property of a variant serde never writes, and a
+    /// flattened open map; `serialize_with` on it changes nothing serde does.
+    /// Written and never read, it is left out of an object that constrains no
+    /// member it does not name, whatever it writes through. A transparent struct
+    /// is scanned over the fields serde writes or reads through, and no other.
+    #[test]
+    fn a_named_field_serde_skips_in_one_direction_is_accepted() {
+        for declaration in [
+            quote::quote!(
+                struct Draft {
+                    plain: u64,
+                    #[serde(skip_serializing, default)]
+                    elided: u64,
+                }
+            ),
+            quote::quote!(
+                struct Draft {
+                    plain: u64,
+                    #[serde(skip_serializing)]
+                    maybe: Option<u64>,
+                }
+            ),
+            quote::quote!(
+                #[serde(default)]
+                struct Draft {
+                    plain: u64,
+                    #[serde(skip_serializing)]
+                    elided: u64,
+                }
+            ),
+            quote::quote!(
+                enum Reading {
+                    Total(u64),
+                    #[serde(skip_serializing)]
+                    Count {
+                        #[serde(skip_serializing)]
+                        count: u64,
+                    },
+                }
+            ),
+            quote::quote!(
+                struct Draft {
+                    id: u64,
+                    #[serde(flatten, skip_serializing)]
+                    #[schema(open)]
+                    extra: BTreeMap<String, String>,
+                }
+            ),
+            quote::quote!(
+                struct Reading {
+                    total: u64,
+                    #[serde(skip_serializing, default, serialize_with = "as_string")]
+                    count: u64,
+                }
+            ),
+            quote::quote!(
+                struct Draft {
+                    plain: u64,
+                    #[serde(skip_deserializing)]
+                    stamp: u64,
+                }
+            ),
+            quote::quote!(
+                struct Reading {
+                    total: u64,
+                    #[serde(skip_deserializing, serialize_with = "as_string")]
+                    count: u64,
+                }
+            ),
+            // serde writes and reads through `a` alone, so `b` reaches neither
+            // direction and nothing it reads through can contradict the schema.
+            quote::quote!(
+                #[serde(transparent)]
+                struct Skipped {
+                    a: u64,
+                    #[serde(default, skip_serializing, deserialize_with = "from_string")]
+                    b: u64,
+                }
+            ),
+            quote::quote!(
+                #[serde(transparent)]
+                struct Handle(u64, #[serde(default, deserialize_with = "from_string")] u64);
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+
+            if let Err(error) = expand_inner(&input) {
+                panic!("a named field one schema describes both ways must expand: {error}");
+            }
+        }
+    }
+
     /// Whether the expansion claims `kynos::schema::Flatten` for the input.
     ///
     /// Read off the emitted tokens rather than by calling the predicate, so
