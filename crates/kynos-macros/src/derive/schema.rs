@@ -32,9 +32,9 @@ mod attributes;
 mod shape;
 
 use attributes::{
-    constraints, described_members, field_name, is_described, is_flattened, is_open, is_required,
-    is_skipped, is_skipped_both_ways, is_unit_like, open_span, serde_flag, serde_key_span,
-    transparent_member, transparent_members, variant_name,
+    constraints, described_members, field_name, is_described, is_flattened, is_open, is_option,
+    is_required, is_skipped, is_skipped_both_ways, is_unit_like, open_span, serde_flag,
+    serde_key_span, transparent_member, transparent_members, variant_name,
 };
 use shape::{enum_body, struct_body};
 
@@ -92,6 +92,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     reject_transparent_without_one_field(input)?;
     reject_read_required_skip(input)?;
     reject_one_way_member_skip(input)?;
+    reject_skipped_adjacent_payload(input)?;
     check_constraints(input)?;
 
     let name = &input.ident;
@@ -838,6 +839,56 @@ fn reject_one_way_member_skip(input: &DeriveInput) -> syn::Result<()> {
                  last beside `#[serde(default)]`, or give the type named fields",
             ));
         }
+    }
+    Ok(())
+}
+
+/// A newtype variant of an adjacently tagged enum whose member serde skips has
+/// no one schema, unless that member is an `Option`.
+///
+/// serde writes the variant as its tag alone, but reads it by its declared
+/// newtype style rather than the unit style it wrote, so it demands the content
+/// property and reads only `{"t":"V","c":null}`. An `Option` member reads the
+/// missing content as `None`, so it round-trips as the tag-only branch `branch`
+/// emits. External and internal tagging read back what they write, and a
+/// member skipped one way only is refused before this is reached.
+fn reject_skipped_adjacent_payload(input: &DeriveInput) -> syn::Result<()> {
+    let Data::Enum(data) = &input.data else {
+        return Ok(());
+    };
+    let container = Container::read(input);
+    let (Some(_), Some(_)) = (&container.tag, &container.content) else {
+        return Ok(());
+    };
+
+    for variant in data
+        .variants
+        .iter()
+        .filter(|variant| !is_skipped(&variant.attrs))
+    {
+        let Fields::Unnamed(unnamed) = &variant.fields else {
+            continue;
+        };
+        let Some(member) = unnamed.unnamed.first() else {
+            continue;
+        };
+        if !is_unit_like(&variant.fields) || is_option(&member.ty) {
+            continue;
+        }
+        let keys = &["skip", "skip_serializing", "skip_deserializing"];
+        let Some((key, span)) = serde_key_span(&member.attrs, keys) else {
+            continue;
+        };
+        return Err(syn::Error::new(
+            span,
+            format!(
+                "`{key}` leaves out the only member of a newtype variant in an adjacently \
+                 tagged enum, so serde writes the variant as its tag alone, but reads it back \
+                 only with its content present, which nothing serde writes carries. Make the \
+                 member an `Option`, which serde reads absent, or `#[serde(skip)]` the whole \
+                 variant"
+            ),
+        ));
     }
     Ok(())
 }
