@@ -1,0 +1,5 @@
+error: `skip_deserializing` leaves this field out of the schema, since serde never reads it, but serde still writes it, and the `unevaluatedProperties` a `#[schema(open)]` flattened field gives this object refuses a member the schema does not name. Use `#[serde(skip)]` to leave it out both ways, or drop `skip_deserializing` so the schema names it
+  --> tests/ui/macros/schema_field_skipped_on_read_beside_open_map.rs:11:13
+   |
+11 |     #[serde(skip_deserializing)]
+   |             ^^^^^^^^^^^^^^^^^^

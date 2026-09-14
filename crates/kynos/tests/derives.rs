@@ -448,6 +448,187 @@ fn a_container_default_leaves_every_field_optional() {
     );
 }
 
+// --- A named field serde skips in one direction -----------------------------
+//
+// serde reads a `skip_serializing` field and never writes it, so it is a
+// property under the `required` rule; it writes a `skip_deserializing` field
+// and never reads it, so an object naming only what it reads leaves it out.
+// These pin the emitted shape against what serde writes and reads;
+// `docs/schema.md` states the rule. None carries a doc comment, which would add
+// prose to the shapes compared.
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Unsent {
+    plain: u64,
+    #[serde(skip_serializing, default)]
+    defaulted: u64,
+    #[serde(skip_serializing)]
+    maybe: Option<u64>,
+}
+
+#[derive(Default, Schema, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct UnsentUnderDefault {
+    plain: u64,
+    #[serde(skip_serializing)]
+    elided: u64,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum Amendment {
+    Now(u64),
+    #[serde(skip_serializing)]
+    Queued {
+        at: u64,
+        #[serde(skip_serializing)]
+        note: u64,
+    },
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Revised {
+    id: u64,
+    #[serde(skip_serializing, default)]
+    revision: u64,
+    #[serde(flatten)]
+    #[schema(open)]
+    extra: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Annotated {
+    id: u64,
+    #[serde(flatten, skip_serializing)]
+    #[schema(open)]
+    extra: std::collections::BTreeMap<String, u64>,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Stamped {
+    id: u64,
+    #[serde(skip_deserializing)]
+    stamp: u64,
+}
+
+/// A field serde reads and never writes is a property, left out of `required`
+/// where serde reads it absent.
+///
+/// Left out of the schema, `defaulted` would admit the `"x"` serde refuses.
+#[test]
+fn a_named_field_serde_reads_and_never_writes_is_an_optional_property() {
+    assert_eq!(
+        emitted::<Unsent>(),
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "plain": emitted::<u64>(),
+                "defaulted": emitted::<u64>(),
+                "maybe": emitted::<Option<u64>>(),
+            },
+            "required": ["plain"],
+        })
+    );
+    let written = serde_json::to_value(Unsent {
+        plain: 1,
+        defaulted: 2,
+        maybe: Some(3),
+    })
+    .expect("a struct serializes");
+    assert_eq!(written, serde_json::json!({"plain": 1}));
+    assert!(serde_json::from_value::<Unsent>(written).is_ok());
+    assert!(
+        serde_json::from_str::<Unsent>(r#"{"plain":1,"defaulted":"x"}"#).is_err(),
+        "serde must refuse the value the property's schema refuses"
+    );
+
+    assert_eq!(
+        emitted::<UnsentUnderDefault>(),
+        serde_json::json!({
+            "type": "object",
+            "properties": {"plain": emitted::<u64>(), "elided": emitted::<u64>()},
+        })
+    );
+    assert!(serde_json::from_str::<UnsentUnderDefault>("{}").is_ok());
+}
+
+/// Inside a variant serde never writes, a field serde never writes is only
+/// read, so it is required as any other field serde reads.
+#[test]
+fn a_named_field_serde_never_writes_is_required_where_its_variant_is_never_written() {
+    assert_eq!(
+        emitted::<Amendment>()["oneOf"][1]["properties"]["Queued"],
+        serde_json::json!({
+            "type": "object",
+            "properties": {"at": emitted::<u64>(), "note": emitted::<u64>()},
+            "required": ["at", "note"],
+        })
+    );
+    assert!(
+        serde_json::from_str::<Amendment>(r#"{"Queued":{"at":1}}"#).is_err(),
+        "serde must refuse the object `required` refuses"
+    );
+    assert!(serde_json::from_str::<Amendment>(r#"{"Queued":{"at":1,"note":2}}"#).is_ok());
+}
+
+/// Beside an open map, a field serde reads and never writes is named, so the
+/// map's `unevaluatedProperties` does not reach it.
+///
+/// Left out, `revision` would meet the map's string schema, which refuses the
+/// `{"id":1,"revision":2}` serde reads.
+#[test]
+fn a_named_field_serde_never_writes_is_named_beside_an_open_map() {
+    let schema = emitted::<Revised>();
+    assert_eq!(schema["properties"]["revision"], emitted::<u64>());
+    assert_eq!(schema["required"], serde_json::json!(["id"]));
+    assert_eq!(schema["unevaluatedProperties"], emitted::<String>());
+
+    let read = serde_json::from_str::<Revised>(r#"{"id":1,"revision":2}"#)
+        .expect("serde reads the field beside the map");
+    assert_eq!(read.revision, 2);
+    assert!(read.extra.is_empty(), "the field reached the map");
+}
+
+/// A flattened map serde never writes is still the object's open members on
+/// read.
+///
+/// Left out, the object would admit the `{"id":1,"k":"v"}` serde refuses.
+#[test]
+fn a_flattened_map_serde_never_writes_is_still_open() {
+    let schema = emitted::<Annotated>();
+    assert_eq!(schema["unevaluatedProperties"], emitted::<u64>());
+    assert_eq!(schema["required"], serde_json::json!(["id"]));
+
+    let written = serde_json::to_value(Annotated {
+        id: 1,
+        extra: std::collections::BTreeMap::from([("k".to_owned(), 2)]),
+    })
+    .expect("a struct serializes");
+    assert_eq!(written, serde_json::json!({"id": 1}));
+    assert!(serde_json::from_str::<Annotated>(r#"{"id":1,"k":2}"#).is_ok());
+    assert!(
+        serde_json::from_str::<Annotated>(r#"{"id":1,"k":"v"}"#).is_err(),
+        "serde must refuse the member `unevaluatedProperties` refuses"
+    );
+}
+
+/// A field serde writes and never reads is left out of an object that
+/// constrains no member it does not name, which admits it written and ignores
+/// it read, as serde does.
+#[test]
+fn a_named_field_serde_never_reads_is_left_out() {
+    assert_eq!(
+        emitted::<Stamped>(),
+        serde_json::json!({
+            "type": "object",
+            "properties": {"id": emitted::<u64>()},
+            "required": ["id"],
+        })
+    );
+    let written = serde_json::to_value(Stamped { id: 1, stamp: 2 }).expect("a struct serializes");
+    assert_eq!(written, serde_json::json!({"id": 1, "stamp": 2}));
+    assert!(serde_json::from_str::<Stamped>(r#"{"id":1,"stamp":"x"}"#).is_ok());
+}
+
 // --- A transparent struct is the one field serde writes ---------------------
 //
 // serde writes a `#[serde(transparent)]` struct as its one field's value, so the

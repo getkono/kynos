@@ -202,7 +202,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// come from one declaration. A field is left out of `required` when it is an
 /// `Option`, carries `#[serde(default)]`, or belongs to a struct carrying
 /// `#[serde(default)]`, because the wire form then allows it to be absent both
-/// ways; `skip_serializing_if` is accepted only alongside one of those. A
+/// ways; `skip_serializing_if` is accepted only alongside one of those. A named
+/// field serde reads and never writes, `skip_serializing` alone, is described
+/// under that same rule, and one serde writes and never reads,
+/// `skip_deserializing` alone, is left out. A
 /// `transparent` struct is described by the one field serde both writes and
 /// reads through, keeps its own component name, as a newtype does, and carries
 /// that field's constraints. A tuple is the array of the members serde does not
@@ -263,9 +266,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   `defaultMapping` could describe and the derive does not emit. On a variant
 ///   serde skips both ways it catches nothing, and is accepted.
 /// - `skip_serializing_if` on a non-`Option` field with no `#[serde(default)]`
-///   on the field or its struct. serde may leave the field out of what it
-///   writes but still requires it on read, so no `required` list is true in
-///   both directions. Add `#[serde(default)]` beside it or on the struct. A
+///   on the field or its struct, and `#[serde(skip_serializing)]` alone on such
+///   a field. serde may leave the field out of what it writes but still
+///   requires it on read, so no `required` list is true in both directions.
+///   Add `#[serde(default)]` beside it or on the struct. A
 ///   flattened field is decided by `#[schema(open)]` alone, since serde ignores
 ///   any default on it: an open map is exempt, and anything else is refused.
 /// - `#[serde(into = ...)]`, `from` or `try_from` on the type itself, struct or
@@ -292,6 +296,13 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   response serde writes. `#[serde(skip)]` leaves the variant out both ways.
 ///   `skip_serializing` alone on a variant is accepted, since every variant serde
 ///   writes is one it reads.
+/// - `#[serde(skip_deserializing)]` without `skip_serializing` on a named field
+///   of an object that also carries a `#[schema(open)]` flattened field. serde
+///   writes the field and never reads it, so the schema leaves it out, and the
+///   `unevaluatedProperties` the open field gives the object refuses what serde
+///   writes of it. `#[serde(skip)]` leaves the field out both ways. For the same
+///   reason a struct, or an internally tagged enum whose struct variant serde
+///   writes, holding such a field does not implement `Flatten`.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)
