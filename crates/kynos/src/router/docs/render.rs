@@ -8,10 +8,10 @@
 //! the allowance covering both. That separation is the whole reason the
 //! endpoint holds finished [`Bytes`] rather than a document to serialize.
 //!
-//! `pub(crate)` rather than private, because [`render`]'s one caller is
+//! `pub(super)` rather than private, because [`render`]'s one caller is
 //! outside `docs`: [`Router::build`](crate::Router::build)'s describe pass in
-//! `router/describe.rs`. Not `pub`, because nothing outside the crate reaches
-//! it.
+//! `router/describe.rs`. That caller sits in `router`, the parent of `docs`, so
+//! nothing wider is needed.
 
 use bytes::Bytes;
 use kynos_openapi::Document;

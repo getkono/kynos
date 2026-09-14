@@ -59,7 +59,7 @@
 
 mod endpoint;
 mod page;
-pub(crate) mod render;
+pub(super) mod render;
 
 #[cfg(test)]
 mod tests;
