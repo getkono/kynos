@@ -61,7 +61,9 @@ fn every_diagnostic_has_a_case(file: &str, source: &str, cases: usize) {
 }
 
 mod schema {
-    use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
+    use super::{
+        Case, DeriveInput, TokenStream2, case, each_case_is_refused, every_diagnostic_has_a_case,
+    };
     use crate::derive::schema::expand_inner;
 
     fn ledger() -> Vec<Case> {
@@ -475,6 +477,224 @@ mod schema {
                 panic!("a field serde may omit in both directions must expand: {error}");
             }
         }
+    }
+
+    /// Whether the expansion claims `kynos::schema::Flatten` for the input.
+    ///
+    /// Read off the emitted tokens rather than by calling the predicate, so
+    /// what is asserted is the implementation a user receives. `to_string` on a
+    /// `TokenStream` separates every token with a space, which is why the
+    /// needle is spelt out that way.
+    fn claims_flatten(declaration: TokenStream2) -> bool {
+        let input: DeriveInput = syn::parse2(declaration).expect("the case itself must parse");
+        let expansion = expand_inner(&input).expect("the case itself must expand");
+        expansion
+            .to_string()
+            .contains(":: kynos :: schema :: Flatten for")
+    }
+
+    /// The shapes whose description is an object naming its own members.
+    ///
+    /// A closed enumeration, and the one this change introduced: `Flatten` is
+    /// a claim, so a shape that gets the implementation without naming its
+    /// members is a lie the compiler then trusts. Each arm of the decision is
+    /// asserted from both sides, because a predicate that returned `true`
+    /// everywhere would pass every positive case on its own.
+    #[test]
+    fn only_a_shape_naming_its_members_claims_flatten() {
+        // A struct: named fields name them, and no other shape does.
+        assert!(claims_flatten(quote::quote!(
+            struct Audit {
+                at: String,
+            }
+        )));
+        assert!(!claims_flatten(quote::quote!(
+            struct Sku(String);
+        )));
+        assert!(!claims_flatten(quote::quote!(
+            struct Span(u32, u32);
+        )));
+        assert!(!claims_flatten(quote::quote!(
+            struct Marker;
+        )));
+
+        // Adjacently tagged: every branch is an object of a tag property and a
+        // content property, whatever the variant holds.
+        assert!(claims_flatten(quote::quote!(
+            #[serde(tag = "kind", content = "value")]
+            enum Payload {
+                Number(u32),
+                Named { width: u32 },
+                Nothing,
+            }
+        )));
+
+        // Internally tagged: a named or unit variant becomes an object naming
+        // its own members plus the tag. A newtype variant composes with
+        // whatever its payload resolves to, which is the unknown the trait
+        // exists to refuse.
+        assert!(claims_flatten(quote::quote!(
+            #[serde(tag = "kind")]
+            enum Shape {
+                Circle { radius: f64 },
+                Point,
+            }
+        )));
+        assert!(!claims_flatten(quote::quote!(
+            #[serde(tag = "kind")]
+            enum Shape {
+                Circle { radius: f64 },
+                Raw(String),
+            }
+        )));
+
+        // Externally tagged: the variant's name is the single property, and a
+        // unit variant is that name as a bare string instead.
+        assert!(claims_flatten(quote::quote!(
+            enum Event {
+                Created { at: String },
+                Renamed(String),
+            }
+        )));
+        assert!(!claims_flatten(quote::quote!(
+            enum Event {
+                Created { at: String },
+                Deleted,
+            }
+        )));
+        // Every variant a unit is the compact `enum` of names, which is a
+        // string schema and not an object at all.
+        assert!(!claims_flatten(quote::quote!(
+            enum Currency {
+                Gbp,
+                Jpy,
+            }
+        )));
+
+        // A skipped variant reaches no branch, so it cannot disqualify one.
+        assert!(claims_flatten(quote::quote!(
+            enum Event {
+                Created {
+                    at: String,
+                },
+                #[serde(skip)]
+                Internal,
+            }
+        )));
+
+        // An enum with no branch at all describes nothing to flatten.
+        assert!(!claims_flatten(quote::quote!(
+            enum Never {}
+        )));
+        assert!(!claims_flatten(quote::quote!(
+            #[serde(tag = "kind", content = "value")]
+            enum Never {}
+        )));
+        assert!(!claims_flatten(quote::quote!(
+            #[serde(tag = "kind")]
+            enum Never {}
+        )));
+    }
+
+    /// A container that is itself open does not claim to be flattenable.
+    ///
+    /// The subtle one, and the defect re-entering by the back door: an open
+    /// container carries `unevaluatedProperties` of its own, and one level up
+    /// that keyword sits inside an `allOf` branch where it reaches the outer
+    /// object's own properties -- exactly what this change exists to stop.
+    #[test]
+    fn an_open_container_does_not_claim_flatten() {
+        // The same shape without the attribute does claim it, so the case
+        // isolates the attribute rather than the shape.
+        assert!(claims_flatten(quote::quote!(
+            struct Thing {
+                id: u64,
+                #[serde(flatten)]
+                audit: Audit,
+            }
+        )));
+        assert!(!claims_flatten(quote::quote!(
+            struct Thing {
+                id: u64,
+                #[serde(flatten)]
+                #[schema(open)]
+                extra: BTreeMap<String, String>,
+            }
+        )));
+        // And through a variant, which is a field group like any other.
+        assert!(!claims_flatten(quote::quote!(
+            #[serde(tag = "kind")]
+            enum Shape {
+                Circle {
+                    radius: f64,
+                    #[serde(flatten)]
+                    #[schema(open)]
+                    extra: BTreeMap<String, String>,
+                },
+            }
+        )));
+    }
+
+    /// A transparent struct does not claim to be flattenable.
+    ///
+    /// serde writes a `#[serde(transparent)]` struct as its one field's value,
+    /// so what flattening it contributes is that field's members, not the
+    /// struct's. Named fields are the shape of the declaration and say nothing
+    /// about the wire, and a transparent wrapper over a map would otherwise
+    /// carry the map straight past the bound.
+    #[test]
+    fn a_transparent_struct_does_not_claim_flatten() {
+        // The same declaration without the attribute does claim it, so the
+        // case isolates the attribute rather than the shape.
+        assert!(claims_flatten(quote::quote!(
+            struct Labels {
+                inner: BTreeMap<String, String>,
+            }
+        )));
+        assert!(!claims_flatten(quote::quote!(
+            #[serde(transparent)]
+            struct Labels {
+                inner: BTreeMap<String, String>,
+            }
+        )));
+    }
+
+    /// A skipped variant cannot cost an enum its claim to Flatten.
+    ///
+    /// serde never writes a `#[serde(skip)]` variant, so the derive describes no
+    /// branch for it and nothing its fields declare reaches the schema. An open
+    /// field inside one is therefore not an open member of the enum.
+    #[test]
+    fn a_skipped_variant_does_not_disqualify_the_enum() {
+        // The same variant unskipped does disqualify it, so the case isolates
+        // the skip rather than the shape.
+        assert!(!claims_flatten(quote::quote!(
+            #[serde(tag = "kind")]
+            enum Event {
+                Created {
+                    at: String,
+                },
+                Internal {
+                    #[serde(flatten)]
+                    #[schema(open)]
+                    extra: BTreeMap<String, String>,
+                },
+            }
+        )));
+        assert!(claims_flatten(quote::quote!(
+            #[serde(tag = "kind")]
+            enum Event {
+                Created {
+                    at: String,
+                },
+                #[serde(skip)]
+                Internal {
+                    #[serde(flatten)]
+                    #[schema(open)]
+                    extra: BTreeMap<String, String>,
+                },
+            }
+        )));
     }
 }
 

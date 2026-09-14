@@ -7,7 +7,7 @@ use kynos_openapi::{
     model::schema::types::{SchemaType, TypeSet},
 };
 
-use crate::schema::{Flatten, Schema, impls::with_object, registry::Registry};
+use crate::schema::{Flatten, OpenMap, Schema, impls::with_object, registry::Registry};
 
 /// Widens `schema` to admit `null`.
 ///
@@ -92,3 +92,10 @@ transparent!(Box, Arc);
 impl<T: Flatten> Flatten for Box<T> {}
 
 impl<T: Flatten> Flatten for Arc<T> {}
+
+// And whether it is a map described in place, for the same reason and written
+// out for the same one: `name` delegates, so a `Box<BTreeMap<..>>` resolves to
+// the map's own object exactly as the map does.
+impl<T: OpenMap> OpenMap for Box<T> {}
+
+impl<T: OpenMap> OpenMap for Arc<T> {}

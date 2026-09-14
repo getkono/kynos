@@ -24,8 +24,9 @@
 //!
 //! `open` is the one member that is not a constraint, which is why the list is
 //! no longer the `Constraints` keys alone. It says how a `#[serde(flatten)]`
-//! field composes rather than what a value may be, and every other flattened
-//! field is bounded by `kynos::schema::Flatten` instead.
+//! field composes rather than what a value may be. An open field is bounded by
+//! `kynos::schema::OpenMap`, and every other flattened field by
+//! `kynos::schema::Flatten`.
 
 mod attributes;
 mod shape;
@@ -104,7 +105,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 
     let container = Container::read(input);
     let body = body(input, &container);
-    let witnesses = flatten_witnesses(input, &generics);
+    let witnesses = flatten_witnesses(input, &container, &generics);
     let flatten = flattens(input, &container).then(|| {
         quote! {
             #[allow(deprecated)]
@@ -181,20 +182,57 @@ fn schema_bounded_generics(input: &DeriveInput) -> syn::Generics {
 /// downstream code happens to name it. `schema_bounded_generics` also records
 /// why field-type predicates were rejected once already.
 ///
-/// A field carrying `#[schema(open)]` is exempt, because that attribute is the
-/// declaration that the object really is open and `object_body` describes it
-/// with `unevaluatedProperties` instead.
-fn flatten_witnesses(input: &DeriveInput, generics: &syn::Generics) -> TokenStream2 {
+/// A field carrying `#[schema(open)]` is bounded by `kynos::schema::OpenMap`
+/// instead. That attribute is the declaration that the object really is open,
+/// and `object_body` describes it by hoisting the field's `additionalProperties`
+/// to `unevaluatedProperties` — which only a map described in place has to
+/// hoist, since anything reached through a `$ref` would carry its own into the
+/// `allOf`.
+///
+/// An internally tagged newtype variant's payload is bounded by `Flatten` too.
+/// The variant has no properties of its own to put the tag beside, so its
+/// payload is composed with a tag-only object in an `allOf` — a flatten in all
+/// but the attribute, with the same thing to get wrong.
+fn flatten_witnesses(
+    input: &DeriveInput,
+    container: &Container,
+    generics: &syn::Generics,
+) -> TokenStream2 {
     let (impl_generics, _, where_clause) = generics.split_for_impl();
 
-    let witnesses = field_groups(input)
+    let flattened = described_groups(input)
         .into_iter()
         .flat_map(Fields::iter)
-        .filter(|field| is_described(field) && is_flattened(field) && !is_open(field))
-        .map(|field| {
-            let ty = &field.ty;
-            // Spanned at the field's type, so the refusal points at what was
-            // written rather than at the derive.
+        .filter(|field| is_described(field) && is_flattened(field));
+
+    let payloads: Vec<&Field> = match (&input.data, &container.tag, &container.content) {
+        (Data::Enum(data), Some(_), None) => data
+            .variants
+            .iter()
+            .filter(|variant| !is_skipped(&variant.attrs))
+            .filter_map(|variant| match &variant.fields {
+                Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => unnamed.unnamed.first(),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+
+    let witnesses = flattened.chain(payloads).map(|field| {
+        let ty = &field.ty;
+        // Spanned at the field's type, so the refusal points at what was
+        // written rather than at the derive.
+        if is_open(field) {
+            quote_spanned! {ty.span()=>
+                const _: () = {
+                    #[allow(dead_code, deprecated)]
+                    fn open_fields_are_maps_described_in_place #impl_generics () #where_clause {
+                        fn is_open_map<T: ::kynos::schema::OpenMap + ?Sized>() {}
+                        is_open_map::<#ty>();
+                    }
+                };
+            }
+        } else {
             quote_spanned! {ty.span()=>
                 const _: () = {
                     #[allow(dead_code, deprecated)]
@@ -204,7 +242,8 @@ fn flatten_witnesses(input: &DeriveInput, generics: &syn::Generics) -> TokenStre
                     }
                 };
             }
-        });
+        }
+    });
 
     quote!(#(#witnesses)*)
 }
@@ -222,9 +261,14 @@ fn flatten_witnesses(input: &DeriveInput, generics: &syn::Generics) -> TokenStre
 ///
 /// A container carrying `#[schema(open)]` is excluded whatever its shape: its
 /// own `unevaluatedProperties` would, one level up, reach the members the outer
-/// object declared.
+/// object declared. So is a `#[serde(transparent)]` one, whose wire form is its
+/// one field's value rather than an object naming the fields it declares.
 fn flattens(input: &DeriveInput, container: &Container) -> bool {
-    let groups = field_groups(input);
+    if container.transparent {
+        return false;
+    }
+
+    let groups = described_groups(input);
     if groups.iter().flat_map(|group| group.iter()).any(is_open) {
         return false;
     }
@@ -332,6 +376,25 @@ fn field_groups(input: &DeriveInput) -> Vec<&Fields> {
             .map(|variant| &variant.fields)
             .collect(),
         Data::Union(_) => Vec::new(),
+    }
+}
+
+/// The field groups the emitted schema describes: every group but a skipped
+/// variant's.
+///
+/// serde never writes a `#[serde(skip)]` variant, so no branch is emitted for it
+/// and its fields reach neither a flatten witness nor the `Flatten` decision.
+/// `check_constraints` still reads [`field_groups`], because a malformed
+/// attribute is an error wherever it is written.
+fn described_groups(input: &DeriveInput) -> Vec<&Fields> {
+    match &input.data {
+        Data::Enum(data) => data
+            .variants
+            .iter()
+            .filter(|variant| !is_skipped(&variant.attrs))
+            .map(|variant| &variant.fields)
+            .collect(),
+        _ => field_groups(input),
     }
 }
 
@@ -582,6 +645,9 @@ struct Container {
     rename_all: Option<String>,
     tag: Option<String>,
     content: Option<String>,
+    /// `#[serde(transparent)]`: the wire form is the one field's value, not an
+    /// object of the fields the declaration names.
+    transparent: bool,
     doc: Option<String>,
     /// A container `#[serde(default)]`, which serde fills every missing field
     /// from. serde accepts it only on a struct with named fields, so it is
@@ -612,6 +678,7 @@ impl Container {
                     "rename_all" => container.rename_all = string_value(&meta)?,
                     "tag" => container.tag = string_value(&meta)?,
                     "content" => container.content = string_value(&meta)?,
+                    "transparent" => container.transparent = true,
                     _ => skip_value(&meta)?,
                 }
                 Ok(())

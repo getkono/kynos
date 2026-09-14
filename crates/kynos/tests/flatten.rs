@@ -24,7 +24,10 @@
 
 use std::collections::BTreeMap;
 
-use kynos::{Schema, schema::Schema as SchemaTrait};
+use kynos::{
+    Schema,
+    schema::{MapKey, Schema as SchemaTrait, constraints::Constraints},
+};
 use serde::Serialize;
 
 /// The schema `T` emits, with everything it refers to reachable from the root.
@@ -234,5 +237,103 @@ fn an_open_map_beside_a_flattened_struct_weakens_neither() {
     assert!(
         !validator.is_valid(&serde_json::json!({ "id": 1, "k": "v" })),
         "the flattened struct's own required property was not required: {schema}"
+    );
+}
+
+/// A map key carrying a constraint, which an open flatten has nowhere to put.
+#[derive(Schema, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+struct Sku(String);
+
+impl MapKey for Sku {
+    fn key_constraints() -> Constraints {
+        let mut constraints = Constraints::default();
+        constraints.pattern = Some("^[A-Z]{3}-[0-9]{4}$".to_owned());
+        constraints
+    }
+}
+
+/// The same map as a property, where its key constraint has a schema of its own.
+#[derive(Schema, Serialize)]
+struct Ledger {
+    counts: BTreeMap<Sku, u64>,
+}
+
+/// And flattened open, where it does not.
+#[derive(Schema, Serialize)]
+struct Stock {
+    id: u64,
+    #[serde(flatten)]
+    #[schema(open)]
+    counts: BTreeMap<Sku, u64>,
+}
+
+/// An open flatten drops a key constraint rather than moving it.
+///
+/// Inside the `allOf` branch `propertyNames` would name `id` as well, and `id`
+/// matches no SKU pattern, so keeping it would refuse the JSON the type writes.
+/// The description is left weaker than `Sku` instead. `Ledger` is the same map
+/// as a property, which is what makes the absence here an observation: there
+/// the constraint is emitted.
+#[test]
+fn an_open_flatten_drops_the_key_constraint_rather_than_reaching_the_parent() {
+    assert!(
+        emitted::<Ledger>().to_string().contains("propertyNames"),
+        "a map keyed by `Sku` emitted no key constraint at all: {}",
+        emitted::<Ledger>()
+    );
+
+    let stock = Stock {
+        id: 1,
+        counts: BTreeMap::from([(Sku("ABC-0001".to_owned()), 3)]),
+    };
+    let schema = emitted::<Stock>();
+    assert!(
+        !schema.to_string().contains("propertyNames"),
+        "a key constraint survived an open flatten: {schema}"
+    );
+    let refusals = refusals(&stock);
+    assert!(
+        refusals.is_empty(),
+        "the type cannot produce an instance its own description accepts: {refusals:?}\n\
+         schema: {schema}"
+    );
+}
+
+/// An open map inside an internally tagged variant.
+///
+/// The variant's object carries the tag beside its own properties, and the
+/// hoisted `unevaluatedProperties` sits on that object, so both the tag and
+/// `id` are evaluated before the map's value schema applies.
+#[derive(Schema, Serialize)]
+#[serde(tag = "kind")]
+enum Tally {
+    Counted {
+        id: u64,
+        #[serde(flatten)]
+        #[schema(open)]
+        extra: BTreeMap<String, u64>,
+    },
+}
+
+#[test]
+fn an_open_map_in_a_tagged_variant_leaves_the_tag_and_the_variants_properties_alone() {
+    let tally = Tally::Counted {
+        id: 1,
+        extra: BTreeMap::from([("k".to_owned(), 2)]),
+    };
+    let refusals = refusals(&tally);
+    assert!(
+        refusals.is_empty(),
+        "the type cannot produce an instance its own description accepts: {refusals:?}\n\
+         schema: {}",
+        emitted::<Tally>()
+    );
+
+    let schema = emitted::<Tally>();
+    let validator =
+        jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
+    assert!(
+        !validator.is_valid(&serde_json::json!({ "kind": "Counted", "id": 1, "k": "v" })),
+        "a member contributed by a `BTreeMap<String, u64>` was accepted as a string: {schema}"
     );
 }

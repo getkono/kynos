@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use kynos_openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType};
 
-use crate::schema::{MapKey, Schema, impls::with_object, registry::Registry};
+use crate::schema::{MapKey, OpenMap, Schema, impls::with_object, registry::Registry};
 
 /// An array schema over `T`, optionally requiring its members to be distinct.
 fn array<T: Schema>(registry: &mut Registry, unique: bool) -> OpenApiSchema {
@@ -90,3 +90,9 @@ impl<K: MapKey, V: Schema> Schema for BTreeMap<K, V> {
         map::<K, V>(registry)
     }
 }
+
+// A map claims no component name, so `resolve` hands back `map`'s object
+// itself -- the `additionalProperties` that `#[schema(open)]` hoists.
+impl<K: MapKey, V: Schema, S> OpenMap for HashMap<K, V, S> {}
+
+impl<K: MapKey, V: Schema> OpenMap for BTreeMap<K, V> {}
