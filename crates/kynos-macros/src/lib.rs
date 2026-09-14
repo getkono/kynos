@@ -203,8 +203,9 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// `Option`, carries `#[serde(default)]`, or belongs to a struct carrying
 /// `#[serde(default)]`, because the wire form then allows it to be absent both
 /// ways; `skip_serializing_if` is accepted only alongside one of those. A
-/// `transparent` struct is described by its one described field, with that
-/// field's constraints, and keeps its own component name, as a newtype does.
+/// `transparent` struct is described by the one field serde both writes and
+/// reads through, keeps its own component name, as a newtype does, and carries
+/// that field's constraints.
 ///
 /// Constraints go on fields, and the grammar is exactly the keys of
 /// [`Constraints`](https://docs.rs/kynos/latest/kynos/schema/constraints/struct.Constraints.html)
