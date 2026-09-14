@@ -207,6 +207,17 @@ mod schema {
                 ),
                 "still requires it on read",
             ),
+            case(
+                "`skip_serializing_if` on a flattened field that is not an open map",
+                quote::quote!(
+                    struct Wrapper {
+                        id: u64,
+                        #[serde(flatten, skip_serializing_if = "Audit::is_empty")]
+                        audit: Audit,
+                    }
+                ),
+                "ignores `#[serde(default)]` on a flattened field",
+            ),
         ]
     }
 
@@ -479,6 +490,16 @@ mod schema {
                     extra: HashMap<String, String>,
                 }
             ),
+            // The same open map with a default, which a flattened field is
+            // decided without: `#[schema(open)]` alone accepts it.
+            quote::quote!(
+                struct Draft {
+                    id: u64,
+                    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+                    #[schema(open)]
+                    extra: HashMap<String, String>,
+                }
+            ),
         ] {
             let input: syn::DeriveInput =
                 syn::parse2(declaration).expect("the case itself must parse");
@@ -489,26 +510,53 @@ mod schema {
         }
     }
 
-    /// A flattened struct skipped on write is refused like any other field.
+    /// A flattened struct skipped on write is refused, whatever default it or
+    /// its struct carries.
     ///
     /// Only an open map is exempt. A flattened struct's own required members
     /// vanish from what serde writes when it is skipped, while serde still
     /// requires them on read, so the `required` its members publish is true in
-    /// neither direction unless a `default` covers the field.
+    /// neither direction. serde ignores `#[serde(default)]` on a flattened
+    /// field, at field and container level alike, so no default covers it.
     #[test]
     fn a_flattened_struct_skipped_on_write_is_still_refused() {
         each_case_is_refused(
-            vec![case(
-                "`skip_serializing_if` on a flattened struct with no default",
-                quote::quote!(
-                    struct Draft {
-                        id: u64,
-                        #[serde(flatten, skip_serializing_if = "Audit::is_empty")]
-                        audit: Audit,
-                    }
+            vec![
+                case(
+                    "`skip_serializing_if` on a flattened struct with no default",
+                    quote::quote!(
+                        struct Draft {
+                            id: u64,
+                            #[serde(flatten, skip_serializing_if = "Audit::is_empty")]
+                            audit: Audit,
+                        }
+                    ),
+                    "ignores `#[serde(default)]` on a flattened field",
                 ),
-                "still requires it on read",
-            )],
+                case(
+                    "`skip_serializing_if` on a flattened struct with a field-level default",
+                    quote::quote!(
+                        struct Wrapper {
+                            id: u64,
+                            #[serde(flatten, default, skip_serializing_if = "Audit::is_empty")]
+                            audit: Audit,
+                        }
+                    ),
+                    "ignores `#[serde(default)]` on a flattened field",
+                ),
+                case(
+                    "`skip_serializing_if` on a flattened struct under a container default",
+                    quote::quote!(
+                        #[serde(default)]
+                        struct Wrapper {
+                            id: u64,
+                            #[serde(flatten, skip_serializing_if = "Audit::is_empty")]
+                            audit: Audit,
+                        }
+                    ),
+                    "ignores `#[serde(default)]` on a flattened field",
+                ),
+            ],
             expand_inner,
         );
     }
