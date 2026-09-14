@@ -6,7 +6,7 @@ error[E0277]: `BTreeMap<std::string::String, std::string::String>` cannot be fla
   |
   = help: the trait `kynos::schema::Flatten` is not implemented for `BTreeMap<std::string::String, std::string::String>`
   = note: a flattened field's members become the parent's own, so its schema has to name them; a map names none, so its values would reach the properties the object declared itself
-  = note: give it a named field of its own, or, on a `HashMap` or `BTreeMap` field, add `#[schema(open)]` beside `#[serde(flatten)]` to say the object really is open -- the values then become the object's `unevaluatedProperties`
+  = note: give it a named field of its own; on a `HashMap` or `BTreeMap` field, add `#[schema(open)]` beside `#[serde(flatten)]` to say the object really is open, so its values become the object's `unevaluatedProperties`; as an internally tagged newtype variant's payload, make it a struct variant holding that flattened open field, which serde writes the same way
 help: the following other types implement trait `kynos::schema::Flatten`
  --> src/schema/impls/wrapper.rs
   |

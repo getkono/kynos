@@ -238,7 +238,10 @@ impl MapKey for String {}
 /// field that wrote it.
 ///
 /// Derived beside [`Schema`] for the shapes whose description is an object
-/// naming its members: a struct with named fields, and an enum serde tags.
+/// naming its members: a struct with named fields, and an enum whose every
+/// `oneOf` branch is such an object. Not for a container carrying
+/// `#[schema(open)]` or `#[serde(transparent)]`, an externally tagged enum with a
+/// unit variant, or an internally tagged enum with a newtype variant.
 /// Unsealed, for the reason [`MapKey`] is — a hand-written [`Schema`] that does
 /// the same thing has to be able to say so.
 ///
@@ -260,9 +263,11 @@ impl MapKey for String {}
     label = "does not name its members",
     note = "a flattened field's members become the parent's own, so its schema has to name them; a \
             map names none, so its values would reach the properties the object declared itself",
-    note = "give it a named field of its own, or, on a `HashMap` or `BTreeMap` field, add \
-            `#[schema(open)]` beside `#[serde(flatten)]` to say the object really is open -- the \
-            values then become the object's `unevaluatedProperties`"
+    note = "give it a named field of its own; on a `HashMap` or `BTreeMap` field, add \
+            `#[schema(open)]` beside `#[serde(flatten)]` to say the object really is open, so \
+            its values become the object's `unevaluatedProperties`; as an internally tagged \
+            newtype variant's payload, make it a struct variant holding that flattened open \
+            field, which serde writes the same way"
 )]
 pub trait Flatten: Schema {}
 

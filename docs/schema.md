@@ -267,7 +267,7 @@ and writes:
 | --- | --- |
 | every variant is a unit | `type: string` with an `enum` of the names, unless one is deprecated — see [Deprecation](#deprecation) |
 | externally tagged, the default | `oneOf`; a unit variant is its own name as a `const` string, and anything else a one-property object keyed by the variant name |
-| `#[serde(tag = "...")]` | `oneOf` of objects each carrying the tag as a `const` property beside the variant's own, plus a `discriminator`. A newtype variant has no properties to sit beside, so it becomes an `allOf` of a tag-only object and its payload — which must implement `Flatten`, for the reason a [flattened](#flattening) field's type must |
+| `#[serde(tag = "...")]` | `oneOf` of objects each carrying the tag as a `const` property beside the variant's own, plus a `discriminator`. A newtype variant has no properties to sit beside, so it becomes an `allOf` of a tag-only object and its payload — which must implement `Flatten`, for the reason a [flattened](#flattening) field's type must. A map payload has no route through `#[schema(open)]`, since serde refuses `flatten` on a newtype variant: write a struct variant holding the map as a flattened open field, which serializes the same way |
 | `#[serde(tag = "...", content = "...")]` | the same, with the payload under the content property, which a unit variant omits |
 | `#[serde(untagged)]` | **refused** |
 
@@ -369,7 +369,10 @@ flattening one used to emit an object requiring `id: u64` to be a string.
 witness spanned at the field's type, so the refusal lands where it was written.
 The derive implements the marker for the shapes whose description is an object
 naming its members: a struct with named fields, and an enum whose every `oneOf`
-branch is such an object. `Box<T>` and `Arc<T>` carry `T`'s answer across, and
+branch is such an object. It does not for a container carrying `#[schema(open)]`
+or `#[serde(transparent)]`, an externally tagged enum with a unit variant, or an
+internally tagged enum with a newtype variant, and a `#[serde(skip)]` variant
+counts toward none of these. `Box<T>` and `Arc<T>` carry `T`'s answer across, and
 the trait is unsealed so a hand-written `Schema` doing the same can say so.
 serde offers nothing to read here: `flatten` never leaves `serde_derive` and
 what enforces it is a runtime serializer, so the type-level surface has to be
