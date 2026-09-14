@@ -667,14 +667,17 @@ fn reject_unread_variant(input: &DeriveInput) -> syn::Result<()> {
 /// The schema's `oneOf` lists only the named ones, and only OpenAPI 3.2's
 /// `discriminator.defaultMapping` can say where the rest go. This derive emits
 /// no `defaultMapping`, so every build refuses the attribute rather than 3.1
-/// alone. Every variant is checked, skipped ones included: `skip_serializing`
-/// keeps a catch-all out of the schema, not out of deserialization.
+/// alone. Only a variant serde reads is checked: `skip_serializing` keeps a
+/// catch-all out of what serde writes, not out of deserialization, but serde
+/// draws the fallthrough only from the variants it reads, so `other` on one it
+/// skips both ways catches nothing. A lone `skip_deserializing` is refused
+/// before this runs, by [`reject_unread_variant`].
 fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
     let Data::Enum(data) = &input.data else {
         return Ok(());
     };
 
-    for variant in &data.variants {
+    for variant in described_variants(data) {
         if let Some((_, span)) = serde_key_span(&variant.attrs, &["other"]) {
             return Err(syn::Error::new(
                 span,
