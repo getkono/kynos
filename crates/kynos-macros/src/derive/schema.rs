@@ -33,7 +33,8 @@ mod shape;
 
 use attributes::{
     constraints, described_members, field_name, is_described, is_flattened, is_open, is_required,
-    is_skipped, open_span, serde_flag, serde_key_span, variant_name,
+    is_skipped, is_skipped_both_ways, is_unit_like, min_items, open_span, positional_members,
+    serde_flag, serde_key_span, variant_name,
 };
 use shape::{enum_body, struct_body};
 
@@ -197,7 +198,9 @@ fn schema_bounded_generics(input: &DeriveInput) -> syn::Generics {
 /// An internally tagged newtype variant's payload is bounded by `Flatten` too.
 /// The variant has no properties of its own to put the tag beside, so its
 /// payload is composed with a tag-only object in an `allOf` — a flatten in all
-/// but the attribute, with the same thing to get wrong.
+/// but the attribute, with the same thing to get wrong. A newtype variant whose
+/// member serde skips is a unit on the wire and composes no payload, so its
+/// member is bounded by nothing.
 fn flatten_witnesses(
     input: &DeriveInput,
     container: &Container,
@@ -214,7 +217,7 @@ fn flatten_witnesses(
         (Data::Enum(data), Some(_), None) => data
             .variants
             .iter()
-            .filter(|variant| !is_skipped(&variant.attrs))
+            .filter(|variant| !is_skipped(&variant.attrs) && !is_unit_like(&variant.fields))
             .filter_map(|variant| match &variant.fields {
                 Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => unnamed.unnamed.first(),
                 _ => None,
@@ -259,7 +262,8 @@ fn flatten_witnesses(
 /// True of the shapes whose description is an object whose `properties` names
 /// every member it admits: a struct with named fields, and an enum whose every
 /// `oneOf` branch is such an object. A newtype, a tuple and a unit struct are
-/// not objects at all; an externally tagged enum with a unit variant has a bare
+/// not objects at all; an externally tagged enum with a unit variant, or with a
+/// newtype variant whose member serde skips and so writes as one, has a bare
 /// string for that branch; and an internally tagged newtype variant composes
 /// with whatever its payload resolves to, which is exactly the unknown this
 /// trait exists to refuse.
@@ -305,7 +309,7 @@ fn flattens(input: &DeriveInput, container: &Container) -> bool {
                     !variants.is_empty()
                         && variants
                             .iter()
-                            .all(|variant| !matches!(variant.fields, Fields::Unit))
+                            .all(|variant| !is_unit_like(&variant.fields))
                 }
             }
         }
@@ -550,14 +554,16 @@ fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
 /// `PhantomData` and every field of a skipped variant are in no schema, so an
 /// override on one of them contradicts nothing and is left alone.
 ///
-/// An unnamed field has no such exemption. The newtype, tuple and tuple-variant
-/// shapes describe every member whatever its skip attributes say, so an
-/// override on any of them contradicts what is published.
+/// An unnamed member is exempt only when serde skips it both ways, and never on
+/// a newtype struct, whose member serde writes through the function whatever it
+/// skips. Skip attributes are read rather than [`is_described`], which would
+/// exempt that newtype member and a positional `PhantomData` alike.
 fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
-    fn fields(fields: &Fields) -> Vec<(&[syn::Attribute], &'static str)> {
+    fn fields(fields: &Fields, newtype: bool) -> Vec<(&[syn::Attribute], &'static str)> {
         let described: fn(&&Field) -> bool = match fields {
             Fields::Named(_) => |field| is_described(field),
-            Fields::Unnamed(_) | Fields::Unit => |_| true,
+            Fields::Unnamed(_) if newtype => |_| true,
+            Fields::Unnamed(_) | Fields::Unit => |field| !is_skipped_both_ways(&field.attrs),
         };
         fields
             .iter()
@@ -567,14 +573,14 @@ fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
     }
 
     let described = match &input.data {
-        Data::Struct(data) => fields(&data.fields),
+        Data::Struct(data) => fields(&data.fields, data.fields.len() == 1),
         Data::Enum(data) => data
             .variants
             .iter()
             .filter(|variant| !is_skipped(&variant.attrs))
             .flat_map(|variant| {
                 std::iter::once((variant.attrs.as_slice(), "variant"))
-                    .chain(fields(&variant.fields))
+                    .chain(fields(&variant.fields, false))
             })
             .collect(),
         // Refused at the top of `expand_inner`.

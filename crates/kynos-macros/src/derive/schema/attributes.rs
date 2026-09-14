@@ -1,6 +1,6 @@
 use super::{
-    COUNTS, Container, Field, Fields, Lit, LitFloat, LitInt, NUMERIC, Span, Spanned, TokenStream2,
-    Type, Variant, quote, skip_value, string_value,
+    COUNTS, Comma, Container, Field, Fields, Lit, LitFloat, LitInt, NUMERIC, Punctuated, Span,
+    Spanned, TokenStream2, Type, Variant, quote, skip_value, string_value,
 };
 
 /// The wire name of a field: serde's `rename` if it has one, the container's
@@ -134,6 +134,50 @@ pub(super) fn is_phantom(ty: &Type) -> bool {
 /// Whether an item carries `#[serde(skip)]` or either half of it.
 pub(super) fn is_skipped(attrs: &[syn::Attribute]) -> bool {
     serde_flag(attrs, &["skip", "skip_serializing", "skip_deserializing"])
+}
+
+/// Whether serde leaves a member out in both directions: `#[serde(skip)]`, or
+/// `skip_serializing` beside `skip_deserializing`.
+pub(super) fn is_skipped_both_ways(attrs: &[syn::Attribute]) -> bool {
+    serde_flag(attrs, &["skip"])
+        || (serde_flag(attrs, &["skip_serializing"]) && serde_flag(attrs, &["skip_deserializing"]))
+}
+
+/// The members of a tuple or tuple variant that hold a position on the wire,
+/// in order: each one serde does not skip both ways.
+///
+/// Read off skip attributes rather than [`is_described`], because a
+/// `PhantomData` dropped from the list would shift every later position.
+pub(super) fn positional_members(fields: &Punctuated<Field, Comma>) -> Vec<&Field> {
+    fields
+        .iter()
+        .filter(|field| !is_skipped_both_ways(&field.attrs))
+        .collect()
+}
+
+/// The fewest elements serde reads for a tuple holding these positions.
+///
+/// Every position, less a last one carrying `skip_serializing_if`: serde may
+/// leave that one out of what it writes, and fills it from its
+/// `#[serde(default)]` when the array ends before it.
+pub(super) fn min_items(positions: &[&Field]) -> u64 {
+    let trailing = positions
+        .last()
+        .is_some_and(|field| serde_flag(&field.attrs, &["skip_serializing_if"]));
+    u64::try_from(positions.len() - usize::from(trailing)).unwrap_or(u64::MAX)
+}
+
+/// Whether a variant is a unit on the wire: declared as one, or a newtype
+/// variant whose member serde skips both ways, which serde writes and reads as
+/// a unit variant.
+pub(super) fn is_unit_like(fields: &Fields) -> bool {
+    match fields {
+        Fields::Unit => true,
+        Fields::Unnamed(unnamed) => {
+            unnamed.unnamed.len() == 1 && is_skipped_both_ways(&unnamed.unnamed[0].attrs)
+        }
+        Fields::Named(_) => false,
+    }
 }
 
 pub(super) fn is_flattened(field: &Field) -> bool {

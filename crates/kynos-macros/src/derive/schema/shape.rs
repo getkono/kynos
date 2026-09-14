@@ -1,7 +1,8 @@
 use super::{
     Comma, Container, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant, constraints,
     deprecate, described, described_members, doc_string, field_name, is_deprecated, is_described,
-    is_flattened, is_open, is_required, is_skipped, quote, variant_name,
+    is_flattened, is_open, is_required, is_skipped, is_unit_like, min_items, positional_members,
+    quote, variant_name,
 };
 
 /// A struct's schema, which its fields decide.
@@ -35,12 +36,21 @@ pub(super) fn struct_body(fields: &Fields, container: &Container) -> TokenStream
     }
 }
 
-/// A tuple's schema: a closed array, one `prefixItems` entry per member.
+/// A tuple's schema: a closed array of the members serde does not skip both
+/// ways, bounded below by the fewest serde reads. With no member left there is
+/// no `prefixItems`, which may not be empty.
 pub(super) fn tuple_body(fields: &Punctuated<Field, Comma>) -> TokenStream2 {
-    let members = fields.iter().map(|field| {
+    let positions = positional_members(fields);
+    let fewest = min_items(&positions);
+    let members = positions.iter().map(|field| {
         let ty = &field.ty;
         quote!(registry.resolve::<#ty>())
     });
+    let prefix = (!positions.is_empty()).then(|| {
+        quote!(keywords.prefix_items = ::core::option::Option::Some(::std::vec![#(#members),*]);)
+    });
+    let bound =
+        (fewest > 0).then(|| quote!(keywords.min_items = ::core::option::Option::Some(#fewest);));
 
     quote! {
         {
@@ -50,12 +60,12 @@ pub(super) fn tuple_body(fields: &Punctuated<Field, Comma>) -> TokenStream2 {
                     ::kynos::openapi::model::schema::types::SchemaType::Array,
                 ),
             );
-            keywords.prefix_items =
-                ::core::option::Option::Some(::std::vec![#(#members),*]);
+            #prefix
             // Closed, because a tuple has exactly as many members as it has.
             keywords.items = ::core::option::Option::Some(
                 ::std::boxed::Box::new(::kynos::openapi::Schema::never()),
             );
+            #bound
             ::kynos::openapi::Schema::Object(::std::boxed::Box::new(keywords))
         }
     }
@@ -231,9 +241,7 @@ pub(super) fn enum_body(data: &DataEnum, container: &Container) -> TokenStream2 
 
     if container.tag.is_none()
         && !any_deprecated
-        && variants
-            .iter()
-            .all(|variant| matches!(variant.fields, Fields::Unit))
+        && variants.iter().all(|variant| is_unit_like(&variant.fields))
     {
         let names = variants
             .iter()
@@ -323,28 +331,25 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
 
         // Internally tagged: the tag is one more property of the variant's own
         // object. A newtype variant has no properties of its own to add it to,
-        // so the two are composed instead.
+        // so the two are composed instead, unless serde writes it as a unit.
         (Some(tag), None) => match &variant.fields {
             Fields::Named(named) => {
                 described(object_body(&named.named, container, Some((tag, &name))))
             }
-            Fields::Unit => described(object_body(
-                &Punctuated::new(),
-                container,
-                Some((tag, &name)),
-            )),
-            Fields::Unnamed(_) => {
+            Fields::Unit | Fields::Unnamed(_) => {
                 let marker = object_body(&Punctuated::new(), container, Some((tag, &name)));
-                let payload = payload(&variant.fields, container);
-                described(quote! {
-                    {
-                        let mut keywords = ::kynos::openapi::SchemaObject::default();
-                        keywords.all_of = ::core::option::Option::Some(
-                            ::std::vec![#marker, #payload],
-                        );
-                        ::kynos::openapi::Schema::Object(::std::boxed::Box::new(keywords))
-                    }
-                })
+                match payload(&variant.fields, container) {
+                    None => described(marker),
+                    Some(payload) => described(quote! {
+                        {
+                            let mut keywords = ::kynos::openapi::SchemaObject::default();
+                            keywords.all_of = ::core::option::Option::Some(
+                                ::std::vec![#marker, #payload],
+                            );
+                            ::kynos::openapi::Schema::Object(::std::boxed::Box::new(keywords))
+                        }
+                    }),
+                }
             }
         },
 
@@ -371,14 +376,17 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
     }
 }
 
-/// The schema of what a variant carries, or nothing for a unit variant.
+/// The schema of what a variant carries, or nothing for a unit variant, which
+/// a newtype variant whose member serde skips is on the wire.
 pub(super) fn payload(fields: &Fields, container: &Container) -> Option<TokenStream2> {
     match fields {
         Fields::Unit => None,
         Fields::Named(named) => Some(object_body(&named.named, container, None)),
         Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => {
-            let ty = &unnamed.unnamed[0].ty;
-            Some(quote!(registry.resolve::<#ty>()))
+            (!is_unit_like(fields)).then(|| {
+                let ty = &unnamed.unnamed[0].ty;
+                quote!(registry.resolve::<#ty>())
+            })
         }
         Fields::Unnamed(unnamed) => Some(tuple_body(&unnamed.unnamed)),
     }
