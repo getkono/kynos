@@ -70,6 +70,9 @@ const WIRE_FORM_OVERRIDES: &[&str] = &["with", "serialize_with", "deserialize_wi
 /// The overrides among those that serde reads through.
 const READ_OVERRIDES: &[&str] = &["with", "deserialize_with"];
 
+/// The overrides among those that serde writes through.
+const WRITE_OVERRIDES: &[&str] = &["with", "serialize_with"];
+
 /// serde's container keys that write or read the whole value as another type.
 const CONVERSIONS: &[&str] = &["into", "from", "try_from"];
 
@@ -570,11 +573,18 @@ fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
 /// predicts.
 ///
 /// Refused on every field and variant the schema describes, which is
-/// everywhere serde accepts the three keys. A skipped named field, a named
-/// `PhantomData` and every field of a variant serde skips both ways are in no
-/// schema, so an override on one of them contradicts nothing and is left alone.
-/// Inside a variant serde never writes, only [`READ_OVERRIDES`] are refused:
-/// [`is_written`] says why `serialize_with` changes nothing there.
+/// everywhere serde accepts the three keys. A named field serde never reads, a
+/// named `PhantomData` and every field of a variant serde skips both ways are in
+/// no schema, so an override on one of them contradicts nothing and is left
+/// alone. Where serde never writes -- inside a variant serde never writes, and
+/// on a named field carrying `skip_serializing` alone -- only
+/// [`READ_OVERRIDES`] are refused: [`is_written`] says why `serialize_with`
+/// changes nothing there.
+///
+/// A `#[serde(transparent)]` struct is scanned over the fields
+/// [`transparent_members`] says serde writes through, for [`WRITE_OVERRIDES`],
+/// and reads through, for [`READ_OVERRIDES`]: serde hands no other field's value
+/// to a function in either direction.
 ///
 /// An unnamed member is exempt only when serde skips it both ways, and never on
 /// a newtype struct, whose member serde writes through the function whatever it
@@ -596,11 +606,38 @@ fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
         fields
             .iter()
             .filter(described)
-            .map(|field| (field.attrs.as_slice(), "field", keys))
+            .map(|field| {
+                // A described named field is read, so `skip_serializing` on one
+                // is `skip_serializing` alone.
+                let unwritten =
+                    field.ident.is_some() && serde_flag(&field.attrs, &["skip_serializing"]);
+                let keys = if unwritten { READ_OVERRIDES } else { keys };
+                (field.attrs.as_slice(), "field", keys)
+            })
+            .collect()
+    }
+
+    fn picked(fields: &Fields) -> Vec<Scanned<'_>> {
+        let (written, read) = transparent_members(fields);
+        let among = |members: &[&Field], field: &Field| {
+            members.iter().any(|member| std::ptr::eq(*member, field))
+        };
+        fields
+            .iter()
+            .filter_map(|field| {
+                let keys = match (among(&written, field), among(&read, field)) {
+                    (true, true) => WIRE_FORM_OVERRIDES,
+                    (true, false) => WRITE_OVERRIDES,
+                    (false, true) => READ_OVERRIDES,
+                    (false, false) => return None,
+                };
+                Some((field.attrs.as_slice(), "field", keys))
+            })
             .collect()
     }
 
     let described = match &input.data {
+        Data::Struct(data) if Container::read(input).transparent => picked(&data.fields),
         Data::Struct(data) => fields(&data.fields, data.fields.len() == 1, WIRE_FORM_OVERRIDES),
         Data::Enum(data) => described_variants(data)
             .into_iter()
@@ -751,7 +788,8 @@ fn reject_transparent_without_one_field(input: &DeriveInput) -> syn::Result<()> 
 }
 
 /// `skip_serializing_if` on a field serde still requires on read has no
-/// truthful `required`.
+/// truthful `required`, and neither has `skip_serializing` alone, which is
+/// `skip_serializing_if` with a condition that always holds.
 ///
 /// serde may leave such a field out of what it writes, and rejects a document
 /// without it on read, so listing it in `required` misdescribes a response and
@@ -761,9 +799,9 @@ fn reject_transparent_without_one_field(input: &DeriveInput) -> syn::Result<()> 
 /// this refusal reads that same rule, so the two cannot disagree. A flattened
 /// field is decided before that rule, by `#[schema(open)]` alone, because serde
 /// ignores any default on it. Only named fields are checked, since only an
-/// object has a `required` list; a skipped field is in no schema, and a field of
-/// a variant serde never writes is only read, where `skip_serializing_if` changes
-/// nothing. A `#[serde(transparent)]` struct is not checked at all: serde writes
+/// object has a `required` list; a field serde never reads is in no schema, and a
+/// field of a variant serde never writes is only read, where neither key changes
+/// anything. A `#[serde(transparent)]` struct is not checked at all: serde writes
 /// its one field's value whatever `skip_serializing_if` says, and the schema
 /// describing that value has no `required` list to contradict.
 fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
@@ -790,7 +828,9 @@ fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
     });
 
     for field in named.flatten().filter(|field| is_described(field)) {
-        let Some((_, span)) = serde_key_span(&field.attrs, &["skip_serializing_if"]) else {
+        let Some((key, span)) =
+            serde_key_span(&field.attrs, &["skip_serializing_if", "skip_serializing"])
+        else {
             continue;
         };
 
@@ -808,12 +848,14 @@ fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
             }
             return Err(syn::Error::new(
                 span,
-                "`skip_serializing_if` on a flattened field is refused unless it is \
-                 `#[schema(open)]`. A flattened map must be `#[schema(open)]` for the schema to \
-                 describe it, and may then skip itself, since serde reads it absent as empty. A \
-                 flattened struct is written whole or not at all, so drop `skip_serializing_if` \
-                 to keep its members consistent with its schema. `#[serde(default)]` does not \
-                 change this on a flattened field",
+                format!(
+                    "`{key}` on a flattened field is refused unless it is \
+                     `#[schema(open)]`. A flattened map must be `#[schema(open)]` for the schema \
+                     to describe it, and may then skip itself, since serde reads it absent as \
+                     empty. A flattened struct is written whole or not at all, so drop `{key}` \
+                     to keep its members consistent with its schema. `#[serde(default)]` does \
+                     not change this on a flattened field"
+                ),
             ));
         }
 
@@ -822,10 +864,12 @@ fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
         }
         return Err(syn::Error::new(
             span,
-            "`skip_serializing_if` lets serde leave this field out of what it writes, but \
-             without a `#[serde(default)]` on the field or its struct serde still requires it \
-             on read, so no `required` list is true in both directions. Add \
-             `#[serde(default)]` beside it or on the struct, or make the field an `Option`",
+            format!(
+                "`{key}` lets serde leave this field out of what it writes, but without a \
+                 `#[serde(default)]` on the field or its struct serde still requires it on \
+                 read, so no `required` list is true in both directions. Add \
+                 `#[serde(default)]` beside it or on the struct, or make the field an `Option`"
+            ),
         ));
     }
     Ok(())

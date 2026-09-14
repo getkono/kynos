@@ -1592,7 +1592,10 @@ mod schema {
             ),
             quote::quote!(
                 #[serde(transparent)]
-                struct Handle(u64, #[serde(default, deserialize_with = "from_string")] u64);
+                struct Handle(
+                    u64,
+                    #[serde(default, skip_serializing, deserialize_with = "from_string")] u64,
+                );
             ),
         ] {
             let input: syn::DeriveInput =
