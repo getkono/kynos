@@ -927,6 +927,130 @@ fn a_newtype_member_publishes_its_prose_and_deprecation() {
     );
 }
 
+// --- A variant serde skips in one direction ---------------------------------
+//
+// serde reads a `skip_serializing` variant and never writes it, so it is
+// described as the name or branch serde reads; a variant serde skips both ways
+// is described nowhere. These pin the emitted shape against what serde reads;
+// `docs/schema.md` states the rule. None carries a doc comment, for the reason
+// `Labels` gives.
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum Intake {
+    Web,
+    #[serde(skip_serializing)]
+    Fax,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "t")]
+enum Command {
+    Start {
+        at: u64,
+    },
+    #[serde(skip_serializing)]
+    Legacy {
+        at: u64,
+    },
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum Retiring {
+    Web,
+    #[deprecated]
+    #[serde(skip_serializing)]
+    Fax,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum Withdrawn {
+    Web,
+    #[serde(skip_serializing)]
+    #[serde(skip_deserializing)]
+    Fax,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum Hidden {
+    Web,
+    #[deprecated]
+    #[serde(skip)]
+    Fax,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum Batch {
+    Now(u64),
+    #[serde(skip_serializing)]
+    Queued(u64, #[serde(skip_serializing_if = "is_zero")] u64),
+}
+
+/// A variant serde reads and never writes is the name or branch serde reads.
+#[test]
+fn a_variant_serde_reads_but_never_writes_is_described() {
+    assert_eq!(
+        emitted::<Intake>(),
+        serde_json::json!({"type": "string", "enum": ["Web", "Fax"]})
+    );
+    assert!(
+        serde_json::to_value(Intake::Fax).is_err(),
+        "serde must refuse to write the variant"
+    );
+    assert!(serde_json::from_str::<Intake>(r#""Fax""#).is_ok());
+
+    let branch = |name: &str| {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "t": {"type": "string", "const": name},
+                "at": emitted::<u64>(),
+            },
+            "required": ["t", "at"],
+        })
+    };
+    assert_eq!(
+        emitted::<Command>(),
+        serde_json::json!({
+            "oneOf": [branch("Start"), branch("Legacy")],
+            "discriminator": {"propertyName": "t"},
+        })
+    );
+    assert!(serde_json::from_str::<Command>(r#"{"t":"Legacy","at":1}"#).is_ok());
+}
+
+/// A tuple variant serde never writes admits no fewer members than serde reads:
+/// a trailing `skip_serializing_if` with no `#[serde(default)]` lowers nothing,
+/// since serde refuses the shorter array.
+#[test]
+fn a_tuple_variant_serde_never_writes_admits_no_fewer_members_than_it_reads() {
+    let schema = emitted::<Batch>();
+    let queued = &schema["oneOf"][1]["properties"]["Queued"];
+    assert_eq!(queued["minItems"], serde_json::json!(2), "{schema}");
+    assert!(serde_json::from_str::<Batch>(r#"{"Queued":[1]}"#).is_err());
+    assert!(serde_json::from_str::<Batch>(r#"{"Queued":[1,0]}"#).is_ok());
+}
+
+/// A deprecated variant serde only reads keeps its branch and its deprecation.
+#[test]
+fn a_deprecated_variant_serde_only_reads_is_marked() {
+    assert_eq!(
+        emitted::<Retiring>(),
+        serde_json::json!({"oneOf": [
+            {"type": "string", "const": "Web"},
+            {"type": "string", "const": "Fax", "deprecated": true},
+        ]})
+    );
+}
+
+/// A variant serde skips both ways, however it is spelt, is in no schema, and
+/// neither is its deprecation.
+#[test]
+fn a_variant_serde_skips_both_ways_is_described_nowhere() {
+    let names = serde_json::json!({"type": "string", "enum": ["Web"]});
+    assert_eq!(emitted::<Withdrawn>(), names);
+    assert_eq!(emitted::<Hidden>(), names);
+}
+
 // --- What a derived error response declares ---------------------------------
 //
 // A problem body carries the type URI the declaration named, so the response
