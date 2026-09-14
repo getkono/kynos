@@ -35,6 +35,8 @@
 //! [`Unchecked`](crate::schema::unchecked::Unchecked) before reaching for this module,
 //! because a weak schema is still an honest one.
 
+mod describe;
+
 use std::{
     convert::Infallible,
     future::Future,
@@ -44,7 +46,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use kynos_openapi::{Document, Method, OpaqueReason, OpaqueRoute};
+use kynos_openapi::{Method, OpaqueReason, OpaqueRoute};
 
 use crate::{
     error::problem::Problem,
@@ -305,19 +307,6 @@ impl<C> Unchecked<C> {
             self.routes.push(route);
         }
     }
-
-    /// Records every unexpressible route on the document, and restamps it.
-    pub(crate) fn annotate(&self, document: &mut Document) {
-        for route in &self.routes {
-            // The only reachable failure is a list already present in a shape
-            // Kynos never emits, which a document Kynos just built cannot carry.
-            let _ = route.record.append_to(document);
-        }
-
-        // Derived rather than set: the stamp summarizes what the document now
-        // says, in both directions.
-        document.restamp_authority();
-    }
 }
 
 /// The literal prefix a pattern is anchored at, when it has variables past it.
@@ -465,14 +454,6 @@ where
 #[derive(Clone, Debug)]
 pub struct UncheckedService<C> {
     service: Arc<Service<C>>,
-}
-
-impl<C> UncheckedService<C> {
-    /// Returns the document, with every operation flagged opaque.
-    #[must_use]
-    pub fn openapi(&self) -> &kynos_openapi::Document {
-        self.service.openapi()
-    }
 }
 
 impl<C> Service<C> {
