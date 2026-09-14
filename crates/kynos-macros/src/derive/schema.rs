@@ -637,8 +637,9 @@ fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
 /// it writes through the field without `skip` or `skip_serializing`, reads
 /// through the field without `skip`, `skip_deserializing` or a field-level
 /// `default`, and never through a `PhantomData`. Where each direction picks a
-/// single field and the two differ, no one schema is true of the struct, and it
-/// is refused. Everything else is [`transparent_member`]'s, which `struct_body`
+/// single field and they are different fields, the struct is refused: the
+/// derive compares fields rather than their schemas, so two fields of one type
+/// are refused too. Everything else is [`transparent_member`]'s, which `struct_body`
 /// describes. Where only one direction picks a single field, serde refuses the
 /// other derive by itself, so the struct compiles with that direction's derive
 /// alone and the field is true of it. Where neither does, serde refuses the
@@ -679,8 +680,9 @@ fn reject_transparent_without_one_field(input: &DeriveInput) -> syn::Result<()> 
         format!(
             "`#[serde(transparent)]` makes serde write through the one field without `skip` or \
              `skip_serializing` and read through the one field without `skip`, \
-             `skip_deserializing` or `default`, and a schema is true of both only when they are \
-             the same field; this struct writes through {writes} and reads through {reads}. Leave \
+             `skip_deserializing` or `default`, and `Schema` describes the struct only where \
+             they are the same field, since it does not compare two fields' schemas; this struct \
+             writes through {writes} and reads through {reads}. Leave \
              one field serde both writes and reads, and mark every other `#[serde(skip)]`"
         ),
     ))
