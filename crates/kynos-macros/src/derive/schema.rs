@@ -32,8 +32,8 @@ mod attributes;
 mod shape;
 
 use attributes::{
-    constraints, field_name, is_described, is_flattened, is_open, is_required, is_skipped,
-    open_span, serde_flag, serde_key_span, variant_name,
+    constraints, described_members, field_name, is_described, is_flattened, is_open, is_required,
+    is_skipped, open_span, serde_flag, serde_key_span, variant_name,
 };
 use shape::{enum_body, struct_body};
 
@@ -634,8 +634,15 @@ fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
 /// field is decided before that rule, by `#[schema(open)]` alone, because serde
 /// ignores any default on it. Only named fields are checked, since only an
 /// object has a `required` list; a skipped field or a field of a skipped
-/// variant is in no schema.
+/// variant is in no schema. A `#[serde(transparent)]` struct is not checked at
+/// all: serde writes its one field's value whatever `skip_serializing_if` says,
+/// and the schema describing that value has no `required` list to contradict.
 fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
+    let container = Container::read(input);
+    if container.transparent {
+        return Ok(());
+    }
+
     let groups: Vec<&Fields> = match &input.data {
         Data::Struct(data) => vec![&data.fields],
         Data::Enum(data) => data
@@ -652,8 +659,6 @@ fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
         Fields::Named(named) => Some(&named.named),
         Fields::Unnamed(_) | Fields::Unit => None,
     });
-
-    let container = Container::read(input);
 
     for field in named.flatten().filter(|field| is_described(field)) {
         let Some((_, span)) = serde_key_span(&field.attrs, &["skip_serializing_if"]) else {
@@ -708,7 +713,8 @@ struct Container {
     tag: Option<String>,
     content: Option<String>,
     /// `#[serde(transparent)]`: the wire form is the one field's value, not an
-    /// object of the fields the declaration names.
+    /// object of the fields the declaration names, so `struct_body` describes
+    /// that field and `flattens` refuses the `Flatten` claim.
     transparent: bool,
     doc: Option<String>,
     /// A container `#[serde(default)]`, which serde fills every missing field

@@ -1,6 +1,6 @@
 use super::{
-    COUNTS, Container, Field, Lit, LitFloat, LitInt, NUMERIC, Span, Spanned, TokenStream2, Type,
-    Variant, quote, skip_value, string_value,
+    COUNTS, Container, Field, Fields, Lit, LitFloat, LitInt, NUMERIC, Span, Spanned, TokenStream2,
+    Type, Variant, quote, skip_value, string_value,
 };
 
 /// The wire name of a field: serde's `rename` if it has one, the container's
@@ -110,6 +110,15 @@ pub(super) fn rename(ident: &str, style: &str) -> String {
 /// satisfies -- would make a marker field cost a bound the type cannot meet.
 pub(super) fn is_described(field: &Field) -> bool {
     !is_skipped(&field.attrs) && !is_phantom(&field.ty)
+}
+
+/// The fields a schema describes, in declaration order: each one
+/// [`is_described`] keeps.
+///
+/// A `#[serde(transparent)]` struct is described by the one field this returns,
+/// whichever shape declares it.
+pub(super) fn described_members(fields: &Fields) -> Vec<&Field> {
+    fields.iter().filter(|field| is_described(field)).collect()
 }
 
 pub(super) fn is_phantom(ty: &Type) -> bool {

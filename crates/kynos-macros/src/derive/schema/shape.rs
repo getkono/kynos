@@ -1,16 +1,25 @@
 use super::{
     Comma, Container, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant, constraints,
-    deprecate, described, doc_string, field_name, is_deprecated, is_described, is_flattened,
-    is_open, is_required, is_skipped, quote, variant_name,
+    deprecate, described, described_members, doc_string, field_name, is_deprecated, is_described,
+    is_flattened, is_open, is_required, is_skipped, quote, variant_name,
 };
 
 /// A struct's schema, which its fields decide.
+///
+/// A `#[serde(transparent)]` struct is its one described field's schema,
+/// whichever shape declares it, because serde writes that field's value and
+/// nothing around it.
 ///
 /// A newtype is transparent, because serde makes it so: `Sku(String)` is a
 /// string on the wire and describing it as anything else would be a claim the
 /// serializer contradicts. A longer tuple is the array serde writes, and a unit
 /// struct is `null`.
 pub(super) fn struct_body(fields: &Fields, container: &Container) -> TokenStream2 {
+    let members = described_members(fields);
+    if let (true, [field]) = (container.transparent, members.as_slice()) {
+        return member_schema(field);
+    }
+
     match fields {
         Fields::Named(named) => object_body(&named.named, container, None),
         Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => {
@@ -129,40 +138,12 @@ pub(super) fn object_body(
                 };
             }
 
-            let constrained = constraints(field)
-                .map(|constraints| quote!(let schema = #constraints.apply(schema);));
-            // A property's prose sits beside its schema, which for a named
-            // field type is a `$ref` -- legal from 3.1 onward, where a schema
-            // `$ref` applies its siblings. A boolean schema has nowhere to put
-            // it and keeps none.
-            let described = doc_string(&field.attrs).map(|doc| {
-                quote! {
-                    let mut schema = schema;
-                    if let ::kynos::openapi::Schema::Object(property) = &mut schema {
-                        property.description =
-                            ::core::option::Option::Some(::std::string::String::from(#doc));
-                    }
-                }
-            });
-            let deprecated = is_deprecated(&field.attrs).then(|| {
-                quote! {
-                    let mut schema = schema;
-                    if let ::kynos::openapi::Schema::Object(property) = &mut schema {
-                        property.deprecated = ::core::option::Option::Some(true);
-                    }
-                }
-            });
+            let schema = member_schema(field);
             let require = is_required(field, container)
                 .then(|| quote!(required.push(::std::string::String::from(#wire));));
 
             quote! {
-                {
-                    let schema = registry.resolve::<#ty>();
-                    #constrained
-                    #described
-                    #deprecated
-                    keywords.properties.insert(::std::string::String::from(#wire), schema);
-                }
+                keywords.properties.insert(::std::string::String::from(#wire), #schema);
                 #require
             }
         });
@@ -185,6 +166,29 @@ pub(super) fn object_body(
             ::kynos::openapi::Schema::Object(::std::boxed::Box::new(keywords))
         }
     }
+}
+
+/// One described field's schema: its type's, under the field's constraints,
+/// prose and deprecation.
+///
+/// The prose sits beside the schema, which for a named field type is a `$ref`
+/// -- legal from 3.1 onward, where a schema `$ref` applies its siblings. A
+/// boolean schema has nowhere to put it and keeps none.
+pub(super) fn member_schema(field: &Field) -> TokenStream2 {
+    let ty = &field.ty;
+    let constrained =
+        constraints(field).map(|constraints| quote!(let schema = #constraints.apply(schema);));
+    let resolved = quote! {
+        {
+            let schema = registry.resolve::<#ty>();
+            #constrained
+            schema
+        }
+    };
+    deprecate(
+        described(resolved, doc_string(&field.attrs).as_deref()),
+        is_deprecated(&field.attrs),
+    )
 }
 
 /// A string schema fixed to one value, which is what a tag property is.

@@ -198,11 +198,13 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// Describes a type as JSON Schema.
 ///
 /// Reads the serde attributes already on the type — `rename_all`, `skip`,
-/// `flatten`, `tag`, `content` — so the schema and the wire form come from one
-/// declaration. A field is left out of `required` when it is an `Option`,
-/// carries `#[serde(default)]`, or belongs to a struct carrying
+/// `flatten`, `tag`, `content`, `transparent` — so the schema and the wire form
+/// come from one declaration. A field is left out of `required` when it is an
+/// `Option`, carries `#[serde(default)]`, or belongs to a struct carrying
 /// `#[serde(default)]`, because the wire form then allows it to be absent both
-/// ways; `skip_serializing_if` is accepted only alongside one of those.
+/// ways; `skip_serializing_if` is accepted only alongside one of those. A
+/// `transparent` struct is described by its one described field, with that
+/// field's constraints, and keeps its own component name, as a newtype does.
 ///
 /// Constraints go on fields, and the grammar is exactly the keys of
 /// [`Constraints`](https://docs.rs/kynos/latest/kynos/schema/constraints/struct.Constraints.html)
