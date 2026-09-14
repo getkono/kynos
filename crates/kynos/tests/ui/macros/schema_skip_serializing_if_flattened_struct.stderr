@@ -1,0 +1,5 @@
+error: `skip_serializing_if` lets serde leave this flattened field out of what it writes, but serde ignores `#[serde(default)]` on a flattened field, so it still requires the flattened type's required members on read. For a map, add `#[schema(open)]`, which reads an absent map as empty; for a struct, make that type's own members optional
+  --> tests/ui/macros/schema_skip_serializing_if_flattened_struct.rs:20:31
+   |
+20 |     #[serde(flatten, default, skip_serializing_if = "Audit::is_empty")]
+   |                               ^^^^^^^^^^^^^^^^^^^

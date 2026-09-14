@@ -255,7 +255,8 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   on the field or its struct. serde may leave the field out of what it
 ///   writes but still requires it on read, so no `required` list is true in
 ///   both directions. Add `#[serde(default)]` beside it or on the struct. A
-///   flattened `#[schema(open)]` map is exempt: serde reads it absent as empty.
+///   flattened field is decided by `#[schema(open)]` alone, since serde ignores
+///   any default on it: an open map is exempt, and anything else is refused.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)

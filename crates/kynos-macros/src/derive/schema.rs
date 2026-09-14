@@ -595,7 +595,9 @@ fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
 /// leaving it out misdescribes a request. An `Option`, a field-level
 /// `#[serde(default)]` or a struct's container `#[serde(default)]` lets the
 /// field be absent both ways, which is what lets [`is_required`] leave it out;
-/// this refusal reads that same rule, so the two cannot disagree. Only named fields are checked, since only an
+/// this refusal reads that same rule, so the two cannot disagree. A flattened
+/// field is decided before that rule, by `#[schema(open)]` alone, because serde
+/// ignores any default on it. Only named fields are checked, since only an
 /// object has a `required` list; a skipped field or a field of a skipped
 /// variant is in no schema.
 fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
@@ -619,24 +621,39 @@ fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
     let container = Container::read(input);
 
     for field in named.flatten().filter(|field| is_described(field)) {
+        let Some((_, span)) = serde_key_span(&field.attrs, &["skip_serializing_if"]) else {
+            continue;
+        };
+
+        // A flattened field is decided by `#[schema(open)]` alone, before any
+        // default: serde ignores `#[serde(default)]` on a flattened field, at
+        // field and container level alike. An open map reads absent as empty
+        // and is never listed in `required`, recognised by the same pair
+        // `object_body` reads; anything else keeps its members required.
+        if is_flattened(field) {
+            if is_open(field) {
+                continue;
+            }
+            return Err(syn::Error::new(
+                span,
+                "`skip_serializing_if` lets serde leave this flattened field out of what it \
+                 writes, but serde ignores `#[serde(default)]` on a flattened field, so it still \
+                 requires the flattened type's required members on read. For a map, add \
+                 `#[schema(open)]`, which reads an absent map as empty; for a struct, make that \
+                 type's own members optional",
+            ));
+        }
+
         if !is_required(field, &container) {
             continue;
         }
-        // A flattened open map reads as an empty map when absent, and no
-        // flattened field is ever listed in `required`, so nothing here can
-        // disagree with it. Recognised by the same pair `object_body` reads.
-        if is_flattened(field) && is_open(field) {
-            continue;
-        }
-        if let Some((_, span)) = serde_key_span(&field.attrs, &["skip_serializing_if"]) {
-            return Err(syn::Error::new(
-                span,
-                "`skip_serializing_if` lets serde leave this field out of what it writes, but \
-                 without a `#[serde(default)]` on the field or its struct serde still requires it \
-                 on read, so no `required` list is true in both directions. Add \
-                 `#[serde(default)]` beside it or on the struct, or make the field an `Option`",
-            ));
-        }
+        return Err(syn::Error::new(
+            span,
+            "`skip_serializing_if` lets serde leave this field out of what it writes, but \
+             without a `#[serde(default)]` on the field or its struct serde still requires it \
+             on read, so no `required` list is true in both directions. Add \
+             `#[serde(default)]` beside it or on the struct, or make the field an `Option`",
+        ));
     }
     Ok(())
 }
