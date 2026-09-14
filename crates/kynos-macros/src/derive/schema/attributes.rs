@@ -182,6 +182,26 @@ pub(super) fn is_skipped(attrs: &[syn::Attribute]) -> bool {
     serde_flag(attrs, &["skip", "skip_serializing", "skip_deserializing"])
 }
 
+/// Whether serde leaves a member out in both directions: `#[serde(skip)]`, or
+/// `skip_serializing` beside `skip_deserializing`.
+pub(super) fn is_skipped_both_ways(attrs: &[syn::Attribute]) -> bool {
+    serde_flag(attrs, &["skip"])
+        || (serde_flag(attrs, &["skip_serializing"]) && serde_flag(attrs, &["skip_deserializing"]))
+}
+
+/// Whether a variant is a unit on the wire: declared as one, or a newtype
+/// variant whose member serde skips both ways, which serde writes and reads as
+/// a unit variant.
+pub(super) fn is_unit_like(fields: &Fields) -> bool {
+    match fields {
+        Fields::Unit => true,
+        Fields::Unnamed(unnamed) => {
+            unnamed.unnamed.len() == 1 && is_skipped_both_ways(&unnamed.unnamed[0].attrs)
+        }
+        Fields::Named(_) => false,
+    }
+}
+
 pub(super) fn is_flattened(field: &Field) -> bool {
     serde_flag(&field.attrs, &["flatten"])
 }

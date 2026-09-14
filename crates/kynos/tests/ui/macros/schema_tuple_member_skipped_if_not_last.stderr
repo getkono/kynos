@@ -1,0 +1,5 @@
+error: `skip_serializing_if` on a tuple member is refused unless it is the last described member and carries `#[serde(default)]`. serde leaves the member out of the array it writes, which moves every later member into its position, and reads the shorter array back only when a default fills the end. Move the member last beside `#[serde(default)]`, or give the type named fields
+  --> tests/ui/macros/schema_tuple_member_skipped_if_not_last.rs:13:22
+   |
+13 |     #[serde(default, skip_serializing_if = "is_zero")] u64,
+   |                      ^^^^^^^^^^^^^^^^^^^
