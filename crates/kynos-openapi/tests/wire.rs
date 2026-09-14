@@ -660,6 +660,35 @@ fn a_fractional_number_survives_a_round_trip_at_every_site() {
     assert_eq!(parsed, original);
 }
 
+/// A numeric keyword reads every JSON spelling of a number, through `RefOr`
+/// and `Schema`.
+///
+/// The round trip above only ever sees what `serde_json` writes for an `f64`,
+/// which always carries a decimal point. A description written by hand does
+/// not: an explicit `null`, a bare integer, exponent text and an integer beyond
+/// `u64` each reach the keyword's deserializer as a different input, and under
+/// `serde_json/arbitrary_precision` each is buffered differently too.
+#[test]
+fn every_json_number_spelling_reads_at_a_numeric_keyword() {
+    fn maximum(json: &str) -> Option<f64> {
+        match serde_json::from_str::<RefOr<Schema>>(json) {
+            Ok(RefOr::Item(Schema::Object(object))) => object.maximum,
+            other => panic!("{json} must read as a Schema Object: {other:?}"),
+        }
+    }
+
+    for (json, expected) in [
+        (r#"{"maximum":null}"#, None),
+        (r#"{"maximum":0}"#, Some(0.0)),
+        (r#"{"maximum":-5}"#, Some(-5.0)),
+        (r#"{"maximum":1e3}"#, Some(1000.0)),
+        (r#"{"maximum":1E-3}"#, Some(0.001)),
+        (r#"{"maximum":100000000000000000000}"#, Some(1e20)),
+    ] {
+        assert_eq!(maximum(json), expected, "{json}");
+    }
+}
+
 /// Every object the specification lets carry an extension round-trips one.
 ///
 /// `references/3.1.2.md` says "This object MAY be extended with Specification
