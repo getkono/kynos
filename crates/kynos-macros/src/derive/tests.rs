@@ -853,6 +853,49 @@ mod schema {
         );
     }
 
+    /// A catch-all on a variant serde never reads is left alone.
+    ///
+    /// serde draws the fallthrough only from the variants it reads, so
+    /// `#[serde(other)]` on one it skips on read catches nothing, and the
+    /// refusal's "accepts every tag this enum does not name" would be false. A
+    /// lone `skip_deserializing` never reaches the check, since
+    /// `reject_unread_variant` refuses it first.
+    #[test]
+    fn a_catch_all_on_a_variant_serde_never_reads_is_left_alone() {
+        for declaration in [
+            quote::quote!(
+                #[serde(tag = "kind")]
+                enum Event {
+                    Created {
+                        id: u64,
+                    },
+                    #[serde(skip)]
+                    #[serde(other)]
+                    Unknown,
+                }
+            ),
+            quote::quote!(
+                #[serde(tag = "kind")]
+                enum Event {
+                    Created {
+                        id: u64,
+                    },
+                    #[serde(skip_serializing)]
+                    #[serde(skip_deserializing)]
+                    #[serde(other)]
+                    Unknown,
+                }
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+
+            if let Err(error) = expand_inner(&input) {
+                panic!("a catch-all serde never reads must expand: {error}");
+            }
+        }
+    }
+
     /// `skip_serializing_if` is accepted wherever serde may leave the field out
     /// in both directions, or never reads it at all.
     ///
