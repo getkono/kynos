@@ -48,6 +48,65 @@ fn rendered_errors(violations: &[Violation]) -> Vec<String> {
     rendered
 }
 
+/// Every place the emitted JSON holds an unchecked schema, as sorted pointers.
+///
+/// Read off the wire rather than the model, so the oracle shares no walk with
+/// the validator: an object carrying `x-kynos-unchecked` anywhere, and `true`
+/// wherever it is a Media Type Object's own `schema` or `itemSchema` — under a
+/// `content` map, or as a 3.2 `components.mediaTypes` entry.
+fn unchecked_pointers(document: &Document) -> Vec<String> {
+    fn is_media_type_schema(tokens: &[String]) -> bool {
+        match tokens {
+            [.., parent, _, last] if parent == "content" => {
+                last == "schema" || last == "itemSchema"
+            }
+            [components, media_types, _, last]
+                if components == "components" && media_types == "mediaTypes" =>
+            {
+                last == "schema" || last == "itemSchema"
+            }
+            _ => false,
+        }
+    }
+
+    fn walk(value: &serde_json::Value, tokens: &mut Vec<String>, found: &mut Vec<String>) {
+        let pointer = |tokens: &[String]| {
+            tokens.iter().fold("#".to_owned(), |pointer, token| {
+                format!("{pointer}/{token}")
+            })
+        };
+        match value {
+            serde_json::Value::Object(map) => {
+                if map.contains_key("x-kynos-unchecked") {
+                    found.push(pointer(tokens));
+                }
+                for (key, child) in map {
+                    tokens.push(key.replace('~', "~0").replace('/', "~1"));
+                    walk(child, tokens, found);
+                    tokens.pop();
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (index, child) in items.iter().enumerate() {
+                    tokens.push(index.to_string());
+                    walk(child, tokens, found);
+                    tokens.pop();
+                }
+            }
+            serde_json::Value::Bool(true) if is_media_type_schema(tokens) => {
+                found.push(pointer(tokens));
+            }
+            _ => {}
+        }
+    }
+
+    let json = serde_json::to_value(document).expect("every generated value is representable");
+    let mut found = Vec::new();
+    walk(&json, &mut Vec::new(), &mut found);
+    found.sort();
+    found
+}
+
 // --- Properties ----------------------------------------------------------
 
 proptest! {
@@ -82,6 +141,23 @@ proptest! {
             for violation in &violations {
                 prop_assert!(violation.location.starts_with('#'));
             }
+        }
+    }
+
+    /// Every unchecked schema a document holds is reported once, at its own
+    /// pointer, whatever container it sits in and however deep.
+    #[test]
+    fn every_unchecked_schema_is_reported_once_where_it_sits(document in arb_document()) {
+        let expected = unchecked_pointers(&document);
+        for &version in VERSIONS {
+            let mut reported: Vec<String> = Validator::new(version)
+                .validate(&document)
+                .into_iter()
+                .filter(|violation| violation.error == SpecError::UncheckedSchema)
+                .map(|violation| violation.location)
+                .collect();
+            reported.sort();
+            prop_assert_eq!(&reported, &expected);
         }
     }
 
