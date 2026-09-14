@@ -1701,9 +1701,13 @@ fn a_referenced_component_is_reported_once_where_it_is_defined() {
 fn a_permissive_schema_below_a_media_type_is_not_unchecked() {
     use crate::model::schema::object::SchemaObject;
 
-    let mut open = SchemaObject::default();
-    open.additional_properties = Some(Box::new(Schema::any()));
-    open.properties.insert("anything".to_owned(), Schema::any());
+    let open = SchemaObject {
+        additional_properties: Some(Box::new(Schema::any())),
+        properties: [("anything".to_owned(), Schema::any())]
+            .into_iter()
+            .collect(),
+        ..SchemaObject::default()
+    };
 
     let mut document = document_with_body(Schema::Object(Box::new(open)));
     document
