@@ -321,15 +321,14 @@ needed no entry of its own.
 A fourth shape is a *dependency's* feature forced on: one no manifest in the
 workspace asks for, and that Cargo unifies in anyway from whatever graph a
 downstream program builds. [`mise run test:arbitrary-precision`](../mise.toml)
-builds `kynos-openapi`'s library with `serde_json/arbitrary_precision` on, under
+runs `kynos-openapi`'s suite with `serde_json/arbitrary_precision` on, under
 which a `serde_json::Number` serializes as a one-field struct only serde_json's
-own serializer reads back as a number — so how `to_yaml` handles one is
-observable there and nowhere else. It runs `emit::tests::yaml` alone, with
-`--no-tests=fail` so a rename cannot leave it passing over nothing, because
-parsing breaks separately under that graph: a numeric keyword inside an untagged
-enum such as `RefOr` fails to deserialize, and the property round-trips fail on
-that before emission is reached — filed as
-[#163](https://github.com/getkono/kynos/issues/163). A dev-dependency asking for
+own serializer reads back as a number, and reaches an untagged enum such as
+`RefOr` as a map — so how `to_yaml` writes one and how the model reads one are
+observable there and nowhere else. Two tests are excluded by exact name, the
+oracles holding `to_yaml` to what `serde_yaml_ng` writes for the model, because
+under that graph the two sides differ by design; `--no-tests=fail` keeps a
+filter matching nothing from passing. A dev-dependency asking for
 the feature is the shorter spelling and the wrong one here, since it unifies into
 every `--all-targets` build and leaves the default number path untested.
 

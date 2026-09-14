@@ -193,12 +193,17 @@ pub struct SchemaObject {
     #[serde(
         rename = "multipleOf",
         default,
+        deserialize_with = "crate::model::number::float",
         skip_serializing_if = "Option::is_none"
     )]
     pub multiple_of: Option<f64>,
 
     /// The inclusive upper bound of a number.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "crate::model::number::float",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub maximum: Option<f64>,
 
     /// The exclusive upper bound of a number.
@@ -208,18 +213,24 @@ pub struct SchemaObject {
     #[serde(
         rename = "exclusiveMaximum",
         default,
+        deserialize_with = "crate::model::number::float",
         skip_serializing_if = "Option::is_none"
     )]
     pub exclusive_maximum: Option<f64>,
 
     /// The inclusive lower bound of a number.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "crate::model::number::float",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub minimum: Option<f64>,
 
     /// The exclusive lower bound of a number.
     #[serde(
         rename = "exclusiveMinimum",
         default,
+        deserialize_with = "crate::model::number::float",
         skip_serializing_if = "Option::is_none"
     )]
     pub exclusive_minimum: Option<f64>,

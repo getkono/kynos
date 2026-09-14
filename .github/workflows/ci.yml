@@ -149,7 +149,7 @@ jobs:
         run: mise run test:baseline
       # Ahead of `features:check` for the reason `test:baseline` is: it builds a
       # test target, so it needs the dev-dependencies that task strips.
-      - name: Test YAML emission with arbitrary_precision forced on
+      - name: Test kynos-openapi with arbitrary_precision forced on
         run: mise run test:arbitrary-precision
       - name: Check every feature combination
         run: mise run features:check
