@@ -487,6 +487,21 @@ mod schema {
                     ),
                     "`from` makes serde read or write this struct as the type it names",
                 ),
+                // The untagged-enum refusal would also fire here. The
+                // conversion is reported instead, because every other rule
+                // reads a declaration the conversion says the wire does not
+                // follow.
+                case(
+                    "`from` on an untagged enum, which the untagged refusal also refuses",
+                    quote::quote!(
+                        #[serde(untagged, from = "String")]
+                        enum Payload {
+                            Number(u32),
+                            Text(String),
+                        }
+                    ),
+                    "`from` makes serde read or write this enum as the type it names",
+                ),
             ],
             expand_inner,
         );
