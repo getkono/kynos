@@ -254,7 +254,8 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// - `skip_serializing_if` on a non-`Option` field with no `#[serde(default)]`
 ///   on the field or its struct. serde may leave the field out of what it
 ///   writes but still requires it on read, so no `required` list is true in
-///   both directions. Add `#[serde(default)]` beside it or on the struct.
+///   both directions. Add `#[serde(default)]` beside it or on the struct. A
+///   flattened `#[schema(open)]` map is exempt: serde reads it absent as empty.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)

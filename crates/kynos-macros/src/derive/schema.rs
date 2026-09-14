@@ -622,6 +622,12 @@ fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
         if !is_required(field, &container) {
             continue;
         }
+        // A flattened open map reads as an empty map when absent, and no
+        // flattened field is ever listed in `required`, so nothing here can
+        // disagree with it. Recognised by the same pair `object_body` reads.
+        if is_flattened(field) && is_open(field) {
+            continue;
+        }
         if let Some((_, span)) = serde_key_span(&field.attrs, &["skip_serializing_if"]) {
             return Err(syn::Error::new(
                 span,
