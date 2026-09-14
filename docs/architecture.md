@@ -279,8 +279,11 @@ number exists it stays closed.
 
 **matchit.** A `{param}` matches exactly one path segment, never crossing a
 `/`, and captures a borrowed slice of the request path rather than an owned
-string — which is what makes the zero-allocation requirement in
-[`nfr.md`](nfr.md#routing) reachable at all. matchit also understands catch-all
+string — the property the routing path's allocation requirements rest on.
+[`nfr.md`](nfr.md#routing) records zero heap allocations there as `absent` and
+unmet, since a static match measures seven, and enforces recorded ceilings in
+the meantime; lowering one is what closing the gap looks like. matchit also
+understands catch-all
 patterns, which Kynos does not: a catch-all has no OpenAPI equivalent, so the
 router rejects that syntax before matchit is asked to insert it. That check is
 syntactic and belongs above the dependency rather than inside it, which is why
@@ -652,9 +655,21 @@ on.
 
 The case for owning the HTTP/1 codec rests on a category error: `httparse` is
 already what hyper parses with, so a rewrite would not touch the parser. What
-it would take over is framing and buffering — and measured against that, hyper
+it would take over is framing and buffering — and set against that, hyper
 costs roughly nothing per request. A GET with standard headers allocates once
-or not at all.
+or not at all inside hyper's codec — a reading of hyper, not a count. No
+allocation count this repository records reaches that codec: the request-path
+counts poll `Service` directly, with no socket
+([`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs)), and
+a per-request figure over a socket is the general measurement
+[`performance.md`](performance.md#the-boundary) sends to `kynos-bench`. What
+Kynos's routing path adds is counted: [`nfr.md`](nfr.md#routing) records seven
+allocations for a static match. What its server path adds around each request
+is counted by nothing: the per-connection handler in
+[`server/connection.rs`](../crates/kynos/src/server/connection.rs) inserts the
+connection metadata into the request's extensions and erases the incoming body,
+and only the erasure is traced, in the body-erasure paragraph later in this
+section.
 
 The honest counter-argument is the per-connection buffer floor. Roughly 16 KiB
 that cannot be pooled or reclaimed between requests on an idle keep-alive
