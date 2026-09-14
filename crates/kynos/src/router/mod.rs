@@ -681,6 +681,12 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     ///
     /// [`Unchecked`](crate::schema::unchecked::Unchecked) is honest but weak. A team that
     /// wants no weak schemas at all can say so here.
+    ///
+    /// The setting reaches an `Unchecked` wherever the description nests it: a
+    /// body's own schema, a field of a derived type whether inlined or
+    /// registered as a component, the items of a `Vec`, or the value of an
+    /// `Option`. A component is refused once, where it is defined, however many
+    /// operations name it.
     #[must_use]
     pub fn deny_unchecked_schemas(mut self) -> Self {
         self.deny_unchecked_schemas = true;

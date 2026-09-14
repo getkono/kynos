@@ -1,12 +1,14 @@
-//! Media type rules, including the annotation that marks a schema as
-//! deliberately unconstrained.
+//! Media type rules.
+//!
+//! A media type's schema is not read here. Whether it is deliberately
+//! unconstrained is a question about every schema a document holds, and
+//! `rules/schemas.rs` answers it once for all of them.
 
 use crate::{
-    annotation::UNCHECKED_SCHEMA_ANNOTATION,
-    model::{body::media_type::MediaType, schema::Schema},
+    model::body::media_type::MediaType,
     validate::{
         rules::parameters::check_header_map,
-        violation::{SpecError, Violation, pointer_token},
+        violation::{Violation, pointer_token},
     },
 };
 
@@ -20,12 +22,6 @@ pub(in crate::validate) fn check_media_type(
     // setting both cannot reach this function: it fails to deserialize, and
     // there is no way to build one.
 
-    if let Some(schema) = &content.schema {
-        if is_unchecked(schema) {
-            violations.push(Violation::warning(location, SpecError::UncheckedSchema));
-        }
-    }
-
     // The one exclusion the specification states that this model does *not*
     // spell as a type. A sum type is the crate's usual answer and would be the
     // wrong one here: `prefixEncoding` and `itemEncoding` are 3.2-only, so the
@@ -37,7 +33,10 @@ pub(in crate::validate) fn check_media_type(
     if !content.encoding.is_empty()
         && (content.prefix_encoding.is_some() || content.item_encoding.is_some())
     {
-        violations.push(Violation::error(location, SpecError::ConflictingEncoding));
+        violations.push(Violation::error(
+            location,
+            crate::validate::violation::SpecError::ConflictingEncoding,
+        ));
     }
 
     for (property, encoding) in &content.encoding {
@@ -46,15 +45,5 @@ pub(in crate::validate) fn check_media_type(
             &encoding.headers,
             violations,
         );
-    }
-}
-
-fn is_unchecked(schema: &Schema) -> bool {
-    match schema {
-        Schema::Bool(true) => true,
-        Schema::Object(object) => object
-            .unknown_keywords
-            .contains_key(UNCHECKED_SCHEMA_ANNOTATION),
-        Schema::Bool(false) => false,
     }
 }

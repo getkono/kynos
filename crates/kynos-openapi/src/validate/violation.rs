@@ -285,9 +285,14 @@ pub enum SpecError {
     },
 
     /// A schema was deliberately left unconstrained.
+    ///
+    /// Located at the schema itself: one carrying the `x-kynos-unchecked`
+    /// annotation wherever it is nested, or the permissive schema `true` where
+    /// it is a media type's own `schema` or `itemSchema`. A `$ref` is not
+    /// followed, so a component is reported once, where it is defined.
     #[error(
-        "this payload is described by the permissive schema, so the description does not \
-         constrain it"
+        "this schema is deliberately unconstrained, so the description makes no claim about \
+         what it describes"
     )]
     UncheckedSchema,
 
