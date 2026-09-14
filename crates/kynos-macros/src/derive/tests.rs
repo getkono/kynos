@@ -228,6 +228,18 @@ mod schema {
                 ),
                 "as the type it names",
             ),
+            case(
+                "`#[serde(transparent)]` over two described fields, which serde may read apart",
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Reading {
+                        value: u64,
+                        #[serde(default)]
+                        extra: String,
+                    }
+                ),
+                "`#[serde(transparent)]` writes one field's value",
+            ),
         ]
     }
 
