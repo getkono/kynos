@@ -109,6 +109,10 @@ fn every_rejected_schema_attribute_has_a_case() {
             "`#[serde(skip_deserializing)]` alone on a variant",
             "macros/schema_variant_skipped_on_read.stderr",
         ),
+        (
+            "`#[serde(skip_deserializing)]` without `skip_serializing`",
+            "macros/schema_field_skipped_on_read_beside_open_map.stderr",
+        ),
     ];
     const HEADING: &str = "# Rejected, because serde and the schema would disagree";
 
