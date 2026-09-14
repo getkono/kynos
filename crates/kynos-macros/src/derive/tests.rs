@@ -278,11 +278,33 @@ mod schema {
         )]
     }
 
+    /// The named-field skips no one schema is true of in both directions.
+    ///
+    /// A fourth function, so that a row about a field does not sit in a ledger
+    /// named for variants.
+    fn field_ledger() -> Vec<Case> {
+        vec![case(
+            "`skip_deserializing` alone on a field beside an open flattened map",
+            quote::quote!(
+                struct Thing {
+                    id: u64,
+                    #[serde(skip_deserializing)]
+                    stamp: u64,
+                    #[serde(flatten)]
+                    #[schema(open)]
+                    extra: BTreeMap<String, String>,
+                }
+            ),
+            "refuses a member the schema does not name",
+        )]
+    }
+
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
         each_case_is_refused(serde_ledger(), expand_inner);
         each_case_is_refused(variant_ledger(), expand_inner);
+        each_case_is_refused(field_ledger(), expand_inner);
     }
 
     #[test]
@@ -290,7 +312,7 @@ mod schema {
         every_diagnostic_has_a_case(
             "schema.rs",
             include_str!("schema.rs"),
-            ledger().len() + serde_ledger().len() + variant_ledger().len(),
+            ledger().len() + serde_ledger().len() + variant_ledger().len() + field_ledger().len(),
         );
     }
 
@@ -1607,6 +1629,148 @@ mod schema {
         }
     }
 
+    /// A named field serde writes and never reads is refused beside an open
+    /// flattened field, in every object serde writes.
+    ///
+    /// Left out of the schema, the field is a member the object does not name,
+    /// so the `unevaluatedProperties` the open map gives the object refuses what
+    /// serde writes of it. One row per placement: a field, a flattened struct,
+    /// and a struct variant under the tagging that nests it and the one that
+    /// does not.
+    #[test]
+    fn a_field_serde_never_reads_beside_an_open_map_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "`skip_deserializing` alone on a field beside an open map",
+                    quote::quote!(
+                        struct Thing {
+                            id: u64,
+                            #[serde(skip_deserializing)]
+                            stamp: u64,
+                            #[serde(flatten)]
+                            #[schema(open)]
+                            extra: BTreeMap<String, String>,
+                        }
+                    ),
+                    "`skip_deserializing` leaves this field out of the schema",
+                ),
+                case(
+                    "`skip_deserializing` alone on a flattened struct beside an open map",
+                    quote::quote!(
+                        struct Thing {
+                            id: u64,
+                            #[serde(flatten, skip_deserializing)]
+                            audit: Audit,
+                            #[serde(flatten)]
+                            #[schema(open)]
+                            extra: BTreeMap<String, String>,
+                        }
+                    ),
+                    "`skip_deserializing` leaves this field out of the schema",
+                ),
+                case(
+                    "`skip_deserializing` alone beside an open map in an externally tagged variant",
+                    quote::quote!(
+                        enum Event {
+                            Created {
+                                at: u64,
+                                #[serde(skip_deserializing)]
+                                stamp: u64,
+                                #[serde(flatten)]
+                                #[schema(open)]
+                                extra: BTreeMap<String, String>,
+                            },
+                        }
+                    ),
+                    "`skip_deserializing` leaves this field out of the schema",
+                ),
+                case(
+                    "`skip_deserializing` alone beside an open map in an internally tagged variant",
+                    quote::quote!(
+                        #[serde(tag = "kind")]
+                        enum Event {
+                            Created {
+                                at: u64,
+                                #[serde(skip_deserializing)]
+                                stamp: u64,
+                                #[serde(flatten)]
+                                #[schema(open)]
+                                extra: BTreeMap<String, String>,
+                            },
+                        }
+                    ),
+                    "`skip_deserializing` leaves this field out of the schema",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// Beside an open flattened field, a field serde never writes, or never
+    /// writes and never reads, expands.
+    ///
+    /// Skipped both ways, however it is spelt, the field is in nothing serde
+    /// writes. An open map serde never reads is in no schema, so it gives the
+    /// object no `unevaluatedProperties`. Inside a variant serde never writes,
+    /// serde reads the field into the map, whose value schema the object
+    /// applies to it.
+    #[test]
+    fn a_field_serde_never_writes_beside_an_open_map_is_accepted() {
+        for declaration in [
+            quote::quote!(
+                struct Thing {
+                    id: u64,
+                    #[serde(skip)]
+                    stamp: u64,
+                    #[serde(flatten)]
+                    #[schema(open)]
+                    extra: BTreeMap<String, String>,
+                }
+            ),
+            quote::quote!(
+                struct Thing {
+                    id: u64,
+                    #[serde(skip_serializing)]
+                    #[serde(skip_deserializing)]
+                    stamp: u64,
+                    #[serde(flatten)]
+                    #[schema(open)]
+                    extra: BTreeMap<String, String>,
+                }
+            ),
+            quote::quote!(
+                struct Thing {
+                    id: u64,
+                    #[serde(flatten, skip_deserializing)]
+                    #[schema(open)]
+                    extra: BTreeMap<String, String>,
+                }
+            ),
+            quote::quote!(
+                enum Event {
+                    Now(u64),
+                    #[serde(skip_serializing)]
+                    Queued {
+                        at: u64,
+                        #[serde(skip_deserializing)]
+                        stamp: u64,
+                        #[serde(flatten)]
+                        #[schema(open)]
+                        extra: BTreeMap<String, String>,
+                    },
+                }
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+
+            if let Err(error) = expand_inner(&input) {
+                panic!("a field serde never writes beside an open map must expand: {error}");
+            }
+        }
+    }
+
     /// Whether the expansion claims `kynos::schema::Flatten` for the input.
     ///
     /// Read off the emitted tokens rather than by calling the predicate, so
@@ -1881,6 +2045,76 @@ mod schema {
                 #[serde(skip_serializing)]
                 #[serde(skip_deserializing)]
                 Deleted,
+            }
+        )));
+    }
+
+    /// A shape carrying a named field serde writes and never reads, where serde
+    /// writes it beside the members it contributes, does not claim Flatten.
+    ///
+    /// The field is left out of the schema, so one level up it is a member the
+    /// flattened schema does not name, and an open map beside it refuses what
+    /// serde writes. A struct and an internally tagged struct variant serde
+    /// writes put the field there. An externally tagged variant nests it, and
+    /// a variant serde never writes writes nothing, so neither withdraws the
+    /// claim.
+    #[test]
+    fn a_field_serde_never_reads_withdraws_the_flatten_claim() {
+        assert!(!claims_flatten(quote::quote!(
+            struct Stamped {
+                id: u64,
+                #[serde(skip_deserializing)]
+                stamp: u64,
+            }
+        )));
+        // Skipped both ways, or only never written, the same field leaves the
+        // claim, so the case isolates the direction rather than the shape.
+        assert!(claims_flatten(quote::quote!(
+            struct Stamped {
+                id: u64,
+                #[serde(skip)]
+                stamp: u64,
+            }
+        )));
+        assert!(claims_flatten(quote::quote!(
+            struct Stamped {
+                id: u64,
+                #[serde(skip_serializing, default)]
+                stamp: u64,
+            }
+        )));
+
+        assert!(!claims_flatten(quote::quote!(
+            #[serde(tag = "kind")]
+            enum Event {
+                Created {
+                    at: u64,
+                    #[serde(skip_deserializing)]
+                    stamp: u64,
+                },
+            }
+        )));
+        assert!(claims_flatten(quote::quote!(
+            #[serde(tag = "kind")]
+            enum Event {
+                Created {
+                    at: u64,
+                },
+                #[serde(skip_serializing)]
+                Amended {
+                    at: u64,
+                    #[serde(skip_deserializing)]
+                    stamp: u64,
+                },
+            }
+        )));
+        assert!(claims_flatten(quote::quote!(
+            enum Event {
+                Created {
+                    at: u64,
+                    #[serde(skip_deserializing)]
+                    stamp: u64,
+                },
             }
         )));
     }
