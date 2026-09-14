@@ -279,8 +279,9 @@ number exists it stays closed.
 
 **matchit.** A `{param}` matches exactly one path segment, never crossing a
 `/`, and captures a borrowed slice of the request path rather than an owned
-string — which is what makes the zero-allocation requirement in
-[`nfr.md`](nfr.md#routing) reachable at all. matchit also understands catch-all
+string — the property the zero-allocation requirement once rested on. That
+requirement was measured and is false; [`nfr.md`](nfr.md#routing) records the
+ceilings that replaced it. matchit also understands catch-all
 patterns, which Kynos does not: a catch-all has no OpenAPI equivalent, so the
 router rejects that syntax before matchit is asked to insert it. That check is
 syntactic and belongs above the dependency rather than inside it, which is why
