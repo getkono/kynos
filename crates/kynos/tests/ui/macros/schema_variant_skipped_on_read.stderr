@@ -1,0 +1,5 @@
+error: `skip_deserializing` makes serde write this variant and refuse to read it back, so no closed `oneOf` or `enum` is true in both directions: listing the variant describes a request serde refuses, and leaving it out describes a response serde writes. Use `#[serde(skip)]` to leave it out both ways, or drop `skip_deserializing`
+ --> tests/ui/macros/schema_variant_skipped_on_read.rs:9:13
+  |
+9 |     #[serde(skip_deserializing)]
+  |             ^^^^^^^^^^^^^^^^^^
