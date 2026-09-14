@@ -446,3 +446,159 @@ fn a_hand_written_open_map_is_hoisted_like_a_standard_one() {
         "a member contributed by `Headers` was accepted as a number: {schema}"
     );
 }
+
+/// A problem document carrying a member of its own type, the shape RFC 9457's
+/// extension members exist for.
+#[derive(Schema, Serialize)]
+struct Extended {
+    #[serde(flatten)]
+    problem: kynos::Problem,
+    balance: u32,
+}
+
+/// A flattened `Problem` describes the object the type writes.
+///
+/// `Problem` names its five registered members and admits the rest with
+/// `additionalProperties: true`, which reaches the parent's `balance` from inside
+/// the `allOf` and permits it. So the composition accepts both an extension the
+/// problem carries and the member the parent declared, while the registered
+/// members stay typed.
+#[test]
+fn a_flattened_problem_accepts_its_extension_members() {
+    let extended = Extended {
+        problem: kynos::Problem::new(kynos::http::StatusCode::FORBIDDEN)
+            .with_detail("d")
+            .with_extension("accounts", serde_json::json!(["/a"])),
+        balance: 30,
+    };
+    assert_eq!(
+        serde_json::to_value(&extended).expect("the value serializes"),
+        serde_json::json!({
+            "accounts": ["/a"], "balance": 30, "detail": "d",
+            "status": 403, "title": "Forbidden", "type": "about:blank"
+        })
+    );
+    let refusals = refusals(&extended);
+    assert!(
+        refusals.is_empty(),
+        "the type cannot produce an instance its own description accepts: {refusals:?}\n\
+         schema: {}",
+        emitted::<Extended>()
+    );
+
+    let schema = emitted::<Extended>();
+    let validator =
+        jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
+    assert!(
+        !validator.is_valid(&serde_json::json!({
+            "type": "about:blank", "status": "403", "balance": 30
+        })),
+        "a problem's `status` was accepted as a string: {schema}"
+    );
+}
+
+/// Arbitrary JSON beside the members the object declares, which is the payload
+/// `Unchecked` exists to carry.
+#[derive(Schema, Serialize)]
+struct Envelope {
+    id: u64,
+    #[serde(flatten)]
+    #[schema(open)]
+    rest: kynos::schema::unchecked::Unchecked<serde_json::Map<String, serde_json::Value>>,
+}
+
+fn envelope() -> Envelope {
+    Envelope {
+        id: 1,
+        rest: kynos::schema::unchecked::Unchecked(
+            serde_json::json!({ "k": "v", "n": [1, { "deep": null }] })
+                .as_object()
+                .expect("an object literal")
+                .clone(),
+        ),
+    }
+}
+
+/// An open `Unchecked` field describes the object the type writes.
+///
+/// Its schema carries no `additionalProperties`, so the hoist moves nothing and
+/// the parent is left open: every member the payload contributes is admitted,
+/// whatever its value.
+#[test]
+fn an_open_unchecked_field_accepts_whatever_it_contributes() {
+    let refusals = refusals(&envelope());
+    assert!(
+        refusals.is_empty(),
+        "the type cannot produce an instance its own description accepts: {refusals:?}\n\
+         schema: {}",
+        emitted::<Envelope>()
+    );
+
+    let schema = emitted::<Envelope>();
+    assert!(
+        schema["unevaluatedProperties"].is_null(),
+        "an unconstrained payload closed the object it was flattened into: {schema}"
+    );
+}
+
+/// And leaving the object open weakens nothing it declared.
+#[test]
+fn an_open_unchecked_field_still_constrains_the_parents_own_properties() {
+    let schema = emitted::<Envelope>();
+    let validator =
+        jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
+
+    assert!(
+        !validator.is_valid(&serde_json::json!({ "id": "1", "k": "v" })),
+        "the parent's `id` was accepted as a string: {schema}"
+    );
+    assert!(
+        !validator.is_valid(&serde_json::json!({ "k": "v" })),
+        "the parent's own required property was not required: {schema}"
+    );
+}
+
+/// A flattened `Problem` beside an open map, the one neighbour where the
+/// problem's `additionalProperties: true` does any work.
+#[derive(Schema, Serialize)]
+struct Throttled {
+    #[serde(flatten)]
+    problem: kynos::Problem,
+    #[serde(flatten)]
+    #[schema(open)]
+    limits: BTreeMap<String, u64>,
+}
+
+/// A flattened `Problem` beside an open map describes the object the type
+/// writes, and leaves the map's values unchecked.
+///
+/// `Problem`'s `additionalProperties: true` marks every member evaluated, the
+/// map's included, so the hoisted `unevaluatedProperties` has nothing left to
+/// constrain. Without the keyword the problem's own extension member would fall
+/// to the map's value schema and be refused. `docs/schema.md` records the
+/// looseness, which this pins.
+#[test]
+fn a_flattened_problem_beside_an_open_map_leaves_the_maps_values_unchecked() {
+    let throttled = Throttled {
+        problem: kynos::Problem::new(kynos::http::StatusCode::TOO_MANY_REQUESTS)
+            .with_extension("retry", serde_json::json!("later")),
+        limits: BTreeMap::from([("remaining".to_owned(), 0)]),
+    };
+    let refusals = refusals(&throttled);
+    assert!(
+        refusals.is_empty(),
+        "the type cannot produce an instance its own description accepts: {refusals:?}\n\
+         schema: {}",
+        emitted::<Throttled>()
+    );
+
+    let schema = emitted::<Throttled>();
+    let validator =
+        jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
+    assert!(
+        validator.is_valid(&serde_json::json!({
+            "type": "about:blank", "status": 429, "remaining": "many"
+        })),
+        "a string under a map key was refused, so the recorded looseness no longer holds: {schema}"
+    );
+}

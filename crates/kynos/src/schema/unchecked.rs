@@ -4,7 +4,7 @@ use kynos_openapi::{
     Schema as OpenApiSchema, SchemaObject, annotation::UNCHECKED_SCHEMA_ANNOTATION,
 };
 
-use crate::schema::{Schema, registry::Registry};
+use crate::schema::{OpenMap, Schema, registry::Registry};
 
 /// A payload this API deliberately does not constrain.
 ///
@@ -61,3 +61,45 @@ impl<T> Schema for Unchecked<T> {
         OpenApiSchema::Object(Box::new(object))
     }
 }
+
+/// Flattened arbitrary JSON beside the members an object declares, under
+/// `#[serde(flatten)] #[schema(open)]`, when the payload is a map.
+///
+/// The schema is written in place and carries no `additionalProperties`, so the
+/// hoist moves nothing and the object is left open: whatever the payload
+/// contributes is admitted, and what the object declares is still constrained.
+///
+/// Only a map qualifies — a `serde_json::Map<String, Value>`, or a payload that
+/// is itself an [`OpenMap`] — because serde flattens only structs and maps, and
+/// a struct payload has a route that needs no wrapper: flatten the struct itself.
+///
+/// ```
+/// fn open<T: kynos::schema::OpenMap>() {}
+///
+/// open::<kynos::schema::unchecked::Unchecked<serde_json::Map<String, serde_json::Value>>>();
+/// open::<kynos::schema::unchecked::Unchecked<std::collections::BTreeMap<String, u64>>>();
+/// ```
+///
+/// A payload serde cannot flatten is refused here, rather than by serde at run
+/// time with "can only flatten structs and maps":
+///
+/// ```compile_fail
+/// fn open<T: kynos::schema::OpenMap>() {}
+///
+/// open::<kynos::schema::unchecked::Unchecked<u64>>();
+/// ```
+///
+/// Not [`Flatten`](crate::schema::Flatten). The permissive schema names no member
+/// it contributes, so beside an open map those members stay unevaluated and the
+/// map's `unevaluatedProperties` would refuse what serde writes:
+///
+/// ```compile_fail
+/// fn flattenable<T: kynos::schema::Flatten>() {}
+///
+/// flattenable::<kynos::schema::unchecked::Unchecked<serde_json::Map<String, serde_json::Value>>>();
+/// ```
+impl<T: OpenMap> OpenMap for Unchecked<T> {}
+
+/// `serde_json::Map` has no [`Schema`] of its own, so it reaches [`OpenMap`] only
+/// through `Unchecked`.
+impl OpenMap for Unchecked<serde_json::Map<String, serde_json::Value>> {}
