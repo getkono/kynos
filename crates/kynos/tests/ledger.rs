@@ -105,6 +105,10 @@ fn every_rejected_schema_attribute_has_a_case() {
             "`skip_deserializing` alone",
             "macros/schema_tuple_member_skipped_one_way.stderr",
         ),
+        (
+            "`#[serde(skip_deserializing)]` alone on a variant",
+            "macros/schema_variant_skipped_on_read.stderr",
+        ),
     ];
     const HEADING: &str = "# Rejected, because serde and the schema would disagree";
 

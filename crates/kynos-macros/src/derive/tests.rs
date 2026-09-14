@@ -260,10 +260,29 @@ mod schema {
         ]
     }
 
+    /// The variant skips no one schema is true of in both directions.
+    ///
+    /// A third function for the reason `serde_ledger` gives: one more row there
+    /// outgrows what Clippy will accept.
+    fn variant_ledger() -> Vec<Case> {
+        vec![case(
+            "`skip_deserializing` alone on a variant, which serde writes and never reads",
+            quote::quote!(
+                enum Channel {
+                    Web,
+                    #[serde(skip_deserializing)]
+                    Fax,
+                }
+            ),
+            "makes serde write this variant and refuse to read it back",
+        )]
+    }
+
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
         each_case_is_refused(serde_ledger(), expand_inner);
+        each_case_is_refused(variant_ledger(), expand_inner);
     }
 
     #[test]
@@ -271,7 +290,7 @@ mod schema {
         every_diagnostic_has_a_case(
             "schema.rs",
             include_str!("schema.rs"),
-            ledger().len() + serde_ledger().len(),
+            ledger().len() + serde_ledger().len() + variant_ledger().len(),
         );
     }
 
@@ -806,13 +825,12 @@ mod schema {
         }
     }
 
-    /// A catch-all the schema skips is refused all the same.
+    /// A catch-all serde never writes is refused all the same.
     ///
-    /// Unlike a wire-form override, `#[serde(other)]` is not about the
-    /// variant's own branch: `skip_serializing` keeps that branch out of the
-    /// schema, but deserialization still routes every tag the enum does not
-    /// name to it, so the schema's closed `oneOf` still disagrees with what the
-    /// type accepts.
+    /// `#[serde(other)]` is not about the variant's own branch:
+    /// `skip_serializing` keeps the variant out of what serde writes, but
+    /// deserialization still routes every tag the enum does not name to it, so
+    /// the schema's closed `oneOf` still disagrees with what the type accepts.
     #[test]
     fn a_catch_all_on_a_skipped_variant_is_still_refused() {
         each_case_is_refused(
@@ -833,6 +851,49 @@ mod schema {
             )],
             expand_inner,
         );
+    }
+
+    /// A catch-all on a variant serde never reads is left alone.
+    ///
+    /// serde draws the fallthrough only from the variants it reads, so
+    /// `#[serde(other)]` on one it skips on read catches nothing, and the
+    /// refusal's "accepts every tag this enum does not name" would be false. A
+    /// lone `skip_deserializing` never reaches the check, since
+    /// `reject_unread_variant` refuses it first.
+    #[test]
+    fn a_catch_all_on_a_variant_serde_never_reads_is_left_alone() {
+        for declaration in [
+            quote::quote!(
+                #[serde(tag = "kind")]
+                enum Event {
+                    Created {
+                        id: u64,
+                    },
+                    #[serde(skip)]
+                    #[serde(other)]
+                    Unknown,
+                }
+            ),
+            quote::quote!(
+                #[serde(tag = "kind")]
+                enum Event {
+                    Created {
+                        id: u64,
+                    },
+                    #[serde(skip_serializing)]
+                    #[serde(skip_deserializing)]
+                    #[serde(other)]
+                    Unknown,
+                }
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+
+            if let Err(error) = expand_inner(&input) {
+                panic!("a catch-all serde never reads must expand: {error}");
+            }
+        }
     }
 
     /// `skip_serializing_if` is accepted wherever serde may leave the field out
@@ -1197,6 +1258,140 @@ mod schema {
         }
     }
 
+    /// A variant skip serde reads through expands, and so does whatever serde
+    /// never reaches inside a variant it never writes.
+    ///
+    /// serde's `Serialize` arm for a `skip_serializing` variant errors before it
+    /// touches a field, so a field's `serialize_with`, any `skip_serializing_if`
+    /// and a member's lone `skip_serializing` change nothing serde does with the
+    /// variant, and refusing one would be a false refusal. The two-attribute
+    /// spelling of a skip both ways is here so it is not read as either half.
+    #[test]
+    fn a_variant_skip_serde_reads_through_is_accepted() {
+        for declaration in [
+            quote::quote!(
+                enum Channel {
+                    Web,
+                    #[serde(skip_serializing)]
+                    Fax,
+                }
+            ),
+            quote::quote!(
+                enum Channel {
+                    Web,
+                    #[serde(skip_serializing)]
+                    #[serde(skip_deserializing)]
+                    Fax,
+                }
+            ),
+            quote::quote!(
+                enum Reading {
+                    Total(u64),
+                    #[serde(skip_serializing)]
+                    Count {
+                        #[serde(serialize_with = "as_string")]
+                        count: u64,
+                    },
+                }
+            ),
+            quote::quote!(
+                #[serde(tag = "kind")]
+                enum Event {
+                    Created {
+                        at: String,
+                    },
+                    #[serde(skip_serializing)]
+                    Amended {
+                        #[serde(skip_serializing_if = "String::is_empty")]
+                        note: String,
+                    },
+                }
+            ),
+            quote::quote!(
+                enum Reading {
+                    Total(u64),
+                    #[serde(skip_serializing)]
+                    Count(u64, #[serde(skip_serializing)] u64),
+                }
+            ),
+            quote::quote!(
+                enum Reading {
+                    Total(u64),
+                    #[serde(skip_serializing)]
+                    Count(#[serde(skip_serializing_if = "is_zero")] u64, u64),
+                }
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+
+            if let Err(error) = expand_inner(&input) {
+                panic!("a variant skip serde reads through must expand: {error}");
+            }
+        }
+    }
+
+    /// Inside a variant serde reads and never writes, what serde reads through
+    /// is refused as it is in a variant serde writes.
+    #[test]
+    fn a_read_override_or_skip_inside_a_variant_serde_never_writes_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "`deserialize_with` on a field of a variant serde never writes",
+                    quote::quote!(
+                        enum Reading {
+                            Total(u64),
+                            #[serde(skip_serializing)]
+                            Count {
+                                #[serde(deserialize_with = "from_string")]
+                                count: u64,
+                            },
+                        }
+                    ),
+                    "`deserialize_with` reads or writes this field",
+                ),
+                case(
+                    "`with` on a field of a variant serde never writes",
+                    quote::quote!(
+                        enum Reading {
+                            Total(u64),
+                            #[serde(skip_serializing)]
+                            Count {
+                                #[serde(with = "as_string")]
+                                count: u64,
+                            },
+                        }
+                    ),
+                    "`with` reads or writes this field",
+                ),
+                case(
+                    "`deserialize_with` on a variant serde never writes",
+                    quote::quote!(
+                        enum Reading {
+                            Total(u64),
+                            #[serde(skip_serializing, deserialize_with = "from_string")]
+                            Count(u64),
+                        }
+                    ),
+                    "`deserialize_with` reads or writes this variant",
+                ),
+                case(
+                    "`skip_deserializing` alone on a member of a variant serde never writes",
+                    quote::quote!(
+                        enum Reading {
+                            Total(u64),
+                            #[serde(skip_serializing)]
+                            Count(u64, #[serde(skip_deserializing)] u64),
+                        }
+                    ),
+                    "`skip_deserializing` leaves this member out in one direction only",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
     /// Whether the expansion claims `kynos::schema::Flatten` for the input.
     ///
     /// Read off the emitted tokens rather than by calling the predicate, so
@@ -1436,6 +1631,100 @@ mod schema {
                 },
             }
         )));
+    }
+
+    /// A variant serde reads and never writes has a branch, so it decides the
+    /// claim to Flatten as a variant serde writes does.
+    #[test]
+    fn a_variant_serde_only_reads_counts_toward_the_flatten_claim() {
+        assert!(!claims_flatten(quote::quote!(
+            enum Event {
+                Created {
+                    at: String,
+                },
+                #[serde(skip_serializing)]
+                Deleted,
+            }
+        )));
+        assert!(!claims_flatten(quote::quote!(
+            #[serde(tag = "kind")]
+            enum Shape {
+                Circle {
+                    radius: f64,
+                },
+                #[serde(skip_serializing)]
+                Raw(Audit),
+            }
+        )));
+        // Skipped both ways, the same unit variant reaches no branch, so the
+        // case isolates the direction rather than the shape.
+        assert!(claims_flatten(quote::quote!(
+            enum Event {
+                Created {
+                    at: String,
+                },
+                #[serde(skip_serializing)]
+                #[serde(skip_deserializing)]
+                Deleted,
+            }
+        )));
+    }
+
+    /// How many `Flatten` witnesses the expansion asserts for the input, read
+    /// off the emitted tokens as [`claims_flatten`] reads its claim.
+    fn flatten_witnesses_in(declaration: TokenStream2) -> usize {
+        let input: DeriveInput = syn::parse2(declaration).expect("the case itself must parse");
+        let expansion = expand_inner(&input).expect("the case itself must expand");
+        expansion.to_string().matches("is_flattenable ::").count()
+    }
+
+    /// A variant serde reads and never writes composes what serde reads, so its
+    /// payload and its flattened fields answer to the bound a written variant's
+    /// do.
+    #[test]
+    fn a_variant_serde_only_reads_bounds_what_it_composes() {
+        assert_eq!(
+            flatten_witnesses_in(quote::quote!(
+                #[serde(tag = "kind")]
+                enum Shape {
+                    Circle {
+                        radius: f64,
+                    },
+                    #[serde(skip_serializing)]
+                    Raw(Audit),
+                }
+            )),
+            1
+        );
+        assert_eq!(
+            flatten_witnesses_in(quote::quote!(
+                enum Event {
+                    Created {
+                        at: String,
+                    },
+                    #[serde(skip_serializing)]
+                    Amended {
+                        at: String,
+                        #[serde(flatten)]
+                        audit: Audit,
+                    },
+                }
+            )),
+            1
+        );
+        assert_eq!(
+            flatten_witnesses_in(quote::quote!(
+                #[serde(tag = "kind")]
+                enum Shape {
+                    Circle {
+                        radius: f64,
+                    },
+                    #[serde(skip)]
+                    Raw(Audit),
+                }
+            )),
+            0
+        );
     }
 }
 

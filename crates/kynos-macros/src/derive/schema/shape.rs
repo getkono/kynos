@@ -1,7 +1,7 @@
 use super::{
     Comma, Container, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant, constraints,
-    deprecate, described, doc_string, field_name, is_deprecated, is_described, is_flattened,
-    is_open, is_required, is_skipped, is_unit_like, min_items, positional_members, quote,
+    deprecate, described, described_variants, doc_string, field_name, is_deprecated, is_described,
+    is_flattened, is_open, is_required, is_unit_like, min_items, positional_members, quote,
     transparent_member, variant_name,
 };
 
@@ -219,13 +219,10 @@ pub(super) fn constant_string(value: &str) -> TokenStream2 {
 ///
 /// Four shapes, and which applies is read from the serde attributes rather than
 /// chosen here: an enumeration of names where every variant is a unit, and
-/// otherwise the `oneOf` that matches how the payload is tagged.
+/// otherwise the `oneOf` that matches how the payload is tagged. A variant serde
+/// reads and never writes is described as serde reads it.
 pub(super) fn enum_body(data: &DataEnum, container: &Container) -> TokenStream2 {
-    let variants: Vec<&Variant> = data
-        .variants
-        .iter()
-        .filter(|variant| !is_skipped(&variant.attrs))
-        .collect();
+    let variants = described_variants(data);
 
     // An `enum` array of names is the compact shape, and it has nowhere to put
     // a keyword about one member: JSON Schema deprecates a *schema*, and every

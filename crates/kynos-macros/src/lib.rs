@@ -209,7 +209,9 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// skip both ways, and a newtype variant whose member serde skips is the unit
 /// variant serde writes. A newtype, and each described member of a tuple, tuple
 /// variant or newtype variant, carries its constraints, prose and
-/// `#[deprecated]` as a named field does.
+/// `#[deprecated]` as a named field does. A variant serde skips both ways is
+/// described nowhere, and one serde reads and never writes is described as serde
+/// reads it, under its prose and `#[deprecated]`.
 ///
 /// Constraints go on fields, named or unnamed, and the grammar is exactly the
 /// keys of
@@ -257,8 +259,9 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   keyword that sees annotations across an `allOf`. The same bound holds the
 ///   payload of an internally tagged enum's newtype variant, which is composed
 ///   beside the tag in an `allOf` the same way.
-/// - A `#[serde(other)]` catch-all variant, which only 3.2's `defaultMapping`
-///   could describe and the derive does not emit.
+/// - A `#[serde(other)]` catch-all on a variant serde reads, which only 3.2's
+///   `defaultMapping` could describe and the derive does not emit. On a variant
+///   serde skips both ways it catches nothing, and is accepted.
 /// - `skip_serializing_if` on a non-`Option` field with no `#[serde(default)]`
 ///   on the field or its struct. serde may leave the field out of what it
 ///   writes but still requires it on read, so no `required` list is true in
@@ -283,6 +286,12 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   would write one shape and read another. `#[serde(skip)]` leaves the member
 ///   out both ways; a newtype struct is exempt, since serde ignores all three
 ///   there.
+/// - `#[serde(skip_deserializing)]` alone on a variant. serde writes the variant
+///   and refuses to read it back, so a closed `oneOf` or `enum` listing it
+///   describes a request serde refuses, and one leaving it out describes a
+///   response serde writes. `#[serde(skip)]` leaves the variant out both ways.
+///   `skip_serializing` alone on a variant is accepted, since every variant serde
+///   writes is one it reads.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)
