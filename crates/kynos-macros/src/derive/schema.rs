@@ -629,18 +629,22 @@ fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
         // default: serde ignores `#[serde(default)]` on a flattened field, at
         // field and container level alike. An open map reads absent as empty
         // and is never listed in `required`, recognised by the same pair
-        // `object_body` reads; anything else keeps its members required.
+        // `object_body` reads. The field's Rust type is invisible here, and
+        // this error aborts expansion before any `Flatten` or `OpenMap`
+        // witness is emitted, so one message states a map's remedy and a
+        // struct's alike.
         if is_flattened(field) {
             if is_open(field) {
                 continue;
             }
             return Err(syn::Error::new(
                 span,
-                "`skip_serializing_if` lets serde leave this flattened field out of what it \
-                 writes, but serde ignores `#[serde(default)]` on a flattened field, so it still \
-                 requires the flattened type's required members on read. For a map, add \
-                 `#[schema(open)]`, which reads an absent map as empty; for a struct, make that \
-                 type's own members optional",
+                "`skip_serializing_if` on a flattened field is refused unless it is \
+                 `#[schema(open)]`. A flattened map must be `#[schema(open)]` for the schema to \
+                 describe it, and may then skip itself, since serde reads it absent as empty. A \
+                 flattened struct is written whole or not at all, so drop `skip_serializing_if` \
+                 to keep its members consistent with its schema. `#[serde(default)]` does not \
+                 change this on a flattened field",
             ));
         }
 

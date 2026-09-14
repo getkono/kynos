@@ -216,7 +216,7 @@ mod schema {
                         audit: Audit,
                     }
                 ),
-                "ignores `#[serde(default)]` on a flattened field",
+                "on a flattened field is refused unless it is `#[schema(open)]`",
             ),
         ]
     }
@@ -500,6 +500,17 @@ mod schema {
                     extra: HashMap<String, String>,
                 }
             ),
+            // The same rule inside an internally tagged struct variant: an
+            // `Option` field may be absent both ways.
+            quote::quote!(
+                #[serde(tag = "kind")]
+                enum Event {
+                    Created {
+                        #[serde(skip_serializing_if = "Option::is_none")]
+                        note: Option<String>,
+                    },
+                }
+            ),
         ] {
             let input: syn::DeriveInput =
                 syn::parse2(declaration).expect("the case itself must parse");
@@ -510,16 +521,16 @@ mod schema {
         }
     }
 
-    /// A flattened struct skipped on write is refused, whatever default it or
-    /// its struct carries.
+    /// A flattened field that skips itself on write is refused unless it is
+    /// `#[schema(open)]`, whatever default it or its struct carries.
     ///
-    /// Only an open map is exempt. A flattened struct's own required members
-    /// vanish from what serde writes when it is skipped, while serde still
-    /// requires them on read, so the `required` its members publish is true in
-    /// neither direction. serde ignores `#[serde(default)]` on a flattened
-    /// field, at field and container level alike, so no default covers it.
+    /// The refusal reads attributes, not types, so a map and a struct meet the
+    /// same site. A flattened struct is written whole or not at all, and serde
+    /// ignores `#[serde(default)]` on a flattened field at field and container
+    /// level alike, so no default covers it. A flattened map is decided by
+    /// `#[schema(open)]` alone, which the map row below leaves off.
     #[test]
-    fn a_flattened_struct_skipped_on_write_is_still_refused() {
+    fn a_flattened_field_skipped_on_write_is_refused_unless_open() {
         each_case_is_refused(
             vec![
                 case(
@@ -531,7 +542,7 @@ mod schema {
                             audit: Audit,
                         }
                     ),
-                    "ignores `#[serde(default)]` on a flattened field",
+                    "on a flattened field is refused unless it is `#[schema(open)]`",
                 ),
                 case(
                     "`skip_serializing_if` on a flattened struct with a field-level default",
@@ -542,7 +553,7 @@ mod schema {
                             audit: Audit,
                         }
                     ),
-                    "ignores `#[serde(default)]` on a flattened field",
+                    "on a flattened field is refused unless it is `#[schema(open)]`",
                 ),
                 case(
                     "`skip_serializing_if` on a flattened struct under a container default",
@@ -554,9 +565,45 @@ mod schema {
                             audit: Audit,
                         }
                     ),
-                    "ignores `#[serde(default)]` on a flattened field",
+                    "on a flattened field is refused unless it is `#[schema(open)]`",
+                ),
+                case(
+                    "`skip_serializing_if` on a flattened map that is not `#[schema(open)]`",
+                    quote::quote!(
+                        struct Tagged {
+                            id: u64,
+                            #[serde(flatten, skip_serializing_if = "HashMap::is_empty")]
+                            extra: HashMap<String, String>,
+                        }
+                    ),
+                    "on a flattened field is refused unless it is `#[schema(open)]`",
                 ),
             ],
+            expand_inner,
+        );
+    }
+
+    /// `skip_serializing_if` on a field of an enum variant follows the rule a
+    /// struct's field does.
+    ///
+    /// The refusal walks every variant serde writes, because an internally
+    /// tagged struct variant is an object with its own `required` list.
+    #[test]
+    fn a_variant_field_skipped_on_write_is_refused_like_a_struct_field() {
+        each_case_is_refused(
+            vec![case(
+                "`skip_serializing_if` on a non-`Option` variant field with no default",
+                quote::quote!(
+                    #[serde(tag = "kind")]
+                    enum Event {
+                        Created {
+                            #[serde(skip_serializing_if = "String::is_empty")]
+                            note: String,
+                        },
+                    }
+                ),
+                "still requires it on read",
+            )],
             expand_inner,
         );
     }
