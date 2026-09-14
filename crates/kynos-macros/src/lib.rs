@@ -203,10 +203,11 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// `Option`, carries `#[serde(default)]`, or belongs to a struct carrying
 /// `#[serde(default)]`, because the wire form then allows it to be absent both
 /// ways; `skip_serializing_if` is accepted only alongside one of those. A
-/// `transparent` struct is described by its one described field, with that
-/// field's constraints, and keeps its own component name, as a newtype does. A
-/// tuple is the array of the members serde does not skip both ways, and a
-/// newtype variant whose member serde skips is the unit variant serde writes.
+/// `transparent` struct is described by the one field serde both writes and
+/// reads through, keeps its own component name, as a newtype does, and carries
+/// that field's constraints. A tuple is the array of the members serde does not
+/// skip both ways, and a newtype variant whose member serde skips is the unit
+/// variant serde writes.
 ///
 /// Constraints go on fields, and the grammar is exactly the keys of
 /// [`Constraints`](https://docs.rs/kynos/latest/kynos/schema/constraints/struct.Constraints.html)
@@ -266,11 +267,12 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   fields or variants no longer predict. Implement `Schema` by hand, describing
 ///   the type serde converts through. `#[serde(remote = ...)]` is accepted,
 ///   since its fields mirror the type it names.
-/// - `#[serde(transparent)]` on a struct without exactly one field that no
-///   `skip`, `skip_serializing`, `skip_deserializing` or `PhantomData` leaves
-///   out. serde picks the field per direction, so it may write one field and
-///   read another, and no one schema is true of both. Mark every other field
-///   `#[serde(skip)]`.
+/// - `#[serde(transparent)]` on a struct serde may write and read through
+///   different fields. serde writes through the field without `skip` or
+///   `skip_serializing` and reads through the field without `skip`,
+///   `skip_deserializing` or a field-level `default`, so where either direction
+///   picks one field, the other must pick the same one. Where neither picks one,
+///   serde refuses the struct itself. Mark every other field `#[serde(skip)]`.
 /// - `#[serde(skip_serializing)]` or `skip_deserializing` alone on a member of a
 ///   tuple struct, a tuple variant or a newtype variant, or `skip_serializing_if`
 ///   on a tuple member other than the last one carrying `#[serde(default)]`. A

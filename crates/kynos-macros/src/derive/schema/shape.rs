@@ -1,23 +1,24 @@
 use super::{
     Comma, Container, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant, constraints,
-    deprecate, described, described_members, doc_string, field_name, is_deprecated, is_described,
-    is_flattened, is_open, is_required, is_skipped, is_unit_like, min_items, positional_members,
-    quote, variant_name,
+    deprecate, described, doc_string, field_name, is_deprecated, is_described, is_flattened,
+    is_open, is_required, is_skipped, is_unit_like, min_items, positional_members, quote,
+    transparent_member, variant_name,
 };
 
 /// A struct's schema, which its fields decide.
 ///
-/// A `#[serde(transparent)]` struct is its one described field's schema,
-/// whichever shape declares it, because serde writes that field's value and
-/// nothing around it.
+/// A `#[serde(transparent)]` struct is the schema of the one field serde both
+/// writes and reads through, whichever shape declares it, because that field's
+/// value is all the wire carries. `reject_transparent_without_one_field` refuses
+/// the struct where serde picks a different field each way, reading the same
+/// helper, so the field described here is the one that refusal accepted.
 ///
 /// A newtype is transparent, because serde makes it so: `Sku(String)` is a
 /// string on the wire and describing it as anything else would be a claim the
 /// serializer contradicts. A longer tuple is the array serde writes, and a unit
 /// struct is `null`.
 pub(super) fn struct_body(fields: &Fields, container: &Container) -> TokenStream2 {
-    let members = described_members(fields);
-    if let (true, [field]) = (container.transparent, members.as_slice()) {
+    if let (true, Some(field)) = (container.transparent, transparent_member(fields)) {
         return member_schema(field);
     }
 

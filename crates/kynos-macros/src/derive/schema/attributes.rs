@@ -114,11 +114,39 @@ pub(super) fn is_described(field: &Field) -> bool {
 
 /// The fields a schema describes, in declaration order: each one
 /// [`is_described`] keeps.
-///
-/// A `#[serde(transparent)]` struct is described by the one field this returns,
-/// whichever shape declares it.
 pub(super) fn described_members(fields: &Fields) -> Vec<&Field> {
     fields.iter().filter(|field| is_described(field)).collect()
+}
+
+/// The fields a `#[serde(transparent)]` struct may be written through, and the
+/// fields it may be read through, in that order.
+///
+/// `serde_derive`'s `allow_transparent`, read from the attributes: a field is
+/// written through unless it is `skip` or `skip_serializing`, read through
+/// unless it is `skip`, `skip_deserializing` or given a field-level `default`,
+/// and a `PhantomData` is neither. A container `default` is not read, because
+/// serde does not read it there.
+pub(super) fn transparent_members(fields: &Fields) -> (Vec<&Field>, Vec<&Field>) {
+    let candidates = |excluded: &[&str]| {
+        fields
+            .iter()
+            .filter(|field| !is_phantom(&field.ty) && !serde_flag(&field.attrs, excluded))
+            .collect::<Vec<_>>()
+    };
+    (
+        candidates(&["skip", "skip_serializing"]),
+        candidates(&["skip", "skip_deserializing", "default"]),
+    )
+}
+
+/// The one field a `#[serde(transparent)]` struct is both written and read
+/// through, when serde picks the same single field each way.
+pub(super) fn transparent_member(fields: &Fields) -> Option<&Field> {
+    let (written, read) = transparent_members(fields);
+    match (written.as_slice(), read.as_slice()) {
+        ([written], [read]) if std::ptr::eq(*written, *read) => Some(*written),
+        _ => None,
+    }
 }
 
 pub(super) fn is_phantom(ty: &Type) -> bool {
@@ -143,15 +171,6 @@ pub(super) fn is_skipped_both_ways(attrs: &[syn::Attribute]) -> bool {
         || (serde_flag(attrs, &["skip_serializing"]) && serde_flag(attrs, &["skip_deserializing"]))
 }
 
-/// The `skip_serializing` or `skip_deserializing` a member carries without the
-/// other, and where it is written.
-pub(super) fn one_way_skip_span(field: &Field) -> Option<(String, Span)> {
-    if is_skipped_both_ways(&field.attrs) {
-        return None;
-    }
-    serde_key_span(&field.attrs, &["skip_serializing", "skip_deserializing"])
-}
-
 /// The members of a tuple or tuple variant that hold a position on the wire,
 /// in order: each one serde does not skip both ways.
 ///
@@ -162,18 +181,6 @@ pub(super) fn positional_members(fields: &Punctuated<Field, Comma>) -> Vec<&Fiel
         .iter()
         .filter(|field| !is_skipped_both_ways(&field.attrs))
         .collect()
-}
-
-/// The fewest elements serde reads for a tuple holding these positions.
-///
-/// Every position, less a last one carrying `skip_serializing_if`: serde may
-/// leave that one out of what it writes, and fills it from its
-/// `#[serde(default)]` when the array ends before it.
-pub(super) fn min_items(positions: &[&Field]) -> u64 {
-    let trailing = positions
-        .last()
-        .is_some_and(|field| serde_flag(&field.attrs, &["skip_serializing_if"]));
-    u64::try_from(positions.len() - usize::from(trailing)).unwrap_or(u64::MAX)
 }
 
 /// Whether a variant is a unit on the wire: declared as one, or a newtype

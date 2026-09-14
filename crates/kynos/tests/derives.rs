@@ -515,6 +515,16 @@ fn a_transparent_field_keeps_what_it_said_about_its_value() {
             "description": "A name a person reads."
         })
     );
+
+    let written = serde_json::to_value(DisplayName {
+        value: "Ada".to_owned(),
+    })
+    .expect("a string serializes");
+    assert_eq!(written, serde_json::json!("Ada"));
+    assert!(
+        serde_json::from_value::<DisplayName>(written).is_ok(),
+        "the value the schema describes must read back"
+    );
 }
 
 /// A transparent tuple struct is its one described member, not an array of all.
@@ -524,6 +534,64 @@ fn a_transparent_tuple_struct_is_described_by_its_one_described_member() {
     assert_eq!(
         serde_json::to_value(Handle(1, 2)).expect("an integer serializes"),
         serde_json::json!(1)
+    );
+    assert!(
+        serde_json::from_value::<Handle>(serde_json::json!(1)).is_ok(),
+        "the value the schema describes must read back"
+    );
+}
+
+// No doc comment, so the field's prose is the only prose there is.
+#[derive(Schema, serde::Serialize)]
+#[serde(transparent)]
+struct Nickname {
+    /// What a person goes by.
+    #[deprecated]
+    value: String,
+}
+
+/// With no prose of its own, a transparent struct publishes its field's prose
+/// and its field's deprecation.
+#[test]
+fn a_transparent_field_publishes_its_prose_and_deprecation() {
+    assert_eq!(
+        emitted::<Nickname>(),
+        serde_json::json!({
+            "type": "string",
+            "description": "What a person goes by.",
+            "deprecated": true
+        })
+    );
+}
+
+// No doc comment, for the reason `Labels` gives.
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+struct Code(#[schema(min_length = 1)] String);
+
+/// A transparent tuple struct carries its member's constraints, as its
+/// named-field twin does.
+#[test]
+fn a_transparent_tuple_member_keeps_its_constraints() {
+    assert_eq!(
+        emitted::<Code>(),
+        serde_json::json!({"type": "string", "minLength": 1})
+    );
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+struct Wrapped<T> {
+    value: T,
+}
+
+/// A generic transparent struct claims no component name, which every
+/// instantiation would otherwise share.
+#[test]
+fn a_generic_transparent_struct_claims_no_component_name() {
+    assert!(
+        <Wrapped<u64> as SchemaTrait>::name().is_none(),
+        "a generic transparent struct claimed a component name"
     );
 }
 
