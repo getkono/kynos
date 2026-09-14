@@ -1,6 +1,7 @@
 //! A flattened field whose type is a parameter. The bound is the one the type's
 //! own declaration writes: the derive carries the input's generics into the
-//! witness, so `T: Flatten` there is what satisfies it.
+//! witness, so `T: Flatten` there is what satisfies it. The control for
+//! `macros/schema_flatten_generic_field_unbounded.rs`.
 
 use kynos::schema::Flatten;
 
