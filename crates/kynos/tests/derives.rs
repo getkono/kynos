@@ -911,6 +911,113 @@ fn a_skipped_member_needs_no_schema_of_its_own() {
     implements_schema::<Remark>();
 }
 
+// --- An unnamed member keeps what it declares -------------------------------
+//
+// A newtype, tuple or variant member is described under its own constraints,
+// prose and `#[deprecated]`, as a named field is. These pin the emitted shape;
+// `docs/schema.md` states the rule. None but `Motto` carries a doc comment, for
+// the reason `Labels` gives.
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Slug(#[schema(min_length = 1, max_length = 10)] String);
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Label(String);
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Alias(#[schema(max_length = 8)] Label);
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Grid(
+    #[serde(skip)]
+    #[schema(minimum = 5)]
+    u64,
+    #[schema(minimum = 1)] u64,
+    #[schema(max_length = 2)] String,
+);
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum Measure {
+    Range(#[schema(minimum = 1)] u64, u64),
+    Title(#[schema(min_length = 1)] String),
+}
+
+#[derive(Schema, serde::Serialize)]
+struct Motto(
+    /// What the team says.
+    #[deprecated]
+    String,
+);
+
+/// A newtype's constraints reach its schema, beside the `$ref` when its member
+/// names a component.
+#[test]
+fn a_newtype_member_keeps_its_constraints() {
+    assert_eq!(
+        emitted::<Slug>(),
+        serde_json::json!({"type": "string", "minLength": 1, "maxLength": 10})
+    );
+    let written = serde_json::to_value(Slug("ada".to_owned())).expect("a newtype serializes");
+    assert_eq!(written, serde_json::json!("ada"));
+    assert!(serde_json::from_value::<Slug>(written).is_ok());
+
+    assert_eq!(
+        emitted::<Alias>(),
+        serde_json::json!({"$ref": "#/components/schemas/Label", "maxLength": 8})
+    );
+}
+
+/// Each position carries its own member's constraints, and a member serde skips
+/// both ways carries none anywhere.
+#[test]
+fn a_tuple_member_keeps_its_constraints_at_its_position() {
+    assert_eq!(
+        emitted::<Grid>(),
+        serde_json::json!({
+            "type": "array",
+            "prefixItems": [
+                {"type": "integer", "format": "uint64", "minimum": 1.0},
+                {"type": "string", "maxLength": 2},
+            ],
+            "items": false,
+            "minItems": 2,
+        })
+    );
+
+    let written = serde_json::to_value(Grid(9, 1, "ab".to_owned())).expect("a tuple serializes");
+    assert_eq!(written, serde_json::json!([1, "ab"]));
+    assert!(serde_json::from_value::<Grid>(written).is_ok());
+}
+
+/// A tuple variant's members and a newtype variant's payload keep their
+/// constraints inside the branch.
+#[test]
+fn a_variant_member_keeps_its_constraints() {
+    let schema = emitted::<Measure>();
+    assert_eq!(
+        schema["oneOf"][0]["properties"]["Range"]["prefixItems"][0]["minimum"],
+        serde_json::json!(1.0)
+    );
+    assert_eq!(
+        schema["oneOf"][1]["properties"]["Title"],
+        serde_json::json!({"type": "string", "minLength": 1})
+    );
+}
+
+/// A newtype publishes its member's prose and deprecation, as a named field's
+/// property does.
+#[test]
+fn a_newtype_member_publishes_its_prose_and_deprecation() {
+    assert_eq!(
+        emitted::<Motto>(),
+        serde_json::json!({
+            "type": "string",
+            "description": "What the team says.",
+            "deprecated": true
+        })
+    );
+}
+
 // --- What a derived error response declares ---------------------------------
 //
 // A problem body carries the type URI the declaration named, so the response
