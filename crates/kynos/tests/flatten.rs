@@ -342,12 +342,14 @@ fn an_open_map_in_a_tagged_variant_leaves_the_tag_and_the_variants_properties_al
 ///
 /// The variant's fields sit under the content key rather than beside the tag,
 /// so the hoisted `unevaluatedProperties` belongs to the content object and has
-/// only `id` to leave alone.
+/// `id` and `name` to leave alone. `name` is a string where the map's values are
+/// numbers, so a value schema left inside the `allOf` would refuse it.
 #[derive(Schema, Serialize)]
 #[serde(tag = "kind", content = "data")]
 enum Wrapped {
     Counted {
         id: u64,
+        name: String,
         #[serde(flatten)]
         #[schema(open)]
         extra: BTreeMap<String, u64>,
@@ -358,6 +360,7 @@ enum Wrapped {
 fn an_open_map_in_an_adjacently_tagged_variant_leaves_the_variants_properties_alone() {
     let wrapped = Wrapped::Counted {
         id: 1,
+        name: "n".to_owned(),
         extra: BTreeMap::from([("k".to_owned(), 2)]),
     };
     let refusals = refusals(&wrapped);
@@ -373,7 +376,7 @@ fn an_open_map_in_an_adjacently_tagged_variant_leaves_the_variants_properties_al
         jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
     assert!(
         !validator.is_valid(&serde_json::json!({
-            "kind": "Counted", "data": { "id": 1, "k": "v" }
+            "kind": "Counted", "data": { "id": 1, "name": "n", "k": "v" }
         })),
         "a member contributed by a `BTreeMap<String, u64>` was accepted as a string: {schema}"
     );
