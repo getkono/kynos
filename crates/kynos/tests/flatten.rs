@@ -496,3 +496,64 @@ fn a_flattened_problem_accepts_its_extension_members() {
         "a problem's `status` was accepted as a string: {schema}"
     );
 }
+
+/// Arbitrary JSON beside the members the object declares, which is the payload
+/// `Unchecked` exists to carry.
+#[derive(Schema, Serialize)]
+struct Envelope {
+    id: u64,
+    #[serde(flatten)]
+    #[schema(open)]
+    rest: kynos::schema::unchecked::Unchecked<serde_json::Map<String, serde_json::Value>>,
+}
+
+fn envelope() -> Envelope {
+    Envelope {
+        id: 1,
+        rest: kynos::schema::unchecked::Unchecked(
+            serde_json::json!({ "k": "v", "n": [1, { "deep": null }] })
+                .as_object()
+                .expect("an object literal")
+                .clone(),
+        ),
+    }
+}
+
+/// An open `Unchecked` field describes the object the type writes.
+///
+/// Its schema carries no `additionalProperties`, so the hoist moves nothing and
+/// the parent is left open: every member the payload contributes is admitted,
+/// whatever its value.
+#[test]
+fn an_open_unchecked_field_accepts_whatever_it_contributes() {
+    let refusals = refusals(&envelope());
+    assert!(
+        refusals.is_empty(),
+        "the type cannot produce an instance its own description accepts: {refusals:?}\n\
+         schema: {}",
+        emitted::<Envelope>()
+    );
+
+    let schema = emitted::<Envelope>();
+    assert!(
+        schema["unevaluatedProperties"].is_null(),
+        "an unconstrained payload closed the object it was flattened into: {schema}"
+    );
+}
+
+/// And leaving the object open weakens nothing it declared.
+#[test]
+fn an_open_unchecked_field_still_constrains_the_parents_own_properties() {
+    let schema = emitted::<Envelope>();
+    let validator =
+        jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
+
+    assert!(
+        !validator.is_valid(&serde_json::json!({ "id": "1", "k": "v" })),
+        "the parent's `id` was accepted as a string: {schema}"
+    );
+    assert!(
+        !validator.is_valid(&serde_json::json!({ "k": "v" })),
+        "the parent's own required property was not required: {schema}"
+    );
+}

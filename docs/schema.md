@@ -427,6 +427,13 @@ The attribute may appear once per object — there is one
 ordinary field is a single property whose own schema already states what it
 admits. Both are compile errors.
 
+`Unchecked<T>` implements `OpenMap` too, and is the route for arbitrary JSON
+beside an object's own members. Its schema is written in place with no
+`additionalProperties`, so the hoist moves nothing and the object stays open.
+It does not implement `Flatten`: the permissive schema names none of the
+members it contributes, so beside an open map they stay unevaluated and the
+map's `unevaluatedProperties` refuses what serde writes.
+
 One thing is lost deliberately: a map whose key type constrains
 `propertyNames` contributes no key constraint through an open flatten. Inside
 the `allOf` branch `propertyNames` names the parent's own properties too, which
