@@ -337,3 +337,44 @@ fn an_open_map_in_a_tagged_variant_leaves_the_tag_and_the_variants_properties_al
         "a member contributed by a `BTreeMap<String, u64>` was accepted as a string: {schema}"
     );
 }
+
+/// The same open map inside an adjacently tagged variant.
+///
+/// The variant's fields sit under the content key rather than beside the tag,
+/// so the hoisted `unevaluatedProperties` belongs to the content object and has
+/// only `id` to leave alone.
+#[derive(Schema, Serialize)]
+#[serde(tag = "kind", content = "data")]
+enum Wrapped {
+    Counted {
+        id: u64,
+        #[serde(flatten)]
+        #[schema(open)]
+        extra: BTreeMap<String, u64>,
+    },
+}
+
+#[test]
+fn an_open_map_in_an_adjacently_tagged_variant_leaves_the_variants_properties_alone() {
+    let wrapped = Wrapped::Counted {
+        id: 1,
+        extra: BTreeMap::from([("k".to_owned(), 2)]),
+    };
+    let refusals = refusals(&wrapped);
+    assert!(
+        refusals.is_empty(),
+        "the type cannot produce an instance its own description accepts: {refusals:?}\n\
+         schema: {}",
+        emitted::<Wrapped>()
+    );
+
+    let schema = emitted::<Wrapped>();
+    let validator =
+        jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
+    assert!(
+        !validator.is_valid(&serde_json::json!({
+            "kind": "Counted", "data": { "id": 1, "k": "v" }
+        })),
+        "a member contributed by a `BTreeMap<String, u64>` was accepted as a string: {schema}"
+    );
+}
