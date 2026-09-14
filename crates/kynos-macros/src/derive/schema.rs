@@ -88,6 +88,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     reject_untagged(input)?;
     reject_wire_form_overrides(input)?;
     reject_catch_all(input)?;
+    reject_transparent_without_one_field(input)?;
     reject_read_required_skip(input)?;
     check_constraints(input)?;
 
@@ -620,6 +621,42 @@ fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
         }
     }
     Ok(())
+}
+
+/// A `#[serde(transparent)]` struct is described by its one described field,
+/// and with none or several there is no one schema to give it.
+///
+/// serde picks the field per direction -- on write the one without
+/// `skip_serializing`, on read the one without `skip_deserializing` or
+/// `default`, never a `PhantomData` -- so a struct it accepts may still write
+/// one field and read another. This derive cannot see which of serde's derives
+/// sit beside it, so it counts the fields [`described_members`] keeps and
+/// refuses any count but one. A unit struct and an enum are left to serde,
+/// which refuses `transparent` on both.
+fn reject_transparent_without_one_field(input: &DeriveInput) -> syn::Result<()> {
+    let Data::Struct(data) = &input.data else {
+        return Ok(());
+    };
+    if matches!(data.fields, Fields::Unit) {
+        return Ok(());
+    }
+    let Some((_, span)) = serde_key_span(&input.attrs, &["transparent"]) else {
+        return Ok(());
+    };
+    let described = described_members(&data.fields).len();
+    if described == 1 {
+        return Ok(());
+    }
+    Err(syn::Error::new(
+        span,
+        format!(
+            "`#[serde(transparent)]` writes one field's value, and `Schema` describes the one \
+             field no `skip`, `skip_serializing`, `skip_deserializing` or `PhantomData` leaves \
+             out; this struct has {described}, so serde may write one field and read another, \
+             or a field the schema cannot name. Leave exactly one such field, and mark every \
+             other `#[serde(skip)]`"
+        ),
+    ))
 }
 
 /// `skip_serializing_if` on a field serde still requires on read has no
