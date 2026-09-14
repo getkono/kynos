@@ -469,6 +469,16 @@ mod schema {
                     elided: String,
                 }
             ),
+            // A flattened open map: serde reads its absence as an empty map,
+            // and no flattened field is ever listed in `required`.
+            quote::quote!(
+                struct Draft {
+                    id: u64,
+                    #[serde(flatten, skip_serializing_if = "HashMap::is_empty")]
+                    #[schema(open)]
+                    extra: HashMap<String, String>,
+                }
+            ),
         ] {
             let input: syn::DeriveInput =
                 syn::parse2(declaration).expect("the case itself must parse");
@@ -477,6 +487,30 @@ mod schema {
                 panic!("a field serde may omit in both directions must expand: {error}");
             }
         }
+    }
+
+    /// A flattened struct skipped on write is refused like any other field.
+    ///
+    /// Only an open map is exempt. A flattened struct's own required members
+    /// vanish from what serde writes when it is skipped, while serde still
+    /// requires them on read, so the `required` its members publish is true in
+    /// neither direction unless a `default` covers the field.
+    #[test]
+    fn a_flattened_struct_skipped_on_write_is_still_refused() {
+        each_case_is_refused(
+            vec![case(
+                "`skip_serializing_if` on a flattened struct with no default",
+                quote::quote!(
+                    struct Draft {
+                        id: u64,
+                        #[serde(flatten, skip_serializing_if = "Audit::is_empty")]
+                        audit: Audit,
+                    }
+                ),
+                "still requires it on read",
+            )],
+            expand_inner,
+        );
     }
 
     /// Whether the expansion claims `kynos::schema::Flatten` for the input.
