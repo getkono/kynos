@@ -66,6 +66,9 @@ const FLAGS: &[&str] = &["unique_items", "open"];
 /// `Serialize` and `Deserialize`.
 const WIRE_FORM_OVERRIDES: &[&str] = &["with", "serialize_with", "deserialize_with"];
 
+/// serde's container keys that write or read the whole value as another type.
+const CONVERSIONS: &[&str] = &["into", "from", "try_from"];
+
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
     match expand_inner(&input) {
@@ -81,6 +84,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             "`Schema` cannot describe a union: no JSON value corresponds to one",
         ));
     }
+    reject_container_conversions(input)?;
     reject_untagged(input)?;
     reject_wire_form_overrides(input)?;
     reject_catch_all(input)?;
@@ -463,6 +467,37 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
              `exclusive_minimum`, `exclusive_maximum`, `multiple_of`, `min_length`, \
              `max_length`, `pattern`, `min_items`, `max_items` and `unique_items`; plus \
              `open`, which says a flattened field's members are not named"
+        ),
+    ))
+}
+
+/// A type serde writes or reads as another type has no schema its declaration
+/// predicts.
+///
+/// `into`, `from` and `try_from` hand the whole value to a conversion, so the
+/// wire carries whatever the named type writes, and the fields or variants
+/// declared here reach it only through code the derive cannot read. Refused on
+/// a struct and an enum alike, which is everywhere serde accepts the keys, and
+/// before any other rule, since every other rule reads a declaration this one
+/// says the wire does not follow. `remote` is not among them: its fields mirror
+/// the type it names, so the declaration still predicts the wire form.
+fn reject_container_conversions(input: &DeriveInput) -> syn::Result<()> {
+    let Some((key, span)) = serde_key_span(&input.attrs, CONVERSIONS) else {
+        return Ok(());
+    };
+    let (noun, members) = match &input.data {
+        Data::Enum(_) => ("enum", "variants"),
+        // A union was refused at the top of `expand_inner`.
+        Data::Struct(_) | Data::Union(_) => ("struct", "fields"),
+    };
+    Err(syn::Error::new(
+        span,
+        format!(
+            "`{key}` makes serde read or write this {noun} as the type it names rather than as \
+             the {members} it declares, so a schema derived from the declaration would describe \
+             a value the wire never carries. Implement `Schema` for this {noun} by hand, \
+             describing the type serde converts through -- `registry.resolve::<T>()` where that \
+             is one type `T` in both directions"
         ),
     ))
 }
