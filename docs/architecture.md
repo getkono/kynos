@@ -653,7 +653,7 @@ on.
 
 The case for owning the HTTP/1 codec rests on a category error: `httparse` is
 already what hyper parses with, so a rewrite would not touch the parser. What
-it would take over is framing and buffering — and measured against that, hyper
+it would take over is framing and buffering — and set against that, hyper
 costs roughly nothing per request. A GET with standard headers allocates once
 or not at all inside hyper's codec — a reading of hyper, not a count. No
 allocation count this repository records reaches that codec: the request-path
@@ -661,8 +661,13 @@ counts poll `Service` directly, with no socket
 ([`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs)), and
 a per-request figure over a socket is the general measurement
 [`performance.md`](performance.md#the-boundary) sends to `kynos-bench`. What
-Kynos adds is counted: [`nfr.md`](nfr.md#routing) records seven allocations for
-a static match.
+Kynos's routing path adds is counted: [`nfr.md`](nfr.md#routing) records seven
+allocations for a static match. What its server path adds around each request
+is counted by nothing: the per-connection handler in
+[`server/connection.rs`](../crates/kynos/src/server/connection.rs) inserts the
+connection metadata into the request's extensions and erases the incoming body,
+and only the erasure is traced, in the body-erasure paragraph later in this
+section.
 
 The honest counter-argument is the per-connection buffer floor. Roughly 16 KiB
 that cannot be pooled or reclaimed between requests on an idle keep-alive
