@@ -663,12 +663,30 @@ mod schema {
                     "this struct writes through `a` and reads through no field",
                 ),
                 case(
+                    // serde refuses this under `Serialize`, which has no field
+                    // to write through, and accepts it under `Deserialize`
+                    // alone, reading through `a`.
+                    "written through no field, read through `a`, which `Deserialize` accepts",
+                    quote::quote!(
+                        #[serde(transparent)]
+                        struct Hole {
+                            #[serde(skip_serializing)]
+                            a: u64,
+                            #[serde(skip_serializing, skip_deserializing)]
+                            b: u64,
+                        }
+                    ),
+                    "this struct writes through no field and reads through `a`",
+                ),
+                case(
+                    // serde accepts this under `Serialize`, `Deserialize` and
+                    // both: a `default` member may follow one without.
                     "a tuple struct written through one member and read through another",
                     quote::quote!(
                         #[serde(transparent)]
-                        struct Pair(#[serde(default)] u64, #[serde(skip_serializing)] u64);
+                        struct Pair(#[serde(skip_serializing)] u64, #[serde(default)] u64);
                     ),
-                    "this struct writes through field 0 and reads through field 1",
+                    "this struct writes through field 1 and reads through field 0",
                 ),
             ],
             expand_inner,
@@ -709,6 +727,44 @@ mod schema {
                 panic!("a transparent struct with one field both ways must expand: {error}");
             }
         }
+    }
+
+    /// A `PhantomData` a macro passed through a `$t:ty` fragment is still a
+    /// `PhantomData`.
+    ///
+    /// rustc hands such a type to the derive inside an invisible group, which
+    /// `syn` parses as `Type::Group`, and serde's transparent check unwraps it.
+    /// Unrecognised, the marker would count as a member serde writes and reads,
+    /// and the derive would describe it and demand `PhantomData<T>: Schema`.
+    #[test]
+    fn a_phantom_member_a_macro_wraps_in_a_group_is_not_described() {
+        let marker =
+            proc_macro2::Group::new(proc_macro2::Delimiter::None, quote::quote!(PhantomData<T>));
+        let input: syn::DeriveInput = syn::parse2(quote::quote!(
+            #[serde(transparent)]
+            struct Id<T>(u64, #marker);
+        ))
+        .expect("the case itself must parse");
+
+        // Without the group there is nothing here to test.
+        let syn::Data::Struct(data) = &input.data else {
+            panic!("the case is a struct");
+        };
+        assert!(
+            data.fields
+                .iter()
+                .any(|field| matches!(field.ty, syn::Type::Group(_))),
+            "the marker did not parse as a `Type::Group`"
+        );
+
+        let expanded = match expand_inner(&input) {
+            Ok(tokens) => tokens.to_string(),
+            Err(error) => panic!("a transparent struct beside a marker must expand: {error}"),
+        };
+        assert!(
+            !expanded.contains("PhantomData"),
+            "the marker reached the expansion: {expanded}"
+        );
     }
 
     /// A transparent struct serde refuses in both directions is serde's to
