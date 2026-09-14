@@ -527,6 +527,212 @@ fn a_transparent_tuple_struct_is_described_by_its_one_described_member() {
     );
 }
 
+// --- A tuple is the positions serde writes and reads ------------------------
+//
+// serde leaves a member it skips both ways out of the array in both directions,
+// and writes a newtype variant whose member it skips as a unit variant. These
+// pin the emitted shape against what serde writes and reads; `docs/schema.md`
+// states the rule. None carries a doc comment, for the reason `Labels` gives.
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Late(#[serde(skip)] u64, String);
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Pair(u64, String);
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Tally(u64, #[serde(default, skip_serializing_if = "is_zero")] u64);
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde passes the field by reference
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Blank(#[serde(skip)] u64, #[serde(skip)] String);
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Count(#[serde(skip_serializing)] u64);
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum External {
+    Shown(u64),
+    Hidden(#[serde(skip)] u64),
+}
+
+// Serialize only: serde's own reader refuses the `{"t":"Hidden"}` its writer
+// produces for an adjacently tagged unit-like variant, so there is no read to
+// hold the schema to.
+#[derive(Schema, serde::Serialize)]
+#[serde(tag = "t", content = "c")]
+enum Adjacent {
+    Shown(u64),
+    Hidden(#[serde(skip)] u64),
+}
+
+#[derive(Default, Schema, serde::Serialize, serde::Deserialize)]
+struct Payload {
+    x: u64,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "t")]
+enum Internal {
+    Shown(Payload),
+    Hidden(#[serde(skip)] Payload),
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum Units {
+    A,
+    B(#[serde(skip)] u64),
+}
+
+/// A tag-only object: what a tagged unit variant is on the wire.
+fn tag_only(tag: &str, name: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {tag: {"type": "string", "const": name}},
+        "required": [tag],
+    })
+}
+
+/// A member skipped both ways is no position, so the later ones keep theirs.
+///
+/// `Late` writes `["s"]`, which an array whose first position is an integer
+/// refuses.
+#[test]
+fn a_tuple_is_the_members_serde_writes_and_reads() {
+    assert_eq!(
+        emitted::<Late>(),
+        serde_json::json!({
+            "type": "array",
+            "prefixItems": [emitted::<String>()],
+            "items": false,
+            "minItems": 1,
+        })
+    );
+
+    let written = serde_json::to_value(Late(7, "s".to_owned())).expect("a tuple serializes");
+    assert_eq!(written, serde_json::json!(["s"]));
+    assert!(
+        serde_json::from_value::<Late>(written).is_ok(),
+        "the array the schema describes must read back"
+    );
+}
+
+/// `minItems` refuses the shorter array serde refuses, which `prefixItems`
+/// alone admits.
+#[test]
+fn a_tuple_admits_no_fewer_members_than_serde_reads() {
+    assert_eq!(
+        emitted::<Pair>(),
+        serde_json::json!({
+            "type": "array",
+            "prefixItems": [emitted::<u64>(), emitted::<String>()],
+            "items": false,
+            "minItems": 2,
+        })
+    );
+    assert!(
+        serde_json::from_str::<Pair>("[1]").is_err(),
+        "serde must refuse the array `minItems` refuses"
+    );
+    assert!(serde_json::from_str::<Pair>(r#"[1,"s"]"#).is_ok());
+}
+
+/// A last member serde may leave out, and fills from `Default` when the array
+/// ends before it, lowers the bound by one.
+#[test]
+fn a_trailing_member_serde_may_leave_out_lowers_min_items() {
+    assert_eq!(
+        emitted::<Tally>(),
+        serde_json::json!({
+            "type": "array",
+            "prefixItems": [emitted::<u64>(), emitted::<u64>()],
+            "items": false,
+            "minItems": 1,
+        })
+    );
+
+    let written = serde_json::to_value(Tally(1, 0)).expect("a tuple serializes");
+    assert_eq!(written, serde_json::json!([1]));
+    assert!(
+        serde_json::from_value::<Tally>(written).is_ok(),
+        "the shorter array serde writes must read back"
+    );
+}
+
+/// With every member skipped, the tuple is the empty array, and there is no
+/// `prefixItems`, which may not be empty.
+#[test]
+fn a_tuple_whose_every_member_is_skipped_is_the_empty_array() {
+    assert_eq!(
+        emitted::<Blank>(),
+        serde_json::json!({"type": "array", "items": false})
+    );
+
+    let written =
+        serde_json::to_value(Blank(7, "s".to_owned())).expect("an empty tuple serializes");
+    assert_eq!(written, serde_json::json!([]));
+    assert!(serde_json::from_value::<Blank>(written).is_ok());
+}
+
+/// serde ignores skip attributes on a newtype struct, so its member stands.
+#[test]
+fn a_newtype_struct_is_its_member_whatever_serde_skips() {
+    assert_eq!(emitted::<Count>(), emitted::<u64>());
+
+    let written = serde_json::to_value(Count(5)).expect("a newtype serializes");
+    assert_eq!(written, serde_json::json!(5));
+    assert!(serde_json::from_value::<Count>(written).is_ok());
+}
+
+/// A newtype variant whose member serde skips is the unit variant serde writes,
+/// under every tagging.
+#[test]
+fn a_newtype_variant_whose_member_is_skipped_is_a_unit_variant() {
+    let hidden = serde_json::json!({"type": "string", "const": "Hidden"});
+    assert_eq!(emitted::<External>()["oneOf"][1], hidden);
+    let written = serde_json::to_value(External::Hidden(7)).expect("a variant serializes");
+    assert_eq!(written, serde_json::json!("Hidden"));
+    assert!(serde_json::from_value::<External>(written).is_ok());
+
+    assert_eq!(
+        emitted::<Adjacent>()["oneOf"][1],
+        tag_only("t", "Hidden"),
+        "the branch carries no content property"
+    );
+    assert_eq!(
+        serde_json::to_value(Adjacent::Hidden(7)).expect("a variant serializes"),
+        serde_json::json!({"t": "Hidden"})
+    );
+
+    assert_eq!(
+        emitted::<Internal>()["oneOf"][1],
+        tag_only("t", "Hidden"),
+        "the branch composes no payload"
+    );
+    let written =
+        serde_json::to_value(Internal::Hidden(Payload::default())).expect("a variant serializes");
+    assert_eq!(written, serde_json::json!({"t": "Hidden"}));
+    assert!(serde_json::from_value::<Internal>(written).is_ok());
+}
+
+/// A skipped newtype variant is a name like any unit variant, so an enum of
+/// names keeps the compact shape.
+#[test]
+fn an_enum_of_names_counts_a_skipped_newtype_variant_as_a_name() {
+    assert_eq!(
+        emitted::<Units>(),
+        serde_json::json!({"type": "string", "enum": ["A", "B"]})
+    );
+    assert_eq!(
+        serde_json::to_value(Units::B(7)).expect("a variant serializes"),
+        serde_json::json!("B")
+    );
+}
+
 // --- What a derived error response declares ---------------------------------
 //
 // A problem body carries the type URI the declaration named, so the response

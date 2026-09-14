@@ -397,12 +397,33 @@ mod schema {
     /// A wire-form override on something no schema describes is left alone.
     ///
     /// The refusal exists because the schema would describe a value the wire
-    /// never carries. A skipped field, and every field of a skipped variant,
-    /// are in no schema at all, so there is nothing for the override to
-    /// contradict.
+    /// never carries. A skipped named field, every field of a skipped variant,
+    /// and a member of a tuple, tuple variant or newtype variant that serde
+    /// skips both ways are in no schema at all, so there is nothing for the
+    /// override to contradict.
     #[test]
     fn a_wire_form_override_on_an_undescribed_field_is_left_alone() {
         for declaration in [
+            quote::quote!(
+                struct Pair(u64, #[serde(skip, with = "as_string")] u64);
+            ),
+            quote::quote!(
+                enum Reading {
+                    Count(u64, #[serde(skip, with = "as_string")] u64),
+                }
+            ),
+            quote::quote!(
+                enum Reading {
+                    Total(u64),
+                    Count(#[serde(skip, with = "as_string")] u64),
+                }
+            ),
+            // A transparent struct is its one described member, and the other
+            // is skipped both ways on a two-member tuple.
+            quote::quote!(
+                #[serde(transparent)]
+                struct Pair(u64, #[serde(skip, with = "as_string")] u64);
+            ),
             quote::quote!(
                 struct Reading {
                     total: u64,
@@ -434,6 +455,26 @@ mod schema {
                 panic!("an override nothing describes must expand, and was refused: {error}");
             }
         }
+    }
+
+    /// A wire-form override on a newtype struct's member is refused whatever
+    /// serde skips.
+    ///
+    /// serde ignores skip attributes on a newtype struct and still writes its
+    /// member through the function, so the exemption a skipped tuple member
+    /// gets does not reach it.
+    #[test]
+    fn a_wire_form_override_on_a_newtype_member_is_refused_whatever_it_skips() {
+        each_case_is_refused(
+            vec![case(
+                "`serialize_with` on the member of a newtype that skips it both ways",
+                quote::quote!(
+                    struct Sku(#[serde(skip, serialize_with = "as_string")] u64);
+                ),
+                "`serialize_with` reads or writes this field",
+            )],
+            expand_inner,
+        );
     }
 
     /// Each of serde's three container conversions is refused on a struct and
@@ -922,6 +963,29 @@ mod schema {
             #[serde(transparent)]
             struct Labels {
                 inner: BTreeMap<String, String>,
+            }
+        )));
+    }
+
+    /// A newtype variant whose member serde skips is a unit variant, so an
+    /// externally tagged enum carrying one does not claim to be flattenable.
+    ///
+    /// serde writes it as a bare name, and the derive describes that branch as
+    /// the bare string it is, which names no members.
+    #[test]
+    fn a_skipped_newtype_variant_is_a_unit_to_the_flatten_claim() {
+        // The same variant with its member unskipped does claim it, so the case
+        // isolates the skip rather than the shape.
+        assert!(claims_flatten(quote::quote!(
+            enum Event {
+                Created { at: String },
+                Hidden(u64),
+            }
+        )));
+        assert!(!claims_flatten(quote::quote!(
+            enum Event {
+                Created { at: String },
+                Hidden(#[serde(skip)] u64),
             }
         )));
     }
