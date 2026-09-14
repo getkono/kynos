@@ -198,11 +198,15 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// Describes a type as JSON Schema.
 ///
 /// Reads the serde attributes already on the type — `rename_all`, `skip`,
-/// `flatten`, `tag`, `content` — so the schema and the wire form come from one
-/// declaration. A field is left out of `required` when it is an `Option`,
-/// carries `#[serde(default)]`, or belongs to a struct carrying
+/// `flatten`, `tag`, `content`, `transparent` — so the schema and the wire form
+/// come from one declaration. A field is left out of `required` when it is an
+/// `Option`, carries `#[serde(default)]`, or belongs to a struct carrying
 /// `#[serde(default)]`, because the wire form then allows it to be absent both
-/// ways; `skip_serializing_if` is accepted only alongside one of those.
+/// ways; `skip_serializing_if` is accepted only alongside one of those. A
+/// `transparent` struct is described by the one field serde writes and reads
+/// through, or the single field of the one direction serde can derive for it,
+/// keeps its own component name, as a newtype does, and carries that field's
+/// constraints.
 ///
 /// Constraints go on fields, and the grammar is exactly the keys of
 /// [`Constraints`](https://docs.rs/kynos/latest/kynos/schema/constraints/struct.Constraints.html)
@@ -262,6 +266,13 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   fields or variants no longer predict. Implement `Schema` by hand, describing
 ///   the type serde converts through. `#[serde(remote = ...)]` is accepted,
 ///   since its fields mirror the type it names.
+/// - `#[serde(transparent)]` on a struct serde writes through one field and
+///   reads through another. serde writes through the field without `skip` or
+///   `skip_serializing` and reads through the field without `skip`,
+///   `skip_deserializing` or a field-level `default`; where each direction picks
+///   a single field, the two must be the same. A struct where only one direction
+///   picks a single field is described by it, since serde refuses the other
+///   derive itself. Mark every other field `#[serde(skip)]`.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)

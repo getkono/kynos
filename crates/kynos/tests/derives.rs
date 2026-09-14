@@ -448,6 +448,174 @@ fn a_container_default_leaves_every_field_optional() {
     );
 }
 
+// --- A transparent struct is the one field serde writes ---------------------
+//
+// serde writes a `#[serde(transparent)]` struct as its one field's value, so the
+// description is that field's schema rather than an object of the fields the
+// declaration names. These pin the emitted shape; `docs/schema.md` states the
+// rule.
+
+// No doc comment, which would add prose the map's own schema does not carry.
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+struct Labels {
+    inner: std::collections::BTreeMap<String, String>,
+}
+
+/// A name a person reads.
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+struct DisplayName {
+    /// The name as it was typed, which the struct's own prose replaces.
+    #[schema(min_length = 1, max_length = 10)]
+    value: String,
+}
+
+// No doc comment, for the reason `Labels` gives.
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+struct Handle(u64, #[serde(skip)] u64);
+
+/// A transparent struct is described by the value serde writes.
+///
+/// `Labels` writes `{"k":"v"}`, which an object requiring `inner` refuses. It
+/// keeps its own component name, as a newtype does, so a reference to it names
+/// the type that was declared.
+#[test]
+fn a_transparent_struct_is_described_by_its_one_field() {
+    assert_eq!(
+        emitted::<Labels>(),
+        emitted::<std::collections::BTreeMap<String, String>>()
+    );
+    assert_eq!(
+        <Labels as SchemaTrait>::name().map(|name| name.as_str().to_owned()),
+        Some("Labels".to_owned())
+    );
+
+    let written = serde_json::to_value(Labels {
+        inner: [("k".to_owned(), "v".to_owned())].into(),
+    })
+    .expect("a map serializes");
+    assert_eq!(written, serde_json::json!({"k": "v"}));
+    assert!(
+        serde_json::from_value::<Labels>(written).is_ok(),
+        "the value the schema describes must read back"
+    );
+}
+
+/// A transparent field's constraints reach the schema, under the struct's prose.
+#[test]
+fn a_transparent_field_keeps_what_it_said_about_its_value() {
+    assert_eq!(
+        emitted::<DisplayName>(),
+        serde_json::json!({
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10,
+            "description": "A name a person reads."
+        })
+    );
+
+    let written = serde_json::to_value(DisplayName {
+        value: "Ada".to_owned(),
+    })
+    .expect("a string serializes");
+    assert_eq!(written, serde_json::json!("Ada"));
+    assert!(
+        serde_json::from_value::<DisplayName>(written).is_ok(),
+        "the value the schema describes must read back"
+    );
+}
+
+/// A transparent tuple struct is its one described member, not an array of all.
+#[test]
+fn a_transparent_tuple_struct_is_described_by_its_one_described_member() {
+    assert_eq!(emitted::<Handle>(), emitted::<u64>());
+    assert_eq!(
+        serde_json::to_value(Handle(1, 2)).expect("an integer serializes"),
+        serde_json::json!(1)
+    );
+    assert!(
+        serde_json::from_value::<Handle>(serde_json::json!(1)).is_ok(),
+        "the value the schema describes must read back"
+    );
+}
+
+// No doc comment, so the field's prose is the only prose there is.
+#[derive(Schema, serde::Serialize)]
+#[serde(transparent)]
+struct Nickname {
+    /// What a person goes by.
+    #[deprecated]
+    value: String,
+}
+
+/// With no prose of its own, a transparent struct publishes its field's prose
+/// and its field's deprecation.
+#[test]
+fn a_transparent_field_publishes_its_prose_and_deprecation() {
+    assert_eq!(
+        emitted::<Nickname>(),
+        serde_json::json!({
+            "type": "string",
+            "description": "What a person goes by.",
+            "deprecated": true
+        })
+    );
+}
+
+// No doc comment, for the reason `Labels` gives.
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+struct Code(#[schema(min_length = 1)] String);
+
+/// A transparent tuple struct carries its member's constraints, as its
+/// named-field twin does.
+#[test]
+fn a_transparent_tuple_member_keeps_its_constraints() {
+    assert_eq!(
+        emitted::<Code>(),
+        serde_json::json!({"type": "string", "minLength": 1})
+    );
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+struct Wrapped<T> {
+    value: T,
+}
+
+/// A generic transparent struct claims no component name, which every
+/// instantiation would otherwise share.
+#[test]
+fn a_generic_transparent_struct_claims_no_component_name() {
+    assert!(
+        <Wrapped<u64> as SchemaTrait>::name().is_none(),
+        "a generic transparent struct claimed a component name"
+    );
+}
+
+// No doc comment, for the reason `Labels` gives. serde writes this through both
+// fields, so it refuses `Serialize` here, and reads it through `value` alone.
+#[derive(Schema, serde::Deserialize)]
+#[serde(transparent)]
+struct Reading {
+    value: u64,
+    #[serde(default)]
+    extra: String,
+}
+
+/// A transparent struct serde derives in one direction only is described by
+/// the one field that direction picks.
+#[test]
+fn a_transparent_struct_read_through_one_field_is_described_by_it() {
+    assert_eq!(emitted::<Reading>(), emitted::<u64>());
+
+    let read = serde_json::from_value::<Reading>(serde_json::json!(5))
+        .expect("the value the schema describes must read");
+    assert_eq!(read.value, 5);
+}
+
 // --- What a derived error response declares ---------------------------------
 //
 // A problem body carries the type URI the declaration named, so the response

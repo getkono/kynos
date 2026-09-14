@@ -1,0 +1,5 @@
+error: `#[serde(transparent)]` makes serde write through the one field without `skip` or `skip_serializing` and read through the one field without `skip`, `skip_deserializing` or `default`, and `Schema` describes the struct only where they are the same field, since it does not compare two fields' schemas; this struct writes through `a` and reads through `b`. Leave one field serde both writes and reads, and mark every other `#[serde(skip)]`
+ --> tests/ui/macros/schema_transparent_without_one_field.rs:7:9
+  |
+7 | #[serde(transparent)]
+  |         ^^^^^^^^^^^

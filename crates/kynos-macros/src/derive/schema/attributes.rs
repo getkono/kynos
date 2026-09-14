@@ -1,6 +1,6 @@
 use super::{
-    COUNTS, Container, Field, Lit, LitFloat, LitInt, NUMERIC, Span, Spanned, TokenStream2, Type,
-    Variant, quote, skip_value, string_value,
+    COUNTS, Container, Field, Fields, Lit, LitFloat, LitInt, NUMERIC, Span, Spanned, TokenStream2,
+    Type, Variant, quote, skip_value, string_value,
 };
 
 /// The wire name of a field: serde's `rename` if it has one, the container's
@@ -112,7 +112,62 @@ pub(super) fn is_described(field: &Field) -> bool {
     !is_skipped(&field.attrs) && !is_phantom(&field.ty)
 }
 
+/// The fields a schema describes, in declaration order: each one
+/// [`is_described`] keeps.
+pub(super) fn described_members(fields: &Fields) -> Vec<&Field> {
+    fields.iter().filter(|field| is_described(field)).collect()
+}
+
+/// The fields a `#[serde(transparent)]` struct may be written through, and the
+/// fields it may be read through, in that order.
+///
+/// `serde_derive`'s `allow_transparent`, read from the attributes: a field is
+/// written through unless it is `skip` or `skip_serializing`, read through
+/// unless it is `skip`, `skip_deserializing` or given a field-level `default`,
+/// and a `PhantomData` is neither. A container `default` is not read, because
+/// serde does not read it there.
+pub(super) fn transparent_members(fields: &Fields) -> (Vec<&Field>, Vec<&Field>) {
+    let candidates = |excluded: &[&str]| {
+        fields
+            .iter()
+            .filter(|field| !is_phantom(&field.ty) && !serde_flag(&field.attrs, excluded))
+            .collect::<Vec<_>>()
+    };
+    (
+        candidates(&["skip", "skip_serializing"]),
+        candidates(&["skip", "skip_deserializing", "default"]),
+    )
+}
+
+/// The one field a `#[serde(transparent)]` struct is described by: the field
+/// both directions pick, or the single field of the one direction that picks
+/// one.
+///
+/// serde refuses a derive whose direction has no single candidate, so where only
+/// one direction picks a single field the struct compiles with that direction's
+/// derive alone, and the field is all serde writes, or reads. Two different
+/// single picks give no field, and `reject_transparent_without_one_field`
+/// refuses that struct.
+pub(super) fn transparent_member(fields: &Fields) -> Option<&Field> {
+    let (written, read) = transparent_members(fields);
+    match (written.as_slice(), read.as_slice()) {
+        ([written], [read]) => std::ptr::eq(*written, *read).then_some(*written),
+        ([only], _) | (_, [only]) => Some(*only),
+        _ => None,
+    }
+}
+
+/// Whether a type is a `PhantomData`.
+///
+/// A type a macro passed through a `$t:ty` fragment arrives inside an invisible
+/// group, which `serde_derive`'s `ungroup` unwraps, and nothing else, before its
+/// own test. This unwraps the same, so a marker is a marker however it was
+/// written.
 pub(super) fn is_phantom(ty: &Type) -> bool {
+    let mut ty = ty;
+    while let Type::Group(group) = ty {
+        ty = &group.elem;
+    }
     let Type::Path(path) = ty else {
         return false;
     };
