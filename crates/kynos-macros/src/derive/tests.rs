@@ -383,6 +383,44 @@ mod schema {
             }
         )));
     }
+
+    /// A skipped variant cannot cost an enum its claim to Flatten.
+    ///
+    /// serde never writes a `#[serde(skip)]` variant, so the derive describes no
+    /// branch for it and nothing its fields declare reaches the schema. An open
+    /// field inside one is therefore not an open member of the enum.
+    #[test]
+    fn a_skipped_variant_does_not_disqualify_the_enum() {
+        // The same variant unskipped does disqualify it, so the case isolates
+        // the skip rather than the shape.
+        assert!(!claims_flatten(quote::quote!(
+            #[serde(tag = "kind")]
+            enum Event {
+                Created {
+                    at: String,
+                },
+                Internal {
+                    #[serde(flatten)]
+                    #[schema(open)]
+                    extra: BTreeMap<String, String>,
+                },
+            }
+        )));
+        assert!(claims_flatten(quote::quote!(
+            #[serde(tag = "kind")]
+            enum Event {
+                Created {
+                    at: String,
+                },
+                #[serde(skip)]
+                Internal {
+                    #[serde(flatten)]
+                    #[schema(open)]
+                    extra: BTreeMap<String, String>,
+                },
+            }
+        )));
+    }
 }
 
 mod api_error {
