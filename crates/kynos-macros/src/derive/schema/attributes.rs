@@ -1,6 +1,6 @@
 use super::{
-    COUNTS, Container, Field, Lit, LitFloat, LitInt, NUMERIC, TokenStream2, Type, Variant, quote,
-    skip_value, string_value,
+    COUNTS, Container, Field, Lit, LitFloat, LitInt, NUMERIC, Span, Spanned, TokenStream2, Type,
+    Variant, quote, skip_value, string_value,
 };
 
 /// The wire name of a field: serde's `rename` if it has one, the container's
@@ -131,6 +131,33 @@ pub(super) fn is_flattened(field: &Field) -> bool {
     serde_flag(&field.attrs, &["flatten"])
 }
 
+/// Whether a field carries `#[schema(open)]`, and where it says so.
+///
+/// The span is the `open` key itself, so a diagnostic about it points at the
+/// word rather than at the whole field.
+pub(super) fn open_span(field: &Field) -> Option<Span> {
+    let mut found = None;
+    for attr in &field.attrs {
+        if !attr.path().is_ident("schema") {
+            continue;
+        }
+        // Shape errors in the list are `check_constraints`' to report, so this
+        // reads the one key it wants and stays silent about the rest.
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("open") {
+                found = Some(meta.path.span());
+                return Ok(());
+            }
+            skip_value(&meta)
+        });
+    }
+    found
+}
+
+pub(super) fn is_open(field: &Field) -> bool {
+    open_span(field).is_some()
+}
+
 /// Whether a property must be present.
 ///
 /// An `Option` is optional because the type says so, and a field with a serde
@@ -194,6 +221,13 @@ pub(super) fn constraints(field: &Field) -> Option<TokenStream2> {
                 return skip_value(&meta);
             };
             let name = key.to_string();
+
+            // `open` is not a constraint on a value: it says how a flattened
+            // field composes into the object carrying it, and `object_body`
+            // reads it there.
+            if name == "open" {
+                return Ok(());
+            }
 
             if name == "unique_items" {
                 assignments.push(quote! {

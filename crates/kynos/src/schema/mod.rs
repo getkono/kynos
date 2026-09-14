@@ -222,5 +222,98 @@ pub trait MapKey: Schema {
 
 impl MapKey for String {}
 
+/// A type whose schema names its own members, so it can be flattened into
+/// another object.
+///
+/// `#[serde(flatten)]` makes a field's members the *parent's* members, so the
+/// parent composes the field's schema rather than naming it. A schema that
+/// constrains every member it does not name — `additionalProperties` on a map,
+/// the permissive schema — then reaches the members the parent declared itself,
+/// and the object ends up refusing the JSON its own type writes.
+///
+/// The marker is Kynos's own because serde has no type-level surface to read:
+/// `Serialize` is one method, `flatten` is an internal flag that never leaves
+/// `serde_derive`, and what enforces it is a runtime serializer. Bounding a
+/// flattened field by this trait is what turns that into a compile error at the
+/// field that wrote it.
+///
+/// Derived beside [`Schema`] for the shapes whose description is an object
+/// naming its members: a struct with named fields, and an enum whose every
+/// `oneOf` branch is such an object. Not for a container carrying
+/// `#[schema(open)]` or `#[serde(transparent)]`, an externally tagged enum with a
+/// unit variant, or an internally tagged enum with a newtype variant.
+/// Unsealed, for the reason [`MapKey`] is — a hand-written [`Schema`] that does
+/// the same thing has to be able to say so.
+///
+/// ```no_run
+/// # use kynos::schema::{Flatten, Schema};
+/// # struct Audit;
+/// # impl Schema for Audit {
+/// #     fn schema(_: &mut kynos::schema::registry::Registry) -> kynos::openapi::Schema {
+/// #         todo!()
+/// #     }
+/// # }
+/// // `Audit::schema` returns an object whose `properties` names `created_at`
+/// // and `created_by`, and which constrains no other member. Flattening it
+/// // therefore adds exactly those two to whatever carries it.
+/// impl Flatten for Audit {}
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be flattened into another object",
+    label = "does not name its members",
+    note = "a flattened field's members become the parent's own, so its schema has to name them; a \
+            map names none, so its values would reach the properties the object declared itself",
+    note = "give it a named field of its own; on a `HashMap` or `BTreeMap` field, add \
+            `#[schema(open)]` beside `#[serde(flatten)]` to say the object really is open, so \
+            its values become the object's `unevaluatedProperties`; as an internally tagged \
+            newtype variant's payload, make it a struct variant holding that flattened open \
+            field, which serde writes the same way"
+)]
+pub trait Flatten: Schema {}
+
+/// A map whose schema is written out in place, so `#[schema(open)]` can hoist
+/// its values onto the object it is flattened into.
+///
+/// `#[schema(open)]` moves a flattened map's `additionalProperties` to the
+/// parent's `unevaluatedProperties`, which needs the map's own schema object in
+/// hand. A type described through a `$ref` leaves nothing to move, and the
+/// `additionalProperties` of the schema it refers to would reach the properties
+/// the parent declared itself. The derive bounds every open field by this
+/// trait, so that case is a compile error at the field.
+///
+/// Implemented for [`HashMap`](std::collections::HashMap) and
+/// [`BTreeMap`](std::collections::BTreeMap), and carried across `Box<T>` and
+/// `Arc<T>`. Unsealed, for the reason [`MapKey`] is — a hand-written [`Schema`]
+/// that claims no component name and describes an object by
+/// `additionalProperties` alone has to be able to say so.
+///
+/// A key constraint does not survive the hoist. Inside the `allOf` branch
+/// `propertyNames` would name the parent's own properties too, so it is dropped:
+/// a map keyed by a [`MapKey`] with [`key_constraints`](MapKey::key_constraints)
+/// is described more weakly than its type, rather than contradicting it.
+///
+/// ```no_run
+/// # use kynos::schema::{OpenMap, Schema};
+/// # struct Headers;
+/// # impl Schema for Headers {
+/// #     fn schema(_: &mut kynos::schema::registry::Registry) -> kynos::openapi::Schema {
+/// #         todo!()
+/// #     }
+/// # }
+/// // `Headers::schema` returns `{"type": "object", "additionalProperties": ...}`
+/// // and `Headers::name` is the default `None`, so the description of a
+/// // flattened `Headers` is that object itself.
+/// impl OpenMap for Headers {}
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be flattened with `#[schema(open)]`",
+    label = "not a map described in place",
+    note = "`#[schema(open)]` moves a map's value schema onto the object carrying it, which needs \
+            the map's own schema rather than a `$ref` to one",
+    note = "flatten the `HashMap` or `BTreeMap` field itself, or drop `#[schema(open)]` from a \
+            type that names its members"
+)]
+pub trait OpenMap: Schema {}
+
 #[cfg(test)]
 mod tests;

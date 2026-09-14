@@ -1,11 +1,13 @@
 //! `#[derive(Schema)]`.
 //!
-//! The field grammar is exactly the keys of `schema::constraints::Constraints`,
-//! so the attribute and the type it fills are one list and neither can grow
-//! without the other:
+//! The constraint half of the field grammar is exactly the keys of
+//! `schema::constraints::Constraints`, so the attribute and the type it fills
+//! are one list and neither can grow without the other:
 //!
 //! ```text
-//! #[schema( <constraint> [, <constraint>]* )]     on a field, optional
+//! #[schema( <member> [, <member>]* )]             on a field, optional
+//!
+//! member := <constraint> | open
 //!
 //! constraint := minimum = <number> | maximum = <number>
 //!             | exclusive_minimum = <number> | exclusive_maximum = <number>
@@ -19,18 +21,25 @@
 //! `format` is deliberately absent. It states what a value *is*, which follows
 //! from the type or from nothing, so naming it here is an error that points at
 //! the remedy rather than a key that quietly works.
+//!
+//! `open` is the one member that is not a constraint, which is why the list is
+//! no longer the `Constraints` keys alone. It says how a `#[serde(flatten)]`
+//! field composes rather than what a value may be. An open field is bounded by
+//! `kynos::schema::OpenMap`, and every other flattened field by
+//! `kynos::schema::Flatten`.
 
 mod attributes;
 mod shape;
 
 use attributes::{
-    constraints, field_name, is_described, is_flattened, is_required, is_skipped, variant_name,
+    constraints, field_name, is_described, is_flattened, is_open, is_required, is_skipped,
+    open_span, variant_name,
 };
 use shape::{enum_body, struct_body};
 
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
+use proc_macro2::{Span, TokenStream as TokenStream2};
+use quote::{quote, quote_spanned};
 use syn::{
     Data, DataEnum, DeriveInput, Field, Fields, Lit, LitFloat, LitInt, LitStr, Type, Variant,
     parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma,
@@ -49,6 +58,9 @@ const NUMERIC: &[&str] = &[
 
 /// Keys taking a non-negative count.
 const COUNTS: &[&str] = &["min_length", "max_length", "min_items", "max_items"];
+
+/// Keys written alone, with no value.
+const FLAGS: &[&str] = &["unique_items", "open"];
 
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
@@ -86,8 +98,18 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 
     let container = Container::read(input);
     let body = body(input, &container);
+    let witnesses = flatten_witnesses(input, &container, &generics);
+    let flatten = flattens(input, &container).then(|| {
+        quote! {
+            #[allow(deprecated)]
+            impl #impl_generics ::kynos::schema::Flatten for #name #ty_generics #where_clause {}
+        }
+    });
 
     Ok(quote! {
+        #witnesses
+        #flatten
+
         // A deprecated type still has to describe itself, and the impl below
         // names it. Without this, `#[deprecated]` plus `#[derive(Schema)]` is a
         // warning at the type's own definition -- an error under `-D warnings`,
@@ -139,37 +161,234 @@ fn schema_bounded_generics(input: &DeriveInput) -> syn::Generics {
     generics
 }
 
+/// One witness per flattened field, requiring that its type names its members.
+///
+/// A flattened field's members become the parent's own, so the parent composes
+/// the field's schema rather than naming it — and a composed schema that
+/// constrains every member it does not name, which is what a map's
+/// `additionalProperties` is, then reaches the members the parent declared
+/// itself. `kynos::schema::Flatten` is the claim that it does not.
+///
+/// Asserted in a `const _` rather than as a predicate on the implementation,
+/// for the reason the `ApiError` derive's `Display` witness gives: the
+/// diagnostic lands on the type's own definition instead of on whatever
+/// downstream code happens to name it. `schema_bounded_generics` also records
+/// why field-type predicates were rejected once already.
+///
+/// A field carrying `#[schema(open)]` is bounded by `kynos::schema::OpenMap`
+/// instead. That attribute is the declaration that the object really is open,
+/// and `object_body` describes it by hoisting the field's `additionalProperties`
+/// to `unevaluatedProperties` — which only a map described in place has to
+/// hoist, since anything reached through a `$ref` would carry its own into the
+/// `allOf`.
+///
+/// An internally tagged newtype variant's payload is bounded by `Flatten` too.
+/// The variant has no properties of its own to put the tag beside, so its
+/// payload is composed with a tag-only object in an `allOf` — a flatten in all
+/// but the attribute, with the same thing to get wrong.
+fn flatten_witnesses(
+    input: &DeriveInput,
+    container: &Container,
+    generics: &syn::Generics,
+) -> TokenStream2 {
+    let (impl_generics, _, where_clause) = generics.split_for_impl();
+
+    let flattened = described_groups(input)
+        .into_iter()
+        .flat_map(Fields::iter)
+        .filter(|field| is_described(field) && is_flattened(field));
+
+    let payloads: Vec<&Field> = match (&input.data, &container.tag, &container.content) {
+        (Data::Enum(data), Some(_), None) => data
+            .variants
+            .iter()
+            .filter(|variant| !is_skipped(&variant.attrs))
+            .filter_map(|variant| match &variant.fields {
+                Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => unnamed.unnamed.first(),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+
+    let witnesses = flattened.chain(payloads).map(|field| {
+        let ty = &field.ty;
+        // Spanned at the field's type, so the refusal points at what was
+        // written rather than at the derive.
+        if is_open(field) {
+            quote_spanned! {ty.span()=>
+                const _: () = {
+                    #[allow(dead_code, deprecated)]
+                    fn open_fields_are_maps_described_in_place #impl_generics () #where_clause {
+                        fn is_open_map<T: ::kynos::schema::OpenMap + ?Sized>() {}
+                        is_open_map::<#ty>();
+                    }
+                };
+            }
+        } else {
+            quote_spanned! {ty.span()=>
+                const _: () = {
+                    #[allow(dead_code, deprecated)]
+                    fn flattened_fields_name_their_members #impl_generics () #where_clause {
+                        fn is_flattenable<T: ::kynos::schema::Flatten + ?Sized>() {}
+                        is_flattenable::<#ty>();
+                    }
+                };
+            }
+        }
+    });
+
+    quote!(#(#witnesses)*)
+}
+
+/// Whether the schema this input emits names its own members, and so may itself
+/// be flattened.
+///
+/// True of the shapes whose description is an object whose `properties` names
+/// every member it admits: a struct with named fields, and an enum whose every
+/// `oneOf` branch is such an object. A newtype, a tuple and a unit struct are
+/// not objects at all; an externally tagged enum with a unit variant has a bare
+/// string for that branch; and an internally tagged newtype variant composes
+/// with whatever its payload resolves to, which is exactly the unknown this
+/// trait exists to refuse.
+///
+/// A container carrying `#[schema(open)]` is excluded whatever its shape: its
+/// own `unevaluatedProperties` would, one level up, reach the members the outer
+/// object declared. So is a `#[serde(transparent)]` one, whose wire form is its
+/// one field's value rather than an object naming the fields it declares.
+fn flattens(input: &DeriveInput, container: &Container) -> bool {
+    if container.transparent {
+        return false;
+    }
+
+    let groups = described_groups(input);
+    if groups.iter().flat_map(|group| group.iter()).any(is_open) {
+        return false;
+    }
+
+    match &input.data {
+        Data::Struct(data) => matches!(data.fields, Fields::Named(_)),
+        Data::Enum(data) => {
+            let variants: Vec<&Variant> = data
+                .variants
+                .iter()
+                .filter(|variant| !is_skipped(&variant.attrs))
+                .collect();
+
+            match (&container.tag, &container.content) {
+                // Adjacently tagged: every branch is an object of a tag
+                // property and a content property, whatever the variant holds.
+                (Some(_), Some(_)) => !variants.is_empty(),
+                // Internally tagged: a named or unit variant becomes an object
+                // naming its own members plus the tag.
+                (Some(_), None) => {
+                    !variants.is_empty()
+                        && variants.iter().all(|variant| {
+                            matches!(variant.fields, Fields::Named(_) | Fields::Unit)
+                        })
+                }
+                // Externally tagged: the variant's name is the single property,
+                // and a unit variant is that name as a bare string instead.
+                (None, _) => {
+                    !variants.is_empty()
+                        && variants
+                            .iter()
+                            .all(|variant| !matches!(variant.fields, Fields::Unit))
+                }
+            }
+        }
+        // Refused at the top of `expand_inner`.
+        Data::Union(_) => false,
+    }
+}
+
 /// Validates every `#[schema(...)]` in the input.
 ///
 /// Run before any code is emitted, so that [`constraints`] can read the same
 /// lists back without checking them again — a key that reached the emitter had
 /// its shape settled here, and one that did not never gets there.
 fn check_constraints(input: &DeriveInput) -> syn::Result<()> {
-    let fields = match &input.data {
-        Data::Struct(data) => vec![&data.fields],
-        Data::Enum(data) => data
-            .variants
-            .iter()
-            .map(|variant| &variant.fields)
-            .collect(),
-        Data::Union(_) => return Ok(()),
-    };
-
-    for group in fields {
+    for group in field_groups(input) {
         let named = match group {
             Fields::Named(named) => &named.named,
             Fields::Unnamed(unnamed) => &unnamed.unnamed,
             Fields::Unit => continue,
         };
+
+        // One `unevaluatedProperties` per emitted object, so one `open` field
+        // per group of fields that becomes one.
+        let mut opened: Option<Span> = None;
+
         for field in named {
             for attr in &field.attrs {
                 if attr.path().is_ident("schema") {
                     attr.parse_nested_meta(|meta| check_constraint(&meta))?;
                 }
             }
+
+            let Some(span) = open_span(field) else {
+                continue;
+            };
+
+            if !is_flattened(field) {
+                return Err(syn::Error::new(
+                    span,
+                    "`#[schema(open)]` says what a flattened field contributes to the object \
+                     carrying it, and only a flattened field has anything to contribute: an \
+                     ordinary field is one property, whose own schema already states what it \
+                     admits. Add `#[serde(flatten)]`, or drop the attribute",
+                ));
+            }
+
+            if opened.is_some() {
+                return Err(syn::Error::new(
+                    span,
+                    "`#[schema(open)]` may appear once per container object: it supplies that \
+                     object's `unevaluatedProperties`, which is one keyword, so a second open \
+                     field could only overwrite what the first one said. Merge the two maps, or \
+                     give one of them a named field of its own",
+                ));
+            }
+
+            opened = Some(span);
         }
     }
     Ok(())
+}
+
+/// Each group of fields the input declares that becomes one emitted object.
+///
+/// A struct has one; an enum has one per variant, because a variant's fields
+/// are composed into a branch of their own.
+fn field_groups(input: &DeriveInput) -> Vec<&Fields> {
+    match &input.data {
+        Data::Struct(data) => vec![&data.fields],
+        Data::Enum(data) => data
+            .variants
+            .iter()
+            .map(|variant| &variant.fields)
+            .collect(),
+        Data::Union(_) => Vec::new(),
+    }
+}
+
+/// The field groups the emitted schema describes: every group but a skipped
+/// variant's.
+///
+/// serde never writes a `#[serde(skip)]` variant, so no branch is emitted for it
+/// and its fields reach neither a flatten witness nor the `Flatten` decision.
+/// `check_constraints` still reads [`field_groups`], because a malformed
+/// attribute is an error wherever it is written.
+fn described_groups(input: &DeriveInput) -> Vec<&Fields> {
+    match &input.data {
+        Data::Enum(data) => data
+            .variants
+            .iter()
+            .filter(|variant| !is_skipped(&variant.attrs))
+            .map(|variant| &variant.fields)
+            .collect(),
+        _ => field_groups(input),
+    }
 }
 
 /// One `key` or `key = value` inside a field's `#[schema(...)]`.
@@ -191,13 +410,13 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
         ));
     }
 
-    if name == "unique_items" {
+    if FLAGS.contains(&name.as_str()) {
         // A flag: `unique_items = true` would let `= false` mean something the
         // absence of the key already means.
         return if meta.input.peek(syn::Token![=]) {
             Err(syn::Error::new(
                 key.span(),
-                "`unique_items` is a flag; write it alone, or leave it out",
+                format!("`{name}` is a flag; write it alone, or leave it out"),
             ))
         } else {
             Ok(())
@@ -235,7 +454,8 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
             "`{name}` is not part of the `#[schema(...)]` grammar, which is the keys of \
              `kynos::schema::constraints::Constraints`: `minimum`, `maximum`, \
              `exclusive_minimum`, `exclusive_maximum`, `multiple_of`, `min_length`, \
-             `max_length`, `pattern`, `min_items`, `max_items` and `unique_items`"
+             `max_length`, `pattern`, `min_items`, `max_items` and `unique_items`; plus \
+             `open`, which says a flattened field's members are not named"
         ),
     ))
 }
@@ -289,6 +509,9 @@ struct Container {
     rename_all: Option<String>,
     tag: Option<String>,
     content: Option<String>,
+    /// `#[serde(transparent)]`: the wire form is the one field's value, not an
+    /// object of the fields the declaration names.
+    transparent: bool,
     doc: Option<String>,
 }
 
@@ -315,6 +538,7 @@ impl Container {
                     "rename_all" => container.rename_all = string_value(&meta)?,
                     "tag" => container.tag = string_value(&meta)?,
                     "content" => container.content = string_value(&meta)?,
+                    "transparent" => container.transparent = true,
                     _ => skip_value(&meta)?,
                 }
                 Ok(())
