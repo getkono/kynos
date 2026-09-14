@@ -218,6 +218,16 @@ mod schema {
                 ),
                 "on a flattened field is refused unless it is `#[schema(open)]`",
             ),
+            case(
+                "`into` and `from` on a struct, which serde writes and reads as another type",
+                quote::quote!(
+                    #[serde(into = "String", from = "String")]
+                    struct Celsius {
+                        degrees: i64,
+                    }
+                ),
+                "as the type it names",
+            ),
         ]
     }
 
@@ -411,6 +421,97 @@ mod schema {
             if let Err(error) = expand_inner(&input) {
                 panic!("an override nothing describes must expand, and was refused: {error}");
             }
+        }
+    }
+
+    /// Each of serde's three container conversions is refused on a struct and
+    /// on an enum alike.
+    ///
+    /// One row per key and shape, each written out: the ledger's single row
+    /// proves the site fires, and this proves the scan reaches every key, both
+    /// shapes, and names the first key written rather than the first one it
+    /// looks for.
+    #[test]
+    fn every_container_conversion_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "`into` on a struct",
+                    quote::quote!(
+                        #[serde(into = "String")]
+                        struct Celsius {
+                            degrees: i64,
+                        }
+                    ),
+                    "`into` makes serde read or write this struct as the type it names",
+                ),
+                case(
+                    "`from` on a struct",
+                    quote::quote!(
+                        #[serde(from = "String")]
+                        struct Celsius {
+                            degrees: i64,
+                        }
+                    ),
+                    "`from` makes serde read or write this struct as the type it names",
+                ),
+                case(
+                    "`try_from` on a struct",
+                    quote::quote!(
+                        #[serde(try_from = "String")]
+                        struct Even {
+                            value: u64,
+                        }
+                    ),
+                    "`try_from` makes serde read or write this struct as the type it names",
+                ),
+                case(
+                    "`into` on an internally tagged enum",
+                    quote::quote!(
+                        #[serde(tag = "kind", into = "String")]
+                        enum Speed {
+                            Fast,
+                            Slow,
+                        }
+                    ),
+                    "`into` makes serde read or write this enum as the type it names",
+                ),
+                case(
+                    "`from` written before `into`, in separate attributes",
+                    quote::quote!(
+                        #[serde(from = "String")]
+                        #[serde(into = "String")]
+                        struct Celsius {
+                            degrees: i64,
+                        }
+                    ),
+                    "`from` makes serde read or write this struct as the type it names",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// `#[serde(remote = ...)]` is left alone.
+    ///
+    /// It derives serde's traits for the type it names as inherent functions on
+    /// this one, whose fields mirror that type's, so the declaration still
+    /// predicts the wire form and there is no disagreement to refuse.
+    #[test]
+    fn a_remote_container_is_left_alone() {
+        let input: syn::DeriveInput = syn::parse2(quote::quote!(
+            #[serde(remote = "Duration")]
+            struct DurationDef {
+                secs: u64,
+                nanos: u32,
+            }
+        ))
+        .expect("the case itself must parse");
+
+        // Expansion must succeed outright, for the reason
+        // `a_wire_form_override_on_an_undescribed_field_is_left_alone` gives.
+        if let Err(error) = expand_inner(&input) {
+            panic!("a remote container must expand, and was refused: {error}");
         }
     }
 
