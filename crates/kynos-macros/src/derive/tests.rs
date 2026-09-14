@@ -374,9 +374,9 @@ mod schema {
                     ),
                     "`deserialize_with` reads or writes this variant",
                 ),
-                // The tuple, newtype and tuple-variant shapes emit every member
-                // whatever its skip attributes say, so a skipped member there
-                // is still described and its override still contradicts it.
+                // A member serde skips in one direction only is still scanned,
+                // and a newtype's member is written whatever it skips, so each
+                // override here is refused before any skip rule is read.
                 case(
                     "`serialize_with` on a skipped member of a tuple struct",
                     quote::quote!(
