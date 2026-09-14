@@ -392,6 +392,62 @@ fn an_all_unit_enum_keeps_the_compact_shape() {
     );
 }
 
+/// One field of each kind `required` tells apart: always present, optional by
+/// its type, and optional because serde's wire form lets it be absent both
+/// ways. `skip_serializing_if` is accepted only beside a `default`, which is
+/// what makes `elided` absent on read as well as on write.
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Draft {
+    plain: u64,
+    maybe: Option<u64>,
+    #[serde(default)]
+    defaulted: u64,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    elided: String,
+}
+
+/// `required` names only what serde always reads and writes.
+///
+/// An `Option` may be absent because its type says so, and a
+/// `#[serde(default)]` field because serde fills it in on read. Listing either
+/// would describe a document the type never demands. The read below holds the
+/// other half: a document naming only what `required` lists is one serde
+/// accepts, so the schema cannot promise a request body that is refused.
+#[test]
+fn required_lists_only_what_serde_always_reads_and_writes() {
+    assert_eq!(emitted::<Draft>()["required"], serde_json::json!(["plain"]));
+    assert!(
+        serde_json::from_str::<Draft>(r#"{"plain":1}"#).is_ok(),
+        "a document carrying only the required fields must read"
+    );
+}
+
+/// A container `#[serde(default)]`, which serde honours by filling every
+/// missing field from the struct's own `Default`. `label` also carries
+/// `skip_serializing_if`, which the container `default` makes absent-tolerant
+/// on read as well as on write.
+#[derive(Default, Schema, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct Settings {
+    retries: u64,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    label: String,
+}
+
+/// Under a container `default`, no field is required.
+///
+/// serde reads `{}` into `Settings::default()`, so a `required` list naming
+/// any field would call a document invalid that the type accepts, and a
+/// `skip_serializing_if` field under it is accepted rather than refused.
+#[test]
+fn a_container_default_leaves_every_field_optional() {
+    assert_eq!(emitted::<Settings>().get("required"), None);
+    assert!(
+        serde_json::from_str::<Settings>("{}").is_ok(),
+        "an empty document must read under a container default"
+    );
+}
+
 // --- What a derived error response declares ---------------------------------
 //
 // A problem body carries the type URI the declaration named, so the response

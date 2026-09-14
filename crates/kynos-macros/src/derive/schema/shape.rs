@@ -152,7 +152,7 @@ pub(super) fn object_body(
                     }
                 }
             });
-            let require = is_required(field)
+            let require = is_required(field, container)
                 .then(|| quote!(required.push(::std::string::String::from(#wire));));
 
             quote! {

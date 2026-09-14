@@ -181,6 +181,71 @@ fn an_open_flattened_map_hoists_its_values_to_unevaluated_properties() {
     );
 }
 
+/// An open map that leaves itself out of the object when it is empty.
+#[derive(Schema, Serialize, serde::Deserialize)]
+struct Sparse {
+    id: u64,
+    #[serde(flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    #[schema(open)]
+    extra: BTreeMap<String, String>,
+}
+
+/// An open map that skips itself on write describes what serde writes and reads.
+///
+/// The `Schema` derive accepts `skip_serializing_if` on a flattened field only
+/// when it is `#[schema(open)]`, on the ground that serde reads the absent map
+/// as empty and no flattened field is listed in `required`. That ground is held
+/// here against the wire: the object written without the map validates and
+/// reads back to an empty map, a map with members still validates, and a
+/// member of the wrong type is still refused.
+#[test]
+fn an_open_map_that_skips_itself_when_empty_agrees_with_its_schema() {
+    let empty = Sparse {
+        id: 1,
+        extra: BTreeMap::new(),
+    };
+    let written = serde_json::to_value(&empty).expect("the value serializes");
+    assert_eq!(
+        written,
+        serde_json::json!({ "id": 1 }),
+        "an empty map reached the object serde wrote"
+    );
+
+    let omitted = refusals(&empty);
+    assert!(
+        omitted.is_empty(),
+        "the object written without the map fails its own description: {omitted:?}\n\
+         schema: {}",
+        emitted::<Sparse>()
+    );
+
+    let read: Sparse = serde_json::from_value(written).expect("the object serde wrote reads back");
+    assert!(
+        read.extra.is_empty(),
+        "an absent map read back with members: {:?}",
+        read.extra
+    );
+
+    let populated = refusals(&Sparse {
+        id: 1,
+        extra: BTreeMap::from([("k".to_owned(), "v".to_owned())]),
+    });
+    assert!(
+        populated.is_empty(),
+        "a map with members fails its own description: {populated:?}\n\
+         schema: {}",
+        emitted::<Sparse>()
+    );
+
+    let schema = emitted::<Sparse>();
+    let validator =
+        jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
+    assert!(
+        !validator.is_valid(&serde_json::json!({ "id": 1, "k": 2 })),
+        "a member contributed by a `BTreeMap<String, String>` was accepted as a number: {schema}"
+    );
+}
+
 /// Both compositions on one container, which is the case the keyword was
 /// chosen for.
 ///
