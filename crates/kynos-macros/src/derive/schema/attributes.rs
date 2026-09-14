@@ -149,7 +149,17 @@ pub(super) fn transparent_member(fields: &Fields) -> Option<&Field> {
     }
 }
 
+/// Whether a type is a `PhantomData`.
+///
+/// A type a macro passed through a `$t:ty` fragment arrives inside an invisible
+/// group, which `serde_derive`'s `ungroup` unwraps, and nothing else, before its
+/// own test. This unwraps the same, so a marker is a marker however it was
+/// written.
 pub(super) fn is_phantom(ty: &Type) -> bool {
+    let mut ty = ty;
+    while let Type::Group(group) = ty {
+        ty = &group.elem;
+    }
     let Type::Path(path) = ty else {
         return false;
     };
