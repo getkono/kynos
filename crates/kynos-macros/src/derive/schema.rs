@@ -560,6 +560,11 @@ fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
 /// a newtype struct, whose member serde writes through the function whatever it
 /// skips. Skip attributes are read rather than [`is_described`], which would
 /// exempt that newtype member and a positional `PhantomData` alike.
+///
+/// A `#[serde(transparent)]` tuple struct is scanned only on the member
+/// [`transparent_member`] picks, as its named twin effectively is, since serde
+/// writes and reads through no other. Without a pick the rule above applies,
+/// and the transparent refusal follows.
 fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
     fn fields(fields: &Fields, newtype: bool) -> Vec<(&[syn::Attribute], &'static str)> {
         let described: fn(&&Field) -> bool = match fields {
@@ -575,6 +580,14 @@ fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
     }
 
     let described = match &input.data {
+        Data::Struct(data)
+            if Container::read(input).transparent && matches!(data.fields, Fields::Unnamed(_)) =>
+        {
+            transparent_member(&data.fields).map_or_else(
+                || fields(&data.fields, data.fields.len() == 1),
+                |member| vec![(member.attrs.as_slice(), "field")],
+            )
+        }
         Data::Struct(data) => fields(&data.fields, data.fields.len() == 1),
         Data::Enum(data) => data
             .variants
