@@ -98,6 +98,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     reject_catch_all(input)?;
     reject_transparent_without_one_field(input)?;
     reject_read_required_skip(input)?;
+    reject_unread_field_beside_open_map(input)?;
     reject_one_way_member_skip(input)?;
     check_constraints(input)?;
 
@@ -278,7 +279,11 @@ fn flatten_witnesses(
 /// A container carrying `#[schema(open)]` is excluded whatever its shape: its
 /// own `unevaluatedProperties` would, one level up, reach the members the outer
 /// object declared. So is a `#[serde(transparent)]` one, whose wire form is its
-/// one field's value rather than an object naming the fields it declares.
+/// one field's value rather than an object naming the fields it declares. So is
+/// a struct, or an internally tagged enum with a struct variant serde writes,
+/// holding a named field serde writes and never reads ([`unread_field_span`]):
+/// its schema leaves out a member serde writes beside the ones it names, which
+/// an open map one level up would refuse.
 fn flattens(input: &DeriveInput, container: &Container) -> bool {
     if container.transparent {
         return false;
@@ -290,7 +295,9 @@ fn flattens(input: &DeriveInput, container: &Container) -> bool {
     }
 
     match &input.data {
-        Data::Struct(data) => matches!(data.fields, Fields::Named(_)),
+        Data::Struct(data) => {
+            matches!(data.fields, Fields::Named(_)) && unread_field_span(&data.fields).is_none()
+        }
         Data::Enum(data) => {
             let variants = described_variants(data);
 
@@ -299,12 +306,18 @@ fn flattens(input: &DeriveInput, container: &Container) -> bool {
                 // property and a content property, whatever the variant holds.
                 (Some(_), Some(_)) => !variants.is_empty(),
                 // Internally tagged: a named or unit variant becomes an object
-                // naming its own members plus the tag.
+                // naming its own members plus the tag, and serde writes a
+                // variant's fields beside that tag, so one it never reads is a
+                // member the object does not name.
                 (Some(_), None) => {
                     !variants.is_empty()
                         && variants.iter().all(|variant| {
                             matches!(variant.fields, Fields::Named(_) | Fields::Unit)
                         })
+                        && variants
+                            .iter()
+                            .filter(|variant| is_written(variant))
+                            .all(|variant| unread_field_span(&variant.fields).is_none())
                 }
                 // Externally tagged: the variant's name is the single property,
                 // and a unit variant is that name as a bare string instead.
@@ -873,6 +886,66 @@ fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
         ));
     }
     Ok(())
+}
+
+/// A named field serde writes and never reads is refused beside an open
+/// flattened field.
+///
+/// `skip_deserializing` alone keeps the field out of the object serde reads,
+/// which is all [`is_described`] names, and an object constraining no member it
+/// does not name still admits what serde writes of it. An open flattened field
+/// is what makes the object constrain such members: the `unevaluatedProperties`
+/// it gives the object reaches the field, and refuses what serde writes wherever
+/// the map's values are another type, which is invisible here. Checked in every
+/// object serde writes, a struct and each struct variant it writes, against an
+/// open field the schema describes. A `#[serde(transparent)]` struct is its one
+/// field's value, with no object to check.
+fn reject_unread_field_beside_open_map(input: &DeriveInput) -> syn::Result<()> {
+    if Container::read(input).transparent {
+        return Ok(());
+    }
+
+    let groups: Vec<&Fields> = match &input.data {
+        Data::Struct(data) => vec![&data.fields],
+        Data::Enum(data) => data
+            .variants
+            .iter()
+            .filter(|variant| is_written(variant))
+            .map(|variant| &variant.fields)
+            .collect(),
+        // Refused at the top of `expand_inner`.
+        Data::Union(_) => Vec::new(),
+    };
+
+    for fields in groups {
+        if !described_members(fields).into_iter().any(is_open) {
+            continue;
+        }
+        if let Some(span) = unread_field_span(fields) {
+            return Err(syn::Error::new(
+                span,
+                "`skip_deserializing` leaves this field out of the schema, since serde never \
+                 reads it, but serde still writes it, and the `unevaluatedProperties` a \
+                 `#[schema(open)]` flattened field gives this object refuses a member the schema \
+                 does not name. Use `#[serde(skip)]` to leave it out both ways, or drop \
+                 `skip_deserializing` so the schema names it",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Where the first named field serde writes and never reads, `skip_deserializing`
+/// alone, carries that key.
+fn unread_field_span(fields: &Fields) -> Option<Span> {
+    let Fields::Named(named) = fields else {
+        return None;
+    };
+    named
+        .named
+        .iter()
+        .find_map(|field| one_way_skip_span(field, &["skip_deserializing"]))
+        .map(|(_, span)| span)
 }
 
 /// A member serde leaves out in one direction only has no one position to
