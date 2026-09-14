@@ -689,6 +689,48 @@ fn every_json_number_spelling_reads_at_a_numeric_keyword() {
     }
 }
 
+/// A numeric keyword read from YAML refuses what a `serde_json::Number` cannot
+/// hold.
+///
+/// A record of today's behaviour, not an endorsement. The five numeric
+/// keywords read through `serde_json::Number` (`src/model/number.rs`), so what
+/// another format hands them is held to what a JSON number is rather than to
+/// what an `f64` is. Nothing in the workspace reads the model from anything but
+/// JSON; a caller who does reaches this.
+///
+/// `.inf` and `.nan` are refused in both graphs: JSON has no such number, and
+/// `to_json` would write one as `null`. An integer beyond 64 bits depends on
+/// the graph: without `serde_json/arbitrary_precision` it is out of range, and
+/// with it the digits are kept and read as `1e20`. Each graph pins its own
+/// outcome, told apart the way `emit`'s YAML path tells them apart.
+#[cfg(feature = "yaml")]
+#[test]
+fn a_numeric_keyword_read_from_yaml_refuses_what_serde_json_number_cannot_hold() {
+    fn maximum(yaml: &str) -> Result<Option<f64>, serde_yaml_ng::Error> {
+        serde_yaml_ng::from_str::<SchemaObject>(yaml).map(|object| object.maximum)
+    }
+
+    assert_eq!(
+        maximum("maximum: 0.5").expect("the control reads"),
+        Some(0.5)
+    );
+    for yaml in ["maximum: .inf", "maximum: .nan"] {
+        let read = maximum(yaml);
+        assert!(read.is_err(), "{yaml} read as {read:?}");
+    }
+
+    let arbitrary_precision = matches!(
+        serde_yaml_ng::to_value(serde_json::Number::from(0u8)),
+        Ok(serde_yaml_ng::Value::Mapping(_))
+    );
+    let wide = maximum("maximum: 100000000000000000000");
+    if arbitrary_precision {
+        assert_eq!(wide.expect("the digits are kept"), Some(1e20));
+    } else {
+        assert!(wide.is_err(), "an integer beyond 64 bits read as {wide:?}");
+    }
+}
+
 /// Every object the specification lets carry an extension round-trips one.
 ///
 /// `references/3.1.2.md` says "This object MAY be extended with Specification
