@@ -595,6 +595,27 @@ fn a_generic_transparent_struct_claims_no_component_name() {
     );
 }
 
+// No doc comment, for the reason `Labels` gives. serde writes this through both
+// fields, so it refuses `Serialize` here, and reads it through `value` alone.
+#[derive(Schema, serde::Deserialize)]
+#[serde(transparent)]
+struct Reading {
+    value: u64,
+    #[serde(default)]
+    extra: String,
+}
+
+/// A transparent struct serde derives in one direction only is described by
+/// the one field that direction picks.
+#[test]
+fn a_transparent_struct_read_through_one_field_is_described_by_it() {
+    assert_eq!(emitted::<Reading>(), emitted::<u64>());
+
+    let read = serde_json::from_value::<Reading>(serde_json::json!(5))
+        .expect("the value the schema describes must read");
+    assert_eq!(read.value, 5);
+}
+
 // --- A tuple is the positions serde writes and reads ------------------------
 //
 // serde leaves a member it skips both ways out of the array in both directions,

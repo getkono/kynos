@@ -33,8 +33,8 @@ mod shape;
 
 use attributes::{
     constraints, described_members, field_name, is_described, is_flattened, is_open, is_required,
-    is_skipped, is_skipped_both_ways, is_unit_like, open_span, positional_members, serde_flag,
-    serde_key_span, transparent_member, transparent_members, variant_name,
+    is_skipped, is_skipped_both_ways, is_unit_like, open_span, serde_flag, serde_key_span,
+    transparent_member, transparent_members, variant_name,
 };
 use shape::{enum_body, struct_body};
 
@@ -630,19 +630,19 @@ fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
     Ok(())
 }
 
-/// A `#[serde(transparent)]` struct is described by the one field serde both
-/// writes and reads through, and refused where serde may pick a different field
-/// each way.
+/// A `#[serde(transparent)]` struct serde writes through one field and reads
+/// through another is refused.
 ///
 /// serde picks per direction, from the attributes alone ([`transparent_members`]):
 /// it writes through the field without `skip` or `skip_serializing`, reads
 /// through the field without `skip`, `skip_deserializing` or a field-level
-/// `default`, and never through a `PhantomData`. This derive cannot see which of
-/// serde's derives sit beside it, so it accepts only the struct whose two
-/// directions pick the same single field -- [`transparent_member`], which
-/// `struct_body` describes -- and refuses one whose directions pick different
-/// fields, or where one direction picks a single field and the other none or
-/// several. Where neither direction picks a single field, serde refuses the
+/// `default`, and never through a `PhantomData`. Where each direction picks a
+/// single field and they are different fields, the struct is refused: the
+/// derive compares fields rather than their schemas, so two fields of one type
+/// are refused too. Everything else is [`transparent_member`]'s, which `struct_body`
+/// describes. Where only one direction picks a single field, serde refuses the
+/// other derive by itself, so the struct compiles with that direction's derive
+/// alone and the field is true of it. Where neither does, serde refuses the
 /// struct for either derive, and a second error here would restate it; that
 /// covers a unit struct too, and an enum is serde's to refuse.
 fn reject_transparent_without_one_field(input: &DeriveInput) -> syn::Result<()> {
@@ -652,38 +652,37 @@ fn reject_transparent_without_one_field(input: &DeriveInput) -> syn::Result<()> 
     let Some((_, span)) = serde_key_span(&input.attrs, &["transparent"]) else {
         return Ok(());
     };
-    if transparent_member(&data.fields).is_some() {
-        return Ok(());
-    }
     let (written, read) = transparent_members(&data.fields);
-    if !matches!((written.as_slice(), read.as_slice()), ([_], _) | (_, [_])) {
+    let ([written], [read]) = (written.as_slice(), read.as_slice()) else {
+        return Ok(());
+    };
+    if std::ptr::eq(*written, *read) {
         return Ok(());
     }
 
-    let label = |members: &[&Field]| match members {
-        [] => "no field".to_owned(),
-        [member] => member.ident.as_ref().map_or_else(
+    let label = |member: &Field| {
+        member.ident.as_ref().map_or_else(
             || {
                 let index = data
                     .fields
                     .iter()
-                    .position(|field| std::ptr::eq(field, *member))
+                    .position(|field| std::ptr::eq(field, member))
                     .unwrap_or_default();
                 format!("field {index}")
             },
             |ident| format!("`{ident}`"),
-        ),
-        several => format!("{} fields", several.len()),
+        )
     };
-    let (writes, reads) = (label(&written), label(&read));
+    let (writes, reads) = (label(written), label(read));
 
     Err(syn::Error::new(
         span,
         format!(
             "`#[serde(transparent)]` makes serde write through the one field without `skip` or \
              `skip_serializing` and read through the one field without `skip`, \
-             `skip_deserializing` or `default`, and a schema is true of both only when they are \
-             the same field; this struct writes through {writes} and reads through {reads}. Leave \
+             `skip_deserializing` or `default`, and `Schema` describes the struct only where \
+             they are the same field, since it does not compare two fields' schemas; this struct \
+             writes through {writes} and reads through {reads}. Leave \
              one field serde both writes and reads, and mark every other `#[serde(skip)]`"
         ),
     ))
@@ -850,6 +849,18 @@ fn one_way_skip_span(field: &Field) -> Option<(String, Span)> {
         return None;
     }
     serde_key_span(&field.attrs, &["skip_serializing", "skip_deserializing"])
+}
+
+/// The members of a tuple or tuple variant that hold a position on the wire,
+/// in order: each one serde does not skip both ways.
+///
+/// Read off skip attributes rather than [`is_described`], because a
+/// `PhantomData` dropped from the list would shift every later position.
+fn positional_members(fields: &Punctuated<Field, Comma>) -> Vec<&Field> {
+    fields
+        .iter()
+        .filter(|field| !is_skipped_both_ways(&field.attrs))
+        .collect()
 }
 
 /// The fewest elements serde reads for a tuple holding these positions.
