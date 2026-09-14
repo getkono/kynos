@@ -785,7 +785,8 @@ fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
 /// `#[serde(transparent)]` struct is described by its one field rather than as
 /// an array, and a skipped variant is in no schema.
 fn reject_one_way_member_skip(input: &DeriveInput) -> syn::Result<()> {
-    if Container::read(input).transparent {
+    let container = Container::read(input);
+    if container.transparent {
         return Ok(());
     }
 
@@ -826,8 +827,11 @@ fn reject_one_way_member_skip(input: &DeriveInput) -> syn::Result<()> {
             let Some((_, span)) = serde_key_span(&field.attrs, &["skip_serializing_if"]) else {
                 continue;
             };
+            // A container default fills the end of a tuple struct as a
+            // field-level one fills its own member.
+            let defaulted = container.default || serde_flag(&field.attrs, &["default"]);
             let last = index + 1 == positions.len();
-            if members.len() == 1 || (last && serde_flag(&field.attrs, &["default"])) {
+            if members.len() == 1 || (last && defaulted) {
                 continue;
             }
             return Err(syn::Error::new(
@@ -918,8 +922,13 @@ fn positional_members(fields: &Punctuated<Field, Comma>) -> Vec<&Field> {
 ///
 /// Every position, less a last one carrying `skip_serializing_if`: serde may
 /// leave that one out of what it writes, and [`reject_one_way_member_skip`]
-/// accepts it only beside the `#[serde(default)]` that fills it on read.
-fn min_items(positions: &[&Field]) -> u64 {
+/// accepts it only beside the `#[serde(default)]` that fills it on read. Under a
+/// container default, `defaulted`, serde fills every missing trailing element,
+/// so it reads the empty array and there is no bound.
+fn min_items(positions: &[&Field], defaulted: bool) -> u64 {
+    if defaulted {
+        return 0;
+    }
     let trailing = positions
         .last()
         .is_some_and(|field| serde_flag(&field.attrs, &["skip_serializing_if"]));
@@ -942,8 +951,8 @@ struct Container {
     transparent: bool,
     doc: Option<String>,
     /// A container `#[serde(default)]`, which serde fills every missing field
-    /// from. serde accepts it only on a struct with named fields, so it is
-    /// never set for any other shape.
+    /// from, and on a tuple struct every missing trailing element. serde
+    /// accepts it only on a struct, so it is never set for an enum.
     default: bool,
 }
 
@@ -977,7 +986,7 @@ impl Container {
             });
         }
 
-        container.default = matches!(&input.data, Data::Struct(data) if matches!(data.fields, Fields::Named(_)))
+        container.default = matches!(&input.data, Data::Struct(data) if !matches!(data.fields, Fields::Unit))
             && serde_flag(&input.attrs, &["default"]);
 
         container

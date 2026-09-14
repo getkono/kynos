@@ -823,6 +823,32 @@ fn an_enum_of_names_counts_a_skipped_newtype_variant_as_a_name() {
     );
 }
 
+#[derive(Default, Schema, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct Settled(u64, #[serde(skip_serializing_if = "is_zero")] u64);
+
+/// A container `#[serde(default)]` fills every trailing element serde finds
+/// missing, so a tuple under it admits any shorter array, down to the empty one.
+#[test]
+fn a_tuple_under_a_container_default_carries_no_min_items() {
+    assert_eq!(
+        emitted::<Settled>(),
+        serde_json::json!({
+            "type": "array",
+            "prefixItems": [emitted::<u64>(), emitted::<u64>()],
+            "items": false,
+        })
+    );
+
+    let written = serde_json::to_value(Settled(1, 0)).expect("a tuple serializes");
+    assert_eq!(written, serde_json::json!([1]));
+    assert!(serde_json::from_value::<Settled>(written).is_ok());
+    assert!(
+        serde_json::from_str::<Settled>("[]").is_ok(),
+        "serde fills the empty array from the container's default"
+    );
+}
+
 #[derive(Schema, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 struct Pick(u64, #[serde(default, skip_serializing)] u64);

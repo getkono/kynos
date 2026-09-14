@@ -29,7 +29,7 @@ pub(super) fn struct_body(fields: &Fields, container: &Container) -> TokenStream
             let ty = &unnamed.unnamed[0].ty;
             quote!(registry.resolve::<#ty>())
         }
-        Fields::Unnamed(unnamed) => tuple_body(&unnamed.unnamed),
+        Fields::Unnamed(unnamed) => tuple_body(&unnamed.unnamed, container.default),
         Fields::Unit => quote! {
             ::kynos::openapi::Schema::of_type(
                 ::kynos::openapi::model::schema::types::SchemaType::Null,
@@ -39,11 +39,11 @@ pub(super) fn struct_body(fields: &Fields, container: &Container) -> TokenStream
 }
 
 /// A tuple's schema: a closed array of the members serde does not skip both
-/// ways, bounded below by the fewest serde reads. With no member left there is
-/// no `prefixItems`, which may not be empty.
-pub(super) fn tuple_body(fields: &Punctuated<Field, Comma>) -> TokenStream2 {
+/// ways, bounded below by the fewest serde reads, which a container default
+/// (`defaulted`) lowers to none. With no member left there is no `prefixItems`.
+pub(super) fn tuple_body(fields: &Punctuated<Field, Comma>, defaulted: bool) -> TokenStream2 {
     let positions = positional_members(fields);
-    let fewest = min_items(&positions);
+    let fewest = min_items(&positions, defaulted);
     let members = positions.iter().map(|field| {
         let ty = &field.ty;
         quote!(registry.resolve::<#ty>())
@@ -390,6 +390,7 @@ pub(super) fn payload(fields: &Fields, container: &Container) -> Option<TokenStr
                 quote!(registry.resolve::<#ty>())
             })
         }
-        Fields::Unnamed(unnamed) => Some(tuple_body(&unnamed.unnamed)),
+        // An enum carries no container default.
+        Fields::Unnamed(unnamed) => Some(tuple_body(&unnamed.unnamed, false)),
     }
 }
