@@ -257,6 +257,11 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   both directions. Add `#[serde(default)]` beside it or on the struct. A
 ///   flattened field is decided by `#[schema(open)]` alone, since serde ignores
 ///   any default on it: an open map is exempt, and anything else is refused.
+/// - `#[serde(into = ...)]`, `from` or `try_from` on the type itself, struct or
+///   enum. serde then writes or reads the type they name, which the declared
+///   fields or variants no longer predict. Implement `Schema` by hand, describing
+///   the type serde converts through. `#[serde(remote = ...)]` is accepted,
+///   since its fields mirror the type it names.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)
