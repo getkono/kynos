@@ -631,6 +631,35 @@ fn a_null_survives_a_round_trip_at_every_site() {
     );
 }
 
+/// A fractional number survives a round trip at every numeric keyword of a
+/// Schema Object reached through `RefOr` and `Schema`.
+///
+/// It used not to wherever `serde_json/arbitrary_precision` is unified into
+/// the build. Both enums are untagged, so serde buffers their input before
+/// reading it, and under that feature `serde_json` hands the buffer a fractional
+/// number as a map, which an `f64` field cannot read: a schema carrying
+/// `maximum: 0.5` failed to parse. `mise run test:arbitrary-precision` is the
+/// graph this can fail in.
+///
+/// Every site is asserted rather than one, for the reason the null sites are.
+#[test]
+fn a_fractional_number_survives_a_round_trip_at_every_site() {
+    let original = RefOr::Item(Schema::Object(Box::new(SchemaObject {
+        multiple_of: Some(0.25),
+        maximum: Some(99.5),
+        exclusive_maximum: Some(100.75),
+        minimum: Some(-2.5),
+        exclusive_minimum: Some(-3.125),
+        ..SchemaObject::default()
+    })));
+
+    let json = serde_json::to_string(&original).expect("serializable");
+    let parsed: RefOr<Schema> =
+        serde_json::from_str(&json).expect("what the model emits, it reads");
+
+    assert_eq!(parsed, original);
+}
+
 /// Every object the specification lets carry an extension round-trips one.
 ///
 /// `references/3.1.2.md` says "This object MAY be extended with Specification
