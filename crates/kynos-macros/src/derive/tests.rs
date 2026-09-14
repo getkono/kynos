@@ -229,7 +229,7 @@ mod schema {
                 "as the type it names",
             ),
             case(
-                "`#[serde(transparent)]` over two described fields, which serde may read apart",
+                "`#[serde(transparent)]` read through one field and written through two",
                 quote::quote!(
                     #[serde(transparent)]
                     struct Reading {
@@ -238,7 +238,7 @@ mod schema {
                         extra: String,
                     }
                 ),
-                "`#[serde(transparent)]` writes one field's value",
+                "`#[serde(transparent)]` makes serde write through",
             ),
         ]
     }
@@ -539,6 +539,156 @@ mod schema {
         // `a_wire_form_override_on_an_undescribed_field_is_left_alone` gives.
         if let Err(error) = expand_inner(&input) {
             panic!("a remote container must expand, and was refused: {error}");
+        }
+    }
+
+    /// A transparent struct serde writes and reads through different fields is
+    /// refused, and so is one where a single direction picks a single field.
+    ///
+    /// `serde_derive`'s `allow_transparent` writes through the field without
+    /// `skip_serializing` and reads through the field without
+    /// `skip_deserializing` or a field-level `default`, never a `PhantomData`.
+    /// Each row is a declaration serde accepts for at least one of its derives,
+    /// and names the fields each direction picks.
+    #[test]
+    fn a_transparent_struct_serde_writes_and_reads_apart_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "written through `a`, read through `b`",
+                    quote::quote!(
+                        #[serde(transparent)]
+                        struct Hole {
+                            #[serde(default)]
+                            a: u64,
+                            #[serde(skip_serializing)]
+                            b: String,
+                        }
+                    ),
+                    "this struct writes through `a` and reads through `b`",
+                ),
+                case(
+                    "read through `b` alone, which `Deserialize` accepts",
+                    quote::quote!(
+                        #[serde(transparent)]
+                        struct Hole {
+                            #[serde(skip_deserializing)]
+                            a: u64,
+                            b: String,
+                        }
+                    ),
+                    "this struct writes through 2 fields and reads through `b`",
+                ),
+                case(
+                    "written through `a` alone, which `Serialize` accepts",
+                    quote::quote!(
+                        #[serde(transparent)]
+                        struct Hole {
+                            a: u64,
+                            #[serde(skip_serializing)]
+                            b: String,
+                        }
+                    ),
+                    "this struct writes through `a` and reads through 2 fields",
+                ),
+                case(
+                    "a lone field with a default, which serde never reads through",
+                    quote::quote!(
+                        #[serde(transparent)]
+                        struct Hole {
+                            #[serde(default)]
+                            a: u64,
+                            #[serde(skip)]
+                            b: String,
+                        }
+                    ),
+                    "this struct writes through `a` and reads through no field",
+                ),
+                case(
+                    "a tuple struct written through one member and read through another",
+                    quote::quote!(
+                        #[serde(transparent)]
+                        struct Pair(#[serde(default)] u64, #[serde(skip_serializing)] u64);
+                    ),
+                    "this struct writes through field 0 and reads through field 1",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// A transparent struct serde writes and reads through one field expands.
+    #[test]
+    fn a_transparent_struct_written_and_read_through_one_field_expands() {
+        for declaration in [
+            // A default on a field neither direction picks changes nothing.
+            quote::quote!(
+                #[serde(transparent)]
+                struct Labels {
+                    inner: u64,
+                    #[serde(default, skip)]
+                    extra: String,
+                }
+            ),
+            // Both skips spelled apart are `skip`.
+            quote::quote!(
+                #[serde(transparent)]
+                struct Labels {
+                    #[serde(skip_serializing, skip_deserializing)]
+                    extra: String,
+                    inner: u64,
+                }
+            ),
+            quote::quote!(
+                #[serde(transparent)]
+                struct Handle(u64, #[serde(skip)] u64);
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+
+            if let Err(error) = expand_inner(&input) {
+                panic!("a transparent struct with one field both ways must expand: {error}");
+            }
+        }
+    }
+
+    /// A transparent struct serde refuses in both directions is serde's to
+    /// refuse.
+    ///
+    /// With no single field to write through and none to read through, serde
+    /// raises its own error for either derive, so a second one here would
+    /// restate a serde shape rule, for the reason
+    /// `untagged_on_a_struct_is_left_to_serde` gives.
+    #[test]
+    fn a_transparent_struct_serde_refuses_both_ways_is_left_to_serde() {
+        for declaration in [
+            quote::quote!(
+                #[serde(transparent)]
+                struct Two {
+                    a: u64,
+                    b: String,
+                }
+            ),
+            quote::quote!(
+                #[serde(transparent)]
+                struct Empty {
+                    #[serde(skip)]
+                    a: u64,
+                }
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+
+            let Err(error) = expand_inner(&input) else {
+                continue;
+            };
+
+            assert!(
+                !error.to_string().contains("`#[serde(transparent)]`"),
+                "a struct serde refuses both ways drew a second refusal: {error}"
+            );
         }
     }
 
