@@ -143,6 +143,15 @@ pub(super) fn is_skipped_both_ways(attrs: &[syn::Attribute]) -> bool {
         || (serde_flag(attrs, &["skip_serializing"]) && serde_flag(attrs, &["skip_deserializing"]))
 }
 
+/// The `skip_serializing` or `skip_deserializing` a member carries without the
+/// other, and where it is written.
+pub(super) fn one_way_skip_span(field: &Field) -> Option<(String, Span)> {
+    if is_skipped_both_ways(&field.attrs) {
+        return None;
+    }
+    serde_key_span(&field.attrs, &["skip_serializing", "skip_deserializing"])
+}
+
 /// The members of a tuple or tuple variant that hold a position on the wire,
 /// in order: each one serde does not skip both ways.
 ///

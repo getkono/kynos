@@ -33,8 +33,8 @@ mod shape;
 
 use attributes::{
     constraints, described_members, field_name, is_described, is_flattened, is_open, is_required,
-    is_skipped, is_skipped_both_ways, is_unit_like, min_items, open_span, positional_members,
-    serde_flag, serde_key_span, variant_name,
+    is_skipped, is_skipped_both_ways, is_unit_like, min_items, one_way_skip_span, open_span,
+    positional_members, serde_flag, serde_key_span, variant_name,
 };
 use shape::{enum_body, struct_body};
 
@@ -91,6 +91,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     reject_catch_all(input)?;
     reject_transparent_without_one_field(input)?;
     reject_read_required_skip(input)?;
+    reject_one_way_member_skip(input)?;
     check_constraints(input)?;
 
     let name = &input.ident;
@@ -741,6 +742,80 @@ fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
              on read, so no `required` list is true in both directions. Add \
              `#[serde(default)]` beside it or on the struct, or make the field an `Option`",
         ));
+    }
+    Ok(())
+}
+
+/// A member serde leaves out in one direction only has no one position to
+/// describe.
+///
+/// A position is on the wire or not as a whole, and so is a newtype variant's
+/// payload, which serde writes as a unit variant without it. So a tuple,
+/// tuple-variant or newtype-variant member carrying `skip_serializing` or
+/// `skip_deserializing` alone makes serde write one shape and read another.
+/// `skip_serializing_if` does the same on a tuple member, except on the last
+/// position beside `#[serde(default)]`, which serde fills when the array ends
+/// early and [`min_items`] leaves out of the bound.
+///
+/// A newtype struct is never checked, since serde ignores all three there, and
+/// neither is a newtype variant's `skip_serializing_if`. A
+/// `#[serde(transparent)]` struct is described by its one field rather than as
+/// an array, and a skipped variant is in no schema.
+fn reject_one_way_member_skip(input: &DeriveInput) -> syn::Result<()> {
+    if Container::read(input).transparent {
+        return Ok(());
+    }
+
+    let groups: Vec<&Punctuated<Field, Comma>> = match &input.data {
+        Data::Struct(data) => match &data.fields {
+            Fields::Unnamed(unnamed) if unnamed.unnamed.len() > 1 => vec![&unnamed.unnamed],
+            Fields::Named(_) | Fields::Unnamed(_) | Fields::Unit => Vec::new(),
+        },
+        Data::Enum(data) => data
+            .variants
+            .iter()
+            .filter(|variant| !is_skipped(&variant.attrs))
+            .filter_map(|variant| match &variant.fields {
+                Fields::Unnamed(unnamed) => Some(&unnamed.unnamed),
+                Fields::Named(_) | Fields::Unit => None,
+            })
+            .collect(),
+        // Refused at the top of `expand_inner`.
+        Data::Union(_) => Vec::new(),
+    };
+
+    for members in groups {
+        let positions = positional_members(members);
+        for (index, field) in positions.iter().enumerate() {
+            if let Some((key, span)) = one_way_skip_span(field) {
+                return Err(syn::Error::new(
+                    span,
+                    format!(
+                        "`{key}` leaves this member out in one direction only, and a tuple \
+                         position or a newtype variant's payload is on the wire or not as a \
+                         whole, so serde would write one shape and read another. Use \
+                         `#[serde(skip)]` to leave it out both ways, or give the type named \
+                         fields"
+                    ),
+                ));
+            }
+
+            let Some((_, span)) = serde_key_span(&field.attrs, &["skip_serializing_if"]) else {
+                continue;
+            };
+            let last = index + 1 == positions.len();
+            if members.len() == 1 || (last && serde_flag(&field.attrs, &["default"])) {
+                continue;
+            }
+            return Err(syn::Error::new(
+                span,
+                "`skip_serializing_if` on a tuple member is refused unless it is the last \
+                 described member and carries `#[serde(default)]`. serde leaves the member out \
+                 of the array it writes, which moves every later member into its position, and \
+                 reads the shorter array back only when a default fills the end. Move the member \
+                 last beside `#[serde(default)]`, or give the type named fields",
+            ));
+        }
     }
     Ok(())
 }
