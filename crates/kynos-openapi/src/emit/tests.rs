@@ -45,9 +45,9 @@ fn a_document_using_no_three_two_construct_has_no_blockers() {
 /// A document carrying one is malformed, since an extension's name starts with
 /// `x-`, but emitting it must not silently drop the field it collides with. A
 /// route through an intermediate `serde_yaml_ng::Value` would, because a
-/// mapping holds one value per key. Outside `mod yaml` on purpose: under
-/// `test:arbitrary-precision` that route is the one taken, and the two sides
-/// differ there by design.
+/// mapping holds one value per key. Outside `mod yaml`, and excluded by name
+/// from `test:arbitrary-precision`, on purpose: under that task that route is
+/// the one taken, and the two sides differ there by design.
 #[cfg(feature = "yaml")]
 #[test]
 fn an_extension_repeating_a_model_field_leaves_the_field_in_place() {
@@ -70,8 +70,8 @@ fn an_extension_repeating_a_model_field_leaves_the_field_in_place() {
 /// Cargo unifies features across a whole dependency graph, so a program can be
 /// built with `serde_json/arbitrary_precision` on without asking for it. These
 /// hold in the default graph too, but that is not where they can fail:
-/// `mise run test:arbitrary-precision` runs this module under the graph that
-/// switch is on in.
+/// `mise run test:arbitrary-precision` runs them, with the rest of the crate,
+/// under the graph that switch is on in.
 #[cfg(feature = "yaml")]
 mod yaml {
     use serde_yaml_ng::{Number, Value};
