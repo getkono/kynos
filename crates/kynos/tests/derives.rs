@@ -1197,12 +1197,21 @@ fn a_unit_variants_alias_joins_the_compact_enumeration() {
     );
 }
 
-#[derive(Schema, serde::Serialize, serde::Deserialize)]
-enum OverlappingLevel {
-    On,
-    #[serde(alias = "On", alias = "Idle")]
-    Off,
+// serde's derive matches the shared name twice, and the second arm is the
+// unreachable pattern this module allows: serde reads it as `On` alone.
+#[allow(unreachable_patterns)]
+mod overlapping {
+    use kynos::Schema;
+
+    #[derive(Schema, serde::Serialize, serde::Deserialize)]
+    pub(super) enum OverlappingLevel {
+        On,
+        #[serde(alias = "On", alias = "Idle")]
+        Off,
+    }
 }
+
+use overlapping::OverlappingLevel;
 
 /// A variant's alias naming another variant is listed once in the compact
 /// `enum`, which already holds it: `enum` items should be unique.
