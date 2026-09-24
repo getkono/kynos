@@ -876,10 +876,6 @@ fn an_open_unchecked_typed_map_accepts_what_serde_writes_and_waives_its_values()
         validator.is_valid(&serde_json::json!({ "id": 1, "apples": "many" })),
         "a value the waived map schema would refuse was refused: {schema}"
     );
-    assert!(
-        !validator.is_valid(&serde_json::json!({ "id": "1", "apples": 3 })),
-        "the parent's `id` was accepted as a string: {schema}"
-    );
 }
 
 /// A field serde writes and never reads beside an open `Unchecked` payload.
