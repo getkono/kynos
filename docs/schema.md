@@ -443,6 +443,13 @@ the description stays weaker than the type instead of contradicting it. The
 `allOf` keeps what is left of the map's schema, `{ "type": "object" }`, which
 asserts nothing the parent does not.
 
+A flattened `Problem` beside an open map leaves the map's values unchecked.
+`Problem`'s `additionalProperties: true` marks every member evaluated, the
+map's included, so the hoisted `unevaluatedProperties` has nothing left to
+constrain. The description admits more than the type writes and never refuses
+what it writes; refusing the pair would need a marker on every flattenable
+type, since the derive sees a field's syntax rather than which type it holds.
+
 ## Closed objects
 
 serde refuses a key that names no field it reads when the type carries
