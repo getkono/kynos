@@ -1,0 +1,5 @@
+error: `#[schema(open)]` says this object admits members nothing names, but `#[serde(deny_unknown_fields)]` makes serde refuse every key its fields do not name before the map sees it, so serde reads the map empty and writes members it would refuse to read back. Drop `deny_unknown_fields` to keep the map, or drop the map
+  --> tests/ui/macros/schema_open_map_denying_unknown_fields.rs:14:14
+   |
+14 |     #[schema(open)]
+   |              ^^^^
