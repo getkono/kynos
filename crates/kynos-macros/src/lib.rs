@@ -202,7 +202,11 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// so the schema and the wire form come from one declaration. A named field
 /// serde reads under an `alias` is a property under each name it reads, present
 /// under exactly one where it is required and under at most one otherwise,
-/// since serde refuses a document naming two. Under
+/// since serde refuses a document naming two. A variant serde reads under an
+/// `alias` is named under each name it reads: in the `enum` of an all-unit
+/// enum, in the `enum` a tag or an externally tagged unit variant then is in
+/// place of a `const`, and as a property of an externally tagged object branch,
+/// present under exactly one. Under
 /// `deny_unknown_fields`, every object serde then refuses unknown keys in is
 /// closed: a struct, each struct variant's fields, and an adjacently tagged
 /// branch. The derive uses `additionalProperties: false`, or
