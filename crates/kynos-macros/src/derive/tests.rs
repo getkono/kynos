@@ -269,6 +269,17 @@ mod schema {
     fn variant_ledger() -> Vec<Case> {
         vec![
             case(
+                "an untagged variant, which serde writes as its bare payload",
+                quote::quote!(
+                    enum Reading {
+                        Labelled { value: u64 },
+                        #[serde(untagged)]
+                        Bare(u64),
+                    }
+                ),
+                "an untagged variant",
+            ),
+            case(
                 "a skipped non-`Option` member of an adjacently tagged newtype variant",
                 quote::quote!(
                     #[serde(tag = "t", content = "c")]
@@ -358,6 +369,25 @@ mod schema {
             !error.to_string().contains("untagged enum"),
             "a struct was refused with a sentence about enums: {error}"
         );
+    }
+
+    /// An untagged variant serde skips both ways is in no schema, so it has no
+    /// decoding rule to be ambiguous about and is accepted, as a skipped
+    /// `#[serde(other)]` variant is.
+    #[test]
+    fn untagged_on_a_variant_skipped_both_ways_is_accepted() {
+        let input: syn::DeriveInput = syn::parse2(quote::quote!(
+            enum Reading {
+                Labelled { value: u64 },
+                #[serde(skip, untagged)]
+                Bare(u64),
+            }
+        ))
+        .expect("the case itself must parse");
+
+        if let Err(error) = expand_inner(&input) {
+            panic!("a variant in no schema was refused: {error}");
+        }
     }
 
     /// Each of serde's three wire-form overrides is refused wherever serde
