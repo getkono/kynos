@@ -908,6 +908,174 @@ fn an_externally_tagged_enum_denying_unknown_fields_closes_its_struct_payloads()
     );
 }
 
+// --- A field serde reads under an alias is described under each name --------
+//
+// serde reads a field under its own name or under any `alias` it carries, and
+// refuses a document naming two of them as a duplicate field. So each name is a
+// property, a required field is present under exactly one name, and an optional
+// one under at most one. None carries a doc comment, which would add prose to
+// the shapes compared.
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Aliased {
+    #[serde(alias = "bee")]
+    b: u64,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct OptionallyAliased {
+    #[serde(alias = "bee")]
+    b: Option<u64>,
+    #[serde(default, alias = "sea", alias = "see")]
+    c: u64,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RenamedAliased {
+    #[serde(alias = "created_at")]
+    created_at: u64,
+    #[serde(alias = "id")]
+    id: u64,
+}
+
+/// A required field serde reads under an alias is a property under each name,
+/// present under exactly one of them.
+///
+/// Naming `b` alone, and requiring it, refused the `{"bee":1}` serde reads and
+/// admitted the `{"b":1,"bee":2}` it refuses.
+#[test]
+fn a_required_aliased_field_is_present_under_exactly_one_name() {
+    assert_eq!(
+        emitted::<Aliased>(),
+        serde_json::json!({
+            "type": "object",
+            "properties": {"b": emitted::<u64>(), "bee": emitted::<u64>()},
+            "allOf": [{"oneOf": [{"required": ["b"]}, {"required": ["bee"]}]}],
+        })
+    );
+
+    for document in [r#"{"b":1}"#, r#"{"bee":1}"#] {
+        assert!(
+            serde_json::from_str::<Aliased>(document).is_ok(),
+            "{document}"
+        );
+    }
+    for document in ["{}", r#"{"b":1,"bee":2}"#] {
+        assert!(
+            serde_json::from_str::<Aliased>(document).is_err(),
+            "serde must refuse what no `oneOf` branch or two of them admit: {document}"
+        );
+    }
+}
+
+/// An optional field serde reads under an alias is a property under each name,
+/// present under at most one of them, with every pair of names refused
+/// together.
+#[test]
+fn an_optional_aliased_field_is_present_under_at_most_one_name() {
+    assert_eq!(
+        emitted::<OptionallyAliased>(),
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "b": emitted::<Option<u64>>(),
+                "bee": emitted::<Option<u64>>(),
+                "c": emitted::<u64>(),
+                "sea": emitted::<u64>(),
+                "see": emitted::<u64>(),
+            },
+            "allOf": [
+                {"not": {"required": ["b", "bee"]}},
+                {"not": {"anyOf": [
+                    {"required": ["c", "sea"]},
+                    {"required": ["c", "see"]},
+                    {"required": ["sea", "see"]},
+                ]}},
+            ],
+        })
+    );
+
+    for document in ["{}", r#"{"bee":1,"see":2}"#, r#"{"b":1,"sea":2}"#] {
+        assert!(
+            serde_json::from_str::<OptionallyAliased>(document).is_ok(),
+            "{document}"
+        );
+    }
+    for document in [
+        r#"{"b":1,"bee":2}"#,
+        r#"{"c":1,"see":2}"#,
+        r#"{"sea":1,"see":2}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<OptionallyAliased>(document).is_err(),
+            "serde must refuse the pair `not` refuses: {document}"
+        );
+    }
+}
+
+/// An alias is the literal name serde reads, which `rename_all` does not touch,
+/// and one naming the field's own wire name adds nothing.
+#[test]
+fn an_alias_is_read_as_written_and_a_redundant_one_adds_nothing() {
+    assert_eq!(
+        emitted::<RenamedAliased>(),
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "createdAt": emitted::<u64>(),
+                "created_at": emitted::<u64>(),
+                "id": emitted::<u64>(),
+            },
+            "required": ["id"],
+            "allOf": [{"oneOf": [{"required": ["createdAt"]}, {"required": ["created_at"]}]}],
+        })
+    );
+
+    for document in [r#"{"createdAt":1,"id":2}"#, r#"{"created_at":1,"id":2}"#] {
+        assert!(
+            serde_json::from_str::<RenamedAliased>(document).is_ok(),
+            "{document}"
+        );
+    }
+    assert!(
+        serde_json::from_str::<RenamedAliased>(r#"{"createdAt":1,"created_at":1,"id":2}"#).is_err(),
+        "serde must refuse the field under two names"
+    );
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StrictAliased {
+    #[serde(alias = "identifier")]
+    id: u64,
+}
+
+/// A closed object names every name serde reads a field under, so it admits
+/// the alias and still nothing serde refuses.
+///
+/// The `allOf` bounding the names makes `unevaluatedProperties` the closing
+/// keyword, which sees the object's own `properties` as
+/// `additionalProperties` would.
+#[test]
+fn a_closed_object_admits_a_field_under_its_alias() {
+    assert_eq!(
+        emitted::<StrictAliased>(),
+        serde_json::json!({
+            "type": "object",
+            "properties": {"id": emitted::<u64>(), "identifier": emitted::<u64>()},
+            "allOf": [{"oneOf": [{"required": ["id"]}, {"required": ["identifier"]}]}],
+            "unevaluatedProperties": false,
+        })
+    );
+
+    assert!(serde_json::from_str::<StrictAliased>(r#"{"identifier":1}"#).is_ok());
+    assert!(
+        serde_json::from_str::<StrictAliased>(r#"{"identifier":1,"z":2}"#).is_err(),
+        "serde must refuse the member `unevaluatedProperties` refuses"
+    );
+}
+
 // --- An externally tagged branch is its variant key alone -------------------
 //
 // serde reads an externally tagged enum from an object holding exactly one

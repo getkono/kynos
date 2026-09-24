@@ -339,17 +339,6 @@ mod schema {
                 ),
                 "reads the map empty",
             ),
-            case(
-                "`alias` on a field of an object serde reads under `deny_unknown_fields`",
-                quote::quote!(
-                    #[serde(deny_unknown_fields)]
-                    struct Thing {
-                        #[serde(alias = "identifier")]
-                        id: u64,
-                    }
-                ),
-                "under a second name",
-            ),
         ]
     }
 
@@ -2051,12 +2040,12 @@ mod schema {
         );
     }
 
-    /// An open map or an `alias` is refused wherever serde reads it into an
-    /// object `deny_unknown_fields` closes, including a variant serde never
-    /// writes, since the object is closed on read alone. `open` on a field that
-    /// is not flattened keeps the diagnostic naming that mistake.
+    /// An open map is refused wherever serde reads it into an object
+    /// `deny_unknown_fields` closes, including a variant serde never writes,
+    /// since the object is closed on read alone. `open` on a field that is not
+    /// flattened keeps the diagnostic naming that mistake.
     #[test]
-    fn an_open_map_or_alias_in_a_closed_object_is_refused_in_every_group() {
+    fn an_open_map_in_a_closed_object_is_refused_in_every_group() {
         each_case_is_refused(
             vec![
                 case(
@@ -2075,19 +2064,21 @@ mod schema {
                     "reads the map empty",
                 ),
                 case(
-                    "an `alias` in a closed variant serde never writes",
+                    "an open map in a closed variant serde never writes",
                     quote::quote!(
                         #[serde(deny_unknown_fields)]
                         enum Event {
                             Now(u64),
                             #[serde(skip_serializing)]
                             Queued {
-                                #[serde(alias = "when")]
                                 at: u64,
+                                #[serde(flatten)]
+                                #[schema(open)]
+                                extra: BTreeMap<String, String>,
                             },
                         }
                     ),
-                    "under a second name",
+                    "reads the map empty",
                 ),
                 case(
                     "`open` on a field that is not flattened, in a closed object",
@@ -2109,9 +2100,29 @@ mod schema {
     /// neither, expands: a field it skips both ways, a flattened struct, an
     /// `alias` on a field it never reads, and a `#[serde(transparent)]` struct,
     /// whose wire form is its one field's value rather than a closed object.
+    /// So does an `alias` on a field it reads, in a struct and in a variant it
+    /// never writes alike, since the closed object names every alias.
     #[test]
     fn a_closed_object_serde_agrees_with_expands() {
         for declaration in [
+            quote::quote!(
+                #[serde(deny_unknown_fields)]
+                struct Thing {
+                    #[serde(alias = "identifier")]
+                    id: u64,
+                }
+            ),
+            quote::quote!(
+                #[serde(deny_unknown_fields)]
+                enum Event {
+                    Now(u64),
+                    #[serde(skip_serializing)]
+                    Queued {
+                        #[serde(alias = "when")]
+                        at: u64,
+                    },
+                }
+            ),
             quote::quote!(
                 #[serde(deny_unknown_fields)]
                 struct Thing {
