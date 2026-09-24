@@ -2109,9 +2109,29 @@ mod schema {
     /// neither, expands: a field it skips both ways, a flattened struct, an
     /// `alias` on a field it never reads, and a `#[serde(transparent)]` struct,
     /// whose wire form is its one field's value rather than a closed object.
+    /// So does an `alias` on a field it reads, in a struct and in a variant it
+    /// never writes alike, since the closed object names every alias.
     #[test]
     fn a_closed_object_serde_agrees_with_expands() {
         for declaration in [
+            quote::quote!(
+                #[serde(deny_unknown_fields)]
+                struct Thing {
+                    #[serde(alias = "identifier")]
+                    id: u64,
+                }
+            ),
+            quote::quote!(
+                #[serde(deny_unknown_fields)]
+                enum Event {
+                    Now(u64),
+                    #[serde(skip_serializing)]
+                    Queued {
+                        #[serde(alias = "when")]
+                        at: u64,
+                    },
+                }
+            ),
             quote::quote!(
                 #[serde(deny_unknown_fields)]
                 struct Thing {

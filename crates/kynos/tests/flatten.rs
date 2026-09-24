@@ -559,3 +559,58 @@ fn a_closed_object_admits_what_a_flattened_struct_contributes_and_nothing_else()
         "a member serde refuses was accepted: {schema}"
     );
 }
+
+/// A flattened struct whose field serde also reads under an alias.
+#[derive(Schema, Serialize, serde::Deserialize)]
+struct Located {
+    #[serde(alias = "place")]
+    at: String,
+}
+
+/// A closed object beside it, so an alias the flattened struct does not name is
+/// refused rather than admitted as an unknown member.
+#[derive(Schema, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SealedLocation {
+    id: u64,
+    #[serde(flatten)]
+    location: Located,
+}
+
+/// serde reads a flattened struct's field under its alias too, so the struct's
+/// description names the alias where the closed parent sees it through the
+/// `$ref`, and refuses the field under both names as serde does.
+#[test]
+fn a_flattened_structs_alias_is_read_through_the_closed_parent() {
+    let schema = emitted::<SealedLocation>();
+    let validator =
+        jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
+
+    for document in [
+        serde_json::json!({ "id": 1, "at": "a" }),
+        serde_json::json!({ "id": 1, "place": "a" }),
+    ] {
+        assert!(
+            serde_json::from_value::<SealedLocation>(document.clone()).is_ok(),
+            "serde must read {document}"
+        );
+        assert!(
+            validator.is_valid(&document),
+            "a document serde reads was refused: {document}\nschema: {schema}"
+        );
+    }
+    for document in [
+        serde_json::json!({ "id": 1 }),
+        serde_json::json!({ "id": 1, "at": "a", "place": "b" }),
+        serde_json::json!({ "id": 1, "place": "a", "z": 2 }),
+    ] {
+        assert!(
+            serde_json::from_value::<SealedLocation>(document.clone()).is_err(),
+            "serde must refuse {document}"
+        );
+        assert!(
+            !validator.is_valid(&document),
+            "a document serde refuses was accepted: {document}\nschema: {schema}"
+        );
+    }
+}
