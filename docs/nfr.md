@@ -45,11 +45,9 @@ on a shared runner is a guessed ceiling by the standard
 [Thresholds](#thresholds) sets, whatever the requirement names.
 [`performance.md`](performance.md#the-boundary) carries the reasoning.
 
-The counted halves are being wired one at a time rather than together: route
-resolution's is `enforced` in [Routing](#routing) below, generation's is
-`enforced` in [Document model](#document-model), and the per-layer one in
-[Middleware](#middleware) is still `planned`. This paragraph records the split
-and not a status, so read the status off the row.
+The counted halves are the rows in [Routing](#routing),
+[Document model](#document-model) and [Middleware](#middleware) below. This
+paragraph records the split and not a status, so read the status off each row.
 
 Nothing was deleted in the split, and that is deliberate: replacing a latency
 requirement with an allocation one and calling it a refiling would leave the
