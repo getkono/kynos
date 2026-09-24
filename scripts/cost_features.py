@@ -285,9 +285,10 @@ CODEGEN_HEADER = """\
 # this exists to count.
 #
 # The compared columns are the two deltas, for `binary.tsv`'s reason, and the
-# openapi31 row's `lines` under the toolchain named below. Per-
-# function attribution is deliberately not recorded here: monomorphized names
-# churn with every generic signature and a file of them would be a diff
+# openapi31 row's `lines` under the toolchain named below.
+#
+# Per-function attribution is deliberately not recorded here: monomorphized
+# names churn with every generic signature and a file of them would be a diff
 # generator rather than a baseline. Attribution is report-only, in
 # `cost-report.md`.
 #
@@ -825,10 +826,13 @@ def provenance(recorded, versions):
 def unrecorded(name, rows, recorded, versions):
     """Every way `rows` differs from what `cost:record` last wrote to `name`.
 
-    Empty exactly when recording this run would leave `name` unchanged, which
-    is the whole of what the release gate asks. Every column is compared, the
-    absolutes included: under one toolchain an absolute is a fact about Kynos,
-    and it is the one number that moves when every feature pays for a change.
+    Empty exactly when recording this run would leave every number in `name`
+    and the toolchain it names unchanged, which is the whole of what the
+    release gate asks. The prose above them is the script's rather than a
+    measurement, so a change to it alone is not a reason. Every column is
+    compared, the absolutes included: under one toolchain an absolute is a
+    fact about Kynos, and it is the one number that moves when every feature
+    pays for a change.
 
     A different toolchain or host is one reason and ends the comparison. Its
     differences would be facts about rustc, and they are cleared the same way

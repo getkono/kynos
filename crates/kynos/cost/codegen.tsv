@@ -14,9 +14,11 @@
 # reads pre-link IR, and a fat-LTO release build deletes the monomorphizations
 # this exists to count.
 #
-# The compared columns are the two deltas, for `binary.tsv`'s reason. Per-
-# function attribution is deliberately not recorded here: monomorphized names
-# churn with every generic signature and a file of them would be a diff
+# The compared columns are the two deltas, for `binary.tsv`'s reason, and the
+# openapi31 row's `lines` under the toolchain named below.
+#
+# Per-function attribution is deliberately not recorded here: monomorphized
+# names churn with every generic signature and a file of them would be a diff
 # generator rather than a baseline. Attribution is report-only, in
 # `cost-report.md`.
 #
