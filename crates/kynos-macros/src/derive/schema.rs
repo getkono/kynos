@@ -33,8 +33,8 @@ mod shape;
 
 use attributes::{
     constraints, described_members, field_name, is_described, is_flattened, is_open, is_option,
-    is_required, is_skipped, is_skipped_both_ways, is_unit_like, open_span, serde_flag,
-    serde_key_span, transparent_member, transparent_members, variant_name,
+    is_required, is_skipped_both_ways, is_unit_like, open_span, serde_flag, serde_key_span,
+    transparent_member, transparent_members, variant_name,
 };
 use shape::{enum_body, struct_body};
 
@@ -941,6 +941,10 @@ fn reject_one_way_member_skip(input: &DeriveInput) -> syn::Result<()> {
 /// missing content as `None`, so it round-trips as the tag-only branch `branch`
 /// emits. External and internal tagging read back what they write, and a
 /// member skipped one way only is refused before this is reached.
+///
+/// Checked on every variant the schema describes, including one serde reads
+/// and never writes: serde still reads it only with its content, so the
+/// tag-only branch would describe a request serde refuses.
 fn reject_skipped_adjacent_payload(input: &DeriveInput) -> syn::Result<()> {
     let Data::Enum(data) = &input.data else {
         return Ok(());
@@ -950,11 +954,7 @@ fn reject_skipped_adjacent_payload(input: &DeriveInput) -> syn::Result<()> {
         return Ok(());
     };
 
-    for variant in data
-        .variants
-        .iter()
-        .filter(|variant| !is_skipped(&variant.attrs))
-    {
+    for variant in described_variants(data) {
         let Fields::Unnamed(unnamed) = &variant.fields else {
             continue;
         };
