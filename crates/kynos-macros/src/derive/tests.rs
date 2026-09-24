@@ -750,6 +750,78 @@ mod schema {
         );
     }
 
+    /// A wire-form override on a flattened `PhantomData` serde reads is refused.
+    ///
+    /// The marker alone puts nothing in the object, but serde hands the
+    /// function its flattening serializer, which writes whatever members the
+    /// function emits, and its flattening deserializer, which reads whatever
+    /// members the function demands.
+    #[test]
+    fn a_wire_form_override_on_a_flattened_phantom_data_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "`with` on a flattened `PhantomData`",
+                    quote::quote!(
+                        struct Reading {
+                            total: u64,
+                            #[serde(flatten, with = "extra")]
+                            marker: PhantomData<()>,
+                        }
+                    ),
+                    "`with` reads or writes this field",
+                ),
+                case(
+                    "`serialize_with` on a flattened `PhantomData`",
+                    quote::quote!(
+                        struct Reading {
+                            total: u64,
+                            #[serde(flatten, serialize_with = "extra")]
+                            marker: PhantomData<()>,
+                        }
+                    ),
+                    "`serialize_with` reads or writes this field",
+                ),
+                case(
+                    "`deserialize_with` on a flattened `PhantomData`",
+                    quote::quote!(
+                        struct Reading {
+                            total: u64,
+                            #[serde(flatten, deserialize_with = "demand")]
+                            marker: PhantomData<()>,
+                        }
+                    ),
+                    "`deserialize_with` reads or writes this field",
+                ),
+                case(
+                    "`deserialize_with` on a flattened `PhantomData` serde never writes",
+                    quote::quote!(
+                        struct Reading {
+                            total: u64,
+                            #[serde(flatten, skip_serializing, deserialize_with = "demand")]
+                            marker: PhantomData<()>,
+                        }
+                    ),
+                    "`deserialize_with` reads or writes this field",
+                ),
+                case(
+                    "`with` on a flattened `PhantomData` in a struct variant",
+                    quote::quote!(
+                        enum Reading {
+                            Count {
+                                total: u64,
+                                #[serde(flatten, with = "extra")]
+                                marker: PhantomData<()>,
+                            },
+                        }
+                    ),
+                    "`with` reads or writes this field",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
     /// Each of serde's three container conversions is refused on a struct and
     /// on an enum alike.
     ///
@@ -1931,6 +2003,23 @@ mod schema {
                     total: u64,
                     #[serde(skip_deserializing, serialize_with = "as_string")]
                     count: u64,
+                }
+            ),
+            // A flattened `PhantomData` serde never reads is exempt like any
+            // other named field serde never reads, and one serde never writes
+            // is only read, where `serialize_with` changes nothing.
+            quote::quote!(
+                struct Reading {
+                    total: u64,
+                    #[serde(flatten, skip_deserializing, serialize_with = "extra")]
+                    marker: PhantomData<()>,
+                }
+            ),
+            quote::quote!(
+                struct Reading {
+                    total: u64,
+                    #[serde(flatten, skip_serializing, serialize_with = "extra")]
+                    marker: PhantomData<()>,
                 }
             ),
             // serde writes and reads through `a` alone, so `b` reaches neither
