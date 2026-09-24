@@ -1130,6 +1130,208 @@ fn an_externally_tagged_branch_admits_only_its_variant_key() {
     }
 }
 
+// --- A variant serde reads under an alias is described under each name ------
+//
+// serde reads a variant under its own name or under any `alias` it carries,
+// wherever that name travels: as a bare string, as an externally tagged key and
+// as a tag value. So each shape names every one of them. None carries a doc
+// comment, which would add prose to the shapes compared.
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum AliasedLevel {
+    #[serde(alias = "Low", alias = "low")]
+    Low,
+    High,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum AliasedDirective {
+    #[serde(alias = "go")]
+    Move {
+        x: u64,
+    },
+    #[serde(alias = "stop")]
+    Halt,
+    Say(String),
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind")]
+enum AliasedShape {
+    #[serde(alias = "circle")]
+    Circle { radius: f64 },
+    #[serde(alias = "dot")]
+    Point,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "t", content = "c")]
+enum AliasedEvent {
+    #[serde(alias = "made")]
+    Created(u64),
+    Gone,
+}
+
+/// The compact `enum` of an all-unit enum lists every name serde reads, the
+/// alias literally rather than through `rename_all`, and one repeating the
+/// variant's own name once.
+///
+/// Listing `low` and `high` alone refused the `"Low"` serde reads.
+#[test]
+fn a_unit_variants_alias_joins_the_compact_enumeration() {
+    assert_eq!(
+        emitted::<AliasedLevel>(),
+        serde_json::json!({"type": "string", "enum": ["low", "Low", "high"]})
+    );
+
+    for document in [r#""low""#, r#""Low""#, r#""high""#] {
+        assert!(
+            serde_json::from_str::<AliasedLevel>(document).is_ok(),
+            "{document}"
+        );
+    }
+    assert!(
+        serde_json::from_str::<AliasedLevel>(r#""High""#).is_err(),
+        "serde must refuse the name the enumeration leaves out"
+    );
+}
+
+/// An externally tagged unit branch is an `enum` of its names, and an object
+/// branch a property under each name, present under exactly one of them and
+/// closed to every other key.
+///
+/// Naming `Move` and `Halt` alone refused the `{"go":{"x":1}}` and `"stop"`
+/// serde reads.
+#[test]
+fn an_externally_tagged_variant_is_keyed_by_any_of_its_names() {
+    let payload = serde_json::json!({
+        "type": "object",
+        "properties": {"x": emitted::<u64>()},
+        "required": ["x"],
+    });
+    assert_eq!(
+        emitted::<AliasedDirective>(),
+        serde_json::json!({"oneOf": [
+            {
+                "type": "object",
+                "properties": {"Move": payload, "go": payload},
+                "allOf": [{"oneOf": [{"required": ["Move"]}, {"required": ["go"]}]}],
+                "unevaluatedProperties": false,
+            },
+            {"type": "string", "enum": ["Halt", "stop"]},
+            {
+                "type": "object",
+                "properties": {"Say": emitted::<String>()},
+                "required": ["Say"],
+                "additionalProperties": false,
+            },
+        ]})
+    );
+
+    for document in [
+        r#"{"Move":{"x":1}}"#,
+        r#"{"go":{"x":1}}"#,
+        r#""Halt""#,
+        r#""stop""#,
+    ] {
+        assert!(
+            serde_json::from_str::<AliasedDirective>(document).is_ok(),
+            "{document}"
+        );
+    }
+    for document in [
+        r#"{"Move":{"x":1},"go":{"x":1}}"#,
+        r#"{"go":{"x":1},"z":3}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<AliasedDirective>(document).is_err(),
+            "serde must refuse what the `oneOf` or `unevaluatedProperties` refuses: {document}"
+        );
+    }
+}
+
+/// An internally tagged branch's tag is an `enum` of its names, and the
+/// `discriminator` names the property alone: its branches are inline, which
+/// no mapping can point at, so each tag value, alias or not, is told apart by
+/// the `enum` in its branch.
+///
+/// A `const` of `Circle` refused the `{"kind":"circle","radius":1.0}` serde
+/// reads.
+#[test]
+fn an_internally_tagged_variant_is_tagged_by_any_of_its_names() {
+    assert_eq!(
+        emitted::<AliasedShape>(),
+        serde_json::json!({
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"type": "string", "enum": ["Circle", "circle"]},
+                        "radius": emitted::<f64>(),
+                    },
+                    "required": ["kind", "radius"],
+                },
+                {
+                    "type": "object",
+                    "properties": {"kind": {"type": "string", "enum": ["Point", "dot"]}},
+                    "required": ["kind"],
+                },
+            ],
+            "discriminator": {"propertyName": "kind"},
+        })
+    );
+
+    for document in [
+        r#"{"kind":"Circle","radius":1.0}"#,
+        r#"{"kind":"circle","radius":1.0}"#,
+        r#"{"kind":"dot"}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<AliasedShape>(document).is_ok(),
+            "{document}"
+        );
+    }
+    assert!(
+        serde_json::from_str::<AliasedShape>(r#"{"kind":"point"}"#).is_err(),
+        "serde must refuse the tag value no branch names"
+    );
+}
+
+/// An adjacently tagged branch's tag is an `enum` of its names, beside the
+/// content as before.
+#[test]
+fn an_adjacently_tagged_variant_is_tagged_by_any_of_its_names() {
+    assert_eq!(
+        emitted::<AliasedEvent>(),
+        serde_json::json!({
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "t": {"type": "string", "enum": ["Created", "made"]},
+                        "c": emitted::<u64>(),
+                    },
+                    "required": ["t", "c"],
+                },
+                {
+                    "type": "object",
+                    "properties": {"t": {"type": "string", "const": "Gone"}},
+                    "required": ["t"],
+                },
+            ],
+            "discriminator": {"propertyName": "t"},
+        })
+    );
+
+    for document in [r#"{"t":"Created","c":1}"#, r#"{"t":"made","c":1}"#] {
+        assert!(
+            serde_json::from_str::<AliasedEvent>(document).is_ok(),
+            "{document}"
+        );
+    }
+}
+
 // --- A transparent struct is the one field serde writes ---------------------
 //
 // serde writes a `#[serde(transparent)]` struct as its one field's value, so the
