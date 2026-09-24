@@ -319,7 +319,11 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   or its struct. A position, or a variant's payload, is there or not as a
 ///   whole, so serde would write one shape and read another. `#[serde(skip)]`
 ///   leaves the member out both ways; a newtype struct is exempt, since serde
-///   ignores all three there.
+///   ignores all three there, and so are a newtype variant's
+///   `skip_serializing_if` and a `transparent` struct, which is not an array.
+///   Inside a variant serde never writes, `skip_serializing` on the variant,
+///   serde only reads the members, so there only a lone `skip_deserializing`
+///   is refused; a variant serde skips both ways is in no schema.
 /// - `#[serde(skip)]` on the only member of an adjacently tagged newtype variant,
 ///   unless that member is an `Option`. serde writes the variant as its tag
 ///   alone but reads it only with its content, so no one schema is true of
