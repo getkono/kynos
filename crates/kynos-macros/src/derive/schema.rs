@@ -940,7 +940,9 @@ fn reject_contradicted_closure(input: &DeriveInput) -> syn::Result<()> {
         .flat_map(described_members);
 
     for field in named {
-        if let Some(span) = open_span(field) {
+        // `open` on a field that is not flattened is `check_constraints`'
+        // diagnostic, which names the actual mistake.
+        if let Some(span) = open_span(field).filter(|_| is_flattened(field)) {
             return Err(syn::Error::new(
                 span,
                 "`#[schema(open)]` says this object admits members nothing names, but \
