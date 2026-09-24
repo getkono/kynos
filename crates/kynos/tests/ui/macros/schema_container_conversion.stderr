@@ -1,0 +1,5 @@
+error: `into` makes serde read or write this struct as the type it names rather than as the fields it declares, so a schema derived from the declaration would describe a value the wire never carries. Implement `Schema` for this struct by hand, describing the type serde converts through -- `registry.resolve::<T>()` where that is one type `T` in both directions
+ --> tests/ui/macros/schema_container_conversion.rs:7:9
+  |
+7 | #[serde(into = "String", from = "String")]
+  |         ^^^^
