@@ -1,0 +1,106 @@
+name: Cost
+
+# The per-feature cost sweep, apart from `ci.yml` because it is the one job there
+# no pull request needed to wait for. It builds two fixtures at some fifty
+# feature points, over half of them fat-LTO release builds, and took three times
+# as long as any other job while gating nothing: it was never a required check,
+# and it exits zero whatever it measures.
+#
+# What the numbers are for is a release. So an ordinary pull request skips the
+# job, a push to master measures after the merge as a trend nobody waits on,
+# and a release pull request runs it as a gate that fails unless the committed
+# baselines are exactly what the release measures -- `KYNOS_COST=check`, whose
+# reasoning is in `scripts/cost_features.py`. `docs/releasing.md` has the loop.
+#
+# No `continue-on-error` and no verdict-parsing in YAML, for the `semver` job's
+# reason in `ci.yml`: the first leaves a red mark that means nothing, the second
+# is where a pattern silently stops matching. The script draws the distinction
+# instead, where it is tested: outside the gate it exits zero whenever it
+# measured something and non-zero only when it could not measure at all, and
+# the gate's refusal has a code of its own.
+#
+# The gate judges no number too large. `nfr.md#thresholds` sets a ceiling from a
+# recorded measurement and never guesses one; what a release pull request is
+# refused for is a cost nobody recorded, and the pull request that records it is
+# where the cost is reviewed.
+#
+# Making `Cost trend` required is a change to the `master` ruleset rather than to
+# this file. The skip below is what lets it be required without an ordinary
+# pull request waiting on it.
+on:
+  push:
+    branches:
+      - master
+  # Every pull request, so the job reports on each one, skipped unless it is a
+  # release. A required check that a workflow never reports on waits forever,
+  # while a job skipped by its `if` counts as passing.
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      check:
+        description: Apply the release gate, to preview what a release PR will say
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# `ci.yml`'s rule: a superseded pull request run is worthless, and master's are
+# the trend.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # `ci.yml`'s reason: CI has no working tree for incremental artifacts to pay
+  # off across.
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  cost:
+    name: Cost trend
+    # A release pull request runs on every event, never skipped, so no later run
+    # at the same commit can report a skip over a failed gate. `release-plz-` is
+    # the prefix release-plz opens its branch with, and the prefix
+    # `docs/releasing.md` says a hand-made release pull request must use too.
+    if: >-
+      github.event_name != 'pull_request'
+      || startsWith(github.head_ref, 'release-plz-')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          # The report reads the baselines the last `kynos-v*` tag shipped, so
+          # it needs the tags and the history that reaches them.
+          fetch-depth: 0
+      # No `cargo-cache-key`. The sweep's target directory is the largest any
+      # job here would save, and `setup` records why saving it is the wrong
+      # trade: a branch's cache entries are readable by nobody else while still
+      # counting against the repository-wide limit, so a save this size evicts
+      # the master entries every other job reads. The cost is rebuilding each
+      # run, which this job pays anyway: a sweep compares points built in one
+      # run, not against a cache.
+      - name: Set up
+        uses: ./.github/actions/setup
+      - name: Measure per-feature codegen and binary deltas, and per-codec ones
+        env:
+          KYNOS_COST: >-
+            ${{ (github.event_name == 'pull_request' || inputs.check) && 'check' || '' }}
+        run: mise run cost:features
+      # Also after a refused gate: the report is what the re-record is reviewed
+      # against, and the script writes it before it stops.
+      - name: Add cost summary
+        if: ${{ !cancelled() && hashFiles('cost-report.md') != '' }}
+        run: cat cost-report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload cost report
+        if: ${{ !cancelled() && hashFiles('cost-report.md') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cost-report
+          path: |
+            cost-report.md
+            cost-binary.tsv
+            cost-codec.tsv
+            cost-codegen.tsv
