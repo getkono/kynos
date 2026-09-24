@@ -2053,7 +2053,8 @@ mod schema {
 
     /// An open map or an `alias` is refused wherever serde reads it into an
     /// object `deny_unknown_fields` closes, including a variant serde never
-    /// writes, since the object is closed on read alone.
+    /// writes, since the object is closed on read alone. `open` on a field that
+    /// is not flattened keeps the diagnostic naming that mistake.
     #[test]
     fn an_open_map_or_alias_in_a_closed_object_is_refused_in_every_group() {
         each_case_is_refused(
@@ -2087,6 +2088,17 @@ mod schema {
                         }
                     ),
                     "under a second name",
+                ),
+                case(
+                    "`open` on a field that is not flattened, in a closed object",
+                    quote::quote!(
+                        #[serde(deny_unknown_fields)]
+                        struct Thing {
+                            #[schema(open)]
+                            extra: BTreeMap<String, String>,
+                        }
+                    ),
+                    "only a flattened field has anything",
                 ),
             ],
             expand_inner,
