@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/getkono/kynos/compare/kynos-macros-v0.1.0...kynos-macros-v0.2.0) - 2026-09-24
+
+### Documentation
+
+- *(macros)* scope the flattened-field refusal to fields the skip rule checks
+- *(macros)* restate why positional_members reads skip attributes
+- *(macros)* state the tuple-member skip exemptions
+- *(macros)* carve the flattened and unwritten cases out of the skip rule
+- *(macros)* state rule 30's open-field half by the AdmitsAny bound
+- *(schema)* record how a variant name two variants share is described
+- *(macros)* list the deny_unknown_fields refusals beside their snapshots
+- *(macros)* list a skipped adjacently tagged payload as refused, with its snapshot
+- *(macros)* bind the newtype comparison to the component name alone
+- *(schema)* state what open takes and drops where it is written
+- *(errors)* say what the branch title is, and where the dedup drops it
+
+### Fixed
+
+- *(schema)* let a map of Unchecked values sit open beside a field serde never reads
+- *(macros)* bound an open field beside a field serde never reads by AdmitsAny
+- *(schema)* let an Unchecked map payload be flattened as an open map
+- *(macros)* describe a variant name two variants share under the first alone
+- *(macros)* describe every name serde reads a variant under
+- *(macros)* describe every name serde reads a field under
+- *(macros)* close each externally tagged object branch to its variant key
+- *(macros)* refuse only a flattened open field for being in a closed object
+- *(macros)* close an object serde reads under deny_unknown_fields
+- *(macros)* describe a PhantomData member as the null serde writes
+- *(macros)* check an adjacent skipped payload on every described variant
+- *(macros)* count a tuple's minItems only up to its last member serde does not default
+- *(macros)* scan a transparent tuple only on the member serde picks
+- *(macros)* honour a container default on a tuple struct
+- *(macros)* refuse a skipped adjacently tagged newtype payload that is not an Option
+- *(macros)* say the transparent refusal compares fields, not schemas
+- *(macros)* refuse a transparent struct only where serde's two picks differ
+- *(macros)* recognise a PhantomData a macro wraps in a group
+- *(macros)* refuse a transparent struct by the field serde picks each way
+- *(macros)* refuse a transparent struct serde may read and write through different fields
+- *(macros)* describe a transparent struct by its one described field
+- *(macros)* refuse a container serde reads or writes through another type
+- *(macros)* name the working remedy for a flattened map and struct alike
+- *(macros)* decide a flattened field by open alone, whatever default it carries
+- *(macros)* let a flattened open map skip itself on write
+- *(macros)* describe no Flatten claim for a variant serde never writes
+- *(macros)* [**breaking**] hold a tagged newtype variant's payload to Flatten
+- *(macros)* allow #[schema(open)] only over a map
+- *(macros)* read serde's transparent before claiming Flatten
+- *(macros)* read the `open` key without a let chain
+- *(macros)* flatten only what names its own members
+- *(kynos)* narrow each derived error response to the type it publishes
+- *(macros)* unindent the paragraph rustdoc reads as a code block
+
 ## [0.1.0](https://github.com/getkono/kynos/releases/tag/kynos-macros-v0.1.0) - 2026-08-29
 
 ### Added
