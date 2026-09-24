@@ -97,6 +97,10 @@ fn every_rejected_schema_attribute_has_a_case() {
             "`#[serde(into = ...)]`",
             "macros/schema_container_conversion.stderr",
         ),
+        (
+            "`#[serde(transparent)]`",
+            "macros/schema_transparent_without_one_field.stderr",
+        ),
     ];
     const HEADING: &str = "# Rejected, because serde and the schema would disagree";
 

@@ -228,6 +228,19 @@ mod schema {
                 ),
                 "as the type it names",
             ),
+            case(
+                "`#[serde(transparent)]` written through one field and read through another",
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Split {
+                        #[serde(skip_deserializing)]
+                        a: u64,
+                        #[serde(skip_serializing)]
+                        b: String,
+                    }
+                ),
+                "`#[serde(transparent)]` makes serde write through",
+            ),
         ]
     }
 
@@ -530,6 +543,243 @@ mod schema {
         }
     }
 
+    /// A transparent struct serde writes through one field and reads through
+    /// another is refused.
+    ///
+    /// `serde_derive`'s `allow_transparent` writes through the field without
+    /// `skip_serializing` and reads through the field without
+    /// `skip_deserializing` or a field-level `default`, never a `PhantomData`.
+    /// Each row is a declaration serde accepts under `Serialize`, `Deserialize`
+    /// and both, and names the field each direction picks.
+    #[test]
+    fn a_transparent_struct_serde_writes_and_reads_apart_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "written through `a`, read through `b`",
+                    quote::quote!(
+                        #[serde(transparent)]
+                        struct Hole {
+                            #[serde(default)]
+                            a: u64,
+                            #[serde(skip_serializing)]
+                            b: String,
+                        }
+                    ),
+                    "this struct writes through `a` and reads through `b`",
+                ),
+                case(
+                    // A `default` member may follow one without it.
+                    "a tuple struct written through one member and read through another",
+                    quote::quote!(
+                        #[serde(transparent)]
+                        struct Pair(#[serde(skip_serializing)] u64, #[serde(default)] u64);
+                    ),
+                    "this struct writes through field 1 and reads through field 0",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// A transparent struct serde picks a single field for is described by that
+    /// field.
+    ///
+    /// Where both directions pick one field it is the same one. Where only one
+    /// direction does, serde refuses the other derive by itself, so the struct
+    /// compiles with that direction's derive alone and its one field is all
+    /// serde writes, or reads. Each row names the type the schema must resolve
+    /// and the type of the field it must not.
+    #[test]
+    fn a_transparent_struct_serde_picks_one_field_for_is_described_by_it() {
+        for (declaration, described, other) in [
+            // A default on a field neither direction picks changes nothing.
+            (
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Labels {
+                        inner: u64,
+                        #[serde(default, skip)]
+                        extra: String,
+                    }
+                ),
+                "u64",
+                "String",
+            ),
+            // Both skips spelled apart are `skip`.
+            (
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Labels {
+                        #[serde(skip_serializing, skip_deserializing)]
+                        extra: String,
+                        inner: u64,
+                    }
+                ),
+                "u64",
+                "String",
+            ),
+            (
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Handle(u64, #[serde(skip)] String);
+                ),
+                "u64",
+                "String",
+            ),
+            // Written through `a`, read through no field: serde refuses
+            // `Deserialize` and accepts `Serialize` alone.
+            (
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Hole {
+                        #[serde(default)]
+                        a: u64,
+                        #[serde(skip)]
+                        b: String,
+                    }
+                ),
+                "u64",
+                "String",
+            ),
+            // Written through no field, read through `a`: serde refuses
+            // `Serialize` and accepts `Deserialize` alone.
+            (
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Hole {
+                        #[serde(skip_serializing)]
+                        a: u64,
+                        #[serde(skip_serializing, skip_deserializing)]
+                        b: String,
+                    }
+                ),
+                "u64",
+                "String",
+            ),
+            // Written through `a`, read through both: serde refuses
+            // `Deserialize` and accepts `Serialize` alone.
+            (
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Hole {
+                        a: u64,
+                        #[serde(skip_serializing)]
+                        b: String,
+                    }
+                ),
+                "u64",
+                "String",
+            ),
+            // Written through both, read through `b`: serde refuses
+            // `Serialize` and accepts `Deserialize` alone.
+            (
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Hole {
+                        #[serde(skip_deserializing)]
+                        a: u64,
+                        b: String,
+                    }
+                ),
+                "String",
+                "u64",
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+
+            let expanded = match expand_inner(&input) {
+                Ok(tokens) => tokens.to_string(),
+                Err(error) => {
+                    panic!("a transparent struct with one picked field must expand: {error}")
+                }
+            };
+            assert!(
+                expanded.contains(&format!("resolve :: < {described} >"))
+                    && !expanded.contains(&format!("resolve :: < {other} >")),
+                "the schema must describe the `{described}` field alone: {expanded}"
+            );
+        }
+    }
+
+    /// A `PhantomData` a macro passed through a `$t:ty` fragment is still a
+    /// `PhantomData`.
+    ///
+    /// rustc hands such a type to the derive inside an invisible group, which
+    /// `syn` parses as `Type::Group`, and serde's transparent check unwraps it.
+    /// Unrecognised, the marker would count as a member serde writes and reads,
+    /// and the derive would describe it and demand `PhantomData<T>: Schema`.
+    #[test]
+    fn a_phantom_member_a_macro_wraps_in_a_group_is_not_described() {
+        let marker =
+            proc_macro2::Group::new(proc_macro2::Delimiter::None, quote::quote!(PhantomData<T>));
+        let input: syn::DeriveInput = syn::parse2(quote::quote!(
+            #[serde(transparent)]
+            struct Id<T>(u64, #marker);
+        ))
+        .expect("the case itself must parse");
+
+        // Without the group there is nothing here to test.
+        let syn::Data::Struct(data) = &input.data else {
+            panic!("the case is a struct");
+        };
+        assert!(
+            data.fields
+                .iter()
+                .any(|field| matches!(field.ty, syn::Type::Group(_))),
+            "the marker did not parse as a `Type::Group`"
+        );
+
+        let expanded = match expand_inner(&input) {
+            Ok(tokens) => tokens.to_string(),
+            Err(error) => panic!("a transparent struct beside a marker must expand: {error}"),
+        };
+        assert!(
+            !expanded.contains("PhantomData"),
+            "the marker reached the expansion: {expanded}"
+        );
+    }
+
+    /// A transparent struct serde refuses in both directions is serde's to
+    /// refuse.
+    ///
+    /// With no single field to write through and none to read through, serde
+    /// raises its own error for either derive, so a second one here would
+    /// restate a serde shape rule, for the reason
+    /// `untagged_on_a_struct_is_left_to_serde` gives.
+    #[test]
+    fn a_transparent_struct_serde_refuses_both_ways_is_left_to_serde() {
+        for declaration in [
+            quote::quote!(
+                #[serde(transparent)]
+                struct Two {
+                    a: u64,
+                    b: String,
+                }
+            ),
+            quote::quote!(
+                #[serde(transparent)]
+                struct Empty {
+                    #[serde(skip)]
+                    a: u64,
+                }
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+
+            let Err(error) = expand_inner(&input) else {
+                continue;
+            };
+
+            assert!(
+                !error.to_string().contains("`#[serde(transparent)]`"),
+                "a struct serde refuses both ways drew a second refusal: {error}"
+            );
+        }
+    }
+
     /// A catch-all the schema skips is refused all the same.
     ///
     /// Unlike a wire-form override, `#[serde(other)]` is not about the
@@ -614,6 +864,16 @@ mod schema {
                     #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
                     #[schema(open)]
                     extra: HashMap<String, String>,
+                }
+            ),
+            // A transparent struct is its one field's value, which serde
+            // writes whatever `skip_serializing_if` says, so there is no
+            // `required` list for the field to contradict.
+            quote::quote!(
+                #[serde(transparent)]
+                struct Draft {
+                    #[serde(skip_serializing_if = "String::is_empty")]
+                    elided: String,
                 }
             ),
             // The same rule inside an internally tagged struct variant: an
