@@ -2037,6 +2037,31 @@ mod schema {
         );
     }
 
+    /// A `#[serde(transparent)]` struct is its one field's value, with no
+    /// object for an open field's `unevaluatedProperties` to reach a field
+    /// serde never reads in, so the open field keeps its `OpenMap` bound alone.
+    ///
+    /// serde writes this one through both fields, which serde itself refuses
+    /// for `Serialize`, and reads it through `extra` alone, which is the
+    /// derive it accepts; `reject_transparent_without_one_field` leaves the
+    /// disagreement to serde, so the struct reaches the witnesses.
+    #[test]
+    fn a_transparent_struct_bounds_no_open_field_by_admits_any() {
+        assert_eq!(
+            open_witnesses_in(quote::quote!(
+                #[serde(transparent)]
+                struct Thing {
+                    #[serde(skip_deserializing)]
+                    stamp: u64,
+                    #[serde(flatten)]
+                    #[schema(open)]
+                    extra: BTreeMap<String, String>,
+                }
+            )),
+            (0, 1)
+        );
+    }
+
     /// A named field serde writes and never reads is refused in every object
     /// `deny_unknown_fields` closes, since the closed object refuses what serde
     /// writes of it. One row per placement: a struct, and a struct variant
