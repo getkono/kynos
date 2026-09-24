@@ -751,6 +751,55 @@ fn a_trailing_member_serde_may_leave_out_lowers_min_items() {
     );
 }
 
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Filled(u64, #[serde(default)] u64, #[serde(default)] u64);
+
+// serde refuses a default before a required member on a tuple struct, but not
+// on a tuple variant.
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum Gauge {
+    Read(#[serde(default)] u64, u64, #[serde(default)] u64),
+}
+
+/// serde fills each member carrying `#[serde(default)]` when the array ends
+/// before it, so the bound counts up to the last member with no default: a
+/// default before that one fills nothing, since the array cannot end there.
+#[test]
+fn a_trailing_run_of_defaulted_members_lowers_min_items_to_the_last_required_one() {
+    assert_eq!(
+        emitted::<Filled>(),
+        serde_json::json!({
+            "type": "array",
+            "prefixItems": [emitted::<u64>(), emitted::<u64>(), emitted::<u64>()],
+            "items": false,
+            "minItems": 1,
+        })
+    );
+    assert!(
+        serde_json::from_str::<Filled>("[1]").is_ok(),
+        "serde fills the trailing defaulted members"
+    );
+    assert!(serde_json::from_str::<Filled>("[]").is_err());
+
+    assert_eq!(
+        emitted::<Gauge>()["oneOf"][0]["properties"]["Read"],
+        serde_json::json!({
+            "type": "array",
+            "prefixItems": [emitted::<u64>(), emitted::<u64>(), emitted::<u64>()],
+            "items": false,
+            "minItems": 2,
+        })
+    );
+    assert!(
+        serde_json::from_str::<Gauge>(r#"{"Read":[1,2]}"#).is_ok(),
+        "serde fills the trailing defaulted member"
+    );
+    assert!(
+        serde_json::from_str::<Gauge>(r#"{"Read":[1]}"#).is_err(),
+        "a default before a required member fills nothing"
+    );
+}
+
 /// With every member skipped, the tuple is the empty array, and there is no
 /// `prefixItems`, which may not be empty.
 #[test]
