@@ -10,7 +10,7 @@ help: the trait `OpenMap` is not implemented for `Labels`
  8 | struct Labels(BTreeMap<String, String>);
    | ^^^^^^^^^^^^^
    = note: `#[schema(open)]` moves a map's value schema onto the object carrying it, which needs the map's own schema rather than a `$ref` to one
-   = note: flatten the `HashMap` or `BTreeMap` field itself, or drop `#[schema(open)]` from a type that names its members
+   = note: flatten the `HashMap` or `BTreeMap` field itself; for arbitrary JSON, flatten an `Unchecked<serde_json::Map<String, Value>>`, not an `Unchecked<Value>`, since serde flattens only a map; or drop `#[schema(open)]` from a type that names its members
    = help: the following other types implement trait `OpenMap`:
              Arc<T>
              BTreeMap<K, V>
