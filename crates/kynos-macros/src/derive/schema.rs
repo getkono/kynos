@@ -1337,6 +1337,12 @@ fn closed(schema: TokenStream2, container: &Container) -> TokenStream2 {
     if !container.deny_unknown_fields {
         return schema;
     }
+    close(schema)
+}
+
+/// Closes an object whatever the container says, as [`closed`] does under
+/// `#[serde(deny_unknown_fields)]`: for an object serde closes on its own.
+fn close(schema: TokenStream2) -> TokenStream2 {
     quote! {
         {
             let mut closed = #schema;

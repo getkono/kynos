@@ -1,5 +1,5 @@
 use super::{
-    Comma, Container, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant, closed,
+    Comma, Container, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant, close, closed,
     constraints, deprecate, described, described_variants, doc_string, field_name, is_deprecated,
     is_described, is_flattened, is_open, is_phantom, is_required, is_unit_like, min_items,
     positional_members, quote, transparent_member, variant_name,
@@ -361,13 +361,11 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
             }
         },
 
-        // Externally tagged: the variant's name is the single property, and a
-        // unit variant is that name as a bare string. The object is closed
-        // whatever the container says, because serde reads it as exactly one
-        // entry and refuses anything beside it.
+        // Externally tagged: the variant's name is the one entry serde reads, so
+        // nothing beside it, and a unit variant is that name as a bare string.
         (None, _) => match payload(&variant.fields, container) {
             None => described(constant_string(&name)),
-            Some(payload) => described(quote! {
+            Some(payload) => described(close(quote! {
                 {
                     let mut keywords = ::kynos::openapi::SchemaObject::default();
                     keywords.ty = ::core::option::Option::Some(
@@ -379,12 +377,9 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
                     keywords.required = ::core::option::Option::Some(
                         ::std::vec![::std::string::String::from(#name)],
                     );
-                    keywords.additional_properties = ::core::option::Option::Some(
-                        ::std::boxed::Box::new(::kynos::openapi::Schema::never()),
-                    );
                     ::kynos::openapi::Schema::Object(::std::boxed::Box::new(keywords))
                 }
-            }),
+            })),
         },
     }
 }
