@@ -38,7 +38,9 @@ on:
   workflow_dispatch:
     inputs:
       check:
-        description: Apply the release gate, to preview what a release PR will say
+        description: >-
+          Apply the release gate, to preview what a release PR will say. Always
+          on for a release-plz- branch.
         type: boolean
         default: false
 
@@ -61,7 +63,8 @@ jobs:
   cost:
     name: Cost trend
     # A release pull request runs on every event, never skipped, so no later run
-    # at the same commit can report a skip over a failed gate. `release-plz-` is
+    # at the same commit can report a skip over a failed gate; the step below
+    # keeps a manual run there from reporting an ungated pass over one. `release-plz-` is
     # the prefix release-plz opens its branch with, and the prefix
     # `docs/releasing.md` says a hand-made release pull request must use too.
     if: >-
@@ -84,10 +87,14 @@ jobs:
       # run, not against a cache.
       - name: Set up
         uses: ./.github/actions/setup
+      # The gate on a release branch whatever the event: a required check reads
+      # the latest run at a commit, so a manual run there that passed without
+      # the gate would stand in for the refusal before it.
       - name: Measure per-feature codegen and binary deltas, and per-codec ones
         env:
           KYNOS_COST: >-
-            ${{ (github.event_name == 'pull_request' || inputs.check) && 'check' || '' }}
+            ${{ (github.event_name == 'pull_request' || inputs.check
+            || startsWith(github.ref_name, 'release-plz-')) && 'check' || '' }}
         run: mise run cost:features
       # Also after a refused gate: the report is what the re-record is reviewed
       # against, and the script writes it before it stops.
