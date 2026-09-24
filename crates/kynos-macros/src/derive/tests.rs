@@ -272,7 +272,9 @@ mod schema {
                 "an untagged variant, which serde writes as its bare payload",
                 quote::quote!(
                     enum Reading {
-                        Labelled { value: u64 },
+                        Labelled {
+                            value: u64,
+                        },
                         #[serde(untagged)]
                         Bare(u64),
                     }
@@ -378,7 +380,9 @@ mod schema {
     fn untagged_on_a_variant_skipped_both_ways_is_accepted() {
         let input: syn::DeriveInput = syn::parse2(quote::quote!(
             enum Reading {
-                Labelled { value: u64 },
+                Labelled {
+                    value: u64,
+                },
                 #[serde(skip, untagged)]
                 Bare(u64),
             }
