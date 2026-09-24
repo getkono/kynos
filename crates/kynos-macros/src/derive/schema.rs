@@ -673,14 +673,18 @@ fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
 /// predicts.
 ///
 /// Refused on every field and variant the schema describes, which is
-/// everywhere serde accepts the three keys. A named field serde never reads, a
-/// flattened `PhantomData` and every field of a variant serde skips both ways
+/// everywhere serde accepts the three keys, and on a flattened `PhantomData`
+/// serde reads: that marker is in no schema, but serde hands the function its
+/// flattening serializer and deserializer, which write and demand whatever
+/// members the function names. Any other `PhantomData` is described as `null`,
+/// which an override contradicts as it would any other type's schema. A named
+/// field serde never reads and every field of a variant serde skips both ways
 /// are in no schema, so an override on one of them contradicts nothing and is
-/// left alone. Any other `PhantomData` is described as `null`, which an
-/// override contradicts as it would any other type's schema. Where serde never writes -- inside a variant serde never writes, and
-/// on a named field carrying `skip_serializing` alone -- only
-/// [`READ_OVERRIDES`] are refused: [`is_written`] says why `serialize_with`
-/// changes nothing there.
+/// left alone.
+///
+/// Where serde never writes -- inside a variant serde never writes, and on a
+/// named field carrying `skip_serializing` alone -- only [`READ_OVERRIDES`] are
+/// refused: [`is_written`] says why `serialize_with` changes nothing there.
 ///
 /// A `#[serde(transparent)]` struct is scanned only on the one field each
 /// direction picks, from [`transparent_picks`]: a field picked both ways for
@@ -693,7 +697,7 @@ fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
 /// An unnamed member is exempt only when serde skips it both ways, and never on
 /// a newtype struct, whose member serde writes through the function whatever it
 /// skips. Skip attributes are read rather than [`is_described`], which would
-/// exempt that newtype member.
+/// exempt that newtype member and a flattened `PhantomData` serde reads.
 fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
     type Scanned<'a> = (&'a [syn::Attribute], &'static str, &'static [&'static str]);
 
@@ -702,16 +706,16 @@ fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
         newtype: bool,
         keys: &'static [&'static str],
     ) -> Vec<Scanned<'a>> {
-        let described: fn(&&Field) -> bool = match fields {
-            Fields::Named(_) => |field| is_described(field),
+        let scanned: fn(&&Field) -> bool = match fields {
+            Fields::Named(_) => |field| !serde_flag(&field.attrs, &["skip", "skip_deserializing"]),
             Fields::Unnamed(_) if newtype => |_| true,
             Fields::Unnamed(_) | Fields::Unit => |field| !is_skipped_both_ways(&field.attrs),
         };
         fields
             .iter()
-            .filter(described)
+            .filter(scanned)
             .map(|field| {
-                // A described named field is read, so `skip_serializing` on one
+                // A scanned named field is read, so `skip_serializing` on one
                 // is `skip_serializing` alone.
                 let unwritten =
                     field.ident.is_some() && serde_flag(&field.attrs, &["skip_serializing"]);
