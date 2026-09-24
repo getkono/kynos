@@ -311,20 +311,46 @@ mod schema {
     /// A fourth function, so that a row about a field does not sit in a ledger
     /// named for variants.
     fn field_ledger() -> Vec<Case> {
-        vec![case(
-            "`skip_deserializing` alone on a field beside an open flattened map",
-            quote::quote!(
-                struct Thing {
-                    id: u64,
-                    #[serde(skip_deserializing)]
-                    stamp: u64,
-                    #[serde(flatten)]
-                    #[schema(open)]
-                    extra: BTreeMap<String, String>,
-                }
+        vec![
+            case(
+                "`skip_deserializing` alone on a field beside an open flattened map",
+                quote::quote!(
+                    struct Thing {
+                        id: u64,
+                        #[serde(skip_deserializing)]
+                        stamp: u64,
+                        #[serde(flatten)]
+                        #[schema(open)]
+                        extra: BTreeMap<String, String>,
+                    }
+                ),
+                "refuses a member the schema does not name",
             ),
-            "refuses a member the schema does not name",
-        )]
+            case(
+                "an open flattened map in an object serde reads under `deny_unknown_fields`",
+                quote::quote!(
+                    #[serde(deny_unknown_fields)]
+                    struct Thing {
+                        id: u64,
+                        #[serde(flatten)]
+                        #[schema(open)]
+                        extra: BTreeMap<String, String>,
+                    }
+                ),
+                "reads the map empty",
+            ),
+            case(
+                "`alias` on a field of an object serde reads under `deny_unknown_fields`",
+                quote::quote!(
+                    #[serde(deny_unknown_fields)]
+                    struct Thing {
+                        #[serde(alias = "identifier")]
+                        id: u64,
+                    }
+                ),
+                "under a second name",
+            ),
+        ]
     }
 
     #[test]
@@ -1943,6 +1969,215 @@ mod schema {
                 panic!("a field serde never writes beside an open map must expand: {error}");
             }
         }
+    }
+
+    /// A named field serde writes and never reads is refused in every object
+    /// `deny_unknown_fields` closes, since the closed object refuses what serde
+    /// writes of it. One row per placement: a struct, and a struct variant
+    /// under each tagging.
+    #[test]
+    fn a_field_serde_never_reads_in_a_closed_object_is_refused() {
+        let expects = "`#[serde(deny_unknown_fields)]` gives this object";
+        each_case_is_refused(
+            vec![
+                case(
+                    "`skip_deserializing` alone on a field of a closed struct",
+                    quote::quote!(
+                        #[serde(deny_unknown_fields)]
+                        struct Thing {
+                            id: u64,
+                            #[serde(skip_deserializing)]
+                            stamp: u64,
+                        }
+                    ),
+                    expects,
+                ),
+                case(
+                    "`skip_deserializing` alone on a flattened struct in a closed struct",
+                    quote::quote!(
+                        #[serde(deny_unknown_fields)]
+                        struct Thing {
+                            id: u64,
+                            #[serde(flatten, skip_deserializing)]
+                            audit: Audit,
+                        }
+                    ),
+                    expects,
+                ),
+                case(
+                    "`skip_deserializing` alone in a closed externally tagged variant",
+                    quote::quote!(
+                        #[serde(deny_unknown_fields)]
+                        enum Event {
+                            Created {
+                                at: u64,
+                                #[serde(skip_deserializing)]
+                                stamp: u64,
+                            },
+                        }
+                    ),
+                    expects,
+                ),
+                case(
+                    "`skip_deserializing` alone in a closed internally tagged variant",
+                    quote::quote!(
+                        #[serde(deny_unknown_fields, tag = "kind")]
+                        enum Event {
+                            Created {
+                                at: u64,
+                                #[serde(skip_deserializing)]
+                                stamp: u64,
+                            },
+                        }
+                    ),
+                    expects,
+                ),
+                case(
+                    "`skip_deserializing` alone in a closed adjacently tagged variant",
+                    quote::quote!(
+                        #[serde(deny_unknown_fields, tag = "kind", content = "value")]
+                        enum Event {
+                            Created {
+                                at: u64,
+                                #[serde(skip_deserializing)]
+                                stamp: u64,
+                            },
+                        }
+                    ),
+                    expects,
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// An open map or an `alias` is refused wherever serde reads it into an
+    /// object `deny_unknown_fields` closes, including a variant serde never
+    /// writes, since the object is closed on read alone.
+    #[test]
+    fn an_open_map_or_alias_in_a_closed_object_is_refused_in_every_group() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "an open map in a closed internally tagged variant",
+                    quote::quote!(
+                        #[serde(deny_unknown_fields, tag = "kind")]
+                        enum Event {
+                            Created {
+                                at: u64,
+                                #[serde(flatten)]
+                                #[schema(open)]
+                                extra: BTreeMap<String, String>,
+                            },
+                        }
+                    ),
+                    "reads the map empty",
+                ),
+                case(
+                    "an `alias` in a closed variant serde never writes",
+                    quote::quote!(
+                        #[serde(deny_unknown_fields)]
+                        enum Event {
+                            Now(u64),
+                            #[serde(skip_serializing)]
+                            Queued {
+                                #[serde(alias = "when")]
+                                at: u64,
+                            },
+                        }
+                    ),
+                    "under a second name",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// Under `deny_unknown_fields`, what serde reads and writes alike, or
+    /// neither, expands: a field it skips both ways, a flattened struct, an
+    /// `alias` on a field it never reads, and a `#[serde(transparent)]` struct,
+    /// whose wire form is its one field's value rather than a closed object.
+    #[test]
+    fn a_closed_object_serde_agrees_with_expands() {
+        for declaration in [
+            quote::quote!(
+                #[serde(deny_unknown_fields)]
+                struct Thing {
+                    id: u64,
+                    #[serde(skip)]
+                    cache: u64,
+                    #[serde(flatten)]
+                    audit: Audit,
+                }
+            ),
+            quote::quote!(
+                #[serde(deny_unknown_fields)]
+                struct Thing {
+                    id: u64,
+                    #[serde(skip, alias = "cached")]
+                    cache: u64,
+                }
+            ),
+            quote::quote!(
+                #[serde(deny_unknown_fields, transparent)]
+                struct Thing {
+                    #[serde(alias = "identifier")]
+                    id: u64,
+                }
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+
+            if let Err(error) = expand_inner(&input) {
+                panic!("a closed object serde agrees with must expand: {error}");
+            }
+        }
+    }
+
+    /// A shape `deny_unknown_fields` closes does not claim to be flattenable,
+    /// and one it leaves open still does.
+    ///
+    /// A closed object's `additionalProperties` or `unevaluatedProperties`
+    /// would, inside the `allOf` one level up, refuse the members the outer
+    /// object declared itself. serde leaves an internally tagged unit variant
+    /// open, and an externally tagged struct variant closes only its payload,
+    /// which is a property value rather than a composed object.
+    #[test]
+    fn a_closed_shape_does_not_claim_flatten() {
+        assert!(!claims_flatten(quote::quote!(
+            #[serde(deny_unknown_fields)]
+            struct Audit {
+                at: String,
+            }
+        )));
+        assert!(!claims_flatten(quote::quote!(
+            #[serde(deny_unknown_fields, tag = "kind")]
+            enum Shape {
+                Circle { radius: f64 },
+                Empty,
+            }
+        )));
+        assert!(!claims_flatten(quote::quote!(
+            #[serde(deny_unknown_fields, tag = "kind", content = "value")]
+            enum Payload {
+                Number(u32),
+            }
+        )));
+
+        assert!(claims_flatten(quote::quote!(
+            #[serde(deny_unknown_fields, tag = "kind")]
+            enum Marker {
+                On,
+                Off,
+            }
+        )));
+        assert!(claims_flatten(quote::quote!(
+            #[serde(deny_unknown_fields)]
+            enum Command {
+                Move { x: u64 },
+            }
+        )));
     }
 
     /// Whether the expansion claims `kynos::schema::Flatten` for the input.
