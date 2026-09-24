@@ -208,9 +208,12 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// keeps its own component name, as a newtype does, and carries that field's
 /// constraints. A tuple is the array of the members serde does not skip both
 /// ways, and a newtype variant whose member serde skips is the unit variant
-/// serde writes, provided serde also reads it back.
+/// serde writes, provided serde also reads it back. A newtype, and each
+/// described member of a tuple, tuple variant or newtype variant, carries its
+/// constraints, prose and `#[deprecated]` as a named field does.
 ///
-/// Constraints go on fields, and the grammar is exactly the keys of
+/// Constraints go on fields, named or unnamed, and the grammar is exactly the
+/// keys of
 /// [`Constraints`](https://docs.rs/kynos/latest/kynos/schema/constraints/struct.Constraints.html)
 /// so that
 /// the attribute and the type it fills cannot drift: `minimum`, `maximum`,
