@@ -2153,8 +2153,8 @@ mod schema {
     /// A closed object's `additionalProperties` or `unevaluatedProperties`
     /// would, inside the `allOf` one level up, refuse the members the outer
     /// object declared itself. serde leaves an internally tagged unit variant
-    /// open, and an externally tagged struct variant closes only its payload,
-    /// which is a property value rather than a composed object.
+    /// open. An externally tagged enum claims nothing either way, since its
+    /// object branches are closed without the attribute.
     #[test]
     fn a_closed_shape_does_not_claim_flatten() {
         assert!(!claims_flatten(quote::quote!(
@@ -2184,7 +2184,7 @@ mod schema {
                 Off,
             }
         )));
-        assert!(claims_flatten(quote::quote!(
+        assert!(!claims_flatten(quote::quote!(
             #[serde(deny_unknown_fields)]
             enum Command {
                 Move { x: u64 },
@@ -2261,9 +2261,10 @@ mod schema {
             }
         )));
 
-        // Externally tagged: the variant's name is the single property, and a
-        // unit variant is that name as a bare string instead.
-        assert!(claims_flatten(quote::quote!(
+        // Externally tagged: an object branch admits its variant key alone,
+        // which inside an `allOf` one level up would refuse the members the
+        // outer object declared itself; a unit variant is a bare string.
+        assert!(!claims_flatten(quote::quote!(
             enum Event {
                 Created { at: String },
                 Renamed(String),
@@ -2286,12 +2287,13 @@ mod schema {
 
         // A skipped variant reaches no branch, so it cannot disqualify one.
         assert!(claims_flatten(quote::quote!(
+            #[serde(tag = "kind")]
             enum Event {
                 Created {
                     at: String,
                 },
                 #[serde(skip)]
-                Internal,
+                Raw(String),
             }
         )));
 
@@ -2372,29 +2374,6 @@ mod schema {
         )));
     }
 
-    /// A newtype variant whose member serde skips is a unit variant, so an
-    /// externally tagged enum carrying one does not claim to be flattenable.
-    ///
-    /// serde writes it as a bare name, and the derive describes that branch as
-    /// the bare string it is, which names no members.
-    #[test]
-    fn a_skipped_newtype_variant_is_a_unit_to_the_flatten_claim() {
-        // The same variant with its member unskipped does claim it, so the case
-        // isolates the skip rather than the shape.
-        assert!(claims_flatten(quote::quote!(
-            enum Event {
-                Created { at: String },
-                Hidden(u64),
-            }
-        )));
-        assert!(!claims_flatten(quote::quote!(
-            enum Event {
-                Created { at: String },
-                Hidden(#[serde(skip)] u64),
-            }
-        )));
-    }
-
     /// A skipped variant cannot cost an enum its claim to Flatten.
     ///
     /// serde never writes a `#[serde(skip)]` variant, so the derive describes no
@@ -2438,15 +2417,6 @@ mod schema {
     #[test]
     fn a_variant_serde_only_reads_counts_toward_the_flatten_claim() {
         assert!(!claims_flatten(quote::quote!(
-            enum Event {
-                Created {
-                    at: String,
-                },
-                #[serde(skip_serializing)]
-                Deleted,
-            }
-        )));
-        assert!(!claims_flatten(quote::quote!(
             #[serde(tag = "kind")]
             enum Shape {
                 Circle {
@@ -2456,16 +2426,17 @@ mod schema {
                 Raw(Audit),
             }
         )));
-        // Skipped both ways, the same unit variant reaches no branch, so the
+        // Skipped both ways, the same newtype variant reaches no branch, so the
         // case isolates the direction rather than the shape.
         assert!(claims_flatten(quote::quote!(
-            enum Event {
-                Created {
-                    at: String,
+            #[serde(tag = "kind")]
+            enum Shape {
+                Circle {
+                    radius: f64,
                 },
                 #[serde(skip_serializing)]
                 #[serde(skip_deserializing)]
-                Deleted,
+                Raw(Audit),
             }
         )));
     }
@@ -2476,9 +2447,9 @@ mod schema {
     /// The field is left out of the schema, so one level up it is a member the
     /// flattened schema does not name, and an open map beside it refuses what
     /// serde writes. A struct and an internally tagged struct variant serde
-    /// writes put the field there. An externally tagged variant nests it, and
-    /// a variant serde never writes writes nothing, so neither withdraws the
-    /// claim.
+    /// writes put the field there. An adjacently tagged variant nests it under
+    /// the content key, and a variant serde never writes writes nothing, so
+    /// neither withdraws the claim.
     #[test]
     fn a_field_serde_never_reads_withdraws_the_flatten_claim() {
         assert!(!claims_flatten(quote::quote!(
@@ -2530,6 +2501,7 @@ mod schema {
             }
         )));
         assert!(claims_flatten(quote::quote!(
+            #[serde(tag = "kind", content = "data")]
             enum Event {
                 Created {
                     at: u64,

@@ -908,6 +908,60 @@ fn an_externally_tagged_enum_denying_unknown_fields_closes_its_struct_payloads()
     );
 }
 
+// --- An externally tagged branch is its variant key alone -------------------
+//
+// serde reads an externally tagged enum from an object holding exactly one
+// entry, with or without `deny_unknown_fields`, so every branch that is an
+// object is closed. A unit variant is its name as a bare string.
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum Directive {
+    Move { x: u64 },
+    Say(String),
+    Warp(u64, u64),
+    Halt,
+}
+
+/// Each non-unit branch of an externally tagged enum admits only its variant
+/// key.
+///
+/// Left open, a branch would admit the `{"Move":{"x":1},"z":3}` serde refuses.
+#[test]
+fn an_externally_tagged_branch_admits_only_its_variant_key() {
+    let schema = emitted::<Directive>();
+    for (index, variant) in ["Move", "Say", "Warp"].into_iter().enumerate() {
+        let branch = &schema["oneOf"][index];
+        assert_eq!(branch["required"], serde_json::json!([variant]), "{schema}");
+        assert_eq!(
+            branch["additionalProperties"],
+            serde_json::json!(false),
+            "{schema}"
+        );
+    }
+    assert_eq!(
+        schema["oneOf"][3],
+        serde_json::json!({"type": "string", "const": "Halt"})
+    );
+
+    for document in [r#"{"Move":{"x":1}}"#, r#"{"Say":"s"}"#, r#"{"Warp":[1,2]}"#] {
+        assert!(
+            serde_json::from_str::<Directive>(document).is_ok(),
+            "{document}"
+        );
+    }
+    for document in [
+        r#"{"Move":{"x":1},"z":3}"#,
+        r#"{"Say":"s","z":3}"#,
+        r#"{"Warp":[1,2],"z":3}"#,
+        r#"{"z":3,"Say":"s"}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<Directive>(document).is_err(),
+            "serde must refuse the member `additionalProperties` refuses: {document}"
+        );
+    }
+}
+
 // --- A transparent struct is the one field serde writes ---------------------
 //
 // serde writes a `#[serde(transparent)]` struct as its one field's value, so the

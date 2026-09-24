@@ -240,8 +240,9 @@ impl MapKey for String {}
 /// Derived beside [`Schema`] for the shapes whose description is an object
 /// naming its members: a struct with named fields, and an enum whose every
 /// `oneOf` branch is such an object. Not for a container carrying
-/// `#[schema(open)]` or `#[serde(transparent)]`, an externally tagged enum with a
-/// unit variant, or an internally tagged enum with a newtype variant.
+/// `#[schema(open)]` or `#[serde(transparent)]`, an externally tagged enum, whose
+/// branches admit only their variant key, or an internally tagged enum with a
+/// newtype variant.
 /// Unsealed, for the reason [`MapKey`] is — a hand-written [`Schema`] that does
 /// the same thing has to be able to say so.
 ///
