@@ -33,8 +33,8 @@ mod shape;
 
 use attributes::{
     constraints, described_members, field_name, is_described, is_flattened, is_open, is_option,
-    is_required, is_skipped_both_ways, is_unit_like, open_span, serde_flag, serde_key_span,
-    transparent_member, transparent_members, variant_name,
+    is_phantom, is_required, is_skipped_both_ways, is_unit_like, open_span, serde_flag,
+    serde_key_span, transparent_member, transparent_members, variant_name,
 };
 use shape::{enum_body, struct_body};
 
@@ -159,8 +159,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 /// *parameters* rather than the field types is both sufficient and narrower.
 /// `Vec<T>: Schema` follows from `T: Schema` through the blanket
 /// implementation, while a field-type bound would demand `PhantomData<T>:
-/// Schema` — a bound nothing satisfies, on a field no schema describes, failing
-/// at the handler rather than here.
+/// Schema` — a bound nothing satisfies, on a field described as the `null`
+/// serde writes without it, failing at the handler rather than here.
 ///
 /// Emitted now because the implementation will need it, and adding a bound
 /// after the freeze breaks exactly the code this milestone invites people to
@@ -606,9 +606,10 @@ fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
 ///
 /// Refused on every field and variant the schema describes, which is
 /// everywhere serde accepts the three keys. A named field serde never reads, a
-/// named `PhantomData` and every field of a variant serde skips both ways are in
-/// no schema, so an override on one of them contradicts nothing and is left
-/// alone. Where serde never writes -- inside a variant serde never writes, and
+/// flattened `PhantomData` and every field of a variant serde skips both ways
+/// are in no schema, so an override on one of them contradicts nothing and is
+/// left alone. Any other `PhantomData` is described as `null`, which an
+/// override contradicts as it would any other type's schema. Where serde never writes -- inside a variant serde never writes, and
 /// on a named field carrying `skip_serializing` alone -- only
 /// [`READ_OVERRIDES`] are refused: [`is_written`] says why `serialize_with`
 /// changes nothing there.
@@ -621,7 +622,7 @@ fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
 /// An unnamed member is exempt only when serde skips it both ways, and never on
 /// a newtype struct, whose member serde writes through the function whatever it
 /// skips. Skip attributes are read rather than [`is_described`], which would
-/// exempt that newtype member and a positional `PhantomData` alike.
+/// exempt that newtype member.
 fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
     type Scanned<'a> = (&'a [syn::Attribute], &'static str, &'static [&'static str]);
 

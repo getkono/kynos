@@ -1,8 +1,8 @@
 use super::{
     Comma, Container, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant, constraints,
     deprecate, described, described_variants, doc_string, field_name, is_deprecated, is_described,
-    is_flattened, is_open, is_required, is_unit_like, min_items, positional_members, quote,
-    transparent_member, variant_name,
+    is_flattened, is_open, is_phantom, is_required, is_unit_like, min_items, positional_members,
+    quote, transparent_member, variant_name,
 };
 
 /// A struct's schema, which its fields decide.
@@ -183,10 +183,18 @@ pub(super) fn object_body(
 /// The prose sits beside the schema, which for a named field type is a `$ref`
 /// -- legal from 3.1 onward, where a schema `$ref` applies its siblings. A
 /// boolean schema has nowhere to put it and keeps none.
+///
+/// A `PhantomData` is resolved as `()`, the `null` serde writes and reads for
+/// both, since `PhantomData<T>: Schema` is a bound nothing satisfies.
 pub(super) fn member_schema(field: &Field) -> TokenStream2 {
     let ty = &field.ty;
     let constrained =
         constraints(field).map(|constraints| quote!(let schema = #constraints.apply(schema);));
+    let ty = if is_phantom(ty) {
+        quote!(())
+    } else {
+        quote!(#ty)
+    };
     let resolved = quote! {
         {
             let schema = registry.resolve::<#ty>();

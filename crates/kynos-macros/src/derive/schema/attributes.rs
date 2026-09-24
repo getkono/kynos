@@ -108,11 +108,14 @@ pub(super) fn rename(ident: &str, style: &str) -> String {
 /// serde reads a field unless it is `skip` or `skip_deserializing`, so a field it
 /// only never writes is described, and one it only never reads is not.
 ///
-/// `PhantomData` is skipped whatever serde does with it: it carries no value a
-/// consumer can act on, and requiring `PhantomData<T>: Schema` -- which nothing
-/// satisfies -- would make a marker field cost a bound the type cannot meet.
+/// A `PhantomData` is read like any other field: serde writes it as `null` and
+/// refuses a document without it, so it is described, as the `null`
+/// [`member_schema`](super::shape::member_schema) gives it. A flattened one is
+/// the exception, since serde writes nothing of it into the object and reads
+/// nothing from it.
 pub(super) fn is_described(field: &Field) -> bool {
-    !serde_flag(&field.attrs, &["skip", "skip_deserializing"]) && !is_phantom(&field.ty)
+    !(serde_flag(&field.attrs, &["skip", "skip_deserializing"])
+        || (is_phantom(&field.ty) && is_flattened(field)))
 }
 
 /// The fields a schema describes, in declaration order: each one
