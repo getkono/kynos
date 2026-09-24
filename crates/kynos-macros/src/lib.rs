@@ -266,9 +266,23 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// # Rejected, because serde and the schema would disagree
 ///
 /// - `#[serde(with = ...)]`, `serialize_with`, `deserialize_with` on a field or
-///   a variant. The wire form no longer follows from the Rust type, so a schema
-///   derived from the Rust type would be a lie. Give the value a newtype whose
-///   own `Serialize`, `Deserialize` and `Schema` agree on that form instead.
+///   a variant the schema describes. The wire form no longer follows from the
+///   Rust type, so a schema derived from the Rust type would be a lie. Give the
+///   value a newtype whose own `Serialize`, `Deserialize` and `Schema` agree on
+///   that form instead. Exempt, being in no schema, are a named field serde
+///   never reads, a variant serde skips both ways and its fields, and a member
+///   of a tuple struct, tuple variant or newtype variant serde skips both ways;
+///   a newtype struct's member never is, since serde writes it through the
+///   function whatever it skips. A flattened `PhantomData` serde reads is in no
+///   schema and still refused, since serde hands the function the parent object
+///   to write members into and read members from. Where serde never writes (a
+///   variant carrying `skip_serializing`, its fields, and a named field carrying
+///   `skip_serializing` alone) only `with` and `deserialize_with` are refused. A
+///   `transparent` struct is checked only on the field serde picks in each
+///   direction: `with` and `serialize_with` on the one field it writes through,
+///   `with` and `deserialize_with` on the one field it reads through, and
+///   nothing for a direction with no single candidate, since serde then refuses
+///   that direction's derive.
 /// - `#[serde(untagged)]` enums. `anyOf` with no discriminator is ambiguous to
 ///   decode, and the tie-break is inexpressible. Use an internally or
 ///   adjacently tagged enum, which becomes a `discriminator`. The same holds for
