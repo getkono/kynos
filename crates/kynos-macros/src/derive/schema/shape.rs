@@ -284,7 +284,7 @@ pub(super) fn enum_body(data: &DataEnum, container: &Container) -> TokenStream2 
 /// One `oneOf` branch: the variant, shaped by how the enum is tagged, under
 /// every name serde reads it by.
 pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
-    let names = variant_names(variant, container);
+    let read = variant_names(variant, container);
     let deprecated = is_deprecated(&variant.attrs);
     let described = |schema: TokenStream2| {
         deprecate(
@@ -297,7 +297,7 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
         // Adjacently tagged: the tag and the payload are two properties of one
         // object.
         (Some(tag), Some(content)) => {
-            let tagged = named_string(&names);
+            let tagged = named_string(&read);
             let payload = payload(&variant.fields, container).map(|payload| {
                 quote! {
                     keywords.properties.insert(::std::string::String::from(#content), #payload);
@@ -329,12 +329,12 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
         // so the two are composed instead, unless serde writes it as a unit.
         (Some(tag), None) => match &variant.fields {
             Fields::Named(named) => {
-                described(object_body(&named.named, container, Some((tag, &names))))
+                described(object_body(&named.named, container, Some((tag, &read))))
             }
             Fields::Unit | Fields::Unnamed(_) => {
                 // Never closed: a unit ignores the keys beside it, a payload reads them.
                 let open = Container::default();
-                let marker = object_body(&Punctuated::new(), &open, Some((tag, &names)));
+                let marker = object_body(&Punctuated::new(), &open, Some((tag, &read)));
                 match payload(&variant.fields, container) {
                     None => described(marker),
                     Some(payload) => described(quote! {
@@ -354,8 +354,8 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
         // reads, so nothing beside it, and a unit variant is that name as a
         // bare string.
         (None, _) => match payload(&variant.fields, container) {
-            None => described(named_string(&names)),
-            Some(payload) => described(keyed(&names, &payload)),
+            None => described(named_string(&read)),
+            Some(payload) => described(keyed(&read, &payload)),
         },
     }
 }
