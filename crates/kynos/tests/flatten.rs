@@ -828,3 +828,56 @@ fn a_problem_as_a_tagged_newtype_payload_accepts_what_serde_writes() {
          schema: {schema}"
     );
 }
+
+/// An `Unchecked` over a typed map, flattened open.
+#[derive(Schema, Serialize)]
+struct Tallies {
+    id: u64,
+    #[serde(flatten)]
+    #[schema(open)]
+    counts: kynos::schema::unchecked::Unchecked<BTreeMap<String, u64>>,
+}
+
+/// An open `Unchecked` over a typed map describes the object the type writes,
+/// and waives the map's value schema as `Unchecked` waives any.
+///
+/// `Unchecked::schema` never reads its payload, so the hoist finds no
+/// `additionalProperties` and the object is left open: a value the map would
+/// never write is admitted too, which is what wrapping it says.
+#[test]
+fn an_open_unchecked_typed_map_accepts_what_serde_writes_and_waives_its_values() {
+    let tallies = Tallies {
+        id: 1,
+        counts: kynos::schema::unchecked::Unchecked(BTreeMap::from([
+            ("apples".to_owned(), 3),
+            ("pears".to_owned(), 0),
+        ])),
+    };
+    assert_eq!(
+        serde_json::to_value(&tallies).expect("the value serializes"),
+        serde_json::json!({ "id": 1, "apples": 3, "pears": 0 })
+    );
+    let refusals = refusals(&tallies);
+    assert!(
+        refusals.is_empty(),
+        "the type cannot produce an instance its own description accepts: {refusals:?}\n\
+         schema: {}",
+        emitted::<Tallies>()
+    );
+
+    let schema = emitted::<Tallies>();
+    assert!(
+        schema["unevaluatedProperties"].is_null(),
+        "an unchecked payload hoisted its map's value schema: {schema}"
+    );
+    let validator =
+        jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
+    assert!(
+        validator.is_valid(&serde_json::json!({ "id": 1, "apples": "many" })),
+        "a value the waived map schema would refuse was refused: {schema}"
+    );
+    assert!(
+        !validator.is_valid(&serde_json::json!({ "id": "1", "apples": 3 })),
+        "the parent's `id` was accepted as a string: {schema}"
+    );
+}
