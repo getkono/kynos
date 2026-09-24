@@ -22,6 +22,8 @@
 //! work they bound. [`protocol`] and [`tls`] are configuration;
 //! [`lifecycle`] is the state every part observes.
 
+mod describe;
+
 pub mod accept;
 pub mod address;
 pub mod connection;
@@ -275,12 +277,6 @@ impl<C: 'static> BoundServer<C> {
     #[must_use]
     pub fn local_addrs(&self) -> &[SocketAddr] {
         &self.local_addrs
-    }
-
-    /// The transport-aware OpenAPI description.
-    #[must_use]
-    pub fn openapi(&self) -> &kynos_openapi::Document {
-        self.service.openapi()
     }
 
     /// Serves on every listener until shutdown or a terminal accept failure.
