@@ -26,6 +26,10 @@ print a plausible table of the wrong subtraction. Both are asserted here, and so
 is the refusing direction `measure_binary` gained with them — a build that named
 no artifact, and an `llvm-size` that printed no `.text`.
 
+`main` is reached once, with the sweep stubbed out, for the release gate: its
+exit code is what makes a release pull request red, so it is asserted where it
+is decided rather than inferred from the pure verdict beneath it.
+
 Run it as `mise run cost:test`, or directly. There is no Python test runner in
 this repository and `unittest` needs none.
 """
@@ -424,6 +428,166 @@ class Provenance(unittest.TestCase):
         self.assertNotIn("mixes toolchains", self.report(LIVE))
 
 
+class ReleaseGate(unittest.TestCase):
+    """`KYNOS_COST=check`: whether the committed baselines are what was measured.
+
+    The gate's one question is whether `cost:record` would write anything new,
+    so each test states a way the answer is yes and asserts the reason names
+    it. A reason that named the wrong table or the wrong row would send the
+    reviewer of the re-record to the wrong line of the diff.
+    """
+
+    def verdict(self, measured, recorded, versions=LIVE):
+        """The gate's reasons for a binary table, against `recorded` or none."""
+        with tempfile.TemporaryDirectory() as directory:
+            was = None if recorded is None else recorded_binary(directory, recorded)
+        return cost.unrecorded(cost.BINARY_TSV, measured, was, versions)
+
+    def test_the_numbers_that_were_recorded_pass(self):
+        rows = binary_rows(openapi32=75920, uuid=-32)
+        self.assertEqual(self.verdict(rows, rows), [])
+
+    def test_a_moved_delta_is_named_by_table_row_and_column(self):
+        (reason,) = [
+            reason
+            for reason in self.verdict(
+                binary_rows(openapi32=76000), binary_rows(openapi32=75920)
+            )
+            if "delta" in reason
+        ]
+        self.assertIn("`binary.tsv` `openapi32` delta", reason)
+        self.assertIn("recorded 75920, measured 76000", reason)
+
+    def test_a_moved_floor_fails_though_no_delta_moved(self):
+        """The growth every feature pays, which no delta shows."""
+        recorded = binary_rows(openapi32=75920)
+        measured = {
+            label: {"text": values["text"] + 50160, "delta": values["delta"]}
+            for label, values in recorded.items()
+        }
+        reasons = self.verdict(measured, recorded)
+        self.assertIn(
+            f"`binary.tsv` `{cost.BASELINE}` text: recorded 865004, measured 915164",
+            reasons,
+        )
+        self.assertFalse([reason for reason in reasons if "delta" in reason])
+
+    def test_a_feature_nobody_recorded_fails(self):
+        reasons = self.verdict(
+            binary_rows(openapi32=75920, brand_new=0), binary_rows(openapi32=75920)
+        )
+        self.assertEqual(reasons, ["`binary.tsv` has no row for `brand-new`"])
+
+    def test_a_recorded_feature_this_run_did_not_measure_fails(self):
+        reasons = self.verdict(
+            binary_rows(openapi32=75920), binary_rows(openapi32=75920, retired=64)
+        )
+        self.assertEqual(
+            reasons, ["`binary.tsv` records `retired`, which this run did not measure"]
+        )
+
+    def test_a_missing_baseline_fails(self):
+        self.assertEqual(
+            self.verdict(binary_rows(), None),
+            ["`binary.tsv` has no recorded baseline"],
+        )
+
+    def test_another_toolchain_fails_rather_than_comparing(self):
+        rows = binary_rows(openapi32=75920)
+        (reason,) = self.verdict(rows, rows, OTHER_TOOLCHAIN)
+        self.assertIn(RECORDED_TOOLCHAIN, reason)
+        self.assertIn(OTHER_TOOLCHAIN[0], reason)
+
+    def test_every_codegen_column_is_compared(self):
+        recorded = codegen_rows(openapi32=101)
+        measured = codegen_rows(openapi32=101)
+        measured["openapi32"]["delta_copies"] = 2
+        with tempfile.TemporaryDirectory() as directory:
+            was = recorded_codegen(directory, recorded)
+        self.assertEqual(
+            cost.unrecorded(cost.CODEGEN_TSV, measured, was, LIVE),
+            ["`codegen.tsv` `openapi32` delta_copies: recorded 0, measured 2"],
+        )
+
+    def test_the_report_leads_with_the_verdict_and_the_way_to_clear_it(self):
+        text = cost.report(
+            binary_rows(),
+            None,
+            None,
+            None,
+            {cost.BINARY_TSV: None, cost.CODEGEN_TSV: None, cost.CODEC_TSV: None},
+            LIVE,
+            ["`binary.tsv` has no recorded baseline"],
+        )
+        self.assertIn("### Release gate: not recorded", text)
+        self.assertIn("mise run cost:record", text)
+        self.assertLess(text.index("Release gate"), text.index("Binary delta"))
+
+    def test_a_report_outside_the_gate_passes_no_verdict(self):
+        text = cost.report(
+            binary_rows(),
+            None,
+            None,
+            None,
+            {cost.BINARY_TSV: None, cost.CODEGEN_TSV: None, cost.CODEC_TSV: None},
+            LIVE,
+        )
+        self.assertNotIn("Release gate", text)
+
+    def run_main(self, mode, measured, recorded):
+        """`main` over a binary-only run, with the sweep itself stubbed out."""
+        with tempfile.TemporaryDirectory() as directory:
+            was = recorded_binary(directory, recorded)
+            environ = {"KYNOS_COST": mode} if mode else {}
+            argv = ["cost_features.py", "--kind", "binary"]
+            with contextlib.ExitStack() as stack:
+                for name, value in (
+                    ("ROOT", Path(directory)),
+                    ("sweep_env", mock.Mock(return_value={})),
+                    ("toolchain", mock.Mock(return_value=LIVE)),
+                    ("sweep_binary", mock.Mock(return_value=measured)),
+                    ("read_recorded", mock.Mock(side_effect=lambda path: (
+                        was if path.name == cost.BINARY_TSV else None
+                    ))),
+                ):
+                    stack.enter_context(mock.patch.object(cost, name, value))
+                stack.enter_context(mock.patch.object(sys, "argv", argv))
+                stack.enter_context(mock.patch.dict(os.environ, environ, clear=True))
+                stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                said = stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+                try:
+                    cost.main()
+                    code = 0
+                except SystemExit as stopped:
+                    code = stopped.code
+                left = (Path(directory) / "cost-report.md").is_file()
+        return code, said.getvalue(), left
+
+    def test_unrecorded_numbers_stop_the_gate_with_their_own_code(self):
+        code, said, _ = self.run_main(
+            "check", binary_rows(openapi32=76000), binary_rows(openapi32=75920)
+        )
+        self.assertEqual(code, cost.UNRECORDED)
+        self.assertIn("`openapi32` delta", said)
+
+    def test_a_refused_release_still_leaves_its_report(self):
+        _, _, left = self.run_main(
+            "check", binary_rows(openapi32=76000), binary_rows(openapi32=75920)
+        )
+        self.assertTrue(left)
+
+    def test_recorded_numbers_pass_the_gate(self):
+        rows = binary_rows(openapi32=75920)
+        code, _, _ = self.run_main("check", rows, rows)
+        self.assertEqual(code, 0)
+
+    def test_outside_the_gate_a_drift_still_exits_zero(self):
+        code, _, _ = self.run_main(
+            None, binary_rows(openapi32=76000), binary_rows(openapi32=75920)
+        )
+        self.assertEqual(code, 0)
+
+
 class Exclusions(unittest.TestCase):
     """One feature-exclusion set, written down in three places.
 
@@ -542,7 +706,8 @@ class Failures(unittest.TestCase):
     `cost:features` exits zero whenever it measured something, whatever the
     number says, and non-zero only when it could not measure at all -- which
     is the distinction the `cost` CI job leans on instead of parsing a verdict
-    out of YAML. Every other test here asserts the measuring direction. These
+    out of YAML. The release gate's own code, `UNRECORDED`, is asserted in
+    `ReleaseGate`. Every other test here asserts the measuring direction. These
     assert the refusing one, and each asserts the *code*, because a path that
     stopped with the wrong one reports a defect in Kynos as a broken runner.
     """
