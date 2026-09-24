@@ -1,8 +1,8 @@
 use super::{
-    Comma, Container, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant, constraints,
-    deprecate, described, described_variants, doc_string, field_name, is_deprecated, is_described,
-    is_flattened, is_open, is_phantom, is_required, is_unit_like, min_items, positional_members,
-    quote, transparent_member, variant_name,
+    Comma, Container, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant, closed,
+    constraints, deprecate, described, described_variants, doc_string, field_name, is_deprecated,
+    is_described, is_flattened, is_open, is_phantom, is_required, is_unit_like, min_items,
+    positional_members, quote, transparent_member, variant_name,
 };
 
 /// A struct's schema, which its fields decide.
@@ -74,7 +74,7 @@ pub(super) fn tuple_body(fields: &Punctuated<Field, Comma>, defaulted: bool) -> 
 ///
 /// `tag` is `(property, value)` for an internally tagged enum variant, which is
 /// an object whose fields are the variant's plus the one that says which
-/// variant it is.
+/// variant it is. Closed as [`closed`](super::closed) says.
 pub(super) fn object_body(
     fields: &Punctuated<Field, Comma>,
     container: &Container,
@@ -157,7 +157,7 @@ pub(super) fn object_body(
             }
         });
 
-    quote! {
+    let object = quote! {
         {
             let mut keywords = ::kynos::openapi::SchemaObject::default();
             keywords.ty = ::core::option::Option::Some(
@@ -174,7 +174,8 @@ pub(super) fn object_body(
             }
             ::kynos::openapi::Schema::Object(::std::boxed::Box::new(keywords))
         }
-    }
+    };
+    closed(object, container)
 }
 
 /// One described field's schema: its type's, under the field's constraints,
@@ -314,7 +315,7 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
                     required.push(::std::string::String::from(#content));
                 }
             });
-            described(quote! {
+            let object = quote! {
                 {
                     let mut keywords = ::kynos::openapi::SchemaObject::default();
                     keywords.ty = ::core::option::Option::Some(
@@ -330,7 +331,8 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
                     keywords.required = ::core::option::Option::Some(required);
                     ::kynos::openapi::Schema::Object(::std::boxed::Box::new(keywords))
                 }
-            })
+            };
+            described(closed(object, container))
         }
 
         // Internally tagged: the tag is one more property of the variant's own
@@ -341,7 +343,9 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
                 described(object_body(&named.named, container, Some((tag, &name))))
             }
             Fields::Unit | Fields::Unnamed(_) => {
-                let marker = object_body(&Punctuated::new(), container, Some((tag, &name)));
+                // Never closed: a unit ignores the keys beside it, a payload reads them.
+                let open = Container::default();
+                let marker = object_body(&Punctuated::new(), &open, Some((tag, &name)));
                 match payload(&variant.fields, container) {
                     None => described(marker),
                     Some(payload) => described(quote! {

@@ -68,7 +68,7 @@ fn refusals<T: SchemaTrait + Serialize>(value: &T) -> Vec<String> {
 }
 
 /// A type that names its members, which is what makes it flattenable.
-#[derive(Schema, Serialize)]
+#[derive(Schema, Serialize, serde::Deserialize)]
 struct Audit {
     at: String,
 }
@@ -509,5 +509,53 @@ fn a_hand_written_open_map_is_hoisted_like_a_standard_one() {
     assert!(
         !validator.is_valid(&serde_json::json!({ "id": 1, "k": 2 })),
         "a member contributed by `Headers` was accepted as a number: {schema}"
+    );
+}
+
+/// A closed object beside a flattened struct, which serde reads under
+/// `deny_unknown_fields`.
+#[derive(Schema, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Sealed {
+    id: u64,
+    #[serde(flatten)]
+    audit: Audit,
+}
+
+/// A closed object admits what the flattened struct contributes through its
+/// `$ref`, and nothing serde refuses.
+///
+/// `unevaluatedProperties: false` sees the flattened struct's `properties`
+/// across the `allOf` and the `$ref` inside it, which is what keeps `at`; an
+/// `additionalProperties: false` beside the parent's own `properties` would
+/// refuse it. Each document is checked against serde as well as the validator,
+/// so the two agree rather than the schema agreeing with itself.
+#[test]
+fn a_closed_object_admits_what_a_flattened_struct_contributes_and_nothing_else() {
+    let sealed = Sealed {
+        id: 1,
+        audit: Audit {
+            at: "2026-01-01T00:00:00Z".to_owned(),
+        },
+    };
+    let refusals = refusals(&sealed);
+    assert!(
+        refusals.is_empty(),
+        "the type cannot produce an instance its own description accepts: {refusals:?}\n\
+         schema: {}",
+        emitted::<Sealed>()
+    );
+
+    let schema = emitted::<Sealed>();
+    let validator =
+        jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
+    let unknown = serde_json::json!({ "id": 1, "at": "t", "z": 2 });
+    assert!(
+        serde_json::from_value::<Sealed>(unknown.clone()).is_err(),
+        "serde must refuse a member no field names"
+    );
+    assert!(
+        !validator.is_valid(&unknown),
+        "a member serde refuses was accepted: {schema}"
     );
 }

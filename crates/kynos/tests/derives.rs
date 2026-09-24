@@ -724,6 +724,190 @@ fn a_flattened_phantom_field_is_left_out() {
     assert!(serde_json::from_value::<FlatMarked<User>>(written).is_ok());
 }
 
+// --- An object serde reads under deny_unknown_fields is closed --------------
+//
+// serde refuses a key naming no field it reads, so the object admits no member
+// it does not name: `additionalProperties: false` where it composes nothing,
+// and `unevaluatedProperties: false` where a flattened field contributes
+// members through an `allOf`. None carries a doc comment, which would add prose
+// to the shapes compared.
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Strict {
+    id: u64,
+    #[serde(skip)]
+    cache: u64,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Origin {
+    host: String,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StrictOrigin {
+    id: u64,
+    #[serde(flatten)]
+    origin: Origin,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "kind")]
+enum StrictEvent {
+    Created { at: u64 },
+    Cleared,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields, tag = "t", content = "c")]
+enum StrictMessage {
+    Text { body: String },
+    Ping,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+enum StrictCommand {
+    Move { x: u64 },
+    Stop,
+}
+
+/// A struct serde reads under `deny_unknown_fields` admits only the members it
+/// names.
+///
+/// Left open, it would admit the `{"id":1,"z":2}` serde refuses, and the
+/// `{"id":1,"cache":2}` naming a field serde skips.
+#[test]
+fn a_struct_denying_unknown_fields_is_a_closed_object() {
+    assert_eq!(
+        emitted::<Strict>(),
+        serde_json::json!({
+            "type": "object",
+            "properties": {"id": emitted::<u64>()},
+            "required": ["id"],
+            "additionalProperties": false,
+        })
+    );
+
+    assert!(serde_json::from_str::<Strict>(r#"{"id":1}"#).is_ok());
+    assert!(
+        serde_json::from_str::<Strict>(r#"{"id":1,"z":2}"#).is_err(),
+        "serde must refuse the member `additionalProperties` refuses"
+    );
+    assert!(
+        serde_json::from_str::<Strict>(r#"{"id":1,"cache":2}"#).is_err(),
+        "serde must refuse the skipped field `additionalProperties` refuses"
+    );
+}
+
+/// Beside a flattened struct, the object is closed by `unevaluatedProperties`,
+/// which sees the members the flattened struct names across the `allOf`.
+///
+/// `additionalProperties: false` would refuse `host`, which serde reads into
+/// the flattened struct; `tests/flatten.rs` holds the emitted schema to both
+/// documents against a validator.
+#[test]
+fn a_struct_denying_unknown_fields_beside_a_flattened_struct_is_closed_across_it() {
+    let schema = emitted::<StrictOrigin>();
+    assert_eq!(schema["unevaluatedProperties"], serde_json::json!(false));
+    assert_eq!(schema.get("additionalProperties"), None);
+    assert_eq!(
+        schema["allOf"].as_array().map(Vec::len),
+        Some(1),
+        "the flattened struct is composed, not named"
+    );
+
+    assert!(serde_json::from_str::<StrictOrigin>(r#"{"id":1,"host":"h"}"#).is_ok());
+    assert!(
+        serde_json::from_str::<StrictOrigin>(r#"{"id":1,"host":"h","z":2}"#).is_err(),
+        "serde must refuse the member `unevaluatedProperties` refuses"
+    );
+}
+
+/// An internally tagged struct variant is a closed object of its tag and its
+/// fields, and a unit variant stays open, since serde ignores every key beside
+/// its tag whatever the container says.
+#[test]
+fn an_internally_tagged_enum_denying_unknown_fields_closes_its_struct_variants() {
+    let schema = emitted::<StrictEvent>();
+    assert_eq!(
+        schema["oneOf"][0],
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "const": "Created"},
+                "at": emitted::<u64>(),
+            },
+            "required": ["kind", "at"],
+            "additionalProperties": false,
+        })
+    );
+    assert_eq!(schema["oneOf"][1], tag_only("kind", "Cleared"));
+
+    assert!(
+        serde_json::from_str::<StrictEvent>(r#"{"kind":"Created","at":1,"z":2}"#).is_err(),
+        "serde must refuse the member `additionalProperties` refuses"
+    );
+    assert!(
+        serde_json::from_str::<StrictEvent>(r#"{"kind":"Cleared","z":2}"#).is_ok(),
+        "serde reads a unit variant whatever sits beside its tag"
+    );
+}
+
+/// An adjacently tagged branch is a closed object of its tag and its content,
+/// and a struct variant's content is closed too.
+#[test]
+fn an_adjacently_tagged_enum_denying_unknown_fields_closes_every_branch() {
+    let schema = emitted::<StrictMessage>();
+    assert_eq!(
+        schema["oneOf"][0]["additionalProperties"],
+        serde_json::json!(false)
+    );
+    assert_eq!(
+        schema["oneOf"][0]["properties"]["c"]["additionalProperties"],
+        serde_json::json!(false)
+    );
+    assert_eq!(
+        schema["oneOf"][1],
+        serde_json::json!({
+            "type": "object",
+            "properties": {"t": {"type": "string", "const": "Ping"}},
+            "required": ["t"],
+            "additionalProperties": false,
+        })
+    );
+
+    assert!(
+        serde_json::from_str::<StrictMessage>(r#"{"t":"Ping","z":1}"#).is_err(),
+        "serde must refuse the member beside the tag that `additionalProperties` refuses"
+    );
+    assert!(
+        serde_json::from_str::<StrictMessage>(r#"{"t":"Text","c":{"body":"b","z":1}}"#).is_err(),
+        "serde must refuse the member of the content that `additionalProperties` refuses"
+    );
+}
+
+/// An externally tagged struct variant's payload is a closed object.
+#[test]
+fn an_externally_tagged_enum_denying_unknown_fields_closes_its_struct_payloads() {
+    let schema = emitted::<StrictCommand>();
+    assert_eq!(
+        schema["oneOf"][0]["properties"]["Move"]["additionalProperties"],
+        serde_json::json!(false)
+    );
+    assert_eq!(
+        schema["oneOf"][1],
+        serde_json::json!({"type": "string", "const": "Stop"})
+    );
+
+    assert!(
+        serde_json::from_str::<StrictCommand>(r#"{"Move":{"x":1,"z":2}}"#).is_err(),
+        "serde must refuse the member `additionalProperties` refuses"
+    );
+}
+
 // --- A transparent struct is the one field serde writes ---------------------
 //
 // serde writes a `#[serde(transparent)]` struct as its one field's value, so the

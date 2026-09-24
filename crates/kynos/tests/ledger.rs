@@ -117,6 +117,14 @@ fn every_rejected_schema_attribute_has_a_case() {
             "`#[serde(skip_deserializing)]` without `skip_serializing`",
             "macros/schema_field_skipped_on_read_beside_open_map.stderr",
         ),
+        (
+            "`#[schema(open)]` field beside `#[serde(deny_unknown_fields)]`",
+            "macros/schema_open_map_denying_unknown_fields.stderr",
+        ),
+        (
+            "`#[serde(alias = ...)]`",
+            "macros/schema_alias_denying_unknown_fields.stderr",
+        ),
     ];
     const HEADING: &str = "# Rejected, because serde and the schema would disagree";
 

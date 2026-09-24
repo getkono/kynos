@@ -198,8 +198,13 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// Describes a type as JSON Schema.
 ///
 /// Reads the serde attributes already on the type — `rename_all`, `skip`,
-/// `flatten`, `tag`, `content`, `transparent` — so the schema and the wire form
-/// come from one declaration. A field is left out of `required` when it is an
+/// `flatten`, `tag`, `content`, `transparent`, `deny_unknown_fields` — so the
+/// schema and the wire form come from one declaration. Under
+/// `deny_unknown_fields`, every object serde then refuses unknown keys in is
+/// closed: a struct, each struct variant's fields, and an adjacently tagged
+/// branch. The derive uses `additionalProperties: false`, or
+/// `unevaluatedProperties: false` where a flattened field composes members
+/// through an `allOf`. A shape that closes does not implement `Flatten`. A field is left out of `required` when it is an
 /// `Option`, carries `#[serde(default)]`, or belongs to a struct carrying
 /// `#[serde(default)]`, because the wire form then allows it to be absent both
 /// ways; `skip_serializing_if` is accepted only alongside one of those. A named
@@ -305,12 +310,21 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   `skip_serializing` alone on a variant is accepted, since every variant serde
 ///   writes is one it reads.
 /// - `#[serde(skip_deserializing)]` without `skip_serializing` on a named field
-///   of an object that also carries a `#[schema(open)]` flattened field. serde
-///   writes the field and never reads it, so the schema leaves it out, and the
-///   `unevaluatedProperties` the open field gives the object refuses what serde
-///   writes of it. `#[serde(skip)]` leaves the field out both ways. For the same
-///   reason a struct, or an internally tagged enum whose struct variant serde
-///   writes, holding such a field does not implement `Flatten`.
+///   of an object that also carries a `#[schema(open)]` flattened field, or of
+///   an object that `deny_unknown_fields` closes. serde writes the field and
+///   never reads it, so the schema leaves it out, and the object then refuses
+///   what serde writes of it: through the `unevaluatedProperties` the open field
+///   gives it, or through being closed. `#[serde(skip)]` leaves the field out
+///   both ways. For the same reason a struct, or an internally tagged enum whose
+///   struct variant serde writes, holding such a field does not implement
+///   `Flatten`.
+/// - A flattened `#[schema(open)]` field beside `#[serde(deny_unknown_fields)]`.
+///   serde refuses every key the object's fields do not name before the map
+///   sees it, so it reads the map empty and writes members it would refuse to
+///   read back. Drop one of the two.
+/// - `#[serde(alias = ...)]` on a field serde reads into an object that
+///   `deny_unknown_fields` closes. serde reads the field under a name the closed
+///   object does not name, so the schema would refuse a document serde reads.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)
