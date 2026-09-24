@@ -1,6 +1,6 @@
 use super::{
     Comma, Container, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant,
-    aliases::{keyed, named_string, property, variant_names},
+    aliases::{keyed, named_string, property, variants_read_names},
     closed, constraints, deprecate, described, described_variants, doc_string, is_deprecated,
     is_described, is_flattened, is_open, is_phantom, is_unit_like, min_items, positional_members,
     quote, transparent_member,
@@ -225,16 +225,10 @@ pub(super) fn enum_body(data: &DataEnum, container: &Container) -> TokenStream2 
         && !any_deprecated
         && variants.iter().all(|variant| is_unit_like(&variant.fields))
     {
-        // Every name serde reads, each once: `enum` items should be unique.
-        let mut names: Vec<String> = Vec::new();
-        for name in variants
-            .iter()
-            .flat_map(|variant| variant_names(variant, container))
-        {
-            if !names.contains(&name) {
-                names.push(name);
-            }
-        }
+        // Every name serde reads, each once, since no two variants read one.
+        let names = variants_read_names(&variants, container)
+            .into_iter()
+            .flatten();
         return quote! {
             {
                 let mut keywords = ::kynos::openapi::SchemaObject::default();
@@ -253,7 +247,8 @@ pub(super) fn enum_body(data: &DataEnum, container: &Container) -> TokenStream2 
 
     let branches = variants
         .iter()
-        .map(|variant| branch(variant, container))
+        .zip(variants_read_names(&variants, container))
+        .map(|(variant, read)| branch(variant, &read, container))
         .collect::<Vec<_>>();
 
     // A discriminator makes the choice cheap to determine rather than
@@ -282,9 +277,8 @@ pub(super) fn enum_body(data: &DataEnum, container: &Container) -> TokenStream2 
 }
 
 /// One `oneOf` branch: the variant, shaped by how the enum is tagged, under
-/// every name serde reads it by.
-pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
-    let read = variant_names(variant, container);
+/// `read`, every name serde reads as it, so no two branches share one.
+pub(super) fn branch(variant: &Variant, read: &[String], container: &Container) -> TokenStream2 {
     let deprecated = is_deprecated(&variant.attrs);
     let described = |schema: TokenStream2| {
         deprecate(
@@ -297,7 +291,7 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
         // Adjacently tagged: the tag and the payload are two properties of one
         // object.
         (Some(tag), Some(content)) => {
-            let tagged = named_string(&read);
+            let tagged = named_string(read);
             let payload = payload(&variant.fields, container).map(|payload| {
                 quote! {
                     keywords.properties.insert(::std::string::String::from(#content), #payload);
@@ -329,12 +323,12 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
         // so the two are composed instead, unless serde writes it as a unit.
         (Some(tag), None) => match &variant.fields {
             Fields::Named(named) => {
-                described(object_body(&named.named, container, Some((tag, &read))))
+                described(object_body(&named.named, container, Some((tag, read))))
             }
             Fields::Unit | Fields::Unnamed(_) => {
                 // Never closed: a unit ignores the keys beside it, a payload reads them.
                 let open = Container::default();
-                let marker = object_body(&Punctuated::new(), &open, Some((tag, &read)));
+                let marker = object_body(&Punctuated::new(), &open, Some((tag, read)));
                 match payload(&variant.fields, container) {
                     None => described(marker),
                     Some(payload) => described(quote! {
@@ -354,8 +348,8 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
         // reads, so nothing beside it, and a unit variant is that name as a
         // bare string.
         (None, _) => match payload(&variant.fields, container) {
-            None => described(named_string(&read)),
-            Some(payload) => described(keyed(&read, &payload)),
+            None => described(named_string(read)),
+            Some(payload) => described(keyed(read, &payload)),
         },
     }
 }

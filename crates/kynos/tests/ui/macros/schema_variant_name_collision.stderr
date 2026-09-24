@@ -1,0 +1,16 @@
+error: serde reads `Stop`, this variant's own name, as `Start`, the earlier variant that also claims it, so `Stop` goes on the wire under a name that reads back as `Start`, and no schema describing `Stop` is true in both directions. Drop the `rename` or `alias` that gives both variants the name
+  --> tests/ui/macros/schema_variant_name_collision.rs:11:5
+   |
+11 |     Stop,
+   |     ^^^^
+
+warning: unreachable pattern
+  --> tests/ui/macros/schema_variant_name_collision.rs:11:5
+   |
+ 9 |     #[serde(alias = "Stop")]
+   |                     ------ matches all the relevant values
+10 |     Start,
+11 |     Stop,
+   |     ^^^^ no value can reach this
+   |
+   = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default

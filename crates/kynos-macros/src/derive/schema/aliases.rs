@@ -8,7 +8,8 @@
 //!
 //! serde reads a variant the same way, wherever its name travels: a string
 //! naming it is an `enum` of its names, and an externally tagged object keyed
-//! by it is a property under each name, present under exactly one.
+//! by it is a property under each name, present under exactly one. A name two
+//! variants claim is read as the first alone, so only that one names it.
 
 use super::{
     Container, Field, TokenStream2, Variant, close, field_name, is_required, quote,
@@ -28,6 +29,46 @@ pub(super) fn read_names(field: &Field, container: &Container) -> Vec<String> {
 /// The same for a variant: its wire name first, then each distinct `alias`.
 pub(super) fn variant_names(variant: &Variant, container: &Container) -> Vec<String> {
     names(variant_name(variant, container), &variant.attrs)
+}
+
+/// The names serde reads as each of `variants`, in order: its
+/// [`variant_names`] less any an earlier one claims.
+///
+/// serde tries the variants it reads in declaration order and reads a name as
+/// the first claiming it, so a later variant's claim is never reached. No name
+/// is left in two lists, and no variant is left without its wire name once
+/// [`shadowed_variant`] finds none.
+pub(super) fn variants_read_names(
+    variants: &[&Variant],
+    container: &Container,
+) -> Vec<Vec<String>> {
+    let mut claimed: Vec<String> = Vec::new();
+    variants
+        .iter()
+        .map(|variant| {
+            let read: Vec<String> = variant_names(variant, container)
+                .into_iter()
+                .filter(|name| !claimed.contains(name))
+                .collect();
+            claimed.extend(read.iter().cloned());
+            read
+        })
+        .collect()
+}
+
+/// The first of `variants` whose own wire name an earlier one claims, with
+/// that earlier variant: serde reads the name as the earlier one.
+pub(super) fn shadowed_variant<'a>(
+    variants: &[&'a Variant],
+    container: &Container,
+) -> Option<(&'a Variant, &'a Variant)> {
+    variants.iter().enumerate().find_map(|(index, later)| {
+        let wire = variant_name(later, container);
+        variants[..index]
+            .iter()
+            .find(|earlier| variant_names(earlier, container).contains(&wire))
+            .map(|earlier| (*later, *earlier))
+    })
 }
 
 /// `wire`, then each `alias` in `attrs` not already listed, in the order
