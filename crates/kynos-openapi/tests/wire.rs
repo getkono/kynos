@@ -631,6 +631,106 @@ fn a_null_survives_a_round_trip_at_every_site() {
     );
 }
 
+/// A fractional number survives a round trip at every numeric keyword of a
+/// Schema Object reached through `RefOr` and `Schema`.
+///
+/// It used not to wherever `serde_json/arbitrary_precision` is unified into
+/// the build. Both enums are untagged, so serde buffers their input before
+/// reading it, and under that feature `serde_json` hands the buffer a fractional
+/// number as a map, which an `f64` field cannot read: a schema carrying
+/// `maximum: 0.5` failed to parse. `mise run test:arbitrary-precision` is the
+/// graph this can fail in.
+///
+/// Every site is asserted rather than one, for the reason the null sites are.
+#[test]
+fn a_fractional_number_survives_a_round_trip_at_every_site() {
+    let original = RefOr::Item(Schema::Object(Box::new(SchemaObject {
+        multiple_of: Some(0.25),
+        maximum: Some(99.5),
+        exclusive_maximum: Some(100.75),
+        minimum: Some(-2.5),
+        exclusive_minimum: Some(-3.125),
+        ..SchemaObject::default()
+    })));
+
+    let json = serde_json::to_string(&original).expect("serializable");
+    let parsed: RefOr<Schema> =
+        serde_json::from_str(&json).expect("what the model emits, it reads");
+
+    assert_eq!(parsed, original);
+}
+
+/// A numeric keyword reads every JSON spelling of a number, through `RefOr`
+/// and `Schema`.
+///
+/// The round trip above only ever sees what `serde_json` writes for an `f64`,
+/// which always carries a decimal point. A description written by hand does
+/// not: an explicit `null`, a bare integer, exponent text and an integer beyond
+/// `u64` each reach the keyword's deserializer as a different input, and under
+/// `serde_json/arbitrary_precision` each is buffered differently too.
+#[test]
+fn every_json_number_spelling_reads_at_a_numeric_keyword() {
+    fn maximum(json: &str) -> Option<f64> {
+        match serde_json::from_str::<RefOr<Schema>>(json) {
+            Ok(RefOr::Item(Schema::Object(object))) => object.maximum,
+            other => panic!("{json} must read as a Schema Object: {other:?}"),
+        }
+    }
+
+    for (json, expected) in [
+        (r#"{"maximum":null}"#, None),
+        (r#"{"maximum":0}"#, Some(0.0)),
+        (r#"{"maximum":-5}"#, Some(-5.0)),
+        (r#"{"maximum":1e3}"#, Some(1000.0)),
+        (r#"{"maximum":1E-3}"#, Some(0.001)),
+        (r#"{"maximum":100000000000000000000}"#, Some(1e20)),
+    ] {
+        assert_eq!(maximum(json), expected, "{json}");
+    }
+}
+
+/// A numeric keyword read from YAML refuses what a `serde_json::Number` cannot
+/// hold.
+///
+/// A record of today's behaviour, not an endorsement. The five numeric
+/// keywords read through `serde_json::Number` (`src/model/number.rs`), so what
+/// another format hands them is held to what a JSON number is rather than to
+/// what an `f64` is. Nothing in the workspace reads the model from anything but
+/// JSON; a caller who does reaches this.
+///
+/// `.inf` and `.nan` are refused in both graphs: JSON has no such number, and
+/// `to_json` would write one as `null`. An integer beyond 64 bits depends on
+/// the graph: without `serde_json/arbitrary_precision` it is out of range, and
+/// with it the digits are kept and read as `1e20`. Each graph pins its own
+/// outcome, told apart the way `emit`'s YAML path tells them apart.
+#[cfg(feature = "yaml")]
+#[test]
+fn a_numeric_keyword_read_from_yaml_refuses_what_serde_json_number_cannot_hold() {
+    fn maximum(yaml: &str) -> Result<Option<f64>, serde_yaml_ng::Error> {
+        serde_yaml_ng::from_str::<SchemaObject>(yaml).map(|object| object.maximum)
+    }
+
+    assert_eq!(
+        maximum("maximum: 0.5").expect("the control reads"),
+        Some(0.5)
+    );
+    for yaml in ["maximum: .inf", "maximum: .nan"] {
+        let read = maximum(yaml);
+        assert!(read.is_err(), "{yaml} read as {read:?}");
+    }
+
+    let arbitrary_precision = matches!(
+        serde_yaml_ng::to_value(serde_json::Number::from(0u8)),
+        Ok(serde_yaml_ng::Value::Mapping(_))
+    );
+    let wide = maximum("maximum: 100000000000000000000");
+    if arbitrary_precision {
+        assert_eq!(wide.expect("the digits are kept"), Some(1e20));
+    } else {
+        assert!(wide.is_err(), "an integer beyond 64 bits read as {wide:?}");
+    }
+}
+
 /// Every object the specification lets carry an extension round-trips one.
 ///
 /// `references/3.1.2.md` says "This object MAY be extended with Specification
