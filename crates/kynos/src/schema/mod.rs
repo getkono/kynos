@@ -243,8 +243,10 @@ impl MapKey for String {}
 /// `#[schema(open)]` or `#[serde(transparent)]`, an externally tagged enum, whose
 /// branches admit only their variant key, or an internally tagged enum with a
 /// newtype variant.
-/// Unsealed, for the reason [`MapKey`] is — a hand-written [`Schema`] that does
-/// the same thing has to be able to say so.
+/// Implemented for [`Problem`](crate::Problem), whose schema names the
+/// registered members and admits every other one. Unsealed, for the reason
+/// [`MapKey`] is — a hand-written [`Schema`] that does the same thing has to be
+/// able to say so.
 ///
 /// ```no_run
 /// # use kynos::schema::{Flatten, Schema};
