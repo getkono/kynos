@@ -270,9 +270,10 @@ impl MapKey for String {}
             map names none, so its values would reach the properties the object declared itself",
     note = "give it a named field of its own; on a `HashMap` or `BTreeMap` field, add \
             `#[schema(open)]` beside `#[serde(flatten)]` to say the object really is open, so \
-            its values become the object's `unevaluatedProperties`; as an internally tagged \
-            newtype variant's payload, make it a struct variant holding that flattened open \
-            field, which serde writes the same way"
+            its values become the object's `unevaluatedProperties`; for arbitrary JSON, flatten \
+            an `Unchecked<serde_json::Map<String, Value>>` with `#[schema(open)]`, which leaves \
+            the object open; as an internally tagged newtype variant's payload, make it a \
+            struct variant holding that flattened open field, which serde writes the same way"
 )]
 pub trait Flatten: Schema {}
 
@@ -318,8 +319,9 @@ pub trait Flatten: Schema {}
     label = "not a map described in place",
     note = "`#[schema(open)]` moves a map's value schema onto the object carrying it, which needs \
             the map's own schema rather than a `$ref` to one",
-    note = "flatten the `HashMap` or `BTreeMap` field itself, or drop `#[schema(open)]` from a \
-            type that names its members"
+    note = "flatten the `HashMap` or `BTreeMap` field itself; for arbitrary JSON, flatten an \
+            `Unchecked<serde_json::Map<String, Value>>`, not an `Unchecked<Value>`, since serde \
+            flattens only a map; or drop `#[schema(open)]` from a type that names its members"
 )]
 pub trait OpenMap: Schema {}
 
