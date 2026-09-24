@@ -249,7 +249,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   own `Serialize`, `Deserialize` and `Schema` agree on that form instead.
 /// - `#[serde(untagged)]` enums. `anyOf` with no discriminator is ambiguous to
 ///   decode, and the tie-break is inexpressible. Use an internally or
-///   adjacently tagged enum, which becomes a `discriminator`.
+///   adjacently tagged enum, which becomes a `discriminator`. The same holds for
+///   one untagged variant serde reads or writes: it goes on the wire as its bare
+///   payload, tried only after every tagged variant fails. On a variant serde
+///   skips both ways it is in no schema, and is accepted.
 /// - `#[serde(flatten)]` onto a field whose schema names none of its members,
 ///   which a map's does not. Its `additionalProperties` is defined against the
 ///   `properties` of its own schema object, and composing it into the parent's
