@@ -1,0 +1,5 @@
+error: `serialize_with` reads or writes this field in a form its Rust type does not predict, so a schema derived from the type would describe a value the wire never carries. Give the value a newtype whose own `Serialize` and `Deserialize` produce that form and whose own `Schema` describes it
+  --> tests/ui/macros/schema_serialize_with.rs:11:13
+   |
+11 |     #[serde(serialize_with = "as_string")]
+   |             ^^^^^^^^^^^^^^

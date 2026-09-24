@@ -151,6 +151,17 @@ mod schema {
                 ),
                 "only a flattened field has anything",
             ),
+        ]
+    }
+
+    /// The serde attributes whose wire form the schema could not follow.
+    ///
+    /// A second function rather than more rows in the first, for the reason
+    /// `security_scheme`'s `oauth2_ledger` gives: one list of every diagnostic
+    /// had outgrown what Clippy will accept. These are the refusals the
+    /// derive's rustdoc lists as serde and the schema disagreeing.
+    fn serde_ledger() -> Vec<Case> {
+        vec![
             case(
                 "an untagged enum, which has no describable decoding rule",
                 quote::quote!(
@@ -162,17 +173,67 @@ mod schema {
                 ),
                 "an untagged enum",
             ),
+            case(
+                "`serialize_with` on a field, whose wire form its type no longer predicts",
+                quote::quote!(
+                    struct Reading {
+                        #[serde(serialize_with = "as_string")]
+                        count: u64,
+                    }
+                ),
+                "does not predict",
+            ),
+            case(
+                "a `#[serde(other)]` catch-all, which only 3.2's `defaultMapping` could describe",
+                quote::quote!(
+                    #[serde(tag = "kind")]
+                    enum Event {
+                        Created {
+                            id: u64,
+                        },
+                        #[serde(other)]
+                        Unknown,
+                    }
+                ),
+                "`#[serde(other)]` accepts",
+            ),
+            case(
+                "`skip_serializing_if` on a field serde still requires on read",
+                quote::quote!(
+                    struct Draft {
+                        #[serde(skip_serializing_if = "String::is_empty")]
+                        elided: String,
+                    }
+                ),
+                "still requires it on read",
+            ),
+            case(
+                "`skip_serializing_if` on a flattened field that is not an open map",
+                quote::quote!(
+                    struct Wrapper {
+                        id: u64,
+                        #[serde(flatten, skip_serializing_if = "Audit::is_empty")]
+                        audit: Audit,
+                    }
+                ),
+                "on a flattened field is refused unless it is `#[schema(open)]`",
+            ),
         ]
     }
 
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(serde_ledger(), expand_inner);
     }
 
     #[test]
     fn every_schema_diagnostic_has_a_case() {
-        every_diagnostic_has_a_case("schema.rs", include_str!("schema.rs"), ledger().len());
+        every_diagnostic_has_a_case(
+            "schema.rs",
+            include_str!("schema.rs"),
+            ledger().len() + serde_ledger().len(),
+        );
     }
 
     /// `#[serde(untagged)]` on a struct is serde's diagnostic to raise, not ours.
@@ -201,6 +262,349 @@ mod schema {
         assert!(
             !error.to_string().contains("untagged enum"),
             "a struct was refused with a sentence about enums: {error}"
+        );
+    }
+
+    /// Each of serde's three wire-form overrides is refused wherever serde
+    /// accepts it, on a field and on a variant alike.
+    ///
+    /// One row per key and placement, each written out: the ledger's single row
+    /// proves the site fires, and this proves the scan reaches every key and
+    /// names the one that was written.
+    #[test]
+    fn every_wire_form_override_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "`with` on a field",
+                    quote::quote!(
+                        struct Reading {
+                            #[serde(with = "as_string")]
+                            count: u64,
+                        }
+                    ),
+                    "`with` reads or writes this field",
+                ),
+                case(
+                    "`serialize_with` on a field",
+                    quote::quote!(
+                        struct Reading {
+                            #[serde(serialize_with = "as_string")]
+                            count: u64,
+                        }
+                    ),
+                    "`serialize_with` reads or writes this field",
+                ),
+                case(
+                    "`deserialize_with` on a field",
+                    quote::quote!(
+                        struct Reading {
+                            #[serde(deserialize_with = "from_string")]
+                            count: u64,
+                        }
+                    ),
+                    "`deserialize_with` reads or writes this field",
+                ),
+                case(
+                    "`with` on a variant",
+                    quote::quote!(
+                        enum Reading {
+                            #[serde(with = "as_string")]
+                            Count(u64),
+                        }
+                    ),
+                    "`with` reads or writes this variant",
+                ),
+                case(
+                    "`serialize_with` on a variant",
+                    quote::quote!(
+                        enum Reading {
+                            #[serde(serialize_with = "as_string")]
+                            Count(u64),
+                        }
+                    ),
+                    "`serialize_with` reads or writes this variant",
+                ),
+                case(
+                    "`deserialize_with` on a variant",
+                    quote::quote!(
+                        enum Reading {
+                            #[serde(deserialize_with = "from_string")]
+                            Count(u64),
+                        }
+                    ),
+                    "`deserialize_with` reads or writes this variant",
+                ),
+                // The tuple, newtype and tuple-variant shapes emit every member
+                // whatever its skip attributes say, so a skipped member there
+                // is still described and its override still contradicts it.
+                case(
+                    "`serialize_with` on a skipped member of a tuple struct",
+                    quote::quote!(
+                        struct Pair(
+                            u64,
+                            #[serde(skip_deserializing, serialize_with = "as_string")] u64,
+                        );
+                    ),
+                    "`serialize_with` reads or writes this field",
+                ),
+                case(
+                    "`serialize_with` on the skipped member of a newtype",
+                    quote::quote!(
+                        struct Sku(#[serde(skip_deserializing, serialize_with = "as_string")] u64);
+                    ),
+                    "`serialize_with` reads or writes this field",
+                ),
+                case(
+                    "`serialize_with` on a skipped member of a tuple variant",
+                    quote::quote!(
+                        enum Reading {
+                            Count(
+                                u64,
+                                #[serde(skip_deserializing, serialize_with = "as_string")] u64,
+                            ),
+                        }
+                    ),
+                    "`serialize_with` reads or writes this field",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// A wire-form override on something no schema describes is left alone.
+    ///
+    /// The refusal exists because the schema would describe a value the wire
+    /// never carries. A skipped field, and every field of a skipped variant,
+    /// are in no schema at all, so there is nothing for the override to
+    /// contradict.
+    #[test]
+    fn a_wire_form_override_on_an_undescribed_field_is_left_alone() {
+        for declaration in [
+            quote::quote!(
+                struct Reading {
+                    total: u64,
+                    #[serde(skip, with = "as_string")]
+                    count: u64,
+                }
+            ),
+            quote::quote!(
+                #[serde(tag = "kind")]
+                enum Reading {
+                    Total {
+                        total: u64,
+                    },
+                    #[serde(skip)]
+                    Count {
+                        #[serde(with = "as_string")]
+                        count: u64,
+                    },
+                }
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+
+            // Expansion must succeed outright: checking only that the error is
+            // not this refusal would pass for a declaration refused for any
+            // other reason.
+            if let Err(error) = expand_inner(&input) {
+                panic!("an override nothing describes must expand, and was refused: {error}");
+            }
+        }
+    }
+
+    /// A catch-all the schema skips is refused all the same.
+    ///
+    /// Unlike a wire-form override, `#[serde(other)]` is not about the
+    /// variant's own branch: `skip_serializing` keeps that branch out of the
+    /// schema, but deserialization still routes every tag the enum does not
+    /// name to it, so the schema's closed `oneOf` still disagrees with what the
+    /// type accepts.
+    #[test]
+    fn a_catch_all_on_a_skipped_variant_is_still_refused() {
+        each_case_is_refused(
+            vec![case(
+                "a `#[serde(other)]` catch-all that is never serialized",
+                quote::quote!(
+                    #[serde(tag = "kind")]
+                    enum Event {
+                        Created {
+                            id: u64,
+                        },
+                        #[serde(skip_serializing)]
+                        #[serde(other)]
+                        Unknown,
+                    }
+                ),
+                "`#[serde(other)]` accepts",
+            )],
+            expand_inner,
+        );
+    }
+
+    /// `skip_serializing_if` is accepted wherever serde may leave the field out
+    /// in both directions, or never reads it at all.
+    ///
+    /// Beside an `Option` or a `#[serde(default)]`, an absent field reads as
+    /// well as it writes, so `required` can leave it out truthfully. A field
+    /// that is never read is in no schema, so nothing can disagree with it.
+    #[test]
+    fn skip_serializing_if_beside_an_option_or_a_default_is_accepted() {
+        for declaration in [
+            quote::quote!(
+                struct Draft {
+                    #[serde(skip_serializing_if = "Option::is_none")]
+                    maybe: Option<u64>,
+                }
+            ),
+            quote::quote!(
+                struct Draft {
+                    #[serde(default, skip_serializing_if = "String::is_empty")]
+                    elided: String,
+                }
+            ),
+            quote::quote!(
+                struct Draft {
+                    #[serde(skip_deserializing, skip_serializing_if = "String::is_empty")]
+                    elided: String,
+                }
+            ),
+            // A container `default` fills every missing field from `Default`
+            // on read, so each field is as absent-tolerant as a field-level
+            // `default` would make it.
+            quote::quote!(
+                #[serde(default)]
+                struct Draft {
+                    #[serde(skip_serializing_if = "String::is_empty")]
+                    elided: String,
+                }
+            ),
+            // A flattened open map: serde reads its absence as an empty map,
+            // and no flattened field is ever listed in `required`.
+            quote::quote!(
+                struct Draft {
+                    id: u64,
+                    #[serde(flatten, skip_serializing_if = "HashMap::is_empty")]
+                    #[schema(open)]
+                    extra: HashMap<String, String>,
+                }
+            ),
+            // The same open map with a default, which a flattened field is
+            // decided without: `#[schema(open)]` alone accepts it.
+            quote::quote!(
+                struct Draft {
+                    id: u64,
+                    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+                    #[schema(open)]
+                    extra: HashMap<String, String>,
+                }
+            ),
+            // The same rule inside an internally tagged struct variant: an
+            // `Option` field may be absent both ways.
+            quote::quote!(
+                #[serde(tag = "kind")]
+                enum Event {
+                    Created {
+                        #[serde(skip_serializing_if = "Option::is_none")]
+                        note: Option<String>,
+                    },
+                }
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+
+            if let Err(error) = expand_inner(&input) {
+                panic!("a field serde may omit in both directions must expand: {error}");
+            }
+        }
+    }
+
+    /// A flattened field that skips itself on write is refused unless it is
+    /// `#[schema(open)]`, whatever default it or its struct carries.
+    ///
+    /// The refusal reads attributes, not types, so a map and a struct meet the
+    /// same site. A flattened struct is written whole or not at all, and serde
+    /// ignores `#[serde(default)]` on a flattened field at field and container
+    /// level alike, so no default covers it. A flattened map is decided by
+    /// `#[schema(open)]` alone, which the map row below leaves off.
+    #[test]
+    fn a_flattened_field_skipped_on_write_is_refused_unless_open() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "`skip_serializing_if` on a flattened struct with no default",
+                    quote::quote!(
+                        struct Draft {
+                            id: u64,
+                            #[serde(flatten, skip_serializing_if = "Audit::is_empty")]
+                            audit: Audit,
+                        }
+                    ),
+                    "on a flattened field is refused unless it is `#[schema(open)]`",
+                ),
+                case(
+                    "`skip_serializing_if` on a flattened struct with a field-level default",
+                    quote::quote!(
+                        struct Wrapper {
+                            id: u64,
+                            #[serde(flatten, default, skip_serializing_if = "Audit::is_empty")]
+                            audit: Audit,
+                        }
+                    ),
+                    "on a flattened field is refused unless it is `#[schema(open)]`",
+                ),
+                case(
+                    "`skip_serializing_if` on a flattened struct under a container default",
+                    quote::quote!(
+                        #[serde(default)]
+                        struct Wrapper {
+                            id: u64,
+                            #[serde(flatten, skip_serializing_if = "Audit::is_empty")]
+                            audit: Audit,
+                        }
+                    ),
+                    "on a flattened field is refused unless it is `#[schema(open)]`",
+                ),
+                case(
+                    "`skip_serializing_if` on a flattened map that is not `#[schema(open)]`",
+                    quote::quote!(
+                        struct Tagged {
+                            id: u64,
+                            #[serde(flatten, skip_serializing_if = "HashMap::is_empty")]
+                            extra: HashMap<String, String>,
+                        }
+                    ),
+                    "on a flattened field is refused unless it is `#[schema(open)]`",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// `skip_serializing_if` on a field of an enum variant follows the rule a
+    /// struct's field does.
+    ///
+    /// The refusal walks every variant serde writes, because an internally
+    /// tagged struct variant is an object with its own `required` list.
+    #[test]
+    fn a_variant_field_skipped_on_write_is_refused_like_a_struct_field() {
+        each_case_is_refused(
+            vec![case(
+                "`skip_serializing_if` on a non-`Option` variant field with no default",
+                quote::quote!(
+                    #[serde(tag = "kind")]
+                    enum Event {
+                        Created {
+                            #[serde(skip_serializing_if = "String::is_empty")]
+                            note: String,
+                        },
+                    }
+                ),
+                "still requires it on read",
+            )],
+            expand_inner,
         );
     }
 

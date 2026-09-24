@@ -1,0 +1,5 @@
+error: `skip_serializing_if` on a flattened field is refused unless it is `#[schema(open)]`. A flattened map must be `#[schema(open)]` for the schema to describe it, and may then skip itself, since serde reads it absent as empty. A flattened struct is written whole or not at all, so drop `skip_serializing_if` to keep its members consistent with its schema. `#[serde(default)]` does not change this on a flattened field
+  --> tests/ui/macros/schema_skip_serializing_if_flattened_map.rs:11:22
+   |
+11 |     #[serde(flatten, skip_serializing_if = "HashMap::is_empty")]
+   |                      ^^^^^^^^^^^^^^^^^^^
