@@ -922,3 +922,52 @@ fn a_field_serde_never_reads_beside_an_open_unchecked_field_is_admitted() {
         "a field serde never reads was described: {schema}"
     );
 }
+
+/// A field serde writes and never reads beside an open map whose values are
+/// `Unchecked`.
+#[derive(Schema, Serialize)]
+struct Tagged {
+    id: u64,
+    #[serde(skip_deserializing)]
+    stamp: u64,
+    #[serde(flatten)]
+    #[schema(open)]
+    labels:
+        std::collections::HashMap<String, kynos::schema::unchecked::Unchecked<serde_json::Value>>,
+}
+
+/// The map's value schema is hoisted, and it is the permissive one, so the
+/// object's `unevaluatedProperties` refuses nothing: neither a value the map
+/// contributes nor the field the schema leaves out.
+#[test]
+fn a_field_serde_never_reads_beside_an_open_map_of_unchecked_values_is_admitted() {
+    let tagged = Tagged {
+        id: 1,
+        stamp: 7,
+        labels: std::collections::HashMap::from([(
+            "k".to_owned(),
+            kynos::schema::unchecked::Unchecked(serde_json::json!({ "deep": [1, null] })),
+        )]),
+    };
+    assert_eq!(
+        serde_json::to_value(&tagged).expect("the value serializes"),
+        serde_json::json!({ "id": 1, "stamp": 7, "k": { "deep": [1, null] } })
+    );
+    let refusals = refusals(&tagged);
+    assert!(
+        refusals.is_empty(),
+        "the type cannot produce an instance its own description accepts: {refusals:?}\n\
+         schema: {}",
+        emitted::<Tagged>()
+    );
+
+    let schema = emitted::<Tagged>();
+    assert!(
+        schema["properties"].get("stamp").is_none(),
+        "a field serde never reads was described: {schema}"
+    );
+    assert!(
+        schema["unevaluatedProperties"]["x-kynos-unchecked"] == true,
+        "the hoisted value schema is not the permissive one: {schema}"
+    );
+}

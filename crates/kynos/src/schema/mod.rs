@@ -343,7 +343,7 @@ pub trait OpenMap: Schema {}
 /// across `Box<T>` and `Arc<T>`:
 ///
 /// ```
-/// use std::{collections::BTreeMap, sync::Arc};
+/// use std::{collections::{BTreeMap, HashMap}, sync::Arc};
 ///
 /// use kynos::schema::unchecked::Unchecked;
 ///
@@ -352,9 +352,11 @@ pub trait OpenMap: Schema {}
 /// admits_any::<Unchecked<serde_json::Map<String, serde_json::Value>>>();
 /// admits_any::<Box<Unchecked<serde_json::Map<String, serde_json::Value>>>>();
 /// admits_any::<Arc<Unchecked<BTreeMap<String, u64>>>>();
+/// admits_any::<HashMap<String, Unchecked<serde_json::Value>>>();
+/// admits_any::<BTreeMap<String, Unchecked<Vec<u64>>>>();
 /// ```
 ///
-/// A map hoists its value schema, so it is not one:
+/// A map hoists its value schema, so one whose values are typed is not one:
 ///
 /// ```compile_fail
 /// fn admits_any<T: kynos::schema::AdmitsAny>() {}
