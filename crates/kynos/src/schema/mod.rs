@@ -288,9 +288,9 @@ pub trait Flatten: Schema {}
 ///
 /// Implemented for [`HashMap`](std::collections::HashMap) and
 /// [`BTreeMap`](std::collections::BTreeMap), and carried across `Box<T>` and
-/// `Arc<T>`. Also for [`Unchecked`](unchecked::Unchecked) over one of those or
-/// over a `serde_json::Map`, which has no `additionalProperties` to hoist and so
-/// leaves the object open — the route for arbitrary JSON beside an object's own
+/// `Arc<T>`. Also for [`Unchecked`](unchecked::Unchecked) over a type that
+/// implements `OpenMap` itself, or over a `serde_json::Map`, which has no
+/// `additionalProperties` to hoist and so leaves the object open — the route for arbitrary JSON beside an object's own
 /// members. Unsealed, for the reason [`MapKey`] is — a hand-written [`Schema`]
 /// that claims no component name and describes an object by
 /// `additionalProperties` alone has to be able to say so.
