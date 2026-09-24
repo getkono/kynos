@@ -943,11 +943,7 @@ fn an_externally_tagged_branch_admits_only_its_variant_key() {
         serde_json::json!({"type": "string", "const": "Halt"})
     );
 
-    for document in [
-        r#"{"Move":{"x":1}}"#,
-        r#"{"Say":"s"}"#,
-        r#"{"Warp":[1,2]}"#,
-    ] {
+    for document in [r#"{"Move":{"x":1}}"#, r#"{"Say":"s"}"#, r#"{"Warp":[1,2]}"#] {
         assert!(
             serde_json::from_str::<Directive>(document).is_ok(),
             "{document}"
