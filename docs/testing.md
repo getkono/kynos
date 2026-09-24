@@ -687,10 +687,10 @@ This rule is upheld by review and by that ledger, not by a counter — which
 makes it the one exhaustiveness claim here that is *intended* rather than
 asserted, against what "exhaustiveness is asserted, not intended" asks of the
 rest. [`tests/ui.rs`](../crates/kynos/tests/ui.rs) says so where it
-counts the schema table. Wiring it means reconciling 91 negatives against 92
-controls first — a surplus on the control side, which is the harmless
-direction — and the pairing is by meaning rather than by filename, so nothing
-on disk says which control stands alone.
+counts the schema table. Wiring it means reconciling the negatives against the
+controls first — nothing has ever held the two counts equal — and the pairing
+is by meaning rather than by filename, so nothing on disk says which control
+stands alone or which negative lacks one.
 
 That ledger is where the rule earns its keep. `#[kynos::operation]` was
 scheduled for two negatives, both of which produced exactly the right
