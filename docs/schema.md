@@ -509,6 +509,14 @@ variant names each of them:
   aliased field is, and so closed by `unevaluatedProperties`. It stays one
   branch, so the variant's prose and `#[deprecated]` stay in one place.
 
+serde reads a name two variants claim as the first of them in declaration
+order, and does not refuse the collision. So a name is described under the
+first variant claiming it alone, never in two branches a `oneOf` would then
+both match. Where the name is only a later variant's `alias`, that alias is
+unreachable and dropped. Where it is a later variant's own name, serde writes
+that variant under a name it reads back as the earlier one, and no schema is
+true both ways: the enum is refused.
+
 The `discriminator` maps no value, alias or not. Every branch is inline, which
 implicit mapping does not consider and no `mapping` entry can name without
 knowing where the schema lands in the document, so the tag property's `enum`
@@ -585,6 +593,7 @@ re-walked. A second call would reuse the same maps and agree with itself.
 | 33 | In an object `deny_unknown_fields` closes, a described `#[schema(open)]` flattened field is refused, including inside a variant serde never writes, since serde reads the map empty | the derive's ledger in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs), and `tests/ui/macros/schema_open_map_denying_unknown_fields.rs` for the wording |
 | 34 | A described named field serde reads under an `alias` is a property under its wire name and each distinct alias, read literally rather than through `rename_all`; a required one carries an `allOf` entry of a `oneOf` over one `required` per name and is left out of the object's `required`, and an optional one an entry of a `not` over a `required` for each pair of names; so a closed object carrying one is closed by `unevaluatedProperties`, and admits the alias | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde reads; `a_flattened_structs_alias_is_read_through_the_closed_parent` in [`tests/flatten.rs`](../crates/kynos/tests/flatten.rs), against the `jsonschema` validator; and the acceptance rows in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs) |
 | 35 | A described variant serde reads under an `alias` is named under its wire name and each distinct alias, read literally: each once in the compact `enum`; as an `enum` in place of the `const` of a tag property or an externally tagged unit variant; and as a property of an externally tagged object branch, present under exactly one by an `allOf` entry of a `oneOf` over `required` and closed by `unevaluatedProperties`. The `discriminator` maps no value | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde reads |
+| 36 | A name two described variants claim, by their own names or an `alias`, is named under the first alone, as serde reads it: an alias an earlier variant claims is dropped from the later one, and a variant whose own name an earlier one claims is refused, since serde writes it under a name that reads back as the other; a variant serde skips both ways claims nothing | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde reads; the derive's ledger and acceptance rows in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); and `tests/ui/macros/schema_variant_name_collision.rs` for the wording |
 
 ## Rationale
 

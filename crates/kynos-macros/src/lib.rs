@@ -206,7 +206,8 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// `alias` is named under each name it reads: in the `enum` of an all-unit
 /// enum, in the `enum` a tag or an externally tagged unit variant then is in
 /// place of a `const`, and as a property of an externally tagged object branch,
-/// present under exactly one. Under
+/// present under exactly one. A name two variants claim is named under the
+/// first alone, the one serde reads it as. Under
 /// `deny_unknown_fields`, every object serde then refuses unknown keys in is
 /// closed: a struct, each struct variant's fields, and an adjacently tagged
 /// branch. The derive uses `additionalProperties: false`, or
@@ -333,6 +334,12 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   serde refuses every key the object's fields do not name before the map
 ///   sees it, so it reads the map empty and writes members it would refuse to
 ///   read back. Drop one of the two.
+/// - A variant whose own name, after `rename` and `rename_all`, an earlier
+///   variant also reads, by its own name or an `alias`. serde reads a name as
+///   the first variant claiming it, so the later variant goes on the wire under
+///   a name that reads back as the earlier one. An `alias` an earlier variant
+///   already claims is accepted and named under that variant alone, since serde
+///   never reads it as the later one.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)
