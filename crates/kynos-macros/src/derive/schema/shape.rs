@@ -184,25 +184,20 @@ pub(super) fn object_body(
 /// -- legal from 3.1 onward, where a schema `$ref` applies its siblings. A
 /// boolean schema has nowhere to put it and keeps none.
 ///
-/// A `PhantomData` is the `null` serde writes and reads for it, emitted in
-/// place rather than resolved: `PhantomData<T>: Schema` is a bound nothing
-/// satisfies, and a marker must not cost the type one.
+/// A `PhantomData` is resolved as `()`, the `null` serde writes and reads for
+/// both, since `PhantomData<T>: Schema` is a bound nothing satisfies.
 pub(super) fn member_schema(field: &Field) -> TokenStream2 {
     let ty = &field.ty;
     let constrained =
         constraints(field).map(|constraints| quote!(let schema = #constraints.apply(schema);));
-    let schema = if is_phantom(ty) {
-        quote! {
-            ::kynos::openapi::Schema::of_type(
-                ::kynos::openapi::model::schema::types::SchemaType::Null,
-            )
-        }
+    let ty = if is_phantom(ty) {
+        quote!(())
     } else {
-        quote!(registry.resolve::<#ty>())
+        quote!(#ty)
     };
     let resolved = quote! {
         {
-            let schema = #schema;
+            let schema = registry.resolve::<#ty>();
             #constrained
             schema
         }
