@@ -19,6 +19,9 @@ pub mod link;
 // Private: it declares one deserializer the model's own fields point at, and
 // nothing a caller has a path to.
 mod nullable;
+// Private: it declares one deserializer the model's own fields point at, and
+// nothing a caller has a path to.
+mod number;
 pub mod parameter;
 pub mod paths;
 pub mod reference;

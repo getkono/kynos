@@ -156,6 +156,41 @@ run = "cargo nextest run --workspace --all-targets -E 'not binary(ui)'"
 description = "Run doc tests, which carry the compile-fail guarantees"
 run = "cargo test --workspace --all-features --doc"
 
+[tasks."test:arbitrary-precision"]
+description = "Test kynos-openapi with serde_json's arbitrary_precision forced on"
+# Cargo unifies features across the whole build graph, so any dependency asking
+# for `serde_json/arbitrary_precision` turns it on for this crate too, and with
+# it every `serde_json::Number` serializes as a one-field struct that only
+# serde_json's own serializer reads back as a number, and reaches a buffering
+# deserializer, such as an untagged enum's, as a map. No manifest here asks for
+# it, so without this task no build the repository runs has the switch on and
+# neither `to_yaml`'s handling of it nor the model's parsing is ever observed.
+#
+# `serde_json/arbitrary_precision` is `--features`' dependency spelling: a
+# feature of `kynos-openapi`'s `serde_json` dependency, turned on for this one
+# invocation. Not a dev-dependency, which would unify into every
+# `--workspace --all-targets` build and leave the default number path untested.
+#
+# The whole crate runs except two tests, excluded by exact name: the oracles
+# holding `to_yaml` to what `serde_yaml_ng` writes for the model. With the
+# switch on, the model's own YAML carries each number as that one-field struct
+# and `to_yaml` writes a number, so the two sides differ by design, as both
+# tests' doc comments say. Every other test holds in both graphs. A rename of
+# either oracle makes it run here and fail, rather than widening the exclusion.
+#
+# `--no-tests=fail` so that a filter matching nothing turns this task red rather
+# than letting it pass over nothing.
+#
+# Incremental compilation is off for the reason `features:check` gives: no other
+# invocation names this feature set, so a session written here is one nothing
+# else reads.
+env = { CARGO_INCREMENTAL = "0" }
+run = '''
+cargo nextest run -p kynos-openapi \
+  --features yaml,serde_json/arbitrary_precision --no-tests=fail \
+  -E 'not (test(=emit::tests::an_extension_repeating_a_model_field_leaves_the_field_in_place) | (binary(properties) & test(=yaml_emission_is_what_serde_yaml_ng_writes_for_the_model)))'
+'''
+
 [tasks."features:check"]
 description = "Lint every reachable feature combination"
 # Kynos gates the OpenAPI 3.2 object model, every optional codec and the escape
@@ -323,7 +358,30 @@ description = "Measure what each feature costs a linked artifact and monomorphiz
 # and a reader comparing this file against `mise.lock` is not looking at a
 # gap. The seven `[tools]` entries are locked because each of them resolves to
 # a downloaded file that a checksum can pin.
-tools = { "cargo:cargo-llvm-lines" = "0.4.48" }
+#
+# `python` is pinned here, and on every other task that runs a file from
+# `scripts/`, because until this pin there was no such thing as the interpreter
+# those five files run under: `python3` resolved to whatever the machine or the
+# runner image happened to ship. `containment.py` declares the floor --
+# `PYTHON_FLOOR`, 3.11, which is what the `tomllib` import at the head of it
+# already required -- and checks the scripts against it. This is the other half
+# of that number, and neither half closes the gap alone: the check states what
+# is allowed and cannot make anybody run the version it names, while a pin makes
+# what runs deterministic and states nothing, so a contributor on a newer
+# interpreter raises the floor with nothing reporting it. Raising it deliberately
+# means moving `PYTHON_FLOOR` and every line repeating it below in one commit.
+#
+# Task-scoped rather than `[tools]`, and for the cost the entry above is
+# task-scoped over rather than for the `cargo:` backend's reason. Two of
+# `ci.yml`'s nine jobs run a task from `scripts/`: `lint`, which runs four of
+# them, and `cost`, which runs this one. A third, `package`, pipes `cargo
+# metadata` through a `python3 -c` one-liner, which is not a file in `scripts/`
+# and is held to no floor. A `[tools]` entry would download and activate a
+# Python for the six jobs that run none at all.
+#
+# The patch version is pinned like every other tool in this file. The floor is
+# the minor; the patch is what keeps two machines on the same interpreter.
+tools = { "cargo:cargo-llvm-lines" = "0.4.48", python = "3.11.16" }
 run = "python3 scripts/cost_features.py"
 
 [tasks."cost:codegen"]
@@ -332,9 +390,9 @@ description = "The codegen half of the sweep alone"
 # half whose profile is the surprising one -- running it alone is how a reader
 # checks that claim without paying for twenty-five fat-LTO release builds.
 #
-# The `cargo-llvm-lines` pin is task-scoped for the reason given on
-# `cost:features` above.
-tools = { "cargo:cargo-llvm-lines" = "0.4.48" }
+# The `cargo-llvm-lines` and `python` pins are task-scoped for the reasons
+# given on `cost:features` above.
+tools = { "cargo:cargo-llvm-lines" = "0.4.48", python = "3.11.16" }
 run = "python3 scripts/cost_features.py --kind codegen"
 
 [tasks."cost:codecs"]
@@ -351,6 +409,10 @@ description = "The codec half of the sweep alone: what mounting each codec costs
 # compiles, and at `--release` with fat LTO. `check` runs `cost:test`, which
 # holds this script's parsers, its table reader and its ranking and builds
 # nothing.
+#
+# The `python` pin is task-scoped for the reason given on `cost:features`
+# above.
+tools = { python = "3.11.16" }
 run = "python3 scripts/cost_features.py --kind codec"
 
 [tasks."cost:record"]
@@ -363,9 +425,9 @@ description = "Record the measured deltas as the committed baseline"
 # Writes all three baselines under `crates/kynos/cost/`, because it runs the
 # whole sweep. Recording one alone is `--kind` plus `KYNOS_COST=overwrite`.
 #
-# The `cargo-llvm-lines` pin is task-scoped for the reason given on
-# `cost:features` above.
-tools = { "cargo:cargo-llvm-lines" = "0.4.48" }
+# The `cargo-llvm-lines` and `python` pins are task-scoped for the reasons
+# given on `cost:features` above.
+tools = { "cargo:cargo-llvm-lines" = "0.4.48", python = "3.11.16" }
 env = { KYNOS_COST = "overwrite" }
 run = "python3 scripts/cost_features.py"
 
@@ -386,9 +448,13 @@ description = "Test the cost sweep's parsers and its report"
 # `pytest`, no `tox` and no `requirements.txt` in this repository, and taking
 # a dependency to hold a few pure functions is the worse trade.
 #
-# `-B` because `.gitignore` has no `__pycache__` entry, and a check that
-# leaves an untracked directory behind is a check people learn to work around.
+# `-B` so a run writes no bytecode into the tree it tests. `.gitignore` covers
+# the imports no task controls, and this keeps the task from being one of them.
 # The test file sets `sys.dont_write_bytecode` too, for a direct `python3` run.
+#
+# The `python` pin is task-scoped for the reason given on `cost:features`
+# above.
+tools = { python = "3.11.16" }
 run = "python3 -B scripts/cost_features_test.py"
 
 [tasks."fixtures:generate"]
@@ -456,6 +522,10 @@ description = "Verify every crate is named only where its owner allows"
 # wrong is not hypothetical: a first cut desynchronised on a char literal in
 # `http/etag.rs` and quietly stopped seeing code at all, reporting that every
 # rule held.
+#
+# The `python` pin is task-scoped for the reason given on `cost:features`
+# above.
+tools = { python = "3.11.16" }
 run = "python3 scripts/containment.py"
 
 [tasks."containment:test"]
@@ -477,9 +547,13 @@ description = "Test what the containment gate reads its tables and its tree with
 # `pytest`, no `tox` and no `requirements.txt` in this repository, and taking
 # a dependency to hold a few hundred lines of pure Python is the worse trade.
 #
-# `-B` because `.gitignore` has no `__pycache__` entry, and a check that
-# leaves an untracked directory behind is a check people learn to work around.
+# `-B` so a run writes no bytecode into the tree it tests. `.gitignore` covers
+# the imports no task controls, and this keeps the task from being one of them.
 # The test file sets `sys.dont_write_bytecode` too, for a direct `python3` run.
+#
+# The `python` pin is task-scoped for the reason given on `cost:features`
+# above.
+tools = { python = "3.11.16" }
 run = "python3 -B scripts/containment_test.py"
 
 [tasks."docs:check"]
@@ -654,6 +728,7 @@ run = [
   { task = "commits:test" },
   { task = "docs:check" },
   { task = "panic:check" },
+  { task = "test:arbitrary-precision" },
   { task = "features:check" },
   { task = "features:targets" },
 ]
@@ -737,7 +812,13 @@ description = "Test that both halves of the commit rule agree about a merge"
 #
 # `unittest` from the standard library: this repository has no Python test
 # runner, and taking a dependency to drive git through subprocess is the worse
-# trade. `-B` because `.gitignore` has no `__pycache__` entry.
+# trade. The file imports nothing from `scripts/`; `-B` keeps the task
+# matching `cost:test` and `containment:test`, and keeps a later import from
+# `scripts/` writing nothing.
+#
+# The `python` pin is task-scoped for the reason given on `cost:features`
+# above.
+tools = { python = "3.11.16" }
 run = "python3 -B scripts/commits_test.py"
 
 [tasks."hooks:pre-push"]

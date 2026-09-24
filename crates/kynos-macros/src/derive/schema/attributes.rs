@@ -1,6 +1,6 @@
 use super::{
-    COUNTS, Comma, Container, Field, Fields, Lit, LitFloat, LitInt, NUMERIC, Punctuated, Span,
-    Spanned, TokenStream2, Type, Variant, quote, skip_value, string_value,
+    COUNTS, Container, Field, Fields, Lit, LitFloat, LitInt, NUMERIC, Span, Spanned, TokenStream2,
+    Type, Variant, quote, skip_value, string_value,
 };
 
 /// The wire name of a field: serde's `rename` if it has one, the container's
@@ -142,12 +142,20 @@ pub(super) fn transparent_members(fields: &Fields) -> (Vec<&Field>, Vec<&Field>)
     )
 }
 
-/// The one field a `#[serde(transparent)]` struct is both written and read
-/// through, when serde picks the same single field each way.
+/// The one field a `#[serde(transparent)]` struct is described by: the field
+/// both directions pick, or the single field of the one direction that picks
+/// one.
+///
+/// serde refuses a derive whose direction has no single candidate, so where only
+/// one direction picks a single field the struct compiles with that direction's
+/// derive alone, and the field is all serde writes, or reads. Two different
+/// single picks give no field, and `reject_transparent_without_one_field`
+/// refuses that struct.
 pub(super) fn transparent_member(fields: &Fields) -> Option<&Field> {
     let (written, read) = transparent_members(fields);
     match (written.as_slice(), read.as_slice()) {
-        ([written], [read]) if std::ptr::eq(*written, *read) => Some(*written),
+        ([written], [read]) => std::ptr::eq(*written, *read).then_some(*written),
+        ([only], _) | (_, [only]) => Some(*only),
         _ => None,
     }
 }
@@ -177,18 +185,6 @@ pub(super) fn is_phantom(ty: &Type) -> bool {
 pub(super) fn is_skipped_both_ways(attrs: &[syn::Attribute]) -> bool {
     serde_flag(attrs, &["skip"])
         || (serde_flag(attrs, &["skip_serializing"]) && serde_flag(attrs, &["skip_deserializing"]))
-}
-
-/// The members of a tuple or tuple variant that hold a position on the wire,
-/// in order: each one serde does not skip both ways.
-///
-/// Read off skip attributes rather than [`is_described`], because a
-/// `PhantomData` dropped from the list would shift every later position.
-pub(super) fn positional_members(fields: &Punctuated<Field, Comma>) -> Vec<&Field> {
-    fields
-        .iter()
-        .filter(|field| !is_skipped_both_ways(&field.attrs))
-        .collect()
 }
 
 /// Whether a variant is a unit on the wire: declared as one, or a newtype

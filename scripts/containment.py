@@ -16,6 +16,7 @@ A rule matched over genuinely raw text reads a renamed flag off a stale
 comment and reports the row as holding.
 """
 
+import ast
 import os
 import re
 import sys
@@ -1242,6 +1243,265 @@ def cargo_config_failures(text):
     return problems
 
 
+# --- The Python floor --------------------------------------------------------
+# What grammar the files under `scripts/` are written in. A declaration rather
+# than a measurement: until something states a floor it is whatever the newest
+# syntax anyone has happened to write, and the only record that this one had
+# already moved was a commit message on #144, where an f-string was rewritten so
+# the file would parse under an interpreter nobody had named.
+#
+# 3.11 rather than the 3.9 grammar these five files happen to parse under.
+# `import tomllib` at the head of this file is 3.11, so the *runtime* floor was
+# already this one whatever the grammar allowed, and declaring 3.9 would publish
+# a number the gate script itself cannot run at.
+#
+# The number is written twice deliberately -- here, and as the `python` pin on
+# every mise task that runs one of these files -- because neither half closes
+# the gap alone. The pin makes what runs deterministic and declares nothing, so
+# a contributor on a newer interpreter still raises the floor with nothing
+# reporting it. This check declares what is allowed and cannot make the pinned
+# interpreter the one anybody runs. A change to one is a change to both, and
+# `python_pin_failures` below is what holds them to that rather than the three
+# comments that merely state it.
+#
+# What neither of them holds is the *runtime* floor. `feature_version` bounds
+# grammar and nothing else: `import tomllib` parses at every version this rule
+# can ask about, so a script reaching for a newer standard library -- the shape
+# `tomllib` itself is -- moves the real floor with this number and this rule
+# both unchanged. That side is held by the gate being run under the pin, where
+# an interpreter below 3.11 fails at the import above before any rule runs, and
+# it is held by nothing else. Raising the stdlib a script calls means raising
+# this number by hand in the same commit.
+PYTHON_FLOOR = (3, 11)
+SCRIPTS = ROOT / "scripts"
+MISE_CONFIG = ROOT / "mise.toml"
+# The one task that runs `python3` over something other than a file in
+# `scripts/`: `publish:check` pipes `cargo metadata` through a one-liner. Named
+# here rather than skipped by a pattern, so a second inline interpreter has to
+# be argued for in this file instead of arriving unnoticed -- inline code is
+# code no floor rule reads, because the floor rule reads files.
+PYTHON_UNPINNED = {"publish:check"}
+
+
+def refused_at(source, path, version):
+    """The `SyntaxError` parsing `source` at `version` raises, or `None`.
+
+    Returned rather than raised, for the reason `cargo_config_failures` gives:
+    a rule that takes the process down takes the test run with it. A script the
+    interpreter cannot read is exactly when the rest of this gate has to go on
+    reporting.
+    """
+    try:
+        ast.parse(source, filename=path, feature_version=version)
+    except SyntaxError as error:
+        return error
+    return None
+
+
+def python_floor_failures(scripts, floor=PYTHON_FLOOR):
+    """Which of `scripts` stopped parsing at `floor`, and what each one needs.
+
+    `scripts` is `(path, source)` pairs, opened by `main` rather than read here
+    for the reason its docstring gives: importing this module runs no rule.
+
+    `floor` is an argument so that a case can state its own, the way the rules
+    above take the documents they are stated over. It has to be one: the syntax
+    that violates a floor is by definition syntax the interpreter under the
+    case may be too old to parse, so a suite pinned to this module's constant
+    could assert only what the newest CPython accepts.
+
+    Each file that fails is re-parsed at every minor version between `floor`
+    and this interpreter's own, and the first that accepts it is the version
+    the message reports. `testing.md#cross-cutting` is the argument for naming
+    it rather than saying that two version numbers differ: five files are held
+    here, and a mismatch leaves the reader to find which one moved and how far.
+
+    A file that parses at none of them gets its own sentence. It is either
+    broken or written in grammar newer than the interpreter running this gate,
+    and from in here the two are the same observation -- `ast` cannot parse
+    syntax the running CPython never implemented, so the search has no answer
+    to give above `sys.version_info`.
+    """
+    stated, running = f"3.{floor[1]}", f"3.{sys.version_info.minor}"
+    problems = []
+    for path, source in scripts:
+        refused = refused_at(source, path, floor)
+        if refused is None:
+            continue
+        needs = next(
+            (
+                f"3.{minor}"
+                for minor in range(floor[1] + 1, sys.version_info.minor + 1)
+                if refused_at(source, path, (3, minor)) is None
+            ),
+            None,
+        )
+        stops = f"line {refused.lineno} is where it stops: {refused.msg}"
+        if needs is None:
+            problems.append(
+                f"{path} does not parse at Python {stated}, which is the floor "
+                "scripts/ is held to, and it parses at no version up to this "
+                f"interpreter's own ({running}) either -- {stops}. Either the "
+                "file is broken, or it is written in grammar newer than the "
+                "interpreter running this gate, which the `python` pin on the "
+                f"script tasks in mise.toml fixes at {stated}. Repair the line, "
+                "or raise the pin and this floor in the same commit"
+            )
+        else:
+            problems.append(
+                f"{path} does not parse at Python {stated}, which is the floor "
+                f"scripts/ is held to: it needs {needs} -- {stops}. Every task "
+                f"that runs this file pins {stated}, so the interpreter CI reads "
+                "it under is not the one that wrote it. Write the line in "
+                f"grammar {stated} accepts, or raise the pin on the script tasks "
+                "in mise.toml and this floor in the same commit"
+            )
+    return problems
+
+
+def python_pin_failures(text, scripts, floor=PYTHON_FLOOR, exempt=PYTHON_UNPINNED):
+    """What `mise.toml`'s `python` pins do not hold, `text` being that file.
+
+    The floor is written in nine places -- `PYTHON_FLOOR` above, and a `python`
+    pin on each mise task that runs a file from `scripts/` -- and three separate
+    comments say that moving one means moving the rest. Nothing held them to it.
+    `PYTHON_FLOOR` set two minors above every pin printed `every rule holds`, and
+    so did a ninth script task carrying no pin at all: the same silence the floor
+    rule exists to break, one layer further out. `testing.md#cross-cutting` is
+    the rule applied -- a closed set with names, one pin apiece, asserted against
+    the names rather than intended. `Exclusions.excluded_by` in
+    `cost_features_test.py` and `declared_merge_guard` in `commits_test.py` are
+    the two precedents for reading a declaration back out of `mise.toml`.
+
+    Parsed rather than scanned, for the reason the grading comment gives about
+    the manifest: a regex over the task headers loses a quoted key, and every
+    task key in that file is quoted. A lost key here is a task whose missing pin
+    this rule reports as absent because it never read it.
+
+    `scripts` is the set of paths the floor rule read out of `scripts/`, relative
+    to that directory and handed over rather than globbed again, so that one set
+    answers both rules. That is the whole of what holds the glob: narrowing it to
+    `cost_*.py` silences the floor rule over three files and no other rule here
+    can see it, while from in here those are three scripts a task runs and the
+    floor rule no longer reads.
+
+    There is deliberately no failure for a file under `scripts/` that no task
+    runs. A module imported by one of these scripts rather than run as one is a
+    shape this repository does not have today and has no reason to refuse, and
+    the floor rule reads it either way.
+
+    Unparseable TOML is reported rather than raised, for `cargo_config_failures`'
+    reason.
+    """
+    try:
+        config = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as error:
+        return [f"mise.toml is not readable TOML: {error}"]
+
+    stated = f"3.{floor[1]}"
+    problems, run_by, pinned, unpinned, inline = [], {}, {}, [], set()
+    for name, task in sorted(config.get("tasks", {}).items()):
+        run = task.get("run")
+        body = "\n".join(
+            part
+            for part in ([run] if isinstance(run, str) else run or [])
+            if isinstance(part, str)
+        )
+        named = set(re.findall(r"scripts/(\S+\.py)", body))
+        pin = task.get("tools", {}).get("python")
+        for script in named:
+            run_by.setdefault(script, []).append(name)
+        if named and pin is None:
+            unpinned.append(name)
+        elif named:
+            pinned.setdefault(pin, []).append(name)
+        elif pin is not None:
+            problems.append(
+                f"the mise task `{name}` pins a `python` and runs no file from "
+                "scripts/, so the pin installs an interpreter for a task that "
+                "opens none and repeats a floor it does not stand under. Drop the "
+                "pin, or give the task the script it was added for"
+            )
+        elif "python3" in body:
+            inline.add(name)
+
+    if unpinned:
+        problems.append(
+            "a mise task runs a file from scripts/ and pins no `python`, so what "
+            "it runs is whatever interpreter the machine has rather than the "
+            f"{stated} floor containment.py declares. The pin is the only half of "
+            "that number that is true of anything anybody runs; add "
+            "`tools = { python = ... }` at the version its siblings carry:\n    "
+            + "\n    ".join(unpinned)
+        )
+
+    if len(pinned) > 1:
+        problems.append(
+            "the mise tasks that run a file from scripts/ pin more than one "
+            "`python`, so which interpreter the floor names depends on which task "
+            "a reader opened. Raising the floor is one commit moving every pin and "
+            "`PYTHON_FLOOR` together, and this is what reports that it was not "
+            "one commit:\n    "
+            + "\n    ".join(
+                f"{version}: " + ", ".join(sorted(names))
+                for version, names in sorted(pinned.items())
+            )
+        )
+
+    for version, names in sorted(pinned.items()):
+        read = re.match(r"(\d+)\.(\d+)", version)
+        if read is None:
+            problems.append(
+                f'mise.toml pins `python = "{version}"` for the tasks that run '
+                "scripts/ and nothing here can read a minor version out of it, so "
+                "the pin cannot be compared against the floor it is half of. Pin a "
+                f"version, at {stated}:\n    " + "\n    ".join(sorted(names))
+            )
+        elif (int(read[1]), int(read[2])) != floor:
+            problems.append(
+                f"mise.toml pins python {version} for the tasks that run scripts/ "
+                f"and containment.py declares a floor of {stated}. These are one "
+                "number written twice: a floor nothing runs at is a claim nobody "
+                "keeps, and an interpreter nothing declares is what the floor rule "
+                "exists to refuse. Move both in the same commit:\n    "
+                + "\n    ".join(sorted(names))
+            )
+
+    if unread := sorted(set(run_by) - set(scripts)):
+        problems.append(
+            "a mise task runs a file under scripts/ that the floor rule never "
+            "read, so a file something runs is held to no grammar at all. Either "
+            "the task names a file that is not there, or the floor rule's own file "
+            "set has narrowed and this is the only thing that says so:\n    "
+            + "\n    ".join(
+                f"{script}: run by " + ", ".join(sorted(run_by[script]))
+                for script in unread
+            )
+        )
+
+    if stale := sorted(set(exempt) - inline):
+        problems.append(
+            "mise.toml no longer holds a task `PYTHON_UNPINNED` exempts from the "
+            "`python` pin. That exemption is for an inline `python3` running no "
+            "file in scripts/, and so held to no floor; naming a task that has "
+            "gone, or that has stopped running python3, is an exemption that "
+            "outlived its argument and now hides the next one:\n    "
+            + "\n    ".join(stale)
+        )
+
+    if unexempt := sorted(inline - set(exempt)):
+        problems.append(
+            "a mise task runs `python3` over something other than a file in "
+            "scripts/, so it is held to no declared floor and nothing here can say "
+            "what it should be pinned to. Move the code into scripts/ where the "
+            "floor rule reads it, or name the task in `PYTHON_UNPINNED` and say "
+            "there why an inline interpreter is the right trade:\n    "
+            + "\n    ".join(unexempt)
+        )
+
+    return problems
+
+
 def main(architecture=None, testing=None, performance=None, nfr=None, corpus=None):
     """Run every rule over this repository, and report what does not hold.
 
@@ -1705,6 +1965,15 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
     # --- The dev build profile -----------------------------------------------
     failures += cargo_config_failures(
         CARGO_CONFIG.read_text() if CARGO_CONFIG.is_file() else None
+    )
+
+    # --- The Python floor -----------------------------------------------------
+    scripts = sorted(SCRIPTS.glob("*.py"))
+    failures += python_floor_failures(
+        (path.relative_to(ROOT).as_posix(), path.read_text()) for path in scripts
+    )
+    failures += python_pin_failures(
+        MISE_CONFIG.read_text(), {path.relative_to(SCRIPTS).as_posix() for path in scripts}
     )
 
     # --- Report ---------------------------------------------------------------
