@@ -770,3 +770,61 @@ fn an_open_unchecked_field_still_constrains_the_parents_own_properties() {
         "the parent's own required property was not required: {schema}"
     );
 }
+
+/// A `Problem` as an internally tagged newtype variant's payload, which is
+/// composed with the tag-only object as a flattened field would be.
+#[derive(Schema, Serialize)]
+#[serde(tag = "outcome")]
+enum Outcome {
+    Failed(kynos::Problem),
+    Done { id: u64 },
+}
+
+/// The tag is one more member `Problem`'s `additionalProperties: true` marks
+/// evaluated and permits, so the composition accepts what serde writes, while
+/// the tag and the registered members stay typed.
+#[test]
+fn a_problem_as_a_tagged_newtype_payload_accepts_what_serde_writes() {
+    let failed = Outcome::Failed(
+        kynos::Problem::new(kynos::http::StatusCode::CONFLICT)
+            .with_extension("retry", serde_json::json!(true)),
+    );
+    assert_eq!(
+        serde_json::to_value(&failed).expect("the value serializes"),
+        serde_json::json!({
+            "outcome": "Failed", "retry": true,
+            "status": 409, "title": "Conflict", "type": "about:blank"
+        })
+    );
+    let refusals = refusals(&failed);
+    assert!(
+        refusals.is_empty(),
+        "the type cannot produce an instance its own description accepts: {refusals:?}\n\
+         schema: {}",
+        emitted::<Outcome>()
+    );
+
+    let schema = emitted::<Outcome>();
+    let validator =
+        jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
+    assert!(
+        !validator.is_valid(&serde_json::json!({
+            "outcome": "Failed", "type": "about:blank", "status": "409"
+        })),
+        "a problem's `status` was accepted as a string: {schema}"
+    );
+    assert!(
+        !validator.is_valid(&serde_json::json!({
+            "outcome": "Lost", "type": "about:blank", "status": 409
+        })),
+        "a tag naming no variant was accepted: {schema}"
+    );
+
+    let done = Outcome::Done { id: 1 };
+    let refusals = self::refusals(&done);
+    assert!(
+        refusals.is_empty(),
+        "the sibling struct variant is refused beside the problem branch: {refusals:?}\n\
+         schema: {schema}"
+    );
+}
