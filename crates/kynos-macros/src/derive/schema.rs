@@ -682,10 +682,13 @@ fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
 /// [`READ_OVERRIDES`] are refused: [`is_written`] says why `serialize_with`
 /// changes nothing there.
 ///
-/// A `#[serde(transparent)]` struct is scanned over the fields
-/// [`transparent_picks`] says serde writes through, for [`WRITE_OVERRIDES`],
-/// and reads through, for [`READ_OVERRIDES`]: serde hands no other field's value
-/// to a function in either direction.
+/// A `#[serde(transparent)]` struct is scanned only on the one field each
+/// direction picks, from [`transparent_picks`]: a field picked both ways for
+/// [`WIRE_FORM_OVERRIDES`], one picked for writing alone for
+/// [`WRITE_OVERRIDES`], one picked for reading alone for [`READ_OVERRIDES`].
+/// serde derives no direction with several candidates, and applies an override
+/// to the picked field alone, so no other field's value reaches a function in
+/// either direction.
 ///
 /// An unnamed member is exempt only when serde skips it both ways, and never on
 /// a newtype struct, whose member serde writes through the function whatever it
