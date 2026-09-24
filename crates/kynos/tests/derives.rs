@@ -1209,9 +1209,24 @@ mod overlapping {
         #[serde(alias = "On", alias = "Idle")]
         Off,
     }
+
+    #[derive(Schema, serde::Serialize, serde::Deserialize)]
+    #[serde(tag = "kind")]
+    pub(super) enum OverlappingSignal {
+        Start,
+        #[serde(alias = "Start", alias = "halt")]
+        Stop,
+    }
+
+    #[derive(Schema, serde::Serialize, serde::Deserialize)]
+    pub(super) enum OverlappingCommand {
+        Push(u64),
+        #[serde(alias = "Push", alias = "tug")]
+        Pull(u64),
+    }
 }
 
-use overlapping::OverlappingLevel;
+use overlapping::{OverlappingCommand, OverlappingLevel, OverlappingSignal};
 
 /// A variant's alias naming another variant is listed once in the compact
 /// `enum`, which already holds it: `enum` items should be unique.
@@ -1232,6 +1247,77 @@ fn an_alias_another_variant_already_names_is_listed_once() {
     assert!(matches!(
         serde_json::from_str::<OverlappingLevel>(r#""Idle""#),
         Ok(OverlappingLevel::Off)
+    ));
+}
+
+/// A tag value an earlier variant already claims is named in that variant's
+/// branch alone, since serde reads it as the first variant claiming it.
+///
+/// Naming `Start` in both branches made `{"kind":"Start"}` match two, which
+/// `oneOf` refuses, though serde reads it as `Start`.
+#[test]
+fn a_tag_value_an_earlier_variant_claims_is_named_in_its_branch_alone() {
+    assert_eq!(
+        emitted::<OverlappingSignal>(),
+        serde_json::json!({
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {"kind": {"type": "string", "const": "Start"}},
+                    "required": ["kind"],
+                },
+                {
+                    "type": "object",
+                    "properties": {"kind": {"type": "string", "enum": ["Stop", "halt"]}},
+                    "required": ["kind"],
+                },
+            ],
+            "discriminator": {"propertyName": "kind"},
+        })
+    );
+
+    assert!(matches!(
+        serde_json::from_str::<OverlappingSignal>(r#"{"kind":"Start"}"#),
+        Ok(OverlappingSignal::Start)
+    ));
+    assert!(matches!(
+        serde_json::from_str::<OverlappingSignal>(r#"{"kind":"halt"}"#),
+        Ok(OverlappingSignal::Stop)
+    ));
+}
+
+/// A variant key an earlier variant already claims keys that variant's branch
+/// alone, for the same reason.
+///
+/// Keying `Pull`'s branch by `Push` too made `{"Push":1}` match two branches.
+#[test]
+fn a_variant_key_an_earlier_variant_claims_keys_its_branch_alone() {
+    let payload = emitted::<u64>();
+    assert_eq!(
+        emitted::<OverlappingCommand>(),
+        serde_json::json!({"oneOf": [
+            {
+                "type": "object",
+                "properties": {"Push": payload},
+                "required": ["Push"],
+                "additionalProperties": false,
+            },
+            {
+                "type": "object",
+                "properties": {"Pull": payload, "tug": payload},
+                "allOf": [{"oneOf": [{"required": ["Pull"]}, {"required": ["tug"]}]}],
+                "unevaluatedProperties": false,
+            },
+        ]})
+    );
+
+    assert!(matches!(
+        serde_json::from_str::<OverlappingCommand>(r#"{"Push":1}"#),
+        Ok(OverlappingCommand::Push(1))
+    ));
+    assert!(matches!(
+        serde_json::from_str::<OverlappingCommand>(r#"{"tug":1}"#),
+        Ok(OverlappingCommand::Pull(1))
     ));
 }
 

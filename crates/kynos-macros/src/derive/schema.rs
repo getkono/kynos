@@ -32,6 +32,7 @@ mod aliases;
 mod attributes;
 mod shape;
 
+use aliases::shadowed_variant;
 use attributes::{
     constraints, described_members, field_name, is_described, is_flattened, is_open, is_option,
     is_phantom, is_required, is_skipped_both_ways, is_unit_like, open_span, serde_flag,
@@ -95,6 +96,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     reject_container_conversions(input)?;
     reject_untagged(input)?;
     reject_unread_variant(input)?;
+    reject_shadowed_variant(input)?;
     reject_wire_form_overrides(input)?;
     reject_catch_all(input)?;
     reject_transparent_without_one_field(input)?;
@@ -739,6 +741,41 @@ fn reject_unread_variant(input: &DeriveInput) -> syn::Result<()> {
         }
     }
     Ok(())
+}
+
+/// A variant whose own name serde reads as an earlier variant has no schema
+/// true of both directions.
+///
+/// serde reads a name as the first variant claiming it, by its wire name or an
+/// `alias`, and does not refuse the collision, so it writes the later variant
+/// under a name it reads back as the earlier one: naming the later variant's
+/// branch or `enum` item there describes a request serde reads otherwise, and
+/// leaving the name out describes a response serde writes. A variant serde
+/// reads and never writes is refused alike, since its own name is dead and its
+/// aliases could all be too. An alias an earlier variant claims is only
+/// unreachable, and [`aliases::variants_read_names`] leaves it out. A variant
+/// serde skips both ways claims nothing.
+fn reject_shadowed_variant(input: &DeriveInput) -> syn::Result<()> {
+    let Data::Enum(data) = &input.data else {
+        return Ok(());
+    };
+
+    let container = Container::read(input);
+    let Some((later, earlier)) = shadowed_variant(&described_variants(data), &container) else {
+        return Ok(());
+    };
+    Err(syn::Error::new(
+        later.ident.span(),
+        format!(
+            "serde reads `{name}`, this variant's own name, as `{earlier}`, the earlier variant \
+             that also claims it, so `{later}` goes on the wire under a name that reads back as \
+             `{earlier}`, and no schema describing `{later}` is true in both directions. Drop \
+             the `rename` or `alias` that gives both variants the name",
+            name = variant_name(later, &container),
+            earlier = earlier.ident,
+            later = later.ident,
+        ),
+    ))
 }
 
 /// `#[serde(other)]` makes an enum accept every tag it does not name.

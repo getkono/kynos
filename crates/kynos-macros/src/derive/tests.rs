@@ -303,6 +303,18 @@ mod schema {
                 ),
                 "makes serde write this variant and refuse to read it back",
             ),
+            case(
+                "a variant's own name an earlier variant's `alias` claims",
+                quote::quote!(
+                    #[serde(tag = "kind")]
+                    enum Signal {
+                        #[serde(alias = "Stop")]
+                        Start,
+                        Stop,
+                    }
+                ),
+                "this variant's own name",
+            ),
         ]
     }
 
@@ -406,6 +418,43 @@ mod schema {
 
         if let Err(error) = expand_inner(&input) {
             panic!("a variant in no schema was refused: {error}");
+        }
+    }
+
+    /// A name only an earlier variant's `alias` shares is dropped from the
+    /// later one rather than refused, and one a variant serde skips both ways
+    /// claims is claimed by nothing serde reads.
+    #[test]
+    fn a_shared_name_serde_still_reads_back_is_accepted() {
+        for declaration in [
+            quote::quote!(
+                enum Signal {
+                    Start,
+                    #[serde(alias = "Start")]
+                    Stop,
+                }
+            ),
+            quote::quote!(
+                enum Signal {
+                    #[serde(alias = "go")]
+                    Start,
+                    #[serde(alias = "go")]
+                    Stop,
+                }
+            ),
+            quote::quote!(
+                enum Signal {
+                    #[serde(skip, alias = "Stop")]
+                    Start,
+                    Stop,
+                }
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+            if let Err(error) = expand_inner(&input) {
+                panic!("a name serde reads back was refused: {error}");
+            }
         }
     }
 

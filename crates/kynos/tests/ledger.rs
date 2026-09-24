@@ -121,6 +121,10 @@ fn every_rejected_schema_attribute_has_a_case() {
             "`#[schema(open)]` field beside `#[serde(deny_unknown_fields)]`",
             "macros/schema_open_map_denying_unknown_fields.stderr",
         ),
+        (
+            "A variant whose own name",
+            "macros/schema_variant_name_collision.stderr",
+        ),
     ];
     const HEADING: &str = "# Rejected, because serde and the schema would disagree";
 
