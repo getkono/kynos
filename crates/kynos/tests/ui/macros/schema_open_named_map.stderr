@@ -1,0 +1,34 @@
+error[E0277]: `Labels` cannot be flattened with `#[schema(open)]`
+  --> tests/ui/macros/schema_open_named_map.rs:15:12
+   |
+15 |     extra: Labels,
+   |            ^^^^^^ not a map described in place
+   |
+help: the trait `OpenMap` is not implemented for `Labels`
+  --> tests/ui/macros/schema_open_named_map.rs:8:1
+   |
+ 8 | struct Labels(BTreeMap<String, String>);
+   | ^^^^^^^^^^^^^
+   = note: `#[schema(open)]` moves a map's value schema onto the object carrying it, which needs the map's own schema rather than a `$ref` to one
+   = note: flatten the `HashMap` or `BTreeMap` field itself, or drop `#[schema(open)]` from a type that names its members
+help: the following other types implement trait `OpenMap`
+  --> src/schema/impls/collection.rs
+   |
+   | impl<K: MapKey, V: Schema, S> OpenMap for HashMap<K, V, S> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `HashMap<K, V, S>`
+   |
+   | impl<K: MapKey, V: Schema> OpenMap for BTreeMap<K, V> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `BTreeMap<K, V>`
+   |
+  ::: src/schema/impls/wrapper.rs
+   |
+   | impl<T: OpenMap> OpenMap for Box<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Box<T>`
+   |
+   | impl<T: OpenMap> OpenMap for Arc<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Arc<T>`
+note: required by a bound in `is_open_map`
+  --> tests/ui/macros/schema_open_named_map.rs:15:12
+   |
+15 |     extra: Labels,
+   |            ^^^^^^ required by this bound in `is_open_map`
