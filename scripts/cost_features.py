@@ -617,23 +617,29 @@ def released():
     which an older tag could not be relied on to do against today's fixtures.
 
     A tag that predates the baselines, as `kynos-v0.1.0` does, reads as `None`
-    for each table rather than as a failure. Git's own failures are the same
-    absence, since this is context for the report and never a measurement.
+    for each table rather than as a failure. Git's own failures, an absent
+    `git` among them, are the same absence: this is context for the report and
+    never a measurement, and it runs after every build has already been paid
+    for.
     """
-    described = subprocess.run(
-        ["git", "describe", "--tags", "--abbrev=0", "--match", "kynos-v*"],
-        cwd=ROOT, capture_output=True, text=True, check=False,
-    )
-    if described.returncode != 0:
+
+    def git(*args):
+        try:
+            done = subprocess.run(
+                ["git", *args], cwd=ROOT, capture_output=True, text=True, check=False
+            )
+        except FileNotFoundError:
+            return None
+        return done.stdout if done.returncode == 0 else None
+
+    tag = git("describe", "--tags", "--abbrev=0", "--match", "kynos-v*")
+    if tag is None:
         return None, {}
-    tag = described.stdout.strip()
+    tag = tag.strip()
     tables = {}
     for name in (BINARY_TSV, CODEGEN_TSV, CODEC_TSV):
-        shown = subprocess.run(
-            ["git", "show", f"{tag}:{COST.relative_to(ROOT).as_posix()}/{name}"],
-            cwd=ROOT, capture_output=True, text=True, check=False,
-        )
-        tables[name] = parse_recorded(shown.stdout) if shown.returncode == 0 else None
+        shown = git("show", f"{tag}:{COST.relative_to(ROOT).as_posix()}/{name}")
+        tables[name] = None if shown is None else parse_recorded(shown)
     return tag, tables
 
 
