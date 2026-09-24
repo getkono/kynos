@@ -1,10 +1,14 @@
-error[E0277]: `BTreeMap<std::string::String, std::string::String>` cannot be flattened open beside a field serde writes and never reads
-  --> tests/ui/macros/schema_field_skipped_on_read_beside_open_map.rs:17:12
+error[E0277]: `Extra` cannot be flattened open beside a field serde writes and never reads
+  --> tests/ui/macros/schema_open_struct_beside_field_skipped_on_read.rs:19:12
    |
-17 |     extra: BTreeMap<String, String>,
-   |            ^^^^^^^^^^^^^^^^^^^^^^^^ not an open map that constrains no member
+19 |     extra: Extra,
+   |            ^^^^^ not an open map that constrains no member
    |
-   = help: the trait `AdmitsAny` is not implemented for `BTreeMap<std::string::String, std::string::String>`
+help: the trait `AdmitsAny` is not implemented for `Extra`
+  --> tests/ui/macros/schema_open_struct_beside_field_skipped_on_read.rs:8:1
+   |
+ 8 | struct Extra {
+   | ^^^^^^^^^^^^
    = note: a `skip_deserializing` field is left out of the schema, since serde never reads it, but serde still writes it, so an open field beside it has to leave the object open to members the schema does not name; a map's value schema becomes the object's `unevaluatedProperties` and refuses the field
    = note: use `#[serde(skip)]` to leave the field out both ways, drop `skip_deserializing` so the schema names it, or flatten an `Unchecked<serde_json::Map<String, Value>>`, which leaves the object open
 help: the following other types implement trait `AdmitsAny`
@@ -21,7 +25,7 @@ help: the following other types implement trait `AdmitsAny`
    | impl<T: AdmitsAny> AdmitsAny for Arc<T> {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Arc<T>`
 note: required by a bound in `admits_any`
-  --> tests/ui/macros/schema_field_skipped_on_read_beside_open_map.rs:17:12
+  --> tests/ui/macros/schema_open_struct_beside_field_skipped_on_read.rs:19:12
    |
-17 |     extra: BTreeMap<String, String>,
-   |            ^^^^^^^^ required by this bound in `admits_any`
+19 |     extra: Extra,
+   |            ^^^^^ required by this bound in `admits_any`

@@ -325,15 +325,13 @@ mod schema {
     fn field_ledger() -> Vec<Case> {
         vec![
             case(
-                "`skip_deserializing` alone on a field beside an open flattened map",
+                "`skip_deserializing` alone on a field of an object `deny_unknown_fields` closes",
                 quote::quote!(
+                    #[serde(deny_unknown_fields)]
                     struct Thing {
                         id: u64,
                         #[serde(skip_deserializing)]
                         stamp: u64,
-                        #[serde(flatten)]
-                        #[schema(open)]
-                        extra: BTreeMap<String, String>,
                     }
                 ),
                 "refuses a member the schema does not name",
@@ -1867,84 +1865,6 @@ mod schema {
         }
     }
 
-    /// A named field serde writes and never reads is refused beside an open
-    /// flattened field, in every object serde writes.
-    ///
-    /// Left out of the schema, the field is a member the object does not name,
-    /// so the `unevaluatedProperties` the open map gives the object refuses what
-    /// serde writes of it. One row per placement: a field, a flattened struct,
-    /// and a struct variant under the tagging that nests it and the one that
-    /// does not.
-    #[test]
-    fn a_field_serde_never_reads_beside_an_open_map_is_refused() {
-        each_case_is_refused(
-            vec![
-                case(
-                    "`skip_deserializing` alone on a field beside an open map",
-                    quote::quote!(
-                        struct Thing {
-                            id: u64,
-                            #[serde(skip_deserializing)]
-                            stamp: u64,
-                            #[serde(flatten)]
-                            #[schema(open)]
-                            extra: BTreeMap<String, String>,
-                        }
-                    ),
-                    "`skip_deserializing` leaves this field out of the schema",
-                ),
-                case(
-                    "`skip_deserializing` alone on a flattened struct beside an open map",
-                    quote::quote!(
-                        struct Thing {
-                            id: u64,
-                            #[serde(flatten, skip_deserializing)]
-                            audit: Audit,
-                            #[serde(flatten)]
-                            #[schema(open)]
-                            extra: BTreeMap<String, String>,
-                        }
-                    ),
-                    "`skip_deserializing` leaves this field out of the schema",
-                ),
-                case(
-                    "`skip_deserializing` alone beside an open map in an externally tagged variant",
-                    quote::quote!(
-                        enum Event {
-                            Created {
-                                at: u64,
-                                #[serde(skip_deserializing)]
-                                stamp: u64,
-                                #[serde(flatten)]
-                                #[schema(open)]
-                                extra: BTreeMap<String, String>,
-                            },
-                        }
-                    ),
-                    "`skip_deserializing` leaves this field out of the schema",
-                ),
-                case(
-                    "`skip_deserializing` alone beside an open map in an internally tagged variant",
-                    quote::quote!(
-                        #[serde(tag = "kind")]
-                        enum Event {
-                            Created {
-                                at: u64,
-                                #[serde(skip_deserializing)]
-                                stamp: u64,
-                                #[serde(flatten)]
-                                #[schema(open)]
-                                extra: BTreeMap<String, String>,
-                            },
-                        }
-                    ),
-                    "`skip_deserializing` leaves this field out of the schema",
-                ),
-            ],
-            expand_inner,
-        );
-    }
-
     /// Beside an open flattened field, a field serde never writes, or never
     /// writes and never reads, expands.
     ///
@@ -2007,6 +1927,114 @@ mod schema {
                 panic!("a field serde never writes beside an open map must expand: {error}");
             }
         }
+    }
+
+    /// The `AdmitsAny` and `OpenMap` witnesses the expansion asserts for the
+    /// input, in that order.
+    fn open_witnesses_in(declaration: TokenStream2) -> (usize, usize) {
+        let input: DeriveInput = syn::parse2(declaration).expect("the case itself must parse");
+        let expansion = match expand_inner(&input) {
+            Ok(expansion) => expansion.to_string(),
+            Err(error) => panic!("the case must expand: {error}"),
+        };
+        (
+            expansion.matches("admits_any ::").count(),
+            expansion.matches("is_open_map ::").count(),
+        )
+    }
+
+    /// Beside a named field serde writes and never reads, an open flattened
+    /// field is bounded by `AdmitsAny` rather than refused, in every object
+    /// serde writes.
+    ///
+    /// Left out of the schema, the field is a member the object does not name,
+    /// so what refuses it is the `unevaluatedProperties` the open field's type
+    /// hoists, if it hoists one: `Unchecked` does not, a map does. That is the
+    /// type's answer, so the rule is a bound. One row per placement, as for the
+    /// closed object: a field, a flattened struct, and a struct variant under
+    /// the tagging that nests it and the one that does not.
+    #[test]
+    fn a_field_serde_never_reads_bounds_the_open_field_beside_it_by_admits_any() {
+        for declaration in [
+            quote::quote!(
+                struct Thing {
+                    id: u64,
+                    #[serde(skip_deserializing)]
+                    stamp: u64,
+                    #[serde(flatten)]
+                    #[schema(open)]
+                    extra: BTreeMap<String, String>,
+                }
+            ),
+            quote::quote!(
+                struct Thing {
+                    id: u64,
+                    #[serde(flatten, skip_deserializing)]
+                    audit: Audit,
+                    #[serde(flatten)]
+                    #[schema(open)]
+                    extra: BTreeMap<String, String>,
+                }
+            ),
+            quote::quote!(
+                enum Event {
+                    Created {
+                        at: u64,
+                        #[serde(skip_deserializing)]
+                        stamp: u64,
+                        #[serde(flatten)]
+                        #[schema(open)]
+                        extra: BTreeMap<String, String>,
+                    },
+                }
+            ),
+            quote::quote!(
+                #[serde(tag = "kind")]
+                enum Event {
+                    Created {
+                        at: u64,
+                        #[serde(skip_deserializing)]
+                        stamp: u64,
+                        #[serde(flatten)]
+                        #[schema(open)]
+                        extra: BTreeMap<String, String>,
+                    },
+                }
+            ),
+        ] {
+            assert_eq!(open_witnesses_in(declaration), (1, 0));
+        }
+
+        // Without such a field beside it, the open field answers to `OpenMap`
+        // alone, and so does one in a variant serde never writes.
+        assert_eq!(
+            open_witnesses_in(quote::quote!(
+                struct Thing {
+                    id: u64,
+                    #[serde(flatten)]
+                    #[schema(open)]
+                    extra: BTreeMap<String, String>,
+                }
+            )),
+            (0, 1)
+        );
+        assert_eq!(
+            open_witnesses_in(quote::quote!(
+                enum Event {
+                    Now(u64),
+                    #[serde(skip_serializing)]
+                    Queued {
+                        at: u64,
+                        #[serde(skip_deserializing)]
+                        stamp: u64,
+                        #[serde(flatten)]
+                        #[schema(open)]
+                        extra: BTreeMap<String, String>,
+                    },
+                }
+            )),
+            (0, 1)
+        );
     }
 
     /// A named field serde writes and never reads is refused in every object

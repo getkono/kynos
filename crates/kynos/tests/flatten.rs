@@ -881,3 +881,48 @@ fn an_open_unchecked_typed_map_accepts_what_serde_writes_and_waives_its_values()
         "the parent's `id` was accepted as a string: {schema}"
     );
 }
+
+/// A field serde writes and never reads beside an open `Unchecked` payload.
+#[derive(Schema, Serialize)]
+struct Stamped {
+    id: u64,
+    #[serde(skip_deserializing)]
+    stamp: u64,
+    #[serde(flatten)]
+    #[schema(open)]
+    rest: kynos::schema::unchecked::Unchecked<serde_json::Map<String, serde_json::Value>>,
+}
+
+/// The schema leaves the field out, since serde never reads it, and an open
+/// `Unchecked` hoists no `unevaluatedProperties` to refuse it with, so the
+/// object still accepts what serde writes of it.
+#[test]
+fn a_field_serde_never_reads_beside_an_open_unchecked_field_is_admitted() {
+    let stamped = Stamped {
+        id: 1,
+        stamp: 7,
+        rest: kynos::schema::unchecked::Unchecked(
+            serde_json::json!({ "k": "v" })
+                .as_object()
+                .expect("an object literal")
+                .clone(),
+        ),
+    };
+    assert_eq!(
+        serde_json::to_value(&stamped).expect("the value serializes"),
+        serde_json::json!({ "id": 1, "stamp": 7, "k": "v" })
+    );
+    let refusals = refusals(&stamped);
+    assert!(
+        refusals.is_empty(),
+        "the type cannot produce an instance its own description accepts: {refusals:?}\n\
+         schema: {}",
+        emitted::<Stamped>()
+    );
+
+    let schema = emitted::<Stamped>();
+    assert!(
+        schema["properties"].get("stamp").is_none(),
+        "a field serde never reads was described: {schema}"
+    );
+}
