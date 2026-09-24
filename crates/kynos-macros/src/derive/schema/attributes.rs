@@ -103,13 +103,16 @@ pub(super) fn rename(ident: &str, style: &str) -> String {
     }
 }
 
-/// Whether a field reaches the wire at all.
+/// Whether a named field is in the object serde reads.
+///
+/// serde reads a field unless it is `skip` or `skip_deserializing`, so a field it
+/// only never writes is described, and one it only never reads is not.
 ///
 /// `PhantomData` is skipped whatever serde does with it: it carries no value a
 /// consumer can act on, and requiring `PhantomData<T>: Schema` -- which nothing
 /// satisfies -- would make a marker field cost a bound the type cannot meet.
 pub(super) fn is_described(field: &Field) -> bool {
-    !is_skipped(&field.attrs) && !is_phantom(&field.ty)
+    !serde_flag(&field.attrs, &["skip", "skip_deserializing"]) && !is_phantom(&field.ty)
 }
 
 /// The fields a schema describes, in declaration order: each one
@@ -175,11 +178,6 @@ pub(super) fn is_phantom(ty: &Type) -> bool {
         .segments
         .last()
         .is_some_and(|segment| segment.ident == "PhantomData")
-}
-
-/// Whether an item carries `#[serde(skip)]` or either half of it.
-pub(super) fn is_skipped(attrs: &[syn::Attribute]) -> bool {
-    serde_flag(attrs, &["skip", "skip_serializing", "skip_deserializing"])
 }
 
 /// Whether serde leaves a member out in both directions: `#[serde(skip)]`, or
