@@ -265,8 +265,10 @@ pub(super) fn is_open(field: &Field) -> bool {
 /// annotation that could contradict it.
 ///
 /// `skip_serializing_if` is not read here: it only lets a field be absent from
-/// what is written, and `reject_read_required_skip` refuses it wherever this
-/// rule says the field is still required on read.
+/// what is written, and `reject_read_required_skip` refuses it on every
+/// described, unflattened field of an object serde writes that this rule says
+/// is still required on read. A flattened field never reaches this rule:
+/// `#[schema(open)]` decides it.
 pub(super) fn is_required(field: &Field, container: &Container) -> bool {
     !is_option(&field.ty) && !container.default && !serde_flag(&field.attrs, &["default"])
 }

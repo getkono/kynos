@@ -1247,8 +1247,10 @@ fn one_way_skip_span(field: &Field, keys: &[&str]) -> Option<(String, Span)> {
 /// The members of a tuple or tuple variant that hold a position on the wire,
 /// in order: each one serde does not skip both ways.
 ///
-/// Read off skip attributes rather than [`is_described`], because a
-/// `PhantomData` dropped from the list would shift every later position.
+/// Read off skip attributes rather than [`is_described`], which would drop a
+/// member carrying `skip_deserializing` alone: serde still writes that member
+/// into its position, and [`reject_one_way_member_skip`] has to see it to
+/// refuse it.
 fn positional_members(fields: &Punctuated<Field, Comma>) -> Vec<&Field> {
     fields
         .iter()
