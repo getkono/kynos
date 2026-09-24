@@ -361,7 +361,7 @@ class Ranking(unittest.TestCase):
         self.assertIn("- `uuid` -8", text)
         self.assertLess(text.index("- `openapi32`"), text.index("- `uuid`"))
 
-    def test_the_baseline_point_is_never_ranked(self):
+    def test_the_baseline_point_is_not_ranked_while_its_floor_holds(self):
         text = self.binary(binary_rows(openapi32=76000), binary_rows(openapi32=75920))
         self.assertNotIn(f"- `{cost.BASELINE}`", text)
 
@@ -428,6 +428,97 @@ class Provenance(unittest.TestCase):
         self.assertNotIn("mixes toolchains", self.report(LIVE))
 
 
+def grown(rows, value, by):
+    """`rows` with every point's absolute grown by `by`, and no delta moved."""
+    return {
+        label: {**values, value: values[value] + by} for label, values in rows.items()
+    }
+
+
+class Floor(unittest.TestCase):
+    """The baseline row's absolute: the one number no delta moves with.
+
+    Each sweep takes every delta against its baseline point, so a change that
+    costs every program alike moves no delta and, until this, moved nothing
+    the report compared. It is compared only under the recording toolchain,
+    where an absolute is a fact about Kynos rather than about rustc.
+    """
+
+    def binary(self, measured, recorded, versions=LIVE):
+        with tempfile.TemporaryDirectory() as directory:
+            was = recorded_binary(directory, recorded)
+        return cost.report(
+            measured,
+            None,
+            None,
+            None,
+            {cost.BINARY_TSV: was, cost.CODEGEN_TSV: None, cost.CODEC_TSV: None},
+            versions,
+        )
+
+    def test_a_grown_floor_is_ranked_and_named_as_the_floor(self):
+        rows = binary_rows(openapi32=75920)
+        text = self.binary(grown(rows, "text", 50160), rows)
+        self.assertIn(f"- `{cost.BASELINE}` floor +50160", text)
+        self.assertIn(f"| `{cost.BASELINE}` | 915164 | +0 | 865004 | +50160 |", text)
+
+    def test_a_grown_floor_outranks_a_moved_delta_by_size(self):
+        recorded = binary_rows(openapi32=75920)
+        measured = grown(binary_rows(openapi32=76000), "text", 50160)
+        text = self.binary(measured, recorded)
+        self.assertLess(
+            text.index(f"- `{cost.BASELINE}` floor"), text.index("- `openapi32` +80")
+        )
+
+    def test_under_another_toolchain_the_floor_is_not_compared(self):
+        rows = binary_rows(openapi32=75920)
+        text = self.binary(grown(rows, "text", 50160), rows, OTHER_TOOLCHAIN)
+        self.assertNotIn("floor +", text)
+        self.assertIn(f"| `{cost.BASELINE}` | 915164 | +0 | — | — |", text)
+
+    def test_the_codegen_floor_is_its_line_count(self):
+        rows = codegen_rows(openapi32=101)
+        measured = grown(rows, "lines", 1200)
+        with tempfile.TemporaryDirectory() as directory:
+            was = recorded_codegen(directory, rows)
+        text = cost.report(
+            None,
+            measured,
+            codegen_functions(rows),
+            None,
+            {cost.BINARY_TSV: None, cost.CODEGEN_TSV: was, cost.CODEC_TSV: None},
+            LIVE,
+        )
+        self.assertIn(f"- `{cost.BASELINE}` floor +1200", text)
+        # Ranked, but not attributed: its composition against itself is empty.
+        self.assertNotIn(f"##### `{cost.BASELINE}`", text)
+
+    def test_the_codec_floor_is_the_fixture_with_no_codec(self):
+        rows = codec_rows(json=63936)
+        with tempfile.TemporaryDirectory() as directory:
+            was = recorded_codec(directory, rows)
+        text = cost.report(
+            None,
+            None,
+            None,
+            grown(rows, "text", 512),
+            {cost.BINARY_TSV: None, cost.CODEGEN_TSV: None, cost.CODEC_TSV: was},
+            LIVE,
+        )
+        self.assertIn(f"- `{cost.CODEC_BASELINE}` floor +512", text)
+
+    def test_a_first_run_has_no_floor_to_compare(self):
+        text = cost.report(
+            binary_rows(openapi32=75920),
+            None,
+            None,
+            None,
+            {cost.BINARY_TSV: None, cost.CODEGEN_TSV: None, cost.CODEC_TSV: None},
+            LIVE,
+        )
+        self.assertNotIn("floor", text)
+
+
 class ReleaseGate(unittest.TestCase):
     """`KYNOS_COST=check`: whether the committed baselines are what was measured.
 
@@ -461,11 +552,7 @@ class ReleaseGate(unittest.TestCase):
     def test_a_moved_floor_fails_though_no_delta_moved(self):
         """The growth every feature pays, which no delta shows."""
         recorded = binary_rows(openapi32=75920)
-        measured = {
-            label: {"text": values["text"] + 50160, "delta": values["delta"]}
-            for label, values in recorded.items()
-        }
-        reasons = self.verdict(measured, recorded)
+        reasons = self.verdict(grown(recorded, "text", 50160), recorded)
         self.assertIn(
             f"`binary.tsv` `{cost.BASELINE}` text: recorded 865004, measured 915164",
             reasons,
@@ -682,7 +769,7 @@ class Codecs(unittest.TestCase):
         self.assertIn(f"Largest cost, against the `{cost.CODEC_BASELINE}`", text)
         self.assertIn("- `json` +63936", text)
 
-    def test_the_floor_point_is_never_ranked(self):
+    def test_the_floor_point_is_not_ranked_while_it_holds(self):
         text = self.report(
             codec_rows(json=63968), codec_rows(json=63936)
         )

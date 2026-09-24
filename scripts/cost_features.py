@@ -172,7 +172,7 @@ DISAMBIGUATOR = re.compile(r"(?<=\w)\[[0-9a-f]{8,16}\]")
 
 # The two header lines `write_tsv` emits that are read back rather than only
 # written: which compiler produced the rows below them. `# baseline:` is not
-# among them, being the absolute this file says it does not compare.
+# among them: the absolute it repeats is read from the baseline row instead.
 PROVENANCE = re.compile(r"^#\s*(toolchain|host):\s*(\S.*?)\s*$")
 
 # A committed baseline and the compiler that measured it, kept together
@@ -199,10 +199,11 @@ BINARY_HEADER = """\
 # establish is the cost of merely enabling F to a program that does not use F.
 #
 # The compared column is `delta`: the difference against the openapi31 build in
-# the same run, never the absolute. `performance.md#thresholds` is the reason --
-# relations outlive absolutes, and an absolute moves on a toolchain bump that
-# changed nothing about Kynos. `text` is recorded beside it as context and is
-# not compared.
+# the same run. `performance.md#thresholds` is the reason -- relations outlive
+# absolutes, and an absolute moves on a toolchain bump that changed nothing
+# about Kynos. `text` is compared on the openapi31 row alone, and only under the
+# toolchain named below: that floor is what every program pays, and no delta
+# moves when it grows.
 #
 # No ceiling is set here or anywhere else. `nfr.md#thresholds` sets one from a
 # first recorded measurement, reviewed as a change to that document; this file
@@ -251,7 +252,8 @@ CODEC_HEADER = """\
 #
 # The compared column is `delta`, for `binary.tsv`'s reason: relations outlive
 # absolutes, and an absolute moves on a toolchain bump that changed nothing
-# about Kynos. `text` is recorded beside it as context and is not compared.
+# about Kynos. `text` is compared on the `(no codec)` floor row alone, and only
+# under the toolchain named below, for `binary.tsv`'s reason too.
 #
 # No ceiling is set here or anywhere else. `nfr.md#thresholds` sets one from a
 # first recorded measurement, reviewed as a change to that document; this file
@@ -280,7 +282,8 @@ CODEGEN_HEADER = """\
 # reads pre-link IR, and a fat-LTO release build deletes the monomorphizations
 # this exists to count.
 #
-# The compared columns are the two deltas, for `binary.tsv`'s reason. Per-
+# The compared columns are the two deltas, for `binary.tsv`'s reason, and the
+# openapi31 row's `lines` under the toolchain named below. Per-
 # function attribution is deliberately not recorded here: monomorphized names
 # churn with every generic signature and a file of them would be a diff
 # generator rather than a baseline. Attribution is report-only, in
@@ -607,7 +610,14 @@ def write_tsv(path, header, names, rows):
     path.write_text(header + "\n".join(lines) + "\n")
 
 
-def table(rows, recorded, value, delta, unit, baseline=BASELINE):
+def same_toolchain(recorded, versions):
+    """Whether `recorded` was measured by the compiler this run uses."""
+    return recorded is not None and (recorded.toolchain, recorded.host) == tuple(
+        versions
+    )
+
+
+def table(rows, recorded, value, delta, unit, versions, baseline=BASELINE):
     """The per-kind report table, and the two buckets it ranks points by.
 
     Two buckets rather than one, because a point the recorded baseline has no
@@ -618,6 +628,12 @@ def table(rows, recorded, value, delta, unit, baseline=BASELINE):
     measures a new feature the one run that ranks and attributes nothing --
     the row was in the table, and the separately headed sections below it were
     empty.
+
+    The baseline row is the exception to comparing deltas. Its delta is zero by
+    construction, so its drift is its absolute instead: the floor every other
+    row is a delta over, and the one number that moves when a change costs
+    every program alike. It is compared only under the toolchain that recorded
+    it, because across a toolchain bump an absolute is a fact about rustc.
     """
     lines = [
         f"| feature | {unit} | delta | recorded | drift |",
@@ -625,6 +641,18 @@ def table(rows, recorded, value, delta, unit, baseline=BASELINE):
     ]
     drifts, fresh = {}, {}
     for label, measured in rows.items():
+        if label == baseline and recorded is not None:
+            floor = recorded.rows.get(label, {}).get(value)
+            if floor is None or not same_toolchain(recorded, versions):
+                shown, moved = "—", "—"
+            else:
+                drifts[label] = measured[value] - floor
+                shown, moved = f"{floor}", f"{drifts[label]:+}"
+            lines.append(
+                f"| `{label}` | {measured[value]} | {measured[delta]:+} "
+                f"| {shown} | {moved} |"
+            )
+            continue
         was = None if recorded is None else recorded.rows.get(label, {}).get(delta)
         if was is None:
             shown, moved = ("—", "—") if recorded is None else ("—", "new")
@@ -635,12 +663,7 @@ def table(rows, recorded, value, delta, unit, baseline=BASELINE):
                 fresh[label] = measured[delta]
         else:
             moved_by = measured[delta] - was
-            # The point every delta is taken against has a drift of zero by
-            # construction -- `openapi31` for the feature sweeps, the codec
-            # fixture's floor for the codec one. Ranking it would spend one of
-            # five slots saying the baseline is the baseline.
-            if label != baseline:
-                drifts[label] = moved_by
+            drifts[label] = moved_by
             shown, moved = f"{was:+}", f"{moved_by:+}"
         lines.append(
             f"| `{label}` | {measured[value]} | {measured[delta]:+} "
@@ -771,7 +794,7 @@ def unrecorded(name, rows, recorded, versions):
     if recorded is None:
         return [f"`{name}` has no recorded baseline"]
     live = f"`{versions[0]}` on `{versions[1]}`"
-    if (recorded.toolchain, recorded.host) != tuple(versions):
+    if not same_toolchain(recorded, versions):
         was = f"`{recorded.toolchain}` on `{recorded.host}`"
         return [f"`{name}` was recorded by {was}; this run is {live}"]
     reasons = []
@@ -828,9 +851,22 @@ def section(
     baseline=BASELINE,
 ):
     """One kind's table, its ranked points, and optionally its attribution."""
-    body, drifts, fresh = table(rows, recorded, value, delta, unit, baseline)
+    body, drifts, fresh = table(
+        rows, recorded, value, delta, unit, versions, baseline
+    )
     ranked, heading = movers(rows, drifts, recorded, delta, baseline)
-    listed = [f"- `{label}` {moved:+}" for label, moved in ranked] or ["- none"]
+    listed = [
+        f"- `{label}`{' floor' if label == baseline else ''} {moved:+}"
+        for label, moved in ranked
+    ] or ["- none"]
+    floor = []
+    if recorded is not None:
+        floor = [
+            f"The `{baseline}` row's recorded and drift columns are absolute: the "
+            "floor every delta is taken over, which every program pays. They "
+            "are compared only when this toolchain recorded the baseline.",
+            "",
+        ]
     out = [
         f"### {title}",
         "",
@@ -839,6 +875,7 @@ def section(
         *provenance(recorded, versions),
         body,
         "",
+        *floor,
         f"#### {heading}",
         "",
         *listed,
@@ -858,7 +895,10 @@ def section(
             *[f"- `{label}` {cost:+}" for label, cost in new],
             "",
         ]
-    attributed = [label for label, _ in ranked] + [label for label, _ in new]
+    # Not the baseline: its floor moved, but its composition against itself is
+    # empty by construction.
+    attributed = [label for label, _ in ranked if label != baseline]
+    attributed += [label for label, _ in new]
     if functions is not None and attributed:
         out += [
             f"#### What those features instantiate, against `{baseline}`",
