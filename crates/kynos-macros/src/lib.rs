@@ -219,11 +219,16 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// neither does any externally tagged enum. A field is left out of `required` when it is an
 /// `Option`, carries `#[serde(default)]`, or belongs to a struct carrying
 /// `#[serde(default)]`, because the wire form then allows it to be absent both
-/// ways; `skip_serializing_if` is accepted only alongside one of those. A named
-/// field serde reads and never writes, `skip_serializing` alone, is described
-/// under that same rule, and one serde writes and never reads,
-/// `skip_deserializing` alone, is left out. A `transparent` struct is described by the one field serde writes and reads
-/// through, or the single field of the one direction serde can derive for it,
+/// ways. A named field serde reads and never writes, `skip_serializing` alone,
+/// is described under that same rule, and one serde writes and never reads,
+/// `skip_deserializing` alone, is left out. In an object serde writes,
+/// `skip_serializing_if` on a field serde reads is accepted only alongside an
+/// `Option` or a `#[serde(default)]`, or on a flattened `#[schema(open)]` map,
+/// which serde reads absent as empty and `required` never lists. A field of a
+/// variant serde never writes, `skip_serializing` on the variant, is only read,
+/// so it may carry `skip_serializing_if` without any of them. A `transparent`
+/// struct is described by the one field serde writes and reads through, or the
+/// single field of the one direction serde can derive for it,
 /// keeps its own component name, as a newtype does, and carries that field's
 /// constraints. A tuple is the array of the members serde does not skip both
 /// ways, and a newtype variant whose member serde skips is the unit variant
@@ -292,6 +297,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   Add `#[serde(default)]` beside it or on the struct. A
 ///   flattened field is decided by `#[schema(open)]` alone, since serde ignores
 ///   any default on it: an open map is exempt, and anything else is refused.
+///   Also exempt are a field serde never reads and a flattened `PhantomData`,
+///   both in no schema, any field of a variant serde never writes, which serde
+///   only reads, and any field of a `transparent` struct, which has no
+///   `required` list.
 /// - `#[serde(into = ...)]`, `from` or `try_from` on the type itself, struct or
 ///   enum. serde then writes or reads the type they name, which the declared
 ///   fields or variants no longer predict. Implement `Schema` by hand, describing
