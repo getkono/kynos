@@ -27,6 +27,11 @@
 //! only one entry can be filed under that key -- so what the document says
 //! there is a choice, and a document that made the wrong one would still
 //! validate against everything else here.
+//!
+//! The fifth is what `deny_unchecked_schemas` reaches. A derived body is
+//! registered as a component, so an `Unchecked` field sits two levels below
+//! the media type that names it -- and a setting that only read the media
+//! type's own schema would pass a router it promises to refuse.
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
@@ -1469,5 +1474,69 @@ fn a_named_forbidden_type_meets_a_handler_errors_403_as_a_choice_of_three() {
         schema["oneOf"].as_array().map(Vec::len),
         Some(3),
         "{schema}"
+    );
+}
+
+// --- What `deny_unchecked_schemas` reaches ----------------------------------
+//
+// The setting promotes a warning the validator raises, so it refuses exactly
+// what the validator sees. A derived body is registered as a component and
+// named by `$ref`, which puts its `Unchecked` field under
+// `components/schemas/<Name>/properties` rather than under the media type.
+
+/// A supplier's feed: one field this service constrains, one it does not.
+#[derive(Schema, serde::Deserialize)]
+struct Feed {
+    #[allow(dead_code)]
+    supplier: String,
+    #[allow(dead_code)]
+    payload: kynos::schema::unchecked::Unchecked<serde_json::Value>,
+}
+
+#[kynos::post("/feeds")]
+async fn ingest_feed(
+    kynos::extract::body::json::Json(feed): kynos::extract::body::json::Json<Feed>,
+) -> NoContent {
+    let _ = feed;
+    NoContent
+}
+
+/// The field's own warning is what the setting turns into a build error.
+///
+/// Without the setting the same router builds, so the refusal is the
+/// setting's rather than something else wrong with the document.
+#[test]
+fn deny_unchecked_schemas_refuses_an_unchecked_field_of_a_registered_body() {
+    use kynos::openapi::{Severity, SpecError};
+
+    let router = || Router::<()>::new().mount(kynos::routes![ingest_feed]);
+
+    let reported = router().validate().expect("a describable router");
+    assert!(
+        reported
+            .iter()
+            .any(|violation| violation.error == SpecError::UncheckedSchema
+                && violation.severity == Severity::Warning),
+        "the field warns without the setting: {reported:?}"
+    );
+    router()
+        .openapi()
+        .expect("a warning alone does not refuse the router");
+
+    let Err(kynos::Error::Invalid { violations }) = router().deny_unchecked_schemas().openapi()
+    else {
+        panic!("deny_unchecked_schemas built a router with an `Unchecked` field");
+    };
+    let unchecked: Vec<(&str, Severity)> = violations
+        .iter()
+        .filter(|violation| violation.error == SpecError::UncheckedSchema)
+        .map(|violation| (violation.location.as_str(), violation.severity))
+        .collect();
+    assert_eq!(
+        unchecked,
+        [(
+            "#/components/schemas/Feed/properties/payload",
+            Severity::Error
+        )]
     );
 }

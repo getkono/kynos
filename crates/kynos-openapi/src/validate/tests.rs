@@ -1447,7 +1447,7 @@ fn violation_locations_name_the_media_type_they_came_from() {
         Operation::new("createOrder")
             .with_request_body(RequestBody::new(
                 "application/json",
-                // Unconstrained, so `check_media_type` reports it and the
+                // Unconstrained, so the schema rule reports it and the
                 // location it reports is the thing under test.
                 MediaType::new(Schema::any()),
             ))
@@ -1464,11 +1464,343 @@ fn violation_locations_name_the_media_type_they_came_from() {
         .collect();
 
     assert!(
-        located.contains(&"#/paths/~1orders/post/requestBody/content/application~1json"),
+        located.contains(&"#/paths/~1orders/post/requestBody/content/application~1json/schema"),
         "a request body's media type: {located:?}"
     );
     assert!(
-        located.contains(&"#/paths/~1orders/post/responses/200/content/application~1json"),
+        located.contains(&"#/paths/~1orders/post/responses/200/content/application~1json/schema"),
         "a response's media type: {located:?}"
+    );
+}
+
+// --- Unchecked schemas, wherever a document nests one -----------------------
+
+/// A schema carrying the annotation `Unchecked` emits, and nothing else.
+fn annotated() -> Schema {
+    let mut object = crate::model::schema::object::SchemaObject::default();
+    object.unknown_keywords.insert(
+        crate::annotation::UNCHECKED_SCHEMA_ANNOTATION.to_owned(),
+        true.into(),
+    );
+    Schema::Object(Box::new(object))
+}
+
+/// A document whose one operation reads `schema` as a JSON request body.
+fn document_with_body(schema: Schema) -> Document {
+    use crate::model::body::{RequestBody, media_type::MediaType};
+
+    let item = PathItem::new().with_operation(
+        Method::Post,
+        Operation::new("ingest")
+            .with_request_body(RequestBody::new("application/json", MediaType::new(schema)))
+            .with_responses(ok_responses()),
+    );
+    document_with(&[("/ingest", item)])
+}
+
+/// Where each `UncheckedSchema` was reported, sorted.
+///
+/// Each location is also resolved against the document's own JSON, so a
+/// pointer that names a keyword the wire does not spell fails here rather
+/// than reading as a plausible string.
+fn unchecked_locations(document: &Document) -> Vec<String> {
+    let json = serde_json::to_value(document).expect("a document serializes");
+    let mut located: Vec<String> = violations(document)
+        .into_iter()
+        .filter(|violation| violation.error == SpecError::UncheckedSchema)
+        .map(|violation| violation.location)
+        .collect();
+    located.sort();
+
+    for location in &located {
+        let pointer = location.strip_prefix('#').expect("a fragment pointer");
+        let target = json
+            .pointer(pointer)
+            .unwrap_or_else(|| panic!("{location} resolves to nothing in {json}"));
+        assert!(
+            target == &serde_json::Value::Bool(true)
+                || target
+                    .get(crate::annotation::UNCHECKED_SCHEMA_ANNOTATION)
+                    .is_some(),
+            "{location} resolves to {target}, which is not unchecked"
+        );
+    }
+    located
+}
+
+/// The `SchemaObject` fields whose type holds a `Schema`, read off its source.
+///
+/// Read rather than transcribed, so a subschema keyword added to the model
+/// fails [`an_unchecked_schema_is_reported_under_every_subschema_keyword`]
+/// until the walk and its table both reach it.
+fn schema_bearing_fields() -> Vec<String> {
+    let source = include_str!("../model/schema/object.rs");
+    let body = source
+        .split_once("pub struct SchemaObject {")
+        .and_then(|(_, rest)| rest.split_once("\n}"))
+        .map(|(body, _)| body)
+        .expect("`SchemaObject` is declared in object.rs");
+
+    let mut fields = Vec::new();
+    let mut declaration = String::new();
+    for line in body.lines().map(str::trim) {
+        if declaration.is_empty() && !line.starts_with("pub ") {
+            continue;
+        }
+        declaration.push_str(line);
+        if !line.ends_with(',') {
+            continue;
+        }
+        let (name, ty) = declaration["pub ".len()..]
+            .split_once(':')
+            .expect("a field declaration names its type");
+        if ty
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .any(|token| token == "Schema")
+        {
+            fields.push(name.trim().to_owned());
+        }
+        declaration.clear();
+    }
+    fields.sort();
+    fields
+}
+
+/// Every JSON Schema keyword that holds a subschema is walked.
+///
+/// A derived body puts an `Unchecked` field under `properties`, an `Option` of
+/// one under `anyOf`, and a `Vec` of one under `items`, and each used to raise
+/// nothing: only a media type's own schema was read. The table is closed over
+/// the model's fields, so the walk cannot quietly skip a keyword added later.
+#[test]
+fn an_unchecked_schema_is_reported_under_every_subschema_keyword() {
+    use crate::model::schema::object::SchemaObject;
+
+    type Place = fn(&mut SchemaObject, Schema);
+    let table: &[(&str, &str, Place)] = &[
+        ("defs", "$defs/Inner", |o, s| {
+            o.defs.insert("Inner".to_owned(), s);
+        }),
+        ("all_of", "allOf/1", |o, s| {
+            o.all_of = Some(vec![Schema::of_type(SchemaType::Object), s]);
+        }),
+        ("any_of", "anyOf/0", |o, s| {
+            o.any_of = Some(vec![s, Schema::of_type(SchemaType::Null)]);
+        }),
+        ("one_of", "oneOf/0", |o, s| o.one_of = Some(vec![s])),
+        ("not", "not", |o, s| o.not = Some(Box::new(s))),
+        ("if_schema", "if", |o, s| o.if_schema = Some(Box::new(s))),
+        ("then_schema", "then", |o, s| {
+            o.then_schema = Some(Box::new(s));
+        }),
+        ("else_schema", "else", |o, s| {
+            o.else_schema = Some(Box::new(s));
+        }),
+        ("dependent_schemas", "dependentSchemas/extra", |o, s| {
+            o.dependent_schemas.insert("extra".to_owned(), s);
+        }),
+        ("prefix_items", "prefixItems/0", |o, s| {
+            o.prefix_items = Some(vec![s]);
+        }),
+        ("items", "items", |o, s| o.items = Some(Box::new(s))),
+        ("contains", "contains", |o, s| {
+            o.contains = Some(Box::new(s));
+        }),
+        ("properties", "properties/payload", |o, s| {
+            o.properties.insert("payload".to_owned(), s);
+        }),
+        // A key holding a `/`, so the pointer has to escape it.
+        ("pattern_properties", "patternProperties/^a~1b$", |o, s| {
+            o.pattern_properties.insert("^a/b$".to_owned(), s);
+        }),
+        ("additional_properties", "additionalProperties", |o, s| {
+            o.additional_properties = Some(Box::new(s));
+        }),
+        ("property_names", "propertyNames", |o, s| {
+            o.property_names = Some(Box::new(s));
+        }),
+        ("unevaluated_items", "unevaluatedItems", |o, s| {
+            o.unevaluated_items = Some(Box::new(s));
+        }),
+        ("unevaluated_properties", "unevaluatedProperties", |o, s| {
+            o.unevaluated_properties = Some(Box::new(s));
+        }),
+        ("content_schema", "contentSchema", |o, s| {
+            o.content_schema = Some(Box::new(s));
+        }),
+    ];
+
+    let mut tabled: Vec<String> = table
+        .iter()
+        .map(|(field, ..)| (*field).to_owned())
+        .collect();
+    tabled.sort();
+    assert_eq!(tabled, schema_bearing_fields(), "the table is closed");
+
+    for (field, suffix, place) in table {
+        let mut parent = SchemaObject::default();
+        place(&mut parent, annotated());
+
+        assert_eq!(
+            unchecked_locations(&document_with_body(Schema::Object(Box::new(parent)))),
+            [format!(
+                "#/paths/~1ingest/post/requestBody/content/application~1json/schema/{suffix}"
+            )],
+            "{field}"
+        );
+    }
+}
+
+/// A component is reported where it is written, not once per `$ref` to it.
+///
+/// This is the shape a derived body takes once it is registered: the media
+/// type holds a `$ref`, and the annotated field sits under the component. A
+/// reference is never followed, so two operations naming one component still
+/// raise one violation.
+#[test]
+fn a_referenced_component_is_reported_once_where_it_is_defined() {
+    use crate::model::{body::media_type::MediaType, schema::object::SchemaObject};
+
+    let mut feed = SchemaObject::default();
+    feed.properties.insert("payload".to_owned(), annotated());
+
+    let mut document = document_with_body(Schema::component("Feed"));
+    if let Some(PathItem {
+        post: Some(operation),
+        ..
+    }) = document.paths.items.get_mut("/ingest")
+    {
+        operation.responses = Responses::new().with(
+            200,
+            Response::with_content(
+                "ok",
+                "application/json",
+                MediaType::new(Schema::component("Feed")),
+            ),
+        );
+    }
+    document
+        .components
+        .schemas
+        .insert("Feed".to_owned(), Schema::Object(Box::new(feed)));
+
+    assert_eq!(
+        unchecked_locations(&document),
+        ["#/components/schemas/Feed/properties/payload"]
+    );
+}
+
+/// A permissive schema is only unchecked where it *is* the payload.
+///
+/// `true` as a media type's own schema says the body is unconstrained. Below
+/// that it is an ordinary keyword value: every problem document Kynos emits
+/// carries `additionalProperties: true`, and reporting that would make
+/// `deny_unchecked_schemas` refuse every router with a JSON body. The
+/// annotation is what an author writes on purpose, and counts anywhere.
+#[test]
+fn a_permissive_schema_below_a_media_type_is_not_unchecked() {
+    use crate::model::schema::object::SchemaObject;
+
+    let open = SchemaObject {
+        additional_properties: Some(Box::new(Schema::any())),
+        properties: [("anything".to_owned(), Schema::any())]
+            .into_iter()
+            .collect(),
+        ..SchemaObject::default()
+    };
+
+    let mut document = document_with_body(Schema::Object(Box::new(open)));
+    document
+        .components
+        .schemas
+        .insert("Anything".to_owned(), Schema::any());
+
+    assert_eq!(unchecked_locations(&document), Vec::<String>::new());
+}
+
+/// A header described by `content` is walked into its media type.
+///
+/// The generator gives a content-form header an empty media type, so no
+/// property run puts a schema there. Both places a header is written are
+/// held: under a response, and as a reusable component.
+#[test]
+fn an_unchecked_schema_under_a_header_content_is_reported() {
+    use crate::model::{body::media_type::MediaType, parameter::header::Header, reference::RefOr};
+
+    let header = || Header::with_content("application/json", MediaType::new(annotated()));
+
+    let mut document = document_with_body(Schema::of_type(SchemaType::Object));
+    if let Some(PathItem {
+        post: Some(operation),
+        ..
+    }) = document.paths.items.get_mut("/ingest")
+    {
+        let mut response = Response::new("ok");
+        response
+            .headers
+            .insert("X-Trace".to_owned(), RefOr::Item(header()));
+        operation.responses = Responses::new().with(200, response);
+    }
+    document
+        .components
+        .headers
+        .insert("Trace".to_owned(), RefOr::Item(header()));
+
+    assert_eq!(
+        unchecked_locations(&document),
+        [
+            "#/components/headers/Trace/content/application~1json/schema",
+            "#/paths/~1ingest/post/responses/200/headers/X-Trace/content/application~1json/schema",
+        ]
+    );
+}
+
+/// The containers a generated document does not reach are walked too.
+///
+/// The property in `tests/properties.rs` covers every container its generator
+/// draws. It leaves a media type's `itemEncoding` and an encoding's own nested
+/// encodings empty, so those positions are held here.
+#[cfg(feature = "openapi32")]
+#[test]
+fn an_unchecked_schema_under_a_nested_encoding_is_reported() {
+    use crate::model::{
+        body::{encoding::Encoding, media_type::MediaType},
+        parameter::header::Header,
+        reference::RefOr,
+    };
+
+    let with_header = |schema: Schema| {
+        let mut encoding = Encoding::default();
+        encoding
+            .headers
+            .insert("X-Part".to_owned(), RefOr::Item(Header::new(schema)));
+        encoding
+    };
+
+    let mut outer = Encoding::default();
+    outer
+        .encoding
+        .insert("inner".to_owned(), with_header(annotated()));
+    outer.prefix_encoding = Some(vec![with_header(annotated())]);
+    outer.item_encoding = Some(Box::new(with_header(annotated())));
+
+    let mut media_type = MediaType::new(Schema::of_type(SchemaType::Array));
+    media_type.item_encoding = Some(Box::new(outer));
+    media_type.item_schema = Some(annotated());
+
+    let mut document = document_with(&[]);
+    document
+        .components
+        .media_types
+        .insert("Parts".to_owned(), RefOr::Item(media_type));
+
+    assert_eq!(
+        unchecked_locations(&document),
+        [
+            "#/components/mediaTypes/Parts/itemEncoding/encoding/inner/headers/X-Part/schema",
+            "#/components/mediaTypes/Parts/itemEncoding/itemEncoding/headers/X-Part/schema",
+            "#/components/mediaTypes/Parts/itemEncoding/prefixEncoding/0/headers/X-Part/schema",
+            "#/components/mediaTypes/Parts/itemSchema",
+        ]
     );
 }
