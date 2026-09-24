@@ -36,7 +36,7 @@ use aliases::shadowed_variant;
 use attributes::{
     constraints, described_members, field_name, is_described, is_flattened, is_open, is_option,
     is_phantom, is_required, is_skipped_both_ways, is_unit_like, open_span, serde_flag,
-    serde_key_span, transparent_member, transparent_members, variant_name,
+    serde_key_span, transparent_member, transparent_picks, variant_name,
 };
 use shape::{enum_body, struct_body};
 
@@ -683,7 +683,7 @@ fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
 /// changes nothing there.
 ///
 /// A `#[serde(transparent)]` struct is scanned over the fields
-/// [`transparent_members`] says serde writes through, for [`WRITE_OVERRIDES`],
+/// [`transparent_picks`] says serde writes through, for [`WRITE_OVERRIDES`],
 /// and reads through, for [`READ_OVERRIDES`]: serde hands no other field's value
 /// to a function in either direction.
 ///
@@ -719,22 +719,19 @@ fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
     }
 
     fn picked(fields: &Fields) -> Vec<Scanned<'_>> {
-        let (written, read) = transparent_members(fields);
-        let among = |members: &[&Field], field: &Field| {
-            members.iter().any(|member| std::ptr::eq(*member, field))
-        };
-        fields
-            .iter()
-            .filter_map(|field| {
-                let keys = match (among(&written, field), among(&read, field)) {
-                    (true, true) => WIRE_FORM_OVERRIDES,
-                    (true, false) => WRITE_OVERRIDES,
-                    (false, true) => READ_OVERRIDES,
-                    (false, false) => return None,
-                };
-                Some((field.attrs.as_slice(), "field", keys))
-            })
-            .collect()
+        fn scanned<'a>(field: &'a Field, keys: &'static [&'static str]) -> Scanned<'a> {
+            (field.attrs.as_slice(), "field", keys)
+        }
+        match transparent_picks(fields) {
+            (Some(written), Some(read)) if std::ptr::eq(written, read) => {
+                vec![scanned(written, WIRE_FORM_OVERRIDES)]
+            }
+            (written, read) => written
+                .map(|field| scanned(field, WRITE_OVERRIDES))
+                .into_iter()
+                .chain(read.map(|field| scanned(field, READ_OVERRIDES)))
+                .collect(),
+        }
     }
 
     let described = match &input.data {
@@ -867,7 +864,7 @@ fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
 /// A `#[serde(transparent)]` struct serde writes through one field and reads
 /// through another is refused.
 ///
-/// serde picks per direction, from the attributes alone ([`transparent_members`]):
+/// serde picks per direction, from the attributes alone ([`transparent_picks`]):
 /// it writes through the field without `skip` or `skip_serializing`, reads
 /// through the field without `skip`, `skip_deserializing` or a field-level
 /// `default`, and never through a `PhantomData`. Where each direction picks a
@@ -886,11 +883,10 @@ fn reject_transparent_without_one_field(input: &DeriveInput) -> syn::Result<()> 
     let Some((_, span)) = serde_key_span(&input.attrs, &["transparent"]) else {
         return Ok(());
     };
-    let (written, read) = transparent_members(&data.fields);
-    let ([written], [read]) = (written.as_slice(), read.as_slice()) else {
+    let (Some(written), Some(read)) = transparent_picks(&data.fields) else {
         return Ok(());
     };
-    if std::ptr::eq(*written, *read) {
+    if std::ptr::eq(written, read) {
         return Ok(());
     }
 
