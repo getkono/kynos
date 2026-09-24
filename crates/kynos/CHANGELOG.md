@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/getkono/kynos/compare/kynos-v0.1.0...kynos-v0.2.0) - 2026-09-24
+
+### Added
+
+- *(kynos)* [**breaking**] let each coding refusal name its problem type
+- *(kynos)* [**breaking**] let a cross-site refusal name its problem type
+- *(kynos)* [**breaking**] let each limit name the problem type its refusal carries
+- *(kynos)* narrow a refusal's declared problem type rather than exemplify it
+- *(kynos)* let an authorizer name the problem type of its own 403
+- *(kynos)* fold a mounted scope's stack onto the one it was mounted beside
+- *(kynos)* state the language a response is written in
+- *(kynos)* choose a response language from the client's priority list
+- *(kynos)* match a language range against an offer by truncation and by prefix
+- *(kynos)* read a language tag as the grammar RFC 5646 closes
+
+### Documentation
+
+- *(cost)* say in the recorded baselines that the floor is compared
+- *(schema)* say Unchecked is an OpenMap over any payload that is one
+- *(schema)* say a flattened Problem constrains the five members it names
+- *(macros)* list the deny_unknown_fields refusals beside their snapshots
+- *(macros)* list a skipped adjacently tagged payload as refused, with its snapshot
+- *(examples)* demonstrate a flattened open map
+- *(kynos)* disclose the shift a delta cannot see
+- *(kynos)* cite the sections that contain the sentences relied on
+- *(kynos)* record where the calibration constant came from
+- *(kynos)* say what the pre-region capture actually costs
+- *(kynos)* say what naming the shapes centralises rather than removes
+- *(kynos)* name all three items the shared counting module supplies
+- *(kynos)* say what the shared counting driver asks of its caller
+- *(testing)* name the harness the second counting target now shares
+- *(kynos)* say what every refusal now names and where the rule lives
+- *(kynos)* correct four claims the union's own change falsified
+- *(kynos)* [**breaking**] say what the named 403 reaches, and declare the break
+- *(kynos)* say both authenticator methods may name a 403
+- *(kynos)* record the one thing a rejection carries that the request did not
+- *(kynos)* show an authorizer naming its own 403
+- *(router)* correct add_tag's claim about where a duplicated tag survives
+- *(composition)* let the attribute tag document itself
+- *(nfr)* keep the timed half of every performance row it refiled
+- *(errors)* localize a problem detail from the application's own catalogue
+- *(examples)* serve one resource in three languages
+- *(nfr)* characterize the offer a catalogue on disk cannot state
+
+### Fixed
+
+- *(schema)* let a map of Unchecked values sit open beside a field serde never reads
+- *(macros)* bound an open field beside a field serde never reads by AdmitsAny
+- *(schema)* name the Unchecked map form in the Flatten and OpenMap refusals
+- *(schema)* let an Unchecked map payload be flattened as an open map
+- *(schema)* let a Problem be flattened beside its extension members
+- *(macros)* describe a variant name two variants share under the first alone
+- *(macros)* describe every name serde reads a field under
+- *(macros)* close each externally tagged object branch to its variant key
+- *(macros)* describe a PhantomData member as the null serde writes
+- *(macros)* honour a container default on a tuple struct
+- *(macros)* say the transparent refusal compares fields, not schemas
+- *(macros)* refuse a transparent struct only where serde's two picks differ
+- *(macros)* refuse a transparent struct by the field serde picks each way
+- *(macros)* refuse a transparent struct serde may read and write through different fields
+- *(macros)* refuse a container serde reads or writes through another type
+- *(macros)* name the working remedy for a flattened map and struct alike
+- *(schema)* name the route a refused tagged newtype payload has
+- *(macros)* [**breaking**] hold a tagged newtype variant's payload to Flatten
+- *(macros)* allow #[schema(open)] only over a map
+- *(macros)* flatten only what names its own members
+- *(kynos)* union the problem responses an extractor and a handler share
+- *(kynos)* hold a 403's problem type to a static string
+- *(router)* apply a route attribute's tag to its operation and register its metadata
+- *(kynos)* count allocations on the measuring thread only
+- *(kynos)* keep the runtime out of the region that counts allocations
+- *(kynos)* keep the mounted scopes across catch_panics
+- *(kynos)* [**breaking**] check a later interceptor against the scopes already mounted
+- *(kynos)* [**breaking**] keep the interceptor stack across catch_panics
+- *(kynos)* check an encoded field against the names its group declares
+- *(kynos)* [**breaking**] attach a header group to a continued response exactly once
+- *(openapi)* compare a header parameter's name the way HTTP compares one
+- *(kynos)* make the constructor case fail for the reason it names
+- *(kynos)* rank an offer by the priority the client wrote, not the one it holds
+- *(kynos)* repair the four doc links the module split moved
+
+### Other
+
+- *(kynos)* [**breaking**] promote the refusal marker to error::problem
+- *(kynos)* [**breaking**] split the language module along the two concerns it grew
+
 ## [0.1.0](https://github.com/getkono/kynos/releases/tag/kynos-v0.1.0) - 2026-08-29
 
 ### Added
