@@ -384,8 +384,9 @@ its own type, and the trait is unsealed so a hand-written `Schema` doing the
 same can say so. The rule a flattened schema has to meet is that it marks every
 member it contributes as evaluated, and refuses none it does not. `Problem`'s
 `additionalProperties: true` meets both from inside the `allOf`: it reaches the
-parent's members and permits them, where a map's `additionalProperties`
-reaches them and refuses them.
+parent's members and permits them. A map's `additionalProperties` refuses the
+parent's members, and `Unchecked`'s permissive schema marks none of its own
+evaluated, so neither is flattenable.
 serde offers nothing to read here: `flatten` never leaves `serde_derive` and
 what enforces it is a runtime serializer, so the type-level surface has to be
 Kynos's own.
@@ -433,6 +434,16 @@ The attribute may appear once per object — there is one
 `unevaluatedProperties` to supply — and only on a flattened field, since an
 ordinary field is a single property whose own schema already states what it
 admits. Both are compile errors.
+
+`Unchecked` over a map — a `serde_json::Map`, or a type that implements `OpenMap`
+itself — implements `OpenMap` too, and is the route for arbitrary JSON beside an
+object's own members. Its schema is written in place with no
+`additionalProperties`, so the hoist moves nothing and the object stays open.
+A payload that is not a map, such as `Unchecked<u64>`, is refused: serde
+flattens only structs and maps, and a struct is flattened as itself.
+It does not implement `Flatten`: the permissive schema names none of the
+members it contributes, so beside an open map they stay unevaluated and the
+map's `unevaluatedProperties` refuses what serde writes.
 
 One thing is lost deliberately: a map whose key type constrains
 `propertyNames` contributes no key constraint through an open flatten. Inside

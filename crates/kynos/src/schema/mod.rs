@@ -227,9 +227,11 @@ impl MapKey for String {}
 ///
 /// `#[serde(flatten)]` makes a field's members the *parent's* members, so the
 /// parent composes the field's schema rather than naming it. A schema that
-/// constrains every member it does not name — `additionalProperties` on a map,
-/// the permissive schema — then reaches the members the parent declared itself,
-/// and the object ends up refusing the JSON its own type writes.
+/// constrains every member it does not name — `additionalProperties` on a map —
+/// then reaches the members the parent declared itself, and the object ends up
+/// refusing the JSON its own type writes. The permissive schema reaches nothing,
+/// but names nothing either: the members it contributes stay unevaluated, so an
+/// open map beside it refuses them instead.
 ///
 /// The marker is Kynos's own because serde has no type-level surface to read:
 /// `Serialize` is one method, `flatten` is an internal flag that never leaves
@@ -286,7 +288,10 @@ pub trait Flatten: Schema {}
 ///
 /// Implemented for [`HashMap`](std::collections::HashMap) and
 /// [`BTreeMap`](std::collections::BTreeMap), and carried across `Box<T>` and
-/// `Arc<T>`. Unsealed, for the reason [`MapKey`] is — a hand-written [`Schema`]
+/// `Arc<T>`. Also for [`Unchecked`](unchecked::Unchecked) over one of those or
+/// over a `serde_json::Map`, which has no `additionalProperties` to hoist and so
+/// leaves the object open — the route for arbitrary JSON beside an object's own
+/// members. Unsealed, for the reason [`MapKey`] is — a hand-written [`Schema`]
 /// that claims no component name and describes an object by
 /// `additionalProperties` alone has to be able to say so.
 ///

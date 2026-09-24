@@ -4,7 +4,7 @@ use kynos_openapi::{
     Schema as OpenApiSchema, SchemaObject, annotation::UNCHECKED_SCHEMA_ANNOTATION,
 };
 
-use crate::schema::{Schema, registry::Registry};
+use crate::schema::{OpenMap, Schema, registry::Registry};
 
 /// A payload this API deliberately does not constrain.
 ///
@@ -28,7 +28,7 @@ use crate::schema::{Schema, registry::Registry};
 ///
 /// Arbitrary JSON beside the members an object declares is an `Unchecked` map
 /// under `#[serde(flatten)] #[schema(open)]`. It is an
-/// [`OpenMap`](crate::schema::OpenMap) over a `serde_json::Map<String, Value>`,
+/// [`OpenMap`] over a `serde_json::Map<String, Value>`,
 /// or over a payload that is an `OpenMap` itself:
 ///
 /// ```
@@ -96,3 +96,13 @@ impl<T> Schema for Unchecked<T> {
         OpenApiSchema::Object(Box::new(object))
     }
 }
+
+/// Flattened open beside the members an object declares: the schema is written
+/// in place and carries no `additionalProperties`, so the hoist moves nothing
+/// and the object is left open. Bounded by `T`'s own `OpenMap`, because serde
+/// flattens only structs and maps.
+impl<T: OpenMap> OpenMap for Unchecked<T> {}
+
+/// `serde_json::Map` has no [`Schema`] of its own, so it reaches [`OpenMap`] only
+/// through `Unchecked`.
+impl OpenMap for Unchecked<serde_json::Map<String, serde_json::Value>> {}

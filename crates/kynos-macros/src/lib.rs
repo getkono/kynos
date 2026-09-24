@@ -255,8 +255,8 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// members nothing names, which is the only thing a flattened map can mean. The
 /// field's type must implement
 /// [`OpenMap`](https://docs.rs/kynos/latest/kynos/schema/trait.OpenMap.html) — a
-/// `HashMap` or `BTreeMap`, not a type that refers to one — and a key type's
-/// `propertyNames` does not survive it.
+/// `HashMap`, a `BTreeMap` or an `Unchecked` over a map, not a type that refers
+/// to one — and a key type's `propertyNames` does not survive it.
 ///
 /// # Rejected, because serde and the schema would disagree
 ///
