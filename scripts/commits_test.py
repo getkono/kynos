@@ -27,8 +27,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-# `.gitignore` has no `__pycache__` entry. The task passes `-B` for the same
-# reason; this covers a direct `python3` run.
+# Nothing here imports from `scripts/`, so no `.pyc` lands beside it today.
+# The flag, like the task's `-B`, keeps this file matching its sibling tests
+# and keeps a later import from `scripts/` writing nothing.
 sys.dont_write_bytecode = True
 
 ROOT = Path(__file__).resolve().parent.parent

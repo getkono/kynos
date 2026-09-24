@@ -76,10 +76,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-# Before the import below, and before anything else can trigger one: a `.pyc`
-# written beside the scripts would be an untracked directory in every working
-# tree that ran these tests, and `.gitignore` has no entry for one. The task
-# passes `-B` for the same reason; this covers a direct `python3` run.
+# Before the import below, and before anything else can trigger one: a run
+# writes no `.pyc` into the tree it reads, and `.gitignore` covers the imports
+# no task controls. The task passes `-B` for the same reason; this covers a
+# direct `python3` run.
 sys.dont_write_bytecode = True
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -331,7 +331,7 @@ class ImportTime(unittest.TestCase):
         reader auditing that should not have to go looking:
         `sys.dont_write_bytecode` and `sys.path`, set once at the head of the
         file and deliberately never restored -- the first keeps a `.pyc` out of
-        an untracked `scripts/__pycache__/`, the second is how `containment` is
+        `scripts/__pycache__/`, the second is how `containment` is
         imported at all, and undoing either would undo the import; `sys.stdout`
         and `sys.stderr`, swapped here and in `Main.report` by
         `contextlib.redirect_*`, which restores them on the way out;
