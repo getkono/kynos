@@ -1,0 +1,5 @@
+error: `skip_deserializing` leaves this field out of the schema, since serde never reads it, but serde still writes it, and the `additionalProperties` or `unevaluatedProperties` of `false` that `#[serde(deny_unknown_fields)]` gives this object refuses a member the schema does not name. Use `#[serde(skip)]` to leave it out both ways, or drop `skip_deserializing` so the schema names it
+  --> tests/ui/macros/schema_field_skipped_on_read_denying_unknown_fields.rs:10:13
+   |
+10 |     #[serde(skip_deserializing)]
+   |             ^^^^^^^^^^^^^^^^^^

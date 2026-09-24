@@ -10,20 +10,25 @@ help: the trait `kynos::schema::Flatten` is not implemented for `Labels`
 10 | struct Labels {
    | ^^^^^^^^^^^^^
    = note: a flattened field's members become the parent's own, so its schema has to name them; a map names none, so its values would reach the properties the object declared itself
-   = note: give it a named field of its own; on a `HashMap` or `BTreeMap` field, add `#[schema(open)]` beside `#[serde(flatten)]` to say the object really is open, so its values become the object's `unevaluatedProperties`; as an internally tagged newtype variant's payload, make it a struct variant holding that flattened open field, which serde writes the same way
+   = note: give it a named field of its own; on a `HashMap` or `BTreeMap` field, add `#[schema(open)]` beside `#[serde(flatten)]` to say the object really is open, so its values become the object's `unevaluatedProperties`; for arbitrary JSON, flatten an `Unchecked<serde_json::Map<String, Value>>` with `#[schema(open)]`, which leaves the object open; as an internally tagged newtype variant's payload, make it a struct variant holding that flattened open field, which serde writes the same way
 help: the following other types implement trait `kynos::schema::Flatten`
-  --> tests/ui/macros/schema_flatten_transparent.rs:14:10
-   |
-14 | #[derive(kynos::Schema, serde::Serialize)]
-   |          ^^^^^^^^^^^^^ `Thing`
-   |
-  ::: src/schema/impls/wrapper.rs
+  --> src/schema/impls/wrapper.rs
    |
    | impl<T: Flatten> Flatten for Box<T> {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Box<T>`
    |
    | impl<T: Flatten> Flatten for Arc<T> {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Arc<T>`
+   |
+  ::: tests/ui/macros/schema_flatten_transparent.rs:14:10
+   |
+14 | #[derive(kynos::Schema, serde::Serialize)]
+   |          ^^^^^^^^^^^^^ `Thing`
+   |
+  ::: src/error/problem.rs
+   |
+   | impl Flatten for Problem {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^ `kynos::Problem`
 note: required by a bound in `is_flattenable`
   --> tests/ui/macros/schema_flatten_transparent.rs:18:13
    |

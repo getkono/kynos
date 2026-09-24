@@ -4,7 +4,7 @@ use kynos_openapi::{
     Schema as OpenApiSchema, SchemaObject, annotation::UNCHECKED_SCHEMA_ANNOTATION,
 };
 
-use crate::schema::{Schema, registry::Registry};
+use crate::schema::{AdmitsAny, OpenMap, Schema, registry::Registry};
 
 /// A payload this API deliberately does not constrain.
 ///
@@ -23,6 +23,41 @@ use crate::schema::{Schema, registry::Registry};
 /// bytes, so wrapping a field costs a consumer nothing — and a wrapper that did
 /// reach the wire would make the only sanctioned way to carry an arbitrary
 /// payload the one way that changes its shape.
+///
+/// # Flattening
+///
+/// Arbitrary JSON beside the members an object declares is an `Unchecked` map
+/// under `#[serde(flatten)] #[schema(open)]`. It is an
+/// [`OpenMap`] over a `serde_json::Map<String, Value>`,
+/// or over a payload that is an `OpenMap` itself:
+///
+/// ```
+/// fn open<T: kynos::schema::OpenMap>() {}
+///
+/// open::<kynos::schema::unchecked::Unchecked<serde_json::Map<String, serde_json::Value>>>();
+/// open::<kynos::schema::unchecked::Unchecked<std::collections::BTreeMap<String, u64>>>();
+/// ```
+///
+/// A payload that is not a map is refused here, rather than by serde at run
+/// time with "can only flatten structs and maps". A struct payload needs no
+/// wrapper: flatten the struct itself.
+///
+/// ```compile_fail
+/// fn open<T: kynos::schema::OpenMap>() {}
+///
+/// open::<kynos::schema::unchecked::Unchecked<u64>>();
+/// ```
+///
+/// It is never [`Flatten`](crate::schema::Flatten). The permissive schema names
+/// no member it contributes, so beside an open map those members stay
+/// unevaluated and the map's `unevaluatedProperties` would refuse what serde
+/// writes:
+///
+/// ```compile_fail
+/// fn flattenable<T: kynos::schema::Flatten>() {}
+///
+/// flattenable::<kynos::schema::unchecked::Unchecked<serde_json::Map<String, serde_json::Value>>>();
+/// ```
 #[derive(
     Clone,
     Copy,
@@ -61,3 +96,18 @@ impl<T> Schema for Unchecked<T> {
         OpenApiSchema::Object(Box::new(object))
     }
 }
+
+/// Flattened open beside the members an object declares: the schema is written
+/// in place and carries no `additionalProperties`, so the hoist moves nothing
+/// and the object is left open. Bounded by `T`'s own `OpenMap`, because serde
+/// flattens only structs and maps.
+impl<T: OpenMap> OpenMap for Unchecked<T> {}
+
+/// `serde_json::Map` has no [`Schema`] of its own, so it reaches [`OpenMap`] only
+/// through `Unchecked`.
+impl OpenMap for Unchecked<serde_json::Map<String, serde_json::Value>> {}
+
+/// Hoists nothing wherever it is an [`OpenMap`], since the permissive schema has
+/// no `additionalProperties`, so a field serde writes and never reads may sit
+/// beside it.
+impl<T> AdmitsAny for Unchecked<T> where Self: OpenMap {}

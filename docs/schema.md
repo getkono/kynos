@@ -378,8 +378,17 @@ tagged struct variant serde writes that holds a named field serde never reads,
 whose schema leaves out a member serde writes. Nor does it for a shape that
 [`deny_unknown_fields`](#closed-objects) closes. A variant serde skips both ways
 counts toward none of these, and one serde reads and never writes counts as any
-other. `Box<T>` and `Arc<T>` carry `T`'s answer across, and
-the trait is unsealed so a hand-written `Schema` doing the same can say so.
+other. `Box<T>` and `Arc<T>` carry `T`'s answer across,
+`Problem` implements it so a problem document can carry extension members of
+its own type, and the trait is unsealed so a hand-written `Schema` doing the
+same can say so. The rule a flattened schema has to meet is that it marks every
+member it contributes as evaluated, and constrains none it does not name.
+`Problem`'s `additionalProperties: true` meets both from inside the `allOf`: it
+reaches the parent's members and permits them. The five members it names it
+does constrain, so a parent member may not reuse `type`, `title`, `status`,
+`detail` or `instance`. A map's `additionalProperties` refuses the
+parent's members, and `Unchecked`'s permissive schema marks none of its own
+evaluated, so neither is flattenable.
 serde offers nothing to read here: `flatten` never leaves `serde_derive` and
 what enforces it is a runtime serializer, so the type-level surface has to be
 Kynos's own.
@@ -428,6 +437,28 @@ The attribute may appear once per object — there is one
 ordinary field is a single property whose own schema already states what it
 admits. Both are compile errors.
 
+`Unchecked` over a map — a `serde_json::Map`, or a type that implements `OpenMap`
+itself — implements `OpenMap` too, and is the route for arbitrary JSON beside an
+object's own members. Its schema is written in place with no
+`additionalProperties`, so the hoist moves nothing and the object stays open.
+A payload that is not a map, such as `Unchecked<u64>`, is refused: serde
+flattens only structs and maps, and a struct is flattened as itself.
+It does not implement `Flatten`: the permissive schema names none of the
+members it contributes, so beside an open map they stay unevaluated and the
+map's `unevaluatedProperties` refuses what serde writes.
+
+Hoisting nothing is also why a named field serde writes and never reads,
+`skip_deserializing` alone, may sit beside an open `Unchecked` and not beside
+an open map of typed values. The schema leaves that field out, and only a
+hoisted `unevaluatedProperties` that constrains something would refuse it. The
+derive bounds an open field beside such a field by
+[`AdmitsAny`](https://docs.rs/kynos/latest/kynos/schema/trait.AdmitsAny.html),
+because whether the field's type hoists a constraint is visible to the
+compiler and not to the derive. `Unchecked` implements it, and so does a
+`HashMap` or `BTreeMap` whose values are `Unchecked`: its hoisted value schema
+is the permissive one and refuses nothing. A map whose values are typed does
+not, and neither does a named type, which is not an open map at all.
+
 One thing is lost deliberately: a map whose key type constrains
 `propertyNames` contributes no key constraint through an open flatten. Inside
 the `allOf` branch `propertyNames` names the parent's own properties too, which
@@ -436,6 +467,20 @@ express it — is not emitted. The key constraint is dropped rather than moved, 
 the description stays weaker than the type instead of contradicting it. The
 `allOf` keeps what is left of the map's schema, `{ "type": "object" }`, which
 asserts nothing the parent does not.
+
+A flattened `Problem`, or any flattened type that carries one, beside an open
+map leaves the map's values unchecked. `Problem`'s `additionalProperties: true`
+reaches through the `$ref` of a derived type that flattens it and marks every
+member evaluated, the map's included, so the hoisted `unevaluatedProperties`
+has nothing left to constrain. The same keyword, from a flattened `Problem` or
+any flattened type that carries one, leaves nothing for the
+`unevaluatedProperties: false` of an object
+[`deny_unknown_fields`](#closed-objects) closes to refuse, which describes no
+read: `Problem` has no `Deserialize`, so neither has a type that flattens it,
+and an object carrying either is one serde only writes. Either way the description admits more than the
+type writes and never refuses what it writes. Refusing the pair would take a
+second marker, one every derived type would carry and `Problem` would not,
+since the derive sees a field's syntax rather than which type it holds.
 
 ## Closed objects
 
@@ -572,7 +617,7 @@ re-walked. A second call would reuse the same maps and agree with itself.
 | 12 | A component is registered after everything it refers to | the same file, over a known nesting chain |
 | 13 | A derived error response narrows `Problem.type` to a `const`, and a status several variants share to a `oneOf` of them | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted `Responses`; the shapes themselves in [`error/problem.rs`](../crates/kynos/src/error/problem.rs) |
 | 14 | A status two contributors narrow publishes both; a contributor admitting every problem document publishes for both; a shape the rule cannot place changes nothing | [`tests/description.rs`](../crates/kynos/tests/description.rs) over the document and [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) over the wire; the rule itself in [`model/response/union.rs`](../crates/kynos-openapi/src/model/response/union.rs) |
-| 15 | A flattened field's schema names every member it constrains, or the field says `#[schema(open)]` and contributes the parent's `unevaluatedProperties` | the `Flatten` bound the `Schema` derive asserts per flattened field, snapshotted in `tests/ui/macros/schema_flatten_map.rs` and `tests/ui/traits/flatten.rs`; the emitted shape and the value it accepts in [`tests/flatten.rs`](../crates/kynos/tests/flatten.rs), against the `jsonschema` validator |
+| 15 | A flattened field's schema names every member it constrains, or the field says `#[schema(open)]` and its schema's `additionalProperties`, where it has one, becomes the parent's `unevaluatedProperties` | the `Flatten` bound the `Schema` derive asserts per flattened field, snapshotted in `tests/ui/macros/schema_flatten_map.rs` and `tests/ui/traits/flatten.rs`; the emitted shape and the value it accepts in [`tests/flatten.rs`](../crates/kynos/tests/flatten.rs), against the `jsonschema` validator |
 | 16 | A guard's 403 narrows to `about:blank` and the URI its scope set named, never to either alone | [`tests/description.rs`](../crates/kynos/tests/description.rs) over the document and [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) over one refusal of each shape; the const in [`security/auth.rs`](../crates/kynos/src/security/auth.rs) and what reads it in [`error/rejection.rs`](../crates/kynos/src/error/rejection.rs) |
 | 17 | A described field or variant whose wire form serde's `with`, `serialize_with` or `deserialize_with` decides is refused; every newtype-struct member counts as described, whatever serde skips, and so does every other unnamed member serde does not skip both ways; a named field serde never reads, an unnamed member serde skips both ways outside a newtype struct, or any field of a variant serde skips both ways is left alone, and so is `serialize_with` on a variant serde reads and never writes, on its fields, or on a named field serde reads and never writes; a `#[serde(transparent)]` struct is scanned for `with` and `serialize_with` on the fields serde writes through, for `with` and `deserialize_with` on the fields it reads through, and on no other field | the derive's ledger in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs), and `tests/ui/macros/schema_serialize_with.rs` for the wording |
 | 18 | A `#[serde(other)]` catch-all on a variant serde reads is refused in every build, including one serde never writes; on a variant serde skips both ways it catches nothing and is left alone | the same ledger, and `tests/ui/macros/schema_catch_all_variant.rs` for the wording |
@@ -587,7 +632,7 @@ re-walked. A second call would reuse the same maps and agree with itself.
 | 27 | A variant serde reads and never writes, `skip_serializing` alone, is described as serde reads it: its name in the compact `enum`, or its branch, under its prose and `#[deprecated]`, and it counts toward the `Flatten` claim and its bounds as any other variant does; a variant serde skips both ways, however it is spelt, is described nowhere; its tuple's `minItems` follows rule 24, so a trailing `skip_serializing_if` without `#[serde(default)]`, which only a variant serde never writes may carry, still counts | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde reads; the `Flatten`-claim, witness and acceptance rows in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs) |
 | 28 | `#[serde(skip_deserializing)]` alone on a variant is refused, since serde writes the variant and refuses to read it back, so no closed `oneOf` or `enum` is true in both directions | the derive's ledger in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs), and `tests/ui/macros/schema_variant_skipped_on_read.rs` for the wording |
 | 29 | A named field serde reads and never writes, `skip_serializing` alone, is a property under rule 19, required inside a variant serde never writes, and named beside an open map so its `unevaluatedProperties` does not reach it; a flattened open map carrying it still gives the object its `unevaluatedProperties`; a named field serde writes and never reads, `skip_deserializing` alone, is left out | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde writes and reads; the acceptance rows in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs) |
-| 30 | `#[serde(skip_deserializing)]` alone on a named field is refused in an object serde writes that carries a described `#[schema(open)]` flattened field, or that `deny_unknown_fields` closes under rule 32, since the object's `unevaluatedProperties` or closing keyword refuses the member serde writes and the schema leaves out; a struct, or an internally tagged enum with a struct variant serde writes, holding such a field does not claim `Flatten`; a field serde skips both ways, an open map serde never reads and a variant serde never writes are left alone | the derive's ledger and `Flatten`-claim rows in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs), and `tests/ui/macros/schema_field_skipped_on_read_beside_open_map.rs` for the wording |
+| 30 | `#[serde(skip_deserializing)]` alone on a named field is refused in an object serde writes that `deny_unknown_fields` closes under rule 32, and beside a described `#[schema(open)]` flattened field whose type does not implement `AdmitsAny`, which a map, whose value schema is hoisted, does not unless its values are `Unchecked`, since the closing keyword or the value schema a map hoists as `unevaluatedProperties` refuses the member serde writes and the schema leaves out; an open `Unchecked` map implements it and hoists nothing, and a `HashMap` or `BTreeMap` whose values are `Unchecked` implements it and hoists the permissive schema, so the field is admitted beside either; a struct, or an internally tagged enum with a struct variant serde writes, holding such a field does not claim `Flatten`; a field serde skips both ways, an open map serde never reads and a variant serde never writes are left alone | the derive's ledger, `AdmitsAny`-witness and `Flatten`-claim rows in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); `a_field_serde_never_reads_beside_an_open_unchecked_field_is_admitted` and `a_field_serde_never_reads_beside_an_open_map_of_unchecked_values_is_admitted` in [`tests/flatten.rs`](../crates/kynos/tests/flatten.rs), against the `jsonschema` validator; and `tests/ui/macros/schema_field_skipped_on_read_denying_unknown_fields.rs` for the wording of the closed object's refusal, and `tests/ui/macros/schema_field_skipped_on_read_beside_open_map.rs` for the `AdmitsAny` bound's |
 | 31 | A `PhantomData` member serde does not skip is the `null` serde writes and reads for it, a property under rule 19 or a position under rule 24, without requiring `PhantomData<T>: Schema`; a flattened one, which serde neither writes into the object nor reads from it, is in no schema, and a transparent struct is never described by one | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against the value serde writes; `tests/ui/pass/schema_generic_with_phantom.rs` |
 | 32 | Under `#[serde(deny_unknown_fields)]`, a struct, each struct variant's fields and each adjacently tagged branch are closed: with `additionalProperties: false` where the object composes nothing, and with `unevaluatedProperties: false` where the object carries an `allOf`, which a flattened field composes members through and an aliased field bounds its names in under rule 34. An internally tagged unit or newtype variant's tag-only object stays open, and so does a `#[serde(transparent)]` struct. An externally tagged branch that is an object admits only its variant key, with `additionalProperties: false`, or `unevaluatedProperties: false` where the variant's aliases bound its keys under rule 35, with or without the attribute. A struct, an internally tagged enum with a struct variant, and an adjacently tagged enum that the attribute closes do not claim `Flatten`, and no externally tagged enum does | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde reads; `a_closed_object_admits_what_a_flattened_struct_contributes_and_nothing_else` in [`tests/flatten.rs`](../crates/kynos/tests/flatten.rs), against the `jsonschema` validator; and the `Flatten`-claim and acceptance rows in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs) |
 | 33 | In an object `deny_unknown_fields` closes, a described `#[schema(open)]` flattened field is refused, including inside a variant serde never writes, since serde reads the map empty | the derive's ledger in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs), and `tests/ui/macros/schema_open_map_denying_unknown_fields.rs` for the wording |

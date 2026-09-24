@@ -6,23 +6,14 @@ error[E0277]: `std::string::String` cannot be flattened with `#[schema(open)]`
   |
   = help: the trait `OpenMap` is not implemented for `std::string::String`
   = note: `#[schema(open)]` moves a map's value schema onto the object carrying it, which needs the map's own schema rather than a `$ref` to one
-  = note: flatten the `HashMap` or `BTreeMap` field itself, or drop `#[schema(open)]` from a type that names its members
-help: the following other types implement trait `OpenMap`
- --> src/schema/impls/wrapper.rs
-  |
-  | impl<T: OpenMap> OpenMap for Box<T> {}
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Box<T>`
-  |
-  | impl<T: OpenMap> OpenMap for Arc<T> {}
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Arc<T>`
-  |
- ::: src/schema/impls/collection.rs
-  |
-  | impl<K: MapKey, V: Schema, S> OpenMap for HashMap<K, V, S> {}
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `HashMap<K, V, S>`
-  |
-  | impl<K: MapKey, V: Schema> OpenMap for BTreeMap<K, V> {}
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `BTreeMap<K, V>`
+  = note: flatten the `HashMap` or `BTreeMap` field itself; for arbitrary JSON, flatten an `Unchecked<serde_json::Map<String, Value>>`, not an `Unchecked<Value>`, since serde flattens only a map; or drop `#[schema(open)]` from a type that names its members
+  = help: the following other types implement trait `OpenMap`:
+            Arc<T>
+            BTreeMap<K, V>
+            Box<T>
+            HashMap<K, V, S>
+            Unchecked<T>
+            Unchecked<serde_json::map::Map<std::string::String, serde_json::value::Value>>
 note: required by a bound in `is_open_map`
  --> tests/ui/traits/open_map.rs:4:19
   |

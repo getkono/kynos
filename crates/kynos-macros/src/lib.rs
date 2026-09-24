@@ -255,8 +255,8 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// members nothing names, which is the only thing a flattened map can mean. The
 /// field's type must implement
 /// [`OpenMap`](https://docs.rs/kynos/latest/kynos/schema/trait.OpenMap.html) — a
-/// `HashMap` or `BTreeMap`, not a type that refers to one — and a key type's
-/// `propertyNames` does not survive it.
+/// `HashMap`, a `BTreeMap` or an `Unchecked` over a map, not a type that refers
+/// to one — and a key type's `propertyNames` does not survive it.
 ///
 /// # Rejected, because serde and the schema would disagree
 ///
@@ -322,14 +322,17 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   `skip_serializing` alone on a variant is accepted, since every variant serde
 ///   writes is one it reads.
 /// - `#[serde(skip_deserializing)]` without `skip_serializing` on a named field
-///   of an object that also carries a `#[schema(open)]` flattened field, or of
-///   an object that `deny_unknown_fields` closes. serde writes the field and
-///   never reads it, so the schema leaves it out, and the object then refuses
-///   what serde writes of it: through the `unevaluatedProperties` the open field
-///   gives it, or through being closed. `#[serde(skip)]` leaves the field out
-///   both ways. For the same reason a struct, or an internally tagged enum whose
-///   struct variant serde writes, holding such a field does not implement
-///   `Flatten`.
+///   of an object that `deny_unknown_fields` closes, or beside a
+///   `#[schema(open)]` flattened field whose type does not implement
+///   [`AdmitsAny`](https://docs.rs/kynos/latest/kynos/schema/trait.AdmitsAny.html),
+///   which a map, whose value schema is hoisted, does not unless its values are
+///   `Unchecked`, and an `Unchecked` map does. serde writes the field and never
+///   reads it, so the schema leaves it out, and the object then refuses what
+///   serde writes of it: through being closed, or through the value schema a
+///   map hoists as `unevaluatedProperties`. `#[serde(skip)]` leaves the field
+///   out both ways. For the same reason a
+///   struct, or an internally tagged enum whose struct variant serde writes,
+///   holding such a field does not implement `Flatten`.
 /// - A flattened `#[schema(open)]` field beside `#[serde(deny_unknown_fields)]`.
 ///   serde refuses every key the object's fields do not name before the map
 ///   sees it, so it reads the map empty and writes members it would refuse to

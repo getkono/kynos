@@ -102,6 +102,10 @@ fn compile_fail_cases(directory: &Path) -> usize {
 fn every_guided_diagnostic_has_a_snapshot() {
     /// One row per `#[diagnostic::on_unimplemented]` in `crates/kynos/src`.
     const RECORDED: &[(&str, &str)] = &[
+        (
+            "AdmitsAny",
+            "macros/schema_field_skipped_on_read_beside_open_map.stderr",
+        ),
         ("Alternative", "traits/alternative.stderr"),
         ("ByteSource", "traits/byte_source.stderr"),
         ("Carries", "traits/carries.stderr"),

@@ -115,7 +115,7 @@ fn every_rejected_schema_attribute_has_a_case() {
         ),
         (
             "`#[serde(skip_deserializing)]` without `skip_serializing`",
-            "macros/schema_field_skipped_on_read_beside_open_map.stderr",
+            "macros/schema_field_skipped_on_read_denying_unknown_fields.stderr",
         ),
         (
             "`#[schema(open)]` field beside `#[serde(deny_unknown_fields)]`",
