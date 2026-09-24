@@ -1,8 +1,8 @@
 use super::{
-    Comma, Container, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant, close, closed,
-    constraints, deprecate, described, described_variants, doc_string, field_name, is_deprecated,
-    is_described, is_flattened, is_open, is_phantom, is_required, is_unit_like, min_items,
-    positional_members, quote, transparent_member, variant_name,
+    Comma, Container, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant,
+    aliases::property, close, closed, constraints, deprecate, described, described_variants,
+    doc_string, is_deprecated, is_described, is_flattened, is_open, is_phantom, is_unit_like,
+    min_items, positional_members, quote, transparent_member, variant_name,
 };
 
 /// A struct's schema, which its fields decide.
@@ -93,7 +93,6 @@ pub(super) fn object_body(
         .filter(|field| is_described(field))
         .map(|field| {
             let ty = &field.ty;
-            let wire = field_name(field, container);
 
             if is_flattened(field) {
                 if is_open(field) {
@@ -147,14 +146,7 @@ pub(super) fn object_body(
                 };
             }
 
-            let schema = member_schema(field);
-            let require = is_required(field, container)
-                .then(|| quote!(required.push(::std::string::String::from(#wire));));
-
-            quote! {
-                keywords.properties.insert(::std::string::String::from(#wire), #schema);
-                #require
-            }
+            property(field, container)
         });
 
     let object = quote! {

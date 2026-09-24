@@ -198,13 +198,17 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// Describes a type as JSON Schema.
 ///
 /// Reads the serde attributes already on the type — `rename_all`, `skip`,
-/// `flatten`, `tag`, `content`, `transparent`, `deny_unknown_fields` — so the
-/// schema and the wire form come from one declaration. Under
+/// `flatten`, `alias`, `tag`, `content`, `transparent`, `deny_unknown_fields` —
+/// so the schema and the wire form come from one declaration. A named field
+/// serde reads under an `alias` is a property under each name it reads, present
+/// under exactly one where it is required and under at most one otherwise,
+/// since serde refuses a document naming two. Under
 /// `deny_unknown_fields`, every object serde then refuses unknown keys in is
 /// closed: a struct, each struct variant's fields, and an adjacently tagged
 /// branch. The derive uses `additionalProperties: false`, or
-/// `unevaluatedProperties: false` where a flattened field composes members
-/// through an `allOf`. An externally tagged branch that is an object admits
+/// `unevaluatedProperties: false` where the object carries an `allOf`, which a
+/// flattened field composes members through and an aliased field bounds its
+/// names in. An externally tagged branch that is an object admits
 /// only its variant key, with or without the attribute, since serde reads it as
 /// exactly one entry. A shape that closes does not implement `Flatten`, and
 /// neither does any externally tagged enum. A field is left out of `required` when it is an
@@ -325,9 +329,6 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   serde refuses every key the object's fields do not name before the map
 ///   sees it, so it reads the map empty and writes members it would refuse to
 ///   read back. Drop one of the two.
-/// - `#[serde(alias = ...)]` on a field serde reads into an object that
-///   `deny_unknown_fields` closes. serde reads the field under a name the closed
-///   object does not name, so the schema would refuse a document serde reads.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)

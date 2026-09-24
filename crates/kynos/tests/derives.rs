@@ -1044,6 +1044,38 @@ fn an_alias_is_read_as_written_and_a_redundant_one_adds_nothing() {
     );
 }
 
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StrictAliased {
+    #[serde(alias = "identifier")]
+    id: u64,
+}
+
+/// A closed object names every name serde reads a field under, so it admits
+/// the alias and still nothing serde refuses.
+///
+/// The `allOf` bounding the names makes `unevaluatedProperties` the closing
+/// keyword, which sees the object's own `properties` as
+/// `additionalProperties` would.
+#[test]
+fn a_closed_object_admits_a_field_under_its_alias() {
+    assert_eq!(
+        emitted::<StrictAliased>(),
+        serde_json::json!({
+            "type": "object",
+            "properties": {"id": emitted::<u64>(), "identifier": emitted::<u64>()},
+            "allOf": [{"oneOf": [{"required": ["id"]}, {"required": ["identifier"]}]}],
+            "unevaluatedProperties": false,
+        })
+    );
+
+    assert!(serde_json::from_str::<StrictAliased>(r#"{"identifier":1}"#).is_ok());
+    assert!(
+        serde_json::from_str::<StrictAliased>(r#"{"identifier":1,"z":2}"#).is_err(),
+        "serde must refuse the member `unevaluatedProperties` refuses"
+    );
+}
+
 // --- An externally tagged branch is its variant key alone -------------------
 //
 // serde reads an externally tagged enum from an object holding exactly one

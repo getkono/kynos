@@ -1,5 +1,0 @@
-error: `alias` makes serde read this field under a second name, and the object `#[serde(deny_unknown_fields)]` closes names only the first, so the schema would refuse a document serde reads. Drop the `alias`, or drop `deny_unknown_fields`
- --> tests/ui/macros/schema_alias_denying_unknown_fields.rs:9:13
-  |
-9 |     #[serde(alias = "identifier")]
-  |             ^^^^^

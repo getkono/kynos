@@ -28,6 +28,7 @@
 //! `kynos::schema::OpenMap`, and every other flattened field by
 //! `kynos::schema::Flatten`.
 
+mod aliases;
 mod attributes;
 mod shape;
 
@@ -916,14 +917,15 @@ fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
 }
 
 /// An object `#[serde(deny_unknown_fields)]` closes has no schema true of a
-/// flattened open map or an `alias` it reads.
+/// flattened open map.
 ///
 /// serde refuses every key no field it reads names before a flattened map sees
-/// it, so the map reads empty while serde writes its members; and it reads an
-/// aliased field under a name the closed object does not name. Checked on every
+/// it, so the map reads empty while serde writes its members. Checked on every
 /// named field the schema describes, including inside a variant serde never
 /// writes, since the object is closed on read alone. A `#[serde(transparent)]`
-/// struct is its one field's value, with no object to close.
+/// struct is its one field's value, with no object to close. An `alias` needs
+/// no refusal: the object names every name serde reads a field under
+/// ([`aliases`]).
 fn reject_contradicted_closure(input: &DeriveInput) -> syn::Result<()> {
     let container = Container::read(input);
     if !container.deny_unknown_fields || container.transparent {
@@ -946,14 +948,6 @@ fn reject_contradicted_closure(input: &DeriveInput) -> syn::Result<()> {
                  name before the map sees it, so serde reads the map empty and writes members it \
                  would refuse to read back. Drop `deny_unknown_fields` to keep the map, or drop \
                  the map",
-            ));
-        }
-        if let Some((_, span)) = serde_key_span(&field.attrs, &["alias"]) {
-            return Err(syn::Error::new(
-                span,
-                "`alias` makes serde read this field under a second name, and the object \
-                 `#[serde(deny_unknown_fields)]` closes names only the first, so the schema would \
-                 refuse a document serde reads. Drop the `alias`, or drop `deny_unknown_fields`",
             ));
         }
     }
@@ -1326,11 +1320,12 @@ fn deprecate(schema: TokenStream2, deprecated: bool) -> TokenStream2 {
 /// refuses every key naming no field it reads.
 ///
 /// `additionalProperties: false` where the object composes nothing, which is
-/// the spelling every consumer reads. `unevaluatedProperties: false` where a
-/// flattened field composes members through an `allOf`, since
-/// `additionalProperties` sees only the object's own `properties` and would
-/// refuse them, while `unevaluatedProperties` sees them across the `allOf` and
-/// any `$ref` inside it. serde closes a struct, every struct variant's fields,
+/// the spelling every consumer reads. `unevaluatedProperties: false` where the
+/// object carries an `allOf`, which a flattened field composes members through
+/// and an aliased field bounds its names in, since `additionalProperties` sees
+/// only the object's own `properties` and would refuse a flattened field's
+/// members, while `unevaluatedProperties` sees them across the `allOf` and any
+/// `$ref` inside it. serde closes a struct, every struct variant's fields,
 /// and an adjacently tagged branch; a caller wraps exactly those objects, and
 /// the schema is returned as it was without the attribute.
 fn closed(schema: TokenStream2, container: &Container) -> TokenStream2 {
