@@ -33,8 +33,8 @@ mod shape;
 
 use attributes::{
     constraints, described_members, field_name, is_described, is_flattened, is_open, is_option,
-    is_required, is_skipped, is_skipped_both_ways, is_unit_like, open_span, serde_flag,
-    serde_key_span, transparent_member, transparent_members, variant_name,
+    is_required, is_skipped_both_ways, is_unit_like, open_span, serde_flag, serde_key_span,
+    transparent_member, transparent_members, variant_name,
 };
 use shape::{enum_body, struct_body};
 
@@ -67,6 +67,9 @@ const FLAGS: &[&str] = &["unique_items", "open"];
 /// `Serialize` and `Deserialize`.
 const WIRE_FORM_OVERRIDES: &[&str] = &["with", "serialize_with", "deserialize_with"];
 
+/// The overrides among those that serde reads through.
+const READ_OVERRIDES: &[&str] = &["with", "deserialize_with"];
+
 /// serde's container keys that write or read the whole value as another type.
 const CONVERSIONS: &[&str] = &["into", "from", "try_from"];
 
@@ -87,6 +90,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     }
     reject_container_conversions(input)?;
     reject_untagged(input)?;
+    reject_unread_variant(input)?;
     reject_wire_form_overrides(input)?;
     reject_catch_all(input)?;
     reject_transparent_without_one_field(input)?;
@@ -216,10 +220,9 @@ fn flatten_witnesses(
         .filter(|field| is_flattened(field));
 
     let payloads: Vec<&Field> = match (&input.data, &container.tag, &container.content) {
-        (Data::Enum(data), Some(_), None) => data
-            .variants
-            .iter()
-            .filter(|variant| !is_skipped(&variant.attrs) && !is_unit_like(&variant.fields))
+        (Data::Enum(data), Some(_), None) => described_variants(data)
+            .into_iter()
+            .filter(|variant| !is_unit_like(&variant.fields))
             .filter_map(|variant| match &variant.fields {
                 Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => unnamed.unnamed.first(),
                 _ => None,
@@ -287,11 +290,7 @@ fn flattens(input: &DeriveInput, container: &Container) -> bool {
     match &input.data {
         Data::Struct(data) => matches!(data.fields, Fields::Named(_)),
         Data::Enum(data) => {
-            let variants: Vec<&Variant> = data
-                .variants
-                .iter()
-                .filter(|variant| !is_skipped(&variant.attrs))
-                .collect();
+            let variants = described_variants(data);
 
             match (&container.tag, &container.content) {
                 // Adjacently tagged: every branch is an object of a tag
@@ -390,23 +389,43 @@ fn field_groups(input: &DeriveInput) -> Vec<&Fields> {
     }
 }
 
-/// The field groups the emitted schema describes: every group but a skipped
-/// variant's.
+/// The field groups the emitted schema describes: every group but that of a
+/// variant serde skips both ways.
 ///
-/// serde never writes a `#[serde(skip)]` variant, so no branch is emitted for it
+/// serde neither writes nor reads such a variant, so no branch is emitted for it
 /// and its fields reach neither a flatten witness nor the `Flatten` decision.
 /// `check_constraints` still reads [`field_groups`], because a malformed
 /// attribute is an error wherever it is written.
 fn described_groups(input: &DeriveInput) -> Vec<&Fields> {
     match &input.data {
-        Data::Enum(data) => data
-            .variants
-            .iter()
-            .filter(|variant| !is_skipped(&variant.attrs))
+        Data::Enum(data) => described_variants(data)
+            .into_iter()
             .map(|variant| &variant.fields)
             .collect(),
         _ => field_groups(input),
     }
+}
+
+/// The variants the emitted schema describes: every one serde does not skip
+/// both ways.
+///
+/// A variant serde reads and never writes is among them, since a request
+/// carrying it is one serde accepts. One serde writes and never reads is
+/// refused by [`reject_unread_variant`] before any of these is read.
+fn described_variants(data: &DataEnum) -> Vec<&Variant> {
+    data.variants
+        .iter()
+        .filter(|variant| !is_skipped_both_ways(&variant.attrs))
+        .collect()
+}
+
+/// Whether serde writes a variant: it carries neither `skip` nor
+/// `skip_serializing`.
+///
+/// serde's `Serialize` arm for any other variant errors before it touches a
+/// field, so an attribute deciding only the written form changes nothing there.
+fn is_written(variant: &Variant) -> bool {
+    !serde_flag(&variant.attrs, &["skip", "skip_serializing"])
 }
 
 /// One `key` or `key = value` inside a field's `#[schema(...)]`.
@@ -553,8 +572,10 @@ fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
 ///
 /// Refused on every field and variant the schema describes, which is
 /// everywhere serde accepts the three keys. A skipped named field, a named
-/// `PhantomData` and every field of a skipped variant are in no schema, so an
-/// override on one of them contradicts nothing and is left alone.
+/// `PhantomData` and every field of a variant serde skips both ways are in no
+/// schema, so an override on one of them contradicts nothing and is left alone.
+/// Inside a variant serde never writes, only [`READ_OVERRIDES`] are refused:
+/// [`is_written`] says why `serialize_with` changes nothing there.
 ///
 /// An unnamed member is exempt only when serde skips it both ways, and never on
 /// a newtype struct, whose member serde writes through the function whatever it
@@ -566,7 +587,13 @@ fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
 /// writes and reads through no other. Without a pick the rule above applies,
 /// and the transparent refusal follows.
 fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
-    fn fields(fields: &Fields, newtype: bool) -> Vec<(&[syn::Attribute], &'static str)> {
+    type Scanned<'a> = (&'a [syn::Attribute], &'static str, &'static [&'static str]);
+
+    fn fields<'a>(
+        fields: &'a Fields,
+        newtype: bool,
+        keys: &'static [&'static str],
+    ) -> Vec<Scanned<'a>> {
         let described: fn(&&Field) -> bool = match fields {
             Fields::Named(_) => |field| is_described(field),
             Fields::Unnamed(_) if newtype => |_| true,
@@ -575,7 +602,7 @@ fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
         fields
             .iter()
             .filter(described)
-            .map(|field| (field.attrs.as_slice(), "field"))
+            .map(|field| (field.attrs.as_slice(), "field", keys))
             .collect()
     }
 
@@ -584,26 +611,29 @@ fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
             if Container::read(input).transparent && matches!(data.fields, Fields::Unnamed(_)) =>
         {
             transparent_member(&data.fields).map_or_else(
-                || fields(&data.fields, data.fields.len() == 1),
-                |member| vec![(member.attrs.as_slice(), "field")],
+                || fields(&data.fields, data.fields.len() == 1, WIRE_FORM_OVERRIDES),
+                |member| vec![(member.attrs.as_slice(), "field", WIRE_FORM_OVERRIDES)],
             )
         }
-        Data::Struct(data) => fields(&data.fields, data.fields.len() == 1),
-        Data::Enum(data) => data
-            .variants
-            .iter()
-            .filter(|variant| !is_skipped(&variant.attrs))
+        Data::Struct(data) => fields(&data.fields, data.fields.len() == 1, WIRE_FORM_OVERRIDES),
+        Data::Enum(data) => described_variants(data)
+            .into_iter()
             .flat_map(|variant| {
-                std::iter::once((variant.attrs.as_slice(), "variant"))
-                    .chain(fields(&variant.fields, false))
+                let keys = if is_written(variant) {
+                    WIRE_FORM_OVERRIDES
+                } else {
+                    READ_OVERRIDES
+                };
+                let members = fields(&variant.fields, false, keys);
+                std::iter::once((variant.attrs.as_slice(), "variant", keys)).chain(members)
             })
             .collect(),
         // Refused at the top of `expand_inner`.
         Data::Union(_) => Vec::new(),
     };
 
-    for (attrs, noun) in described {
-        if let Some((key, span)) = serde_key_span(attrs, WIRE_FORM_OVERRIDES) {
+    for (attrs, noun, keys) in described {
+        if let Some((key, span)) = serde_key_span(attrs, keys) {
             return Err(syn::Error::new(
                 span,
                 format!(
@@ -618,19 +648,50 @@ fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
     Ok(())
 }
 
+/// A variant serde writes and never reads has no closed schema true of both.
+///
+/// `skip_deserializing` alone keeps the variant in what serde writes and out of
+/// what it reads, so a `oneOf` or `enum` listing it describes a request serde
+/// refuses, and one leaving it out describes a response serde writes.
+/// `skip_serializing` alone is the other way round and needs no refusal: every
+/// variant serde writes is one it also reads, so the schema listing the variant
+/// is true of both. A variant serde skips both ways is in no schema.
+fn reject_unread_variant(input: &DeriveInput) -> syn::Result<()> {
+    let Data::Enum(data) = &input.data else {
+        return Ok(());
+    };
+
+    for variant in described_variants(data) {
+        if let Some((_, span)) = serde_key_span(&variant.attrs, &["skip_deserializing"]) {
+            return Err(syn::Error::new(
+                span,
+                "`skip_deserializing` makes serde write this variant and refuse to read it back, \
+                 so no closed `oneOf` or `enum` is true in both directions: listing the variant \
+                 describes a request serde refuses, and leaving it out describes a response \
+                 serde writes. Use `#[serde(skip)]` to leave it out both ways, or drop \
+                 `skip_deserializing`",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// `#[serde(other)]` makes an enum accept every tag it does not name.
 ///
 /// The schema's `oneOf` lists only the named ones, and only OpenAPI 3.2's
 /// `discriminator.defaultMapping` can say where the rest go. This derive emits
 /// no `defaultMapping`, so every build refuses the attribute rather than 3.1
-/// alone. Every variant is checked, skipped ones included: `skip_serializing`
-/// keeps a catch-all out of the schema, not out of deserialization.
+/// alone. Only a variant serde reads is checked: `skip_serializing` keeps a
+/// catch-all out of what serde writes, not out of deserialization, but serde
+/// draws the fallthrough only from the variants it reads, so `other` on one it
+/// skips both ways catches nothing. A lone `skip_deserializing` is refused
+/// before this runs, by [`reject_unread_variant`].
 fn reject_catch_all(input: &DeriveInput) -> syn::Result<()> {
     let Data::Enum(data) = &input.data else {
         return Ok(());
     };
 
-    for variant in &data.variants {
+    for variant in described_variants(data) {
         if let Some((_, span)) = serde_key_span(&variant.attrs, &["other"]) {
             return Err(syn::Error::new(
                 span,
@@ -713,10 +774,11 @@ fn reject_transparent_without_one_field(input: &DeriveInput) -> syn::Result<()> 
 /// this refusal reads that same rule, so the two cannot disagree. A flattened
 /// field is decided before that rule, by `#[schema(open)]` alone, because serde
 /// ignores any default on it. Only named fields are checked, since only an
-/// object has a `required` list; a skipped field or a field of a skipped
-/// variant is in no schema. A `#[serde(transparent)]` struct is not checked at
-/// all: serde writes its one field's value whatever `skip_serializing_if` says,
-/// and the schema describing that value has no `required` list to contradict.
+/// object has a `required` list; a skipped field is in no schema, and a field of
+/// a variant serde never writes is only read, where `skip_serializing_if` changes
+/// nothing. A `#[serde(transparent)]` struct is not checked at all: serde writes
+/// its one field's value whatever `skip_serializing_if` says, and the schema
+/// describing that value has no `required` list to contradict.
 fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
     let container = Container::read(input);
     if container.transparent {
@@ -728,7 +790,7 @@ fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
         Data::Enum(data) => data
             .variants
             .iter()
-            .filter(|variant| !is_skipped(&variant.attrs))
+            .filter(|variant| is_written(variant))
             .map(|variant| &variant.fields)
             .collect(),
         // Refused at the top of `expand_inner`.
@@ -796,24 +858,26 @@ fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
 /// A newtype struct is never checked, since serde ignores all three there, and
 /// neither is a newtype variant's `skip_serializing_if`. A
 /// `#[serde(transparent)]` struct is described by its one field rather than as
-/// an array, and a skipped variant is in no schema.
+/// an array, and a variant serde skips both ways is in no schema. A variant
+/// serde never writes is only read, so there only a lone `skip_deserializing`
+/// is refused.
 fn reject_one_way_member_skip(input: &DeriveInput) -> syn::Result<()> {
     let container = Container::read(input);
     if container.transparent {
         return Ok(());
     }
 
-    let groups: Vec<&Punctuated<Field, Comma>> = match &input.data {
+    let groups: Vec<(&Punctuated<Field, Comma>, bool)> = match &input.data {
         Data::Struct(data) => match &data.fields {
-            Fields::Unnamed(unnamed) if unnamed.unnamed.len() > 1 => vec![&unnamed.unnamed],
+            Fields::Unnamed(unnamed) if unnamed.unnamed.len() > 1 => {
+                vec![(&unnamed.unnamed, true)]
+            }
             Fields::Named(_) | Fields::Unnamed(_) | Fields::Unit => Vec::new(),
         },
-        Data::Enum(data) => data
-            .variants
-            .iter()
-            .filter(|variant| !is_skipped(&variant.attrs))
+        Data::Enum(data) => described_variants(data)
+            .into_iter()
             .filter_map(|variant| match &variant.fields {
-                Fields::Unnamed(unnamed) => Some(&unnamed.unnamed),
+                Fields::Unnamed(unnamed) => Some((&unnamed.unnamed, is_written(variant))),
                 Fields::Named(_) | Fields::Unit => None,
             })
             .collect(),
@@ -821,10 +885,15 @@ fn reject_one_way_member_skip(input: &DeriveInput) -> syn::Result<()> {
         Data::Union(_) => Vec::new(),
     };
 
-    for members in groups {
+    for (members, written) in groups {
+        let keys: &[&str] = if written {
+            &["skip_serializing", "skip_deserializing"]
+        } else {
+            &["skip_deserializing"]
+        };
         let positions = positional_members(members);
         for (index, field) in positions.iter().enumerate() {
-            if let Some((key, span)) = one_way_skip_span(field) {
+            if let Some((key, span)) = one_way_skip_span(field, keys) {
                 return Err(syn::Error::new(
                     span,
                     format!(
@@ -837,6 +906,9 @@ fn reject_one_way_member_skip(input: &DeriveInput) -> syn::Result<()> {
                 ));
             }
 
+            if !written {
+                continue;
+            }
             let Some((_, span)) = serde_key_span(&field.attrs, &["skip_serializing_if"]) else {
                 continue;
             };
@@ -869,6 +941,10 @@ fn reject_one_way_member_skip(input: &DeriveInput) -> syn::Result<()> {
 /// missing content as `None`, so it round-trips as the tag-only branch `branch`
 /// emits. External and internal tagging read back what they write, and a
 /// member skipped one way only is refused before this is reached.
+///
+/// Checked on every variant the schema describes, including one serde reads
+/// and never writes: serde still reads it only with its content, so the
+/// tag-only branch would describe a request serde refuses.
 fn reject_skipped_adjacent_payload(input: &DeriveInput) -> syn::Result<()> {
     let Data::Enum(data) = &input.data else {
         return Ok(());
@@ -878,11 +954,7 @@ fn reject_skipped_adjacent_payload(input: &DeriveInput) -> syn::Result<()> {
         return Ok(());
     };
 
-    for variant in data
-        .variants
-        .iter()
-        .filter(|variant| !is_skipped(&variant.attrs))
-    {
+    for variant in described_variants(data) {
         let Fields::Unnamed(unnamed) = &variant.fields else {
             continue;
         };
@@ -910,13 +982,13 @@ fn reject_skipped_adjacent_payload(input: &DeriveInput) -> syn::Result<()> {
     Ok(())
 }
 
-/// The `skip_serializing` or `skip_deserializing` a member carries without the
-/// other, and where it is written.
-fn one_way_skip_span(field: &Field) -> Option<(String, Span)> {
+/// The first of `keys` a member carries without the other half of
+/// `#[serde(skip)]`, and where it is written.
+fn one_way_skip_span(field: &Field, keys: &[&str]) -> Option<(String, Span)> {
     if is_skipped_both_ways(&field.attrs) {
         return None;
     }
-    serde_key_span(&field.attrs, &["skip_serializing", "skip_deserializing"])
+    serde_key_span(&field.attrs, keys)
 }
 
 /// The members of a tuple or tuple variant that hold a position on the wire,
@@ -937,9 +1009,11 @@ fn positional_members(fields: &Punctuated<Field, Comma>) -> Vec<&Field> {
 /// defaulted member when the array ends before it, but a default ahead of a
 /// member without one fills nothing, since the array cannot end there. That
 /// covers the last position carrying `skip_serializing_if`, which
-/// [`reject_one_way_member_skip`] accepts only beside a default. Under a
-/// container default, `defaulted`, serde fills every missing trailing element,
-/// so it reads the empty array and there is no bound.
+/// [`reject_one_way_member_skip`] accepts only beside a default wherever serde
+/// writes the tuple; in a variant serde never writes, such a member without a
+/// default still counts, since serde reads every position it does not fill.
+/// Under a container default, `defaulted`, serde fills every missing trailing
+/// element, so it reads the empty array and there is no bound.
 fn min_items(positions: &[&Field], defaulted: bool) -> u64 {
     if defaulted {
         return 0;
