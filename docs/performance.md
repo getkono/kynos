@@ -262,6 +262,11 @@ under 64 bytes, because the relation is the design property and the absolute is
 a ratchet. A cost gate written as a tight absolute fails on an unrelated
 toolchain bump and gets disabled.
 
+The release gate compares absolutes exactly and is not that gate, because it
+holds no ceiling to ratchet. It fails on a toolchain bump by design, and what
+clears it is recording the new numbers, not raising a limit: a bump then costs
+one reviewed re-record per release rather than a gate someone turns off.
+
 ## Rationale
 
 *Non-normative. This section explains the reasoning behind the rules above so

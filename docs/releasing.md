@@ -27,6 +27,13 @@ This is a runbook. Nothing here is normative for implementation work.
    it refreshes the release pull request, whose CI then has to be asked for
    again. A release that moved nothing passes as it is.
 
+   The refused run's `cost-report` artifact holds the three `cost-*.tsv` files
+   `cost:record` would write, measured on the release's own merge, so copying
+   them over `crates/kynos/cost/` is the same re-record without the local
+   builds. The version bump itself moves no number. A merge to `master` that
+   moves a cost before the re-record lands refuses the release again, and the
+   answer is the same step against the new head.
+
    This is what makes a tag's baselines that release's own numbers, which is
    how the next release is compared against it without rebuilding it. The gate
    sets no ceiling: it refuses a cost nobody recorded, not a cost too large.
