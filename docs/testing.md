@@ -319,6 +319,20 @@ example rather than a test, so `--all-targets` is what reaches it, and the sets
 it is *measured* at are the sets it is already linted at — which is why it
 needed no entry of its own.
 
+A fourth shape is a *dependency's* feature forced on: one no manifest in the
+workspace asks for, and that Cargo unifies in anyway from whatever graph a
+downstream program builds. [`mise run test:arbitrary-precision`](../mise.toml)
+runs `kynos-openapi`'s suite with `serde_json/arbitrary_precision` on, under
+which a `serde_json::Number` serializes as a one-field struct only serde_json's
+own serializer reads back as a number, and reaches an untagged enum such as
+`RefOr` as a map — so how `to_yaml` writes one and how the model reads one are
+observable there and nowhere else. Two tests are excluded by exact name, the
+oracles holding `to_yaml` to what `serde_yaml_ng` writes for the model, because
+under that graph the two sides differ by design; `--no-tests=fail` keeps a
+filter matching nothing from passing. A dev-dependency asking for
+the feature is the shorter spelling and the wrong one here, since it unifies into
+every `--all-targets` build and leaves the default number path untested.
+
 **A gap [`nfr.md`](nfr.md) documents is characterized.** Excluding a known-lossy
 shape from a generator keeps the property honest, but on its own it leaves the
 behaviour unrecorded: closing the gap turns nothing red, and widening it turns
@@ -461,7 +475,7 @@ halve.
 
 | Element | Named by | Named only in | Why a request cannot reach it |
 | --- | --- | --- | --- |
-| the emitted document | `Document` | `router/describe.rs`, `router/docs/mod.rs`, `router/install.rs`, `router/mod.rs`, `router/service.rs`, `server/mod.rs`, `server/tls/document.rs`, `test/conformance.rs`, `unchecked.rs` | every site builds it, annotates it, or hands it back to the application. `docs::render` serializes it once while the router is built, so the endpoint serving a description holds finished bytes rather than a `Document`, and `Service` reads it back only through `Service::openapi` |
+| the emitted document | `Document` | `router/describe.rs`, `router/docs/render.rs`, `router/install.rs`, `router/mod.rs`, `router/service.rs`, `server/describe.rs`, `server/tls/document.rs`, `test/conformance.rs`, `unchecked/describe.rs` | every site builds it, annotates it, or hands it back to the application. `docs::render::render` serializes it once while the router is built, so the endpoint serving a description holds finished bytes rather than a `Document`. Two sites also serve a request, so for them the reason is an argument the rule does not check: `router/describe.rs` builds the per-request closure where the document is in scope and moves only the dispatch table into it, and `router/service.rs`'s `Service` owns the document, hands it to the application only through `Service::openapi`, and lends it to the server only at bind, through `openapi_mut`, before any request is accepted |
 | the schema registry | `Registry::{new,default}` | `router/describe.rs` | the one registry a build mints is consumed by `describe`, which has finished before a service exists to accept a request |
 | the document validators | `Validator` | `router/describe.rs` | a description is validated where it is built. The build either fails or drops the validator, and nothing on the request path holds one to run |
 | the JSON Schema interpreter | `jsonschema` | `test/conformance.rs` | it is behind `test-util` and exists to check an observed response against the description. The request parser is the other projection of the same declaration and interprets no schema |
@@ -612,14 +626,29 @@ the callee the `Request`, and an `Observer` is handed a `Duration` and a
 pins is the stored half — the table's own shape — and that is what a new field
 on it would change.
 
-Neither does the pair compose into "a request cannot reach a `Document`". The
-naming rule is per *file*, and three of the sites the document row allows —
-`unchecked.rs`, `server/mod.rs` and `router/docs/mod.rs` — serve requests
-themselves, so a new use of `Document` *inside* one of them is allowed by the
-row and invisible to the witness. Read the two together as what they are: a
-per-file naming rule, plus a ratchet on the dispatch table's fields. Narrowing
-the allowance below file granularity is what would close that, and is filed as
-[#131](https://github.com/getkono/kynos/issues/131).
+What the pair does compose into is **none of the three describing halves split
+out for #131 serves a request**. The files they came from do — `unchecked.rs`,
+`server/mod.rs` and `router/docs/mod.rs` — and a new use of `Document` inside
+one of them was allowed by the row and invisible to the witness, which is
+[#131](https://github.com/getkono/kynos/issues/131). Each was split in two, and
+the row allows only the describing half: `unchecked/describe.rs`,
+`server/describe.rs` and `router/docs/render.rs`. None of those three holds a
+handler, a layer, an endpoint or an accept loop, so putting a `Document` beside
+the code that answers `/openapi.json` now fails the build rather than passing
+it. That is the one direction the split had to earn, and it is why
+`router/docs/render.rs` exists as a file at all: the endpoint holds finished
+`Bytes`, and the function that produced them is somewhere the endpoint is not.
+
+It still does not compose into "a request cannot reach a `Document`", and the
+gap is the granularity rather than the sites. The rule is per *file*, so what
+keeps the three describing halves off the request path is that nothing in them
+is reached from one — the row's reason, argued, not a property the rule checks.
+Each is kept to the members the row is about so that the argument stays one
+reading long, but a request-serving item added to one of them would be allowed
+by the row exactly as before. Narrowing the allowance below file granularity
+would close that, and needs the rule to parse Rust rather than grep it. Read
+the two together as what they are: a per-file naming rule over files that
+describe and do not serve, plus a ratchet on the dispatch table's fields.
 
 That is narrower than "nothing reaches an erased callee", and deliberately.
 `Service` is above the table: it owns the `Document` and hands the request to a

@@ -261,12 +261,14 @@ that path, so it cannot disagree with the document.
   the same rule OpenAPI's path templating has, which is why the two can share a
   syntax without a translation step.
 - A capture is a borrowed slice of the request path, not an owned `String`.
-  This is the property that makes the zero-allocation requirement in
-  [`nfr.md`](nfr.md#routing) reachable at all.
+  The routing path's allocation requirements in [`nfr.md`](nfr.md#routing) rest
+  on this property: zero heap allocations is recorded there as `absent` and
+  unmet, since a static match measures seven, and the enforced ceilings bound
+  the path in the meantime, lowered as the gap closes.
 - Catch-all patterns are understood by `matchit` and rejected by Kynos above it,
   which is why the anti-pattern and the crate can coexist.
 
-**The allocation caveat.** The zero-allocation requirement is scoped rather than
+**The allocation caveat.** The allocation requirement is scoped rather than
 absolute, and the scope comes from the router's actual guarantees. `matchit`
 captures parameters into a fixed inline buffer of three and spills to the heap
 beyond it; backtracking out of a static segment into a parameter sibling

@@ -735,9 +735,8 @@ fn mutual_tls_rejects_an_existing_incompatible_component() {
 async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
     use http_body_util::{BodyExt as _, Empty};
     use hyper_util::rt::TokioIo;
-    use tokio_rustls::rustls::{
-        ClientConfig,
-        pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject as _},
+    use tokio_rustls::rustls::pki_types::{
+        CertificateDer, PrivateKeyDer, ServerName, pem::PemObject as _,
     };
 
     let issued = authority();
@@ -770,7 +769,7 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
     let server = tokio::spawn(bound.serve());
 
     let anonymous_connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(
-        ClientConfig::builder()
+        client_config_builder()
             .with_root_certificates(trust_anchors(ca))
             .with_no_client_auth(),
     ));
@@ -805,7 +804,7 @@ async fn mutual_tls_serves_a_verified_client_over_a_real_socket() {
         .expect("client chain parses");
     let client_key =
         PrivateKeyDer::from_pem_slice(issued.client.key.as_bytes()).expect("client key parses");
-    let mut client_config = ClientConfig::builder()
+    let mut client_config = client_config_builder()
         .with_root_certificates(trust_anchors(ca))
         .with_client_auth_cert(client_certificates, client_key)
         .expect("client identity is valid");
@@ -1082,14 +1081,29 @@ async fn tls_server(
 /// on is what the server pins its driver to.
 #[cfg(feature = "tls")]
 fn alpn_connector(authority: &[u8], protocols: &[&[u8]]) -> tokio_rustls::TlsConnector {
-    use tokio_rustls::rustls::ClientConfig;
-
-    let mut config = ClientConfig::builder()
+    let mut config = client_config_builder()
         .with_root_certificates(trust_anchors(authority))
         .with_no_client_auth();
     config.alpn_protocols = protocols.iter().map(|protocol| protocol.to_vec()).collect();
 
     tokio_rustls::TlsConnector::from(std::sync::Arc::new(config))
+}
+
+/// A client configuration builder on the provider the server side names.
+///
+/// `ClientConfig::builder` resolves the process-level crypto provider from
+/// crate features and panics when that is ambiguous, which is the whole of what
+/// [`a_caller_installed_crypto_provider_is_the_one_build_runs_on`] covers on
+/// the server side. The harness would panic the same way under the same graph,
+/// so both ends go through the same named provider.
+#[cfg(feature = "tls")]
+fn client_config_builder() -> tokio_rustls::rustls::ConfigBuilder<
+    tokio_rustls::rustls::ClientConfig,
+    tokio_rustls::rustls::WantsVerifier,
+> {
+    tokio_rustls::rustls::ClientConfig::builder_with_provider(crate::server::tls::crypto_provider())
+        .with_safe_default_protocol_versions()
+        .expect("the named provider serves the default protocol versions")
 }
 
 /// The PEM authority in `certificate`, as a store a client can verify against.
@@ -1216,6 +1230,198 @@ fn tls_rejects_repeated_sni_names() {
         ),
         Err(crate::server::tls::error::TlsError::ServerName(name)) if name == "example.com"
     ));
+}
+
+/// `TlsConfig::build` with no crypto provider installed anywhere.
+///
+/// rustls resolves the process-level provider from the `aws-lc-rs` and `ring`
+/// features of whatever `rustls` the graph unified on, and *panics* when zero
+/// or two of them are compiled in. Cargo features are additive, so a dependency
+/// that wants `ring` for its own reasons puts the whole graph in that state and
+/// no downstream manifest can leave it. The provider Kynos builds on therefore
+/// has to be one Kynos names, and this is the case saying that a build with
+/// nothing installed still reaches it.
+#[cfg(feature = "tls")]
+#[test]
+fn tls_builds_on_a_provider_kynos_names_rather_than_one_it_resolves() {
+    assert!(
+        tokio_rustls::rustls::crypto::CryptoProvider::get_default().is_none(),
+        "the premise of this case is that nothing installed a default provider"
+    );
+
+    let identity = server_identity();
+
+    crate::server::tls::TlsConfig::from_pem(
+        identity.certificate.as_bytes(),
+        identity.key.as_bytes(),
+    )
+    .expect("server identity parses")
+    .build()
+    .expect("a TLS runtime builds with no provider installed by anyone");
+
+    assert!(
+        tokio_rustls::rustls::crypto::CryptoProvider::get_default().is_none(),
+        "naming a provider must not install one: the process default is the binary's to set"
+    );
+}
+
+/// The same two claims, on the path a client certificate adds.
+///
+/// `require_client_certificate` puts a second rustls constructor in `build` --
+/// the client verifier's -- and rustls resolves *its* provider the same
+/// implicit way, so a fix that reaches only the `ServerConfig` half leaves the
+/// panic on the mutual-TLS path and starts writing the process-wide static
+/// there. The install half needs no ambiguous graph to see, which is why it is
+/// what this case asserts: after an mutual-TLS `build`, an application that
+/// calls `install_default` with its own FIPS or hardware-backed provider must
+/// still win, and it cannot if Kynos got there first.
+#[cfg(feature = "tls")]
+#[test]
+fn a_mutual_tls_build_installs_no_process_wide_provider() {
+    assert!(
+        tokio_rustls::rustls::crypto::CryptoProvider::get_default().is_none(),
+        "the premise of this case is that nothing installed a default provider"
+    );
+
+    let issued = authority();
+    let client_authentication =
+        crate::server::tls::ClientCertificateConfig::from_pem_roots(issued.certificate.as_bytes())
+            .expect("CA parses");
+
+    crate::server::tls::TlsConfig::from_pem(
+        issued.server.certificate.as_bytes(),
+        issued.server.key.as_bytes(),
+    )
+    .expect("server identity parses")
+    .require_client_certificate(client_authentication)
+    .build()
+    .expect("a mutual-TLS runtime builds with no provider installed by anyone");
+
+    assert!(
+        tokio_rustls::rustls::crypto::CryptoProvider::get_default().is_none(),
+        "configuring client-certificate verification must not install a process default either"
+    );
+}
+
+/// A *usable* caller-installed provider is the one that serves.
+///
+/// The negative case below shows a caller's provider being consulted by
+/// refusing to build on it, which says nothing about a server that starts. This
+/// is the positive half, and the two are not the same claim: "a FIPS or
+/// hardware-backed provider still wins" is a promise about traffic, so what
+/// holds it has to be traffic.
+///
+/// The discriminator is the cipher suite. Both providers list
+/// `TLS13_AES_256_GCM_SHA384` first, so a server on the installed provider --
+/// restricted to `ChaCha20` and nothing else -- settles on a suite a server on
+/// Kynos's own `aws-lc-rs` would not have chosen, against a client whose offer
+/// is deliberately left wide so the intersection is the server's restriction
+/// alone. `ring` rather than a doctored `aws-lc-rs` because it is a different
+/// provider, which is the situation being claimed.
+#[cfg(all(feature = "tls", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_usable_caller_installed_provider_is_the_one_that_serves() {
+    use tokio_rustls::rustls::{
+        CipherSuite, ClientConfig,
+        crypto::{CryptoProvider, ring},
+        pki_types::ServerName,
+    };
+
+    CryptoProvider {
+        cipher_suites: vec![ring::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256],
+        ..ring::default_provider()
+    }
+    .install_default()
+    .expect("no other test in this process installed a provider");
+
+    let (address, authority, shutdown_sender, server) = tls_server(test_service()).await;
+
+    let mut client =
+        ClientConfig::builder_with_provider(std::sync::Arc::new(ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .expect("ring serves the default protocol versions")
+            .with_root_certificates(trust_anchors(authority.as_bytes()))
+            .with_no_client_auth();
+    client.alpn_protocols = vec![b"http/1.1".to_vec()];
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let stream = tokio_rustls::TlsConnector::from(std::sync::Arc::new(client))
+        .connect(
+            ServerName::try_from("localhost").expect("valid DNS name"),
+            stream,
+        )
+        .await
+        .expect("the handshake completes on the installed provider");
+
+    let negotiated = stream
+        .get_ref()
+        .1
+        .negotiated_cipher_suite()
+        .expect("a completed handshake settled a cipher suite");
+    assert_eq!(
+        negotiated.suite(),
+        CipherSuite::TLS13_CHACHA20_POLY1305_SHA256,
+        "the server served on the provider the caller installed, not on Kynos's own"
+    );
+
+    drop(stream);
+    let _ = shutdown_sender.send(());
+    server.await.expect("server task joins").expect("serves");
+}
+
+/// A provider a caller installed is the one `build` runs on, and a provider
+/// that can serve nothing is reported rather than panicked on.
+///
+/// Both halves are one case because one provider shows them: a provider with no
+/// cipher suites is usable for nothing, so a `build` that succeeds cannot have
+/// consulted it, and a `build` that panics has not reported it. rustls's own
+/// `ServerConfig::builder` does the second -- it unwraps the protocol-version
+/// check -- from inside a function whose signature already carries a
+/// `TlsError`.
+///
+/// `install_default` writes a process-wide static that accepts one write. That
+/// is shared state only within a process, and nextest gives each test its own,
+/// so this case observes a default nothing else in the suite can have touched.
+/// It rests on the property `tests/hermeticity.rs` holds the runner to rather
+/// than making an exception to it.
+#[cfg(feature = "tls")]
+#[test]
+fn a_caller_installed_crypto_provider_is_the_one_build_runs_on() {
+    let unusable = tokio_rustls::rustls::crypto::CryptoProvider {
+        cipher_suites: Vec::new(),
+        ..tokio_rustls::rustls::crypto::aws_lc_rs::default_provider()
+    };
+    unusable
+        .install_default()
+        .expect("no other test in this process installed a provider");
+
+    let identity = server_identity();
+    let error = crate::server::tls::TlsConfig::from_pem(
+        identity.certificate.as_bytes(),
+        identity.key.as_bytes(),
+    )
+    .expect("server identity parses")
+    .build()
+    .expect_err("a provider that serves nothing cannot build a TLS runtime");
+
+    assert!(
+        !matches!(
+            error,
+            crate::server::tls::error::TlsError::Pem { .. }
+                | crate::server::tls::error::TlsError::EmptyPem { .. }
+                | crate::server::tls::error::TlsError::PrivateKey(_)
+                | crate::server::tls::error::TlsError::ServerName(_)
+                | crate::server::tls::error::TlsError::ClientVerifier(_)
+                | crate::server::tls::error::TlsError::ZeroHandshakeTimeout
+        ),
+        "an unusable provider is its own failure, not a certificate one: {error}"
+    );
+    assert!(
+        std::error::Error::source(&error).is_some(),
+        "rustls's account of why the provider is unusable must survive as a cause"
+    );
 }
 
 /// A PEM certificate and the key that signs for it.

@@ -574,6 +574,15 @@ jiff = { workspace = true, features = [
 # prepared and nothing committed -- no PEM in the repository to expire, and no
 # reader blocked on generating one first.
 rcgen = { workspace = true }
+# Named by nothing, and that is the point: asking `rustls` for `ring` unifies
+# both provider features onto the one copy `tokio-rustls` resolved, which is the
+# graph every implicit rustls constructor panics in and the graph `server/tls/`
+# now survives by naming its provider. Declaring it here puts the whole suite
+# under that graph, so the defect cannot come back unobserved -- a reproduction
+# living outside the repository catches no regression. `std` because `ring`
+# does not imply it and a build with `tls` off has no `tokio-rustls` to supply
+# it.
+rustls = { workspace = true, features = ["ring", "std"] }
 # The auto-reload example inherits a socket from `systemfd`. Reading a file
 # descriptor out of the environment is the supervisor's protocol rather than the
 # framework's, so the crate that speaks it stays a dev-dependency.
