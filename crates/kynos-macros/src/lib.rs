@@ -206,7 +206,9 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// `transparent` struct is described by the one field serde writes and reads
 /// through, or the single field of the one direction serde can derive for it,
 /// keeps its own component name, as a newtype does, and carries that field's
-/// constraints.
+/// constraints. A tuple is the array of the members serde does not skip both
+/// ways, and a newtype variant whose member serde skips is the unit variant
+/// serde writes, provided serde also reads it back.
 ///
 /// Constraints go on fields, and the grammar is exactly the keys of
 /// [`Constraints`](https://docs.rs/kynos/latest/kynos/schema/constraints/struct.Constraints.html)
@@ -273,6 +275,17 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   a single field, the two must be the same. A struct where only one direction
 ///   picks a single field is described by it, since serde refuses the other
 ///   derive itself. Mark every other field `#[serde(skip)]`.
+/// - `#[serde(skip_serializing)]` or `skip_deserializing` alone on a member of a
+///   tuple struct, a tuple variant or a newtype variant, or `skip_serializing_if`
+///   on a tuple member other than the last one under a `#[serde(default)]` on it
+///   or its struct. A position, or a variant's payload, is there or not as a
+///   whole, so serde would write one shape and read another. `#[serde(skip)]`
+///   leaves the member out both ways; a newtype struct is exempt, since serde
+///   ignores all three there.
+/// - `#[serde(skip)]` on the only member of an adjacently tagged newtype variant,
+///   unless that member is an `Option`. serde writes the variant as its tag
+///   alone but reads it only with its content, so no one schema is true of
+///   both. Make the member an `Option`, or skip the whole variant.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)

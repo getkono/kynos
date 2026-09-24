@@ -32,9 +32,9 @@ mod attributes;
 mod shape;
 
 use attributes::{
-    constraints, described_members, field_name, is_described, is_flattened, is_open, is_required,
-    is_skipped, open_span, serde_flag, serde_key_span, transparent_member, transparent_members,
-    variant_name,
+    constraints, described_members, field_name, is_described, is_flattened, is_open, is_option,
+    is_required, is_skipped, is_skipped_both_ways, is_unit_like, open_span, serde_flag,
+    serde_key_span, transparent_member, transparent_members, variant_name,
 };
 use shape::{enum_body, struct_body};
 
@@ -91,6 +91,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     reject_catch_all(input)?;
     reject_transparent_without_one_field(input)?;
     reject_read_required_skip(input)?;
+    reject_one_way_member_skip(input)?;
+    reject_skipped_adjacent_payload(input)?;
     check_constraints(input)?;
 
     let name = &input.ident;
@@ -198,7 +200,9 @@ fn schema_bounded_generics(input: &DeriveInput) -> syn::Generics {
 /// An internally tagged newtype variant's payload is bounded by `Flatten` too.
 /// The variant has no properties of its own to put the tag beside, so its
 /// payload is composed with a tag-only object in an `allOf` — a flatten in all
-/// but the attribute, with the same thing to get wrong.
+/// but the attribute, with the same thing to get wrong. A newtype variant whose
+/// member serde skips is a unit on the wire and composes no payload, so its
+/// member is bounded by nothing.
 fn flatten_witnesses(
     input: &DeriveInput,
     container: &Container,
@@ -215,7 +219,7 @@ fn flatten_witnesses(
         (Data::Enum(data), Some(_), None) => data
             .variants
             .iter()
-            .filter(|variant| !is_skipped(&variant.attrs))
+            .filter(|variant| !is_skipped(&variant.attrs) && !is_unit_like(&variant.fields))
             .filter_map(|variant| match &variant.fields {
                 Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => unnamed.unnamed.first(),
                 _ => None,
@@ -260,7 +264,8 @@ fn flatten_witnesses(
 /// True of the shapes whose description is an object whose `properties` names
 /// every member it admits: a struct with named fields, and an enum whose every
 /// `oneOf` branch is such an object. A newtype, a tuple and a unit struct are
-/// not objects at all; an externally tagged enum with a unit variant has a bare
+/// not objects at all; an externally tagged enum with a unit variant, or with a
+/// newtype variant whose member serde skips and so writes as one, has a bare
 /// string for that branch; and an internally tagged newtype variant composes
 /// with whatever its payload resolves to, which is exactly the unknown this
 /// trait exists to refuse.
@@ -306,7 +311,7 @@ fn flattens(input: &DeriveInput, container: &Container) -> bool {
                     !variants.is_empty()
                         && variants
                             .iter()
-                            .all(|variant| !matches!(variant.fields, Fields::Unit))
+                            .all(|variant| !is_unit_like(&variant.fields))
                 }
             }
         }
@@ -551,14 +556,21 @@ fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
 /// `PhantomData` and every field of a skipped variant are in no schema, so an
 /// override on one of them contradicts nothing and is left alone.
 ///
-/// An unnamed field has no such exemption. The newtype, tuple and tuple-variant
-/// shapes describe every member whatever its skip attributes say, so an
-/// override on any of them contradicts what is published.
+/// An unnamed member is exempt only when serde skips it both ways, and never on
+/// a newtype struct, whose member serde writes through the function whatever it
+/// skips. Skip attributes are read rather than [`is_described`], which would
+/// exempt that newtype member and a positional `PhantomData` alike.
+///
+/// A `#[serde(transparent)]` tuple struct is scanned only on the member
+/// [`transparent_member`] picks, as its named twin effectively is, since serde
+/// writes and reads through no other. Without a pick the rule above applies,
+/// and the transparent refusal follows.
 fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
-    fn fields(fields: &Fields) -> Vec<(&[syn::Attribute], &'static str)> {
+    fn fields(fields: &Fields, newtype: bool) -> Vec<(&[syn::Attribute], &'static str)> {
         let described: fn(&&Field) -> bool = match fields {
             Fields::Named(_) => |field| is_described(field),
-            Fields::Unnamed(_) | Fields::Unit => |_| true,
+            Fields::Unnamed(_) if newtype => |_| true,
+            Fields::Unnamed(_) | Fields::Unit => |field| !is_skipped_both_ways(&field.attrs),
         };
         fields
             .iter()
@@ -568,14 +580,22 @@ fn reject_wire_form_overrides(input: &DeriveInput) -> syn::Result<()> {
     }
 
     let described = match &input.data {
-        Data::Struct(data) => fields(&data.fields),
+        Data::Struct(data)
+            if Container::read(input).transparent && matches!(data.fields, Fields::Unnamed(_)) =>
+        {
+            transparent_member(&data.fields).map_or_else(
+                || fields(&data.fields, data.fields.len() == 1),
+                |member| vec![(member.attrs.as_slice(), "field")],
+            )
+        }
+        Data::Struct(data) => fields(&data.fields, data.fields.len() == 1),
         Data::Enum(data) => data
             .variants
             .iter()
             .filter(|variant| !is_skipped(&variant.attrs))
             .flat_map(|variant| {
                 std::iter::once((variant.attrs.as_slice(), "variant"))
-                    .chain(fields(&variant.fields))
+                    .chain(fields(&variant.fields, false))
             })
             .collect(),
         // Refused at the top of `expand_inner`.
@@ -762,6 +782,175 @@ fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
     Ok(())
 }
 
+/// A member serde leaves out in one direction only has no one position to
+/// describe.
+///
+/// A position is on the wire or not as a whole, and so is a newtype variant's
+/// payload, which serde writes as a unit variant without it. So a tuple,
+/// tuple-variant or newtype-variant member carrying `skip_serializing` or
+/// `skip_deserializing` alone makes serde write one shape and read another.
+/// `skip_serializing_if` does the same on a tuple member, except on the last
+/// position beside `#[serde(default)]`, which serde fills when the array ends
+/// early and [`min_items`] leaves out of the bound.
+///
+/// A newtype struct is never checked, since serde ignores all three there, and
+/// neither is a newtype variant's `skip_serializing_if`. A
+/// `#[serde(transparent)]` struct is described by its one field rather than as
+/// an array, and a skipped variant is in no schema.
+fn reject_one_way_member_skip(input: &DeriveInput) -> syn::Result<()> {
+    let container = Container::read(input);
+    if container.transparent {
+        return Ok(());
+    }
+
+    let groups: Vec<&Punctuated<Field, Comma>> = match &input.data {
+        Data::Struct(data) => match &data.fields {
+            Fields::Unnamed(unnamed) if unnamed.unnamed.len() > 1 => vec![&unnamed.unnamed],
+            Fields::Named(_) | Fields::Unnamed(_) | Fields::Unit => Vec::new(),
+        },
+        Data::Enum(data) => data
+            .variants
+            .iter()
+            .filter(|variant| !is_skipped(&variant.attrs))
+            .filter_map(|variant| match &variant.fields {
+                Fields::Unnamed(unnamed) => Some(&unnamed.unnamed),
+                Fields::Named(_) | Fields::Unit => None,
+            })
+            .collect(),
+        // Refused at the top of `expand_inner`.
+        Data::Union(_) => Vec::new(),
+    };
+
+    for members in groups {
+        let positions = positional_members(members);
+        for (index, field) in positions.iter().enumerate() {
+            if let Some((key, span)) = one_way_skip_span(field) {
+                return Err(syn::Error::new(
+                    span,
+                    format!(
+                        "`{key}` leaves this member out in one direction only, and a tuple \
+                         position or a newtype variant's payload is on the wire or not as a \
+                         whole, so serde would write one shape and read another. Use \
+                         `#[serde(skip)]` to leave it out both ways, or give the type named \
+                         fields"
+                    ),
+                ));
+            }
+
+            let Some((_, span)) = serde_key_span(&field.attrs, &["skip_serializing_if"]) else {
+                continue;
+            };
+            // A container default fills the end of a tuple struct as a
+            // field-level one fills its own member.
+            let defaulted = container.default || serde_flag(&field.attrs, &["default"]);
+            let last = index + 1 == positions.len();
+            if members.len() == 1 || (last && defaulted) {
+                continue;
+            }
+            return Err(syn::Error::new(
+                span,
+                "`skip_serializing_if` on a tuple member is refused unless it is the last \
+                 described member and carries `#[serde(default)]`. serde leaves the member out \
+                 of the array it writes, which moves every later member into its position, and \
+                 reads the shorter array back only when a default fills the end. Move the member \
+                 last beside `#[serde(default)]`, or give the type named fields",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A newtype variant of an adjacently tagged enum whose member serde skips has
+/// no one schema, unless that member is an `Option`.
+///
+/// serde writes the variant as its tag alone, but reads it by its declared
+/// newtype style rather than the unit style it wrote, so it demands the content
+/// property and reads only `{"t":"V","c":null}`. An `Option` member reads the
+/// missing content as `None`, so it round-trips as the tag-only branch `branch`
+/// emits. External and internal tagging read back what they write, and a
+/// member skipped one way only is refused before this is reached.
+fn reject_skipped_adjacent_payload(input: &DeriveInput) -> syn::Result<()> {
+    let Data::Enum(data) = &input.data else {
+        return Ok(());
+    };
+    let container = Container::read(input);
+    let (Some(_), Some(_)) = (&container.tag, &container.content) else {
+        return Ok(());
+    };
+
+    for variant in data
+        .variants
+        .iter()
+        .filter(|variant| !is_skipped(&variant.attrs))
+    {
+        let Fields::Unnamed(unnamed) = &variant.fields else {
+            continue;
+        };
+        let Some(member) = unnamed.unnamed.first() else {
+            continue;
+        };
+        if !is_unit_like(&variant.fields) || is_option(&member.ty) {
+            continue;
+        }
+        let keys = &["skip", "skip_serializing", "skip_deserializing"];
+        let Some((key, span)) = serde_key_span(&member.attrs, keys) else {
+            continue;
+        };
+        return Err(syn::Error::new(
+            span,
+            format!(
+                "`{key}` leaves out the only member of a newtype variant in an adjacently \
+                 tagged enum, so serde writes the variant as its tag alone, but reads it back \
+                 only with its content present, which nothing serde writes carries. Make the \
+                 member an `Option`, which serde reads absent, or `#[serde(skip)]` the whole \
+                 variant"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// The `skip_serializing` or `skip_deserializing` a member carries without the
+/// other, and where it is written.
+fn one_way_skip_span(field: &Field) -> Option<(String, Span)> {
+    if is_skipped_both_ways(&field.attrs) {
+        return None;
+    }
+    serde_key_span(&field.attrs, &["skip_serializing", "skip_deserializing"])
+}
+
+/// The members of a tuple or tuple variant that hold a position on the wire,
+/// in order: each one serde does not skip both ways.
+///
+/// Read off skip attributes rather than [`is_described`], because a
+/// `PhantomData` dropped from the list would shift every later position.
+fn positional_members(fields: &Punctuated<Field, Comma>) -> Vec<&Field> {
+    fields
+        .iter()
+        .filter(|field| !is_skipped_both_ways(&field.attrs))
+        .collect()
+}
+
+/// The fewest elements serde reads for a tuple holding these positions.
+///
+/// Every position up to the last one with no `#[serde(default)]`: serde fills a
+/// defaulted member when the array ends before it, but a default ahead of a
+/// member without one fills nothing, since the array cannot end there. That
+/// covers the last position carrying `skip_serializing_if`, which
+/// [`reject_one_way_member_skip`] accepts only beside a default. Under a
+/// container default, `defaulted`, serde fills every missing trailing element,
+/// so it reads the empty array and there is no bound.
+fn min_items(positions: &[&Field], defaulted: bool) -> u64 {
+    if defaulted {
+        return 0;
+    }
+    let required = positions
+        .iter()
+        .rposition(|field| !serde_flag(&field.attrs, &["default"]))
+        .map_or(0, |last| last + 1);
+    u64::try_from(required).unwrap_or(u64::MAX)
+}
+
 /// What the type's own serde attributes said.
 ///
 /// Read rather than restated: `rename_all`, `tag` and `content` are already on
@@ -778,8 +967,8 @@ struct Container {
     transparent: bool,
     doc: Option<String>,
     /// A container `#[serde(default)]`, which serde fills every missing field
-    /// from. serde accepts it only on a struct with named fields, so it is
-    /// never set for any other shape.
+    /// from, and on a tuple struct every missing trailing element. serde
+    /// accepts it only on a struct, so it is never set for an enum.
     default: bool,
 }
 
@@ -813,7 +1002,7 @@ impl Container {
             });
         }
 
-        container.default = matches!(&input.data, Data::Struct(data) if matches!(data.fields, Fields::Named(_)))
+        container.default = matches!(&input.data, Data::Struct(data) if !matches!(data.fields, Fields::Unit))
             && serde_flag(&input.attrs, &["default"]);
 
         container
