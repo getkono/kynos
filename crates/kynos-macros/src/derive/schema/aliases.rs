@@ -1,13 +1,18 @@
-//! The names serde reads a named field under, and how an object says so.
+//! The names serde reads a named field or a variant under, and how a schema
+//! says so.
 //!
 //! serde reads a field under its wire name or under any `#[serde(alias)]` it
 //! carries, and refuses a document naming two of them as a duplicate field.
 //! So every name is a property under the field's schema, and where there is
 //! more than one, an `allOf` entry bounds how many of them may be present.
+//!
+//! serde reads a variant the same way, wherever its name travels: a string
+//! naming it is an `enum` of its names, and an externally tagged object keyed
+//! by it is a property under each name, present under exactly one.
 
 use super::{
-    Container, Field, TokenStream2, field_name, is_required, quote, shape::member_schema,
-    skip_value, string_value,
+    Container, Field, TokenStream2, Variant, close, field_name, is_required, quote,
+    shape::member_schema, skip_value, string_value, variant_name,
 };
 
 /// Every name serde reads a named field under: its wire name first, then each
@@ -17,8 +22,19 @@ use super::{
 /// it, and one repeating a name already listed adds nothing, as serde reads its
 /// aliases as a set.
 pub(super) fn read_names(field: &Field, container: &Container) -> Vec<String> {
-    let mut names = vec![field_name(field, container)];
-    for attr in &field.attrs {
+    names(field_name(field, container), &field.attrs)
+}
+
+/// The same for a variant: its wire name first, then each distinct `alias`.
+pub(super) fn variant_names(variant: &Variant, container: &Container) -> Vec<String> {
+    names(variant_name(variant, container), &variant.attrs)
+}
+
+/// `wire`, then each `alias` in `attrs` not already listed, in the order
+/// written.
+fn names(wire: String, attrs: &[syn::Attribute]) -> Vec<String> {
+    let mut names = vec![wire];
+    for attr in attrs {
         if !attr.path().is_ident("serde") {
             continue;
         }
@@ -76,6 +92,69 @@ pub(super) fn property(field: &Field, container: &Container) -> TokenStream2 {
                 .push(bound);
         }
     }
+}
+
+/// A string that is one of `names`: a `const` where there is one, an `enum`
+/// otherwise. What a tag property and an externally tagged unit variant are.
+pub(super) fn named_string(names: &[String]) -> TokenStream2 {
+    let value = if let [name] = names {
+        quote!(constant.const_value = ::core::option::Option::Some(::core::convert::Into::into(#name));)
+    } else {
+        quote! {
+            constant.enumeration = ::core::option::Option::Some(::std::vec![
+                #(::core::convert::Into::into(#names)),*
+            ]);
+        }
+    };
+    quote! {
+        {
+            let mut constant = ::kynos::openapi::SchemaObject::default();
+            constant.ty = ::core::option::Option::Some(
+                ::kynos::openapi::model::schema::types::TypeSet::One(
+                    ::kynos::openapi::model::schema::types::SchemaType::String,
+                ),
+            );
+            #value
+            ::kynos::openapi::Schema::Object(::std::boxed::Box::new(constant))
+        }
+    }
+}
+
+/// An externally tagged branch keyed by the variant's `names`: `payload` under
+/// each, present under exactly one, since serde reads the branch as one entry,
+/// and closed to every other key.
+///
+/// One name is listed in `required`. Several are bounded by an `allOf` entry
+/// of a `oneOf` over `required`, as a required aliased field is, which makes
+/// [`close`]'s keyword `unevaluatedProperties`.
+pub(super) fn keyed(names: &[String], payload: &TokenStream2) -> TokenStream2 {
+    let bound = if let [name] = names {
+        quote! {
+            keywords.required =
+                ::core::option::Option::Some(::std::vec![::std::string::String::from(#name)]);
+        }
+    } else {
+        let exactly = exactly_one(names);
+        quote!(keywords.all_of = ::core::option::Option::Some(::std::vec![#exactly]);)
+    };
+    close(&quote! {
+        {
+            let mut keywords = ::kynos::openapi::SchemaObject::default();
+            keywords.ty = ::core::option::Option::Some(
+                ::kynos::openapi::model::schema::types::TypeSet::One(
+                    ::kynos::openapi::model::schema::types::SchemaType::Object,
+                ),
+            );
+            let payload = #payload;
+            #(
+                keywords
+                    .properties
+                    .insert(::std::string::String::from(#names), ::core::clone::Clone::clone(&payload));
+            )*
+            #bound
+            ::kynos::openapi::Schema::Object(::std::boxed::Box::new(keywords))
+        }
+    })
 }
 
 /// `oneOf` a `required` per name: present under exactly one.

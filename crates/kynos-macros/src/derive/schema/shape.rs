@@ -1,8 +1,9 @@
 use super::{
     Comma, Container, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant,
-    aliases::property, close, closed, constraints, deprecate, described, described_variants,
-    doc_string, is_deprecated, is_described, is_flattened, is_open, is_phantom, is_unit_like,
-    min_items, positional_members, quote, transparent_member, variant_name,
+    aliases::{keyed, named_string, property, variant_names},
+    closed, constraints, deprecate, described, described_variants, doc_string, is_deprecated,
+    is_described, is_flattened, is_open, is_phantom, is_unit_like, min_items, positional_members,
+    quote, transparent_member,
 };
 
 /// A struct's schema, which its fields decide.
@@ -72,16 +73,17 @@ pub(super) fn tuple_body(fields: &Punctuated<Field, Comma>, defaulted: bool) -> 
 
 /// An object schema over named fields, optionally carrying a tag property.
 ///
-/// `tag` is `(property, value)` for an internally tagged enum variant, which is
+/// `tag` is `(property, names)` for an internally tagged enum variant, which is
 /// an object whose fields are the variant's plus the one that says which
-/// variant it is. Closed as [`closed`](super::closed) says.
+/// variant it is, under any name serde reads it by. Closed as
+/// [`closed`](super::closed) says.
 pub(super) fn object_body(
     fields: &Punctuated<Field, Comma>,
     container: &Container,
-    tag: Option<(&str, &str)>,
+    tag: Option<(&str, &[String])>,
 ) -> TokenStream2 {
-    let tagged = tag.map(|(property, value)| {
-        let constant = constant_string(value);
+    let tagged = tag.map(|(property, names)| {
+        let constant = named_string(names);
         quote! {
             keywords.properties.insert(::std::string::String::from(#property), #constant);
             required.push(::std::string::String::from(#property));
@@ -201,23 +203,6 @@ pub(super) fn member_schema(field: &Field) -> TokenStream2 {
     )
 }
 
-/// A string schema fixed to one value, which is what a tag property is.
-pub(super) fn constant_string(value: &str) -> TokenStream2 {
-    quote! {
-        {
-            let mut constant = ::kynos::openapi::SchemaObject::default();
-            constant.ty = ::core::option::Option::Some(
-                ::kynos::openapi::model::schema::types::TypeSet::One(
-                    ::kynos::openapi::model::schema::types::SchemaType::String,
-                ),
-            );
-            constant.const_value =
-                ::core::option::Option::Some(::core::convert::Into::into(#value));
-            ::kynos::openapi::Schema::Object(::std::boxed::Box::new(constant))
-        }
-    }
-}
-
 /// An enum's schema, which its tagging decides.
 ///
 /// Four shapes, and which applies is read from the serde attributes rather than
@@ -240,9 +225,16 @@ pub(super) fn enum_body(data: &DataEnum, container: &Container) -> TokenStream2 
         && !any_deprecated
         && variants.iter().all(|variant| is_unit_like(&variant.fields))
     {
-        let names = variants
+        // Every name serde reads, each once: `enum` items should be unique.
+        let mut names: Vec<String> = Vec::new();
+        for name in variants
             .iter()
-            .map(|variant| variant_name(variant, container));
+            .flat_map(|variant| variant_names(variant, container))
+        {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
         return quote! {
             {
                 let mut keywords = ::kynos::openapi::SchemaObject::default();
@@ -267,6 +259,10 @@ pub(super) fn enum_body(data: &DataEnum, container: &Container) -> TokenStream2 
     // A discriminator makes the choice cheap to determine rather than
     // guessable, which is the whole reason an untagged enum is refused: it
     // needs a property every branch carries, and only a tagged enum has one.
+    // It maps no value: every branch is inline, which implicit mapping does not
+    // consider and no mapping value names, so each tag value, an alias
+    // included, reaches its branch through the tag property's own `const` or
+    // `enum`.
     let discriminator = container.tag.as_ref().map(|tag| {
         quote! {
             keywords.discriminator = ::core::option::Option::Some(
@@ -285,9 +281,10 @@ pub(super) fn enum_body(data: &DataEnum, container: &Container) -> TokenStream2 
     }
 }
 
-/// One `oneOf` branch: the variant, shaped by how the enum is tagged.
+/// One `oneOf` branch: the variant, shaped by how the enum is tagged, under
+/// every name serde reads it by.
 pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
-    let name = variant_name(variant, container);
+    let names = variant_names(variant, container);
     let deprecated = is_deprecated(&variant.attrs);
     let described = |schema: TokenStream2| {
         deprecate(
@@ -300,7 +297,7 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
         // Adjacently tagged: the tag and the payload are two properties of one
         // object.
         (Some(tag), Some(content)) => {
-            let tagged = constant_string(&name);
+            let tagged = named_string(&names);
             let payload = payload(&variant.fields, container).map(|payload| {
                 quote! {
                     keywords.properties.insert(::std::string::String::from(#content), #payload);
@@ -332,12 +329,12 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
         // so the two are composed instead, unless serde writes it as a unit.
         (Some(tag), None) => match &variant.fields {
             Fields::Named(named) => {
-                described(object_body(&named.named, container, Some((tag, &name))))
+                described(object_body(&named.named, container, Some((tag, &names))))
             }
             Fields::Unit | Fields::Unnamed(_) => {
                 // Never closed: a unit ignores the keys beside it, a payload reads them.
                 let open = Container::default();
-                let marker = object_body(&Punctuated::new(), &open, Some((tag, &name)));
+                let marker = object_body(&Punctuated::new(), &open, Some((tag, &names)));
                 match payload(&variant.fields, container) {
                     None => described(marker),
                     Some(payload) => described(quote! {
@@ -353,25 +350,12 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
             }
         },
 
-        // Externally tagged: the variant's name is the one entry serde reads, so
-        // nothing beside it, and a unit variant is that name as a bare string.
+        // Externally tagged: a name of the variant's is the one entry serde
+        // reads, so nothing beside it, and a unit variant is that name as a
+        // bare string.
         (None, _) => match payload(&variant.fields, container) {
-            None => described(constant_string(&name)),
-            Some(payload) => described(close(&quote! {
-                {
-                    let mut keywords = ::kynos::openapi::SchemaObject::default();
-                    keywords.ty = ::core::option::Option::Some(
-                        ::kynos::openapi::model::schema::types::TypeSet::One(
-                            ::kynos::openapi::model::schema::types::SchemaType::Object,
-                        ),
-                    );
-                    keywords.properties.insert(::std::string::String::from(#name), #payload);
-                    keywords.required = ::core::option::Option::Some(
-                        ::std::vec![::std::string::String::from(#name)],
-                    );
-                    ::kynos::openapi::Schema::Object(::std::boxed::Box::new(keywords))
-                }
-            })),
+            None => described(named_string(&names)),
+            Some(payload) => described(keyed(&names, &payload)),
         },
     }
 }
