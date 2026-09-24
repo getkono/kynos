@@ -933,19 +933,22 @@ fn positional_members(fields: &Punctuated<Field, Comma>) -> Vec<&Field> {
 
 /// The fewest elements serde reads for a tuple holding these positions.
 ///
-/// Every position, less a last one carrying `skip_serializing_if`: serde may
-/// leave that one out of what it writes, and [`reject_one_way_member_skip`]
-/// accepts it only beside the `#[serde(default)]` that fills it on read. Under a
+/// Every position up to the last one with no `#[serde(default)]`: serde fills a
+/// defaulted member when the array ends before it, but a default ahead of a
+/// member without one fills nothing, since the array cannot end there. That
+/// covers the last position carrying `skip_serializing_if`, which
+/// [`reject_one_way_member_skip`] accepts only beside a default. Under a
 /// container default, `defaulted`, serde fills every missing trailing element,
 /// so it reads the empty array and there is no bound.
 fn min_items(positions: &[&Field], defaulted: bool) -> u64 {
     if defaulted {
         return 0;
     }
-    let trailing = positions
-        .last()
-        .is_some_and(|field| serde_flag(&field.attrs, &["skip_serializing_if"]));
-    u64::try_from(positions.len() - usize::from(trailing)).unwrap_or(u64::MAX)
+    let required = positions
+        .iter()
+        .rposition(|field| !serde_flag(&field.attrs, &["default"]))
+        .map_or(0, |last| last + 1);
+    u64::try_from(required).unwrap_or(u64::MAX)
 }
 
 /// What the type's own serde attributes said.
