@@ -382,9 +382,11 @@ other. `Box<T>` and `Arc<T>` carry `T`'s answer across,
 `Problem` implements it so a problem document can carry extension members of
 its own type, and the trait is unsealed so a hand-written `Schema` doing the
 same can say so. The rule a flattened schema has to meet is that it marks every
-member it contributes as evaluated, and refuses none it does not. `Problem`'s
-`additionalProperties: true` meets both from inside the `allOf`: it reaches the
-parent's members and permits them. A map's `additionalProperties` refuses the
+member it contributes as evaluated, and constrains none it does not name.
+`Problem`'s `additionalProperties: true` meets both from inside the `allOf`: it
+reaches the parent's members and permits them. The five members it names it
+does constrain, so a parent member may not reuse `type`, `title`, `status`,
+`detail` or `instance`. A map's `additionalProperties` refuses the
 parent's members, and `Unchecked`'s permissive schema marks none of its own
 evaluated, so neither is flattenable.
 serde offers nothing to read here: `flatten` never leaves `serde_derive` and

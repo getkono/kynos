@@ -313,7 +313,9 @@ impl Schema for Problem {
 ///
 /// The schema names the five registered members and admits every other one, so
 /// from inside the carrying object's `allOf` it marks every member evaluated and
-/// refuses none the object declares.
+/// constrains none it does not name. The five it names it does constrain, so a
+/// member of the carrying object may not reuse `type`, `title`, `status`,
+/// `detail` or `instance`.
 impl Flatten for Problem {}
 
 /// The description of one response carrying a problem document.
