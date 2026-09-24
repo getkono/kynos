@@ -365,7 +365,7 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
         // nothing beside it, and a unit variant is that name as a bare string.
         (None, _) => match payload(&variant.fields, container) {
             None => described(constant_string(&name)),
-            Some(payload) => described(close(quote! {
+            Some(payload) => described(close(&quote! {
                 {
                     let mut keywords = ::kynos::openapi::SchemaObject::default();
                     keywords.ty = ::core::option::Option::Some(
