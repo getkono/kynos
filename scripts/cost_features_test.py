@@ -644,7 +644,19 @@ class SinceRelease(unittest.TestCase):
             self.git(root, "init", "-q")
             self.git(root, "add", ".")
             self.git(root, "commit", "-q", "-m", "first")
+            # The two sibling crates' tags are the ones a real history carries,
+            # and neither names a `kynos` release.
+            self.git(root, "tag", "kynos-macros-v0.2.0")
+            self.git(root, "tag", "kynos-openapi-v0.2.0")
             self.assertEqual(self.released(root), (None, {}))
+
+    def test_released_without_git_is_no_release_rather_than_a_crash(self):
+        """It runs after every build, so a missing tool must not waste them."""
+        with tempfile.TemporaryDirectory() as root:
+            with mock.patch.object(
+                cost.subprocess, "run", side_effect=FileNotFoundError("git")
+            ):
+                self.assertEqual(self.released(Path(root)), (None, {}))
 
 
 class ReleaseGate(unittest.TestCase):
