@@ -38,6 +38,7 @@ import contextlib
 import io
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -519,6 +520,133 @@ class Floor(unittest.TestCase):
         self.assertNotIn("floor", text)
 
 
+class SinceRelease(unittest.TestCase):
+    """The cost a release adds, against the baselines the last one shipped.
+
+    The release gate is what makes a tag's baselines that release's numbers,
+    so reading them back is how the report compares two releases without
+    rebuilding the older one.
+    """
+
+    def binary(self, measured, shipped, tag="kynos-v0.2.0", versions=LIVE):
+        with tempfile.TemporaryDirectory() as directory:
+            was = None if shipped is None else recorded_binary(directory, shipped)
+        return cost.report(
+            measured,
+            None,
+            None,
+            None,
+            {cost.BINARY_TSV: None, cost.CODEGEN_TSV: None, cost.CODEC_TSV: None},
+            versions,
+            release=(tag, {cost.BINARY_TSV: was}),
+        )
+
+    def test_every_mover_is_listed_not_only_the_first_five(self):
+        shipped = binary_rows(a=1, b=1, c=1, d=1, e=1, f=1)
+        text = self.binary(binary_rows(a=2, b=2, c=2, d=2, e=2, f=2), shipped)
+        since = text[text.index("#### Since `kynos-v0.2.0`"):]
+        for label in "abcdef":
+            self.assertIn(f"- `{label}` +1", since)
+
+    def test_the_floor_and_a_feature_the_release_lacked_are_listed(self):
+        shipped = binary_rows(openapi32=75920)
+        measured = grown(binary_rows(openapi32=75920, brand_new=64), "text", 50160)
+        text = self.binary(measured, shipped)
+        since = text[text.index("#### Since `kynos-v0.2.0`"):]
+        self.assertIn(f"- `{cost.BASELINE}` floor +50160", since)
+        self.assertIn("- `brand-new` not in `kynos-v0.2.0`, costs +64", since)
+        self.assertNotIn("- `openapi32`", since)
+
+    def test_a_release_that_cost_nothing_says_so(self):
+        rows = binary_rows(openapi32=75920)
+        self.assertIn("- nothing moved", self.binary(rows, rows))
+
+    def test_a_release_measured_by_another_toolchain_says_so(self):
+        rows = binary_rows(openapi32=75920)
+        text = self.binary(grown(rows, "text", 8), rows, versions=OTHER_TOOLCHAIN)
+        since = text[text.index("#### Since `kynos-v0.2.0`"):]
+        self.assertIn("mixes toolchains", since)
+        self.assertNotIn("floor", since)
+
+    def test_a_release_that_shipped_no_baseline_says_so(self):
+        text = self.binary(binary_rows(), None, tag="kynos-v0.1.0")
+        self.assertIn("`kynos-v0.1.0` shipped no baseline for this table", text)
+
+    def test_no_reachable_release_says_so(self):
+        text = self.binary(binary_rows(), None, tag=None)
+        self.assertIn("No `kynos-v*` tag is reachable", text)
+
+    # `commits_test.py`'s isolation, for its reason: under a git hook the
+    # inherited `GIT_*` names would point the fixture's `git init`, and
+    # `released` itself, at the repository being pushed.
+    HERMETIC = {
+        **{k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_AUTHOR_NAME": "Cost Sweep Tests",
+        "GIT_AUTHOR_EMAIL": "cost-sweep-tests@invalid",
+        "GIT_COMMITTER_NAME": "Cost Sweep Tests",
+        "GIT_COMMITTER_EMAIL": "cost-sweep-tests@invalid",
+    }
+
+    def git(self, root, *args):
+        subprocess.run(
+            ["git", *args],
+            cwd=root, env=self.HERMETIC, check=True, capture_output=True,
+        )
+
+    def released(self, root):
+        """`cost.released` over the fixture repository at `root`, and only it."""
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(cost, "ROOT", root))
+            stack.enter_context(
+                mock.patch.object(cost, "COST", root / "crates/kynos/cost")
+            )
+            stack.enter_context(mock.patch.dict(os.environ, self.HERMETIC, clear=True))
+            return cost.released()
+
+    def test_released_reads_the_baselines_the_last_tag_shipped(self):
+        """Through a real repository, since `git describe`'s match is the claim."""
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            cost_dir = root / "crates/kynos/cost"
+            cost_dir.mkdir(parents=True)
+            shipped = binary_rows(openapi32=75920)
+            cost.write_tsv(
+                cost_dir / cost.BINARY_TSV,
+                binary_header(865004),
+                ["text", "delta"],
+                shipped,
+            )
+            self.git(root, "init", "-q")
+            self.git(root, "add", ".")
+            self.git(root, "commit", "-q", "-m", "release")
+            self.git(root, "tag", "kynos-v0.2.0")
+            # A later re-record and an unrelated tag, neither of which is the
+            # release: the tag's baseline is what shipped.
+            cost.write_tsv(
+                cost_dir / cost.BINARY_TSV,
+                binary_header(865004),
+                ["text", "delta"],
+                binary_rows(openapi32=1),
+            )
+            self.git(root, "commit", "-q", "-am", "re-record")
+            self.git(root, "tag", "other-v9")
+            tag, tables = self.released(root)
+        self.assertEqual(tag, "kynos-v0.2.0")
+        self.assertEqual(tables[cost.BINARY_TSV].rows, shipped)
+        self.assertIsNone(tables[cost.CODEC_TSV])
+
+    def test_released_without_a_release_tag_is_no_release(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            (root / "file").write_text("x")
+            self.git(root, "init", "-q")
+            self.git(root, "add", ".")
+            self.git(root, "commit", "-q", "-m", "first")
+            self.assertEqual(self.released(root), (None, {}))
+
+
 class ReleaseGate(unittest.TestCase):
     """`KYNOS_COST=check`: whether the committed baselines are what was measured.
 
@@ -633,6 +761,7 @@ class ReleaseGate(unittest.TestCase):
                     ("sweep_env", mock.Mock(return_value={})),
                     ("toolchain", mock.Mock(return_value=LIVE)),
                     ("sweep_binary", mock.Mock(return_value=measured)),
+                    ("released", mock.Mock(return_value=(None, {}))),
                     ("read_recorded", mock.Mock(side_effect=lambda path: (
                         was if path.name == cost.BINARY_TSV else None
                     ))),

@@ -88,6 +88,8 @@ a ceiling. It asks whether the committed baselines are what this run measured
 they are not. No number is judged too large: what it refuses is a release whose
 cost nobody recorded, so that every release tag carries the baselines of the
 release it names and the diff that re-records them is where a cost is reviewed.
+That is also what lets every report compare against the last release without
+rebuilding it: `released` reads the baselines the last `kynos-v*` tag shipped.
 """
 
 import argparse
@@ -575,8 +577,13 @@ def read_recorded(path):
     """
     if not path.is_file():
         return None
+    return parse_recorded(path.read_text())
+
+
+def parse_recorded(text):
+    """`read_recorded` over a baseline's text, wherever it was read from."""
     stated, rows = {}, []
-    for line in path.read_text().splitlines():
+    for line in text.splitlines():
         if not line:
             continue
         if line.startswith("#"):
@@ -598,6 +605,36 @@ def read_recorded(path):
             for cells in body
         },
     )
+
+
+def released():
+    """The last release reachable from HEAD, and the baselines it shipped with.
+
+    `(tag, {name: Recorded or None})`, or `(None, {})` when no `kynos-v*` tag
+    is reachable. Read from the tag rather than from the working tree: the
+    release gate makes the baselines a release carries the numbers that release
+    measured, so this is the cost of the last release without rebuilding it --
+    which an older tag could not be relied on to do against today's fixtures.
+
+    A tag that predates the baselines, as `kynos-v0.1.0` does, reads as `None`
+    for each table rather than as a failure. Git's own failures are the same
+    absence, since this is context for the report and never a measurement.
+    """
+    described = subprocess.run(
+        ["git", "describe", "--tags", "--abbrev=0", "--match", "kynos-v*"],
+        cwd=ROOT, capture_output=True, text=True, check=False,
+    )
+    if described.returncode != 0:
+        return None, {}
+    tag = described.stdout.strip()
+    tables = {}
+    for name in (BINARY_TSV, CODEGEN_TSV, CODEC_TSV):
+        shown = subprocess.run(
+            ["git", "show", f"{tag}:{COST.relative_to(ROOT).as_posix()}/{name}"],
+            cwd=ROOT, capture_output=True, text=True, check=False,
+        )
+        tables[name] = parse_recorded(shown.stdout) if shown.returncode == 0 else None
+    return tag, tables
 
 
 def write_tsv(path, header, names, rows):
@@ -838,6 +875,54 @@ def gate(reasons):
     ]
 
 
+def since_release(rows, release, value, delta, versions, baseline):
+    """What moved in one table since the last release, all of it, by how far.
+
+    Every mover rather than the top few: this is what a release reviewer reads
+    to decide whether the cost a release adds was meant, and a list cut at five
+    would hide the sixth. The same subtraction as the drift column, against the
+    tag's baselines rather than the working tree's, so the floor is compared
+    under the same toolchain condition and a mixed toolchain is said.
+    """
+    tag, was = release
+    if tag is None:
+        return [
+            "#### Since the last release",
+            "",
+            "No `kynos-v*` tag is reachable from this commit, so there is no "
+            "release to compare against.",
+            "",
+        ]
+    if was is None:
+        return [
+            f"#### Since `{tag}`",
+            "",
+            f"`{tag}` shipped no baseline for this table, so there is nothing "
+            "to compare against until a release that records one.",
+            "",
+        ]
+    _, drifts, fresh = table(rows, was, value, delta, "", versions, baseline)
+    moved = sorted(
+        ((label, by) for label, by in drifts.items() if by != 0),
+        key=lambda item: (-abs(item[1]), item[0]),
+    )
+    listed = [
+        f"- `{label}`{' floor' if label == baseline else ''} {by:+}"
+        for label, by in moved
+    ]
+    listed += [
+        f"- `{label}` not in `{tag}`, costs {cost:+}"
+        for label, cost in sorted(fresh.items())
+    ]
+    return [
+        f"#### Since `{tag}`",
+        "",
+        *provenance(was, versions),
+        *(listed or ["- nothing moved"]),
+        "",
+    ]
+
+
 def section(
     title,
     note,
@@ -849,8 +934,13 @@ def section(
     versions,
     functions=None,
     baseline=BASELINE,
+    release=None,
 ):
-    """One kind's table, its ranked points, and optionally its attribution."""
+    """One kind's table, its ranked points, and optionally its attribution.
+
+    `release` is `(tag, Recorded or None)` for the last release, and `None`
+    when no comparison against one was asked for.
+    """
     body, drifts, fresh = table(
         rows, recorded, value, delta, unit, versions, baseline
     )
@@ -881,6 +971,8 @@ def section(
         *listed,
         "",
     ]
+    if release is not None:
+        out += since_release(rows, release, value, delta, versions, baseline)
     new = newcomers(fresh)
     if new:
         out += [
@@ -915,7 +1007,16 @@ def section(
     return out
 
 
-def report(binary, codegen, functions, codec, recorded, versions, verdict=None):
+def report(
+    binary,
+    codegen,
+    functions,
+    codec,
+    recorded,
+    versions,
+    verdict=None,
+    release=None,
+):
     """The trend report, as Markdown.
 
     A trend and nothing more: it states what moved and by how much, and passes
@@ -923,8 +1024,13 @@ def report(binary, codegen, functions, codec, recorded, versions, verdict=None):
     against, and `nfr.md#thresholds` holds that guessing one is worse than
     having none. `verdict` is the release gate's reasons under
     `KYNOS_COST=check`, and `None` otherwise; it says whether the numbers were
-    recorded, never whether they are too large.
+    recorded, never whether they are too large. `release` is what `released`
+    returns, and `None` when no comparison against a release was asked for.
     """
+
+    def shipped(name):
+        return None if release is None else (release[0], release[1].get(name))
+
     out = [
         "## Per-feature cost",
         "",
@@ -962,6 +1068,7 @@ def report(binary, codegen, functions, codec, recorded, versions, verdict=None):
             "delta",
             "`.text` bytes",
             versions,
+            release=shipped(BINARY_TSV),
         )
     if codegen is not None:
         out += section(
@@ -977,6 +1084,7 @@ def report(binary, codegen, functions, codec, recorded, versions, verdict=None):
             "IR lines",
             versions,
             functions,
+            release=shipped(CODEGEN_TSV),
         )
     if codec is not None:
         out += section(
@@ -995,6 +1103,7 @@ def report(binary, codegen, functions, codec, recorded, versions, verdict=None):
             "`.text` bytes",
             versions,
             baseline=CODEC_BASELINE,
+            release=shipped(CODEC_TSV),
         )
     return "\n".join(out) + "\n"
 
@@ -1079,7 +1188,9 @@ def main():
             for reason in unrecorded(name, rows, recorded[name], versions)
         ]
 
-    text = report(binary, codegen, functions, codec, recorded, versions, verdict)
+    text = report(
+        binary, codegen, functions, codec, recorded, versions, verdict, released()
+    )
     (ROOT / "cost-report.md").write_text(text)
     print(text)
 
