@@ -114,8 +114,8 @@ pub(super) fn rename(ident: &str, style: &str) -> String {
 /// the exception, since serde writes nothing of it into the object and reads
 /// nothing from it.
 pub(super) fn is_described(field: &Field) -> bool {
-    !serde_flag(&field.attrs, &["skip", "skip_deserializing"])
-        && !(is_phantom(&field.ty) && is_flattened(field))
+    !(serde_flag(&field.attrs, &["skip", "skip_deserializing"])
+        || (is_phantom(&field.ty) && is_flattened(field)))
 }
 
 /// The fields a schema describes, in declaration order: each one
