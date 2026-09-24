@@ -124,42 +124,42 @@ pub(super) fn described_members(fields: &Fields) -> Vec<&Field> {
     fields.iter().filter(|field| is_described(field)).collect()
 }
 
-/// The fields a `#[serde(transparent)]` struct may be written through, and the
-/// fields it may be read through, in that order.
+/// The field a `#[serde(transparent)]` struct is written through and the field
+/// it is read through: each direction's single candidate, or `None` for none or
+/// several, where serde refuses that direction's derive and calls no function.
 ///
-/// `serde_derive`'s `allow_transparent`, read from the attributes: a field is
-/// written through unless it is `skip` or `skip_serializing`, read through
-/// unless it is `skip`, `skip_deserializing` or given a field-level `default`,
-/// and a `PhantomData` is neither. A container `default` is not read, because
-/// serde does not read it there.
-pub(super) fn transparent_members(fields: &Fields) -> (Vec<&Field>, Vec<&Field>) {
-    let candidates = |excluded: &[&str]| {
-        fields
+/// `serde_derive`'s `allow_transparent`, read from the attributes: a field is a
+/// write candidate unless `skip` or `skip_serializing`, a read candidate unless
+/// `skip`, `skip_deserializing` or a field-level `default` (serde ignores a
+/// container one), and a `PhantomData` is neither.
+pub(super) fn transparent_picks(fields: &Fields) -> (Option<&Field>, Option<&Field>) {
+    let pick = |excluded: &[&str]| {
+        let mut candidates = fields
             .iter()
-            .filter(|field| !is_phantom(&field.ty) && !serde_flag(&field.attrs, excluded))
-            .collect::<Vec<_>>()
+            .filter(|field| !is_phantom(&field.ty) && !serde_flag(&field.attrs, excluded));
+        match (candidates.next(), candidates.next()) {
+            (Some(only), None) => Some(only),
+            _ => None,
+        }
     };
     (
-        candidates(&["skip", "skip_serializing"]),
-        candidates(&["skip", "skip_deserializing", "default"]),
+        pick(&["skip", "skip_serializing"]),
+        pick(&["skip", "skip_deserializing", "default"]),
     )
 }
 
 /// The one field a `#[serde(transparent)]` struct is described by: the field
-/// both directions pick, or the single field of the one direction that picks
-/// one.
+/// both directions pick, or the field of the one direction that picks one.
 ///
-/// serde refuses a derive whose direction has no single candidate, so where only
-/// one direction picks a single field the struct compiles with that direction's
-/// derive alone, and the field is all serde writes, or reads. Two different
-/// single picks give no field, and `reject_transparent_without_one_field`
+/// Where only one direction picks a field the struct compiles with that
+/// direction's derive alone, and the field is all serde writes, or reads. Two
+/// different picks give no field, and `reject_transparent_without_one_field`
 /// refuses that struct.
 pub(super) fn transparent_member(fields: &Fields) -> Option<&Field> {
-    let (written, read) = transparent_members(fields);
-    match (written.as_slice(), read.as_slice()) {
-        ([written], [read]) => std::ptr::eq(*written, *read).then_some(*written),
-        ([only], _) | (_, [only]) => Some(*only),
-        _ => None,
+    match transparent_picks(fields) {
+        (Some(written), Some(read)) => std::ptr::eq(written, read).then_some(written),
+        (Some(only), None) | (None, Some(only)) => Some(only),
+        (None, None) => None,
     }
 }
 

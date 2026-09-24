@@ -1624,6 +1624,28 @@ fn a_transparent_struct_read_through_one_field_is_described_by_it() {
     assert_eq!(read.value, 5);
 }
 
+// serde writes this through member 0 alone and reads it through no single
+// member, so it derives only `Serialize`, and never calls the function member 1
+// names.
+#[derive(Schema, serde::Serialize)]
+#[serde(transparent)]
+struct Ticket(
+    u64,
+    #[serde(skip_serializing, deserialize_with = "unread")] u64,
+    #[serde(skip_serializing)] u64,
+);
+
+/// An override on a member a one-direction transparent struct is never read
+/// through leaves it described by the member it is written through.
+#[test]
+fn a_transparent_struct_written_through_one_field_ignores_an_unread_override() {
+    assert_eq!(emitted::<Ticket>(), emitted::<u64>());
+    assert_eq!(
+        serde_json::to_value(Ticket(5, 6, 7)).expect("a transparent struct serializes"),
+        serde_json::json!(5)
+    );
+}
+
 // --- A tuple is the positions serde writes and reads ------------------------
 //
 // serde leaves a member it skips both ways out of the array in both directions,
