@@ -1,8 +1,8 @@
 use super::{
     Comma, Container, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant, constraints,
     deprecate, described, described_variants, doc_string, field_name, is_deprecated, is_described,
-    is_flattened, is_open, is_phantom, is_required, is_unit_like, min_items, positional_members, quote,
-    transparent_member, variant_name,
+    is_flattened, is_open, is_phantom, is_required, is_unit_like, min_items, positional_members,
+    quote, transparent_member, variant_name,
 };
 
 /// A struct's schema, which its fields decide.

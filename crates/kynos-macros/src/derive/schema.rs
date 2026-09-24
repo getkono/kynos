@@ -33,9 +33,8 @@ mod shape;
 
 use attributes::{
     constraints, described_members, field_name, is_described, is_flattened, is_open, is_option,
-    is_phantom,
-    is_required, is_skipped_both_ways, is_unit_like, open_span, serde_flag, serde_key_span,
-    transparent_member, transparent_members, variant_name,
+    is_phantom, is_required, is_skipped_both_ways, is_unit_like, open_span, serde_flag,
+    serde_key_span, transparent_member, transparent_members, variant_name,
 };
 use shape::{enum_body, struct_body};
 
