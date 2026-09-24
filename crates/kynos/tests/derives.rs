@@ -1197,6 +1197,35 @@ fn a_unit_variants_alias_joins_the_compact_enumeration() {
     );
 }
 
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum OverlappingLevel {
+    On,
+    #[serde(alias = "On", alias = "Idle")]
+    Off,
+}
+
+/// A variant's alias naming another variant is listed once in the compact
+/// `enum`, which already holds it: `enum` items should be unique.
+///
+/// serde reads the shared name as the first variant, so the document still
+/// validates exactly when serde reads it.
+#[test]
+fn an_alias_another_variant_already_names_is_listed_once() {
+    assert_eq!(
+        emitted::<OverlappingLevel>(),
+        serde_json::json!({"type": "string", "enum": ["On", "Off", "Idle"]})
+    );
+
+    assert!(matches!(
+        serde_json::from_str::<OverlappingLevel>(r#""On""#),
+        Ok(OverlappingLevel::On)
+    ));
+    assert!(matches!(
+        serde_json::from_str::<OverlappingLevel>(r#""Idle""#),
+        Ok(OverlappingLevel::Off)
+    ));
+}
+
 /// An externally tagged unit branch is an `enum` of its names, and an object
 /// branch a property under each name, present under exactly one of them and
 /// closed to every other key.
