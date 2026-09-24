@@ -147,6 +147,10 @@ jobs:
       # walks the powerset: a run that shares a job with it must not follow it.
       - name: Test at baseline features
         run: mise run test:baseline
+      # Ahead of `features:check` for the reason `test:baseline` is: it builds a
+      # test target, so it needs the dev-dependencies that task strips.
+      - name: Test YAML emission with arbitrary_precision forced on
+        run: mise run test:arbitrary-precision
       - name: Check every feature combination
         run: mise run features:check
       # After `features:check`, which strips dev-dependencies while it walks:
