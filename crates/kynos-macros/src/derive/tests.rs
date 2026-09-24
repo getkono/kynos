@@ -1247,7 +1247,9 @@ mod schema {
     /// unless its type is an `Option`, however the skip is spelt.
     ///
     /// serde writes such a variant as the tag alone and reads it only beside
-    /// its content, which an `Option` member alone may leave out.
+    /// its content, which an `Option` member alone may leave out. A variant
+    /// serde reads and never writes is described by the same tag-only branch,
+    /// which serde still refuses to read, so it is refused as well.
     #[test]
     fn every_skipped_adjacently_tagged_payload_is_refused_unless_optional() {
         each_case_is_refused(
@@ -1279,6 +1281,18 @@ mod schema {
                         enum Reading {
                             Count(u64),
                             Hidden(#[serde(skip)] std::vec::Vec<u64>),
+                        }
+                    ),
+                    "`skip` leaves out the only member",
+                ),
+                case(
+                    "`skip` on the member of a variant serde reads and never writes",
+                    quote::quote!(
+                        #[serde(tag = "t", content = "c")]
+                        enum Reading {
+                            Count(u64),
+                            #[serde(skip_serializing)]
+                            Hidden(#[serde(skip)] u64),
                         }
                     ),
                     "`skip` leaves out the only member",
