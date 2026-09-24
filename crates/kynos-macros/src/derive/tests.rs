@@ -569,7 +569,9 @@ mod schema {
     /// never carries. A skipped named field, every field of a skipped variant,
     /// and a member of a tuple, tuple variant or newtype variant that serde
     /// skips both ways are in no schema at all, so there is nothing for the
-    /// override to contradict.
+    /// override to contradict. Nor is a transparent struct's member in a
+    /// direction serde picks no single member for: serde refuses that
+    /// direction's derive, so no function is called there.
     #[test]
     fn a_wire_form_override_on_an_undescribed_field_is_left_alone() {
         for declaration in [
@@ -601,6 +603,47 @@ mod schema {
                     u64,
                     #[serde(default, skip_serializing, with = "as_string")] u64,
                 );
+            ),
+            // serde writes through member 0 alone and reads through no single
+            // member, so it derives only `Serialize`: member 1 reaches neither
+            // direction, and member 0 is written but never read.
+            quote::quote!(
+                #[serde(transparent)]
+                struct Handle(
+                    u64,
+                    #[serde(skip_serializing, deserialize_with = "from_string")] u64,
+                    #[serde(skip_serializing)] u64,
+                );
+            ),
+            quote::quote!(
+                #[serde(transparent)]
+                struct Handle(
+                    #[serde(deserialize_with = "from_string")] u64,
+                    #[serde(skip_serializing)] u64,
+                );
+            ),
+            // The mirror: serde reads through member 0 alone and writes through
+            // no single member, so it derives only `Deserialize`.
+            quote::quote!(
+                #[serde(transparent)]
+                struct Handle(
+                    u64,
+                    #[serde(default, serialize_with = "as_string")] u64,
+                    #[serde(default)] u64,
+                );
+            ),
+            quote::quote!(
+                #[serde(transparent)]
+                struct Handle(
+                    #[serde(serialize_with = "as_string")] u64,
+                    #[serde(default)] u64,
+                );
+            ),
+            // Neither direction picks a single member, so serde derives neither
+            // and refuses the struct in its own words.
+            quote::quote!(
+                #[serde(transparent)]
+                struct Handle(#[serde(with = "as_string")] u64, u64);
             ),
             quote::quote!(
                 struct Reading {
@@ -651,6 +694,58 @@ mod schema {
                 ),
                 "`serialize_with` reads or writes this field",
             )],
+            expand_inner,
+        );
+    }
+
+    /// A wire-form override on the member a transparent struct is written or
+    /// read through is refused, for the keys of each direction that picks it.
+    ///
+    /// A member picked both ways is held to each one-direction key, which only
+    /// the scan for all three refuses together.
+    #[test]
+    fn a_wire_form_override_on_a_transparent_struct_s_picked_member_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "`serialize_with` on the member picked both ways",
+                    quote::quote!(
+                        #[serde(transparent)]
+                        struct Handle(#[serde(serialize_with = "as_string")] u64);
+                    ),
+                    "`serialize_with` reads or writes this field",
+                ),
+                case(
+                    "`deserialize_with` on the member picked both ways",
+                    quote::quote!(
+                        #[serde(transparent)]
+                        struct Handle(#[serde(deserialize_with = "from_string")] u64);
+                    ),
+                    "`deserialize_with` reads or writes this field",
+                ),
+                case(
+                    "`serialize_with` on the one write candidate, beside a second read candidate",
+                    quote::quote!(
+                        #[serde(transparent)]
+                        struct Handle(
+                            #[serde(serialize_with = "as_string")] u64,
+                            #[serde(skip_serializing)] u64,
+                        );
+                    ),
+                    "`serialize_with` reads or writes this field",
+                ),
+                case(
+                    "`deserialize_with` on the one read candidate, beside a second write candidate",
+                    quote::quote!(
+                        #[serde(transparent)]
+                        struct Handle(
+                            #[serde(deserialize_with = "from_string")] u64,
+                            #[serde(default)] u64,
+                        );
+                    ),
+                    "`deserialize_with` reads or writes this field",
+                ),
+            ],
             expand_inner,
         );
     }
