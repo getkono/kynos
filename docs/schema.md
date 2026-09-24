@@ -456,13 +456,16 @@ the description stays weaker than the type instead of contradicting it. The
 `allOf` keeps what is left of the map's schema, `{ "type": "object" }`, which
 asserts nothing the parent does not.
 
-A flattened `Problem` beside an open map leaves the map's values unchecked.
-`Problem`'s `additionalProperties: true` marks every member evaluated, the
-map's included, so the hoisted `unevaluatedProperties` has nothing left to
-constrain. The same keyword leaves nothing for the `unevaluatedProperties:
-false` of an object [`deny_unknown_fields`](#closed-objects) closes to refuse,
-which describes no read: `Problem` has no `Deserialize`, so an object carrying
-it is one serde only writes. Either way the description admits more than the
+A flattened `Problem`, or any flattened type that carries one, beside an open
+map leaves the map's values unchecked. `Problem`'s `additionalProperties: true`
+reaches through the `$ref` of a derived type that flattens it and marks every
+member evaluated, the map's included, so the hoisted `unevaluatedProperties`
+has nothing left to constrain. The same keyword, from a flattened `Problem` or
+any flattened type that carries one, leaves nothing for the
+`unevaluatedProperties: false` of an object
+[`deny_unknown_fields`](#closed-objects) closes to refuse, which describes no
+read: `Problem` has no `Deserialize`, so neither has a type that flattens it,
+and an object carrying either is one serde only writes. Either way the description admits more than the
 type writes and never refuses what it writes. Refusing the pair would take a
 second marker, one every derived type would carry and `Problem` would not,
 since the derive sees a field's syntax rather than which type it holds.
