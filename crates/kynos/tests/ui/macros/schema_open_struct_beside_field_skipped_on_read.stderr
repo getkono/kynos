@@ -9,21 +9,14 @@ help: the trait `AdmitsAny` is not implemented for `Extra`
    |
  8 | struct Extra {
    | ^^^^^^^^^^^^
-   = note: a `skip_deserializing` field is left out of the schema, since serde never reads it, but serde still writes it, so an open field beside it has to leave the object open to members the schema does not name; a map's value schema becomes the object's `unevaluatedProperties` and refuses the field
-   = note: use `#[serde(skip)]` to leave the field out both ways, drop `skip_deserializing` so the schema names it, or flatten an `Unchecked<serde_json::Map<String, Value>>`, which leaves the object open
-help: the following other types implement trait `AdmitsAny`
-  --> src/schema/unchecked.rs
-   |
-   | impl<T> AdmitsAny for Unchecked<T> where Self: OpenMap {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Unchecked<T>`
-   |
-  ::: src/schema/impls/wrapper.rs
-   |
-   | impl<T: AdmitsAny> AdmitsAny for Box<T> {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Box<T>`
-   |
-   | impl<T: AdmitsAny> AdmitsAny for Arc<T> {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Arc<T>`
+   = note: a `skip_deserializing` field is left out of the schema, since serde never reads it, but serde still writes it, so an open field beside it has to leave the object open to members the schema does not name; a map's value schema becomes the object's `unevaluatedProperties` and refuses the field unless its values are `Unchecked`
+   = note: use `#[serde(skip)]` to leave the field out both ways, drop `skip_deserializing` so the schema names it, or flatten an `Unchecked<serde_json::Map<String, Value>>` or a map whose values are `Unchecked`, which leave the object open
+   = help: the following other types implement trait `AdmitsAny`:
+             Arc<T>
+             BTreeMap<K, Unchecked<V>>
+             Box<T>
+             HashMap<K, Unchecked<V>, S>
+             Unchecked<T>
 note: required by a bound in `admits_any`
   --> tests/ui/macros/schema_open_struct_beside_field_skipped_on_read.rs:19:12
    |

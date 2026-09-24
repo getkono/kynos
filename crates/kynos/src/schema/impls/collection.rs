@@ -4,7 +4,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use kynos_openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType};
 
-use crate::schema::{MapKey, OpenMap, Schema, impls::with_object, registry::Registry};
+use crate::schema::{
+    AdmitsAny, MapKey, OpenMap, Schema, impls::with_object, registry::Registry,
+    unchecked::Unchecked,
+};
 
 /// An array schema over `T`, optionally requiring its members to be distinct.
 fn array<T: Schema>(registry: &mut Registry, unique: bool) -> OpenApiSchema {
@@ -96,3 +99,13 @@ impl<K: MapKey, V: Schema> Schema for BTreeMap<K, V> {
 impl<K: MapKey, V: Schema, S> OpenMap for HashMap<K, V, S> {}
 
 impl<K: MapKey, V: Schema> OpenMap for BTreeMap<K, V> {}
+
+// The hoisted `additionalProperties` is the value schema, so a map constrains
+// no member exactly when that schema admits every value. `Unchecked`'s is the
+// permissive one whatever it wraps, so the map is bounded by its value's type
+// rather than by a marker a value type could claim while describing itself
+// with a constraint. The key needs no bound beyond `MapKey`: the hoist drops
+// `propertyNames`, so no key constraint reaches the object.
+impl<K: MapKey, V, S> AdmitsAny for HashMap<K, Unchecked<V>, S> {}
+
+impl<K: MapKey, V> AdmitsAny for BTreeMap<K, Unchecked<V>> {}

@@ -336,11 +336,13 @@ pub trait OpenMap: Schema {}
 /// what serde reads, so it leaves the field out, and the hoisted keyword then
 /// refuses what serde writes of it. The derive bounds an open field by this
 /// trait wherever such a field sits beside it, so that case is a compile error
-/// at the open field, and a map that hoists nothing is accepted there.
+/// at the open field, and an open field whose hoisted schema refuses nothing is
+/// accepted there.
 ///
 /// Implemented for [`Unchecked`](unchecked::Unchecked) wherever it is an
-/// `OpenMap`, since its schema carries no `additionalProperties`, and carried
-/// across `Box<T>` and `Arc<T>`:
+/// `OpenMap`, since its schema carries no `additionalProperties`, for a
+/// `HashMap` or `BTreeMap` whose values are `Unchecked`, and carried across
+/// `Box<T>` and `Arc<T>`:
 ///
 /// ```
 /// use std::{collections::{BTreeMap, HashMap}, sync::Arc};
@@ -387,10 +389,10 @@ pub trait OpenMap: Schema {}
     note = "a `skip_deserializing` field is left out of the schema, since serde never reads it, \
             but serde still writes it, so an open field beside it has to leave the object open to \
             members the schema does not name; a map's value schema becomes the object's \
-            `unevaluatedProperties` and refuses the field",
+            `unevaluatedProperties` and refuses the field unless its values are `Unchecked`",
     note = "use `#[serde(skip)]` to leave the field out both ways, drop `skip_deserializing` so \
-            the schema names it, or flatten an `Unchecked<serde_json::Map<String, Value>>`, which \
-            leaves the object open"
+            the schema names it, or flatten an `Unchecked<serde_json::Map<String, Value>>` or a \
+            map whose values are `Unchecked`, which leave the object open"
 )]
 pub trait AdmitsAny: OpenMap {}
 

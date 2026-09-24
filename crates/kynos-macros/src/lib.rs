@@ -326,9 +326,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   `#[schema(open)]` flattened field whose type hoists an
 ///   `unevaluatedProperties`, which is every open field but one implementing
 ///   [`AdmitsAny`](https://docs.rs/kynos/latest/kynos/schema/trait.AdmitsAny.html),
-///   such as an `Unchecked` map. serde writes the field and never reads it, so
-///   the schema leaves it out, and the object then refuses what serde writes of
-///   it: through being closed, or through the hoisted `unevaluatedProperties`.
+///   such as an `Unchecked` map or a map whose values are `Unchecked`. serde
+///   writes the field and never reads it, so the schema leaves it out, and the
+///   object then refuses what serde writes of it: through being closed, or
+///   through the hoisted `unevaluatedProperties`.
 ///   `#[serde(skip)]` leaves the field out both ways. For the same reason a
 ///   struct, or an internally tagged enum whose struct variant serde writes,
 ///   holding such a field does not implement `Flatten`.

@@ -5,21 +5,13 @@ error[E0277]: `BTreeMap<std::string::String, std::string::String>` cannot be fla
    |                ^^^^^^^^^^^^^^^^^^^^^^^^ not an open map that constrains no member
    |
    = help: the trait `AdmitsAny` is not implemented for `BTreeMap<std::string::String, std::string::String>`
-   = note: a `skip_deserializing` field is left out of the schema, since serde never reads it, but serde still writes it, so an open field beside it has to leave the object open to members the schema does not name; a map's value schema becomes the object's `unevaluatedProperties` and refuses the field
-   = note: use `#[serde(skip)]` to leave the field out both ways, drop `skip_deserializing` so the schema names it, or flatten an `Unchecked<serde_json::Map<String, Value>>`, which leaves the object open
-help: the following other types implement trait `AdmitsAny`
-  --> src/schema/unchecked.rs
+   = note: a `skip_deserializing` field is left out of the schema, since serde never reads it, but serde still writes it, so an open field beside it has to leave the object open to members the schema does not name; a map's value schema becomes the object's `unevaluatedProperties` and refuses the field unless its values are `Unchecked`
+   = note: use `#[serde(skip)]` to leave the field out both ways, drop `skip_deserializing` so the schema names it, or flatten an `Unchecked<serde_json::Map<String, Value>>` or a map whose values are `Unchecked`, which leave the object open
+help: the trait `AdmitsAny` is implemented for `BTreeMap<K, Unchecked<V>>`
+  --> src/schema/impls/collection.rs
    |
-   | impl<T> AdmitsAny for Unchecked<T> where Self: OpenMap {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Unchecked<T>`
-   |
-  ::: src/schema/impls/wrapper.rs
-   |
-   | impl<T: AdmitsAny> AdmitsAny for Box<T> {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Box<T>`
-   |
-   | impl<T: AdmitsAny> AdmitsAny for Arc<T> {}
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Arc<T>`
+   | impl<K: MapKey, V> AdmitsAny for BTreeMap<K, Unchecked<V>> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 note: required by a bound in `admits_any`
   --> tests/ui/macros/schema_variant_field_skipped_on_read_beside_open_map.rs:17:16
    |
