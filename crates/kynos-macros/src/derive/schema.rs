@@ -550,13 +550,19 @@ fn reject_container_conversions(input: &DeriveInput) -> syn::Result<()> {
 /// payload is, and serde's first-match tie-break is not expressible in JSON
 /// Schema. An internally or adjacently tagged enum becomes a `discriminator`,
 /// which is.
+///
+/// The same holds for one variant marked untagged: serde writes it as its bare
+/// payload and reads it only once every tagged variant has failed, so it is
+/// refused on every variant the schema describes rather than emitted as a
+/// tagged branch the wire never carries. A variant serde skips both ways is in
+/// no schema and is left alone.
 fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
     // Only an enum can be untagged. serde refuses the attribute anywhere else
     // in its own words, and a second diagnostic calling a struct an enum is
     // this derive restating a serde shape rule and misnaming the shape.
-    if !matches!(input.data, syn::Data::Enum(_)) {
+    let Data::Enum(data) = &input.data else {
         return Ok(());
-    }
+    };
 
     for attr in &input.attrs {
         if !attr.path().is_ident("serde") {
@@ -577,6 +583,18 @@ fn reject_untagged(input: &DeriveInput) -> syn::Result<()> {
                 "an untagged enum has no describable decoding rule: `anyOf` without a \
                  discriminator is ambiguous, and serde's first-match tie-break cannot be \
                  expressed. Use `#[serde(tag = \"...\")]`, which becomes a `discriminator`",
+            ));
+        }
+    }
+
+    for variant in described_variants(data) {
+        if let Some((_, span)) = serde_key_span(&variant.attrs, &["untagged"]) {
+            return Err(syn::Error::new(
+                span,
+                "an untagged variant has no describable decoding rule: serde writes it as its \
+                 bare payload and reads it only once every tagged variant has failed, a \
+                 first-match tie-break a `oneOf` cannot express. Tag the variant like its \
+                 siblings, or publish the value as `Unchecked` on purpose",
             ));
         }
     }

@@ -269,7 +269,7 @@ and writes:
 | externally tagged, the default | `oneOf`; a unit variant is its own name as a `const` string, and anything else a one-property object keyed by the variant name |
 | `#[serde(tag = "...")]` | `oneOf` of objects each carrying the tag as a `const` property beside the variant's own, plus a `discriminator`. A newtype variant has no properties to sit beside, so it becomes an `allOf` of a tag-only object and its payload — which must implement `Flatten`, for the reason a [flattened](#flattening) field's type must. A map payload has no route through `#[schema(open)]`, since serde refuses `flatten` on a newtype variant: write a struct variant holding the map as a flattened open field, which serializes the same way |
 | `#[serde(tag = "...", content = "...")]` | the same, with the payload under the content property, which a unit variant omits |
-| `#[serde(untagged)]` | **refused** |
+| `#[serde(untagged)]` | **refused**, on the enum and on any variant serde reads or writes: an untagged variant goes on the wire as its bare payload, so a branch keyed by its name describes a value serde never writes. On a variant serde skips both ways it is in no schema, and is accepted |
 | a `#[serde(other)]` variant serde reads | **refused**: it accepts every tag the enum does not name, and only 3.2's `defaultMapping`, which the derive does not emit, could say so. On a variant serde skips both ways it catches nothing, and is accepted |
 
 `discriminator` is emitted exactly when a tag is present, because that is when
@@ -478,7 +478,7 @@ re-walked. A second call would reuse the same maps and agree with itself.
 | 5 | No unconstrained schema is emitted silently | absence of `Schema`, and `Unchecked` for saying so deliberately |
 | 6 | `Schema` names no serde trait | the trait's own declaration, and `protobuf.rs` compiling without serde |
 | 7 | An enum is described as `oneOf`, and carries a `discriminator` exactly when serde gives it a tag | the derive's ledger in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs), and `schema_tagged_enum.rs` in the pass suite |
-| 8 | An untagged enum is refused; an untagged struct is left to serde | the same ledger, and `tests/ui/macros/schema_untagged_enum.rs` for the wording |
+| 8 | An untagged enum, and an untagged variant serde reads or writes, is refused; an untagged struct is left to serde | the same ledger, and `tests/ui/macros/schema_untagged_enum.rs` and `schema_untagged_variant.rs` for the wording |
 | 9 | `deprecated` comes from Rust's `#[deprecated]` and nowhere else | one helper in [`derive/common.rs`](../crates/kynos-macros/src/derive/common.rs), read by the `Schema` derive and the route attribute alike |
 | 10 | A description never carries `deprecated: false` | the emitters write `Some(true)` or nothing |
 | 11 | A description is the same bytes in every process that emits it | [`tests/determinism.rs`](../crates/kynos/tests/determinism.rs), emitting one fixture in three processes |

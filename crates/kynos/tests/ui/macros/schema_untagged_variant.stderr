@@ -1,0 +1,5 @@
+error: an untagged variant has no describable decoding rule: serde writes it as its bare payload and reads it only once every tagged variant has failed, a first-match tie-break a `oneOf` cannot express. Tag the variant like its siblings, or publish the value as `Unchecked` on purpose
+ --> tests/ui/macros/schema_untagged_variant.rs:9:13
+  |
+9 |     #[serde(untagged)]
+  |             ^^^^^^^^
