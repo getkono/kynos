@@ -614,3 +614,53 @@ fn a_flattened_structs_alias_is_read_through_the_closed_parent() {
         );
     }
 }
+
+/// A problem document carrying a member of its own type, the shape RFC 9457's
+/// extension members exist for.
+#[derive(Schema, Serialize)]
+struct Extended {
+    #[serde(flatten)]
+    problem: kynos::Problem,
+    balance: u32,
+}
+
+/// A flattened `Problem` describes the object the type writes.
+///
+/// `Problem` names its five registered members and admits the rest with
+/// `additionalProperties: true`, which reaches the parent's `balance` from inside
+/// the `allOf` and permits it. So the composition accepts both an extension the
+/// problem carries and the member the parent declared, while the registered
+/// members stay typed.
+#[test]
+fn a_flattened_problem_accepts_its_extension_members() {
+    let extended = Extended {
+        problem: kynos::Problem::new(kynos::http::StatusCode::FORBIDDEN)
+            .with_detail("d")
+            .with_extension("accounts", serde_json::json!(["/a"])),
+        balance: 30,
+    };
+    assert_eq!(
+        serde_json::to_value(&extended).expect("the value serializes"),
+        serde_json::json!({
+            "accounts": ["/a"], "balance": 30, "detail": "d",
+            "status": 403, "title": "Forbidden", "type": "about:blank"
+        })
+    );
+    let refusals = refusals(&extended);
+    assert!(
+        refusals.is_empty(),
+        "the type cannot produce an instance its own description accepts: {refusals:?}\n\
+         schema: {}",
+        emitted::<Extended>()
+    );
+
+    let schema = emitted::<Extended>();
+    let validator =
+        jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
+    assert!(
+        !validator.is_valid(&serde_json::json!({
+            "type": "about:blank", "status": "403", "balance": 30
+        })),
+        "a problem's `status` was accepted as a string: {schema}"
+    );
+}
