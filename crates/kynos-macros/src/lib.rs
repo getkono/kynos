@@ -294,13 +294,13 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   on the field or its struct, and `#[serde(skip_serializing)]` alone on such
 ///   a field. serde may leave the field out of what it writes but still
 ///   requires it on read, so no `required` list is true in both directions.
-///   Add `#[serde(default)]` beside it or on the struct. A
-///   flattened field is decided by `#[schema(open)]` alone, since serde ignores
-///   any default on it: an open map is exempt, and anything else is refused.
-///   Also exempt are a field serde never reads and a flattened `PhantomData`,
-///   both in no schema, any field of a variant serde never writes, which serde
-///   only reads, and any field of a `transparent` struct, which has no
-///   `required` list.
+///   Add `#[serde(default)]` beside it or on the struct. Exempt are a field
+///   serde never reads and a flattened `PhantomData`, both in no schema, any
+///   field of a variant serde never writes, which serde only reads, and any
+///   field of a `transparent` struct, which has no `required` list. Any other
+///   flattened field is decided by `#[schema(open)]` alone, since serde
+///   ignores any default on it: an open map is exempt, and anything else is
+///   refused.
 /// - `#[serde(into = ...)]`, `from` or `try_from` on the type itself, struct or
 ///   enum. serde then writes or reads the type they name, which the declared
 ///   fields or variants no longer predict. Implement `Schema` by hand, describing
