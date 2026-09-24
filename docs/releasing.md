@@ -17,7 +17,29 @@ This is a runbook. Nothing here is normative for implementation work.
    reopen the pull request, which re-attributes the event to a person. Do this
    before reading the changelog, not after: this is the one merge here that
    publishes to crates.io, and it is the one whose CI does not start itself.
-3. **Merging it publishes.** `release-plz-release` publishes `kynos-openapi`,
+3. **Record what the release costs.** `Cost trend` fails on the release pull
+   request unless the baselines under `crates/kynos/cost/` are exactly what
+   this release measures, including the floor every feature's delta is taken
+   over. Its job summary lists each number that moved, and everything that
+   moved since the last `kynos-v*` tag. To clear it, run `mise run cost:record`
+   on a branch from `master` and open a pull request; reviewing that diff is
+   deciding whether each increase is one this release means to ship. Merging
+   it refreshes the release pull request, whose CI then has to be asked for
+   again. A release that moved nothing passes as it is.
+
+   The refused run's `cost-report` artifact holds the three `cost-*.tsv` files
+   `cost:record` would write, measured on the release's own merge, so copying
+   them over `crates/kynos/cost/` is the same re-record without the local
+   builds, and the route to prefer: it was measured after the version bump.
+   Only the codec sweep has been checked across a bump, and moved nothing
+   there. A merge to `master` that moves a cost before the re-record lands
+   refuses the release again, and the answer is the same step against the new
+   head.
+
+   This is what makes a tag's baselines that release's own numbers, which is
+   how the next release is compared against it without rebuilding it. The gate
+   sets no ceiling: it refuses a cost nobody recorded, not a cost too large.
+4. **Merging it publishes.** `release-plz-release` publishes `kynos-openapi`,
    then `kynos-macros`, then `kynos` — an order release-plz derives from the
    dependency graph, waiting for each to appear in the index before starting the
    next — then tags all three and cuts one GitHub release, `Kynos vX.Y.Z`.

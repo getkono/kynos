@@ -26,6 +26,10 @@ print a plausible table of the wrong subtraction. Both are asserted here, and so
 is the refusing direction `measure_binary` gained with them — a build that named
 no artifact, and an `llvm-size` that printed no `.text`.
 
+`main` is reached once, with the sweep stubbed out, for the release gate: its
+exit code is what makes a release pull request red, so it is asserted where it
+is decided rather than inferred from the pure verdict beneath it.
+
 Run it as `mise run cost:test`, or directly. There is no Python test runner in
 this repository and `unittest` needs none.
 """
@@ -34,6 +38,7 @@ import contextlib
 import io
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -357,7 +362,7 @@ class Ranking(unittest.TestCase):
         self.assertIn("- `uuid` -8", text)
         self.assertLess(text.index("- `openapi32`"), text.index("- `uuid`"))
 
-    def test_the_baseline_point_is_never_ranked(self):
+    def test_the_baseline_point_is_not_ranked_while_its_floor_holds(self):
         text = self.binary(binary_rows(openapi32=76000), binary_rows(openapi32=75920))
         self.assertNotIn(f"- `{cost.BASELINE}`", text)
 
@@ -422,6 +427,393 @@ class Provenance(unittest.TestCase):
 
     def test_a_drift_within_one_toolchain_is_not_flagged(self):
         self.assertNotIn("mixes toolchains", self.report(LIVE))
+
+
+def grown(rows, value, by):
+    """`rows` with every point's absolute grown by `by`, and no delta moved."""
+    return {
+        label: {**values, value: values[value] + by} for label, values in rows.items()
+    }
+
+
+class Floor(unittest.TestCase):
+    """The baseline row's absolute: the one number no delta moves with.
+
+    Each sweep takes every delta against its baseline point, so a change that
+    costs every program alike moves no delta and, until this, moved nothing
+    the report compared. It is compared only under the recording toolchain,
+    where an absolute is a fact about Kynos rather than about rustc.
+    """
+
+    def binary(self, measured, recorded, versions=LIVE):
+        with tempfile.TemporaryDirectory() as directory:
+            was = recorded_binary(directory, recorded)
+        return cost.report(
+            measured,
+            None,
+            None,
+            None,
+            {cost.BINARY_TSV: was, cost.CODEGEN_TSV: None, cost.CODEC_TSV: None},
+            versions,
+        )
+
+    def test_a_grown_floor_is_ranked_and_named_as_the_floor(self):
+        rows = binary_rows(openapi32=75920)
+        text = self.binary(grown(rows, "text", 50160), rows)
+        self.assertIn(f"- `{cost.BASELINE}` floor +50160", text)
+        self.assertIn(f"| `{cost.BASELINE}` | 915164 | +0 | 865004 | +50160 |", text)
+
+    def test_a_grown_floor_outranks_a_moved_delta_by_size(self):
+        recorded = binary_rows(openapi32=75920)
+        measured = grown(binary_rows(openapi32=76000), "text", 50160)
+        text = self.binary(measured, recorded)
+        self.assertLess(
+            text.index(f"- `{cost.BASELINE}` floor"), text.index("- `openapi32` +80")
+        )
+
+    def test_under_another_toolchain_the_floor_is_not_compared(self):
+        rows = binary_rows(openapi32=75920)
+        text = self.binary(grown(rows, "text", 50160), rows, OTHER_TOOLCHAIN)
+        self.assertNotIn("floor +", text)
+        self.assertIn(f"| `{cost.BASELINE}` | 915164 | +0 | — | — |", text)
+
+    def test_the_codegen_floor_is_its_line_count(self):
+        rows = codegen_rows(openapi32=101)
+        measured = grown(rows, "lines", 1200)
+        with tempfile.TemporaryDirectory() as directory:
+            was = recorded_codegen(directory, rows)
+        text = cost.report(
+            None,
+            measured,
+            codegen_functions(rows),
+            None,
+            {cost.BINARY_TSV: None, cost.CODEGEN_TSV: was, cost.CODEC_TSV: None},
+            LIVE,
+        )
+        self.assertIn(f"- `{cost.BASELINE}` floor +1200", text)
+        # Ranked, but not attributed: its composition against itself is empty.
+        self.assertNotIn(f"##### `{cost.BASELINE}`", text)
+
+    def test_the_codec_floor_is_the_fixture_with_no_codec(self):
+        rows = codec_rows(json=63936)
+        with tempfile.TemporaryDirectory() as directory:
+            was = recorded_codec(directory, rows)
+        text = cost.report(
+            None,
+            None,
+            None,
+            grown(rows, "text", 512),
+            {cost.BINARY_TSV: None, cost.CODEGEN_TSV: None, cost.CODEC_TSV: was},
+            LIVE,
+        )
+        self.assertIn(f"- `{cost.CODEC_BASELINE}` floor +512", text)
+
+    def test_a_first_run_has_no_floor_to_compare(self):
+        text = cost.report(
+            binary_rows(openapi32=75920),
+            None,
+            None,
+            None,
+            {cost.BINARY_TSV: None, cost.CODEGEN_TSV: None, cost.CODEC_TSV: None},
+            LIVE,
+        )
+        self.assertNotIn("floor", text)
+
+
+class SinceRelease(unittest.TestCase):
+    """The cost a release adds, against the baselines the last one shipped.
+
+    The release gate is what makes a tag's baselines that release's numbers,
+    so reading them back is how the report compares two releases without
+    rebuilding the older one.
+    """
+
+    def binary(self, measured, shipped, tag="kynos-v0.2.0", versions=LIVE):
+        with tempfile.TemporaryDirectory() as directory:
+            was = None if shipped is None else recorded_binary(directory, shipped)
+        return cost.report(
+            measured,
+            None,
+            None,
+            None,
+            {cost.BINARY_TSV: None, cost.CODEGEN_TSV: None, cost.CODEC_TSV: None},
+            versions,
+            release=(tag, {cost.BINARY_TSV: was}),
+        )
+
+    def test_every_mover_is_listed_not_only_the_first_five(self):
+        shipped = binary_rows(a=1, b=1, c=1, d=1, e=1, f=1)
+        text = self.binary(binary_rows(a=2, b=2, c=2, d=2, e=2, f=2), shipped)
+        since = text[text.index("#### Since `kynos-v0.2.0`"):]
+        for label in "abcdef":
+            self.assertIn(f"- `{label}` +1", since)
+
+    def test_the_floor_and_a_feature_the_release_lacked_are_listed(self):
+        shipped = binary_rows(openapi32=75920)
+        measured = grown(binary_rows(openapi32=75920, brand_new=64), "text", 50160)
+        text = self.binary(measured, shipped)
+        since = text[text.index("#### Since `kynos-v0.2.0`"):]
+        self.assertIn(f"- `{cost.BASELINE}` floor +50160", since)
+        self.assertIn("- `brand-new` not in `kynos-v0.2.0`, costs +64", since)
+        self.assertNotIn("- `openapi32`", since)
+
+    def test_a_release_that_cost_nothing_says_so(self):
+        rows = binary_rows(openapi32=75920)
+        self.assertIn("- nothing moved", self.binary(rows, rows))
+
+    def test_a_release_measured_by_another_toolchain_says_so(self):
+        rows = binary_rows(openapi32=75920)
+        text = self.binary(grown(rows, "text", 8), rows, versions=OTHER_TOOLCHAIN)
+        since = text[text.index("#### Since `kynos-v0.2.0`"):]
+        self.assertIn("mixes toolchains", since)
+        self.assertNotIn("floor", since)
+
+    def test_a_release_that_shipped_no_baseline_says_so(self):
+        text = self.binary(binary_rows(), None, tag="kynos-v0.1.0")
+        self.assertIn("`kynos-v0.1.0` shipped no baseline for this table", text)
+
+    def test_no_reachable_release_says_so(self):
+        text = self.binary(binary_rows(), None, tag=None)
+        self.assertIn("No `kynos-v*` tag is reachable", text)
+
+    # `commits_test.py`'s isolation, for its reason: under a git hook the
+    # inherited `GIT_*` names would point the fixture's `git init`, and
+    # `released` itself, at the repository being pushed.
+    HERMETIC = {
+        **{k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_AUTHOR_NAME": "Cost Sweep Tests",
+        "GIT_AUTHOR_EMAIL": "cost-sweep-tests@invalid",
+        "GIT_COMMITTER_NAME": "Cost Sweep Tests",
+        "GIT_COMMITTER_EMAIL": "cost-sweep-tests@invalid",
+    }
+
+    def git(self, root, *args):
+        subprocess.run(
+            ["git", *args],
+            cwd=root, env=self.HERMETIC, check=True, capture_output=True,
+        )
+
+    def released(self, root):
+        """`cost.released` over the fixture repository at `root`, and only it."""
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(cost, "ROOT", root))
+            stack.enter_context(
+                mock.patch.object(cost, "COST", root / "crates/kynos/cost")
+            )
+            stack.enter_context(mock.patch.dict(os.environ, self.HERMETIC, clear=True))
+            return cost.released()
+
+    def test_released_reads_the_baselines_the_last_tag_shipped(self):
+        """Through a real repository, since `git describe`'s match is the claim."""
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            cost_dir = root / "crates/kynos/cost"
+            cost_dir.mkdir(parents=True)
+            shipped = binary_rows(openapi32=75920)
+            cost.write_tsv(
+                cost_dir / cost.BINARY_TSV,
+                binary_header(865004),
+                ["text", "delta"],
+                shipped,
+            )
+            self.git(root, "init", "-q")
+            self.git(root, "add", ".")
+            self.git(root, "commit", "-q", "-m", "release")
+            self.git(root, "tag", "kynos-v0.2.0")
+            # A later re-record and an unrelated tag, neither of which is the
+            # release: the tag's baseline is what shipped.
+            cost.write_tsv(
+                cost_dir / cost.BINARY_TSV,
+                binary_header(865004),
+                ["text", "delta"],
+                binary_rows(openapi32=1),
+            )
+            self.git(root, "commit", "-q", "-am", "re-record")
+            self.git(root, "tag", "other-v9")
+            tag, tables = self.released(root)
+        self.assertEqual(tag, "kynos-v0.2.0")
+        self.assertEqual(tables[cost.BINARY_TSV].rows, shipped)
+        self.assertIsNone(tables[cost.CODEC_TSV])
+
+    def test_released_without_a_release_tag_is_no_release(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            (root / "file").write_text("x")
+            self.git(root, "init", "-q")
+            self.git(root, "add", ".")
+            self.git(root, "commit", "-q", "-m", "first")
+            # The two sibling crates' tags are the ones a real history carries,
+            # and neither names a `kynos` release.
+            self.git(root, "tag", "kynos-macros-v0.2.0")
+            self.git(root, "tag", "kynos-openapi-v0.2.0")
+            self.assertEqual(self.released(root), (None, {}))
+
+    def test_released_without_git_is_no_release_rather_than_a_crash(self):
+        """It runs after every build, so a missing tool must not waste them."""
+        with tempfile.TemporaryDirectory() as root:
+            with mock.patch.object(
+                cost.subprocess, "run", side_effect=FileNotFoundError("git")
+            ):
+                self.assertEqual(self.released(Path(root)), (None, {}))
+
+
+class ReleaseGate(unittest.TestCase):
+    """`KYNOS_COST=check`: whether the committed baselines are what was measured.
+
+    The gate's one question is whether `cost:record` would write anything new,
+    so each test states a way the answer is yes and asserts the reason names
+    it. A reason that named the wrong table or the wrong row would send the
+    reviewer of the re-record to the wrong line of the diff.
+    """
+
+    def verdict(self, measured, recorded, versions=LIVE):
+        """The gate's reasons for a binary table, against `recorded` or none."""
+        with tempfile.TemporaryDirectory() as directory:
+            was = None if recorded is None else recorded_binary(directory, recorded)
+        return cost.unrecorded(cost.BINARY_TSV, measured, was, versions)
+
+    def test_the_numbers_that_were_recorded_pass(self):
+        rows = binary_rows(openapi32=75920, uuid=-32)
+        self.assertEqual(self.verdict(rows, rows), [])
+
+    def test_a_moved_delta_is_named_by_table_row_and_column(self):
+        (reason,) = [
+            reason
+            for reason in self.verdict(
+                binary_rows(openapi32=76000), binary_rows(openapi32=75920)
+            )
+            if "delta" in reason
+        ]
+        self.assertIn("`binary.tsv` `openapi32` delta", reason)
+        self.assertIn("recorded 75920, measured 76000", reason)
+
+    def test_a_moved_floor_fails_though_no_delta_moved(self):
+        """The growth every feature pays, which no delta shows."""
+        recorded = binary_rows(openapi32=75920)
+        reasons = self.verdict(grown(recorded, "text", 50160), recorded)
+        self.assertIn(
+            f"`binary.tsv` `{cost.BASELINE}` text: recorded 865004, measured 915164",
+            reasons,
+        )
+        self.assertFalse([reason for reason in reasons if "delta" in reason])
+
+    def test_a_feature_nobody_recorded_fails(self):
+        reasons = self.verdict(
+            binary_rows(openapi32=75920, brand_new=0), binary_rows(openapi32=75920)
+        )
+        self.assertEqual(reasons, ["`binary.tsv` has no row for `brand-new`"])
+
+    def test_a_recorded_feature_this_run_did_not_measure_fails(self):
+        reasons = self.verdict(
+            binary_rows(openapi32=75920), binary_rows(openapi32=75920, retired=64)
+        )
+        self.assertEqual(
+            reasons, ["`binary.tsv` records `retired`, which this run did not measure"]
+        )
+
+    def test_a_missing_baseline_fails(self):
+        self.assertEqual(
+            self.verdict(binary_rows(), None),
+            ["`binary.tsv` has no recorded baseline"],
+        )
+
+    def test_another_toolchain_fails_rather_than_comparing(self):
+        rows = binary_rows(openapi32=75920)
+        (reason,) = self.verdict(rows, rows, OTHER_TOOLCHAIN)
+        self.assertIn(RECORDED_TOOLCHAIN, reason)
+        self.assertIn(OTHER_TOOLCHAIN[0], reason)
+
+    def test_every_codegen_column_is_compared(self):
+        recorded = codegen_rows(openapi32=101)
+        measured = codegen_rows(openapi32=101)
+        measured["openapi32"]["delta_copies"] = 2
+        with tempfile.TemporaryDirectory() as directory:
+            was = recorded_codegen(directory, recorded)
+        self.assertEqual(
+            cost.unrecorded(cost.CODEGEN_TSV, measured, was, LIVE),
+            ["`codegen.tsv` `openapi32` delta_copies: recorded 0, measured 2"],
+        )
+
+    def test_the_report_leads_with_the_verdict_and_the_way_to_clear_it(self):
+        text = cost.report(
+            binary_rows(),
+            None,
+            None,
+            None,
+            {cost.BINARY_TSV: None, cost.CODEGEN_TSV: None, cost.CODEC_TSV: None},
+            LIVE,
+            ["`binary.tsv` has no recorded baseline"],
+        )
+        self.assertIn("### Release gate: not recorded", text)
+        self.assertIn("mise run cost:record", text)
+        self.assertLess(text.index("Release gate"), text.index("Binary delta"))
+
+    def test_a_report_outside_the_gate_passes_no_verdict(self):
+        text = cost.report(
+            binary_rows(),
+            None,
+            None,
+            None,
+            {cost.BINARY_TSV: None, cost.CODEGEN_TSV: None, cost.CODEC_TSV: None},
+            LIVE,
+        )
+        self.assertNotIn("Release gate", text)
+
+    def run_main(self, mode, measured, recorded):
+        """`main` over a binary-only run, with the sweep itself stubbed out."""
+        with tempfile.TemporaryDirectory() as directory:
+            was = recorded_binary(directory, recorded)
+            environ = {"KYNOS_COST": mode} if mode else {}
+            argv = ["cost_features.py", "--kind", "binary"]
+            with contextlib.ExitStack() as stack:
+                for name, value in (
+                    ("ROOT", Path(directory)),
+                    ("sweep_env", mock.Mock(return_value={})),
+                    ("toolchain", mock.Mock(return_value=LIVE)),
+                    ("sweep_binary", mock.Mock(return_value=measured)),
+                    ("released", mock.Mock(return_value=(None, {}))),
+                    ("read_recorded", mock.Mock(side_effect=lambda path: (
+                        was if path.name == cost.BINARY_TSV else None
+                    ))),
+                ):
+                    stack.enter_context(mock.patch.object(cost, name, value))
+                stack.enter_context(mock.patch.object(sys, "argv", argv))
+                stack.enter_context(mock.patch.dict(os.environ, environ, clear=True))
+                stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                said = stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+                try:
+                    cost.main()
+                    code = 0
+                except SystemExit as stopped:
+                    code = stopped.code
+                left = (Path(directory) / "cost-report.md").is_file()
+        return code, said.getvalue(), left
+
+    def test_unrecorded_numbers_stop_the_gate_with_their_own_code(self):
+        code, said, _ = self.run_main(
+            "check", binary_rows(openapi32=76000), binary_rows(openapi32=75920)
+        )
+        self.assertEqual(code, cost.UNRECORDED)
+        self.assertIn("`openapi32` delta", said)
+
+    def test_a_refused_release_still_leaves_its_report(self):
+        _, _, left = self.run_main(
+            "check", binary_rows(openapi32=76000), binary_rows(openapi32=75920)
+        )
+        self.assertTrue(left)
+
+    def test_recorded_numbers_pass_the_gate(self):
+        rows = binary_rows(openapi32=75920)
+        code, _, _ = self.run_main("check", rows, rows)
+        self.assertEqual(code, 0)
+
+    def test_outside_the_gate_a_drift_still_exits_zero(self):
+        code, _, _ = self.run_main(
+            None, binary_rows(openapi32=76000), binary_rows(openapi32=75920)
+        )
+        self.assertEqual(code, 0)
 
 
 class Exclusions(unittest.TestCase):
@@ -518,7 +910,7 @@ class Codecs(unittest.TestCase):
         self.assertIn(f"Largest cost, against the `{cost.CODEC_BASELINE}`", text)
         self.assertIn("- `json` +63936", text)
 
-    def test_the_floor_point_is_never_ranked(self):
+    def test_the_floor_point_is_not_ranked_while_it_holds(self):
         text = self.report(
             codec_rows(json=63968), codec_rows(json=63936)
         )
@@ -542,7 +934,8 @@ class Failures(unittest.TestCase):
     `cost:features` exits zero whenever it measured something, whatever the
     number says, and non-zero only when it could not measure at all -- which
     is the distinction the `cost` CI job leans on instead of parsing a verdict
-    out of YAML. Every other test here asserts the measuring direction. These
+    out of YAML. The release gate's own code, `UNRECORDED`, is asserted in
+    `ReleaseGate`. Every other test here asserts the measuring direction. These
     assert the refusing one, and each asserts the *code*, because a path that
     stopped with the wrong one reports a defect in Kynos as a broken runner.
     """

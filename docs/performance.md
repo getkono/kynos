@@ -59,8 +59,8 @@ What each kind of measurement proves that no other kind does.
 | Allocation count | its own integration target | `cargo nextest`, over `alloc_counter` | that a path allocates a bounded number of times | in use, at four targets: [`kynos/tests/alloc.rs`](../crates/kynos/tests/alloc.rs) for the routing path, [`kynos/tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) for body erasure, [`kynos/tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) for what a payload codec adds, and [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs) for what producing a description costs at 10, 100 and 1000 operations. Several rather than one because an integration binary cannot be depended on, so a second crate that counts cannot reach the first one's harness |
 | Size guard | [`tests/size.rs`](../crates/kynos/tests/size.rs), or a sibling `tests.rs`, or beside the count that shares its fixture | `cargo nextest` | that a type or a future did not grow | in use for types, and for the dispatch future at [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) — which is the one future guarded, not every future |
 | Off-path proof | a sibling `tests.rs`, and a table [`containment:check`](../scripts/containment.py) reads | `python3 scripts/containment.py`, `cargo nextest` | that a feature is unreachable from the request path | in use, for the off-path flags and for the document, the registry, the validators and `jsonschema`: a table in [`testing.md`](testing.md#the-off-path-proof) held by `mise run containment:check`, plus the field witness in [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs); `describe` is the one off-path shape no row holds, and the emitters are held by the `yaml` flag's row rather than by one of their own |
-| Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | in use, via `mise run cost:features` over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs); reports a trend and sets no ceiling, and sees the generics that fixture instantiates rather than the whole surface — so a feature that grows the dependency graph can shrink this number by sharing instantiations out of upstream rlibs, and a negative row is a relocation rather than a saving |
-| Binary delta | a feature sweep | `.text` of a fixed fixture | what a feature costs a linked artifact | in use, over [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv); reports a trend and sets no ceiling. The fixture uses none of these features, so a zero row says the linker stripped — or the collector never instantiated — what nothing called, rather than that the feature is free to a program that uses it. A second sweep answers the question that fixture structurally cannot, over [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv): what mounting a codec costs, weighed on a fixture that mounts one |
+| Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | in use, via `mise run cost:features` over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs); reports a trend after each merge, refuses a release whose numbers are not the recorded ones, and sets no ceiling, and sees the generics that fixture instantiates rather than the whole surface — so a feature that grows the dependency graph can shrink this number by sharing instantiations out of upstream rlibs, and a negative row is a relocation rather than a saving |
+| Binary delta | a feature sweep | `.text` of a fixed fixture | what a feature costs a linked artifact | in use, over [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv); reports a trend after each merge, refuses a release whose numbers are not the recorded ones, and sets no ceiling. The fixture uses none of these features, so a zero row says the linker stripped — or the collector never instantiated — what nothing called, rather than that the feature is free to a program that uses it. A second sweep answers the question that fixture structurally cannot, over [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv): what mounting a codec costs, weighed on a fixture that mounts one |
 
 **An allocation count needs its own target because a global allocator is
 process-wide.** Installing one in the library's unit-test binary would perturb
@@ -94,6 +94,16 @@ and compare artifacts, which no test harness can express, so they are a task —
 [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv) and
 [`cost/codegen.tsv`](../crates/kynos/cost/codegen.tsv), which
 `mise run cost:record` writes.
+
+**A sweep is compared at a release, not at a pull request.** It is some fifty
+builds, so no pull request waits on it: `cost.yml` runs it after each merge as a
+trend, and on the release pull request with `KYNOS_COST=check`, which fails
+unless recording would change nothing. Re-recording in a pull request of its own
+is then where a release's cost is reviewed, and it leaves each release tag
+carrying its own numbers, which is what the report's since-release section reads
+back. The comparison covers each delta and, under the recording toolchain, the
+baseline point's absolute — the floor a change that costs every program alike
+moves while leaving every delta still.
 
 **The codec sweep is the same task over a fixture that varies on purpose.**
 [`cost/codec.rs`](../crates/kynos/cost/codec.rs) mounts one operation each way
@@ -251,6 +261,11 @@ asserts that `Error` is smaller than `Violation` and only loosely that it is
 under 64 bytes, because the relation is the design property and the absolute is
 a ratchet. A cost gate written as a tight absolute fails on an unrelated
 toolchain bump and gets disabled.
+
+The release gate compares absolutes exactly and is not that gate, because it
+holds no ceiling to ratchet. It fails on a toolchain bump by design, and what
+clears it is recording the new numbers, not raising a limit: a bump then costs
+one reviewed re-record per release rather than a gate someone turns off.
 
 ## Rationale
 

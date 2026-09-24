@@ -9,10 +9,11 @@
 # establish is the cost of merely enabling F to a program that does not use F.
 #
 # The compared column is `delta`: the difference against the openapi31 build in
-# the same run, never the absolute. `performance.md#thresholds` is the reason --
-# relations outlive absolutes, and an absolute moves on a toolchain bump that
-# changed nothing about Kynos. `text` is recorded beside it as context and is
-# not compared.
+# the same run. `performance.md#thresholds` is the reason -- relations outlive
+# absolutes, and an absolute moves on a toolchain bump that changed nothing
+# about Kynos. `text` is compared on the openapi31 row alone, and only under the
+# toolchain named below: that floor is what every program pays, and no delta
+# moves when it grows.
 #
 # No ceiling is set here or anywhere else. `nfr.md#thresholds` sets one from a
 # first recorded measurement, reviewed as a change to that document; this file

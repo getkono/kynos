@@ -81,6 +81,15 @@ anywhere, per [`nfr.md`](../docs/nfr.md#thresholds), which sets a ceiling from a
 first recorded measurement and never guesses one. Non-zero only when a
 measurement could not be made at all: a build that did not compile, a missing
 `llvm-size`, an ambient `RUSTFLAGS`, an output with no `(TOTAL)` in it.
+
+`KYNOS_COST=check` is the one exception, and it is the release gate rather than
+a ceiling. It asks whether the committed baselines are what this run measured
+-- whether `cost:record` would write nothing new -- and exits `UNRECORDED` when
+they are not. No number is judged too large: what it refuses is a release whose
+cost nobody recorded, so that every release tag carries the baselines of the
+release it names and the diff that re-records them is where a cost is reviewed.
+That is also what lets every report compare against the last release without
+rebuilding it: `released` reads the baselines the last `kynos-v*` tag shipped.
 """
 
 import argparse
@@ -165,13 +174,19 @@ DISAMBIGUATOR = re.compile(r"(?<=\w)\[[0-9a-f]{8,16}\]")
 
 # The two header lines `write_tsv` emits that are read back rather than only
 # written: which compiler produced the rows below them. `# baseline:` is not
-# among them, being the absolute this file says it does not compare.
+# among them: the absolute it repeats is read from the baseline row instead.
 PROVENANCE = re.compile(r"^#\s*(toolchain|host):\s*(\S.*?)\s*$")
 
 # A committed baseline and the compiler that measured it, kept together
 # because a drift is only a fact about Kynos when both sides of the
 # subtraction came from the same rustc.
 Recorded = namedtuple("Recorded", ("toolchain", "host", "rows"))
+
+# The exit code `KYNOS_COST=check` stops with when it measured and found numbers
+# nobody recorded. Distinct from 1 and 2, which say no measurement was made, so
+# a failed release gate never reads as a broken runner, nor a broken runner as
+# a cost to review.
+UNRECORDED = 3
 
 BINARY_TSV = "binary.tsv"
 BINARY_HEADER = """\
@@ -186,10 +201,11 @@ BINARY_HEADER = """\
 # establish is the cost of merely enabling F to a program that does not use F.
 #
 # The compared column is `delta`: the difference against the openapi31 build in
-# the same run, never the absolute. `performance.md#thresholds` is the reason --
-# relations outlive absolutes, and an absolute moves on a toolchain bump that
-# changed nothing about Kynos. `text` is recorded beside it as context and is
-# not compared.
+# the same run. `performance.md#thresholds` is the reason -- relations outlive
+# absolutes, and an absolute moves on a toolchain bump that changed nothing
+# about Kynos. `text` is compared on the openapi31 row alone, and only under the
+# toolchain named below: that floor is what every program pays, and no delta
+# moves when it grows.
 #
 # No ceiling is set here or anywhere else. `nfr.md#thresholds` sets one from a
 # first recorded measurement, reviewed as a change to that document; this file
@@ -238,7 +254,8 @@ CODEC_HEADER = """\
 #
 # The compared column is `delta`, for `binary.tsv`'s reason: relations outlive
 # absolutes, and an absolute moves on a toolchain bump that changed nothing
-# about Kynos. `text` is recorded beside it as context and is not compared.
+# about Kynos. `text` is compared on the `(no codec)` floor row alone, and only
+# under the toolchain named below, for `binary.tsv`'s reason too.
 #
 # No ceiling is set here or anywhere else. `nfr.md#thresholds` sets one from a
 # first recorded measurement, reviewed as a change to that document; this file
@@ -267,9 +284,11 @@ CODEGEN_HEADER = """\
 # reads pre-link IR, and a fat-LTO release build deletes the monomorphizations
 # this exists to count.
 #
-# The compared columns are the two deltas, for `binary.tsv`'s reason. Per-
-# function attribution is deliberately not recorded here: monomorphized names
-# churn with every generic signature and a file of them would be a diff
+# The compared columns are the two deltas, for `binary.tsv`'s reason, and the
+# openapi31 row's `lines` under the toolchain named below.
+#
+# Per-function attribution is deliberately not recorded here: monomorphized
+# names churn with every generic signature and a file of them would be a diff
 # generator rather than a baseline. Attribution is report-only, in
 # `cost-report.md`.
 #
@@ -282,7 +301,7 @@ CODEGEN_HEADER = """\
 
 
 def fail(message, code=1):
-    """Report that a measurement could not be made, and stop."""
+    """Report why the run stops, and stop with `code`."""
     print(f"cost: {message}", file=sys.stderr)
     sys.exit(code)
 
@@ -559,8 +578,13 @@ def read_recorded(path):
     """
     if not path.is_file():
         return None
+    return parse_recorded(path.read_text())
+
+
+def parse_recorded(text):
+    """`read_recorded` over a baseline's text, wherever it was read from."""
     stated, rows = {}, []
-    for line in path.read_text().splitlines():
+    for line in text.splitlines():
         if not line:
             continue
         if line.startswith("#"):
@@ -584,6 +608,42 @@ def read_recorded(path):
     )
 
 
+def released():
+    """The last release reachable from HEAD, and the baselines it shipped with.
+
+    `(tag, {name: Recorded or None})`, or `(None, {})` when no `kynos-v*` tag
+    is reachable. Read from the tag rather than from the working tree: the
+    release gate makes the baselines a release carries the numbers that release
+    measured, so this is the cost of the last release without rebuilding it --
+    which an older tag could not be relied on to do against today's fixtures.
+
+    A tag that predates the baselines, as `kynos-v0.1.0` does, reads as `None`
+    for each table rather than as a failure. Git's own failures, an absent
+    `git` among them, are the same absence: this is context for the report and
+    never a measurement, and it runs after every build has already been paid
+    for.
+    """
+
+    def git(*args):
+        try:
+            done = subprocess.run(
+                ["git", *args], cwd=ROOT, capture_output=True, text=True, check=False
+            )
+        except FileNotFoundError:
+            return None
+        return done.stdout if done.returncode == 0 else None
+
+    tag = git("describe", "--tags", "--abbrev=0", "--match", "kynos-v*")
+    if tag is None:
+        return None, {}
+    tag = tag.strip()
+    tables = {}
+    for name in (BINARY_TSV, CODEGEN_TSV, CODEC_TSV):
+        shown = git("show", f"{tag}:{COST.relative_to(ROOT).as_posix()}/{name}")
+        tables[name] = None if shown is None else parse_recorded(shown)
+    return tag, tables
+
+
 def write_tsv(path, header, names, rows):
     """A baseline file: `#` prose, one header line, one line per point."""
     lines = ["\t".join(["feature", *names])]
@@ -594,7 +654,14 @@ def write_tsv(path, header, names, rows):
     path.write_text(header + "\n".join(lines) + "\n")
 
 
-def table(rows, recorded, value, delta, unit, baseline=BASELINE):
+def same_toolchain(recorded, versions):
+    """Whether `recorded` was measured by the compiler this run uses."""
+    return recorded is not None and (recorded.toolchain, recorded.host) == tuple(
+        versions
+    )
+
+
+def table(rows, recorded, value, delta, unit, versions, baseline=BASELINE):
     """The per-kind report table, and the two buckets it ranks points by.
 
     Two buckets rather than one, because a point the recorded baseline has no
@@ -605,6 +672,12 @@ def table(rows, recorded, value, delta, unit, baseline=BASELINE):
     measures a new feature the one run that ranks and attributes nothing --
     the row was in the table, and the separately headed sections below it were
     empty.
+
+    The baseline row is the exception to comparing deltas. Its delta is zero by
+    construction, so its drift is its absolute instead: the floor every other
+    row is a delta over, and the one number that moves when a change costs
+    every program alike. It is compared only under the toolchain that recorded
+    it, because across a toolchain bump an absolute is a fact about rustc.
     """
     lines = [
         f"| feature | {unit} | delta | recorded | drift |",
@@ -612,6 +685,18 @@ def table(rows, recorded, value, delta, unit, baseline=BASELINE):
     ]
     drifts, fresh = {}, {}
     for label, measured in rows.items():
+        if label == baseline and recorded is not None:
+            floor = recorded.rows.get(label, {}).get(value)
+            if floor is None or not same_toolchain(recorded, versions):
+                shown, moved = "—", "—"
+            else:
+                drifts[label] = measured[value] - floor
+                shown, moved = f"{floor}", f"{drifts[label]:+}"
+            lines.append(
+                f"| `{label}` | {measured[value]} | {measured[delta]:+} "
+                f"| {shown} | {moved} |"
+            )
+            continue
         was = None if recorded is None else recorded.rows.get(label, {}).get(delta)
         if was is None:
             shown, moved = ("—", "—") if recorded is None else ("—", "new")
@@ -622,12 +707,7 @@ def table(rows, recorded, value, delta, unit, baseline=BASELINE):
                 fresh[label] = measured[delta]
         else:
             moved_by = measured[delta] - was
-            # The point every delta is taken against has a drift of zero by
-            # construction -- `openapi31` for the feature sweeps, the codec
-            # fixture's floor for the codec one. Ranking it would spend one of
-            # five slots saying the baseline is the baseline.
-            if label != baseline:
-                drifts[label] = moved_by
+            drifts[label] = moved_by
             shown, moved = f"{was:+}", f"{moved_by:+}"
         lines.append(
             f"| `{label}` | {measured[value]} | {measured[delta]:+} "
@@ -743,6 +823,116 @@ def provenance(recorded, versions):
     ]
 
 
+def unrecorded(name, rows, recorded, versions):
+    """Every way `rows` differs from what `cost:record` last wrote to `name`.
+
+    Empty exactly when recording this run would leave every number in `name`
+    and the toolchain it names unchanged, which is the whole of what the
+    release gate asks. The prose above them is the script's rather than a
+    measurement, so a change to it alone is not a reason. Every column is
+    compared, the absolutes included: under one toolchain an absolute is a
+    fact about Kynos, and it is the one number that moves when every feature
+    pays for a change.
+
+    A different toolchain or host is one reason and ends the comparison. Its
+    differences would be facts about rustc, and they are cleared the same way
+    -- by recording under the toolchain that now builds the release.
+    """
+    if recorded is None:
+        return [f"`{name}` has no recorded baseline"]
+    live = f"`{versions[0]}` on `{versions[1]}`"
+    if not same_toolchain(recorded, versions):
+        was = f"`{recorded.toolchain}` on `{recorded.host}`"
+        return [f"`{name}` was recorded by {was}; this run is {live}"]
+    reasons = []
+    for label, measured in rows.items():
+        was = recorded.rows.get(label)
+        if was is None:
+            reasons.append(f"`{name}` has no row for `{label}`")
+            continue
+        for column, value in measured.items():
+            if was.get(column) != value:
+                reasons.append(
+                    f"`{name}` `{label}` {column}: recorded {was.get(column)}, "
+                    f"measured {value}"
+                )
+    reasons += [
+        f"`{name}` records `{label}`, which this run did not measure"
+        for label in recorded.rows
+        if label not in rows
+    ]
+    return reasons
+
+
+def gate(reasons):
+    """The release gate's verdict, as the report's first section."""
+    if not reasons:
+        return [
+            "### Release gate: recorded",
+            "",
+            "Every number below is the one committed under `crates/kynos/cost/`.",
+            "",
+        ]
+    return [
+        "### Release gate: not recorded",
+        "",
+        "These numbers are not the committed ones. Run `mise run cost:record` "
+        "in a pull request of its own and review each row it moves: that diff "
+        "is where this release's cost is accepted or sent back.",
+        "",
+        *[f"- {reason}" for reason in reasons],
+        "",
+    ]
+
+
+def since_release(rows, release, value, delta, versions, baseline):
+    """What moved in one table since the last release, all of it, by how far.
+
+    Every mover rather than the top few: this is what a release reviewer reads
+    to decide whether the cost a release adds was meant, and a list cut at five
+    would hide the sixth. The same subtraction as the drift column, against the
+    tag's baselines rather than the working tree's, so the floor is compared
+    under the same toolchain condition and a mixed toolchain is said.
+    """
+    tag, was = release
+    if tag is None:
+        return [
+            "#### Since the last release",
+            "",
+            "No `kynos-v*` tag is reachable from this commit, so there is no "
+            "release to compare against.",
+            "",
+        ]
+    if was is None:
+        return [
+            f"#### Since `{tag}`",
+            "",
+            f"`{tag}` shipped no baseline for this table, so there is nothing "
+            "to compare against until a release that records one.",
+            "",
+        ]
+    _, drifts, fresh = table(rows, was, value, delta, "", versions, baseline)
+    moved = sorted(
+        ((label, by) for label, by in drifts.items() if by != 0),
+        key=lambda item: (-abs(item[1]), item[0]),
+    )
+    listed = [
+        f"- `{label}`{' floor' if label == baseline else ''} {by:+}"
+        for label, by in moved
+    ]
+    listed += [
+        f"- `{label}` not in `{tag}`, costs {cost:+}"
+        for label, cost in sorted(fresh.items())
+    ]
+    return [
+        f"#### Since `{tag}`",
+        "",
+        *provenance(was, versions),
+        *(listed or ["- nothing moved"]),
+        "",
+    ]
+
+
 def section(
     title,
     note,
@@ -754,11 +944,29 @@ def section(
     versions,
     functions=None,
     baseline=BASELINE,
+    release=None,
 ):
-    """One kind's table, its ranked points, and optionally its attribution."""
-    body, drifts, fresh = table(rows, recorded, value, delta, unit, baseline)
+    """One kind's table, its ranked points, and optionally its attribution.
+
+    `release` is `(tag, Recorded or None)` for the last release, and `None`
+    when no comparison against one was asked for.
+    """
+    body, drifts, fresh = table(
+        rows, recorded, value, delta, unit, versions, baseline
+    )
     ranked, heading = movers(rows, drifts, recorded, delta, baseline)
-    listed = [f"- `{label}` {moved:+}" for label, moved in ranked] or ["- none"]
+    listed = [
+        f"- `{label}`{' floor' if label == baseline else ''} {moved:+}"
+        for label, moved in ranked
+    ] or ["- none"]
+    floor = []
+    if recorded is not None:
+        floor = [
+            f"The `{baseline}` row's recorded and drift columns are absolute: the "
+            "floor every delta is taken over, which every program pays. They "
+            "are compared only when this toolchain recorded the baseline.",
+            "",
+        ]
     out = [
         f"### {title}",
         "",
@@ -767,11 +975,14 @@ def section(
         *provenance(recorded, versions),
         body,
         "",
+        *floor,
         f"#### {heading}",
         "",
         *listed,
         "",
     ]
+    if release is not None:
+        out += since_release(rows, release, value, delta, versions, baseline)
     new = newcomers(fresh)
     if new:
         out += [
@@ -786,7 +997,10 @@ def section(
             *[f"- `{label}` {cost:+}" for label, cost in new],
             "",
         ]
-    attributed = [label for label, _ in ranked] + [label for label, _ in new]
+    # Not the baseline: its floor moved, but its composition against itself is
+    # empty by construction.
+    attributed = [label for label, _ in ranked if label != baseline]
+    attributed += [label for label, _ in new]
     if functions is not None and attributed:
         out += [
             f"#### What those features instantiate, against `{baseline}`",
@@ -803,14 +1017,30 @@ def section(
     return out
 
 
-def report(binary, codegen, functions, codec, recorded, versions):
+def report(
+    binary,
+    codegen,
+    functions,
+    codec,
+    recorded,
+    versions,
+    verdict=None,
+    release=None,
+):
     """The trend report, as Markdown.
 
     A trend and nothing more: it states what moved and by how much, and passes
     no verdict on whether a number is too large. There is no ceiling to compare
     against, and `nfr.md#thresholds` holds that guessing one is worse than
-    having none.
+    having none. `verdict` is the release gate's reasons under
+    `KYNOS_COST=check`, and `None` otherwise; it says whether the numbers were
+    recorded, never whether they are too large. `release` is what `released`
+    returns, and `None` when no comparison against a release was asked for.
     """
+
+    def shipped(name):
+        return None if release is None else (release[0], release[1].get(name))
+
     out = [
         "## Per-feature cost",
         "",
@@ -836,6 +1066,8 @@ def report(binary, codegen, functions, codec, recorded, versions):
         "recorded measurement as a change to `docs/nfr.md`.",
         "",
     ]
+    if verdict is not None:
+        out += gate(verdict)
     if binary is not None:
         out += section(
             "Binary delta",
@@ -846,6 +1078,7 @@ def report(binary, codegen, functions, codec, recorded, versions):
             "delta",
             "`.text` bytes",
             versions,
+            release=shipped(BINARY_TSV),
         )
     if codegen is not None:
         out += section(
@@ -861,6 +1094,7 @@ def report(binary, codegen, functions, codec, recorded, versions):
             "IR lines",
             versions,
             functions,
+            release=shipped(CODEGEN_TSV),
         )
     if codec is not None:
         out += section(
@@ -879,6 +1113,7 @@ def report(binary, codegen, functions, codec, recorded, versions):
             "`.text` bytes",
             versions,
             baseline=CODEC_BASELINE,
+            release=shipped(CODEC_TSV),
         )
     return "\n".join(out) + "\n"
 
@@ -954,11 +1189,22 @@ def main():
             )
         )
 
-    text = report(binary, codegen, functions, codec, recorded, versions)
+    mode = os.environ.get("KYNOS_COST")
+    verdict = None
+    if mode == "check":
+        verdict = [
+            reason
+            for name, _, _, _, rows in written
+            for reason in unrecorded(name, rows, recorded[name], versions)
+        ]
+
+    text = report(
+        binary, codegen, functions, codec, recorded, versions, verdict, released()
+    )
     (ROOT / "cost-report.md").write_text(text)
     print(text)
 
-    overwrite = os.environ.get("KYNOS_COST") == "overwrite"
+    overwrite = mode == "overwrite"
     for name, generated, header, names, rows in written:
         write_tsv(ROOT / generated, header, names, rows)
         if overwrite:
@@ -972,6 +1218,18 @@ def main():
             f"cost: no baseline recorded for {', '.join(missing)}; "
             "run `mise run cost:record`",
             file=sys.stderr,
+        )
+
+    # Last, so a refused release still leaves every artifact above behind: the
+    # report and the measured tables are what the reviewer of the re-record
+    # reads.
+    if verdict:
+        for reason in verdict:
+            print(f"cost: {reason}", file=sys.stderr)
+        fail(
+            "the release gate found numbers nobody recorded; "
+            "run `mise run cost:record` and review the diff",
+            UNRECORDED,
         )
 
 
