@@ -644,6 +644,13 @@ struct Marked<T> {
 #[derive(Schema, serde::Serialize, serde::Deserialize)]
 struct MarkedTuple<T>(u64, std::marker::PhantomData<T>);
 
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct FlatMarked<T> {
+    id: u64,
+    #[serde(flatten)]
+    marker: std::marker::PhantomData<T>,
+}
+
 /// A named `PhantomData` is a required `null` property.
 ///
 /// serde writes `{"id":1,"marker":null}` and refuses `{"id":1}`, which an
@@ -693,6 +700,28 @@ fn a_positional_phantom_member_is_the_null_serde_writes() {
         serde_json::from_str::<MarkedTuple<User>>("[1]").is_err(),
         "serde must refuse the array `minItems` refuses"
     );
+}
+
+/// A flattened `PhantomData` puts no member in the object serde writes and
+/// reads none from it, so it is in no schema and claims no `Flatten` bound.
+#[test]
+fn a_flattened_phantom_field_is_left_out() {
+    assert_eq!(
+        emitted::<FlatMarked<User>>(),
+        serde_json::json!({
+            "type": "object",
+            "properties": {"id": emitted::<u64>()},
+            "required": ["id"],
+        })
+    );
+
+    let written = serde_json::to_value(FlatMarked::<User> {
+        id: 1,
+        marker: std::marker::PhantomData,
+    })
+    .expect("a struct serializes");
+    assert_eq!(written, serde_json::json!({"id": 1}));
+    assert!(serde_json::from_value::<FlatMarked<User>>(written).is_ok());
 }
 
 // --- A transparent struct is the one field serde writes ---------------------

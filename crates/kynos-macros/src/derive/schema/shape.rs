@@ -1,7 +1,7 @@
 use super::{
     Comma, Container, DataEnum, Field, Fields, Punctuated, TokenStream2, Variant, constraints,
     deprecate, described, described_variants, doc_string, field_name, is_deprecated, is_described,
-    is_flattened, is_open, is_required, is_unit_like, min_items, positional_members, quote,
+    is_flattened, is_open, is_phantom, is_required, is_unit_like, min_items, positional_members, quote,
     transparent_member, variant_name,
 };
 
@@ -183,13 +183,26 @@ pub(super) fn object_body(
 /// The prose sits beside the schema, which for a named field type is a `$ref`
 /// -- legal from 3.1 onward, where a schema `$ref` applies its siblings. A
 /// boolean schema has nowhere to put it and keeps none.
+///
+/// A `PhantomData` is the `null` serde writes and reads for it, emitted in
+/// place rather than resolved: `PhantomData<T>: Schema` is a bound nothing
+/// satisfies, and a marker must not cost the type one.
 pub(super) fn member_schema(field: &Field) -> TokenStream2 {
     let ty = &field.ty;
     let constrained =
         constraints(field).map(|constraints| quote!(let schema = #constraints.apply(schema);));
+    let schema = if is_phantom(ty) {
+        quote! {
+            ::kynos::openapi::Schema::of_type(
+                ::kynos::openapi::model::schema::types::SchemaType::Null,
+            )
+        }
+    } else {
+        quote!(registry.resolve::<#ty>())
+    };
     let resolved = quote! {
         {
-            let schema = registry.resolve::<#ty>();
+            let schema = #schema;
             #constrained
             schema
         }
