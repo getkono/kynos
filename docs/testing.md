@@ -57,7 +57,7 @@ attribute outlived its reason and went with it.
 | --- | --- |
 | [`pipeline.rs`](../crates/kynos/tests/pipeline.rs) | an `async fn` is a `Handler`, `routes!` collects it, `Endpoints` accepts it, mounting reaches the context that supplies its dependencies, each route attribute writes its own method, and both ends of the arity list typecheck |
 | [`derives.rs`](../crates/kynos/tests/derives.rs) | every derive expands to a well-formed implementation of the trait it claims |
-| [`flatten.rs`](../crates/kynos/tests/flatten.rs) | that a flattened field's description accepts the JSON its type writes, checked by serializing a value and validating it against the emitted schema with a real JSON Schema validator: a flattened struct, an open map beside the parent's own properties and beside a flattened struct, an open map inside a tagged variant, the key constraint an open flatten drops, and an object `deny_unknown_fields` closes beside a flattened struct, alone and with a field serde also reads under an `alias`, whose refusals are held to serde's; a flattened `Problem` beside a member of the parent's own and beside an open map, a `Problem` as an internally tagged newtype variant's payload, and an open `Unchecked` payload, over a `serde_json::Map` and over a typed map, beside the parent's own properties. Behind `macros` and `test-util`, which carries the validator |
+| [`flatten.rs`](../crates/kynos/tests/flatten.rs) | that a flattened field's description accepts the JSON its type writes, checked by serializing a value and validating it against the emitted schema with a real JSON Schema validator: a flattened struct, an open map beside the parent's own properties and beside a flattened struct, an open map inside a tagged variant, the key constraint an open flatten drops, and an object `deny_unknown_fields` closes beside a flattened struct, alone and with a field serde also reads under an `alias`, whose refusals are held to serde's; a flattened `Problem` beside a member of the parent's own and beside an open map, a `Problem` as an internally tagged newtype variant's payload, and an open `Unchecked` payload, over a `serde_json::Map` and over a typed map, beside the parent's own properties and beside a field serde writes and never reads. Behind `macros` and `test-util`, which carries the validator |
 | [`errors.rs`](../crates/kynos/tests/errors.rs) | each extractor rejects with the rejection type its signature names |
 | [`reporting.rs`](../crates/kynos/tests/reporting.rs) | every error type a caller can receive is `Error + Send + Sync + 'static` |
 | [`typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) | a route attribute's `relative_uri` percent-encodes its parameters, and that the hand-written fixture it encodes with describes what it encodes — a `Schema` body nothing executes cannot disagree with the `encode` beside it |
@@ -799,10 +799,10 @@ text. `mise.toml` therefore lists it: a snapshot suite that passes on the
 machine that recorded it and fails everywhere else is testing the environment.
 
 **`on_unimplemented` attributes must land before any snapshot is recorded.**
-Twenty traits carry `#[diagnostic::on_unimplemented]` —
+Twenty-one traits carry `#[diagnostic::on_unimplemented]` —
 `Provides`, `Handler`, `FromRequestParts`, `FromRequest`, `Describe`,
 `RequestContent`, `IntoResponse`, `Responses`, `Schema`, `MapKey`, `Flatten`,
-`OpenMap`, `Alternative`, `ShortCircuit`, `EndpointMeta`, `IntoEndpoints`, `Carries`,
+`OpenMap`, `AdmitsAny`, `Alternative`, `ShortCircuit`, `EndpointMeta`, `IntoEndpoints`, `Carries`,
 `Languages`, `Rangeable` and `ByteSource`.
 Each one replaces the compiler's generic "the trait bound is not satisfied"
 with a message naming the fix.
@@ -812,7 +812,7 @@ with a message naming the fix.
 records it and counts the pairs against the attributes in the source. Eight of
 the fourteen guided traits *at the time it was written* had none, so more than
 half of what this requirement named was unchecked; the count has grown to
-twenty since, and the test is what kept the mapping level with it. The
+twenty-one since, and the test is what kept the mapping level with it. The
 mapping is written out rather than searched for, because half the
 messages deliberately never spell the trait: `Handler`'s says "is not a Kynos
 handler", which is the improvement rather than something to grep for.

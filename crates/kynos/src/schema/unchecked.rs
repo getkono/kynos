@@ -4,7 +4,7 @@ use kynos_openapi::{
     Schema as OpenApiSchema, SchemaObject, annotation::UNCHECKED_SCHEMA_ANNOTATION,
 };
 
-use crate::schema::{OpenMap, Schema, registry::Registry};
+use crate::schema::{AdmitsAny, OpenMap, Schema, registry::Registry};
 
 /// A payload this API deliberately does not constrain.
 ///
@@ -106,3 +106,8 @@ impl<T: OpenMap> OpenMap for Unchecked<T> {}
 /// `serde_json::Map` has no [`Schema`] of its own, so it reaches [`OpenMap`] only
 /// through `Unchecked`.
 impl OpenMap for Unchecked<serde_json::Map<String, serde_json::Value>> {}
+
+/// Hoists nothing wherever it is an [`OpenMap`], since the permissive schema has
+/// no `additionalProperties`, so a field serde writes and never reads may sit
+/// beside it.
+impl<T> AdmitsAny for Unchecked<T> where Self: OpenMap {}

@@ -239,11 +239,25 @@ fn flatten_witnesses(
         _ => Vec::new(),
     };
 
+    let admitting = open_fields_beside_unread_fields(input, container);
+
     let witnesses = flattened.chain(payloads).map(|field| {
         let ty = &field.ty;
         // Spanned at the field's type, so the refusal points at what was
         // written rather than at the derive.
-        if is_open(field) {
+        if admitting.iter().any(|open| std::ptr::eq(*open, field)) {
+            quote_spanned! {ty.span()=>
+                const _: () = {
+                    #[allow(dead_code, deprecated)]
+                    fn open_fields_beside_unread_fields_admit_any_member #impl_generics ()
+                        #where_clause
+                    {
+                        fn admits_any<T: ::kynos::schema::AdmitsAny + ?Sized>() {}
+                        admits_any::<#ty>();
+                    }
+                };
+            }
+        } else if is_open(field) {
             quote_spanned! {ty.span()=>
                 const _: () = {
                     #[allow(dead_code, deprecated)]
@@ -267,6 +281,49 @@ fn flatten_witnesses(
     });
 
     quote!(#(#witnesses)*)
+}
+
+/// The open flattened fields that sit beside a named field serde writes and
+/// never reads, `skip_deserializing` alone, in an object serde writes.
+///
+/// The schema leaves such a field out, so the object must not constrain the
+/// members it does not name, and an open field that hoists an
+/// `additionalProperties` would. Whether this one does is its type's answer,
+/// invisible here, so [`flatten_witnesses`] bounds it by
+/// `kynos::schema::AdmitsAny` rather than by `OpenMap`, which it implies. Read
+/// over the objects [`reject_unread_field_in_closed_object`] reads: a
+/// `#[serde(transparent)]` struct is its one field's value, with no object to
+/// bound, and an object `#[serde(deny_unknown_fields)]` closes never reaches
+/// here holding an open field, which [`reject_contradicted_closure`] refuses.
+fn open_fields_beside_unread_fields<'a>(
+    input: &'a DeriveInput,
+    container: &Container,
+) -> Vec<&'a Field> {
+    if container.transparent {
+        return Vec::new();
+    }
+    written_groups(input)
+        .into_iter()
+        .filter(|fields| unread_field_span(fields).is_some())
+        .flat_map(described_members)
+        .filter(|field| is_open(field))
+        .collect()
+}
+
+/// The field groups of every object serde writes: a struct's, and each
+/// variant's serde writes.
+fn written_groups(input: &DeriveInput) -> Vec<&Fields> {
+    match &input.data {
+        Data::Struct(data) => vec![&data.fields],
+        Data::Enum(data) => data
+            .variants
+            .iter()
+            .filter(|variant| is_written(variant))
+            .map(|variant| &variant.fields)
+            .collect(),
+        // Refused at the top of `expand_inner`.
+        Data::Union(_) => Vec::new(),
+    }
 }
 
 /// Whether the schema this input emits names its own members, and so may itself
@@ -991,57 +1048,36 @@ fn reject_contradicted_closure(input: &DeriveInput) -> syn::Result<()> {
     Ok(())
 }
 
-/// A named field serde writes and never reads is refused in an object that
-/// constrains every member it does not name.
+/// A named field serde writes and never reads is refused in an object
+/// `#[serde(deny_unknown_fields)]` closes.
 ///
 /// `skip_deserializing` alone keeps the field out of the object serde reads,
 /// which is all [`is_described`] names, and an object constraining no member it
-/// does not name still admits what serde writes of it. Two things make the
-/// object constrain such members. An open flattened field gives the object an
-/// `unevaluatedProperties` that reaches the field, and refuses what serde writes
-/// wherever the map's values are another type, which is invisible here.
-/// `#[serde(deny_unknown_fields)]` closes the object outright ([`closed`]).
-/// Checked in every object serde writes, a struct and each struct variant it
-/// writes, against an open field the schema describes or a closed container. A
-/// `#[serde(transparent)]` struct is its one field's value, with no object to
-/// check.
+/// does not name still admits what serde writes of it. A closed object
+/// ([`closed`]) constrains every such member, so it refuses what serde writes of
+/// the field. Checked in every object serde writes, a struct and each struct
+/// variant it writes. A `#[serde(transparent)]` struct is its one field's value,
+/// with no object to check.
+///
+/// An open flattened field constrains such members only when its type hoists an
+/// `additionalProperties`, which is its type's answer rather than its syntax's,
+/// so that case is a bound ([`open_fields_beside_unread_fields`]) rather than a
+/// refusal here.
 fn reject_unread_field_in_closed_object(input: &DeriveInput) -> syn::Result<()> {
     let container = Container::read(input);
-    if container.transparent {
+    if container.transparent || !container.deny_unknown_fields {
         return Ok(());
     }
-    let closer = if container.deny_unknown_fields {
-        "the `additionalProperties` or `unevaluatedProperties` of `false` that \
-         `#[serde(deny_unknown_fields)]` gives this object"
-    } else {
-        "the `unevaluatedProperties` a `#[schema(open)]` flattened field gives this object"
-    };
 
-    let groups: Vec<&Fields> = match &input.data {
-        Data::Struct(data) => vec![&data.fields],
-        Data::Enum(data) => data
-            .variants
-            .iter()
-            .filter(|variant| is_written(variant))
-            .map(|variant| &variant.fields)
-            .collect(),
-        // Refused at the top of `expand_inner`.
-        Data::Union(_) => Vec::new(),
-    };
-
-    for fields in groups {
-        if !container.deny_unknown_fields && !described_members(fields).into_iter().any(is_open) {
-            continue;
-        }
+    for fields in written_groups(input) {
         if let Some(span) = unread_field_span(fields) {
             return Err(syn::Error::new(
                 span,
-                format!(
-                    "`skip_deserializing` leaves this field out of the schema, since serde never \
-                     reads it, but serde still writes it, and {closer} refuses a member the \
-                     schema does not name. Use `#[serde(skip)]` to leave it out both ways, or \
-                     drop `skip_deserializing` so the schema names it"
-                ),
+                "`skip_deserializing` leaves this field out of the schema, since serde never \
+                 reads it, but serde still writes it, and the `additionalProperties` or \
+                 `unevaluatedProperties` of `false` that `#[serde(deny_unknown_fields)]` gives \
+                 this object refuses a member the schema does not name. Use `#[serde(skip)]` to \
+                 leave it out both ways, or drop `skip_deserializing` so the schema names it",
             ));
         }
     }

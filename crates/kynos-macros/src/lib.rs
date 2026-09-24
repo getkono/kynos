@@ -322,14 +322,16 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   `skip_serializing` alone on a variant is accepted, since every variant serde
 ///   writes is one it reads.
 /// - `#[serde(skip_deserializing)]` without `skip_serializing` on a named field
-///   of an object that also carries a `#[schema(open)]` flattened field, or of
-///   an object that `deny_unknown_fields` closes. serde writes the field and
-///   never reads it, so the schema leaves it out, and the object then refuses
-///   what serde writes of it: through the `unevaluatedProperties` the open field
-///   gives it, or through being closed. `#[serde(skip)]` leaves the field out
-///   both ways. For the same reason a struct, or an internally tagged enum whose
-///   struct variant serde writes, holding such a field does not implement
-///   `Flatten`.
+///   of an object that `deny_unknown_fields` closes, or beside a
+///   `#[schema(open)]` flattened field whose type hoists an
+///   `unevaluatedProperties`, which is every open field but one implementing
+///   [`AdmitsAny`](https://docs.rs/kynos/latest/kynos/schema/trait.AdmitsAny.html),
+///   such as an `Unchecked` map. serde writes the field and never reads it, so
+///   the schema leaves it out, and the object then refuses what serde writes of
+///   it: through being closed, or through the hoisted `unevaluatedProperties`.
+///   `#[serde(skip)]` leaves the field out both ways. For the same reason a
+///   struct, or an internally tagged enum whose struct variant serde writes,
+///   holding such a field does not implement `Flatten`.
 /// - A flattened `#[schema(open)]` field beside `#[serde(deny_unknown_fields)]`.
 ///   serde refuses every key the object's fields do not name before the map
 ///   sees it, so it reads the map empty and writes members it would refuse to

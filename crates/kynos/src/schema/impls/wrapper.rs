@@ -7,7 +7,7 @@ use kynos_openapi::{
     model::schema::types::{SchemaType, TypeSet},
 };
 
-use crate::schema::{Flatten, OpenMap, Schema, impls::with_object, registry::Registry};
+use crate::schema::{AdmitsAny, Flatten, OpenMap, Schema, impls::with_object, registry::Registry};
 
 /// Widens `schema` to admit `null`.
 ///
@@ -99,3 +99,8 @@ impl<T: Flatten> Flatten for Arc<T> {}
 impl<T: OpenMap> OpenMap for Box<T> {}
 
 impl<T: OpenMap> OpenMap for Arc<T> {}
+
+// And whether it hoists nothing, which is the map's answer for the same reason.
+impl<T: AdmitsAny> AdmitsAny for Box<T> {}
+
+impl<T: AdmitsAny> AdmitsAny for Arc<T> {}

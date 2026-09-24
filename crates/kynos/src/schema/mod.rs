@@ -291,10 +291,11 @@ pub trait Flatten: Schema {}
 /// [`BTreeMap`](std::collections::BTreeMap), and carried across `Box<T>` and
 /// `Arc<T>`. Also for [`Unchecked`](unchecked::Unchecked) over a type that
 /// implements `OpenMap` itself, or over a `serde_json::Map`, which has no
-/// `additionalProperties` to hoist and so leaves the object open — the route for arbitrary JSON beside an object's own
-/// members. Unsealed, for the reason [`MapKey`] is — a hand-written [`Schema`]
-/// that claims no component name and describes an object by
-/// `additionalProperties` alone has to be able to say so.
+/// `additionalProperties` to hoist and so leaves the object open — the route
+/// for arbitrary JSON beside an object's own members, and an [`AdmitsAny`].
+/// Unsealed, for the reason [`MapKey`] is — a hand-written [`Schema`] that
+/// claims no component name and describes an object by `additionalProperties`
+/// alone has to be able to say so.
 ///
 /// A key constraint does not survive the hoist. Inside the `allOf` branch
 /// `propertyNames` would name the parent's own properties too, so it is dropped:
@@ -324,6 +325,72 @@ pub trait Flatten: Schema {}
             flattens only a map; or drop `#[schema(open)]` from a type that names its members"
 )]
 pub trait OpenMap: Schema {}
+
+/// An [`OpenMap`] whose schema constrains no member, so flattening it leaves the
+/// object it is flattened into open to every member.
+///
+/// `#[schema(open)]` hoists an open map's `additionalProperties` onto the object
+/// as `unevaluatedProperties`, which constrains every member the object's
+/// schema does not name. A named field serde writes and never reads,
+/// `#[serde(skip_deserializing)]` alone, is such a member: the schema describes
+/// what serde reads, so it leaves the field out, and the hoisted keyword then
+/// refuses what serde writes of it. The derive bounds an open field by this
+/// trait wherever such a field sits beside it, so that case is a compile error
+/// at the open field, and a map that hoists nothing is accepted there.
+///
+/// Implemented for [`Unchecked`](unchecked::Unchecked) wherever it is an
+/// `OpenMap`, since its schema carries no `additionalProperties`, and carried
+/// across `Box<T>` and `Arc<T>`:
+///
+/// ```
+/// use std::{collections::BTreeMap, sync::Arc};
+///
+/// use kynos::schema::unchecked::Unchecked;
+///
+/// fn admits_any<T: kynos::schema::AdmitsAny>() {}
+///
+/// admits_any::<Unchecked<serde_json::Map<String, serde_json::Value>>>();
+/// admits_any::<Box<Unchecked<serde_json::Map<String, serde_json::Value>>>>();
+/// admits_any::<Arc<Unchecked<BTreeMap<String, u64>>>>();
+/// ```
+///
+/// A map hoists its value schema, so it is not one:
+///
+/// ```compile_fail
+/// fn admits_any<T: kynos::schema::AdmitsAny>() {}
+///
+/// admits_any::<std::collections::BTreeMap<String, u64>>();
+/// ```
+///
+/// Unsealed, for the reason [`MapKey`] is — a hand-written open map whose schema
+/// has no `additionalProperties` has to be able to say so.
+///
+/// ```no_run
+/// # use kynos::schema::{AdmitsAny, OpenMap, Schema};
+/// # struct Passthrough;
+/// # impl Schema for Passthrough {
+/// #     fn schema(_: &mut kynos::schema::registry::Registry) -> kynos::openapi::Schema {
+/// #         todo!()
+/// #     }
+/// # }
+/// // Where `Passthrough::schema` returns `{"type": "object"}`, with no
+/// // `additionalProperties`, hoisting it gives the object no
+/// // `unevaluatedProperties` at all.
+/// impl OpenMap for Passthrough {}
+/// impl AdmitsAny for Passthrough {}
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be flattened open beside a field serde writes and never reads",
+    label = "not an open map that constrains no member",
+    note = "a `skip_deserializing` field is left out of the schema, since serde never reads it, \
+            but serde still writes it, so an open field beside it has to leave the object open to \
+            members the schema does not name; a map's value schema becomes the object's \
+            `unevaluatedProperties` and refuses the field",
+    note = "use `#[serde(skip)]` to leave the field out both ways, drop `skip_deserializing` so \
+            the schema names it, or flatten an `Unchecked<serde_json::Map<String, Value>>`, which \
+            leaves the object open"
+)]
+pub trait AdmitsAny: OpenMap {}
 
 #[cfg(test)]
 mod tests;
