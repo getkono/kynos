@@ -1,0 +1,5 @@
+error: `skip` leaves out the only member of a newtype variant in an adjacently tagged enum, so serde writes the variant as its tag alone, but reads it back only with its content present, which nothing serde writes carries. Make the member an `Option`, which serde reads absent, or `#[serde(skip)]` the whole variant
+  --> tests/ui/macros/schema_adjacent_skipped_payload.rs:11:20
+   |
+11 |     Hidden(#[serde(skip)] u64),
+   |                    ^^^^

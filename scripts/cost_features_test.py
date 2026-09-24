@@ -40,10 +40,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-# Before the import below, and before anything else can trigger one: a `.pyc`
-# written beside the scripts would be an untracked directory in every working
-# tree that ran these tests, and `.gitignore` has no entry for one. The task
-# passes `-B` for the same reason; this covers a direct `python3` run.
+# Before the import below, and before anything else can trigger one: a run
+# writes no `.pyc` into the tree it reads, and `.gitignore` covers the imports
+# no task controls. The task passes `-B` for the same reason; this covers a
+# direct `python3` run.
 sys.dont_write_bytecode = True
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))

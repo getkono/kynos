@@ -106,6 +106,10 @@ fn every_rejected_schema_attribute_has_a_case() {
             "macros/schema_tuple_member_skipped_one_way.stderr",
         ),
         (
+            "its tag alone",
+            "macros/schema_adjacent_skipped_payload.stderr",
+        ),
+        (
             "`#[serde(skip_deserializing)]` alone on a variant",
             "macros/schema_variant_skipped_on_read.stderr",
         ),

@@ -229,13 +229,14 @@ mod schema {
                 "as the type it names",
             ),
             case(
-                "`#[serde(transparent)]` read through one field and written through two",
+                "`#[serde(transparent)]` written through one field and read through another",
                 quote::quote!(
                     #[serde(transparent)]
-                    struct Reading {
-                        value: u64,
-                        #[serde(default)]
-                        extra: String,
+                    struct Split {
+                        #[serde(skip_deserializing)]
+                        a: u64,
+                        #[serde(skip_serializing)]
+                        b: String,
                     }
                 ),
                 "`#[serde(transparent)]` makes serde write through",
@@ -260,22 +261,36 @@ mod schema {
         ]
     }
 
-    /// The variant skips no one schema is true of in both directions.
+    /// The refusals that depend on an enum's variants: how they are tagged, and
+    /// the variant skips no one schema is true of in both directions.
     ///
-    /// A third function for the reason `serde_ledger` gives: one more row there
-    /// outgrows what Clippy will accept.
+    /// A third function for the reason `serde_ledger` gives: that list is at
+    /// the length Clippy accepts.
     fn variant_ledger() -> Vec<Case> {
-        vec![case(
-            "`skip_deserializing` alone on a variant, which serde writes and never reads",
-            quote::quote!(
-                enum Channel {
-                    Web,
-                    #[serde(skip_deserializing)]
-                    Fax,
-                }
+        vec![
+            case(
+                "a skipped non-`Option` member of an adjacently tagged newtype variant",
+                quote::quote!(
+                    #[serde(tag = "t", content = "c")]
+                    enum Reading {
+                        Count(u64),
+                        Hidden(#[serde(skip)] u64),
+                    }
+                ),
+                "writes the variant as its tag alone",
             ),
-            "makes serde write this variant and refuse to read it back",
-        )]
+            case(
+                "`skip_deserializing` alone on a variant, which serde writes and never reads",
+                quote::quote!(
+                    enum Channel {
+                        Web,
+                        #[serde(skip_deserializing)]
+                        Fax,
+                    }
+                ),
+                "makes serde write this variant and refuse to read it back",
+            ),
+        ]
     }
 
     #[test]
@@ -460,6 +475,15 @@ mod schema {
                 #[serde(transparent)]
                 struct Pair(u64, #[serde(skip, with = "as_string")] u64);
             ),
+            // serde neither writes nor reads through a transparent tuple's
+            // unpicked member, whatever it skips, as with its named twin.
+            quote::quote!(
+                #[serde(transparent)]
+                struct Pair(
+                    u64,
+                    #[serde(default, skip_serializing, with = "as_string")] u64,
+                );
+            ),
             quote::quote!(
                 struct Reading {
                     total: u64,
@@ -619,14 +643,14 @@ mod schema {
         }
     }
 
-    /// A transparent struct serde writes and reads through different fields is
-    /// refused, and so is one where a single direction picks a single field.
+    /// A transparent struct serde writes through one field and reads through
+    /// another is refused.
     ///
     /// `serde_derive`'s `allow_transparent` writes through the field without
     /// `skip_serializing` and reads through the field without
     /// `skip_deserializing` or a field-level `default`, never a `PhantomData`.
-    /// Each row is a declaration serde accepts for at least one of its derives,
-    /// and names the fields each direction picks.
+    /// Each row is a declaration serde accepts under `Serialize`, `Deserialize`
+    /// and both, and names the field each direction picks.
     #[test]
     fn a_transparent_struct_serde_writes_and_reads_apart_is_refused() {
         each_case_is_refused(
@@ -645,61 +669,7 @@ mod schema {
                     "this struct writes through `a` and reads through `b`",
                 ),
                 case(
-                    "read through `b` alone, which `Deserialize` accepts",
-                    quote::quote!(
-                        #[serde(transparent)]
-                        struct Hole {
-                            #[serde(skip_deserializing)]
-                            a: u64,
-                            b: String,
-                        }
-                    ),
-                    "this struct writes through 2 fields and reads through `b`",
-                ),
-                case(
-                    "written through `a` alone, which `Serialize` accepts",
-                    quote::quote!(
-                        #[serde(transparent)]
-                        struct Hole {
-                            a: u64,
-                            #[serde(skip_serializing)]
-                            b: String,
-                        }
-                    ),
-                    "this struct writes through `a` and reads through 2 fields",
-                ),
-                case(
-                    "a lone field with a default, which serde never reads through",
-                    quote::quote!(
-                        #[serde(transparent)]
-                        struct Hole {
-                            #[serde(default)]
-                            a: u64,
-                            #[serde(skip)]
-                            b: String,
-                        }
-                    ),
-                    "this struct writes through `a` and reads through no field",
-                ),
-                case(
-                    // serde refuses this under `Serialize`, which has no field
-                    // to write through, and accepts it under `Deserialize`
-                    // alone, reading through `a`.
-                    "written through no field, read through `a`, which `Deserialize` accepts",
-                    quote::quote!(
-                        #[serde(transparent)]
-                        struct Hole {
-                            #[serde(skip_serializing)]
-                            a: u64,
-                            #[serde(skip_serializing, skip_deserializing)]
-                            b: u64,
-                        }
-                    ),
-                    "this struct writes through no field and reads through `a`",
-                ),
-                case(
-                    // serde accepts this under `Serialize`, `Deserialize` and
-                    // both: a `default` member may follow one without.
+                    // A `default` member may follow one without it.
                     "a tuple struct written through one member and read through another",
                     quote::quote!(
                         #[serde(transparent)]
@@ -712,39 +682,124 @@ mod schema {
         );
     }
 
-    /// A transparent struct serde writes and reads through one field expands.
+    /// A transparent struct serde picks a single field for is described by that
+    /// field.
+    ///
+    /// Where both directions pick one field it is the same one. Where only one
+    /// direction does, serde refuses the other derive by itself, so the struct
+    /// compiles with that direction's derive alone and its one field is all
+    /// serde writes, or reads. Each row names the type the schema must resolve
+    /// and the type of the field it must not.
     #[test]
-    fn a_transparent_struct_written_and_read_through_one_field_expands() {
-        for declaration in [
+    fn a_transparent_struct_serde_picks_one_field_for_is_described_by_it() {
+        for (declaration, described, other) in [
             // A default on a field neither direction picks changes nothing.
-            quote::quote!(
-                #[serde(transparent)]
-                struct Labels {
-                    inner: u64,
-                    #[serde(default, skip)]
-                    extra: String,
-                }
+            (
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Labels {
+                        inner: u64,
+                        #[serde(default, skip)]
+                        extra: String,
+                    }
+                ),
+                "u64",
+                "String",
             ),
             // Both skips spelled apart are `skip`.
-            quote::quote!(
-                #[serde(transparent)]
-                struct Labels {
-                    #[serde(skip_serializing, skip_deserializing)]
-                    extra: String,
-                    inner: u64,
-                }
+            (
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Labels {
+                        #[serde(skip_serializing, skip_deserializing)]
+                        extra: String,
+                        inner: u64,
+                    }
+                ),
+                "u64",
+                "String",
             ),
-            quote::quote!(
-                #[serde(transparent)]
-                struct Handle(u64, #[serde(skip)] u64);
+            (
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Handle(u64, #[serde(skip)] String);
+                ),
+                "u64",
+                "String",
+            ),
+            // Written through `a`, read through no field: serde refuses
+            // `Deserialize` and accepts `Serialize` alone.
+            (
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Hole {
+                        #[serde(default)]
+                        a: u64,
+                        #[serde(skip)]
+                        b: String,
+                    }
+                ),
+                "u64",
+                "String",
+            ),
+            // Written through no field, read through `a`: serde refuses
+            // `Serialize` and accepts `Deserialize` alone.
+            (
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Hole {
+                        #[serde(skip_serializing)]
+                        a: u64,
+                        #[serde(skip_serializing, skip_deserializing)]
+                        b: String,
+                    }
+                ),
+                "u64",
+                "String",
+            ),
+            // Written through `a`, read through both: serde refuses
+            // `Deserialize` and accepts `Serialize` alone.
+            (
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Hole {
+                        a: u64,
+                        #[serde(skip_serializing)]
+                        b: String,
+                    }
+                ),
+                "u64",
+                "String",
+            ),
+            // Written through both, read through `b`: serde refuses
+            // `Serialize` and accepts `Deserialize` alone.
+            (
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Hole {
+                        #[serde(skip_deserializing)]
+                        a: u64,
+                        b: String,
+                    }
+                ),
+                "String",
+                "u64",
             ),
         ] {
             let input: syn::DeriveInput =
                 syn::parse2(declaration).expect("the case itself must parse");
 
-            if let Err(error) = expand_inner(&input) {
-                panic!("a transparent struct with one field both ways must expand: {error}");
-            }
+            let expanded = match expand_inner(&input) {
+                Ok(tokens) => tokens.to_string(),
+                Err(error) => {
+                    panic!("a transparent struct with one picked field must expand: {error}")
+                }
+            };
+            assert!(
+                expanded.contains(&format!("resolve :: < {described} >"))
+                    && !expanded.contains(&format!("resolve :: < {other} >")),
+                "the schema must describe the `{described}` field alone: {expanded}"
+            );
         }
     }
 
@@ -1188,6 +1243,51 @@ mod schema {
         );
     }
 
+    /// A skipped member of an adjacently tagged newtype variant is refused
+    /// unless its type is an `Option`, however the skip is spelt.
+    ///
+    /// serde writes such a variant as the tag alone and reads it only beside
+    /// its content, which an `Option` member alone may leave out.
+    #[test]
+    fn every_skipped_adjacently_tagged_payload_is_refused_unless_optional() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "`skip` on an adjacently tagged newtype-variant member",
+                    quote::quote!(
+                        #[serde(tag = "t", content = "c")]
+                        enum Reading {
+                            Hidden(#[serde(skip)] u64),
+                        }
+                    ),
+                    "`skip` leaves out the only member",
+                ),
+                case(
+                    "`skip_serializing` beside `skip_deserializing` on that member",
+                    quote::quote!(
+                        #[serde(tag = "t", content = "c")]
+                        enum Reading {
+                            Hidden(#[serde(skip_serializing, skip_deserializing)] String),
+                        }
+                    ),
+                    "`skip_serializing` leaves out the only member",
+                ),
+                case(
+                    "`skip` on a member whose path type is not an `Option`",
+                    quote::quote!(
+                        #[serde(tag = "t", content = "c", rename_all = "snake_case")]
+                        enum Reading {
+                            Count(u64),
+                            Hidden(#[serde(skip)] std::vec::Vec<u64>),
+                        }
+                    ),
+                    "`skip` leaves out the only member",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
     /// Every member skip serde honours in both directions expands.
     ///
     /// Each row is a placement the refusal must not reach: a newtype struct,
@@ -1247,6 +1347,32 @@ mod schema {
             quote::quote!(
                 #[serde(transparent)]
                 struct Handle(u64, #[serde(default, skip_serializing)] u64);
+            ),
+            // A container `default` fills every missing trailing element.
+            quote::quote!(
+                #[serde(default)]
+                struct Tally(u64, #[serde(skip_serializing_if = "is_zero")] u64);
+            ),
+            // A skipped newtype variant serde reads back as it writes: an
+            // `Option` member under adjacent tagging, and any member under
+            // external or internal tagging.
+            quote::quote!(
+                #[serde(tag = "t", content = "c")]
+                enum Reading {
+                    Hidden(#[serde(skip)] Option<u64>),
+                }
+            ),
+            quote::quote!(
+                enum Reading {
+                    Hidden(#[serde(skip)] u64),
+                }
+            ),
+            quote::quote!(
+                #[serde(tag = "t")]
+                enum Reading {
+                    Total(Audit),
+                    Hidden(#[serde(skip)] u64),
+                }
             ),
         ] {
             let input: syn::DeriveInput =

@@ -595,6 +595,27 @@ fn a_generic_transparent_struct_claims_no_component_name() {
     );
 }
 
+// No doc comment, for the reason `Labels` gives. serde writes this through both
+// fields, so it refuses `Serialize` here, and reads it through `value` alone.
+#[derive(Schema, serde::Deserialize)]
+#[serde(transparent)]
+struct Reading {
+    value: u64,
+    #[serde(default)]
+    extra: String,
+}
+
+/// A transparent struct serde derives in one direction only is described by
+/// the one field that direction picks.
+#[test]
+fn a_transparent_struct_read_through_one_field_is_described_by_it() {
+    assert_eq!(emitted::<Reading>(), emitted::<u64>());
+
+    let read = serde_json::from_value::<Reading>(serde_json::json!(5))
+        .expect("the value the schema describes must read");
+    assert_eq!(read.value, 5);
+}
+
 // --- A tuple is the positions serde writes and reads ------------------------
 //
 // serde leaves a member it skips both ways out of the array in both directions,
@@ -628,14 +649,13 @@ enum External {
     Hidden(#[serde(skip)] u64),
 }
 
-// Serialize only: serde's own reader refuses the `{"t":"Hidden"}` its writer
-// produces for an adjacently tagged unit-like variant, so there is no read to
-// hold the schema to.
-#[derive(Schema, serde::Serialize)]
+// An `Option` member, because serde reads an adjacently tagged variant's missing
+// content only as an absent `Option`; any other member type is refused.
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "t", content = "c")]
 enum Adjacent {
     Shown(u64),
-    Hidden(#[serde(skip)] u64),
+    Hidden(#[serde(skip)] Option<u64>),
 }
 
 #[derive(Default, Schema, serde::Serialize, serde::Deserialize)]
@@ -731,6 +751,55 @@ fn a_trailing_member_serde_may_leave_out_lowers_min_items() {
     );
 }
 
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Filled(u64, #[serde(default)] u64, #[serde(default)] u64);
+
+// serde refuses a default before a required member on a tuple struct, but not
+// on a tuple variant.
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum Gauge {
+    Read(#[serde(default)] u64, u64, #[serde(default)] u64),
+}
+
+/// serde fills each member carrying `#[serde(default)]` when the array ends
+/// before it, so the bound counts up to the last member with no default: a
+/// default before that one fills nothing, since the array cannot end there.
+#[test]
+fn a_trailing_run_of_defaulted_members_lowers_min_items_to_the_last_required_one() {
+    assert_eq!(
+        emitted::<Filled>(),
+        serde_json::json!({
+            "type": "array",
+            "prefixItems": [emitted::<u64>(), emitted::<u64>(), emitted::<u64>()],
+            "items": false,
+            "minItems": 1,
+        })
+    );
+    assert!(
+        serde_json::from_str::<Filled>("[1]").is_ok(),
+        "serde fills the trailing defaulted members"
+    );
+    assert!(serde_json::from_str::<Filled>("[]").is_err());
+
+    assert_eq!(
+        emitted::<Gauge>()["oneOf"][0]["properties"]["Read"],
+        serde_json::json!({
+            "type": "array",
+            "prefixItems": [emitted::<u64>(), emitted::<u64>(), emitted::<u64>()],
+            "items": false,
+            "minItems": 2,
+        })
+    );
+    assert!(
+        serde_json::from_str::<Gauge>(r#"{"Read":[1,2]}"#).is_ok(),
+        "serde fills the trailing defaulted member"
+    );
+    assert!(
+        serde_json::from_str::<Gauge>(r#"{"Read":[1]}"#).is_err(),
+        "a default before a required member fills nothing"
+    );
+}
+
 /// With every member skipped, the tuple is the empty array, and there is no
 /// `prefixItems`, which may not be empty.
 #[test]
@@ -771,9 +840,11 @@ fn a_newtype_variant_whose_member_is_skipped_is_a_unit_variant() {
         tag_only("t", "Hidden"),
         "the branch carries no content property"
     );
-    assert_eq!(
-        serde_json::to_value(Adjacent::Hidden(7)).expect("a variant serializes"),
-        serde_json::json!({"t": "Hidden"})
+    let written = serde_json::to_value(Adjacent::Hidden(Some(7))).expect("a variant serializes");
+    assert_eq!(written, serde_json::json!({"t": "Hidden"}));
+    assert!(
+        serde_json::from_value::<Adjacent>(written).is_ok(),
+        "the tag-only branch must read back"
     );
 
     assert_eq!(
@@ -798,6 +869,75 @@ fn an_enum_of_names_counts_a_skipped_newtype_variant_as_a_name() {
     assert_eq!(
         serde_json::to_value(Units::B(7)).expect("a variant serializes"),
         serde_json::json!("B")
+    );
+}
+
+#[derive(Default, Schema, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct Settled(u64, #[serde(skip_serializing_if = "is_zero")] u64);
+
+/// A container `#[serde(default)]` fills every trailing element serde finds
+/// missing, so a tuple under it admits any shorter array, down to the empty one.
+#[test]
+fn a_tuple_under_a_container_default_carries_no_min_items() {
+    assert_eq!(
+        emitted::<Settled>(),
+        serde_json::json!({
+            "type": "array",
+            "prefixItems": [emitted::<u64>(), emitted::<u64>()],
+            "items": false,
+        })
+    );
+
+    let written = serde_json::to_value(Settled(1, 0)).expect("a tuple serializes");
+    assert_eq!(written, serde_json::json!([1]));
+    assert!(serde_json::from_value::<Settled>(written).is_ok());
+    assert!(
+        serde_json::from_str::<Settled>("[]").is_ok(),
+        "serde fills the empty array from the container's default"
+    );
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+struct Pick(u64, #[serde(default, skip_serializing)] u64);
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum Meter {
+    Tally(u64, #[serde(default, skip_serializing_if = "is_zero")] u64),
+}
+
+/// A transparent tuple is its picked member, whatever its other member skips
+/// one way: the one-way skip refusal is not reached, and nothing else is
+/// described.
+#[test]
+fn a_transparent_tuple_ignores_a_one_way_skip_on_its_unpicked_member() {
+    assert_eq!(emitted::<Pick>(), emitted::<u64>());
+
+    let written = serde_json::to_value(Pick(1, 2)).expect("a transparent tuple serializes");
+    assert_eq!(written, serde_json::json!(1));
+    assert!(serde_json::from_value::<Pick>(written).is_ok());
+}
+
+/// A tuple variant's trailing member serde may leave out lowers its bound, as a
+/// tuple struct's does.
+#[test]
+fn a_tuple_variant_lowers_min_items_for_a_trailing_member_serde_may_leave_out() {
+    assert_eq!(
+        emitted::<Meter>()["oneOf"][0]["properties"]["Tally"],
+        serde_json::json!({
+            "type": "array",
+            "prefixItems": [emitted::<u64>(), emitted::<u64>()],
+            "items": false,
+            "minItems": 1,
+        })
+    );
+
+    let written = serde_json::to_value(Meter::Tally(1, 0)).expect("a variant serializes");
+    assert_eq!(written, serde_json::json!({"Tally": [1]}));
+    assert!(
+        serde_json::from_value::<Meter>(written).is_ok(),
+        "the shorter array serde writes must read back"
     );
 }
 

@@ -7,11 +7,12 @@ use super::{
 
 /// A struct's schema, which its fields decide.
 ///
-/// A `#[serde(transparent)]` struct is the schema of the one field serde both
-/// writes and reads through, whichever shape declares it, because that field's
-/// value is all the wire carries. `reject_transparent_without_one_field` refuses
-/// the struct where serde picks a different field each way, reading the same
-/// helper, so the field described here is the one that refusal accepted.
+/// A `#[serde(transparent)]` struct is the schema of its transparent field,
+/// whichever shape declares it: the field serde both writes and reads through,
+/// or the single field of the one direction serde can derive, because that
+/// field's value is all the wire carries. `reject_transparent_without_one_field`
+/// refuses the struct where the two directions pick different fields, and reads
+/// the same picks, so no field described here is one that refusal refused.
 ///
 /// A newtype is transparent, because serde makes it so: `Sku(String)` is a
 /// string on the wire, under what its member declares, and describing it as
@@ -27,7 +28,7 @@ pub(super) fn struct_body(fields: &Fields, container: &Container) -> TokenStream
         Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => {
             member_schema(&unnamed.unnamed[0])
         }
-        Fields::Unnamed(unnamed) => tuple_body(&unnamed.unnamed),
+        Fields::Unnamed(unnamed) => tuple_body(&unnamed.unnamed, container.default),
         Fields::Unit => quote! {
             ::kynos::openapi::Schema::of_type(
                 ::kynos::openapi::model::schema::types::SchemaType::Null,
@@ -37,11 +38,12 @@ pub(super) fn struct_body(fields: &Fields, container: &Container) -> TokenStream
 }
 
 /// A tuple's schema: a closed array of the members serde does not skip both
-/// ways, each under what it declares, bounded below by the fewest serde reads.
-/// With no member left there is no `prefixItems`, which may not be empty.
-pub(super) fn tuple_body(fields: &Punctuated<Field, Comma>) -> TokenStream2 {
+/// ways, each under what it declares, bounded below by the fewest serde reads,
+/// which a container default (`defaulted`) lowers to none. With no member left
+/// there is no `prefixItems`.
+pub(super) fn tuple_body(fields: &Punctuated<Field, Comma>, defaulted: bool) -> TokenStream2 {
     let positions = positional_members(fields);
-    let fewest = min_items(&positions);
+    let fewest = min_items(&positions, defaulted);
     let members = positions.iter().map(|field| member_schema(field));
     let prefix = (!positions.is_empty()).then(|| {
         quote!(keywords.prefix_items = ::core::option::Option::Some(::std::vec![#(#members),*]);)
@@ -380,6 +382,7 @@ pub(super) fn payload(fields: &Fields, container: &Container) -> Option<TokenStr
         Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => {
             (!is_unit_like(fields)).then(|| member_schema(&unnamed.unnamed[0]))
         }
-        Fields::Unnamed(unnamed) => Some(tuple_body(&unnamed.unnamed)),
+        // An enum carries no container default.
+        Fields::Unnamed(unnamed) => Some(tuple_body(&unnamed.unnamed, false)),
     }
 }
