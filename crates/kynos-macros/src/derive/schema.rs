@@ -98,7 +98,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     reject_catch_all(input)?;
     reject_transparent_without_one_field(input)?;
     reject_read_required_skip(input)?;
-    reject_unread_field_beside_open_map(input)?;
+    reject_contradicted_closure(input)?;
+    reject_unread_field_in_closed_object(input)?;
     reject_one_way_member_skip(input)?;
     reject_skipped_adjacent_payload(input)?;
     check_constraints(input)?;
@@ -285,6 +286,13 @@ fn flatten_witnesses(
 /// holding a named field serde writes and never reads ([`unread_field_span`]):
 /// its schema leaves out a member serde writes beside the ones it names, which
 /// an open map one level up would refuse.
+///
+/// So is every object [`closed`] closes under `#[serde(deny_unknown_fields)]`,
+/// for the reason an open container is excluded: a struct, an internally tagged
+/// enum with a struct variant, and an adjacently tagged enum. An internally
+/// tagged unit variant stays open, since serde ignores every key beside its
+/// tag, and an externally tagged struct variant closes only its payload, which
+/// is a property's value rather than an object composed one level up.
 fn flattens(input: &DeriveInput, container: &Container) -> bool {
     if container.transparent {
         return false;
@@ -297,7 +305,9 @@ fn flattens(input: &DeriveInput, container: &Container) -> bool {
 
     match &input.data {
         Data::Struct(data) => {
-            matches!(data.fields, Fields::Named(_)) && unread_field_span(&data.fields).is_none()
+            matches!(data.fields, Fields::Named(_))
+                && unread_field_span(&data.fields).is_none()
+                && !container.deny_unknown_fields
         }
         Data::Enum(data) => {
             let variants = described_variants(data);
@@ -305,15 +315,17 @@ fn flattens(input: &DeriveInput, container: &Container) -> bool {
             match (&container.tag, &container.content) {
                 // Adjacently tagged: every branch is an object of a tag
                 // property and a content property, whatever the variant holds.
-                (Some(_), Some(_)) => !variants.is_empty(),
+                (Some(_), Some(_)) => !variants.is_empty() && !container.deny_unknown_fields,
                 // Internally tagged: a named or unit variant becomes an object
                 // naming its own members plus the tag, and serde writes a
                 // variant's fields beside that tag, so one it never reads is a
                 // member the object does not name.
                 (Some(_), None) => {
                     !variants.is_empty()
-                        && variants.iter().all(|variant| {
-                            matches!(variant.fields, Fields::Named(_) | Fields::Unit)
+                        && variants.iter().all(|variant| match variant.fields {
+                            Fields::Unit => true,
+                            Fields::Named(_) => !container.deny_unknown_fields,
+                            Fields::Unnamed(_) => false,
                         })
                         && variants
                             .iter()
@@ -907,22 +919,74 @@ fn reject_read_required_skip(input: &DeriveInput) -> syn::Result<()> {
     Ok(())
 }
 
-/// A named field serde writes and never reads is refused beside an open
-/// flattened field.
+/// An object `#[serde(deny_unknown_fields)]` closes has no schema true of a
+/// flattened open map or an `alias` it reads.
+///
+/// serde refuses every key no field it reads names before a flattened map sees
+/// it, so the map reads empty while serde writes its members; and it reads an
+/// aliased field under a name the closed object does not name. Checked on every
+/// named field the schema describes, including inside a variant serde never
+/// writes, since the object is closed on read alone. A `#[serde(transparent)]`
+/// struct is its one field's value, with no object to close.
+fn reject_contradicted_closure(input: &DeriveInput) -> syn::Result<()> {
+    let container = Container::read(input);
+    if !container.deny_unknown_fields || container.transparent {
+        return Ok(());
+    }
+
+    let named = described_groups(input)
+        .into_iter()
+        .filter(|fields| matches!(fields, Fields::Named(_)))
+        .flat_map(described_members);
+
+    for field in named {
+        if let Some(span) = open_span(field) {
+            return Err(syn::Error::new(
+                span,
+                "`#[schema(open)]` says this object admits members nothing names, but \
+                 `#[serde(deny_unknown_fields)]` makes serde refuse every key its fields do not \
+                 name before the map sees it, so serde reads the map empty and writes members it \
+                 would refuse to read back. Drop `deny_unknown_fields` to keep the map, or drop \
+                 the map",
+            ));
+        }
+        if let Some((_, span)) = serde_key_span(&field.attrs, &["alias"]) {
+            return Err(syn::Error::new(
+                span,
+                "`alias` makes serde read this field under a second name, and the object \
+                 `#[serde(deny_unknown_fields)]` closes names only the first, so the schema would \
+                 refuse a document serde reads. Drop the `alias`, or drop `deny_unknown_fields`",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A named field serde writes and never reads is refused in an object that
+/// constrains every member it does not name.
 ///
 /// `skip_deserializing` alone keeps the field out of the object serde reads,
 /// which is all [`is_described`] names, and an object constraining no member it
-/// does not name still admits what serde writes of it. An open flattened field
-/// is what makes the object constrain such members: the `unevaluatedProperties`
-/// it gives the object reaches the field, and refuses what serde writes wherever
-/// the map's values are another type, which is invisible here. Checked in every
-/// object serde writes, a struct and each struct variant it writes, against an
-/// open field the schema describes. A `#[serde(transparent)]` struct is its one
-/// field's value, with no object to check.
-fn reject_unread_field_beside_open_map(input: &DeriveInput) -> syn::Result<()> {
-    if Container::read(input).transparent {
+/// does not name still admits what serde writes of it. Two things make the
+/// object constrain such members. An open flattened field gives the object an
+/// `unevaluatedProperties` that reaches the field, and refuses what serde writes
+/// wherever the map's values are another type, which is invisible here.
+/// `#[serde(deny_unknown_fields)]` closes the object outright ([`closed`]).
+/// Checked in every object serde writes, a struct and each struct variant it
+/// writes, against an open field the schema describes or a closed container. A
+/// `#[serde(transparent)]` struct is its one field's value, with no object to
+/// check.
+fn reject_unread_field_in_closed_object(input: &DeriveInput) -> syn::Result<()> {
+    let container = Container::read(input);
+    if container.transparent {
         return Ok(());
     }
+    let closer = if container.deny_unknown_fields {
+        "the `additionalProperties` or `unevaluatedProperties` of `false` that \
+         `#[serde(deny_unknown_fields)]` gives this object"
+    } else {
+        "the `unevaluatedProperties` a `#[schema(open)]` flattened field gives this object"
+    };
 
     let groups: Vec<&Fields> = match &input.data {
         Data::Struct(data) => vec![&data.fields],
@@ -937,17 +1001,18 @@ fn reject_unread_field_beside_open_map(input: &DeriveInput) -> syn::Result<()> {
     };
 
     for fields in groups {
-        if !described_members(fields).into_iter().any(is_open) {
+        if !container.deny_unknown_fields && !described_members(fields).into_iter().any(is_open) {
             continue;
         }
         if let Some(span) = unread_field_span(fields) {
             return Err(syn::Error::new(
                 span,
-                "`skip_deserializing` leaves this field out of the schema, since serde never \
-                 reads it, but serde still writes it, and the `unevaluatedProperties` a \
-                 `#[schema(open)]` flattened field gives this object refuses a member the schema \
-                 does not name. Use `#[serde(skip)]` to leave it out both ways, or drop \
-                 `skip_deserializing` so the schema names it",
+                format!(
+                    "`skip_deserializing` leaves this field out of the schema, since serde never \
+                     reads it, but serde still writes it, and {closer} refuses a member the \
+                     schema does not name. Use `#[serde(skip)]` to leave it out both ways, or \
+                     drop `skip_deserializing` so the schema names it"
+                ),
             ));
         }
     }
@@ -1167,6 +1232,9 @@ struct Container {
     /// from, and on a tuple struct every missing trailing element. serde
     /// accepts it only on a struct, so it is never set for an enum.
     default: bool,
+    /// `#[serde(deny_unknown_fields)]`: serde refuses a key naming no field it
+    /// reads, so [`closed`] closes each object that rule reaches.
+    deny_unknown_fields: bool,
 }
 
 impl Container {
@@ -1193,6 +1261,7 @@ impl Container {
                     "tag" => container.tag = string_value(&meta)?,
                     "content" => container.content = string_value(&meta)?,
                     "transparent" => container.transparent = true,
+                    "deny_unknown_fields" => container.deny_unknown_fields = true,
                     _ => skip_value(&meta)?,
                 }
                 Ok(())
@@ -1251,6 +1320,39 @@ fn deprecate(schema: TokenStream2, deprecated: bool) -> TokenStream2 {
                 keywords.deprecated = ::core::option::Option::Some(true);
             }
             deprecated
+        }
+    }
+}
+
+/// Closes an object serde reads under `#[serde(deny_unknown_fields)]`, which
+/// refuses every key naming no field it reads.
+///
+/// `additionalProperties: false` where the object composes nothing, which is
+/// the spelling every consumer reads. `unevaluatedProperties: false` where a
+/// flattened field composes members through an `allOf`, since
+/// `additionalProperties` sees only the object's own `properties` and would
+/// refuse them, while `unevaluatedProperties` sees them across the `allOf` and
+/// any `$ref` inside it. serde closes a struct, every struct variant's fields,
+/// and an adjacently tagged branch; a caller wraps exactly those objects, and
+/// the schema is returned as it was without the attribute.
+fn closed(schema: TokenStream2, container: &Container) -> TokenStream2 {
+    if !container.deny_unknown_fields {
+        return schema;
+    }
+    quote! {
+        {
+            let mut closed = #schema;
+            if let ::kynos::openapi::Schema::Object(keywords) = &mut closed {
+                let never = ::core::option::Option::Some(::std::boxed::Box::new(
+                    ::kynos::openapi::Schema::never(),
+                ));
+                if keywords.all_of.is_some() {
+                    keywords.unevaluated_properties = never;
+                } else {
+                    keywords.additional_properties = never;
+                }
+            }
+            closed
         }
     }
 }
