@@ -204,7 +204,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// closed: a struct, each struct variant's fields, and an adjacently tagged
 /// branch. The derive uses `additionalProperties: false`, or
 /// `unevaluatedProperties: false` where a flattened field composes members
-/// through an `allOf`. A shape that closes does not implement `Flatten`. A field is left out of `required` when it is an
+/// through an `allOf`. An externally tagged branch that is an object admits
+/// only its variant key, with or without the attribute, since serde reads it as
+/// exactly one entry. A shape that closes does not implement `Flatten`, and
+/// neither does any externally tagged enum. A field is left out of `required` when it is an
 /// `Option`, carries `#[serde(default)]`, or belongs to a struct carrying
 /// `#[serde(default)]`, because the wire form then allows it to be absent both
 /// ways; `skip_serializing_if` is accepted only alongside one of those. A named

@@ -362,7 +362,9 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
         },
 
         // Externally tagged: the variant's name is the single property, and a
-        // unit variant is that name as a bare string.
+        // unit variant is that name as a bare string. The object is closed
+        // whatever the container says, because serde reads it as exactly one
+        // entry and refuses anything beside it.
         (None, _) => match payload(&variant.fields, container) {
             None => described(constant_string(&name)),
             Some(payload) => described(quote! {
@@ -376,6 +378,9 @@ pub(super) fn branch(variant: &Variant, container: &Container) -> TokenStream2 {
                     keywords.properties.insert(::std::string::String::from(#name), #payload);
                     keywords.required = ::core::option::Option::Some(
                         ::std::vec![::std::string::String::from(#name)],
+                    );
+                    keywords.additional_properties = ::core::option::Option::Some(
+                        ::std::boxed::Box::new(::kynos::openapi::Schema::never()),
                     );
                     ::kynos::openapi::Schema::Object(::std::boxed::Box::new(keywords))
                 }

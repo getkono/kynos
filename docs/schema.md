@@ -266,7 +266,7 @@ and writes:
 | serde | Emitted |
 | --- | --- |
 | every variant is a unit | `type: string` with an `enum` of the names, unless one is deprecated — see [Deprecation](#deprecation) |
-| externally tagged, the default | `oneOf`; a unit variant is its own name as a `const` string, and anything else a one-property object keyed by the variant name |
+| externally tagged, the default | `oneOf`; a unit variant is its own name as a `const` string, and anything else a one-property object keyed by the variant name and closed with `additionalProperties: false`, since serde reads it as exactly one entry |
 | `#[serde(tag = "...")]` | `oneOf` of objects each carrying the tag as a `const` property beside the variant's own, plus a `discriminator`. A newtype variant has no properties to sit beside, so it becomes an `allOf` of a tag-only object and its payload — which must implement `Flatten`, for the reason a [flattened](#flattening) field's type must. A map payload has no route through `#[schema(open)]`, since serde refuses `flatten` on a newtype variant: write a struct variant holding the map as a flattened open field, which serializes the same way |
 | `#[serde(tag = "...", content = "...")]` | the same, with the payload under the content property, which a unit variant omits |
 | `#[serde(untagged)]` | **refused**, on the enum and on any variant serde reads or writes: an untagged variant goes on the wire as its bare payload, so a branch keyed by its name describes a value serde never writes. On a variant serde skips both ways it is in no schema, and is accepted |
@@ -371,8 +371,9 @@ witness spanned at the field's type, so the refusal lands where it was written.
 The derive implements the marker for the shapes whose description is an object
 naming its members: a struct with named fields, and an enum whose every `oneOf`
 branch is such an object. It does not for a container carrying `#[schema(open)]`
-or `#[serde(transparent)]`, an externally tagged enum with a unit variant, or an
-internally tagged enum with a newtype variant, nor for a struct or an internally
+or `#[serde(transparent)]`, an externally tagged enum, whose object branches
+are [closed](#closed-objects) to all but the variant key, or an internally
+tagged enum with a newtype variant, nor for a struct or an internally
 tagged struct variant serde writes that holds a named field serde never reads,
 whose schema leaves out a member serde writes. Nor does it for a shape that
 [`deny_unknown_fields`](#closed-objects) closes. A variant serde skips both ways
@@ -443,9 +444,15 @@ serde refuses a key that names no field it reads when the type carries
 reaches. That covers a struct, each struct variant's fields under every tagging,
 and an adjacently tagged branch. An internally tagged unit or newtype variant
 stays open, because serde ignores the keys beside its tag or hands them to the
-payload. An externally tagged branch is left as it is, since serde_json closes
-it with or without the attribute
-([#189](https://github.com/getkono/kynos/issues/189)).
+payload.
+
+An externally tagged branch that is an object is closed with or without the
+attribute, because serde reads it as exactly one entry named after the variant
+and refuses anything beside it. So an externally tagged enum never implements
+`Flatten`, even though serde can flatten one by taking the entry named after a
+variant: the enum has one schema, and that closed branch inside an outer
+object's `allOf` would refuse the members the object declared itself. Tag the
+enum, internally or adjacently, to flatten it.
 
 An object that composes nothing is closed with `additionalProperties: false`,
 which every consumer reads. An object that composes a flattened struct through
@@ -535,7 +542,7 @@ re-walked. A second call would reuse the same maps and agree with itself.
 | 29 | A named field serde reads and never writes, `skip_serializing` alone, is a property under rule 19, required inside a variant serde never writes, and named beside an open map so its `unevaluatedProperties` does not reach it; a flattened open map carrying it still gives the object its `unevaluatedProperties`; a named field serde writes and never reads, `skip_deserializing` alone, is left out | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde writes and reads; the acceptance rows in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs) |
 | 30 | `#[serde(skip_deserializing)]` alone on a named field is refused in an object serde writes that carries a described `#[schema(open)]` flattened field, or that `deny_unknown_fields` closes under rule 32, since the object's `unevaluatedProperties` or closing keyword refuses the member serde writes and the schema leaves out; a struct, or an internally tagged enum with a struct variant serde writes, holding such a field does not claim `Flatten`; a field serde skips both ways, an open map serde never reads and a variant serde never writes are left alone | the derive's ledger and `Flatten`-claim rows in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs), and `tests/ui/macros/schema_field_skipped_on_read_beside_open_map.rs` for the wording |
 | 31 | A `PhantomData` member serde does not skip is the `null` serde writes and reads for it, a property under rule 19 or a position under rule 24, without requiring `PhantomData<T>: Schema`; a flattened one, which serde neither writes into the object nor reads from it, is in no schema, and a transparent struct is never described by one | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against the value serde writes; `tests/ui/pass/schema_generic_with_phantom.rs` |
-| 32 | Under `#[serde(deny_unknown_fields)]`, a struct, each struct variant's fields and each adjacently tagged branch are closed: with `additionalProperties: false` where the object composes nothing, and with `unevaluatedProperties: false` where a flattened field composes members through an `allOf`. An internally tagged unit or newtype variant's tag-only object and an externally tagged branch stay open, and so does a `#[serde(transparent)]` struct. A struct, an internally tagged enum with a struct variant, and an adjacently tagged enum that the attribute closes do not claim `Flatten` | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde reads; `a_closed_object_admits_what_a_flattened_struct_contributes_and_nothing_else` in [`tests/flatten.rs`](../crates/kynos/tests/flatten.rs), against the `jsonschema` validator; and the `Flatten`-claim and acceptance rows in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs) |
+| 32 | Under `#[serde(deny_unknown_fields)]`, a struct, each struct variant's fields and each adjacently tagged branch are closed: with `additionalProperties: false` where the object composes nothing, and with `unevaluatedProperties: false` where a flattened field composes members through an `allOf`. An internally tagged unit or newtype variant's tag-only object stays open, and so does a `#[serde(transparent)]` struct. An externally tagged branch that is an object admits only its variant key, with `additionalProperties: false`, with or without the attribute. A struct, an internally tagged enum with a struct variant, and an adjacently tagged enum that the attribute closes do not claim `Flatten`, and no externally tagged enum does | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde reads; `a_closed_object_admits_what_a_flattened_struct_contributes_and_nothing_else` in [`tests/flatten.rs`](../crates/kynos/tests/flatten.rs), against the `jsonschema` validator; and the `Flatten`-claim and acceptance rows in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs) |
 | 33 | In an object `deny_unknown_fields` closes, a described `#[schema(open)]` flattened field and an `alias` on a described named field are refused, including inside a variant serde never writes, since serde reads the map empty and reads the alias under a name the object does not name | the derive's ledger in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs), and `tests/ui/macros/schema_open_map_denying_unknown_fields.rs` and `tests/ui/macros/schema_alias_denying_unknown_fields.rs` for the wording |
 
 ## Rationale

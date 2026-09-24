@@ -272,11 +272,12 @@ fn flatten_witnesses(
 /// True of the shapes whose description is an object whose `properties` names
 /// every member it admits: a struct with named fields, and an enum whose every
 /// `oneOf` branch is such an object. A newtype, a tuple and a unit struct are
-/// not objects at all; an externally tagged enum with a unit variant, or with a
-/// newtype variant whose member serde skips and so writes as one, has a bare
-/// string for that branch; and an internally tagged newtype variant composes
-/// with whatever its payload resolves to, which is exactly the unknown this
-/// trait exists to refuse.
+/// not objects at all; an internally tagged newtype variant composes with
+/// whatever its payload resolves to, which is exactly the unknown this trait
+/// exists to refuse; and an externally tagged enum is excluded whatever its
+/// variants. serde reads each of its object branches as exactly one entry, so
+/// the branch is closed to every key but the variant's (`branch`), and a unit
+/// variant is a bare string.
 ///
 /// A container carrying `#[schema(open)]` is excluded whatever its shape: its
 /// own `unevaluatedProperties` would, one level up, reach the members the outer
@@ -291,8 +292,7 @@ fn flatten_witnesses(
 /// for the reason an open container is excluded: a struct, an internally tagged
 /// enum with a struct variant, and an adjacently tagged enum. An internally
 /// tagged unit variant stays open, since serde ignores every key beside its
-/// tag, and an externally tagged struct variant closes only its payload, which
-/// is a property's value rather than an object composed one level up.
+/// tag.
 fn flattens(input: &DeriveInput, container: &Container) -> bool {
     if container.transparent {
         return false;
@@ -332,14 +332,10 @@ fn flattens(input: &DeriveInput, container: &Container) -> bool {
                             .filter(|variant| is_written(variant))
                             .all(|variant| unread_field_span(&variant.fields).is_none())
                 }
-                // Externally tagged: the variant's name is the single property,
-                // and a unit variant is that name as a bare string instead.
-                (None, _) => {
-                    !variants.is_empty()
-                        && variants
-                            .iter()
-                            .all(|variant| !is_unit_like(&variant.fields))
-                }
+                // Externally tagged: a unit variant is a bare string, and every
+                // other branch is closed to all but its variant key, which one
+                // level up would refuse the outer object's own members.
+                (None, _) => false,
             }
         }
         // Refused at the top of `expand_inner`.
