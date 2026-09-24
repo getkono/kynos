@@ -626,29 +626,34 @@ the callee the `Request`, and an `Observer` is handed a `Duration` and a
 pins is the stored half — the table's own shape — and that is what a new field
 on it would change.
 
-What the pair does compose into is **none of the three describing halves split
-out for #131 serves a request**. The files they came from do — `unchecked.rs`,
-`server/mod.rs` and `router/docs/mod.rs` — and a new use of `Document` inside
-one of them was allowed by the row and invisible to the witness, which is
-[#131](https://github.com/getkono/kynos/issues/131). Each was split in two, and
-the row allows only the describing half: `unchecked/describe.rs`,
-`server/describe.rs` and `router/docs/render.rs`. None of those three holds a
-handler, a layer, an endpoint or an accept loop, so putting a `Document` beside
-the code that answers `/openapi.json` now fails the build rather than passing
-it. That is the one direction the split had to earn, and it is why
-`router/docs/render.rs` exists as a file at all: the endpoint holds finished
-`Bytes`, and the function that produced them is somewhere the endpoint is not.
+What the naming rule enforces for #131 is **the request-serving half of each
+file split for it may not name `Document`**. The files `unchecked.rs`,
+`server/mod.rs` and `router/docs/mod.rs` serve requests, and a new use of
+`Document` inside one of them was allowed by the row and invisible to the
+witness, which is [#131](https://github.com/getkono/kynos/issues/131). Each was
+split in two, and the row allows only the describing half:
+`unchecked/describe.rs`, `server/describe.rs` and `router/docs/render.rs`. The
+serving halves are no longer listed, so putting a `Document` beside the code that answers
+`/openapi.json` now fails `containment:check` rather than passing it. That is
+the one direction the split had to earn, and it is why `router/docs/render.rs`
+exists as a file at all: the endpoint holds finished `Bytes`, and the function
+that produced them is somewhere the endpoint is not.
 
-It still does not compose into "a request cannot reach a `Document`", and the
-gap is the granularity rather than the sites. The rule is per *file*, so what
-keeps the three describing halves off the request path is that nothing in them
-is reached from one — the row's reason, argued, not a property the rule checks.
-Each is kept to the members the row is about so that the argument stays one
-reading long, but a request-serving item added to one of them would be allowed
-by the row exactly as before. Narrowing the allowance below file granularity
-would close that, and needs the rule to parse Rust rather than grep it. Read
-the two together as what they are: a per-file naming rule over files that
-describe and do not serve, plus a ratchet on the dispatch table's fields.
+Neither the rule nor the witness checks that the describing halves themselves
+serve no request. None of the three holds a handler, a layer, an endpoint or an
+accept loop, but that is the row's reason, argued: the rule flags only a file
+the row does not list, and the witness sees only the table's fields. So it does
+not compose into "a request cannot reach a `Document`", and the gap is the
+granularity rather than the sites. Each describing half is kept to the members
+the row is about so that the argument stays one reading long, but a
+request-serving item added to one of them would be allowed by the row exactly
+as before. Narrowing the allowance below file granularity would close that, and
+needs the rule to parse Rust rather than grep it. Read the two together as what
+they are: a per-file naming rule that fails every file in its scope that names
+an element without being one of that element's allowed sites, plus a ratchet on
+the dispatch table's fields. The allowed sites are not all files that describe
+and do not serve — the `Document` row names two that also serve a request, and
+argues each in its reason.
 
 That is narrower than "nothing reaches an erased callee", and deliberately.
 `Service` is above the table: it owns the `Document` and hands the request to a
