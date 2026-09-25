@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-fn is_open_map<T: kynos::schema::OpenMap>() {}
+fn is_open_map<T: kynos::schema::flatten::OpenMap>() {}
 
 fn main() {
     is_open_map::<BTreeMap<String, String>>();

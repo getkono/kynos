@@ -136,7 +136,7 @@ pub(super) fn object_body(
                 // is the composition that says so without naming them.
                 //
                 // Which is sound only because the field's type is
-                // `kynos::schema::Flatten`, asserted by the witness
+                // `kynos::schema::flatten::Flatten`, asserted by the witness
                 // `flatten_witnesses` emits: a schema constraining members it
                 // does not name would reach this object's own properties from
                 // inside the branch.

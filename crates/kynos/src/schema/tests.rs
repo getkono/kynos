@@ -9,7 +9,11 @@ use kynos_openapi::{
     model::schema::types::{SchemaType, TypeSet},
 };
 
-use crate::schema::{ClosedFlatten, Flatten, MapKey, Schema, registry::Registry};
+use crate::schema::{
+    MapKey, Schema,
+    flatten::{ClosedFlatten, Flatten},
+    registry::Registry,
+};
 
 /// The registry is only touched by implementations that have members to
 /// resolve, so the ones checked here can be driven without one being built.

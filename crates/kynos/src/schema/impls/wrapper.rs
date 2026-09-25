@@ -8,7 +8,10 @@ use kynos_openapi::{
 };
 
 use crate::schema::{
-    AdmitsAny, ClosedFlatten, Flatten, OpenMap, Schema, impls::with_object, registry::Registry,
+    Schema,
+    flatten::{AdmitsAny, ClosedFlatten, Flatten, OpenMap},
+    impls::with_object,
+    registry::Registry,
 };
 
 /// Widens `schema` to admit `null`.

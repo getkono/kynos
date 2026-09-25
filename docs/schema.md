@@ -365,7 +365,7 @@ A map is the shape that hits it. It has no fixed member names to put in
 flattening one used to emit an object requiring `id: u64` to be a string.
 
 **So a flattened field's type must implement
-[`Flatten`](https://docs.rs/kynos/latest/kynos/schema/trait.Flatten.html).** The
+[`Flatten`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.Flatten.html).** The
 `Schema` derive asserts the bound once per flattened field, in a `const _`
 witness spanned at the field's type, so the refusal lands where it was written.
 The derive implements the marker for the shapes whose description is an object
@@ -400,7 +400,7 @@ Kynos's own.
 A flattened map is a real shape, and refusing it outright would remove it with
 no way back. `#[schema(open)]` on the flattened field is the declaration that
 the object admits members nothing names. It swaps the `Flatten` bound for
-[`OpenMap`](https://docs.rs/kynos/latest/kynos/schema/trait.OpenMap.html) and
+[`OpenMap`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.OpenMap.html) and
 changes what is emitted: the flattened schema's `additionalProperties` is
 hoisted onto the parent as `unevaluatedProperties`.
 
@@ -454,7 +454,7 @@ Hoisting nothing is also why a named field serde writes and never reads,
 an open map of typed values. The schema leaves that field out, and only a
 hoisted `unevaluatedProperties` that constrains something would refuse it. The
 derive bounds an open field beside such a field by
-[`AdmitsAny`](https://docs.rs/kynos/latest/kynos/schema/trait.AdmitsAny.html),
+[`AdmitsAny`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.AdmitsAny.html),
 because whether the field's type hoists a constraint is visible to the
 compiler and not to the derive. `Unchecked` implements it, and so does a
 `HashMap` or `BTreeMap` whose values are `Unchecked`: its hoisted value schema
@@ -519,7 +519,7 @@ through `deserialize_map`; both borrow the entries and leave every one behind,
 so serde refuses each document the type writes while the closed schema
 accepts it. The derive therefore bounds each flattened field of a closed object
 by
-[`ClosedFlatten`](https://docs.rs/kynos/latest/kynos/schema/trait.ClosedFlatten.html),
+[`ClosedFlatten`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.ClosedFlatten.html),
 which it implements beside `Flatten` for two shapes: a struct with no flattened
 field serde reads, by serde's own test, so one it skips both ways does not
 count and a flattened `PhantomData` does; and an adjacently tagged enum, whose tag and

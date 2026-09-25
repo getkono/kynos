@@ -1,7 +1,7 @@
 //! The control for `ui/traits/flatten.rs`: the same bound, over a type whose
 //! schema does name its members.
 
-fn is_flattenable<T: kynos::schema::Flatten>() {}
+fn is_flattenable<T: kynos::schema::flatten::Flatten>() {}
 
 #[derive(kynos::Schema, serde::Serialize)]
 struct Audit {

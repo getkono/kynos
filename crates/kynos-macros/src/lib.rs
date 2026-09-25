@@ -261,7 +261,7 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// goes on a `#[serde(flatten)]` field to say that the object really does admit
 /// members nothing names, which is the only thing a flattened map can mean. The
 /// field's type must implement
-/// [`OpenMap`](https://docs.rs/kynos/latest/kynos/schema/trait.OpenMap.html) — a
+/// [`OpenMap`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.OpenMap.html) — a
 /// `HashMap`, a `BTreeMap` or an `Unchecked` over a map, not a type that refers
 /// to one — and a key type's `propertyNames` does not survive it.
 ///
@@ -296,7 +296,7 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   `properties` of its own schema object, and composing it into the parent's
 ///   `allOf` leaves it none — so the map's *value* schema would apply to the
 ///   properties the parent declared itself. Refused by a
-///   [`Flatten`](https://docs.rs/kynos/latest/kynos/schema/trait.Flatten.html)
+///   [`Flatten`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.Flatten.html)
 ///   bound the expansion asserts per flattened field. `#[schema(open)]` on that
 ///   field is the opt-in that keeps the map: it says the object really is open,
 ///   and the map's values become the parent's `unevaluatedProperties`, the one
@@ -353,7 +353,7 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// - `#[serde(skip_deserializing)]` without `skip_serializing` on a named field
 ///   of an object that `deny_unknown_fields` closes, or beside a
 ///   `#[schema(open)]` flattened field whose type does not implement
-///   [`AdmitsAny`](https://docs.rs/kynos/latest/kynos/schema/trait.AdmitsAny.html),
+///   [`AdmitsAny`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.AdmitsAny.html),
 ///   which a map, whose value schema is hoisted, does not unless its values are
 ///   `Unchecked`, and an `Unchecked` map does. serde writes the field and never
 ///   reads it, so the schema leaves it out, and the object then refuses what
@@ -371,7 +371,7 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   serde takes a flattened key only for a type it reads by name, through
 ///   `deserialize_struct`, and lends these two every key without taking any,
 ///   so the object refuses every document the type writes. Refused by a
-///   [`ClosedFlatten`](https://docs.rs/kynos/latest/kynos/schema/trait.ClosedFlatten.html)
+///   [`ClosedFlatten`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.ClosedFlatten.html)
 ///   bound the expansion asserts per flattened field of a closed object beside
 ///   `Flatten`, which the derive implements for a struct with no
 ///   flattened field serde reads and for an adjacently tagged enum. Flatten

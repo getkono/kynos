@@ -5,7 +5,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use kynos_openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType};
 
 use crate::schema::{
-    AdmitsAny, MapKey, OpenMap, Schema, impls::with_object, registry::Registry,
+    MapKey, Schema,
+    flatten::{AdmitsAny, OpenMap},
+    impls::with_object,
+    registry::Registry,
     unchecked::Unchecked,
 };
 

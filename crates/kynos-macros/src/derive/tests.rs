@@ -2489,7 +2489,7 @@ mod schema {
         )));
     }
 
-    /// Whether the expansion claims `kynos::schema::Flatten` for the input.
+    /// Whether the expansion claims `kynos::schema::flatten::Flatten` for the input.
     ///
     /// Read off the emitted tokens rather than by calling the predicate, so
     /// what is asserted is the implementation a user receives. `to_string` on a
@@ -2500,7 +2500,7 @@ mod schema {
         let expansion = expand_inner(&input).expect("the case itself must expand");
         expansion
             .to_string()
-            .contains(":: kynos :: schema :: Flatten for")
+            .contains(":: kynos :: schema :: flatten :: Flatten for")
     }
 
     /// The shapes whose description is an object naming its own members.
@@ -2866,14 +2866,14 @@ mod schema {
         );
     }
 
-    /// Whether the expansion claims `kynos::schema::ClosedFlatten` for the
+    /// Whether the expansion claims `kynos::schema::flatten::ClosedFlatten` for the
     /// input, read off the emitted tokens as [`claims_flatten`] reads its claim.
     fn claims_closed_flatten(declaration: TokenStream2) -> bool {
         let input: DeriveInput = syn::parse2(declaration).expect("the case itself must parse");
         let expansion = expand_inner(&input).expect("the case itself must expand");
         expansion
             .to_string()
-            .contains(":: kynos :: schema :: ClosedFlatten for")
+            .contains(":: kynos :: schema :: flatten :: ClosedFlatten for")
     }
 
     /// Only a flattenable shape serde reads through `deserialize_struct` claims

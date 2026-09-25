@@ -13,7 +13,7 @@
 //! members the parent declared itself.
 //!
 //! A flattened map is the shape that does it, because a map names no member at
-//! all. `kynos::schema::Flatten` is what refuses one outright; `#[schema(open)]`
+//! all. `kynos::schema::flatten::Flatten` is what refuses one outright; `#[schema(open)]`
 //! is the declaration that the object really is open, and the case below is what
 //! holds the description it then emits to the JSON the type actually writes.
 
@@ -31,7 +31,8 @@ use kynos::{
         model::schema::types::{SchemaType, TypeSet},
     },
     schema::{
-        MapKey, OpenMap, Schema as SchemaTrait, constraints::Constraints, registry::Registry,
+        MapKey, Schema as SchemaTrait, constraints::Constraints, flatten::OpenMap,
+        registry::Registry,
     },
 };
 use serde::Serialize;
