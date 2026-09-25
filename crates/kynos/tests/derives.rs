@@ -1170,13 +1170,17 @@ fn a_required_aliased_field_projects_to_one_optional_parameter_per_name() {
     );
 }
 
-/// A flattened struct's members reach the schema through an `allOf`, which the
-/// projection does not read, so only the parent's own field is a parameter.
+/// A flattened struct's members reach the schema through a `$ref` inside an
+/// `allOf`, neither of which the projection reads, so only the parent's own
+/// field is a parameter.
 ///
-/// Not implied by the aliased case, whose `allOf` holds bounds and no members:
-/// a projection that walked `allOf` for `properties` alone would pass that one.
+/// Not implied by the aliased case, whose `allOf` holds bounds and no `$ref`:
+/// a projection that walked `allOf` and resolved what it found would pass that
+/// one and list `host` here.
 #[test]
 fn a_flattened_structs_members_project_to_no_parameter() {
+    assert!(emitted::<Located>()["allOf"][0].get("$ref").is_some());
+
     assert_eq!(
         query_parameters::<Located>(),
         serde_json::json!([
