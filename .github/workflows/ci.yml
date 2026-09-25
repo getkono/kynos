@@ -181,18 +181,22 @@ jobs:
   semver:
     name: API compatibility
     runs-on: ubuntu-latest
-    # Reports the verdict; does not fail the pull request on a break.
+    # Advisory before 1.0: reports the verdict in the job summary and does not
+    # fail the pull request on a break.
+    #
+    # Pre-1.0, a minor bump *is* how an intentional break is declared. The
+    # baseline is the last version published to crates.io, so once one break
+    # lands on `master` for the next minor release, every later pull request
+    # reports it too, whatever that pull request changed, until the release
+    # ships. A blocking job would fail all of them, and a red mark that means
+    # "the next release has not happened yet" teaches reviewers to ignore the
+    # column. Whether a break is intended is decided in review and again in the
+    # release pull request, which carries release-plz's own verdict.
     #
     # `continue-on-error` is deliberately *not* used here. It keeps the
     # workflow's own conclusion green but leaves the check run reporting
     # `failure`, so the pull request still shows a red mark -- which is the
-    # thing this job must not do, because it fails on every pull request today
-    # regardless of what that pull request changed. The baseline is the
-    # published 0.1.0, and `Router::group`/`nest`/`merge` plus `Timeout`'s new
-    # private field are breaks the pending 0.2.0 release exists to express;
-    # pre-1.0 a minor bump *is* how a break is declared. A red mark that means
-    # "the last release has not happened yet" teaches reviewers to ignore the
-    # column.
+    # thing this job must not do.
     #
     # So the verdict goes to the job summary, where `coverage:ci` already puts
     # its own, and the step separates the two outcomes that matter:
@@ -202,9 +206,12 @@ jobs:
     # failure `release-plz.toml` records about the release-time copy and the
     # one this job exists to not repeat.
     #
-    # When 0.2.0 is published the baseline moves past both breaks. At that
-    # point this becomes a plain `run: mise run semver:check`, and making it
-    # required is a change to the `master` ruleset rather than to this file.
+    # This stays advisory until the policy changes, not until a release does.
+    # Two things would change it: reaching 1.0, after which a break needs a
+    # major version and should block; or an explicit decision to gate on it
+    # sooner. Either way the step becomes a plain `run: mise run
+    # semver:check`, and making it required is a change to the `master`
+    # ruleset rather than to this file.
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
