@@ -369,9 +369,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// - A flattened internally tagged enum, or a flattened struct holding a
 ///   flattened field serde reads or carrying a container `#[serde(tag)]`, in
 ///   an object `deny_unknown_fields` closes. serde takes a flattened key only
-///   for a type it reads by name, through `deserialize_struct`, and lends the
-///   first two every key without taking any, and never takes a struct's own
-///   tag, so the object refuses every document the type writes. Refused by a
+///   for a type it reads by name, through `deserialize_struct`. It lends an
+///   internally tagged enum, and a struct holding a flattened field, every key
+///   without taking any, and never takes a struct's own tag, so the object
+///   refuses every document the type writes. Refused by a
 ///   [`ClosedFlatten`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.ClosedFlatten.html)
 ///   bound the expansion asserts per flattened field of a closed object beside
 ///   `Flatten`, which the derive implements for a struct with no flattened
