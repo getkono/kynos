@@ -465,8 +465,8 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 /// Declares a group of path parameters.
 ///
 /// Wire names, each a field's name or its `rename`, must match the route
-/// template's variables; the route attribute emits a const assertion comparing
-/// the two sets.
+/// template's variables in declaration order; the route attribute emits a const
+/// assertion comparing the two lists.
 #[proc_macro_derive(PathParams, attributes(param))]
 pub fn derive_path_params(item: TokenStream) -> TokenStream {
     derive::path_params::expand(item)
