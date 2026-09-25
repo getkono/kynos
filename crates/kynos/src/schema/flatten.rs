@@ -120,13 +120,15 @@ pub trait Flatten: Schema {}
 /// ```
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be flattened into an object `#[serde(deny_unknown_fields)]` closes",
-    label = "serde does not read it by name",
+    label = "not known to be read by name",
     note = "a closed object refuses every key no flattened field takes, and serde takes a key \
             only for a type it reads by name; it lends an internally tagged enum, a struct \
             holding a `#[serde(flatten)]` field of its own, or a map every key without taking \
-            any, so the object would refuse every document the type writes; one serde never \
-            reads, such as `Problem`, leaves the closing keyword nothing to refuse",
-    note = "flatten a struct with no flattened field of its own or an adjacently tagged enum, \
+            any, and never takes a struct's own `#[serde(tag)]`, so the object would refuse \
+            every document such a type writes; one serde never reads, such as `Problem`, leaves \
+            the closing keyword nothing to refuse",
+    note = "flatten a struct with no flattened field or `#[serde(tag)]` of its own or an \
+            adjacently tagged enum, \
             `#[serde(tag = \"...\", content = \"...\")]`, which serde reads by name; move the \
             flattened type's members into the object; or drop `deny_unknown_fields`"
 )]
