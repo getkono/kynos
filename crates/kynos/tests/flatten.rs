@@ -617,6 +617,71 @@ fn a_flattened_structs_alias_is_read_through_the_closed_parent() {
     }
 }
 
+/// A flattened struct whose optional field serde also reads under an alias.
+#[derive(Schema, Serialize, serde::Deserialize)]
+struct Labelled {
+    #[serde(alias = "tag")]
+    label: Option<String>,
+}
+
+/// A closed object beside it, so a name the flattened struct does not list is
+/// refused rather than admitted as an unknown member.
+#[derive(Schema, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SealedLabel {
+    id: u64,
+    #[serde(flatten)]
+    labelled: Labelled,
+}
+
+/// An optional field's names are bounded by a `not` over their pair rather
+/// than a `oneOf`, so where the required case refuses the field absent, this
+/// one admits it. The closed parent admits the field under either name or
+/// neither, and as the `null` serde writes for `None`, and refuses it under
+/// both as serde does.
+#[test]
+fn a_flattened_structs_optional_alias_is_read_through_the_closed_parent() {
+    let schema = emitted::<SealedLabel>();
+    let validator =
+        jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
+
+    let written = serde_json::to_value(SealedLabel {
+        id: 1,
+        labelled: Labelled { label: None },
+    })
+    .expect("the value serializes");
+    assert_eq!(written, serde_json::json!({ "id": 1, "label": null }));
+
+    for document in [
+        written,
+        serde_json::json!({ "id": 1 }),
+        serde_json::json!({ "id": 1, "tag": "a" }),
+        serde_json::json!({ "id": 1, "label": "a" }),
+    ] {
+        assert!(
+            serde_json::from_value::<SealedLabel>(document.clone()).is_ok(),
+            "serde must read {document}"
+        );
+        assert!(
+            validator.is_valid(&document),
+            "a document serde reads was refused: {document}\nschema: {schema}"
+        );
+    }
+    for document in [
+        serde_json::json!({ "id": 1, "label": "a", "tag": "b" }),
+        serde_json::json!({ "id": 1, "tag": "a", "z": 2 }),
+    ] {
+        assert!(
+            serde_json::from_value::<SealedLabel>(document.clone()).is_err(),
+            "serde must refuse {document}"
+        );
+        assert!(
+            !validator.is_valid(&document),
+            "a document serde refuses was accepted: {document}\nschema: {schema}"
+        );
+    }
+}
+
 /// An adjacently tagged enum, which serde reads through `deserialize_struct` and
 /// so takes its tag and content keys out of a closed parent.
 #[derive(Schema, Serialize, serde::Deserialize)]
