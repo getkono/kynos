@@ -34,8 +34,9 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let rejection = quote!(::kynos::error::rejection::PathRejection);
 
     // A capture the route matched is looked up by name rather than by
-    // position, because `NAMES` is compared against the template rather than
-    // assumed to be in its order.
+    // position. The route attribute already asserts that `NAMES` matches the
+    // template's variables in order, so the two agree; looking up by name keeps
+    // decoding correct without depending on that assertion.
     let reads = params.iter().map(|param| {
         let wire = param.name();
         let found = quote! {
