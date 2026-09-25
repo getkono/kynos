@@ -37,8 +37,8 @@ use crate::schema::Schema;
 /// newtype variant.
 /// Implemented for [`Problem`](crate::Problem), whose schema names the
 /// registered members and admits every other one. Unsealed, for the reason
-/// [`MapKey`](super::MapKey) is — a hand-written [`Schema`] that does the same thing has to be
-/// able to say so.
+/// [`MapKey`](super::MapKey) is — a hand-written [`Schema`] that does the same
+/// thing has to be able to say so.
 ///
 /// ```no_run
 /// # use kynos::schema::{Schema, flatten::Flatten};
@@ -86,10 +86,10 @@ pub trait Flatten: Schema {}
 /// whose fields include no `#[serde(flatten)]` serde reads and which carries no
 /// container `#[serde(tag = "...")]`, a key serde writes and never takes, and
 /// an adjacently tagged enum, whose tag and content keys serde names. Carried
-/// across `Box<T>` and `Arc<T>`. Not implemented for [`Problem`](crate::Problem): serde never
-/// reads one, having no `Deserialize` for it, and its `additionalProperties:
-/// true` marks every member evaluated, so the closing keyword of an object
-/// flattening it would refuse nothing:
+/// across `Box<T>` and `Arc<T>`. Not implemented for
+/// [`Problem`](crate::Problem): serde never reads one, having no `Deserialize`
+/// for it, and its `additionalProperties: true` marks every member evaluated,
+/// so the closing keyword of an object flattening it would refuse nothing:
 ///
 /// ```compile_fail
 /// fn closed_flattenable<T: kynos::schema::flatten::ClosedFlatten>() {}
@@ -146,18 +146,19 @@ pub trait ClosedFlatten: Flatten {}
 ///
 /// Implemented for [`HashMap`](std::collections::HashMap) and
 /// [`BTreeMap`](std::collections::BTreeMap), and carried across `Box<T>` and
-/// `Arc<T>`. Also for [`Unchecked`](super::unchecked::Unchecked) over a type that
-/// implements `OpenMap` itself, or over a `serde_json::Map`, which has no
+/// `Arc<T>`. Also for [`Unchecked`](super::unchecked::Unchecked) over a type
+/// that implements `OpenMap` itself, or over a `serde_json::Map`, which has no
 /// `additionalProperties` to hoist and so leaves the object open — the route
 /// for arbitrary JSON beside an object's own members, and an [`AdmitsAny`].
-/// Unsealed, for the reason [`MapKey`](super::MapKey) is — a hand-written [`Schema`] that
-/// claims no component name and describes an object by `additionalProperties`
-/// alone has to be able to say so.
+/// Unsealed, for the reason [`MapKey`](super::MapKey) is — a hand-written
+/// [`Schema`] that claims no component name and describes an object by
+/// `additionalProperties` alone has to be able to say so.
 ///
 /// A key constraint does not survive the hoist. Inside the `allOf` branch
-/// `propertyNames` would name the parent's own properties too, so it is dropped:
-/// a map keyed by a [`MapKey`](super::MapKey) with [`key_constraints`](super::MapKey::key_constraints)
-/// is described more weakly than its type, rather than contradicting it.
+/// `propertyNames` would name the parent's own properties too, so it is
+/// dropped: a map keyed by a [`MapKey`](super::MapKey) with
+/// [`key_constraints`](super::MapKey::key_constraints) is described more weakly
+/// than its type, rather than contradicting it.
 ///
 /// ```no_run
 /// # use kynos::schema::{Schema, flatten::OpenMap};
@@ -223,8 +224,8 @@ pub trait OpenMap: Schema {}
 /// admits_any::<std::collections::BTreeMap<String, u64>>();
 /// ```
 ///
-/// Unsealed, for the reason [`MapKey`](super::MapKey) is — a hand-written open map whose schema
-/// has no `additionalProperties` has to be able to say so.
+/// Unsealed, for the reason [`MapKey`](super::MapKey) is — a hand-written open
+/// map whose schema has no `additionalProperties` has to be able to say so.
 ///
 /// ```no_run
 /// # use kynos::schema::{

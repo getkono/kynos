@@ -52,10 +52,10 @@ use crate::schema::{
 /// open::<kynos::schema::unchecked::Unchecked<u64>>();
 /// ```
 ///
-/// It is never [`Flatten`](crate::schema::flatten::Flatten). The permissive schema names
-/// no member it contributes, so beside an open map those members stay
-/// unevaluated and the map's `unevaluatedProperties` would refuse what serde
-/// writes:
+/// It is never [`Flatten`](crate::schema::flatten::Flatten). The permissive
+/// schema names no member it contributes, so beside an open map those members
+/// stay unevaluated and the map's `unevaluatedProperties` would refuse what
+/// serde writes:
 ///
 /// ```compile_fail
 /// fn flattenable<T: kynos::schema::flatten::Flatten>() {}

@@ -2489,7 +2489,8 @@ mod schema {
         )));
     }
 
-    /// Whether the expansion claims `kynos::schema::flatten::Flatten` for the input.
+    /// Whether the expansion claims `kynos::schema::flatten::Flatten` for the
+    /// input.
     ///
     /// Read off the emitted tokens rather than by calling the predicate, so
     /// what is asserted is the implementation a user receives. `to_string` on a
@@ -2866,8 +2867,9 @@ mod schema {
         );
     }
 
-    /// Whether the expansion claims `kynos::schema::flatten::ClosedFlatten` for the
-    /// input, read off the emitted tokens as [`claims_flatten`] reads its claim.
+    /// Whether the expansion claims `kynos::schema::flatten::ClosedFlatten` for
+    /// the input, read off the emitted tokens as [`claims_flatten`] reads its
+    /// claim.
     fn claims_closed_flatten(declaration: TokenStream2) -> bool {
         let input: DeriveInput = syn::parse2(declaration).expect("the case itself must parse");
         let expansion = expand_inner(&input).expect("the case itself must expand");

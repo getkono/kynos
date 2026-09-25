@@ -365,8 +365,8 @@ A map is the shape that hits it. It has no fixed member names to put in
 flattening one used to emit an object requiring `id: u64` to be a string.
 
 **So a flattened field's type must implement
-[`Flatten`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.Flatten.html).** The
-`Schema` derive asserts the bound once per flattened field, in a `const _`
+[`Flatten`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.Flatten.html).**
+The `Schema` derive asserts the bound once per flattened field, in a `const _`
 witness spanned at the field's type, so the refusal lands where it was written.
 The derive implements the marker for the shapes whose description is an object
 naming its members: a struct with named fields, and an enum whose every `oneOf`
@@ -400,8 +400,8 @@ Kynos's own.
 A flattened map is a real shape, and refusing it outright would remove it with
 no way back. `#[schema(open)]` on the flattened field is the declaration that
 the object admits members nothing names. It swaps the `Flatten` bound for
-[`OpenMap`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.OpenMap.html) and
-changes what is emitted: the flattened schema's `additionalProperties` is
+[`OpenMap`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.OpenMap.html)
+and changes what is emitted: the flattened schema's `additionalProperties` is
 hoisted onto the parent as `unevaluatedProperties`.
 
 The hoist needs the map's own schema object in hand, which is what `OpenMap`

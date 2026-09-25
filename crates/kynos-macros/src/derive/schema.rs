@@ -25,10 +25,11 @@
 //! `open` is the one member that is not a constraint, which is why the list is
 //! no longer the `Constraints` keys alone. It says how a `#[serde(flatten)]`
 //! field composes rather than what a value may be. An open field is bounded by
-//! `kynos::schema::flatten::OpenMap`, or by `kynos::schema::flatten::AdmitsAny` beside a field
-//! serde never reads, and every other flattened field by
-//! `kynos::schema::flatten::Flatten`, and in an object `#[serde(deny_unknown_fields)]`
-//! closes by `kynos::schema::flatten::ClosedFlatten` as well.
+//! `kynos::schema::flatten::OpenMap`, or by `kynos::schema::flatten::AdmitsAny`
+//! beside a field serde never reads, and every other flattened field by
+//! `kynos::schema::flatten::Flatten`, and in an object
+//! `#[serde(deny_unknown_fields)]` closes by
+//! `kynos::schema::flatten::ClosedFlatten` as well.
 
 mod aliases;
 mod attributes;
@@ -131,7 +132,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let flatten = flattens(input, &container).then(|| {
         quote! {
             #[allow(deprecated)]
-            impl #impl_generics ::kynos::schema::flatten::Flatten for #name #ty_generics #where_clause {}
+            impl #impl_generics ::kynos::schema::flatten::Flatten
+                for #name #ty_generics #where_clause {}
         }
     });
     let closed_flatten = flattens_into_closed_objects(input, &container).then(|| {
@@ -212,12 +214,12 @@ fn schema_bounded_generics(input: &DeriveInput) -> syn::Generics {
 /// downstream code happens to name it. `schema_bounded_generics` also records
 /// why field-type predicates were rejected once already.
 ///
-/// A field carrying `#[schema(open)]` is bounded by `kynos::schema::flatten::OpenMap`
-/// instead. That attribute is the declaration that the object really is open,
-/// and `object_body` describes it by hoisting the field's `additionalProperties`
-/// to `unevaluatedProperties` — which only a map described in place has to
-/// hoist, since anything reached through a `$ref` would carry its own into the
-/// `allOf`.
+/// A field carrying `#[schema(open)]` is bounded by
+/// `kynos::schema::flatten::OpenMap` instead. That attribute is the declaration
+/// that the object really is open, and `object_body` describes it by hoisting
+/// the field's `additionalProperties` to `unevaluatedProperties` — which only a
+/// map described in place has to hoist, since anything reached through a `$ref`
+/// would carry its own into the `allOf`.
 ///
 /// An internally tagged newtype variant's payload is bounded by `Flatten` too.
 /// The variant has no properties of its own to put the tag beside, so its
@@ -227,9 +229,9 @@ fn schema_bounded_generics(input: &DeriveInput) -> syn::Generics {
 /// member is bounded by nothing.
 ///
 /// In an object `#[serde(deny_unknown_fields)]` closes ([`closed`]), a
-/// flattened field is also bounded by `kynos::schema::flatten::ClosedFlatten`: serde
-/// refuses every key no flattened field took, and only a type it reads by name
-/// takes one ([`flattens_into_closed_objects`]). `Flatten` stays asserted
+/// flattened field is also bounded by `kynos::schema::flatten::ClosedFlatten`:
+/// serde refuses every key no flattened field took, and only a type it reads by
+/// name takes one ([`flattens_into_closed_objects`]). `Flatten` stays asserted
 /// beside it, since `ClosedFlatten` implies it and a type that is not
 /// flattenable at all is then refused with that reason too. The payload of an
 /// internally tagged newtype variant is bounded by `Flatten` alone, since its
@@ -328,11 +330,12 @@ fn flatten_witnesses(
 /// members it does not name, and an open field that hoists an
 /// `additionalProperties` would. Whether this one does is its type's answer,
 /// invisible here, so [`flatten_witnesses`] bounds it by
-/// `kynos::schema::flatten::AdmitsAny` rather than by `OpenMap`, which it implies. Read
-/// over the objects [`reject_unread_field_in_closed_object`] reads: a
-/// `#[serde(transparent)]` struct is its one field's value, with no object to
-/// bound, and an object `#[serde(deny_unknown_fields)]` closes never reaches
-/// here holding an open field, which [`reject_contradicted_closure`] refuses.
+/// `kynos::schema::flatten::AdmitsAny` rather than by `OpenMap`, which it
+/// implies. Read over the objects [`reject_unread_field_in_closed_object`]
+/// reads: a `#[serde(transparent)]` struct is its one field's value, with no
+/// object to bound, and an object `#[serde(deny_unknown_fields)]` closes never
+/// reaches here holding an open field, which [`reject_contradicted_closure`]
+/// refuses.
 fn open_fields_beside_unread_fields<'a>(
     input: &'a DeriveInput,
     container: &Container,

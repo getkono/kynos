@@ -13,9 +13,10 @@
 //! members the parent declared itself.
 //!
 //! A flattened map is the shape that does it, because a map names no member at
-//! all. `kynos::schema::flatten::Flatten` is what refuses one outright; `#[schema(open)]`
-//! is the declaration that the object really is open, and the case below is what
-//! holds the description it then emits to the JSON the type actually writes.
+//! all. `kynos::schema::flatten::Flatten` is what refuses one outright;
+//! `#[schema(open)]` is the declaration that the object really is open, and the
+//! case below is what holds the description it then emits to the JSON the type
+//! actually writes.
 
 // `test-util` carries the JSON Schema validator, which is what makes this a
 // check against an oracle rather than an assertion about the emitter written
