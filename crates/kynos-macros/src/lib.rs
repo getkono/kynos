@@ -216,8 +216,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// names in. An externally tagged branch that is an object admits
 /// only its variant key, with or without the attribute, since serde reads it as
 /// exactly one entry. A shape that closes does not implement `Flatten`, and
-/// neither does any externally tagged enum. A field is left out of `required` when it is an
-/// `Option`, carries `#[serde(default)]`, or belongs to a struct carrying
+/// neither does any externally tagged enum. A flattened field of an object the
+/// attribute closes is also bounded by the narrower `ClosedFlatten`, below. A
+/// field is left out of `required` when it is an `Option`, carries
+/// `#[serde(default)]`, or belongs to a struct carrying
 /// `#[serde(default)]`, because the wire form then allows it to be absent both
 /// ways. A named field serde reads and never writes, `skip_serializing` alone,
 /// is described under that same rule, and one serde writes and never reads,
@@ -364,6 +366,16 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   serde refuses every key the object's fields do not name before the map
 ///   sees it, so it reads the map empty and writes members it would refuse to
 ///   read back. Drop one of the two.
+/// - A flattened internally tagged enum, or a flattened struct holding a
+///   flattened field serde reads, in an object `deny_unknown_fields` closes.
+///   serde takes a flattened key only for a type it reads by name, through
+///   `deserialize_struct`, and lends these two every key without taking any,
+///   so the object refuses every document the type writes. Refused by a
+///   [`ClosedFlatten`](https://docs.rs/kynos/latest/kynos/schema/trait.ClosedFlatten.html)
+///   bound the expansion asserts per flattened field of a closed object beside
+///   `Flatten`, which the derive implements for a struct with no
+///   flattened field serde reads and for an adjacently tagged enum. Flatten
+///   one of those instead, or drop `deny_unknown_fields`.
 /// - A variant whose own name, after `rename` and `rename_all`, an earlier
 ///   variant also reads, by its own name or an `alias`. serde reads a name as
 ///   the first variant claiming it, so the later variant goes on the wire under

@@ -376,9 +376,11 @@ are [closed](#closed-objects) to all but the variant key, or an internally
 tagged enum with a newtype variant, nor for a struct or an internally
 tagged struct variant serde writes that holds a named field serde never reads,
 whose schema leaves out a member serde writes. Nor does it for a shape that
-[`deny_unknown_fields`](#closed-objects) closes. A variant serde skips both ways
-counts toward none of these, and one serde reads and never writes counts as any
-other. `Box<T>` and `Arc<T>` carry `T`'s answer across,
+[`deny_unknown_fields`](#closed-objects) closes, and a closed object also
+bounds its flattened fields by the narrower `ClosedFlatten` described there. A
+variant serde skips both ways counts toward none of these, and one serde reads
+and never writes counts as any other. `Box<T>` and `Arc<T>` carry `T`'s answer
+across,
 `Problem` implements it so a problem document can carry extension members of
 its own type, and the trait is unsealed so a hand-written `Schema` doing the
 same can say so. The rule a flattened schema has to meet is that it marks every
@@ -472,15 +474,14 @@ A flattened `Problem`, or any flattened type that carries one, beside an open
 map leaves the map's values unchecked. `Problem`'s `additionalProperties: true`
 reaches through the `$ref` of a derived type that flattens it and marks every
 member evaluated, the map's included, so the hoisted `unevaluatedProperties`
-has nothing left to constrain. The same keyword, from a flattened `Problem` or
-any flattened type that carries one, leaves nothing for the
-`unevaluatedProperties: false` of an object
-[`deny_unknown_fields`](#closed-objects) closes to refuse, which describes no
-read: `Problem` has no `Deserialize`, so neither has a type that flattens it,
-and an object carrying either is one serde only writes. Either way the description admits more than the
-type writes and never refuses what it writes. Refusing the pair would take a
-second marker, one every derived type would carry and `Problem` would not,
-since the derive sees a field's syntax rather than which type it holds.
+has nothing left to constrain. The description admits more than the type
+writes and never refuses what it writes. Refusing the pair would take a second
+marker, one every derived type would carry and `Problem` would not, since the
+derive sees a field's syntax rather than which type it holds. In an object
+[`deny_unknown_fields`](#closed-objects) closes, the same keyword would leave
+the closing `unevaluatedProperties: false` nothing to refuse, and there such a
+marker exists: `Problem` does not implement `ClosedFlatten`, and neither does a
+derived type that flattens it, so that object is refused.
 
 ## Closed objects
 
@@ -508,6 +509,28 @@ struct's `properties` across the `allOf` and its `$ref`, whereas
 sit inside the outer object's `allOf` and refuse the members that object
 declared itself. serde's documentation lists the attribute as unsupported with
 `flatten` for the same reason.
+
+A flattened field of a closed object is held to a narrower bound than
+`Flatten`. serde buffers the object's entries, hands each flattened field all
+of them, and then refuses the first entry no field took, and only a type serde
+reads through `deserialize_struct` takes one. An internally tagged enum reads
+through `deserialize_any`, and a struct holding a flattened field serde reads
+through `deserialize_map`; both borrow the entries and leave every one behind,
+so serde refuses each document the type writes while the closed schema
+accepts it. The derive therefore bounds each flattened field of a closed object
+by
+[`ClosedFlatten`](https://docs.rs/kynos/latest/kynos/schema/trait.ClosedFlatten.html),
+which it implements beside `Flatten` for two shapes: a struct with no flattened
+field serde reads, by serde's own test, so one it skips both ways does not
+count and a flattened `PhantomData` does; and an adjacently tagged enum, whose tag and
+content keys serde names. An externally tagged enum, which serde would read by
+its variant key, is not `Flatten` at all. `Box<T>` and `Arc<T>` carry the
+answer across, `Problem`, which serde never reads, does not implement it, and a
+hand-written `Flatten` has to implement it too to be flattened into a closed
+object. The field stays bounded by `Flatten` as well, so a type that is not
+flattenable at all is refused with that reason too. An internally tagged
+newtype variant's payload is bounded by `Flatten` alone, since its tag-only
+object is never closed.
 
 A closed object has no true schema in two cases, so the derive refuses each
 one:
@@ -639,6 +662,7 @@ re-walked. A second call would reuse the same maps and agree with itself.
 | 34 | A described named field serde reads under an `alias` is a property under its wire name and each distinct alias, read literally rather than through `rename_all`; a required one carries an `allOf` entry of a `oneOf` over one `required` per name and is left out of the object's `required`, and an optional one an entry of a `not` over a `required` for each pair of names; so a closed object carrying one is closed by `unevaluatedProperties`, and admits the alias | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde reads; `a_flattened_structs_alias_is_read_through_the_closed_parent` in [`tests/flatten.rs`](../crates/kynos/tests/flatten.rs), against the `jsonschema` validator; and the acceptance rows in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs) |
 | 35 | A described variant serde reads under an `alias` is named under its wire name and each distinct alias, read literally: each once in the compact `enum`; as an `enum` in place of the `const` of a tag property or an externally tagged unit variant; and as a property of an externally tagged object branch, present under exactly one by an `allOf` entry of a `oneOf` over `required` and closed by `unevaluatedProperties`. The `discriminator` maps no value | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde reads |
 | 36 | A name two described variants claim, by their own names or an `alias`, is named under the first alone, as serde reads it: an alias an earlier variant claims is dropped from the later one, and a variant whose own name an earlier one claims is refused, since serde writes it under a name that reads back as the other; a variant serde skips both ways claims nothing | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde reads; the derive's ledger and acceptance rows in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); and `tests/ui/macros/schema_variant_name_collision.rs` for the wording |
+| 37 | Under `#[serde(deny_unknown_fields)]`, a flattened field of an object rule 32 closes is bounded by `ClosedFlatten` beside `Flatten`, since serde takes a flattened key only through `deserialize_struct`: the derive implements it beside `Flatten` for a struct with no flattened field serde reads, a flattened `PhantomData` counting and one skipped both ways not, and for an adjacently tagged enum, never for an internally tagged one; `Box<T>` and `Arc<T>` carry it, `Problem` does not implement it, and an internally tagged newtype variant's payload is bounded by `Flatten` alone | the `ClosedFlatten`-claim and witness rows in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); `a_type_serde_reads_by_name_can_be_flattened_into_a_closed_object` in [`schema/tests.rs`](../crates/kynos/src/schema/tests.rs) for the wrappers, and a `compile_fail` doctest on the trait for `Problem`; `a_closed_object_reads_a_flattened_adjacently_tagged_enum_as_serde_does` in [`tests/flatten.rs`](../crates/kynos/tests/flatten.rs), against the `jsonschema` validator and serde's read; and `tests/ui/macros/schema_flatten_internally_tagged_denying_unknown_fields.rs` and `tests/ui/macros/schema_flatten_nested_flatten_denying_unknown_fields.rs` for the wording |
 
 ## Rationale
 

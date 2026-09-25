@@ -125,6 +125,10 @@ fn every_rejected_schema_attribute_has_a_case() {
             "A variant whose own name",
             "macros/schema_variant_name_collision.stderr",
         ),
+        (
+            "A flattened internally tagged enum",
+            "macros/schema_flatten_internally_tagged_denying_unknown_fields.stderr",
+        ),
     ];
     const HEADING: &str = "# Rejected, because serde and the schema would disagree";
 
