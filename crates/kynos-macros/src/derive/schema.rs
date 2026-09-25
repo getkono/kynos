@@ -448,17 +448,23 @@ fn flattens(input: &DeriveInput, container: &Container) -> bool {
 /// key only through `deserialize_struct`, which claims the keys it names. It
 /// reads a struct that way unless a field is flattened without
 /// `skip_deserializing` — serde's own test, so a flattened `PhantomData`
-/// counts — in which case it reads the struct as a map. An adjacently tagged
-/// enum names its tag and content; an internally tagged one reads through
-/// `deserialize_any`, which takes nothing.
+/// counts — in which case it reads the struct as a map. A struct carrying a
+/// container `#[serde(tag = "...")]` is excluded too: serde writes the tag
+/// beside the fields and never names it among the keys it takes. An adjacently
+/// tagged enum names its tag and content; an internally tagged one reads
+/// through `deserialize_any`, which takes nothing.
 fn flattens_into_closed_objects(input: &DeriveInput, container: &Container) -> bool {
     if !flattens(input, container) {
         return false;
     }
     match &input.data {
-        Data::Struct(data) => !data.fields.iter().any(|field| {
-            is_flattened(field) && !serde_flag(&field.attrs, &["skip", "skip_deserializing"])
-        }),
+        Data::Struct(data) => {
+            container.tag.is_none()
+                && !data.fields.iter().any(|field| {
+                    is_flattened(field)
+                        && !serde_flag(&field.attrs, &["skip", "skip_deserializing"])
+                })
+        }
         Data::Enum(_) => container.content.is_some(),
         Data::Union(_) => false,
     }

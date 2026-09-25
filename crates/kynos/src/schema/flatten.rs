@@ -83,9 +83,10 @@ pub trait Flatten: Schema {}
 /// compile error at the field.
 ///
 /// Derived beside `Flatten` for the two shapes serde reads by name: a struct
-/// whose fields include no `#[serde(flatten)]` serde reads, and an adjacently
-/// tagged enum, whose tag and content keys serde names. Carried across `Box<T>`
-/// and `Arc<T>`. Not implemented for [`Problem`](crate::Problem): serde never
+/// whose fields include no `#[serde(flatten)]` serde reads and which carries no
+/// container `#[serde(tag = "...")]`, a key serde writes and never takes, and
+/// an adjacently tagged enum, whose tag and content keys serde names. Carried
+/// across `Box<T>` and `Arc<T>`. Not implemented for [`Problem`](crate::Problem): serde never
 /// reads one, having no `Deserialize` for it, and its `additionalProperties:
 /// true` marks every member evaluated, so the closing keyword of an object
 /// flattening it would refuse nothing:
