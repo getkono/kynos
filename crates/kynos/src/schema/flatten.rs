@@ -127,10 +127,10 @@ pub trait Flatten: Schema {}
             any, and never takes a struct's own `#[serde(tag)]`, so the object would refuse \
             every document such a type writes; one serde never reads, such as `Problem`, leaves \
             the closing keyword nothing to refuse",
-    note = "flatten a struct with no flattened field or `#[serde(tag)]` of its own or an \
-            adjacently tagged enum, \
-            `#[serde(tag = \"...\", content = \"...\")]`, which serde reads by name; move the \
-            flattened type's members into the object; or drop `deny_unknown_fields`"
+    note = "flatten a type serde reads by name instead, either a struct with neither a \
+            flattened field nor a `#[serde(tag)]` of its own, or an adjacently tagged enum, \
+            `#[serde(tag = \"...\", content = \"...\")]`; move the flattened type's members \
+            into the object; or drop `deny_unknown_fields`"
 )]
 pub trait ClosedFlatten: Flatten {}
 
