@@ -568,6 +568,10 @@ properties do. The `allOf` makes a closed object's closing keyword
 `unevaluatedProperties`, which sees the object's own `properties` as
 `additionalProperties` would.
 
+The default [`QueryParams::parameters`](../crates/kynos/src/extract/params/query.rs)
+makes each name of an aliased field its own optional query parameter, because
+a Parameter Object cannot express the `allOf` bounds above.
+
 ### On a variant
 
 serde reads a variant under its wire name or any `alias` it carries, wherever

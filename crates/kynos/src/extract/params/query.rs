@@ -30,11 +30,36 @@ pub struct Query<T>(pub T);
 pub trait QueryParams: Sized + Schema {
     /// Describes the individual OpenAPI query parameters.
     ///
-    /// The default projects the group's own schema: one parameter per property,
-    /// carrying that property's schema, required exactly when the object says
-    /// it is. That is the whole of what a group of named query parameters is,
-    /// which is why it needs no separate name list the way the other locations
-    /// do.
+    /// `#[derive(QueryParams)]` replaces this; the default serves a group that
+    /// implements the trait by hand over its [`Schema`].
+    ///
+    /// The default reads only the top-level `properties` and `required` of the
+    /// group's own schema: one parameter per property, carrying that property's
+    /// schema, required exactly when `required` names it. That is why it needs
+    /// no separate name list the way the other locations do. Nothing else in
+    /// the schema is carried:
+    ///
+    /// - Each name of a field serde reads under an `alias` becomes its own
+    ///   optional parameter. The schema's bound on them, exactly one for a
+    ///   required field and at most one for an optional one, is lost: a
+    ///   Parameter Object describes one parameter and cannot bound several.
+    /// - A member composed through `allOf`, `oneOf` or `$ref` is not listed,
+    ///   because the default does not read them. That covers a flattened
+    ///   field's members, an enum's variants and a `transparent` type's inner
+    ///   fields.
+    ///
+    /// Where that loses something, you have three options:
+    ///
+    /// - Override this method.
+    /// - Under `openapi32`, take the whole query as a [`QueryString`]. That
+    ///   keeps the whole schema, but Kynos decodes the query string only as one
+    ///   JSON document.
+    /// - Derive `QueryParams`, which helps with aliases only, and only by
+    ///   dropping them. It names each field by `#[param(rename)]`, then serde's
+    ///   `rename`, and ignores every other serde attribute, `alias` included. So
+    ///   it describes and decodes one name per field. It refuses an enum and
+    ///   decodes each field as one `FromStr` value, so a flattened or
+    ///   `transparent` type's members have to be written out as fields.
     ///
     /// `style` is left unstated: `form` with `explode` is the default for a
     /// query parameter, so stating it would only repeat the location.
