@@ -367,15 +367,16 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   sees it, so it reads the map empty and writes members it would refuse to
 ///   read back. Drop one of the two.
 /// - A flattened internally tagged enum, or a flattened struct holding a
-///   flattened field serde reads, in an object `deny_unknown_fields` closes.
-///   serde takes a flattened key only for a type it reads by name, through
-///   `deserialize_struct`, and lends these two every key without taking any,
-///   so the object refuses every document the type writes. Refused by a
+///   flattened field serde reads or carrying a container `#[serde(tag)]`, in
+///   an object `deny_unknown_fields` closes. serde takes a flattened key only
+///   for a type it reads by name, through `deserialize_struct`, and lends the
+///   first two every key without taking any, and never takes a struct's own
+///   tag, so the object refuses every document the type writes. Refused by a
 ///   [`ClosedFlatten`](https://docs.rs/kynos/latest/kynos/schema/flatten/trait.ClosedFlatten.html)
 ///   bound the expansion asserts per flattened field of a closed object beside
-///   `Flatten`, which the derive implements for a struct with no
-///   flattened field serde reads and for an adjacently tagged enum. Flatten
-///   one of those instead, or drop `deny_unknown_fields`.
+///   `Flatten`, which the derive implements for a struct with no flattened
+///   field serde reads and no container tag, and for an adjacently tagged
+///   enum. Flatten one of those instead, or drop `deny_unknown_fields`.
 /// - A variant whose own name, after `rename` and `rename_all`, an earlier
 ///   variant also reads, by its own name or an `alias`. serde reads a name as
 ///   the first variant claiming it, so the later variant goes on the wire under
