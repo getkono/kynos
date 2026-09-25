@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/getkono/kynos/compare/kynos-v0.2.0...kynos-v0.3.0) - 2026-09-25
+
+### Documentation
+
+- *(macros)* link the QueryParams object-field limit to #216
+- *(macros)* state the object-field limit of the QueryParams derive
+- *(macros)* say the path parameter check is ordered
+- *(macros)* state what the parameter derives actually check
+- *(schema)* state what the default QueryParams::parameters leaves out
+- *(schema)* state which flattened types a closed object admits
+
+### Fixed
+
+- *(schema)* say a closed object refuses a document a flattened type writes into
+- *(schema)* state ClosedFlatten's remedy without chaining two "or"s
+- *(schema)* say only what holds of every type ClosedFlatten refuses
+- *(macros)* withhold ClosedFlatten from a struct carrying a serde tag
+- *(schema)* [**breaking**] bound a closed object's flattened field by ClosedFlatten
+
+### Other
+
+- *(schema)* [**breaking**] move the flatten markers to kynos::schema::flatten
+
 ## [0.2.0](https://github.com/getkono/kynos/compare/kynos-v0.1.0...kynos-v0.2.0) - 2026-09-24
 
 ### Added
