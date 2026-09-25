@@ -2,15 +2,15 @@ error[E0277]: `Mode` cannot be flattened into an object `#[serde(deny_unknown_fi
   --> tests/ui/macros/schema_flatten_internally_tagged_denying_unknown_fields.rs:18:11
    |
 18 |     mode: Mode,
-   |           ^^^^ serde does not read it by name
+   |           ^^^^ not known to be read by name
    |
 help: the trait `ClosedFlatten` is not implemented for `Mode`
   --> tests/ui/macros/schema_flatten_internally_tagged_denying_unknown_fields.rs:9:1
    |
  9 | enum Mode {
    | ^^^^^^^^^
-   = note: a closed object refuses every key no flattened field takes, and serde takes a key only for a type it reads by name; it lends an internally tagged enum, a struct holding a `#[serde(flatten)]` field of its own, or a map every key without taking any, so the object would refuse every document the type writes; one serde never reads, such as `Problem`, leaves the closing keyword nothing to refuse
-   = note: flatten a struct with no flattened field of its own or an adjacently tagged enum, `#[serde(tag = "...", content = "...")]`, which serde reads by name; move the flattened type's members into the object; or drop `deny_unknown_fields`
+   = note: a closed object refuses every key no flattened field takes, and serde takes a key only for a type it reads by name; it lends an internally tagged enum, a struct holding a `#[serde(flatten)]` field of its own, or a map every key without taking any, and never takes a struct's own `#[serde(tag)]`, so the object would refuse every document such a type writes; one serde never reads, such as `Problem`, leaves the closing keyword nothing to refuse
+   = note: flatten a struct with no flattened field or `#[serde(tag)]` of its own or an adjacently tagged enum, `#[serde(tag = "...", content = "...")]`, which serde reads by name; move the flattened type's members into the object; or drop `deny_unknown_fields`
 help: the following other types implement trait `ClosedFlatten`
   --> src/schema/impls/wrapper.rs
    |
