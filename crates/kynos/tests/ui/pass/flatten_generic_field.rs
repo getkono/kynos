@@ -3,7 +3,7 @@
 //! witness, so `T: Flatten` there is what satisfies it. The control for
 //! `macros/schema_flatten_generic_field_unbounded.rs`.
 
-use kynos::schema::Flatten;
+use kynos::schema::flatten::Flatten;
 
 #[derive(kynos::Schema, serde::Serialize)]
 struct Audit {

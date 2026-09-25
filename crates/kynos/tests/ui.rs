@@ -109,6 +109,10 @@ fn every_guided_diagnostic_has_a_snapshot() {
         ("Alternative", "traits/alternative.stderr"),
         ("ByteSource", "traits/byte_source.stderr"),
         ("Carries", "traits/carries.stderr"),
+        (
+            "ClosedFlatten",
+            "macros/schema_flatten_internally_tagged_denying_unknown_fields.stderr",
+        ),
         ("Describe", "traits/describe.stderr"),
         ("EndpointMeta", "traits/endpoint_meta.stderr"),
         ("Flatten", "traits/flatten.stderr"),

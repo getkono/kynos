@@ -9,7 +9,7 @@ struct Audit {
 
 #[derive(kynos::Schema, serde::Serialize)]
 #[serde(tag = "kind")]
-enum Event<T: kynos::schema::Flatten> {
+enum Event<T: kynos::schema::flatten::Flatten> {
     Wrapped(T),
 }
 

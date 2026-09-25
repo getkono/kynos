@@ -9,7 +9,11 @@ use kynos_openapi::{
     model::schema::types::{SchemaType, TypeSet},
 };
 
-use crate::schema::{Flatten, MapKey, Schema, registry::Registry};
+use crate::schema::{
+    MapKey, Schema,
+    flatten::{ClosedFlatten, Flatten},
+    registry::Registry,
+};
 
 /// The registry is only touched by implementations that have members to
 /// resolve, so the ones checked here can be driven without one being built.
@@ -427,6 +431,8 @@ impl Schema for Audit {
 
 impl Flatten for Audit {}
 
+impl ClosedFlatten for Audit {}
+
 /// The bound a flattened field is checked against, and the wrappers that carry
 /// it across.
 #[test]
@@ -435,6 +441,18 @@ fn a_type_that_names_its_members_can_be_flattened() {
     // `Box<T>` and `Arc<T>` are `T`'s description, so they are `T`'s answer.
     flattenable::<Box<Audit>>();
     flattenable::<Arc<Audit>>();
+}
+
+/// The narrower bound a closed object's flattened field is checked against,
+/// carried across the same wrappers, since serde reads a `Box<T>` or an
+/// `Arc<T>` as its `T`.
+#[test]
+fn a_type_serde_reads_by_name_can_be_flattened_into_a_closed_object() {
+    fn closed_flattenable<T: ClosedFlatten + ?Sized>() {}
+
+    closed_flattenable::<Audit>();
+    closed_flattenable::<Box<Audit>>();
+    closed_flattenable::<Arc<Audit>>();
 }
 
 /// `Box<T>` and `Arc<T>` are `T` on the wire, so they must not mint a second

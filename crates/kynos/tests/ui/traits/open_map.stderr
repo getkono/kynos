@@ -17,5 +17,5 @@ error[E0277]: `std::string::String` cannot be flattened with `#[schema(open)]`
 note: required by a bound in `is_open_map`
  --> tests/ui/traits/open_map.rs:4:19
   |
-4 | fn is_open_map<T: kynos::schema::OpenMap>() {}
-  |                   ^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `is_open_map`
+4 | fn is_open_map<T: kynos::schema::flatten::OpenMap>() {}
+  |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `is_open_map`

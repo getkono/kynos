@@ -1,0 +1,58 @@
+error[E0277]: `Mode` cannot be flattened into another object
+  --> tests/ui/macros/schema_flatten_externally_tagged_denying_unknown_fields.rs:19:11
+   |
+19 |     mode: Mode,
+   |           ^^^^ does not name its members
+   |
+help: the trait `kynos::schema::flatten::Flatten` is not implemented for `Mode`
+  --> tests/ui/macros/schema_flatten_externally_tagged_denying_unknown_fields.rs:10:1
+   |
+10 | enum Mode {
+   | ^^^^^^^^^
+   = note: a flattened field's members become the parent's own, so its schema has to name them; a map names none, so its values would reach the properties the object declared itself
+   = note: give it a named field of its own; on a `HashMap` or `BTreeMap` field, add `#[schema(open)]` beside `#[serde(flatten)]` to say the object really is open, so its values become the object's `unevaluatedProperties`; for arbitrary JSON, flatten an `Unchecked<serde_json::Map<String, Value>>` with `#[schema(open)]`, which leaves the object open; as an internally tagged newtype variant's payload, make it a struct variant holding that flattened open field, which serde writes the same way
+help: the following other types implement trait `kynos::schema::flatten::Flatten`
+  --> src/error/problem.rs
+   |
+   | impl Flatten for Problem {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^ `kynos::Problem`
+   |
+  ::: src/schema/impls/wrapper.rs
+   |
+   | impl<T: Flatten> Flatten for Box<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Box<T>`
+   |
+   | impl<T: Flatten> Flatten for Arc<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Arc<T>`
+note: required by a bound in `is_flattenable`
+  --> tests/ui/macros/schema_flatten_externally_tagged_denying_unknown_fields.rs:19:11
+   |
+19 |     mode: Mode,
+   |           ^^^^ required by this bound in `is_flattenable`
+
+error[E0277]: `Mode` cannot be flattened into an object `#[serde(deny_unknown_fields)]` closes
+  --> tests/ui/macros/schema_flatten_externally_tagged_denying_unknown_fields.rs:19:11
+   |
+19 |     mode: Mode,
+   |           ^^^^ not known to be read by name
+   |
+help: the trait `ClosedFlatten` is not implemented for `Mode`
+  --> tests/ui/macros/schema_flatten_externally_tagged_denying_unknown_fields.rs:10:1
+   |
+10 | enum Mode {
+   | ^^^^^^^^^
+   = note: a closed object refuses every key no flattened field takes, and serde takes a key only for a type it reads by name; it lends an internally tagged enum, a struct holding a `#[serde(flatten)]` field of its own, or a map every key without taking any, and never takes a struct's own `#[serde(tag)]`, so the object would refuse any document in which such a type writes a member; one serde never reads, such as `Problem`, leaves the closing keyword nothing to refuse
+   = note: flatten a type serde reads by name instead, either a struct with neither a flattened field nor a `#[serde(tag)]` of its own, or an adjacently tagged enum, `#[serde(tag = "...", content = "...")]`; move the flattened type's members into the object; or drop `deny_unknown_fields`
+help: the following other types implement trait `ClosedFlatten`
+  --> src/schema/impls/wrapper.rs
+   |
+   | impl<T: ClosedFlatten> ClosedFlatten for Box<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Box<T>`
+   |
+   | impl<T: ClosedFlatten> ClosedFlatten for Arc<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Arc<T>`
+note: required by a bound in `is_closed_flattenable`
+  --> tests/ui/macros/schema_flatten_externally_tagged_denying_unknown_fields.rs:19:11
+   |
+19 |     mode: Mode,
+   |           ^^^^ required by this bound in `is_closed_flattenable`

@@ -4,7 +4,11 @@ use kynos_openapi::{
     Schema as OpenApiSchema, SchemaObject, annotation::UNCHECKED_SCHEMA_ANNOTATION,
 };
 
-use crate::schema::{AdmitsAny, OpenMap, Schema, registry::Registry};
+use crate::schema::{
+    Schema,
+    flatten::{AdmitsAny, OpenMap},
+    registry::Registry,
+};
 
 /// A payload this API deliberately does not constrain.
 ///
@@ -32,7 +36,7 @@ use crate::schema::{AdmitsAny, OpenMap, Schema, registry::Registry};
 /// or over a payload that is an `OpenMap` itself:
 ///
 /// ```
-/// fn open<T: kynos::schema::OpenMap>() {}
+/// fn open<T: kynos::schema::flatten::OpenMap>() {}
 ///
 /// open::<kynos::schema::unchecked::Unchecked<serde_json::Map<String, serde_json::Value>>>();
 /// open::<kynos::schema::unchecked::Unchecked<std::collections::BTreeMap<String, u64>>>();
@@ -43,18 +47,18 @@ use crate::schema::{AdmitsAny, OpenMap, Schema, registry::Registry};
 /// wrapper: flatten the struct itself.
 ///
 /// ```compile_fail
-/// fn open<T: kynos::schema::OpenMap>() {}
+/// fn open<T: kynos::schema::flatten::OpenMap>() {}
 ///
 /// open::<kynos::schema::unchecked::Unchecked<u64>>();
 /// ```
 ///
-/// It is never [`Flatten`](crate::schema::Flatten). The permissive schema names
-/// no member it contributes, so beside an open map those members stay
-/// unevaluated and the map's `unevaluatedProperties` would refuse what serde
-/// writes:
+/// It is never [`Flatten`](crate::schema::flatten::Flatten). The permissive
+/// schema names no member it contributes, so beside an open map those members
+/// stay unevaluated and the map's `unevaluatedProperties` would refuse what
+/// serde writes:
 ///
 /// ```compile_fail
-/// fn flattenable<T: kynos::schema::Flatten>() {}
+/// fn flattenable<T: kynos::schema::flatten::Flatten>() {}
 ///
 /// flattenable::<kynos::schema::unchecked::Unchecked<serde_json::Map<String, serde_json::Value>>>();
 /// ```

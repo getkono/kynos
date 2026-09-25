@@ -25,8 +25,11 @@
 //! `open` is the one member that is not a constraint, which is why the list is
 //! no longer the `Constraints` keys alone. It says how a `#[serde(flatten)]`
 //! field composes rather than what a value may be. An open field is bounded by
-//! `kynos::schema::OpenMap`, and every other flattened field by
-//! `kynos::schema::Flatten`.
+//! `kynos::schema::flatten::OpenMap`, or by `kynos::schema::flatten::AdmitsAny`
+//! beside a field serde never reads, and every other flattened field by
+//! `kynos::schema::flatten::Flatten`, and in an object
+//! `#[serde(deny_unknown_fields)]` closes by
+//! `kynos::schema::flatten::ClosedFlatten` as well.
 
 mod aliases;
 mod attributes;
@@ -129,13 +132,22 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let flatten = flattens(input, &container).then(|| {
         quote! {
             #[allow(deprecated)]
-            impl #impl_generics ::kynos::schema::Flatten for #name #ty_generics #where_clause {}
+            impl #impl_generics ::kynos::schema::flatten::Flatten
+                for #name #ty_generics #where_clause {}
+        }
+    });
+    let closed_flatten = flattens_into_closed_objects(input, &container).then(|| {
+        quote! {
+            #[allow(deprecated)]
+            impl #impl_generics ::kynos::schema::flatten::ClosedFlatten
+                for #name #ty_generics #where_clause {}
         }
     });
 
     Ok(quote! {
         #witnesses
         #flatten
+        #closed_flatten
 
         // A deprecated type still has to describe itself, and the impl below
         // names it. Without this, `#[deprecated]` plus `#[derive(Schema)]` is a
@@ -194,7 +206,7 @@ fn schema_bounded_generics(input: &DeriveInput) -> syn::Generics {
 /// the field's schema rather than naming it — and a composed schema that
 /// constrains every member it does not name, which is what a map's
 /// `additionalProperties` is, then reaches the members the parent declared
-/// itself. `kynos::schema::Flatten` is the claim that it does not.
+/// itself. `kynos::schema::flatten::Flatten` is the claim that it does not.
 ///
 /// Asserted in a `const _` rather than as a predicate on the implementation,
 /// for the reason the `ApiError` derive's `Display` witness gives: the
@@ -202,12 +214,12 @@ fn schema_bounded_generics(input: &DeriveInput) -> syn::Generics {
 /// downstream code happens to name it. `schema_bounded_generics` also records
 /// why field-type predicates were rejected once already.
 ///
-/// A field carrying `#[schema(open)]` is bounded by `kynos::schema::OpenMap`
-/// instead. That attribute is the declaration that the object really is open,
-/// and `object_body` describes it by hoisting the field's `additionalProperties`
-/// to `unevaluatedProperties` — which only a map described in place has to
-/// hoist, since anything reached through a `$ref` would carry its own into the
-/// `allOf`.
+/// A field carrying `#[schema(open)]` is bounded by
+/// `kynos::schema::flatten::OpenMap` instead. That attribute is the declaration
+/// that the object really is open, and `object_body` describes it by hoisting
+/// the field's `additionalProperties` to `unevaluatedProperties` — which only a
+/// map described in place has to hoist, since anything reached through a `$ref`
+/// would carry its own into the `allOf`.
 ///
 /// An internally tagged newtype variant's payload is bounded by `Flatten` too.
 /// The variant has no properties of its own to put the tag beside, so its
@@ -215,6 +227,15 @@ fn schema_bounded_generics(input: &DeriveInput) -> syn::Generics {
 /// but the attribute, with the same thing to get wrong. A newtype variant whose
 /// member serde skips is a unit on the wire and composes no payload, so its
 /// member is bounded by nothing.
+///
+/// In an object `#[serde(deny_unknown_fields)]` closes ([`closed`]), a
+/// flattened field is also bounded by `kynos::schema::flatten::ClosedFlatten`:
+/// serde refuses every key no flattened field took, and only a type it reads by
+/// name takes one ([`flattens_into_closed_objects`]). `Flatten` stays asserted
+/// beside it, since `ClosedFlatten` implies it and a type that is not
+/// flattenable at all is then refused with that reason too. The payload of an
+/// internally tagged newtype variant is bounded by `Flatten` alone, since its
+/// tag-only object is never closed.
 fn flatten_witnesses(
     input: &DeriveInput,
     container: &Container,
@@ -222,10 +243,12 @@ fn flatten_witnesses(
 ) -> TokenStream2 {
     let (impl_generics, _, where_clause) = generics.split_for_impl();
 
+    let closing = container.deny_unknown_fields && !container.transparent;
     let flattened = described_groups(input)
         .into_iter()
         .flat_map(described_members)
-        .filter(|field| is_flattened(field));
+        .filter(|field| is_flattened(field))
+        .map(|field| (field, closing));
 
     let payloads: Vec<&Field> = match (&input.data, &container.tag, &container.content) {
         (Data::Enum(data), Some(_), None) => described_variants(data)
@@ -241,7 +264,8 @@ fn flatten_witnesses(
 
     let admitting = open_fields_beside_unread_fields(input, container);
 
-    let witnesses = flattened.chain(payloads).map(|field| {
+    let payloads = payloads.into_iter().map(|field| (field, false));
+    let witnesses = flattened.chain(payloads).map(|(field, closed)| {
         let ty = &field.ty;
         // Spanned at the field's type, so the refusal points at what was
         // written rather than at the derive.
@@ -252,7 +276,7 @@ fn flatten_witnesses(
                     fn open_fields_beside_unread_fields_admit_any_member #impl_generics ()
                         #where_clause
                     {
-                        fn admits_any<T: ::kynos::schema::AdmitsAny + ?Sized>() {}
+                        fn admits_any<T: ::kynos::schema::flatten::AdmitsAny + ?Sized>() {}
                         admits_any::<#ty>();
                     }
                 };
@@ -262,20 +286,36 @@ fn flatten_witnesses(
                 const _: () = {
                     #[allow(dead_code, deprecated)]
                     fn open_fields_are_maps_described_in_place #impl_generics () #where_clause {
-                        fn is_open_map<T: ::kynos::schema::OpenMap + ?Sized>() {}
+                        fn is_open_map<T: ::kynos::schema::flatten::OpenMap + ?Sized>() {}
                         is_open_map::<#ty>();
                     }
                 };
             }
         } else {
+            let read_by_name = closed.then(|| {
+                quote_spanned! {ty.span()=>
+                    const _: () = {
+                        #[allow(dead_code, deprecated)]
+                        fn closed_objects_flatten_what_serde_reads_by_name #impl_generics ()
+                            #where_clause
+                        {
+                            fn is_closed_flattenable<
+                                T: ::kynos::schema::flatten::ClosedFlatten + ?Sized,
+                            >() {}
+                            is_closed_flattenable::<#ty>();
+                        }
+                    };
+                }
+            });
             quote_spanned! {ty.span()=>
                 const _: () = {
                     #[allow(dead_code, deprecated)]
                     fn flattened_fields_name_their_members #impl_generics () #where_clause {
-                        fn is_flattenable<T: ::kynos::schema::Flatten + ?Sized>() {}
+                        fn is_flattenable<T: ::kynos::schema::flatten::Flatten + ?Sized>() {}
                         is_flattenable::<#ty>();
                     }
                 };
+                #read_by_name
             }
         }
     });
@@ -290,11 +330,12 @@ fn flatten_witnesses(
 /// members it does not name, and an open field that hoists an
 /// `additionalProperties` would. Whether this one does is its type's answer,
 /// invisible here, so [`flatten_witnesses`] bounds it by
-/// `kynos::schema::AdmitsAny` rather than by `OpenMap`, which it implies. Read
-/// over the objects [`reject_unread_field_in_closed_object`] reads: a
-/// `#[serde(transparent)]` struct is its one field's value, with no object to
-/// bound, and an object `#[serde(deny_unknown_fields)]` closes never reaches
-/// here holding an open field, which [`reject_contradicted_closure`] refuses.
+/// `kynos::schema::flatten::AdmitsAny` rather than by `OpenMap`, which it
+/// implies. Read over the objects [`reject_unread_field_in_closed_object`]
+/// reads: a `#[serde(transparent)]` struct is its one field's value, with no
+/// object to bound, and an object `#[serde(deny_unknown_fields)]` closes never
+/// reaches here holding an open field, which [`reject_contradicted_closure`]
+/// refuses.
 fn open_fields_beside_unread_fields<'a>(
     input: &'a DeriveInput,
     container: &Container,
@@ -399,6 +440,35 @@ fn flattens(input: &DeriveInput, container: &Container) -> bool {
             }
         }
         // Refused at the top of `expand_inner`.
+        Data::Union(_) => false,
+    }
+}
+
+/// Whether serde reads this [`flattens`] shape by name, so it may be flattened
+/// into an object `#[serde(deny_unknown_fields)]` closes.
+///
+/// Such a parent refuses every key no flattened field took, and serde takes a
+/// key only through `deserialize_struct`, which claims the keys it names. It
+/// reads a struct that way unless a field is flattened without
+/// `skip_deserializing` — serde's own test, so a flattened `PhantomData`
+/// counts — in which case it reads the struct as a map. A struct carrying a
+/// container `#[serde(tag = "...")]` is excluded too: serde writes the tag
+/// beside the fields and never names it among the keys it takes. An adjacently
+/// tagged enum names its tag and content; an internally tagged one reads
+/// through `deserialize_any`, which takes nothing.
+fn flattens_into_closed_objects(input: &DeriveInput, container: &Container) -> bool {
+    if !flattens(input, container) {
+        return false;
+    }
+    match &input.data {
+        Data::Struct(data) => {
+            container.tag.is_none()
+                && !data.fields.iter().any(|field| {
+                    is_flattened(field)
+                        && !serde_flag(&field.attrs, &["skip", "skip_deserializing"])
+                })
+        }
+        Data::Enum(_) => container.content.is_some(),
         Data::Union(_) => false,
     }
 }

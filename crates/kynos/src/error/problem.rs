@@ -17,7 +17,7 @@ use kynos_openapi::{
 use crate::{
     http::{HeaderValue, StatusCode, body::Body, header},
     response::IntoResponse,
-    schema::{Flatten, Schema, registry::Registry},
+    schema::{Schema, flatten::Flatten, registry::Registry},
 };
 
 #[cfg(test)]

@@ -2489,7 +2489,8 @@ mod schema {
         )));
     }
 
-    /// Whether the expansion claims `kynos::schema::Flatten` for the input.
+    /// Whether the expansion claims `kynos::schema::flatten::Flatten` for the
+    /// input.
     ///
     /// Read off the emitted tokens rather than by calling the predicate, so
     /// what is asserted is the implementation a user receives. `to_string` on a
@@ -2500,7 +2501,7 @@ mod schema {
         let expansion = expand_inner(&input).expect("the case itself must expand");
         expansion
             .to_string()
-            .contains(":: kynos :: schema :: Flatten for")
+            .contains(":: kynos :: schema :: flatten :: Flatten for")
     }
 
     /// The shapes whose description is an object naming its own members.
@@ -2863,6 +2864,230 @@ mod schema {
                 }
             )),
             0
+        );
+    }
+
+    /// Whether the expansion claims `kynos::schema::flatten::ClosedFlatten` for
+    /// the input, read off the emitted tokens as [`claims_flatten`] reads its
+    /// claim.
+    fn claims_closed_flatten(declaration: TokenStream2) -> bool {
+        let input: DeriveInput = syn::parse2(declaration).expect("the case itself must parse");
+        let expansion = expand_inner(&input).expect("the case itself must expand");
+        expansion
+            .to_string()
+            .contains(":: kynos :: schema :: flatten :: ClosedFlatten for")
+    }
+
+    /// Only a flattenable shape serde reads through `deserialize_struct` claims
+    /// `ClosedFlatten`.
+    ///
+    /// Under a closed parent serde refuses every key no flattened field took,
+    /// and only `deserialize_struct` takes keys: a named struct with no
+    /// flattened field serde reads, and an adjacently tagged enum, whose tag and
+    /// content it names. An internally tagged enum reads through
+    /// `deserialize_any`, and a struct with a flattened field serde reads,
+    /// `PhantomData` included, through `deserialize_map`, both of which only
+    /// borrow the keys. A shape that is not `Flatten` claims nothing.
+    #[test]
+    fn only_a_shape_serde_reads_by_name_claims_closed_flatten() {
+        assert!(claims_closed_flatten(quote::quote!(
+            struct Audit {
+                at: String,
+            }
+        )));
+        assert!(claims_closed_flatten(quote::quote!(
+            #[serde(tag = "kind", content = "value")]
+            enum Payload {
+                Number(u32),
+                Named { width: u32 },
+                Nothing,
+            }
+        )));
+
+        assert!(!claims_closed_flatten(quote::quote!(
+            #[serde(tag = "kind")]
+            enum Shape {
+                Circle { radius: f64 },
+                Point,
+            }
+        )));
+        assert!(!claims_closed_flatten(quote::quote!(
+            #[serde(tag = "kind")]
+            enum Marker {
+                On,
+                Off,
+            }
+        )));
+
+        // A flattened field serde reads makes serde read the struct as a map;
+        // one it skips both ways, however that is spelt, leaves it read by
+        // name.
+        assert!(!claims_closed_flatten(quote::quote!(
+            struct Stamped {
+                id: u64,
+                #[serde(flatten)]
+                audit: Audit,
+            }
+        )));
+        assert!(!claims_closed_flatten(quote::quote!(
+            struct Stamped<T> {
+                id: u64,
+                #[serde(flatten)]
+                marker: PhantomData<T>,
+            }
+        )));
+        assert!(claims_closed_flatten(quote::quote!(
+            struct Stamped {
+                id: u64,
+                #[serde(flatten)]
+                #[serde(skip)]
+                audit: Audit,
+            }
+        )));
+        assert!(claims_closed_flatten(quote::quote!(
+            struct Stamped {
+                id: u64,
+                #[serde(flatten)]
+                #[serde(skip_serializing, skip_deserializing)]
+                audit: Audit,
+            }
+        )));
+
+        // A struct's container tag is a member serde writes beside its fields
+        // and never names among them, so it takes no tag key out of a closed
+        // parent's buffer.
+        assert!(!claims_closed_flatten(quote::quote!(
+            #[serde(tag = "type")]
+            struct Tagged {
+                a: u8,
+            }
+        )));
+
+        // Not `Flatten` at all, so not the narrower claim either.
+        assert!(!claims_closed_flatten(quote::quote!(
+            enum Event {
+                Created { at: String },
+            }
+        )));
+        assert!(!claims_closed_flatten(quote::quote!(
+            #[serde(deny_unknown_fields)]
+            struct Audit {
+                at: String,
+            }
+        )));
+        assert!(!claims_closed_flatten(quote::quote!(
+            #[serde(transparent)]
+            struct Labels {
+                inner: Audit,
+            }
+        )));
+    }
+
+    /// How many `ClosedFlatten` witnesses the expansion asserts for the input.
+    fn closed_flatten_witnesses_in(declaration: TokenStream2) -> usize {
+        let input: DeriveInput = syn::parse2(declaration).expect("the case itself must parse");
+        let expansion = expand_inner(&input).expect("the case itself must expand");
+        expansion
+            .to_string()
+            .matches("is_closed_flattenable ::")
+            .count()
+    }
+
+    /// A flattened field of an object `deny_unknown_fields` closes is bounded by
+    /// `ClosedFlatten` beside `Flatten`, and one of an open object by `Flatten`
+    /// alone.
+    ///
+    /// `Flatten` stays asserted so a type that is not flattenable at all is
+    /// refused with its own reason rather than only for how serde reads it.
+    /// One row per object serde closes: a struct, and a struct variant under
+    /// each tagging. An internally tagged newtype variant's payload stays
+    /// bounded by `Flatten` alone, since serde hands it the keys beside the tag
+    /// whatever the attribute says, and its tag-only object stays open.
+    #[test]
+    fn a_closed_object_bounds_its_flattened_fields_by_closed_flatten() {
+        let witnesses = |declaration: TokenStream2| {
+            (
+                closed_flatten_witnesses_in(declaration.clone()),
+                flatten_witnesses_in(declaration),
+            )
+        };
+
+        assert_eq!(
+            witnesses(quote::quote!(
+                #[serde(deny_unknown_fields)]
+                struct Thing {
+                    id: u64,
+                    #[serde(flatten)]
+                    audit: Audit,
+                }
+            )),
+            (1, 1)
+        );
+        // Open, the same struct keeps only the wider bound, so the case isolates the
+        // attribute rather than the shape.
+        assert_eq!(
+            witnesses(quote::quote!(
+                struct Thing {
+                    id: u64,
+                    #[serde(flatten)]
+                    audit: Audit,
+                }
+            )),
+            (0, 1)
+        );
+
+        for declaration in [
+            quote::quote!(
+                #[serde(deny_unknown_fields, tag = "kind")]
+                enum Event {
+                    Created {
+                        #[serde(flatten)]
+                        audit: Audit,
+                    },
+                }
+            ),
+            quote::quote!(
+                #[serde(deny_unknown_fields, tag = "kind", content = "data")]
+                enum Event {
+                    Created {
+                        #[serde(flatten)]
+                        audit: Audit,
+                    },
+                }
+            ),
+            quote::quote!(
+                #[serde(deny_unknown_fields)]
+                enum Event {
+                    Created {
+                        #[serde(flatten)]
+                        audit: Audit,
+                    },
+                }
+            ),
+        ] {
+            assert_eq!(witnesses(declaration), (1, 1));
+        }
+
+        assert_eq!(
+            witnesses(quote::quote!(
+                #[serde(deny_unknown_fields, tag = "kind")]
+                enum Event {
+                    Raw(Audit),
+                }
+            )),
+            (0, 1)
+        );
+        // A transparent struct is its one field's value, with no object for the
+        // attribute to close, so its flattened field keeps `Flatten` alone.
+        assert_eq!(
+            witnesses(quote::quote!(
+                #[serde(transparent, deny_unknown_fields)]
+                struct Wrapper {
+                    #[serde(flatten)]
+                    audit: Audit,
+                }
+            )),
+            (0, 1)
         );
     }
 }

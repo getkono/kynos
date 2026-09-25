@@ -116,10 +116,13 @@
 //! # How this module is laid out
 //!
 //! The trait lives here; [`registry`] collects what a description refers to,
-//! [`unchecked`] is the explicit escape from constraint, and [`constraints`]
-//! holds what a derive attaches to a field.
+//! [`unchecked`] is the explicit escape from constraint, [`constraints`] holds
+//! what a derive attaches to a field, and [`flatten`] holds the markers that
+//! say how a type composes when `#[serde(flatten)]` makes its members another
+//! object's.
 
 pub mod constraints;
+pub mod flatten;
 pub mod registry;
 pub mod unchecked;
 
@@ -221,180 +224,6 @@ pub trait MapKey: Schema {
 }
 
 impl MapKey for String {}
-
-/// A type whose schema names its own members, so it can be flattened into
-/// another object.
-///
-/// `#[serde(flatten)]` makes a field's members the *parent's* members, so the
-/// parent composes the field's schema rather than naming it. A schema that
-/// constrains every member it does not name — `additionalProperties` on a map —
-/// then reaches the members the parent declared itself, and the object ends up
-/// refusing the JSON its own type writes. The permissive schema reaches nothing,
-/// but names nothing either: the members it contributes stay unevaluated, so an
-/// open map beside it refuses them instead.
-///
-/// The marker is Kynos's own because serde has no type-level surface to read:
-/// `Serialize` is one method, `flatten` is an internal flag that never leaves
-/// `serde_derive`, and what enforces it is a runtime serializer. Bounding a
-/// flattened field by this trait is what turns that into a compile error at the
-/// field that wrote it.
-///
-/// Derived beside [`Schema`] for the shapes whose description is an object
-/// naming its members: a struct with named fields, and an enum whose every
-/// `oneOf` branch is such an object. Not for a container carrying
-/// `#[schema(open)]` or `#[serde(transparent)]`, an externally tagged enum, whose
-/// branches admit only their variant key, or an internally tagged enum with a
-/// newtype variant.
-/// Implemented for [`Problem`](crate::Problem), whose schema names the
-/// registered members and admits every other one. Unsealed, for the reason
-/// [`MapKey`] is — a hand-written [`Schema`] that does the same thing has to be
-/// able to say so.
-///
-/// ```no_run
-/// # use kynos::schema::{Flatten, Schema};
-/// # struct Audit;
-/// # impl Schema for Audit {
-/// #     fn schema(_: &mut kynos::schema::registry::Registry) -> kynos::openapi::Schema {
-/// #         todo!()
-/// #     }
-/// # }
-/// // `Audit::schema` returns an object whose `properties` names `created_at`
-/// // and `created_by`, and which constrains no other member. Flattening it
-/// // therefore adds exactly those two to whatever carries it.
-/// impl Flatten for Audit {}
-/// ```
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` cannot be flattened into another object",
-    label = "does not name its members",
-    note = "a flattened field's members become the parent's own, so its schema has to name them; a \
-            map names none, so its values would reach the properties the object declared itself",
-    note = "give it a named field of its own; on a `HashMap` or `BTreeMap` field, add \
-            `#[schema(open)]` beside `#[serde(flatten)]` to say the object really is open, so \
-            its values become the object's `unevaluatedProperties`; for arbitrary JSON, flatten \
-            an `Unchecked<serde_json::Map<String, Value>>` with `#[schema(open)]`, which leaves \
-            the object open; as an internally tagged newtype variant's payload, make it a \
-            struct variant holding that flattened open field, which serde writes the same way"
-)]
-pub trait Flatten: Schema {}
-
-/// A map whose schema is written out in place, so `#[schema(open)]` can hoist
-/// its values onto the object it is flattened into.
-///
-/// `#[schema(open)]` moves a flattened map's `additionalProperties` to the
-/// parent's `unevaluatedProperties`, which needs the map's own schema object in
-/// hand. A type described through a `$ref` leaves nothing to move, and the
-/// `additionalProperties` of the schema it refers to would reach the properties
-/// the parent declared itself. The derive bounds every open field by this
-/// trait, so that case is a compile error at the field.
-///
-/// Implemented for [`HashMap`](std::collections::HashMap) and
-/// [`BTreeMap`](std::collections::BTreeMap), and carried across `Box<T>` and
-/// `Arc<T>`. Also for [`Unchecked`](unchecked::Unchecked) over a type that
-/// implements `OpenMap` itself, or over a `serde_json::Map`, which has no
-/// `additionalProperties` to hoist and so leaves the object open — the route
-/// for arbitrary JSON beside an object's own members, and an [`AdmitsAny`].
-/// Unsealed, for the reason [`MapKey`] is — a hand-written [`Schema`] that
-/// claims no component name and describes an object by `additionalProperties`
-/// alone has to be able to say so.
-///
-/// A key constraint does not survive the hoist. Inside the `allOf` branch
-/// `propertyNames` would name the parent's own properties too, so it is dropped:
-/// a map keyed by a [`MapKey`] with [`key_constraints`](MapKey::key_constraints)
-/// is described more weakly than its type, rather than contradicting it.
-///
-/// ```no_run
-/// # use kynos::schema::{OpenMap, Schema};
-/// # struct Headers;
-/// # impl Schema for Headers {
-/// #     fn schema(_: &mut kynos::schema::registry::Registry) -> kynos::openapi::Schema {
-/// #         todo!()
-/// #     }
-/// # }
-/// // `Headers::schema` returns `{"type": "object", "additionalProperties": ...}`
-/// // and `Headers::name` is the default `None`, so the description of a
-/// // flattened `Headers` is that object itself.
-/// impl OpenMap for Headers {}
-/// ```
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` cannot be flattened with `#[schema(open)]`",
-    label = "not a map described in place",
-    note = "`#[schema(open)]` moves a map's value schema onto the object carrying it, which needs \
-            the map's own schema rather than a `$ref` to one",
-    note = "flatten the `HashMap` or `BTreeMap` field itself; for arbitrary JSON, flatten an \
-            `Unchecked<serde_json::Map<String, Value>>`, not an `Unchecked<Value>`, since serde \
-            flattens only a map; or drop `#[schema(open)]` from a type that names its members"
-)]
-pub trait OpenMap: Schema {}
-
-/// An [`OpenMap`] whose schema constrains no member, so flattening it leaves the
-/// object it is flattened into open to every member.
-///
-/// `#[schema(open)]` hoists an open map's `additionalProperties` onto the object
-/// as `unevaluatedProperties`, which constrains every member the object's
-/// schema does not name. A named field serde writes and never reads,
-/// `#[serde(skip_deserializing)]` alone, is such a member: the schema describes
-/// what serde reads, so it leaves the field out, and the hoisted keyword then
-/// refuses what serde writes of it. The derive bounds an open field by this
-/// trait wherever such a field sits beside it, so that case is a compile error
-/// at the open field, and an open field whose hoisted schema refuses nothing is
-/// accepted there.
-///
-/// Implemented for [`Unchecked`](unchecked::Unchecked) wherever it is an
-/// `OpenMap`, since its schema carries no `additionalProperties`, for a
-/// `HashMap` or `BTreeMap` whose values are `Unchecked`, and carried across
-/// `Box<T>` and `Arc<T>`:
-///
-/// ```
-/// use std::{collections::{BTreeMap, HashMap}, sync::Arc};
-///
-/// use kynos::schema::unchecked::Unchecked;
-///
-/// fn admits_any<T: kynos::schema::AdmitsAny>() {}
-///
-/// admits_any::<Unchecked<serde_json::Map<String, serde_json::Value>>>();
-/// admits_any::<Box<Unchecked<serde_json::Map<String, serde_json::Value>>>>();
-/// admits_any::<Arc<Unchecked<BTreeMap<String, u64>>>>();
-/// admits_any::<HashMap<String, Unchecked<serde_json::Value>>>();
-/// admits_any::<BTreeMap<String, Unchecked<Vec<u64>>>>();
-/// ```
-///
-/// A map hoists its value schema, so one whose values are typed is not one:
-///
-/// ```compile_fail
-/// fn admits_any<T: kynos::schema::AdmitsAny>() {}
-///
-/// admits_any::<std::collections::BTreeMap<String, u64>>();
-/// ```
-///
-/// Unsealed, for the reason [`MapKey`] is — a hand-written open map whose schema
-/// has no `additionalProperties` has to be able to say so.
-///
-/// ```no_run
-/// # use kynos::schema::{AdmitsAny, OpenMap, Schema};
-/// # struct Passthrough;
-/// # impl Schema for Passthrough {
-/// #     fn schema(_: &mut kynos::schema::registry::Registry) -> kynos::openapi::Schema {
-/// #         todo!()
-/// #     }
-/// # }
-/// // Where `Passthrough::schema` returns `{"type": "object"}`, with no
-/// // `additionalProperties`, hoisting it gives the object no
-/// // `unevaluatedProperties` at all.
-/// impl OpenMap for Passthrough {}
-/// impl AdmitsAny for Passthrough {}
-/// ```
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` cannot be flattened open beside a field serde writes and never reads",
-    label = "not an open map that constrains no member",
-    note = "a `skip_deserializing` field is left out of the schema, since serde never reads it, \
-            but serde still writes it, so an open field beside it has to leave the object open to \
-            members the schema does not name; a map's value schema becomes the object's \
-            `unevaluatedProperties` and refuses the field unless its values are `Unchecked`",
-    note = "use `#[serde(skip)]` to leave the field out both ways, drop `skip_deserializing` so \
-            the schema names it, or flatten an `Unchecked<serde_json::Map<String, Value>>` or a \
-            map whose values are `Unchecked`, which leave the object open"
-)]
-pub trait AdmitsAny: OpenMap {}
 
 #[cfg(test)]
 mod tests;

@@ -2,7 +2,7 @@
 //! parameter is bounded by `AdmitsAny`, which the derive's witness carries
 //! through the type's own `where` clause.
 
-use kynos::schema::{AdmitsAny, unchecked::Unchecked};
+use kynos::schema::{flatten::AdmitsAny, unchecked::Unchecked};
 
 #[derive(kynos::Schema, serde::Serialize)]
 struct Thing<M>
