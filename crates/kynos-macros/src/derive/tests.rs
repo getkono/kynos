@@ -3075,6 +3075,18 @@ mod schema {
             )),
             (0, 1)
         );
+        // A transparent struct is its one field's value, with no object for the
+        // attribute to close, so its flattened field keeps `Flatten` alone.
+        assert_eq!(
+            witnesses(quote::quote!(
+                #[serde(transparent, deny_unknown_fields)]
+                struct Wrapper {
+                    #[serde(flatten)]
+                    audit: Audit,
+                }
+            )),
+            (0, 1)
+        );
     }
 }
 
