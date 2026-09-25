@@ -12,9 +12,10 @@ use crate::{
 
 /// Variables captured from the path template.
 ///
-/// `T` derives `PathParams`, and its field names are checked against the route
-/// template at compile time — a mismatch is a compile error, not a runtime 500,
-/// which is the failure mode every other Rust framework has here.
+/// `T` derives `PathParams`, and its wire names, each a field's name or its
+/// `rename`, are checked against the route template at compile time — a
+/// mismatch is a compile error, not a runtime 500, which is the failure mode
+/// every other Rust framework has here.
 ///
 /// # Where the values come from
 ///

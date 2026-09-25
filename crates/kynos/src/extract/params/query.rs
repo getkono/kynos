@@ -13,10 +13,9 @@ use crate::extract::media::MediaType;
 
 /// Named query string parameters.
 ///
-/// `T` derives `QueryParams`. Nested objects are rejected at compile time:
-/// `deepObject` is defined only for objects whose properties are scalars, so a
-/// deeper shape has no legal serialization. Under `openapi32`, reach for
-/// [`QueryString`] instead.
+/// `T` derives `QueryParams`, which decodes each field from one parameter's
+/// value through `FromStr`. For a structured query such as a search filter,
+/// reach for [`QueryString`] under `openapi32` instead.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Query<T>(pub T);
 

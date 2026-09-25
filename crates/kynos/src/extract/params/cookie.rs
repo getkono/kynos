@@ -15,9 +15,9 @@ use crate::{
 
 /// Declared request cookies.
 ///
-/// `T` derives `Cookies`. There is no whole-jar extractor; a cookie carrying
-/// credentials is a [`SecurityScheme`](crate::security::SecurityScheme), not a
-/// parameter.
+/// `T` derives `CookieParams`. There is no whole-jar extractor; a cookie
+/// carrying credentials is a [`SecurityScheme`](crate::security::SecurityScheme),
+/// not a parameter.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Cookies<T>(pub T);
 
