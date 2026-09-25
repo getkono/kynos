@@ -7,7 +7,9 @@ use kynos_openapi::{
     model::schema::types::{SchemaType, TypeSet},
 };
 
-use crate::schema::{AdmitsAny, Flatten, OpenMap, Schema, impls::with_object, registry::Registry};
+use crate::schema::{
+    AdmitsAny, ClosedFlatten, Flatten, OpenMap, Schema, impls::with_object, registry::Registry,
+};
 
 /// Widens `schema` to admit `null`.
 ///
@@ -92,6 +94,12 @@ transparent!(Box, Arc);
 impl<T: Flatten> Flatten for Box<T> {}
 
 impl<T: Flatten> Flatten for Arc<T> {}
+
+// And whether serde reads it by name, since serde reads a `Box<T>` or an
+// `Arc<T>` as the `T` inside it.
+impl<T: ClosedFlatten> ClosedFlatten for Box<T> {}
+
+impl<T: ClosedFlatten> ClosedFlatten for Arc<T> {}
 
 // And whether it is a map described in place, for the same reason and written
 // out for the same one: `name` delegates, so a `Box<BTreeMap<..>>` resolves to

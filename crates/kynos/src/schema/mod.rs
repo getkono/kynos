@@ -237,7 +237,8 @@ impl MapKey for String {}
 /// `Serialize` is one method, `flatten` is an internal flag that never leaves
 /// `serde_derive`, and what enforces it is a runtime serializer. Bounding a
 /// flattened field by this trait is what turns that into a compile error at the
-/// field that wrote it.
+/// field that wrote it. In an object `#[serde(deny_unknown_fields)]` closes the
+/// bound is the narrower [`ClosedFlatten`] as well.
 ///
 /// Derived beside [`Schema`] for the shapes whose description is an object
 /// naming its members: a struct with named fields, and an enum whose every
@@ -276,6 +277,67 @@ impl MapKey for String {}
             struct variant holding that flattened open field, which serde writes the same way"
 )]
 pub trait Flatten: Schema {}
+
+/// A [`Flatten`] type serde reads by name, so it can be flattened into an object
+/// `#[serde(deny_unknown_fields)]` closes.
+///
+/// A parent with a flattened field buffers every entry of the object it reads
+/// and hands each flattened field the lot. Under `deny_unknown_fields` it then
+/// refuses the first entry no field took, and only a type serde reads through
+/// `deserialize_struct` takes one: that reader claims each key it names. An
+/// internally tagged enum reads through `deserialize_any`, and a struct holding
+/// a flattened field serde reads, or a map, through `deserialize_map`, both of
+/// which borrow the entries and leave them all in place. Flattened into a closed
+/// object, such a type makes serde refuse every document it writes, while the
+/// closed schema accepts them. The derive bounds each flattened field of a
+/// closed object by this trait as well as by `Flatten`, so that case is a
+/// compile error at the field.
+///
+/// Derived beside `Flatten` for the two shapes serde reads by name: a struct
+/// whose fields include no `#[serde(flatten)]` serde reads, and an adjacently
+/// tagged enum, whose tag and content keys serde names. Carried across `Box<T>`
+/// and `Arc<T>`. Not implemented for [`Problem`](crate::Problem): serde never
+/// reads one, having no `Deserialize` for it, and its `additionalProperties:
+/// true` marks every member evaluated, so the closing keyword of an object
+/// flattening it would refuse nothing:
+///
+/// ```compile_fail
+/// fn closed_flattenable<T: kynos::schema::ClosedFlatten>() {}
+///
+/// closed_flattenable::<kynos::Problem>();
+/// ```
+///
+/// Unsealed, for the reason `Flatten` is — a hand-written `Flatten` whose
+/// `Deserialize` reads through `deserialize_struct` has to be able to say so,
+/// and has to before it can be flattened into a closed object.
+///
+/// ```no_run
+/// # use kynos::schema::{ClosedFlatten, Flatten, Schema};
+/// # struct Audit;
+/// # impl Schema for Audit {
+/// #     fn schema(_: &mut kynos::schema::registry::Registry) -> kynos::openapi::Schema {
+/// #         todo!()
+/// #     }
+/// # }
+/// // `Audit`'s `Deserialize` calls `deserialize_struct` naming `created_at` and
+/// // `created_by`, the two members its schema names, so it takes both keys out
+/// // of a closed object that flattens it.
+/// impl Flatten for Audit {}
+/// impl ClosedFlatten for Audit {}
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be flattened into an object `#[serde(deny_unknown_fields)]` closes",
+    label = "serde does not read it by name",
+    note = "a closed object refuses every key no flattened field takes, and serde takes a key \
+            only for a type it reads by name; it lends an internally tagged enum, a struct \
+            holding a `#[serde(flatten)]` field of its own, or a map every key without taking \
+            any, so the object would refuse every document the type writes; one serde never \
+            reads, such as `Problem`, leaves the closing keyword nothing to refuse",
+    note = "flatten a struct with no flattened field of its own or an adjacently tagged enum, \
+            `#[serde(tag = \"...\", content = \"...\")]`, which serde reads by name; move the \
+            flattened type's members into the object; or drop `deny_unknown_fields`"
+)]
+pub trait ClosedFlatten: Flatten {}
 
 /// A map whose schema is written out in place, so `#[schema(open)]` can hoist
 /// its values onto the object it is flattened into.
