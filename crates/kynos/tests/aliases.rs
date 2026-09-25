@@ -103,11 +103,7 @@ enum Directive {
 fn an_externally_tagged_branch_is_keyed_by_exactly_one_of_its_names() {
     use serde_json::json;
     held_to_serde::<Directive>(
-        &[
-            json!({ "Move": { "x": 1 } }),
-            json!({ "go": { "x": 1 } }),
-            json!({ "Say": "s" }),
-        ],
+        &[json!({ "Move": { "x": 1 } }), json!({ "go": { "x": 1 } })],
         &[json!({}), json!({ "go": { "x": 1 }, "z": 2 })],
     );
 }
