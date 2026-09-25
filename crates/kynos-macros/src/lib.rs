@@ -477,8 +477,9 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// Each field is one parameter, decoded from its value through `FromStr`. A
 /// field whose schema is an object is therefore misdescribed: the default
 /// `form` style with `explode` spreads it as `x=1&y=2`, while the decoder reads
-/// one `name=` pair. This is tracked separately. For a structured query,
-/// `QueryString<T, M>` describes the whole query string under `openapi32`.
+/// one `name=` pair ([#216](https://github.com/getkono/kynos/issues/216)). For a
+/// structured query, `QueryString<T, M>` describes the whole query string under
+/// `openapi32`.
 #[proc_macro_derive(QueryParams, attributes(param))]
 pub fn derive_query_params(item: TokenStream) -> TokenStream {
     derive::query_params::expand(item)

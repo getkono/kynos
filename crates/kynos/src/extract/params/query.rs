@@ -16,9 +16,10 @@ use crate::extract::media::MediaType;
 /// `T` derives `QueryParams`, which decodes each field from one parameter's
 /// value through `FromStr`. A field whose schema is an object is therefore
 /// misdescribed: the default `form` style with `explode` spreads it as
-/// `x=1&y=2`, while the decoder reads one `name=` pair. This is tracked
-/// separately. For a structured query such as a search filter, reach for
-/// [`QueryString`] under `openapi32` instead.
+/// `x=1&y=2`, while the decoder reads one `name=` pair
+/// ([#216](https://github.com/getkono/kynos/issues/216)). For a structured
+/// query such as a search filter, reach for [`QueryString`] under `openapi32`
+/// instead.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Query<T>(pub T);
 
