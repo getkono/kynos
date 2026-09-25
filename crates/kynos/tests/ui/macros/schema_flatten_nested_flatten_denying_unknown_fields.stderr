@@ -1,0 +1,32 @@
+error[E0277]: `Extra` cannot be flattened into an object `#[serde(deny_unknown_fields)]` closes
+  --> tests/ui/macros/schema_flatten_nested_flatten_denying_unknown_fields.rs:25:12
+   |
+25 |     extra: Extra,
+   |            ^^^^^ serde does not read it by name
+   |
+help: the trait `ClosedFlatten` is not implemented for `Extra`
+  --> tests/ui/macros/schema_flatten_nested_flatten_denying_unknown_fields.rs:14:1
+   |
+14 | struct Extra {
+   | ^^^^^^^^^^^^
+   = note: a closed object refuses every key no flattened field takes, and serde takes a key only for a type it reads by name; it lends an internally tagged enum, a struct holding a `#[serde(flatten)]` field of its own, or a map every key without taking any, so the object would refuse every document the type writes; one serde never reads, such as `Problem`, leaves the closing keyword nothing to refuse
+   = note: flatten a struct with no flattened field of its own or an adjacently tagged enum, `#[serde(tag = "...", content = "...")]`, which serde reads by name; move the flattened type's members into the object; or drop `deny_unknown_fields`
+help: the following other types implement trait `ClosedFlatten`
+  --> tests/ui/macros/schema_flatten_nested_flatten_denying_unknown_fields.rs:8:19
+   |
+ 8 | #[derive(Default, kynos::Schema, serde::Serialize, serde::Deserialize)]
+   |                   ^^^^^^^^^^^^^ `Audit`
+   |
+  ::: src/schema/impls/wrapper.rs
+   |
+   | impl<T: ClosedFlatten> ClosedFlatten for Box<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Box<T>`
+   |
+   | impl<T: ClosedFlatten> ClosedFlatten for Arc<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Arc<T>`
+note: required by a bound in `is_closed_flattenable`
+  --> tests/ui/macros/schema_flatten_nested_flatten_denying_unknown_fields.rs:25:12
+   |
+25 |     extra: Extra,
+   |            ^^^^^ required by this bound in `is_closed_flattenable`
+   = note: this error originates in the derive macro `kynos::Schema` (in Nightly builds, run with -Z macro-backtrace for more info)

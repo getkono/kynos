@@ -615,6 +615,67 @@ fn a_flattened_structs_alias_is_read_through_the_closed_parent() {
     }
 }
 
+/// An adjacently tagged enum, which serde reads through `deserialize_struct` and
+/// so takes its tag and content keys out of a closed parent.
+#[derive(Schema, Serialize, serde::Deserialize)]
+#[serde(tag = "kind", content = "value")]
+enum Mode {
+    Fixed { level: u8 },
+    Off,
+}
+
+/// A closed object beside it.
+#[derive(Schema, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SealedMode {
+    id: u64,
+    #[serde(flatten)]
+    mode: Mode,
+}
+
+/// A closed object admits what a flattened adjacently tagged enum contributes,
+/// and refuses what serde refuses, each document held to serde's own read.
+#[test]
+fn a_closed_object_reads_a_flattened_adjacently_tagged_enum_as_serde_does() {
+    let schema = emitted::<SealedMode>();
+    let validator =
+        jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
+
+    for value in [
+        SealedMode {
+            id: 1,
+            mode: Mode::Fixed { level: 2 },
+        },
+        SealedMode {
+            id: 1,
+            mode: Mode::Off,
+        },
+    ] {
+        let document = serde_json::to_value(&value).expect("the value serializes");
+        assert!(
+            serde_json::from_value::<SealedMode>(document.clone()).is_ok(),
+            "serde must read back what it wrote: {document}"
+        );
+        assert!(
+            validator.is_valid(&document),
+            "a document serde reads was refused: {document}\nschema: {schema}"
+        );
+    }
+    for document in [
+        serde_json::json!({ "id": 1, "kind": "Fixed", "value": { "level": 2 }, "z": 3 }),
+        serde_json::json!({ "id": 1, "value": { "level": 2 } }),
+    ] {
+        assert!(
+            serde_json::from_value::<SealedMode>(document.clone()).is_err(),
+            "serde must refuse {document}"
+        );
+        assert!(
+            !validator.is_valid(&document),
+            "a document serde refuses was accepted: {document}\nschema: {schema}"
+        );
+    }
+}
+
 /// A problem document carrying a member of its own type, the shape RFC 9457's
 /// extension members exist for.
 #[derive(Schema, Serialize)]
