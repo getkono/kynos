@@ -77,10 +77,10 @@ pub trait Flatten: Schema {}
 /// internally tagged enum reads through `deserialize_any`, and a struct holding
 /// a flattened field serde reads, or a map, through `deserialize_map`, both of
 /// which borrow the entries and leave them all in place. Flattened into a closed
-/// object, such a type makes serde refuse every document it writes, while the
-/// closed schema accepts them. The derive bounds each flattened field of a
-/// closed object by this trait as well as by `Flatten`, so that case is a
-/// compile error at the field.
+/// object, such a type makes serde refuse any document in which it writes a
+/// member, while the closed schema accepts it. The derive bounds each flattened
+/// field of a closed object by this trait as well as by `Flatten`, so that case
+/// is a compile error at the field.
 ///
 /// Derived beside `Flatten` for the two shapes serde reads by name: a struct
 /// whose fields include no `#[serde(flatten)]` serde reads and which carries no
@@ -125,8 +125,8 @@ pub trait Flatten: Schema {}
             only for a type it reads by name; it lends an internally tagged enum, a struct \
             holding a `#[serde(flatten)]` field of its own, or a map every key without taking \
             any, and never takes a struct's own `#[serde(tag)]`, so the object would refuse \
-            every document such a type writes; one serde never reads, such as `Problem`, leaves \
-            the closing keyword nothing to refuse",
+            any document in which such a type writes a member; one serde never reads, such as \
+            `Problem`, leaves the closing keyword nothing to refuse",
     note = "flatten a type serde reads by name instead, either a struct with neither a \
             flattened field nor a `#[serde(tag)]` of its own, or an adjacently tagged enum, \
             `#[serde(tag = \"...\", content = \"...\")]`; move the flattened type's members \
