@@ -2951,6 +2951,16 @@ mod schema {
             }
         )));
 
+        // A struct's container tag is a member serde writes beside its fields
+        // and never names among them, so it takes no tag key out of a closed
+        // parent's buffer.
+        assert!(!claims_closed_flatten(quote::quote!(
+            #[serde(tag = "type")]
+            struct Tagged {
+                a: u8,
+            }
+        )));
+
         // Not `Flatten` at all, so not the narrower claim either.
         assert!(!claims_closed_flatten(quote::quote!(
             enum Event {
