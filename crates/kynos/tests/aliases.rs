@@ -111,3 +111,43 @@ fn an_externally_tagged_branch_is_keyed_by_exactly_one_of_its_names() {
         &[json!({}), json!({ "go": { "x": 1 }, "z": 2 })],
     );
 }
+
+// serde's derive matches a shared name twice, and the second arm is the
+// unreachable pattern this module allows: serde reads it as the first variant.
+#[allow(unreachable_patterns)]
+mod overlapping {
+    use kynos::Schema;
+
+    /// An internally tagged enum whose later variant's alias is an earlier
+    /// variant's tag value.
+    #[derive(Schema, serde::Serialize, serde::Deserialize)]
+    #[serde(tag = "kind")]
+    pub(super) enum Signal {
+        Start,
+        #[serde(alias = "Start", alias = "halt")]
+        Stop,
+    }
+
+    /// An externally tagged enum whose later variant's alias is an earlier
+    /// variant's key.
+    #[derive(Schema, serde::Serialize, serde::Deserialize)]
+    pub(super) enum Command {
+        Push(u64),
+        #[serde(alias = "Push", alias = "tug")]
+        Pull(u64),
+    }
+}
+
+/// A name two variants claim is read as the first, so only the first's branch
+/// names it: naming it in both makes it match two `oneOf` branches, which the
+/// validator refuses though serde reads it. The later variant keeps the names
+/// no earlier one claims.
+#[test]
+fn a_name_an_earlier_variant_claims_is_read_through_that_variant_alone() {
+    use serde_json::json;
+    held_to_serde::<overlapping::Signal>(
+        &[json!({ "kind": "Start" }), json!({ "kind": "halt" })],
+        &[],
+    );
+    held_to_serde::<overlapping::Command>(&[json!({ "Push": 1 }), json!({ "tug": 1 })], &[]);
+}
