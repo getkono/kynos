@@ -95,11 +95,22 @@ Publishing → Add**, platform GitHub:
 | Workflow filename | `release-plz.yml` |
 | Environment | *(leave empty)* |
 
-If an entry is missing or misconfigured, release-plz logs `Failed to use
-trusted publishing: … Proceeding without it.` and the run then fails at
-`cargo publish` with `no token found`. Check the `Release` job's log for that
-warning before suspecting anything else. Publishing precedes tagging, so such a
-run leaves no tag behind and is safe to retry once the config is fixed.
+A missing or misconfigured entry fails in one of two ways, depending on whether
+any crate still matches:
+
+- **No crate matches.** Release-plz logs `Failed to use trusted publishing: …
+  Proceeding without it.` and `cargo publish` fails with `no token found`.
+- **Some crate matches.** The exchange succeeds — the log says `Retrieved trusted
+  publishing token … successfully` — but crates.io scopes that token to the
+  crates whose entry matched, so `cargo publish` fails with `` 403 Forbidden: The
+  provided access token is not valid for crate `<name>` ``. The entry for the
+  named crate is the one to fix; v0.2.0 failed this way on `kynos-openapi`.
+
+Publishing precedes tagging, so either run leaves no tag behind. Retry by
+re-running the failed `Release` job of the release-PR merge's run, not by
+pushing: a later push is not a release-PR merge and releases nothing. Crates the
+failed run already published are skipped, since release-plz checks the registry
+first.
 
 A fourth crate would need this done again before its first release, and cannot
 have it done in advance: crates.io does not accept a *new* crate through Trusted
