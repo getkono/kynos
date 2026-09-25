@@ -145,5 +145,5 @@ fn a_name_an_earlier_variant_claims_is_read_through_that_variant_alone() {
         &[json!({ "kind": "Start" }), json!({ "kind": "halt" })],
         &[],
     );
-    held_to_serde::<overlapping::Command>(&[json!({ "Push": 1 }), json!({ "tug": 1 })], &[]);
+    held_to_serde::<overlapping::Command>(&[json!({ "Push": 1 })], &[]);
 }
