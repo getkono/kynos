@@ -7,7 +7,9 @@
 //! a user type at all.
 //!
 //! What a derived decoder then *does* is not checked here. That is the macro
-//! crate's, and `docs/testing.md` allocates it there.
+//! crate's, and `docs/testing.md` allocates it there. What *is* checked beyond
+//! compiling is the description a derive emits, and what the default
+//! `QueryParams::parameters` makes of a derived schema.
 
 #![cfg(feature = "macros")]
 #![allow(dead_code)]
@@ -1128,6 +1130,87 @@ fn an_externally_tagged_branch_admits_only_its_variant_key() {
             "serde must refuse the member `additionalProperties` refuses: {document}"
         );
     }
+}
+
+// --- The default query projection reads the top level alone ----------------
+//
+// A group implementing `QueryParams` by hand over a derived schema gets the
+// default `parameters`, which reads only the object's own `properties` and
+// `required`. These record what that loses rather than endorse it: a bound no
+// Parameter Object can state, and members it does not read. The default's
+// rustdoc names both and their remedies.
+
+impl QueryParamsTrait for Aliased {}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct Located {
+    id: u64,
+    #[serde(flatten)]
+    origin: Origin,
+}
+
+impl QueryParamsTrait for Located {}
+
+/// The parameters `T`'s default projection describes, as JSON.
+fn query_parameters<T: QueryParamsTrait>() -> serde_json::Value {
+    let mut registry = kynos::schema::registry::Registry::new();
+    serde_json::to_value(T::parameters(&mut registry)).expect("parameters serialize")
+}
+
+/// Each name of a required aliased field is an optional parameter, and the
+/// exactly-one bound its schema's `allOf` states is dropped.
+#[test]
+fn a_required_aliased_field_projects_to_one_optional_parameter_per_name() {
+    assert_eq!(
+        query_parameters::<Aliased>(),
+        serde_json::json!([
+            {"name": "b", "in": "query", "schema": emitted::<u64>()},
+            {"name": "bee", "in": "query", "schema": emitted::<u64>()},
+        ])
+    );
+}
+
+/// A flattened struct's members reach the schema through an `allOf`, which the
+/// projection does not read, so only the parent's own field is a parameter.
+///
+/// Not implied by the aliased case, whose `allOf` holds bounds and no members:
+/// a projection that walked `allOf` for `properties` alone would pass that one.
+#[test]
+fn a_flattened_structs_members_project_to_no_parameter() {
+    assert_eq!(
+        query_parameters::<Located>(),
+        serde_json::json!([
+            {"name": "id", "in": "query", "required": true, "schema": emitted::<u64>()},
+        ])
+    );
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind")]
+enum Audience {
+    Team { team: u64 },
+    User { user: u64 },
+}
+
+impl QueryParamsTrait for Audience {}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+struct WrappedOrigin {
+    origin: Origin,
+}
+
+impl QueryParamsTrait for WrappedOrigin {}
+
+/// An enum's variants sit under a `oneOf` and a `transparent` type's inner
+/// fields behind a `$ref`, and neither has a top-level property to project.
+#[test]
+fn a_oneof_or_ref_schema_projects_to_no_parameter() {
+    assert!(emitted::<Audience>().get("oneOf").is_some());
+    assert!(emitted::<WrappedOrigin>().get("$ref").is_some());
+
+    assert_eq!(query_parameters::<Audience>(), serde_json::json!([]));
+    assert_eq!(query_parameters::<WrappedOrigin>(), serde_json::json!([]));
 }
 
 // --- A variant serde reads under an alias is described under each name ------
