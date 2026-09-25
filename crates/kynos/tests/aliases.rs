@@ -84,3 +84,30 @@ fn an_optional_field_under_three_names_is_present_under_at_most_one() {
         ],
     );
 }
+
+/// An externally tagged enum whose object branch serde keys by an alias too.
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum Directive {
+    #[serde(alias = "go")]
+    Move {
+        x: u64,
+    },
+    Say(String),
+}
+
+/// An externally tagged branch is one entry under one of its names, never
+/// none, and closed to every other key. `Say` is the branch under one name,
+/// listed in `required`, and the only branch besides `Move`'s, so `{}` is
+/// refused only while `Move`'s bound refuses it too.
+#[test]
+fn an_externally_tagged_branch_is_keyed_by_exactly_one_of_its_names() {
+    use serde_json::json;
+    held_to_serde::<Directive>(
+        &[
+            json!({ "Move": { "x": 1 } }),
+            json!({ "go": { "x": 1 } }),
+            json!({ "Say": "s" }),
+        ],
+        &[json!({}), json!({ "go": { "x": 1 }, "z": 2 })],
+    );
+}
