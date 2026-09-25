@@ -14,8 +14,11 @@ use crate::extract::media::MediaType;
 /// Named query string parameters.
 ///
 /// `T` derives `QueryParams`, which decodes each field from one parameter's
-/// value through `FromStr`. For a structured query such as a search filter,
-/// reach for [`QueryString`] under `openapi32` instead.
+/// value through `FromStr`. A field whose schema is an object is therefore
+/// misdescribed: the default `form` style with `explode` spreads it as
+/// `x=1&y=2`, while the decoder reads one `name=` pair. This is tracked
+/// separately. For a structured query such as a search filter, reach for
+/// [`QueryString`] under `openapi32` instead.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Query<T>(pub T);
 
