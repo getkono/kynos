@@ -1,0 +1,5 @@
+error: `#[serde(tag = "...")]` makes serde write the tag beside this struct's fields, but serde never reads it back as one of them, so `#[serde(deny_unknown_fields)]` refuses every document the struct writes, and no schema is true of both. Drop `deny_unknown_fields`, or drop the tag and declare it as a field
+ --> tests/ui/macros/schema_tagged_struct_denying_unknown_fields.rs:6:23
+  |
+6 | #[serde(tag = "type", deny_unknown_fields)]
+  |                       ^^^^^^^^^^^^^^^^^^^

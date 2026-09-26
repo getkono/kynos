@@ -352,12 +352,44 @@ mod schema {
         ]
     }
 
+    /// The refusals a struct's own `#[serde(tag = "...")]` raises, where
+    /// serde writes the tag beside the fields and no schema is true of both
+    /// directions.
+    ///
+    /// A fifth function, since `serde_ledger` is at the length Clippy accepts.
+    fn tag_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "deny_unknown_fields on a tagged struct",
+                quote::quote!(
+                    #[serde(tag = "type", deny_unknown_fields)]
+                    struct Stamp {
+                        at: u64,
+                    }
+                ),
+                "refuses every document the struct writes",
+            ),
+            case(
+                "a field named as its struct's tag",
+                quote::quote!(
+                    #[serde(tag = "kind")]
+                    struct Stamp {
+                        at: u64,
+                        kind: String,
+                    }
+                ),
+                "is also this struct's",
+            ),
+        ]
+    }
+
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
         each_case_is_refused(serde_ledger(), expand_inner);
         each_case_is_refused(variant_ledger(), expand_inner);
         each_case_is_refused(field_ledger(), expand_inner);
+        each_case_is_refused(tag_ledger(), expand_inner);
     }
 
     #[test]
@@ -365,8 +397,93 @@ mod schema {
         every_diagnostic_has_a_case(
             "schema.rs",
             include_str!("schema.rs"),
-            ledger().len() + serde_ledger().len() + variant_ledger().len() + field_ledger().len(),
+            ledger().len()
+                + serde_ledger().len()
+                + variant_ledger().len()
+                + field_ledger().len()
+                + tag_ledger().len(),
         );
+    }
+
+    /// A tag is refused only where no schema is true of it, so each shape
+    /// that has one is accepted: an open struct, a transparent one serde
+    /// writes without its tag, and a field under the tag's name serde never
+    /// writes or reads there.
+    #[test]
+    fn a_tag_on_a_struct_with_a_true_schema_is_accepted() {
+        for declaration in [
+            quote::quote!(
+                #[serde(tag = "type")]
+                struct Stamp {
+                    at: u64,
+                }
+            ),
+            quote::quote!(
+                #[serde(transparent, tag = "type", deny_unknown_fields)]
+                struct Stamp {
+                    at: u64,
+                }
+            ),
+            quote::quote!(
+                #[serde(tag = "kind")]
+                struct Stamp {
+                    at: u64,
+                    #[serde(skip)]
+                    kind: String,
+                }
+            ),
+            quote::quote!(
+                #[serde(tag = "kind")]
+                struct Stamp {
+                    at: u64,
+                    #[serde(flatten)]
+                    kind: Audit,
+                }
+            ),
+            quote::quote!(
+                #[serde(tag = "kind")]
+                struct Stamp {
+                    at: u64,
+                    #[serde(skip_deserializing, alias = "kind")]
+                    seen: u64,
+                }
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+            if let Err(error) = expand_inner(&input) {
+                panic!("a tag with a true schema was refused: {error}");
+            }
+        }
+    }
+
+    /// `#[serde(tag = "...")]` on a tuple or unit struct is serde's diagnostic
+    /// to raise, for the reason `untagged_on_a_struct_is_left_to_serde` gives:
+    /// serde refuses the attribute there, so neither tag refusal applies.
+    #[test]
+    fn a_tag_on_a_tuple_or_unit_struct_is_left_to_serde() {
+        for declaration in [
+            quote::quote!(
+                #[serde(tag = "t", deny_unknown_fields)]
+                struct Pair(u8, u8);
+            ),
+            quote::quote!(
+                #[serde(tag = "t", deny_unknown_fields)]
+                struct Marker;
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+            let Err(error) = expand_inner(&input) else {
+                continue;
+            };
+            let reported = error.to_string();
+            assert!(
+                !reported.contains("refuses every document the struct writes")
+                    && !reported.contains("is also this struct's"),
+                "a struct serde refuses the tag on was refused for the tag: {reported}"
+            );
+        }
     }
 
     /// `#[serde(untagged)]` on a struct is serde's diagnostic to raise, not ours.
