@@ -1759,6 +1759,13 @@ struct SplitStamp {
     a: u8,
 }
 
+#[allow(non_camel_case_types)]
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind")]
+struct r#match {
+    a: u8,
+}
+
 #[derive(Schema, serde::Serialize, serde::Deserialize)]
 #[serde(transparent, tag = "t")]
 struct WrappedStamp {
@@ -1799,7 +1806,8 @@ fn a_tagged_struct_names_its_tag_as_a_required_const() {
 
 /// The tag's value is the struct's serde name: its container `rename`, the
 /// serialize side where the rename is split, and never `rename_all`, which
-/// reaches only the fields.
+/// reaches only the fields; with no rename, its identifier as serde spells
+/// it, without a raw identifier's `r#`.
 #[test]
 fn a_tagged_structs_tag_is_the_name_serde_writes() {
     assert_eq!(
@@ -1824,6 +1832,13 @@ fn a_tagged_structs_tag_is_the_name_serde_writes() {
         serde_json::json!({"type": "string", "const": written["kind"]})
     );
     assert_eq!(written["kind"], serde_json::json!("w"));
+
+    let written = serde_json::to_value(r#match { a: 2 }).expect("a tagged struct serializes");
+    assert_eq!(
+        emitted::<r#match>()["properties"]["kind"],
+        serde_json::json!({"type": "string", "const": written["kind"]})
+    );
+    assert_eq!(written["kind"], serde_json::json!("match"));
 }
 
 /// serde writes a transparent struct as its one field's value and no tag, so

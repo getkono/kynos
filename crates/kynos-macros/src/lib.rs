@@ -397,7 +397,11 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   container `tag`, as its wire name or an `alias`. serde writes the key
 ///   twice and reads the tag's value back as the field. Rename the field or the
 ///   tag, or skip the field both ways; one serde skips in the direction it
-///   would collide in, or a flattened one, is accepted.
+///   would collide in is accepted. A flattened field's own name is never
+///   written, so it is accepted too, but the keys its type writes are not
+///   checked: the derive cannot see them, as serde's own check of an enum's
+///   internal tag cannot, and one named as the tag gets a schema serde's
+///   document does not meet.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)

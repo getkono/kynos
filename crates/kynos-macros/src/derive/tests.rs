@@ -436,14 +436,6 @@ mod schema {
                 #[serde(tag = "kind")]
                 struct Stamp {
                     at: u64,
-                    #[serde(flatten)]
-                    kind: Audit,
-                }
-            ),
-            quote::quote!(
-                #[serde(tag = "kind")]
-                struct Stamp {
-                    at: u64,
                     #[serde(skip_deserializing, alias = "kind")]
                     seen: u64,
                 }
@@ -455,6 +447,63 @@ mod schema {
                 panic!("a tag with a true schema was refused: {error}");
             }
         }
+    }
+
+    /// A flattened field's own name is never written, so one named as the tag
+    /// is accepted. The keys its type writes are not checked: the derive
+    /// cannot see them at expansion time, the limit serde's own check of an
+    /// enum's internal tag has too, so a flattened type writing the tag's key
+    /// is accepted with a schema serde's document does not meet.
+    #[test]
+    fn a_flattened_field_is_exempt_from_the_tag_whatever_its_type_writes() {
+        let input: syn::DeriveInput = syn::parse2(quote::quote!(
+            #[serde(tag = "kind")]
+            struct Stamp {
+                at: u64,
+                #[serde(flatten)]
+                kind: Audit,
+            }
+        ))
+        .expect("the case itself must parse");
+        if let Err(error) = expand_inner(&input) {
+            panic!("a flattened field named as the tag was refused: {error}");
+        }
+    }
+
+    /// A field collides with its struct's tag in either direction alone: read
+    /// under the tag's name through an `alias`, or written under it by one
+    /// serde never reads.
+    #[test]
+    fn a_field_under_the_tags_name_is_refused_in_either_direction() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a field serde reads under the tag's name through an `alias`",
+                    quote::quote!(
+                        #[serde(tag = "kind")]
+                        struct Stamp {
+                            at: u64,
+                            #[serde(alias = "kind")]
+                            seen: u64,
+                        }
+                    ),
+                    "is also this struct's",
+                ),
+                case(
+                    "a field serde writes under the tag's name and never reads",
+                    quote::quote!(
+                        #[serde(tag = "kind")]
+                        struct Stamp {
+                            at: u64,
+                            #[serde(skip_deserializing)]
+                            kind: String,
+                        }
+                    ),
+                    "is also this struct's",
+                ),
+            ],
+            expand_inner,
+        );
     }
 
     /// `#[serde(tag = "...")]` on a tuple or unit struct is serde's diagnostic
