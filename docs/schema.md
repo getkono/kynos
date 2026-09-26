@@ -192,8 +192,9 @@ one `FromStr` never reads that.
 Left out because `Display` writes something other than the format the schema
 names: chrono's `NaiveDateTime` and `DateTime` put a space where RFC 3339 has a
 `T`, and `DateTime<Utc>` appends ` UTC`; `BigDecimal` switches to an exponent,
-`1E-19`, for a value far from one. A jiff type, or a newtype whose `Display`
-writes the format, carries either.
+`1E-19`, for a value far below one. A jiff type, or a newtype whose `Display`
+writes RFC 3339, carries a date-time; `rust_decimal`, or a newtype whose
+`Display` writes fixed-point digits, carries a decimal.
 
 Your own newtype or enum opts in with `impl ParamValue for UserId {}` once its
 schema describes the one value its `Display` writes. A structured query, such
