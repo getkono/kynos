@@ -56,12 +56,13 @@ pub trait QueryParams: Sized + Schema {
     /// - Under `openapi32`, take the whole query as a [`QueryString`]. That
     ///   keeps the whole schema, but Kynos decodes the query string only as one
     ///   JSON document.
-    /// - Derive `QueryParams`, which helps with aliases only, and only by
-    ///   dropping them. It names each field by `#[param(rename)]`, then serde's
-    ///   `rename`, and ignores every other serde attribute, `alias` included. So
-    ///   it describes and decodes one name per field. It refuses an enum and
-    ///   decodes each field as one `ParamValue`, so a flattened or
-    ///   `transparent` type's members have to be written out as fields.
+    /// - Derive `QueryParams`, which helps with aliases only by refusing them.
+    ///   It names each field by `#[param(rename)]`, then serde's `rename`, then
+    ///   serde's `rename_all`, as the `Schema` derive does, and refuses an
+    ///   `alias` at compile time, so it describes and decodes one name per
+    ///   field. It refuses an enum and decodes each field as one `ParamValue`,
+    ///   so a flattened or `transparent` type's members have to be written out
+    ///   as fields.
     ///
     /// `style` is left unstated: `form` with `explode` is the default for a
     /// query parameter, so stating it would only repeat the location.
