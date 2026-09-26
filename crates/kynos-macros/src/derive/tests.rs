@@ -436,14 +436,6 @@ mod schema {
                 #[serde(tag = "kind")]
                 struct Stamp {
                     at: u64,
-                    #[serde(flatten)]
-                    kind: Audit,
-                }
-            ),
-            quote::quote!(
-                #[serde(tag = "kind")]
-                struct Stamp {
-                    at: u64,
                     #[serde(skip_deserializing, alias = "kind")]
                     seen: u64,
                 }
@@ -454,6 +446,27 @@ mod schema {
             if let Err(error) = expand_inner(&input) {
                 panic!("a tag with a true schema was refused: {error}");
             }
+        }
+    }
+
+    /// A flattened field's own name is never written, so one named as the tag
+    /// is accepted. The keys its type writes are not checked: the derive
+    /// cannot see them at expansion time, the limit serde's own check of an
+    /// enum's internal tag has too, so a flattened type writing the tag's key
+    /// is accepted with a schema serde's document does not meet.
+    #[test]
+    fn a_flattened_field_is_exempt_from_the_tag_whatever_its_type_writes() {
+        let input: syn::DeriveInput = syn::parse2(quote::quote!(
+            #[serde(tag = "kind")]
+            struct Stamp {
+                at: u64,
+                #[serde(flatten)]
+                kind: Audit,
+            }
+        ))
+        .expect("the case itself must parse");
+        if let Err(error) = expand_inner(&input) {
+            panic!("a flattened field named as the tag was refused: {error}");
         }
     }
 
