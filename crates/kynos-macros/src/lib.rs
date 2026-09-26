@@ -480,7 +480,8 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 ///
 /// Wire names, each a field's name or its `rename`, must match the route
 /// template's variables in declaration order; the route attribute emits a const
-/// assertion comparing the two lists.
+/// assertion comparing the two lists. Each field's type, or an `Option`'s inner
+/// type, is a `kynos::schema::ParamValue`.
 #[proc_macro_derive(PathParams, attributes(param))]
 pub fn derive_path_params(item: TokenStream) -> TokenStream {
     derive::path_params::expand(item)
@@ -488,12 +489,12 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 
 /// Declares a group of query parameters.
 ///
-/// Each field is one parameter, decoded from its value through `FromStr`. A
-/// field whose schema is an object is therefore misdescribed: the default
-/// `form` style with `explode` spreads it as `x=1&y=2`, while the decoder reads
-/// one `name=` pair ([#216](https://github.com/getkono/kynos/issues/216)). For a
-/// structured query, `QueryString<T, M>` describes the whole query string under
-/// `openapi32`.
+/// Each field is one parameter, decoded from its value through `FromStr`, so
+/// its type, or an `Option`'s inner type, must be a
+/// `kynos::schema::ParamValue`: a field whose schema is an object is refused,
+/// since the default `form` style with `explode` would describe it as `x=1&y=2`
+/// while the decoder reads one `name=` pair. For a structured query,
+/// `QueryString<T, M>` describes the whole query string under `openapi32`.
 #[proc_macro_derive(QueryParams, attributes(param))]
 pub fn derive_query_params(item: TokenStream) -> TokenStream {
     derive::query_params::expand(item)
@@ -505,13 +506,18 @@ pub fn derive_query_params(item: TokenStream) -> TokenStream {
 /// a parameter definition for those is ignored; `Content-Type` is likewise
 /// derived from a response's content map. Repeated fields such as `Set-Cookie`
 /// remain separate header values rather than being comma joined. The
-/// diagnostic names the right tool for each reserved field.
+/// diagnostic names the right tool for each reserved field. Each field's type,
+/// or an `Option`'s inner type, is a `kynos::schema::ParamValue`, in either
+/// direction.
 #[proc_macro_derive(HeaderParams, attributes(header))]
 pub fn derive_headers(item: TokenStream) -> TokenStream {
     derive::headers::expand(item)
 }
 
 /// Declares a group of request cookies.
+///
+/// Each field's type, or an `Option`'s inner type, is a
+/// `kynos::schema::ParamValue`.
 #[proc_macro_derive(CookieParams, attributes(cookie))]
 pub fn derive_cookies(item: TokenStream) -> TokenStream {
     derive::cookies::expand(item)

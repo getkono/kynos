@@ -171,6 +171,34 @@ that unification fails the build rather than silently invalidating descriptions.
 `decimal128` means IEEE 754-2008 decimal128, which neither backend is. It is
 reserved for a backend that implements it and is emitted by nothing today.
 
+## Parameter values
+
+A path variable, query parameter, header or cookie carries one value. The
+parameter derives read a field with `FromStr`, write it with `Display` and
+describe it by its `Schema`, so each field's type, or an `Option`'s inner type,
+must implement `ParamValue`: the promise that the three agree on one value. An
+object or an array would be spread over several by the location's `style`, and
+one `FromStr` never reads that.
+
+| Implements `ParamValue` | Feature |
+| --- | --- |
+| `bool`, `char`, `String`, `i8`–`i64`, `u8`–`u64`, `f32`, `f64` | — |
+| `Ipv4Addr`, `Ipv6Addr`, `IpAddr` | — |
+| `uuid::Uuid` | `uuid` |
+| `chrono::NaiveDate`, `chrono::NaiveTime` | `time-chrono` |
+| every `jiff` type above | `time-jiff` |
+| `rust_decimal::Decimal` | `decimal-rust` |
+
+Left out because `Display` writes something other than the format the schema
+names: chrono's `NaiveDateTime` and `DateTime` put a space where RFC 3339 has a
+`T`, and `DateTime<Utc>` appends ` UTC`; `BigDecimal` switches to an exponent,
+`1E-19`, for a value far from one. A jiff type, or a newtype whose `Display`
+writes the format, carries either.
+
+Your own newtype or enum opts in with `impl ParamValue for UserId {}` once its
+schema describes the one value its `Display` writes. A structured query, such
+as a search filter, is a whole `QueryString` under `openapi32` instead.
+
 ## Binary content
 
 Binary is fully in scope. What Kynos never emits is the OAS 3.0 spelling: "the
@@ -702,6 +730,7 @@ re-walked. A second call would reuse the same maps and agree with itself.
 | 37 | Under `#[serde(deny_unknown_fields)]`, a flattened field of an object rule 32 closes is bounded by `ClosedFlatten` beside `Flatten`, since serde takes a flattened key only through `deserialize_struct`: the derive implements it beside `Flatten` for a struct with no flattened field serde reads, a flattened `PhantomData` counting and one skipped both ways not, and no container `#[serde(tag = "...")]`, and for an adjacently tagged enum, never for an internally tagged one; a `#[serde(transparent)]` struct closes no object, so its flattened field is bounded by `Flatten` alone; `Box<T>` and `Arc<T>` carry it, `Problem` does not implement it, and an internally tagged newtype variant's payload is bounded by `Flatten` alone | the `ClosedFlatten`-claim and witness rows in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); `a_type_serde_reads_by_name_can_be_flattened_into_a_closed_object` in [`schema/tests.rs`](../crates/kynos/src/schema/tests.rs) for the wrappers, and a `compile_fail` doctest on the trait for `Problem`; `a_closed_object_reads_a_flattened_adjacently_tagged_enum_as_serde_does` in [`tests/flatten.rs`](../crates/kynos/tests/flatten.rs), against the `jsonschema` validator and serde's read; and `tests/ui/macros/schema_flatten_internally_tagged_denying_unknown_fields.rs` and `tests/ui/macros/schema_flatten_nested_flatten_denying_unknown_fields.rs` for the wording, and `tests/ui/macros/schema_flatten_externally_tagged_denying_unknown_fields.rs` for the two refusals a type that is not `Flatten` gets there |
 | 38 | A named struct's `#[serde(tag = "...")]` is a required property whose `const` is the struct's serde name, its container `rename`, the serialize side where the rename is split, otherwise its identifier, never through `rename_all`, with no `discriminator`; a flattened tagged struct's tag reaches the parent through its `$ref`; a `#[serde(transparent)]` struct writes no tag and is its field's schema; a tuple or unit struct is left to serde, which refuses the tag | `a_tagged_struct_names_its_tag_as_a_required_const`, `a_tagged_structs_tag_is_the_name_serde_writes` and `a_transparent_structs_tag_is_in_no_schema` in [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde writes and reads; `a_flattened_tagged_struct_holds_its_tag_through_the_parent` in [`tests/flatten.rs`](../crates/kynos/tests/flatten.rs), against the `jsonschema` validator; `a_tag_on_a_tuple_or_unit_struct_is_left_to_serde` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); and `tests/ui/pass/schema_tagged_struct.rs` |
 | 39 | A tagged named struct is refused under `#[serde(deny_unknown_fields)]` unless it is `#[serde(transparent)]`, and so is one holding a named field serde writes or reads under the tag's own name, as its wire name or an `alias`; a field serde skips in the colliding direction, skips both ways, or flattens is left alone | the derive's ledger and `a_tag_on_a_struct_with_a_true_schema_is_accepted` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs), and `tests/ui/macros/schema_tagged_struct_denying_unknown_fields.rs` and `tests/ui/macros/schema_tagged_struct_field_named_as_tag.rs` for the wording |
+| 40 | A parameter-derive field's type, or an `Option`'s inner type, implements `ParamValue`, which is implemented only for a type whose schema is one value that `Display` writes and `FromStr` reads | the per-field bound in [`derive/params.rs`](../crates/kynos-macros/src/derive/params.rs), `tests/ui/macros/*_params_object_field.rs` for the wording, and `every_shipped_scalar_is_a_parameter_value` in [`schema/tests.rs`](../crates/kynos/src/schema/tests.rs) |
 
 ## Rationale
 

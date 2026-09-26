@@ -7,7 +7,7 @@
 //! cargo run -p kynos --example parameters --features cookie
 //! ```
 //!
-//! Four things are worth noticing:
+//! Five things are worth noticing:
 //!
 //! * **Every argument declares itself.** There is no `Request`, no `HeaderMap`,
 //!   no `Body`. An operation cannot read something its description never
@@ -21,12 +21,15 @@
 //!   specification says a parameter definition for them is ignored — a claim no
 //!   consumer will honour is worse than no claim. The diagnostic names the
 //!   right tool for each.
+//! * **A parameter is one value.** Each field is a `ParamValue`: read with
+//!   `FromStr`, written with `Display`, and described by a schema that is not
+//!   an object or an array. `UserId` below opts in with an empty impl.
 //! * **A hand-written extractor is a first-class one.** `ApiVersion` below
 //!   implements the same two traits the derives implement. Nothing about the
 //!   derived path is privileged, which is what makes the rule "every argument
 //!   describes itself" enforceable rather than aspirational.
 
-use std::net::Ipv4Addr;
+use std::{fmt, net::Ipv4Addr, num::ParseIntError, str::FromStr};
 
 use kynos::{
     extract::{
@@ -39,6 +42,7 @@ use kynos::{
     openapi::{Parameter, ParameterIn},
     prelude::*,
     router::operation::OperationCx,
+    schema::{ParamValue, registry::Registry},
     server::Server,
 };
 use serde::{Deserialize, Serialize};
@@ -50,6 +54,35 @@ struct User {
     name: String,
 }
 
+/// A user's identifier, as a path carries it.
+///
+/// A newtype rather than a bare `u64`, so a handler cannot pass some other
+/// number where a user is meant. It is still one integer on the wire, which is
+/// what `ParamValue` asks it to promise.
+struct UserId(u64);
+
+impl Schema for UserId {
+    fn schema(registry: &mut Registry) -> kynos::openapi::Schema {
+        u64::schema(registry)
+    }
+}
+
+impl FromStr for UserId {
+    type Err = ParseIntError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        raw.parse().map(Self)
+    }
+}
+
+impl fmt::Display for UserId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl ParamValue for UserId {}
+
 /// What `/users/{id}` captures.
 #[allow(dead_code)]
 #[derive(Schema, PathParams)]
@@ -57,7 +90,7 @@ struct UserPath {
     /// A path parameter's name must match the template's variable, and the
     /// derive checks that against `EndpointMeta::PATH_VARIABLES` at compile
     /// time rather than at startup.
-    id: u64,
+    id: UserId,
 }
 
 /// How a list is paged.
@@ -175,7 +208,7 @@ async fn get_user(
     let _ = (page, conditional, preferences);
 
     Json(User {
-        id: path.id,
+        id: path.id.0,
         name: "Ada Lovelace".to_owned(),
     })
 }
