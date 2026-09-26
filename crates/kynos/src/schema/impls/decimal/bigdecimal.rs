@@ -13,5 +13,6 @@ impl Schema for ::bigdecimal::BigDecimal {
     }
 }
 
-// Not a `ParamValue`: `Display` switches to an exponent, `1E-19` or `1e+30`, for
-// a value far from one, which is not the fixed-point text `decimal` names.
+// Not a `ParamValue`: `Display` writes an exponent, `1E-19` for a value far below
+// one or `1e+30` for one read as `1e30`, which is not the fixed-point text
+// `decimal` names.

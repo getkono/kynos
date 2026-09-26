@@ -238,7 +238,10 @@ impl MapKey for String {}
 /// an array over several values, which one `FromStr` never reads.
 ///
 /// Implemented for the scalars Kynos describes whose `Display` writes the form
-/// their schema names. An `Option<T>` field is a derive's business, not this
+/// their schema names, with one exception: a non-finite `f32` or `f64` writes
+/// `NaN`, `inf` or `-inf`, which no `number` admits, and `FromStr` reads them
+/// back, so a float field accepts them. A newtype whose `FromStr` refuses them
+/// is the remedy where that matters. An `Option<T>` field is a derive's business, not this
 /// trait's: the derive makes it optional and bounds `T`.
 ///
 /// ```compile_fail
