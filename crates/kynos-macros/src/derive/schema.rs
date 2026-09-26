@@ -48,7 +48,7 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, quote_spanned};
 use syn::{
     Data, DataEnum, DeriveInput, Field, Fields, Lit, LitFloat, LitInt, LitStr, Type, Variant,
-    parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma,
+    ext::IdentExt, parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma,
 };
 
 use crate::derive::common::{doc_string, is_deprecated, skip_value};
@@ -105,6 +105,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     reject_transparent_without_one_field(input)?;
     reject_read_required_skip(input)?;
     reject_contradicted_closure(input)?;
+    reject_closed_tagged_struct(input)?;
+    reject_field_named_as_tag(input)?;
     reject_unread_field_in_closed_object(input)?;
     reject_one_way_member_skip(input)?;
     reject_skipped_adjacent_payload(input)?;
@@ -1121,6 +1123,84 @@ fn reject_contradicted_closure(input: &DeriveInput) -> syn::Result<()> {
     Ok(())
 }
 
+/// Whether serde writes a named struct's `#[serde(tag = "...")]`, and which:
+/// every tagged named struct but a `#[serde(transparent)]` one, which serde
+/// writes as its one field's value.
+fn struct_tag<'a>(input: &DeriveInput, container: &'a Container) -> Option<&'a str> {
+    let Data::Struct(data) = &input.data else {
+        return None;
+    };
+    if container.transparent || !matches!(data.fields, Fields::Named(_)) {
+        return None;
+    }
+    container.tag.as_deref()
+}
+
+/// A tagged struct `#[serde(deny_unknown_fields)]` closes has no true schema.
+///
+/// serde writes the tag beside the fields and never reads it back as one of
+/// them, so the closed struct refuses the tag in every document it writes: a
+/// schema naming the tag accepts what serde refuses, and one leaving it out
+/// refuses what serde writes. A tuple or unit struct is left to serde, which
+/// refuses the tag there itself.
+fn reject_closed_tagged_struct(input: &DeriveInput) -> syn::Result<()> {
+    let container = Container::read(input);
+    if struct_tag(input, &container).is_none() || !container.deny_unknown_fields {
+        return Ok(());
+    }
+    let span = serde_key_span(&input.attrs, &["deny_unknown_fields"])
+        .map_or_else(|| input.ident.span(), |(_, span)| span);
+    Err(syn::Error::new(
+        span,
+        "`#[serde(tag = \"...\")]` makes serde write the tag beside this struct's fields, but \
+         serde never reads it back as one of them, so `#[serde(deny_unknown_fields)]` refuses \
+         every document the struct writes, and no schema is true of both. Drop \
+         `deny_unknown_fields`, or drop the tag and declare it as a field",
+    ))
+}
+
+/// A named field serde writes or reads under its struct's own tag is refused.
+///
+/// serde checks an enum's variant fields against its tag and skips a struct's,
+/// so it writes the key twice, once as the tag and once as the field, and reads
+/// the tag's value back as the field. The schema would require the name twice
+/// and hold it to the tag's `const`. A field serde skips in the direction it
+/// would collide in is no conflict there. A flattened field's own name is never
+/// written, so it is exempt; the keys its type writes are not checked, since
+/// they are not visible at expansion time, the limit serde's own check of an
+/// enum's internal tag has too.
+fn reject_field_named_as_tag(input: &DeriveInput) -> syn::Result<()> {
+    let container = Container::read(input);
+    let (Some(tag), Data::Struct(data)) = (struct_tag(input, &container), &input.data) else {
+        return Ok(());
+    };
+
+    let conflicting = data.fields.iter().find(|field| {
+        if is_flattened(field) || is_skipped_both_ways(&field.attrs) {
+            return false;
+        }
+        let written = !serde_flag(&field.attrs, &["skip_serializing"])
+            && field_name(field, &container) == tag;
+        let read = !serde_flag(&field.attrs, &["skip_deserializing"])
+            && aliases::read_names(field, &container)
+                .iter()
+                .any(|name| name == tag);
+        written || read
+    });
+
+    match conflicting.and_then(|field| field.ident.as_ref()) {
+        Some(ident) => Err(syn::Error::new(
+            ident.span(),
+            format!(
+                "`{tag}` is also this struct's `#[serde(tag = \"...\")]`, so serde writes the key \
+                 twice, once as the tag and once as this field, and reads the tag's value back as \
+                 the field. Rename the field or the tag, or `#[serde(skip)]` the field"
+            ),
+        )),
+        None => Ok(()),
+    }
+}
+
 /// A named field serde writes and never reads is refused in an object
 /// `#[serde(deny_unknown_fields)]` closes.
 ///
@@ -1360,6 +1440,9 @@ fn min_items(positions: &[&Field], defaulted: bool) -> u64 {
 /// spelling of them would be a second declaration to keep in step.
 #[derive(Default)]
 struct Container {
+    /// The container `rename`, on the serialize side where it is split: the
+    /// name serde writes a struct's `#[serde(tag = "...")]` as.
+    rename: Option<String>,
     rename_all: Option<String>,
     tag: Option<String>,
     content: Option<String>,
@@ -1397,6 +1480,16 @@ impl Container {
                     return skip_value(&meta);
                 };
                 match key.to_string().as_str() {
+                    "rename" if meta.input.peek(syn::token::Paren) => {
+                        meta.parse_nested_meta(|side| {
+                            if side.path.is_ident("serialize") {
+                                container.rename = string_value(&side)?;
+                                return Ok(());
+                            }
+                            skip_value(&side)
+                        })?;
+                    }
+                    "rename" => container.rename = string_value(&meta)?,
                     "rename_all" => container.rename_all = string_value(&meta)?,
                     "tag" => container.tag = string_value(&meta)?,
                     "content" => container.content = string_value(&meta)?,
@@ -1426,10 +1519,16 @@ fn string_value(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<Option<Str
 /// The `schema` body for whatever shape the type has.
 fn body(input: &DeriveInput, container: &Container) -> TokenStream2 {
     let described = match &input.data {
-        Data::Struct(data) => described(
-            struct_body(&data.fields, container),
-            container.doc.as_deref(),
-        ),
+        Data::Struct(data) => {
+            let name = container
+                .rename
+                .clone()
+                .unwrap_or_else(|| input.ident.unraw().to_string());
+            described(
+                struct_body(&data.fields, container, &name),
+                container.doc.as_deref(),
+            )
+        }
         Data::Enum(data) => described(enum_body(data, container), container.doc.as_deref()),
         // Refused at the top of `expand_inner`.
         Data::Union(_) => quote!(::kynos::openapi::Schema::default()),

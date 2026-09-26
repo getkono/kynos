@@ -1733,6 +1733,125 @@ fn a_transparent_struct_written_through_one_field_ignores_an_unread_override() {
     );
 }
 
+// --- A tagged struct names the tag serde writes -----------------------------
+//
+// serde writes a named struct's `#[serde(tag = "...")]` before its fields, as
+// its serde name, and ignores the key when it reads the struct back. These pin
+// the emitted shape against what serde writes and reads; `docs/schema.md`
+// states the rule. None carries a doc comment, which would add prose to the
+// shapes compared.
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type")]
+struct Stamp {
+    a: u8,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename = "stamp.v1", rename_all = "camelCase")]
+struct RenamedStamp {
+    at_ms: u64,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename(serialize = "w", deserialize = "r"))]
+struct SplitStamp {
+    a: u8,
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind")]
+struct r#match {
+    a: u8,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(transparent, tag = "t")]
+struct WrappedStamp {
+    inner: u64,
+}
+
+/// A tagged struct's tag is a required property whose `const` is the name
+/// serde writes.
+///
+/// serde always writes the tag, so it is required, and never reads it, so a
+/// document without it reads back too: the schema is deliberately narrower
+/// than what serde reads, and every document serde writes still validates.
+#[test]
+fn a_tagged_struct_names_its_tag_as_a_required_const() {
+    assert_eq!(
+        emitted::<Stamp>(),
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "type": {"type": "string", "const": "Stamp"},
+                "a": emitted::<u8>(),
+            },
+            "required": ["type", "a"],
+        })
+    );
+
+    let written = serde_json::to_value(Stamp { a: 2 }).expect("a tagged struct serializes");
+    assert_eq!(written, serde_json::json!({"type": "Stamp", "a": 2}));
+    assert!(
+        serde_json::from_value::<Stamp>(written).is_ok(),
+        "the document serde writes must read back"
+    );
+    assert!(
+        serde_json::from_value::<Stamp>(serde_json::json!({"a": 2})).is_ok(),
+        "serde reads the struct without its tag, which the schema refuses by design"
+    );
+}
+
+/// The tag's value is the struct's serde name: its container `rename`, the
+/// serialize side where the rename is split, and never `rename_all`, which
+/// reaches only the fields; with no rename, its identifier as serde spells
+/// it, without a raw identifier's `r#`.
+#[test]
+fn a_tagged_structs_tag_is_the_name_serde_writes() {
+    assert_eq!(
+        emitted::<RenamedStamp>(),
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "const": "stamp.v1"},
+                "atMs": emitted::<u64>(),
+            },
+            "required": ["kind", "atMs"],
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(RenamedStamp { at_ms: 1 }).expect("a tagged struct serializes"),
+        serde_json::json!({"kind": "stamp.v1", "atMs": 1})
+    );
+
+    let written = serde_json::to_value(SplitStamp { a: 2 }).expect("a tagged struct serializes");
+    assert_eq!(
+        emitted::<SplitStamp>()["properties"]["kind"],
+        serde_json::json!({"type": "string", "const": written["kind"]})
+    );
+    assert_eq!(written["kind"], serde_json::json!("w"));
+
+    let written = serde_json::to_value(r#match { a: 2 }).expect("a tagged struct serializes");
+    assert_eq!(
+        emitted::<r#match>()["properties"]["kind"],
+        serde_json::json!({"type": "string", "const": written["kind"]})
+    );
+    assert_eq!(written["kind"], serde_json::json!("match"));
+}
+
+/// serde writes a transparent struct as its one field's value and no tag, so
+/// the tag is in no schema.
+#[test]
+fn a_transparent_structs_tag_is_in_no_schema() {
+    assert_eq!(emitted::<WrappedStamp>(), emitted::<u64>());
+    assert_eq!(
+        serde_json::to_value(WrappedStamp { inner: 5 }).expect("a transparent struct serializes"),
+        serde_json::json!(5)
+    );
+}
+
 // --- A tuple is the positions serde writes and reads ------------------------
 //
 // serde leaves a member it skips both ways out of the array in both directions,

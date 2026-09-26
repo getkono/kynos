@@ -1,0 +1,5 @@
+error: `kind` is also this struct's `#[serde(tag = "...")]`, so serde writes the key twice, once as the tag and once as this field, and reads the tag's value back as the field. Rename the field or the tag, or `#[serde(skip)]` the field
+ --> tests/ui/macros/schema_tagged_struct_field_named_as_tag.rs:9:5
+  |
+9 |     kind: String,
+  |     ^^^^

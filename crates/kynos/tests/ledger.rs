@@ -66,6 +66,72 @@ fn every_derive_has_a_witness() {
     );
 }
 
+/// Each refusal the `Schema` derive's rustdoc lists, as a fragment only its own
+/// entry carries and the snapshot of its refusal under `tests/ui/`.
+///
+/// Outside [`every_rejected_schema_attribute_has_a_case`], which holds the list
+/// to it, so that the test stays within the length Clippy accepts.
+const RECORDED: &[(&str, &str)] = &[
+    (
+        "`#[serde(with = ...)]`",
+        "macros/schema_serialize_with.stderr",
+    ),
+    ("`#[serde(untagged)]`", "macros/schema_untagged_enum.stderr"),
+    ("`#[serde(flatten)]`", "macros/schema_flatten_map.stderr"),
+    (
+        "`#[serde(other)]`",
+        "macros/schema_catch_all_variant.stderr",
+    ),
+    (
+        "`skip_serializing_if` on a non-`Option` field",
+        "macros/schema_skip_serializing_if_without_default.stderr",
+    ),
+    (
+        "`#[serde(into = ...)]`",
+        "macros/schema_container_conversion.stderr",
+    ),
+    (
+        "`#[serde(transparent)]`",
+        "macros/schema_transparent_without_one_field.stderr",
+    ),
+    (
+        "`skip_deserializing` alone",
+        "macros/schema_tuple_member_skipped_one_way.stderr",
+    ),
+    (
+        "its tag alone",
+        "macros/schema_adjacent_skipped_payload.stderr",
+    ),
+    (
+        "`#[serde(skip_deserializing)]` alone on a variant",
+        "macros/schema_variant_skipped_on_read.stderr",
+    ),
+    (
+        "`#[serde(skip_deserializing)]` without `skip_serializing`",
+        "macros/schema_field_skipped_on_read_denying_unknown_fields.stderr",
+    ),
+    (
+        "`#[schema(open)]` field beside `#[serde(deny_unknown_fields)]`",
+        "macros/schema_open_map_denying_unknown_fields.stderr",
+    ),
+    (
+        "A variant whose own name",
+        "macros/schema_variant_name_collision.stderr",
+    ),
+    (
+        "A flattened internally tagged enum",
+        "macros/schema_flatten_internally_tagged_denying_unknown_fields.stderr",
+    ),
+    (
+        "on a struct carrying `deny_unknown_fields`",
+        "macros/schema_tagged_struct_denying_unknown_fields.stderr",
+    ),
+    (
+        "under the name of its struct's own",
+        "macros/schema_tagged_struct_field_named_as_tag.stderr",
+    ),
+];
+
 /// The attributes the `Schema` derive's rustdoc lists as refused, each named
 /// against the snapshot that holds its refusal.
 ///
@@ -76,60 +142,6 @@ fn every_derive_has_a_witness() {
 /// `ui/macros/schema_*` would also count grammar rules no entry lists.
 #[test]
 fn every_rejected_schema_attribute_has_a_case() {
-    /// A fragment only its own entry carries, and the snapshot of its refusal
-    /// under `tests/ui/`.
-    const RECORDED: &[(&str, &str)] = &[
-        (
-            "`#[serde(with = ...)]`",
-            "macros/schema_serialize_with.stderr",
-        ),
-        ("`#[serde(untagged)]`", "macros/schema_untagged_enum.stderr"),
-        ("`#[serde(flatten)]`", "macros/schema_flatten_map.stderr"),
-        (
-            "`#[serde(other)]`",
-            "macros/schema_catch_all_variant.stderr",
-        ),
-        (
-            "`skip_serializing_if` on a non-`Option` field",
-            "macros/schema_skip_serializing_if_without_default.stderr",
-        ),
-        (
-            "`#[serde(into = ...)]`",
-            "macros/schema_container_conversion.stderr",
-        ),
-        (
-            "`#[serde(transparent)]`",
-            "macros/schema_transparent_without_one_field.stderr",
-        ),
-        (
-            "`skip_deserializing` alone",
-            "macros/schema_tuple_member_skipped_one_way.stderr",
-        ),
-        (
-            "its tag alone",
-            "macros/schema_adjacent_skipped_payload.stderr",
-        ),
-        (
-            "`#[serde(skip_deserializing)]` alone on a variant",
-            "macros/schema_variant_skipped_on_read.stderr",
-        ),
-        (
-            "`#[serde(skip_deserializing)]` without `skip_serializing`",
-            "macros/schema_field_skipped_on_read_denying_unknown_fields.stderr",
-        ),
-        (
-            "`#[schema(open)]` field beside `#[serde(deny_unknown_fields)]`",
-            "macros/schema_open_map_denying_unknown_fields.stderr",
-        ),
-        (
-            "A variant whose own name",
-            "macros/schema_variant_name_collision.stderr",
-        ),
-        (
-            "A flattened internally tagged enum",
-            "macros/schema_flatten_internally_tagged_denying_unknown_fields.stderr",
-        ),
-    ];
     const HEADING: &str = "# Rejected, because serde and the schema would disagree";
 
     let entries = listed_entries(&macro_crate(), HEADING);

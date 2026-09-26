@@ -232,7 +232,11 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// struct is described by the one field serde writes and reads through, or the
 /// single field of the one direction serde can derive for it,
 /// keeps its own component name, as a newtype does, and carries that field's
-/// constraints. A tuple is the array of the members serde does not skip both
+/// constraints. A named struct's `tag` is one more required property, whose
+/// `const` is the struct's serde name: its container `rename`, the serialize
+/// side where the rename is split, otherwise its identifier, which `rename_all`
+/// does not reach. It carries no `discriminator`, a struct having no branches
+/// to tell apart, and a `transparent` struct writes no tag. A tuple is the array of the members serde does not skip both
 /// ways, and a newtype variant whose member serde skips is the unit variant
 /// serde writes, provided serde also reads it back. A newtype, and each
 /// described member of a tuple, tuple variant or newtype variant, carries its
@@ -384,6 +388,20 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   a name that reads back as the earlier one. An `alias` an earlier variant
 ///   already claims is accepted and named under that variant alone, since serde
 ///   never reads it as the later one.
+/// - A container `tag` on a struct carrying `deny_unknown_fields`. serde writes
+///   the tag beside the fields and never reads it back as one of them, so the
+///   closed struct refuses every document it writes. Drop
+///   `deny_unknown_fields`, or drop the tag and declare it as a field. A
+///   `transparent` struct writes no tag, and is accepted.
+/// - A named field serde writes or reads under the name of its struct's own
+///   container `tag`, as its wire name or an `alias`. serde writes the key
+///   twice and reads the tag's value back as the field. Rename the field or the
+///   tag, or skip the field both ways; one serde skips in the direction it
+///   would collide in is accepted. A flattened field's own name is never
+///   written, so it is accepted too, but the keys its type writes are not
+///   checked: the derive cannot see them, as serde's own check of an enum's
+///   internal tag cannot, and one named as the tag gets a schema serde's
+///   document does not meet.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)
