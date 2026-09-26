@@ -225,5 +225,94 @@ pub trait MapKey: Schema {
 
 impl MapKey for String {}
 
+/// A value one parameter carries: a path variable, a query parameter, a header
+/// or a cookie.
+///
+/// A parameter is text. The parameter derives read a field with
+/// [`FromStr`](std::str::FromStr), write it with [`Display`](std::fmt::Display),
+/// and describe it by its [`Schema`], so implementing this promises that the
+/// three agree on one value: `Display` writes what the schema describes,
+/// `FromStr` reads it back, and the schema is not an object or an array. That
+/// last part is what the compiler cannot check, and why this is a marker rather
+/// than a blanket implementation — a parameter's `style` spreads an object or
+/// an array over several values, which one `FromStr` never reads.
+///
+/// Implemented for the scalars Kynos describes whose `Display` writes the form
+/// their schema names. An `Option<T>` field is a derive's business, not this
+/// trait's: the derive makes it optional and bounds `T`.
+///
+/// ```compile_fail
+/// # use std::{fmt, str::FromStr};
+/// fn param_value<T: kynos::schema::ParamValue>() {}
+///
+/// // An object, whatever its `FromStr` and `Display` say.
+/// #[derive(kynos::Schema)]
+/// struct Point {
+///     x: i32,
+///     y: i32,
+/// }
+/// # impl FromStr for Point {
+/// #     type Err = fmt::Error;
+/// #     fn from_str(_: &str) -> Result<Self, Self::Err> { Err(fmt::Error) }
+/// # }
+/// # impl fmt::Display for Point {
+/// #     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+/// #         write!(f, "{},{}", self.x, self.y)
+/// #     }
+/// # }
+///
+/// param_value::<Point>();
+/// ```
+///
+/// A newtype or an enum whose schema is one value opts in:
+///
+/// ```
+/// use std::{fmt, num::ParseIntError, str::FromStr};
+///
+/// use kynos::schema::{ParamValue, Schema, registry::Registry};
+///
+/// struct UserId(u64);
+///
+/// impl Schema for UserId {
+///     fn schema(registry: &mut Registry) -> kynos::openapi::Schema {
+///         u64::schema(registry)
+///     }
+/// }
+///
+/// impl FromStr for UserId {
+///     type Err = ParseIntError;
+///
+///     fn from_str(raw: &str) -> Result<Self, Self::Err> {
+///         raw.parse().map(Self)
+///     }
+/// }
+///
+/// impl fmt::Display for UserId {
+///     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+///         self.0.fmt(f)
+///     }
+/// }
+///
+/// impl ParamValue for UserId {}
+///
+/// #[derive(kynos::PathParams)]
+/// struct UserPath {
+///     id: UserId,
+/// }
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a value one parameter carries",
+    label = "not one parameter value",
+    note = "a parameter field is read with `FromStr`, written with `Display` and described by \
+            its `Schema`, so that schema must describe one value, not an object or an array; \
+            implement `kynos::schema::ParamValue` for a newtype or enum whose schema does",
+    note = "for a structured query such as a search filter, take the whole query string as \
+            `kynos::extract::params::query::QueryString` under `openapi32`"
+)]
+pub trait ParamValue:
+    Schema + std::str::FromStr<Err: std::fmt::Display> + std::fmt::Display
+{
+}
+
 #[cfg(test)]
 mod tests;

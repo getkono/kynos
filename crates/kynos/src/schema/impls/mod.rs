@@ -1,4 +1,6 @@
-//! [`Schema`](crate::schema::Schema) for the standard library.
+//! [`Schema`](crate::schema::Schema) for the standard library, and
+//! [`ParamValue`](crate::schema::ParamValue) beside it for each scalar a
+//! parameter can carry.
 //!
 //! Private, and deliberately so: it declares no item, only implementations, so
 //! there is nothing here for a canonical path to point at. Which types get an

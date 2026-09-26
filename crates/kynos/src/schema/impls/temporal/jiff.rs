@@ -3,7 +3,7 @@
 use kynos_openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType};
 
 use crate::schema::{
-    Schema,
+    ParamValue, Schema,
     impls::{formatted, temporal, with_object},
     registry::Registry,
 };
@@ -74,3 +74,15 @@ impl Schema for ::jiff::SignedDuration {
         temporal::duration()
     }
 }
+
+// jiff's serde integration writes through `Display`, so a parameter of each of
+// these carries the text a body would, the form its schema names, and `FromStr`
+// reads it back. A negative duration's leading `-` is outside RFC 3339's
+// `duration` in a parameter exactly as in a body.
+impl ParamValue for ::jiff::civil::Date {}
+impl ParamValue for ::jiff::civil::Time {}
+impl ParamValue for ::jiff::civil::DateTime {}
+impl ParamValue for ::jiff::Timestamp {}
+impl ParamValue for ::jiff::Zoned {}
+impl ParamValue for ::jiff::Span {}
+impl ParamValue for ::jiff::SignedDuration {}

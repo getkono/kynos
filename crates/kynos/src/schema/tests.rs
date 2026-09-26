@@ -10,7 +10,7 @@ use kynos_openapi::{
 };
 
 use crate::schema::{
-    MapKey, Schema,
+    MapKey, ParamValue, Schema,
     flatten::{ClosedFlatten, Flatten},
     registry::Registry,
 };
@@ -34,6 +34,8 @@ fn object_of<T: Schema>() -> SchemaObject {
 fn describable<T: Schema>() {}
 
 fn keyable<T: MapKey>() {}
+
+fn param_value<T: ParamValue>() {}
 
 fn flattenable<T: Flatten>() {}
 
@@ -407,6 +409,52 @@ fn every_standard_type_the_docs_promise_is_describable() {
 #[test]
 fn a_string_is_a_map_key() {
     keyable::<String>();
+}
+
+/// The scalars a parameter field may be. Losing one is breaking, so each one is
+/// named here.
+#[test]
+fn every_shipped_scalar_is_a_parameter_value() {
+    param_value::<bool>();
+    param_value::<char>();
+    param_value::<String>();
+    param_value::<i8>();
+    param_value::<i16>();
+    param_value::<i32>();
+    param_value::<i64>();
+    param_value::<u8>();
+    param_value::<u16>();
+    param_value::<u32>();
+    param_value::<u64>();
+    param_value::<f32>();
+    param_value::<f64>();
+
+    param_value::<Ipv4Addr>();
+    param_value::<Ipv6Addr>();
+    param_value::<IpAddr>();
+
+    #[cfg(feature = "uuid")]
+    param_value::<uuid::Uuid>();
+
+    #[cfg(feature = "time-chrono")]
+    {
+        param_value::<chrono::NaiveDate>();
+        param_value::<chrono::NaiveTime>();
+    }
+
+    #[cfg(feature = "time-jiff")]
+    {
+        param_value::<jiff::civil::Date>();
+        param_value::<jiff::civil::Time>();
+        param_value::<jiff::civil::DateTime>();
+        param_value::<jiff::Timestamp>();
+        param_value::<jiff::Zoned>();
+        param_value::<jiff::Span>();
+        param_value::<jiff::SignedDuration>();
+    }
+
+    #[cfg(feature = "decimal-rust")]
+    param_value::<rust_decimal::Decimal>();
 }
 
 /// A type whose `Schema` is written by hand, saying so.

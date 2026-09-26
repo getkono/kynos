@@ -14,6 +14,12 @@
 //! interposed, which would make the wire form of a parameter depend on
 //! attributes that describe a JSON body.
 //!
+//! Each field's type is bounded by `kynos::schema::ParamValue`, which implies
+//! `FromStr` and `Display` and promises a schema describing one value. One
+//! `FromStr` reads one located value, while a `style` spreads an object or an
+//! array over several, so without the bound such a field is described in a
+//! form the decoder never reads.
+//!
 //! An `Option<T>` field is what makes a parameter optional, matching how an
 //! `Option` field makes an object property optional. The recognition is
 //! syntactic, as serde's own is: an alias for `Option<T>` reads as required,
@@ -90,9 +96,12 @@ impl<'a> Param<'a> {
 ///
 /// `found` is an expression of type `Option<&str>`, `rejection` the type the
 /// derive's `decode` returns, and `missing` what a required parameter says when
-/// nothing carried it. The conversion carries the field's own span, so a type
-/// with no `FromStr` is reported against the field a user wrote rather than
-/// against code they never saw.
+/// nothing carried it. The conversion and the `ParamValue` assertion carry the
+/// field's own span, so a type that is not one value is reported against the
+/// field a user wrote rather than against code they never saw.
+///
+/// The assertion lives here because every derive's `decode` calls this, so it
+/// bounds a group only ever written as much as one only ever read.
 pub(crate) fn decode_field(
     param: &Param<'_>,
     rejection: &TokenStream2,
@@ -115,6 +124,16 @@ pub(crate) fn decode_field(
                     });
                 }
             }
+        }
+    };
+
+    // The `T` of an `Option<T>`, which is what is decoded: optionality is the
+    // derive's to express, and `Option` is no parameter value itself.
+    let carried = param.optional().unwrap_or(ty);
+    let bounded = quote_spanned! {carried.span()=>
+        {
+            fn carried_by_one_parameter<T: ::kynos::schema::ParamValue>() {}
+            carried_by_one_parameter::<#carried>();
         }
     };
 
@@ -142,6 +161,7 @@ pub(crate) fn decode_field(
     };
 
     quote! {
+        #bounded
         let #ident: #ty = {
             let found: ::core::option::Option<&str> = #found;
             #read

@@ -2,7 +2,7 @@
 
 use kynos_openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType};
 
-use crate::schema::{Schema, impls::formatted, registry::Registry};
+use crate::schema::{ParamValue, Schema, impls::formatted, registry::Registry};
 
 // `uuid` is in the JSON Schema Validation vocabulary rather than the five
 // formats OAS defines itself, so support for it is optional and a tool that
@@ -16,3 +16,6 @@ impl Schema for ::uuid::Uuid {
         formatted(SchemaType::String, "uuid")
     }
 }
+
+// `Display` writes the hyphenated form `uuid` names, which is what serde writes.
+impl ParamValue for ::uuid::Uuid {}

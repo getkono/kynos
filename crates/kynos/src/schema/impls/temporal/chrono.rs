@@ -2,7 +2,7 @@
 
 use kynos_openapi::Schema as OpenApiSchema;
 
-use crate::schema::{Schema, impls::temporal, registry::Registry};
+use crate::schema::{ParamValue, Schema, impls::temporal, registry::Registry};
 
 impl Schema for ::chrono::NaiveDate {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
@@ -38,3 +38,10 @@ impl Schema for ::chrono::DateTime<::chrono::FixedOffset> {
         temporal::instant()
     }
 }
+
+// Only the two whose `Display` writes the format their schema names. The
+// date-times' writes a space where RFC 3339 has a `T`, `DateTime<Utc>`'s
+// appends ` UTC` besides, and `NaiveDateTime` cannot parse its own output, so a
+// parameter of any of them would carry text its description refuses.
+impl ParamValue for ::chrono::NaiveDate {}
+impl ParamValue for ::chrono::NaiveTime {}
