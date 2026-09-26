@@ -1165,8 +1165,10 @@ fn reject_closed_tagged_struct(input: &DeriveInput) -> syn::Result<()> {
 /// so it writes the key twice, once as the tag and once as the field, and reads
 /// the tag's value back as the field. The schema would require the name twice
 /// and hold it to the tag's `const`. A field serde skips in the direction it
-/// would collide in is no conflict there, and a flattened field names no key of
-/// its own.
+/// would collide in is no conflict there. A flattened field's own name is never
+/// written, so it is exempt; the keys its type writes are not checked, since
+/// they are not visible at expansion time, the limit serde's own check of an
+/// enum's internal tag has too.
 fn reject_field_named_as_tag(input: &DeriveInput) -> syn::Result<()> {
     let container = Container::read(input);
     let (Some(tag), Data::Struct(data)) = (struct_tag(input, &container), &input.data) else {
