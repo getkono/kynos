@@ -98,12 +98,28 @@ pub(crate) fn skip_value(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<(
     Ok(())
 }
 
+/// The wire name of every field of a parameter group, in declaration order.
+///
+/// `attribute` is the derive's own attribute -- `param`, `header` or
+/// `cookie` -- whose `rename` is consulted first.
+pub(crate) fn wire_names(
+    _input: &DeriveInput,
+    fields: &FieldsNamed,
+    attribute: &str,
+) -> syn::Result<Vec<String>> {
+    fields
+        .named
+        .iter()
+        .map(|field| wire_name(field, attribute))
+        .collect()
+}
+
 /// The wire name of a field: its `rename` if it has one, else its identifier.
 ///
 /// Both the Kynos attribute and serde's are consulted, in that order, so that a
 /// type already carrying `#[serde(rename = "...")]` does not have to repeat
 /// itself — and cannot end up describing one name while serializing another.
-pub(crate) fn wire_name(field: &Field, attribute: &str) -> syn::Result<String> {
+fn wire_name(field: &Field, attribute: &str) -> syn::Result<String> {
     if let Some(renamed) = kynos_rename(field, attribute)? {
         return Ok(renamed);
     }

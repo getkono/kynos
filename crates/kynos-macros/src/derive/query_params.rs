@@ -5,7 +5,7 @@ use quote::quote;
 use syn::{DeriveInput, parse_macro_input};
 
 use crate::derive::{
-    common::{named_fields, reject_duplicate_names, wire_name},
+    common::{named_fields, reject_duplicate_names, wire_names},
     params::{Param, construct, decode_field, parameters_body, query_encode_body, query_pairs},
 };
 
@@ -19,11 +19,7 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
 
 fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "QueryParams")?;
-    let names = fields
-        .named
-        .iter()
-        .map(|field| wire_name(field, "param"))
-        .collect::<syn::Result<Vec<_>>>()?;
+    let names = wire_names(input, fields, "param")?;
     reject_duplicate_names(fields, &names, "query parameter")?;
 
     let name = &input.ident;
