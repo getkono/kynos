@@ -275,6 +275,32 @@ and writes:
 `discriminator` is emitted exactly when a tag is present, because that is when
 there is a property every branch carries for a consumer to switch on.
 
+### A tagged struct
+
+serde writes a named struct's `#[serde(tag = "...")]` before its fields, as the
+struct's serde name: its container `rename`, the serialize side where the rename
+is split, otherwise its identifier. `rename_all` reaches only the fields. The
+schema names the tag as one more required property whose `const` is that name,
+the shape an internally tagged branch has, with no `discriminator`, since a
+struct has no branches to tell apart.
+
+serde never reads the tag back: an open struct ignores the key, so serde also
+reads a document without it. The schema is deliberately narrower than that
+read. It is true of every document serde writes, and a client following it
+always sends the tag.
+
+A `transparent` struct writes no tag and stays its field's schema, and serde
+refuses the tag on a tuple or unit struct itself. Two shapes have no true
+schema, and the derive refuses each:
+
+- `deny_unknown_fields` beside the tag. serde refuses on read the tag it
+  writes, so the closed struct refuses every document it writes.
+- A named field serde writes or reads under the tag's own name, as its wire
+  name or an `alias`. serde writes the key twice and reads the tag's value back
+  as the field; it checks this for an enum's variants and not for a struct's.
+  A field serde skips in the colliding direction, or a flattened one, is no
+  conflict.
+
 ### Why untagged is refused
 
 `oneOf` without a discriminator is not a decoding rule. It says a payload
@@ -524,8 +550,8 @@ which it implements beside `Flatten` for two shapes. One is a struct with no
 flattened field serde reads, by serde's own test, so one it skips both ways
 does not count and a flattened `PhantomData` does, and with no container
 `#[serde(tag = "...")]`, which serde writes beside the fields and never takes
-([#208](https://github.com/getkono/kynos/issues/208) tracks the struct's own
-schema leaving that tag out). The other is an adjacently tagged enum, whose tag
+(see [A tagged struct](#a-tagged-struct) for the struct's own schema). The
+other is an adjacently tagged enum, whose tag
 and content keys serde names. An externally tagged enum, which serde would read
 by its variant key, is not `Flatten` at all, so a closed object flattening one
 reports both refusals, and the `ClosedFlatten` one says only that the type is
@@ -537,13 +563,15 @@ flattenable at all is refused with that reason too. An internally tagged
 newtype variant's payload is bounded by `Flatten` alone, since its tag-only
 object is never closed.
 
-A closed object has no true schema in two cases, so the derive refuses each
+A closed object has no true schema in three cases, so the derive refuses each
 one:
 
 - A flattened `#[schema(open)]` map. serde refuses every unknown key before the
   map sees it, so it reads the map empty and writes members it would refuse.
 - A named field serde writes and never reads, `skip_deserializing` alone. It is
   left out of the schema, and the closed object refuses what serde writes of it.
+- A struct's own `#[serde(tag = "...")]`, unless the struct is `transparent`.
+  serde writes the tag and refuses it on read ([A tagged struct](#a-tagged-struct)).
 
 An `alias` is not among them, because the object names every alias
 ([Aliases](#aliases)).
@@ -672,6 +700,8 @@ re-walked. A second call would reuse the same maps and agree with itself.
 | 35 | A described variant serde reads under an `alias` is named under its wire name and each distinct alias, read literally: each once in the compact `enum`; as an `enum` in place of the `const` of a tag property or an externally tagged unit variant; and as a property of an externally tagged object branch, present under exactly one by an `allOf` entry of a `oneOf` over `required` and closed by `unevaluatedProperties`. The `discriminator` maps no value | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde reads; and `an_externally_tagged_branch_is_keyed_by_exactly_one_of_its_names` in [`tests/aliases.rs`](../crates/kynos/tests/aliases.rs), against the `jsonschema` validator |
 | 36 | A name two described variants claim, by their own names or an `alias`, is named under the first alone, as serde reads it: an alias an earlier variant claims is dropped from the later one, and a variant whose own name an earlier one claims is refused, since serde writes it under a name that reads back as the other; a variant serde skips both ways claims nothing | [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde reads; `a_name_an_earlier_variant_claims_is_read_through_that_variant_alone` in [`tests/aliases.rs`](../crates/kynos/tests/aliases.rs), against the `jsonschema` validator; the derive's ledger and acceptance rows in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); and `tests/ui/macros/schema_variant_name_collision.rs` for the wording |
 | 37 | Under `#[serde(deny_unknown_fields)]`, a flattened field of an object rule 32 closes is bounded by `ClosedFlatten` beside `Flatten`, since serde takes a flattened key only through `deserialize_struct`: the derive implements it beside `Flatten` for a struct with no flattened field serde reads, a flattened `PhantomData` counting and one skipped both ways not, and no container `#[serde(tag = "...")]`, and for an adjacently tagged enum, never for an internally tagged one; a `#[serde(transparent)]` struct closes no object, so its flattened field is bounded by `Flatten` alone; `Box<T>` and `Arc<T>` carry it, `Problem` does not implement it, and an internally tagged newtype variant's payload is bounded by `Flatten` alone | the `ClosedFlatten`-claim and witness rows in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); `a_type_serde_reads_by_name_can_be_flattened_into_a_closed_object` in [`schema/tests.rs`](../crates/kynos/src/schema/tests.rs) for the wrappers, and a `compile_fail` doctest on the trait for `Problem`; `a_closed_object_reads_a_flattened_adjacently_tagged_enum_as_serde_does` in [`tests/flatten.rs`](../crates/kynos/tests/flatten.rs), against the `jsonschema` validator and serde's read; and `tests/ui/macros/schema_flatten_internally_tagged_denying_unknown_fields.rs` and `tests/ui/macros/schema_flatten_nested_flatten_denying_unknown_fields.rs` for the wording, and `tests/ui/macros/schema_flatten_externally_tagged_denying_unknown_fields.rs` for the two refusals a type that is not `Flatten` gets there |
+| 38 | A named struct's `#[serde(tag = "...")]` is a required property whose `const` is the struct's serde name, its container `rename`, the serialize side where the rename is split, otherwise its identifier, never through `rename_all`, with no `discriminator`; a flattened tagged struct's tag reaches the parent through its `$ref`; a `#[serde(transparent)]` struct writes no tag and is its field's schema; a tuple or unit struct is left to serde, which refuses the tag | `a_tagged_struct_names_its_tag_as_a_required_const`, `a_tagged_structs_tag_is_the_name_serde_writes` and `a_transparent_structs_tag_is_in_no_schema` in [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde writes and reads; `a_flattened_tagged_struct_holds_its_tag_through_the_parent` in [`tests/flatten.rs`](../crates/kynos/tests/flatten.rs), against the `jsonschema` validator; `a_tag_on_a_tuple_or_unit_struct_is_left_to_serde` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); and `tests/ui/pass/schema_tagged_struct.rs` |
+| 39 | A tagged named struct is refused under `#[serde(deny_unknown_fields)]` unless it is `#[serde(transparent)]`, and so is one holding a named field serde writes or reads under the tag's own name, as its wire name or an `alias`; a field serde skips in the colliding direction, skips both ways, or flattens is left alone | the derive's ledger and `a_tag_on_a_struct_with_a_true_schema_is_accepted` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs), and `tests/ui/macros/schema_tagged_struct_denying_unknown_fields.rs` and `tests/ui/macros/schema_tagged_struct_field_named_as_tag.rs` for the wording |
 
 ## Rationale
 
