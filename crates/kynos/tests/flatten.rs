@@ -124,6 +124,57 @@ fn a_flattened_struct_leaves_the_parents_own_properties_alone() {
     );
 }
 
+/// A tagged struct, whose tag serde writes as one more member.
+#[derive(Schema, Serialize)]
+#[serde(tag = "type")]
+struct StampedAudit {
+    at: String,
+}
+
+/// An open object carrying the tagged struct flattened.
+#[derive(Schema, Serialize)]
+struct Carrier {
+    id: u64,
+    #[serde(flatten)]
+    stamp: StampedAudit,
+}
+
+/// A flattened tagged struct's tag reaches the parent through its `$ref`.
+///
+/// serde writes the tag into the parent's object, so the parent's schema
+/// admits it, and holds it to the struct's name: a document naming another
+/// tag, or none, is not one serde writes. serde's read is not asked, since the
+/// parent is open and reads either.
+#[test]
+fn a_flattened_tagged_struct_holds_its_tag_through_the_parent() {
+    let carrier = Carrier {
+        id: 1,
+        stamp: StampedAudit {
+            at: "2026-01-01T00:00:00Z".to_owned(),
+        },
+    };
+    let refusals = refusals(&carrier);
+    assert!(
+        refusals.is_empty(),
+        "the type cannot produce an instance its own description accepts: {refusals:?}\n\
+         schema: {}",
+        emitted::<Carrier>()
+    );
+
+    let schema = emitted::<Carrier>();
+    let validator =
+        jsonschema::draft202012::new(&schema).expect("an emitted schema compiles as draft 2020-12");
+    for document in [
+        serde_json::json!({ "id": 1, "at": "t", "type": "Other" }),
+        serde_json::json!({ "id": 1, "at": "t" }),
+    ] {
+        assert!(
+            !validator.is_valid(&document),
+            "a tag serde never writes was accepted: {document} against {schema}"
+        );
+    }
+}
+
 /// An open flattened map describes the object the type writes.
 ///
 /// The declared `id` is a member the parent named, so the map's value schema
