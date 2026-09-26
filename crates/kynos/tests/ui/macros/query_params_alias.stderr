@@ -1,0 +1,5 @@
+error: an `alias` gives this field a second wire name, and a parameter has exactly one. Drop the `alias`, or make the name it carries the field's `rename`
+ --> tests/ui/macros/query_params_alias.rs:3:13
+  |
+3 |     #[serde(alias = "pageSize")]
+  |             ^^^^^
