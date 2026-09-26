@@ -19,13 +19,26 @@ use super::{
 /// string on the wire, under what its member declares, and describing it as
 /// anything else would be a claim the serializer contradicts. A longer tuple is
 /// the array serde writes, and a unit struct is `null`.
-pub(super) fn struct_body(fields: &Fields, container: &Container) -> TokenStream2 {
+///
+/// A named struct's `#[serde(tag = "...")]` is one more required property,
+/// whose `const` is `name`, the struct's serde name: serde writes it before
+/// the fields and ignores it on read, so the schema is narrower than what serde
+/// reads and true of all it writes. A transparent struct writes no tag.
+pub(super) fn struct_body(fields: &Fields, container: &Container, name: &str) -> TokenStream2 {
     if let (true, Some(field)) = (container.transparent, transparent_member(fields)) {
         return member_schema(field);
     }
 
     match fields {
-        Fields::Named(named) => object_body(&named.named, container, None),
+        Fields::Named(named) => {
+            let written = [name.to_owned()];
+            let tag = container
+                .tag
+                .as_deref()
+                .filter(|_| container.content.is_none())
+                .map(|tag| (tag, written.as_slice()));
+            object_body(&named.named, container, tag)
+        }
         Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => {
             member_schema(&unnamed.unnamed[0])
         }
@@ -75,8 +88,8 @@ pub(super) fn tuple_body(fields: &Punctuated<Field, Comma>, defaulted: bool) -> 
 ///
 /// `tag` is `(property, names)` for an internally tagged enum variant, which is
 /// an object whose fields are the variant's plus the one that says which
-/// variant it is, under any name serde reads it by. Closed as
-/// [`closed`](super::closed) says.
+/// variant it is, under any name serde reads it by, and for a tagged struct,
+/// under the one name serde writes. Closed as [`closed`](super::closed) says.
 pub(super) fn object_body(
     fields: &Punctuated<Field, Comma>,
     container: &Container,
