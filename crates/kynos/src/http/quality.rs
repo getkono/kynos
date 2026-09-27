@@ -21,24 +21,25 @@
 /// to round — a field that says something the grammar cannot express is one
 /// this parser declines to guess at.
 pub(crate) fn parse(value: &str) -> Option<u16> {
-    if value == "0" || value == "0.0" || value == "0.00" || value == "0.000" {
-        return Some(0);
-    }
-    if value == "1" || value == "1.0" || value == "1.00" || value == "1.000" {
-        return Some(1_000);
-    }
-    let digits = value.strip_prefix("0.")?;
-    if digits.is_empty() || digits.len() > 3 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+    let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
+    if fraction.len() > 3 || !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
-    digits
-        .parse::<u16>()
-        .ok()
-        .map(|quality| match digits.len() {
-            1 => quality * 100,
-            2 => quality * 10,
-            _ => quality,
-        })
+
+    match whole {
+        // `"0" [ "." 0*3DIGIT ]`: zero to three digits, each a place of
+        // thousandths, so `0.` is as much a zero as `0.000`.
+        "0" => Some(
+            fraction
+                .bytes()
+                .zip([100, 10, 1])
+                .map(|(digit, place)| u16::from(digit - b'0') * place)
+                .sum(),
+        ),
+        // `"1" [ "." 0*3("0") ]`: 1 admits only zeros after the point.
+        "1" => fraction.bytes().all(|byte| byte == b'0').then_some(1_000),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
