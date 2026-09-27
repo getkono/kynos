@@ -2855,3 +2855,108 @@ where
         "{style}: {schema}"
     );
 }
+
+// Struct-variant fields, against serde
+
+/// Per tagging, three enums whose one struct variant serde writes with its
+/// fields named by a different rule: by nothing under an enum `rename_all`,
+/// which serde applies to variant names alone; by the enum's
+/// `rename_all_fields`; and by the variant's own `rename_all` over a
+/// `rename_all_fields` it overrides.
+macro_rules! variant_fields {
+    ($($module:ident => $tagging:ident [$($serde:tt)*]),* $(,)?) => {
+        $(
+            mod $module {
+                #[derive(kynos::Schema, serde::Serialize)]
+                #[serde($($serde)* rename_all = "camelCase")]
+                pub(super) enum EnumRule {
+                    UserCreated { user_id: u8, made_at: u8 },
+                }
+
+                #[derive(kynos::Schema, serde::Serialize)]
+                #[serde($($serde)* rename_all_fields = "camelCase")]
+                pub(super) enum FieldsRule {
+                    UserCreated { user_id: u8, made_at: u8 },
+                }
+
+                #[derive(kynos::Schema, serde::Serialize)]
+                #[serde($($serde)* rename_all_fields = "kebab-case")]
+                pub(super) enum VariantRule {
+                    #[serde(rename_all = "camelCase")]
+                    UserCreated { user_id: u8, made_at: u8 },
+                }
+            }
+        )*
+
+        /// Under every tagging, a struct variant's field is named by the
+        /// variant's `rename_all`, else the enum's `rename_all_fields`, else
+        /// its identifier, and never by the enum's `rename_all`: serde's own
+        /// output is the oracle.
+        #[test]
+        fn a_struct_variants_fields_are_named_as_serde_names_them() {
+            $(
+                assert_variant_fields_named_as_serde_names(
+                    Tagging::$tagging,
+                    $module::EnumRule::UserCreated { user_id: 1, made_at: 2 },
+                );
+                assert_variant_fields_named_as_serde_names(
+                    Tagging::$tagging,
+                    $module::FieldsRule::UserCreated { user_id: 1, made_at: 2 },
+                );
+                assert_variant_fields_named_as_serde_names(
+                    Tagging::$tagging,
+                    $module::VariantRule::UserCreated { user_id: 1, made_at: 2 },
+                );
+            )*
+        }
+    };
+}
+
+variant_fields! {
+    external => External [],
+    internal => Internal [tag = "kind",],
+    adjacent => Adjacent [tag = "t", content = "c",],
+}
+
+/// Where a struct variant's fields travel under each of serde's taggings.
+#[derive(Debug, Clone, Copy)]
+enum Tagging {
+    /// In the object under the variant's name.
+    External,
+    /// Beside the tag, in the variant's own object.
+    Internal,
+    /// In the object under the content key, `c`.
+    Adjacent,
+}
+
+/// The object the only branch of `E`'s schema describes a variant's fields by
+/// names, in its properties and its required list, exactly the keys serde
+/// writes `value`'s fields under.
+fn assert_variant_fields_named_as_serde_names<E>(tagging: Tagging, value: E)
+where
+    E: SchemaTrait + serde::Serialize,
+{
+    use std::collections::BTreeSet;
+
+    let schema = emitted::<E>();
+    let branch = &schema["oneOf"][0];
+    let written = serde_json::to_value(value).expect("a variant serializes");
+    let (described, written) = match tagging {
+        Tagging::External => {
+            let name = keys(&written)[0];
+            (&branch["properties"][name], &written[name])
+        }
+        Tagging::Internal => (branch, &written),
+        Tagging::Adjacent => (&branch["properties"]["c"], &written["c"]),
+    };
+    let written: BTreeSet<&str> = keys(written).into_iter().collect();
+    let properties: BTreeSet<&str> = keys(&described["properties"]).into_iter().collect();
+    let required: BTreeSet<&str> = described["required"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{tagging:?}: expected a required list: {schema}"))
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert_eq!(properties, written, "{tagging:?}: {schema}");
+    assert_eq!(required, written, "{tagging:?}: {schema}");
+}
