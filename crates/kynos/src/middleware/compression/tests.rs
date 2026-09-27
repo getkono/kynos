@@ -80,6 +80,18 @@ fn every_negotiation_rule_the_specification_states_is_applied() {
         ),
         // Nothing left at all: this is the 406.
         ("everything refused", Some("*;q=0"), Negotiated::Nothing),
+        // A wildcard weight that is not a qvalue refuses every coding, but it
+        // is not the explicit `*;q=0` rule 2 needs to exclude identity.
+        (
+            "a wildcard weight above 1",
+            Some("*;q=1.5"),
+            Negotiated::Identity,
+        ),
+        (
+            "a wildcard weight of infinity",
+            Some("*;q=inf"),
+            Negotiated::Identity,
+        ),
         (
             "every coding and identity refused by name",
             Some("gzip;q=0, br;q=0, zstd;q=0, identity;q=0"),
