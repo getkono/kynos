@@ -1347,7 +1347,7 @@ point:
 | `expose_headers(Any / list)` | `expose_any_header`, `expose_headers` |
 | `max_age(Duration)` | `max_age` |
 | `allow_credentials(bool)` | `allow_credentials` |
-| `allow_methods(Any / list / mirror_request)` | derived from the operations the covering scope declares; `allow_methods` overrides |
+| `allow_methods(Any / list / mirror_request)` | derived from the methods the covering scope declares, plus the HEAD each covered GET answers; `allow_methods` overrides |
 | `vary(list)` | derived; a declared header name is a `const`, so it is not a builder's to set |
 | `allow_credentials(predicate)`, `max_age(dynamic)` | absent |
 | `allow_private_network` | absent |
@@ -1356,7 +1356,8 @@ point:
 The last four rows are decisions rather than gaps.
 
 `allow_methods` is derived because the alternative is a second place to state
-what the path already declares, and two statements of one fact drift. `vary`
+what the router already answers on the path, and two statements of one fact
+drift. `vary`
 is derived because `HeaderParams::VARIES` is a `const` the collision check
 reads while the program is compiled; a value a builder set at run time is not
 one the compiler can check two interceptors against.

@@ -114,7 +114,7 @@ fn a_permitted_preflight_advertises_exactly_the_methods_its_scope_covers() {
 
 /// The override is for a deployment fronting routes Kynos does not serve.
 #[test]
-fn an_overridden_method_list_replaces_the_declared_one() {
+fn an_overridden_method_list_replaces_the_covered_one() {
     let config = CorsConfig {
         methods: Some(vec![Method::Patch]),
         ..named()

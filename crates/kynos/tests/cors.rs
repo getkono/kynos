@@ -278,8 +278,9 @@ async fn a_cross_origin_response_varies_on_the_origin_it_answered() {
     );
 }
 
-/// A group-scoped `Cors` advertises the methods *that group* declares, not
-/// every method on the path. Scope in the router is scope in the answer, which
+/// A group-scoped `Cors` advertises the methods *that group* covers — its
+/// declared methods and the `HEAD` each `GET` answers — not every method on
+/// the path. Scope in the router is scope in the answer, which
 /// is the property shape (a) of the design could not have preserved.
 #[tokio::test]
 async fn a_group_scoped_cors_advertises_only_the_methods_it_covers() {
