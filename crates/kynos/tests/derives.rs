@@ -6,10 +6,11 @@
 //! that difference existed, no example, doctest or compile-fail case could name
 //! a user type at all.
 //!
-//! What a derived decoder does is checked here only where the emitted code
-//! alone decides it and no other target runs it: the query decoder's refusal
-//! of a declared value that is not UTF-8. What *is* checked beyond compiling is
-//! the description a derive emits, and what the default
+//! A derive is a type-level surface, so what a derived decoder does is not
+//! checked here, with one recorded exception: the query decoder's refusal of a
+//! declared value that is not UTF-8, which no other target exercises. Its test
+//! calls `DecodeQuery::decode` directly, with no server. What *is* checked
+//! beyond compiling is the description a derive emits, and what the default
 //! `QueryParams::parameters` makes of a derived schema.
 
 #![cfg(feature = "macros")]
@@ -1220,8 +1221,9 @@ fn a_oneof_or_ref_schema_projects_to_no_parameter() {
 
 // --- The derived query decoder reads only octets that are text -------------
 //
-// The one runtime property checked here: no other target runs the emitted
-// decoder, and the macro crate cannot.
+// The one runtime property checked here, because no other target exercises
+// this refusal and the macro crate cannot run an expansion. It calls the
+// derived decoder directly, with no server.
 
 #[derive(Schema, QueryParams)]
 struct Named {
