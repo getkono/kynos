@@ -473,7 +473,8 @@ mod schema {
 
     /// A split `rename` is refused on every member serde both writes and
     /// reads, not only on a struct's field: a variant, and a field of a
-    /// variant serde writes.
+    /// variant serde writes. A `rename` giving one side is split too: its other
+    /// side is the identifier without its `r#` under `rename_all`.
     ///
     /// Beside the ledger rather than in it: the ledger's row proves the site
     /// fires, and these prove each member reaches it.
@@ -505,16 +506,72 @@ mod schema {
                     ),
                     "serde writes this field as `a` and reads it as `b`",
                 ),
+                case(
+                    "a split `rename` whose written side no `alias` covers",
+                    quote::quote!(
+                        struct Stamp {
+                            #[serde(rename(serialize = "a", deserialize = "b"), alias = "c")]
+                            at: u64,
+                        }
+                    ),
+                    "serde writes this field as `a` and reads it as `b`",
+                ),
+                case(
+                    "a split `rename` whose written side is an `alias` an earlier variant claims",
+                    quote::quote!(
+                        enum Change {
+                            #[serde(alias = "x")]
+                            Now,
+                            #[serde(rename(serialize = "x", deserialize = "y"), alias = "x")]
+                            Queued,
+                        }
+                    ),
+                    "serde writes this variant as `x` and reads it as `y`",
+                ),
+                case(
+                    "a `rename` giving only the serialize side of a field",
+                    quote::quote!(
+                        #[serde(rename_all = "camelCase")]
+                        struct Stamp {
+                            #[serde(rename(serialize = "a"))]
+                            r#type_name: u64,
+                        }
+                    ),
+                    "serde writes this field as `a` and reads it as `typeName`",
+                ),
+                case(
+                    "a `rename` giving only the deserialize side of a field",
+                    quote::quote!(
+                        struct Stamp {
+                            #[serde(rename(deserialize = "b"))]
+                            r#type: u64,
+                        }
+                    ),
+                    "serde writes this field as `type` and reads it as `b`",
+                ),
+                case(
+                    "a `rename` giving only the deserialize side of a variant",
+                    quote::quote!(
+                        #[serde(rename_all = "snake_case")]
+                        enum Change {
+                            Now,
+                            #[serde(rename(deserialize = "b"))]
+                            QueuedLater,
+                        }
+                    ),
+                    "serde writes this variant as `queued_later` and reads it as `b`",
+                ),
             ],
             expand_inner,
         );
     }
 
-    /// A split `rename` is refused only where serde uses both sides, so each
-    /// member serde names one way is accepted: sides that agree, a field serde
-    /// only reads or only writes, a field of a variant serde never writes, a
-    /// flattened field, a transparent struct's field, and a variant serde only
-    /// reads.
+    /// A split `rename` is refused only where serde uses both sides and never
+    /// reads the written one, so each member one schema is true of is accepted:
+    /// sides that agree, a field or a variant whose written side is also an
+    /// `alias`, a field serde only reads or only writes, a field of a variant
+    /// serde never writes, a flattened field, a transparent struct's field,
+    /// and a variant serde only reads.
     #[test]
     fn a_split_rename_one_schema_is_true_of_is_accepted() {
         for declaration in [
@@ -522,6 +579,19 @@ mod schema {
                 struct Stamp {
                     #[serde(rename(serialize = "a", deserialize = "a"))]
                     at: u64,
+                }
+            ),
+            quote::quote!(
+                struct Stamp {
+                    #[serde(rename(serialize = "a", deserialize = "b"), alias = "a")]
+                    at: u64,
+                }
+            ),
+            quote::quote!(
+                enum Change {
+                    Now,
+                    #[serde(rename(serialize = "x", deserialize = "y"), alias = "x")]
+                    Queued,
                 }
             ),
             quote::quote!(
@@ -604,7 +674,7 @@ mod schema {
                         Queued,
                     }
                 ),
-                "this variant's own name",
+                "serde reads `Now`, this variant's own name",
             )],
             expand_inner,
         );

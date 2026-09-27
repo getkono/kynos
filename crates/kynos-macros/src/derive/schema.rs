@@ -915,11 +915,16 @@ fn reject_shadowed_variant(input: &DeriveInput) -> syn::Result<()> {
 }
 
 /// A member serde both writes and reads is refused where a split `rename`
-/// gives the two directions different names.
+/// gives the two directions different names and serde never reads the written
+/// one.
 ///
 /// One schema serves both directions, so no name it gives the member is true of
 /// both: under the written name it describes a request serde refuses, under the
-/// read name a response serde never writes. A member serde uses one way is
+/// read name a response serde never writes. Where serde also reads the written
+/// name, through an `alias`, the member is described under every name serde
+/// reads it as, the written one among them, which is true both ways; a variant's
+/// alias an earlier variant claims is not read as it, so it does not count. A
+/// member serde uses one way is
 /// named by that side, so it is exempt: a field serde skips in either
 /// direction, every field of a variant serde never writes, and a variant serde
 /// only reads. A flattened field's own name is neither written nor read, and
@@ -946,30 +951,39 @@ fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
             let ident = field.ident.as_ref()?;
             let written = field_name(field, &container);
             let read = field_read_name(field, &container);
-            (written != read).then(|| {
+            let unread = !aliases::read_names(field, &container).contains(&written);
+            unread.then(|| {
                 let skip = "`skip_serializing` or `skip_deserializing` the field";
                 ("field", skip, &field.attrs, ident.span(), written, read)
             })
         });
     let variant = match &input.data {
-        Data::Enum(data) => described_variants(data)
-            .into_iter()
-            .filter(|variant| is_written(variant))
-            .find_map(|variant| {
-                let written = variant_name(variant, &container);
-                let read = variant_read_name(variant, &container);
-                (written != read).then(|| {
-                    let skip = "`skip_serializing` the variant";
-                    (
-                        "variant",
-                        skip,
-                        &variant.attrs,
-                        variant.ident.span(),
-                        written,
-                        read,
-                    )
+        Data::Enum(data) => {
+            let variants = described_variants(data);
+            let read_names = aliases::variants_read_names(&variants, &container);
+            variants
+                .into_iter()
+                .zip(read_names)
+                .filter(|(variant, _)| is_written(variant))
+                .find_map(|(variant, read_names)| {
+                    let written = variant_name(variant, &container);
+                    let read = variant_read_name(variant, &container);
+                    // An unsplit name an earlier variant claims is
+                    // `reject_shadowed_variant`'s to refuse.
+                    let unread = written != read && !read_names.contains(&written);
+                    unread.then(|| {
+                        let skip = "`skip_serializing` the variant";
+                        (
+                            "variant",
+                            skip,
+                            &variant.attrs,
+                            variant.ident.span(),
+                            written,
+                            read,
+                        )
+                    })
                 })
-            }),
+        }
         _ => None,
     };
 
@@ -980,9 +994,9 @@ fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
     Err(syn::Error::new(
         span,
         format!(
-            "serde writes this {member} as `{written}` and reads it as `{read}`, so no schema \
-             naming it is true in both directions. Give both sides one name with \
-             `rename = \"...\"`, or {skip}"
+            "serde writes this {member} as `{written}` and reads it as `{read}`, never as \
+             `{written}`, so no schema naming it is true in both directions. Give both sides \
+             one name with `rename = \"...\"`, or {skip}"
         ),
     ))
 }

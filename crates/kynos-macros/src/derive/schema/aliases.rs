@@ -59,9 +59,9 @@ pub(super) fn variants_read_names(
 /// The first of `variants` whose own name an earlier one claims, with that
 /// earlier variant: serde reads the name as the earlier one.
 ///
-/// The own name is the read name: a variant serde both writes and reads has
-/// one name once `reject_split_rename` has run, and one serde only reads is
-/// named by the side it is read under.
+/// The own name is the read name: once `reject_split_rename` has run, a
+/// variant serde both writes and reads is written under a name it is read
+/// under, and one serde only reads is named by the side it is read under.
 pub(super) fn shadowed_variant<'a>(
     variants: &[&'a Variant],
     container: &Container,
