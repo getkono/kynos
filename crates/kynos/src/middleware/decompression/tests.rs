@@ -1,7 +1,30 @@
-//! The parts of decompression that decide before anything is read.
+//! The parts of decompression that decide before anything is read, and what it
+//! hands on when the read fails.
+
+use std::{
+    io,
+    pin::Pin,
+    task::{Context, Poll},
+};
+
+use bytes::Bytes;
+use http_body::Frame;
+use http_body_util::BodyExt;
 
 use super::{Coding, Decompression, MAX_CODINGS, declared};
-use crate::http;
+use crate::{
+    Router,
+    extract::{
+        body::{binary::Binary, text::Text},
+        media::OctetStream,
+    },
+    http::{
+        self, Request, Response, StatusCode,
+        body::{Body, BoxError},
+    },
+    openapi::{Method, PathTemplate},
+    router::{endpoint::builder::EndpointBuilder, service::Service},
+};
 
 /// Builds a header map carrying `values` as `Content-Encoding`, one field line
 /// each -- which is a shape a client may legitimately send, and which a parser
@@ -152,4 +175,104 @@ fn a_ratio_that_would_overflow_falls_back_to_the_absolute_limit() {
     let decompression = Decompression::new(1_000).max_ratio(u64::MAX);
 
     assert_eq!(decompression.bound(u64::MAX), 1_000);
+}
+
+/// One data frame, then the connection fails.
+///
+/// Hand-written through the `pub(crate)` `Body::from_body` for the reason
+/// `limits/tests.rs` writes its own: no public surface builds a body that
+/// fails.
+struct Failing {
+    polls: u8,
+}
+
+impl http_body::Body for Failing {
+    type Data = Bytes;
+    type Error = BoxError;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+        self.polls += 1;
+        Poll::Ready(match self.polls {
+            1 => Some(Ok(Frame::data(Bytes::from_static(b"the first half of")))),
+            2 => Some(Err(Box::new(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "peer went away",
+            )))),
+            _ => None,
+        })
+    }
+}
+
+/// Accepts whatever octets arrive, which is what makes a truncation visible:
+/// nothing here parses, so nothing here would notice one.
+async fn upload(body: Binary<OctetStream>) -> Text {
+    Text(format!("stored {} octets", body.into_inner().len()))
+}
+
+/// The upload operation, under `Decompression` when `limit` names one.
+fn service(limit: Option<u64>) -> Service<()> {
+    let endpoint = EndpointBuilder::new(
+        Method::Post,
+        PathTemplate::parse("/upload").expect("a valid path"),
+        upload,
+    );
+    let router = Router::<()>::new().mount(endpoint);
+    match limit {
+        Some(limit) => router.intercept(Decompression::new(limit)).build(()),
+        None => router.build(()),
+    }
+    .expect("a describable router")
+}
+
+/// An upload that fails part-way, under `coding` when it names one.
+fn interrupted(coding: Option<&str>) -> Request {
+    let mut builder = ::http::Request::builder()
+        .method("POST")
+        .uri("/upload")
+        .header(http::header::CONTENT_TYPE, "application/octet-stream");
+    if let Some(coding) = coding {
+        builder = builder.header(http::header::CONTENT_ENCODING, coding);
+    }
+    builder
+        .body(Body::from_body(Failing { polls: 0 }))
+        .expect("a well-formed request")
+}
+
+/// A response's status and body bytes.
+async fn read(response: Response) -> (StatusCode, Bytes) {
+    let status = response.status();
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("a response body that completes")
+        .to_bytes();
+    (status, body)
+}
+
+/// Buffering the body to decode it must not turn a refused request into an
+/// accepted one, nor into a different refusal: the extractor beneath answers
+/// exactly as it does with no `Decompression` mounted. Uncoded, because that
+/// body reaches the handler with no decode to notice the truncation; and coded,
+/// because decoding the part that arrived would answer for a body the client
+/// never sent.
+#[tokio::test]
+async fn a_body_that_fails_part_way_is_refused_as_it_is_without_decompression() {
+    for coding in [None, Some("gzip")] {
+        let (plain, plain_body) = read(service(None).call(interrupted(coding)).await).await;
+        let (decoded, decoded_body) =
+            read(service(Some(1024)).call(interrupted(coding)).await).await;
+
+        assert_eq!(plain, StatusCode::BAD_REQUEST, "coding {coding:?}");
+        assert_eq!(
+            decoded,
+            plain,
+            "coding {coding:?}: {}",
+            String::from_utf8_lossy(&decoded_body)
+        );
+        assert_eq!(decoded_body, plain_body, "coding {coding:?}");
+    }
 }
