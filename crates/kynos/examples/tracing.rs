@@ -37,8 +37,10 @@
 //! * **`on_panic` is the third hook, and the one easily left out.** Its default
 //!   implementation discards the payload, so an observer that implements only
 //!   the first two is silently blind to exactly the traffic worth investigating.
-//!   `route` is an `Option` for the same reason: a request that matched no
-//!   operation is still worth a line.
+//!   Its `route` is always `Some`, since only a routed operation runs anything
+//!   that can panic; the fallback below is there only because the parameter
+//!   has the type it has on the other hooks, where a request that matched
+//!   nothing is still worth a line.
 //! * **`on_response` is not the end of the request, and `on_disconnect` is why
 //!   the difference matters.** The closing event fires when the head is ready,
 //!   so its `latency` measures producing a response rather than delivering one
