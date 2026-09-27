@@ -80,6 +80,13 @@ fn every_negotiation_rule_the_specification_states_is_applied() {
         ),
         // Nothing left at all: this is the 406.
         ("everything refused", Some("*;q=0"), Negotiated::Nothing),
+        // With no wildcard, a coding the field does not list is unacceptable
+        // too, so excluding identity alone leaves nothing.
+        (
+            "identity alone refused",
+            Some("identity;q=0"),
+            Negotiated::Nothing,
+        ),
         // A wildcard weight that is not a qvalue refuses every coding, but it
         // is not the explicit `*;q=0` rule 2 needs to exclude identity.
         (
