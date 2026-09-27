@@ -23,11 +23,25 @@ fn aliases(token: &str) -> &'static [&'static str] {
 ///
 /// A weight is `0..=1000`: RFC 9110 section 12.4.2 bounds a qvalue at three
 /// decimal places, so thousandths state every one exactly. A weight the
-/// grammar cannot express is `0`, a refusal. `None` when neither the token nor a wildcard appears, which is what
-/// distinguishes "not mentioned" from "mentioned and refused" — the difference
-/// between the two is the whole of `q=0`.
+/// grammar cannot express is `0`, a refusal. `None` when neither the token nor
+/// a wildcard appears, which is what distinguishes "not mentioned" from
+/// "mentioned and refused" — the difference between the two is the whole of
+/// `q=0`.
 #[must_use]
 pub fn quality(accept: &str, token: &str) -> Option<u16> {
+    entry(accept, token).map(|entry| entry.weight.unwrap_or(0))
+}
+
+/// The entry that speaks for a token: its own, else the wildcard.
+struct Entry {
+    /// Whether it is the wildcard rather than the token itself.
+    wildcard: bool,
+    /// Its weight in thousandths; `None` when it is not a qvalue.
+    weight: Option<u16>,
+}
+
+/// Finds the entry that speaks for `token`, as `accept` states it.
+fn entry(accept: &str, token: &str) -> Option<Entry> {
     let mut wildcard = None;
 
     for entry in accept.split(',') {
@@ -45,20 +59,24 @@ pub fn quality(accept: &str, token: &str) -> Option<u16> {
                     .strip_prefix("q=")
                     .or_else(|| parameter.strip_prefix("Q="))
             })
-            .map_or(1_000, |weight| {
-                super::quality::parse(weight.trim()).unwrap_or(0)
-            });
+            .map_or(Some(1_000), |weight| super::quality::parse(weight.trim()));
 
         if name.eq_ignore_ascii_case(token)
             || aliases(token)
                 .iter()
                 .any(|alias| alias.eq_ignore_ascii_case(name))
         {
-            return Some(weight);
+            return Some(Entry {
+                wildcard: false,
+                weight,
+            });
         }
 
         if name == "*" {
-            wildcard = Some(weight);
+            wildcard = Some(Entry {
+                wildcard: true,
+                weight,
+            });
         }
     }
 
@@ -103,11 +121,20 @@ pub fn preferred<'a>(accept: &str, available: &[&'a str]) -> Option<&'a str> {
 /// RFC 9110 section 12.5.3 rule 2: identity "is acceptable by default unless
 /// specifically excluded by the Accept-Encoding header field stating either
 /// `identity;q=0` or `*;q=0` without a more specific entry for `identity`".
-/// [`quality`] falls back to the wildcard, so both spellings land here as
-/// `Some(0)`.
+/// Both spellings read as `0`. A wildcard weight that is not a qvalue, such as
+/// `*;q=1.5`, refuses every coding it speaks for but states no `*;q=0`, so it
+/// leaves identity at its default of 1000; an `identity` entry's own weight
+/// that is not a qvalue refuses identity, as it would any coding.
 #[must_use]
 pub fn identity_quality(accept: &str) -> u16 {
-    quality(accept, "identity").unwrap_or(1_000)
+    match entry(accept, "identity") {
+        None
+        | Some(Entry {
+            wildcard: true,
+            weight: None,
+        }) => 1_000,
+        Some(Entry { weight, .. }) => weight.unwrap_or(0),
+    }
 }
 
 #[cfg(test)]

@@ -263,8 +263,9 @@ fn negotiate(headers: &http::HeaderMap) -> Negotiated {
 
     // Rule 2: identity "is acceptable by default unless specifically excluded
     // by the Accept-Encoding header field stating either `identity;q=0` or
-    // `*;q=0` without a more specific entry for `identity`". `quality` falls
-    // back to the wildcard, so both spellings land here as `Some(0)`.
+    // `*;q=0` without a more specific entry for `identity`". Both spellings
+    // read as 0; a wildcard weight that is not a qvalue refuses every coding
+    // above but is neither, so it leaves identity acceptable.
     let identity = crate::http::coding::identity_quality(accept);
 
     let Some((coding, weight)) = best else {
