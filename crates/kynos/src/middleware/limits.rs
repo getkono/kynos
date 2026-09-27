@@ -6,15 +6,7 @@
 //! that rides that status — `Retry-After` on a 503 — is described by the same
 //! type that sets it, rather than by a separate entry keyed on the status.
 
-use std::{
-    fmt,
-    marker::PhantomData,
-    num::NonZeroUsize,
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::{fmt, marker::PhantomData, num::NonZeroUsize, sync::Arc, time::Duration};
 
 use bytes::{Bytes, BytesMut};
 use http_body_util::BodyExt;
@@ -221,35 +213,6 @@ fn declared_length(headers: &http::HeaderMap) -> Option<u64> {
         .ok()
 }
 
-/// What arrived before a request body failed, followed by the failure.
-///
-/// Handed on in place of the body so the extractor beneath sees the read fail
-/// exactly where it would with no limit mounted.
-struct Interrupted {
-    arrived: Option<Bytes>,
-    error: Option<BoxError>,
-}
-
-impl http_body::Body for Interrupted {
-    type Data = Bytes;
-    type Error = BoxError;
-
-    fn poll_frame(
-        self: Pin<&mut Self>,
-        _: &mut Context<'_>,
-    ) -> Poll<Option<Result<http_body::Frame<Bytes>, BoxError>>> {
-        let this = self.get_mut();
-        if let Some(arrived) = this.arrived.take() {
-            return Poll::Ready(Some(Ok(http_body::Frame::data(arrived))));
-        }
-        Poll::Ready(this.error.take().map(Err))
-    }
-
-    fn is_end_stream(&self) -> bool {
-        self.arrived.is_none() && self.error.is_none()
-    }
-}
-
 /// Reads `body` while the running total stays within `limit`, returning the
 /// body to hand on.
 ///
@@ -268,11 +231,7 @@ async fn read_capped(mut body: Body, limit: u64) -> Option<Body> {
         let frame = match frame {
             Ok(frame) => frame,
             Err(error) => {
-                let arrived = (!collected.is_empty()).then(|| collected.freeze());
-                return Some(Body::from_body(Interrupted {
-                    arrived,
-                    error: Some(error),
-                }));
+                return Some(Body::failed_after(collected.freeze(), error));
             }
         };
         let Ok(data) = frame.into_data() else {
