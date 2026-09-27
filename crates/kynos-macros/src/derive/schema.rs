@@ -993,28 +993,50 @@ fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
     ))
 }
 
-/// A split case rule whose sides differ, one side left out included: a
-/// container `rename_all(serialize = ..., deserialize = ...)`, an enum's
-/// `rename_all_fields(...)`, or a variant's own `rename_all(...)`.
+/// A split case rule whose sides differ, one side left out included, where it
+/// names a member serde both writes and reads: a container
+/// `rename_all(serialize = ..., deserialize = ...)`, an enum's
+/// `rename_all_fields(...)` that reaches a struct variant, or the own
+/// `rename_all(...)` of a variant serde both writes and reads.
 ///
-/// Each rule reaches every member serde both writes and reads under it, and
-/// one schema describes both directions, so the form is refused as the
-/// parameter derives refuse a split `rename_all`. Sides that agree are the
-/// `key = "..."` they spell, and [`Container`] and [`variant_rename_all`] read
-/// them so. Runs before any check that reads a [`Container`].
+/// Such a rule gives a member two wire names, and one schema describes both
+/// directions, so the form is refused as the parameter derives refuse a split
+/// `rename_all`. A rule naming only members serde uses one way is not, as
+/// [`reject_split_rename`] exempts them: a variant serde skips both ways is in
+/// no schema, a variant serde only reads has its fields named by its rule's
+/// deserialize side in [`Container::fields_of`], and a `rename_all_fields`
+/// every struct variant overrides on both sides, or on an enum with none,
+/// names nothing. A variant serde only writes is refused before this runs, by
+/// [`reject_unread_variant`]. Sides that agree are the `key = "..."` they
+/// spell, and [`Container`] and [`variant_rename_all`] read them so. Runs
+/// before any check that reads a [`Container`].
 fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
     let variants = match &input.data {
         Data::Enum(data) => data.variants.iter().collect(),
         _ => Vec::new(),
     };
+    // A struct variant whose own rule leaves a side to `rename_all_fields`.
+    let fields_reached = variants.iter().any(|variant| {
+        let own = variant_rename_all(variant);
+        matches!(variant.fields, Fields::Named(_))
+            && (own.serialize.is_none() || own.deserialize.is_none())
+    });
     let rules = [
-        (&input.attrs, "rename_all", "every member"),
-        (&input.attrs, "rename_all_fields", "every variant field"),
+        Some((&input.attrs, "rename_all", "every member")),
+        fields_reached.then_some((
+            &input.attrs,
+            "rename_all_fields",
+            "every variant field it reaches",
+        )),
     ]
     .into_iter()
+    .flatten()
     .chain(
         variants
             .into_iter()
+            .filter(|variant| {
+                is_written(variant) && !serde_flag(&variant.attrs, &["skip_deserializing"])
+            })
             .map(|variant| (&variant.attrs, "rename_all", "every field of this variant")),
     );
     for (attrs, key, reach) in rules {
@@ -1635,12 +1657,25 @@ impl Container {
 
     /// The container a variant's fields are named and described under: this
     /// one, with the variant's own `rename_all`, else the enum's
-    /// `rename_all_fields`, in place of the enum's `rename_all`, which serde
-    /// applies to variant names alone (`serde_derive` 1.0.229,
+    /// `rename_all_fields`, side by side, in place of the enum's `rename_all`,
+    /// which serde applies to variant names alone (`serde_derive` 1.0.229,
     /// `internals/ast.rs`).
+    ///
+    /// The side is the one serde uses the variant's fields on: the serialize
+    /// side for a variant serde writes, and the deserialize side for one it
+    /// only reads. [`reject_split_rename_all`] refuses a variant rule whose
+    /// sides differ where serde uses both, and a split `rename_all_fields`
+    /// reaching any struct variant, so the serialize side read into
+    /// [`Container::rename_all_fields`] is its deserialize side too.
     fn fields_of(&self, variant: &Variant) -> Self {
+        let own = variant_rename_all(variant);
+        let own = if is_written(variant) {
+            own.serialize
+        } else {
+            own.deserialize
+        };
         Self {
-            rename_all: variant_rename_all(variant).or_else(|| self.rename_all_fields.clone()),
+            rename_all: own.or_else(|| self.rename_all_fields.clone()),
             ..self.clone()
         }
     }

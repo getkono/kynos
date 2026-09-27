@@ -97,11 +97,12 @@ fn serde_renames(attrs: &[syn::Attribute]) -> Sides {
     serde_sides(attrs, "rename")
 }
 
-/// A variant's own `rename_all` style, on the serialize side where it is
-/// split: the rule serde names the variant's fields by ahead of the enum's
-/// `rename_all_fields`. `reject_split_rename_all` refuses sides that differ.
-pub(super) fn variant_rename_all(variant: &Variant) -> Option<String> {
-    serde_sides(&variant.attrs, "rename_all").serialize
+/// A variant's own `rename_all` style on each side: the rule serde names the
+/// variant's fields by on that side ahead of the enum's `rename_all_fields`.
+/// `reject_split_rename_all` refuses sides that differ on a variant serde both
+/// writes and reads.
+pub(super) fn variant_rename_all(variant: &Variant) -> Sides {
+    serde_sides(&variant.attrs, "rename_all")
 }
 
 /// The [`sides`] of `key` in `#[serde(...)]` lists, the last one written.
