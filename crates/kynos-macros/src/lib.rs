@@ -520,6 +520,10 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// attribute renames is a parameter under one name and a property under
 /// another.
 ///
+/// A declared parameter whose percent-decoded value is not UTF-8 is refused
+/// with the group's `QueryRejection`, naming it, as a value that fails to parse
+/// is; a parameter the group does not declare is ignored, whatever its octets.
+///
 /// # Rejected, because a parameter has one name
 ///
 /// - `#[serde(alias = "...")]` on any field: serde would read the field under
