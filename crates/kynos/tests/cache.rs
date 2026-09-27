@@ -459,7 +459,7 @@ async fn a_body_of_exactly_the_bound_is_stored() {
 /// A representation whose read fails part-way is neither stored nor forwarded
 /// as complete.
 mod failing {
-    use std::io;
+    use std::{io, time::Duration};
 
     use bytes::Bytes;
     use http_body_util::BodyExt;
@@ -467,7 +467,7 @@ mod failing {
         Router,
         extract::media::OctetStream,
         http::{Request, StatusCode, body::Body, header},
-        middleware::cache::Cache,
+        middleware::{cache::Cache, limits::BodyTimeout},
         response::range::{
             served::{Conditions, Delivery, Served},
             source::{ByteSource, SPAN},
@@ -551,6 +551,68 @@ mod failing {
                 .expect("no test panics while holding this")
                 .is_empty(),
             "a representation that failed part-way was stored"
+        );
+    }
+
+    /// An object store that stops answering after the first span.
+    struct Stalled;
+
+    impl ByteSource for Stalled {
+        type Error = io::Error;
+
+        async fn complete_length(&self) -> Result<u64, Self::Error> {
+            Ok(LENGTH)
+        }
+
+        async fn read_span(&self, first: u64, last: u64) -> Result<Bytes, Self::Error> {
+            if first > 0 {
+                std::future::pending::<()>().await;
+            }
+            let length = usize::try_from(last - first + 1).expect("a span fits in memory");
+            Ok(Bytes::from(vec![b'a'; length]))
+        }
+    }
+
+    #[kynos::get("/stalled")]
+    async fn stalled(conditions: Conditions) -> Delivery<OctetStream> {
+        Served::<_, OctetStream>::new(Stalled)
+            .cache_control("max-age=60")
+            .deliver(&conditions)
+            .await
+            .expect("the length is known")
+    }
+
+    /// `BodyTimeout` beneath `Cache` bounds the read `Cache` buffers, and the
+    /// body it ends reaches the client failing, not as a complete response.
+    #[tokio::test]
+    async fn a_body_timeout_beneath_the_cache_fails_a_stalled_read_for_the_client() {
+        let store = Stored::default();
+        let service = Router::<()>::new()
+            .mount(kynos::routes![stalled])
+            .intercept(Cache::new(store.clone()).namespace("test"))
+            .intercept(BodyTimeout::idle(Duration::from_millis(100)))
+            .build(())
+            .expect("a describable router");
+
+        let mut request = Request::new(Body::empty());
+        *request.uri_mut() = "/stalled".parse().expect("a usable request target");
+        let read = tokio::time::timeout(Duration::from_secs(10), async {
+            service.call(request).await.into_body().collect().await
+        })
+        .await
+        .expect("the timer beneath the cache bounded the buffered read");
+
+        let failure = read
+            .expect_err("a stalled read reached the client as a complete body")
+            .to_string();
+        assert!(failure.contains("did not finish"), "{failure}");
+        assert!(
+            store
+                .0
+                .lock()
+                .expect("no test panics while holding this")
+                .is_empty(),
+            "a representation the timer ended was stored"
         );
     }
 }
