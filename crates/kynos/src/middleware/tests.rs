@@ -223,3 +223,53 @@ fn a_group_encoding_what_it_declared_is_written() {
         Some(&HeaderValue::from_static("gzip"))
     );
 }
+
+/// Removing a field the group never declared fails the build.
+///
+/// `remove_declared` is held to the rule `with_headers` writes under, so an
+/// interceptor cannot strip a field some other group owns behind a name its
+/// own `NAMES` never stated. Debug only, for the reason the case above gives.
+#[cfg(all(debug_assertions, feature = "compression"))]
+#[test]
+#[should_panic(expected = "which its `NAMES` does not declare")]
+fn a_group_removing_an_undeclared_field_is_refused() {
+    struct DeclaresEncoding;
+
+    impl HeaderParams for DeclaresEncoding {
+        const NAMES: &'static [&'static str] = &["content-encoding"];
+    }
+
+    let mut continued = Continued::new(Response::new(crate::http::body::Body::empty()));
+
+    continued.remove_declared::<DeclaresEncoding>(&header::CONTENT_LENGTH);
+}
+
+/// The control: removing a field the group declared takes it off the response.
+///
+/// Without it the case above would pass on any panic at all, and a removal
+/// that did nothing would go unnoticed.
+#[cfg(feature = "compression")]
+#[test]
+fn a_group_removing_a_declared_field_removes_it() {
+    struct DeclaresLength;
+
+    impl HeaderParams for DeclaresLength {
+        const NAMES: &'static [&'static str] = &["content-length"];
+    }
+
+    let mut response = Response::new(crate::http::body::Body::empty());
+    response
+        .headers_mut()
+        .insert(header::CONTENT_LENGTH, HeaderValue::from_static("5"));
+    let mut continued = Continued::new(response);
+
+    continued.remove_declared::<DeclaresLength>(&header::CONTENT_LENGTH);
+
+    assert_eq!(
+        continued
+            .into_response()
+            .headers()
+            .get(header::CONTENT_LENGTH),
+        None
+    );
+}
