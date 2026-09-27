@@ -378,16 +378,19 @@ fn query_encoder() -> TokenStream2 {
     }
 }
 
-/// The reverse: the pairs a raw query string carries, decoded.
+/// The reverse: the pairs a raw query string carries, each half decoded to
+/// octets, so a name is compared as octets.
 ///
 /// `+` is a space, which is what `application/x-www-form-urlencoded` says and
 /// what every client that builds a query string does. A malformed escape is
 /// kept as the literal `%` rather than rejected: a query parameter this group
 /// does not declare is none of its business, and a value it does declare fails
-/// where the field is parsed, with the field's name in the diagnostic.
+/// where the field is parsed, with the field's name in the diagnostic. A value
+/// it declares whose octets are not UTF-8 is refused where the field is read,
+/// naming the field, rather than repaired into text the client never sent.
 pub(crate) fn query_pairs() -> TokenStream2 {
     quote! {
-        fn decode(raw: &str) -> ::std::string::String {
+        fn decode(raw: &str) -> ::std::vec::Vec<u8> {
             fn digit(byte: u8) -> ::core::option::Option<u8> {
                 match byte {
                     b'0'..=b'9' => ::core::option::Option::Some(byte - b'0'),
@@ -427,12 +430,12 @@ pub(crate) fn query_pairs() -> TokenStream2 {
                     }
                 }
             }
-            ::std::string::String::from_utf8_lossy(&decoded).into_owned()
+            decoded
         }
 
         let mut pairs: ::std::vec::Vec<(
-            ::std::string::String,
-            ::std::string::String,
+            ::std::vec::Vec<u8>,
+            ::std::vec::Vec<u8>,
         )> = ::std::vec::Vec::new();
         for pair in ::core::option::Option::unwrap_or_default(query).split('&') {
             if pair.is_empty() {
