@@ -283,8 +283,10 @@ impl HttpBody for FailedAfter {
         Poll::Ready(this.error.take().map(Err))
     }
 
+    // Never, not even once the error is taken: a body that failed was not
+    // delivered, and a `Watched` that finds it ended reports it as complete.
     fn is_end_stream(&self) -> bool {
-        self.arrived.is_none() && self.error.is_none()
+        false
     }
 }
 
