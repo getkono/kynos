@@ -2626,6 +2626,12 @@ struct ReadOnlyRenamed {
 }
 
 #[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct AliasedWrittenSide {
+    #[serde(rename(serialize = "a", deserialize = "b"), alias = "a")]
+    x: u8,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
 struct SameSides {
     #[serde(rename(serialize = "n", deserialize = "n"))]
     x: u8,
@@ -2702,4 +2708,22 @@ fn a_split_rename_is_described_under_the_side_serde_uses() {
     let written = serde_json::to_value(SameSides { x: 1 }).expect("a struct serializes");
     assert_eq!(keys(&schema["properties"]), vec!["n"], "{schema}");
     assert_eq!(keys(&schema["properties"]), keys(&written));
+}
+
+/// A split `rename` whose written side serde also reads, as an `alias`, is
+/// described under every name serde reads, the written one among them, so the
+/// one schema is true of what serde writes and of what it reads.
+#[test]
+fn a_split_rename_whose_written_side_is_an_alias_is_described_under_both() {
+    let schema = emitted::<AliasedWrittenSide>();
+    let mut described = keys(&schema["properties"]);
+    described.sort_unstable();
+    assert_eq!(described, vec!["a", "b"], "{schema}");
+    let written = serde_json::to_value(AliasedWrittenSide { x: 1 }).expect("a struct serializes");
+    assert_eq!(keys(&written), vec!["a"]);
+    for document in [r#"{"a":1}"#, r#"{"b":1}"#] {
+        let read: AliasedWrittenSide =
+            serde_json::from_str(document).expect("serde reads either name");
+        assert_eq!(read.x, 1, "{document}");
+    }
 }
