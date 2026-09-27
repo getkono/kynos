@@ -14,6 +14,9 @@
 //! that has to stay true.
 
 /// What to return for a request no operation handles.
+///
+/// Chooses the body shape of the 404, 405 or 501 such a request gets, never
+/// the status.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FallbackPolicy {

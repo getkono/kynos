@@ -6,8 +6,8 @@ Every error Kynos puts a body on the wire for is an [RFC 9457] problem detail.
 There is no second envelope and no per-endpoint shape, so a client can handle
 failures generically instead of learning one format per operation. The one
 error that carries no body is a fallback under `FallbackPolicy::Empty`
-([`routing.md`](routing.md#application-level-policies)), which answers a 404 or
-a 405 with the status alone.
+([`routing.md`](routing.md#application-level-policies)), which answers a 404, a
+405 or a 501 with the status alone.
 
 This covers the framework's own failures, not only the application's. A body
 that will not parse and a path parameter that will not deserialize both produce

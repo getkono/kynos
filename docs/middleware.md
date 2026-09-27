@@ -54,6 +54,10 @@ occurs has merely written dead code.
 Stating the weaker invariant is what makes it enforceable, and an enforceable
 weak claim is worth more than an unenforceable strong one.
 
+A HEAD is observed against the operation that answered it: its own `head`, or
+the `get` of a path declaring none, whose responses describe the HEAD's with no
+content (RFC 9110 §9.3.2).
+
 ## Why the declaration is the signature
 
 Three properties, each load-bearing:
@@ -693,7 +697,8 @@ after the description has been assembled. That ordering is the whole design:
   because `describe` had already finished when it was created.
 - **It appears in no `Allow` header.** The `Allow` loop runs before
   registration, so a 405 still names only the operations the description
-  declares.
+  declares, and the HEAD each GET implies. Nor does it count as implementing
+  `OPTIONS`, which is what decides a 405 from a 501.
 - **A path that declares its own `OPTIONS` gets no synthesized one.** The
   user's operation wins by construction rather than by a race.
 - **It runs no interceptor.** A browser sends a preflight with no credentials
@@ -704,7 +709,8 @@ after the description has been assembled. That ordering is the whole design:
 
 An `OPTIONS` that is *not* a preflight — no `Origin`, or no
 `Access-Control-Request-Method` — is answered exactly as it was before CORS was
-mounted: the same `method_not_allowed` policy, the same `Allow` value.
+mounted: the same `method_not_allowed` policy, and the same answer — a 405 with
+the same `Allow`, or a 501 where no operation implements `OPTIONS`.
 
 The methods a preflight advertises are the ones the covering scope declares, so
 a `Cors` on a group owning `GET /x` advertises `GET` even where the router also

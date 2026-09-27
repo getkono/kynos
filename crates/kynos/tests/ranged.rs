@@ -97,11 +97,11 @@ async fn recording(conditions: Conditions) -> Delivery<Mpeg> {
 
 /// The same representation, answered to a HEAD.
 ///
-/// A separate route because Kynos does not derive HEAD from GET: the two are
-/// distinct operations in the description, and a router that invented one would
-/// be describing an endpoint nobody declared. `Served` answers both -- section
-/// 9.3.2 says a HEAD is "identical to GET except that the server MUST NOT send
-/// content", and the fields below are the same ones the GET sends.
+/// Declared rather than left to the router, which would answer a HEAD here from
+/// the GET operation anyway: a declared `head` wins, and this one proves
+/// `Served` answers both -- section 9.3.2 says a HEAD is "identical to GET
+/// except that the server MUST NOT send content", and the fields below are the
+/// same ones the GET sends.
 #[kynos::head("/recordings/current")]
 async fn recording_head(conditions: Conditions) -> Delivery<Mpeg> {
     Served::<_, Mpeg>::new(Catalogue::new())

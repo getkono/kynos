@@ -631,10 +631,14 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         self
     }
 
-    /// Sets what happens when a path matches but the method does not.
+    /// Sets what happens when a path matches but the method does not, or when
+    /// no operation anywhere implements the method.
     ///
-    /// The `Allow` header is derived from the operations actually declared on
-    /// that path, so it cannot disagree with the description.
+    /// The first is a 405, whose `Allow` header is derived from the operations
+    /// actually declared on that path, plus the `HEAD` each `GET` answers, so it
+    /// cannot disagree with the description. The second is a 501 with no
+    /// `Allow`, decided before the path is matched. The policy chooses the body
+    /// shape of both, never the status.
     #[must_use]
     pub fn method_not_allowed(mut self, policy: FallbackPolicy) -> Self {
         self.method_not_allowed = policy;

@@ -224,7 +224,7 @@ the router, and have no per-route form.
 | Policy | Applies to | Values |
 | --- | --- | --- |
 | `not_found` | no route matched | `Problem` (default), `Empty` |
-| `method_not_allowed` | path matched, method did not | `Problem` (default), `Empty` |
+| `method_not_allowed` | path matched, method did not (405); no operation anywhere implements the method (501) | `Problem` (default), `Empty` |
 | `trailing_slashes` | a request differing only by a final `/` | `Strict` (default), `Redirect`, `Lenient` |
 
 None of them adds a `paths` entry. An unmatched path, a wrong method and a
@@ -250,7 +250,15 @@ both ways keeps both entries — the declared spellings are registered first, an
 a flipped spelling that collides with one is discarded.
 
 The `Allow` header on a 405 is derived from the operations actually declared on
-that path, so it cannot disagree with the document.
+that path, plus `HEAD` wherever `GET` is declared. RFC 9110 §9.3.2 defines a
+HEAD as the GET without content, so a `get` operation answers and describes
+both, and no `head` is minted into the document; a declared `head` wins. No
+response to a HEAD carries content, whatever answered it.
+
+A method no operation in the service implements is a 501 with no `Allow`,
+decided before the path is matched: RFC 9110 §15.6.2 makes it a property of the
+server, so no 404 or redirect precedes it. A method implemented on some other
+path is still a 405.
 
 ## The `matchit` contract
 
