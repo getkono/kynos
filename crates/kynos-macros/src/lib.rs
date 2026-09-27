@@ -202,9 +202,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// so the schema and the wire form come from one declaration. A named field or
 /// variant is named as serde names it: its `rename`, each side where the rename
 /// is split, otherwise its identifier without a raw identifier's `r#` under
-/// `rename_all`. A named field serde reads under an `alias` is a property under
-/// each name it reads, present under exactly one where it is required and
-/// under at most one otherwise, since serde refuses a document naming two. A
+/// `rename_all`, whose split form is read where its two sides agree. A named
+/// field serde reads under an `alias` is a property under each name it reads,
+/// present under exactly one where it is required and under at most one
+/// otherwise, since serde refuses a document naming two. A
 /// variant serde reads under an `alias` is named under each name it reads: in
 /// the `enum` of an all-unit enum, in the `enum` a tag or an externally tagged
 /// unit variant then is in place of a `const`, and as a property of an
