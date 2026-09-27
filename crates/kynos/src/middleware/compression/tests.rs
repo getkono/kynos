@@ -93,6 +93,11 @@ fn every_negotiation_rule_the_specification_states_is_applied() {
             Negotiated::Identity,
         ),
         (
+            "a wildcard weight that is not a number",
+            Some("*;q=NaN"),
+            Negotiated::Identity,
+        ),
+        (
             "every coding and identity refused by name",
             Some("gzip;q=0, br;q=0, zstd;q=0, identity;q=0"),
             Negotiated::Nothing,
