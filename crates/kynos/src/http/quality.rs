@@ -8,8 +8,8 @@
 //! [`coding::quality`](super::coding::quality) weighs content codings, and
 //! section 12.4.2 is one grammar shared by every `Accept*` field rather than
 //! one per field. What a refusal means is each caller's: the first two reject
-//! the field, where a content coding weight that is not a qvalue is a weight
-//! of 0.
+//! the field, where a content coding weight that is not a qvalue refuses that
+//! coding but excludes no identity, which only an explicit `q=0` does.
 
 /// The weight `value` states, in thousandths.
 ///
