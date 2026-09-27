@@ -37,7 +37,8 @@ fn named(declaration: TokenStream2) -> FieldsNamed {
 /// is only wrong when two sources are present at once. Reading serde's own
 /// `rename` and `rename_all` is what stops a type describing one field name
 /// while serializing another, so which one wins when several are set is the
-/// whole point. The precedence is serde's, and the `Schema` derive's.
+/// whole point. Below the Kynos `rename`, which only the parameter derives
+/// read, the precedence is serde's, and the `Schema` derive's.
 #[test]
 fn a_wire_name_prefers_the_kynos_rename_then_serdes_then_rename_all_then_the_identifier() {
     for rename_all in [false, true] {

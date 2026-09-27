@@ -486,9 +486,10 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 /// the route attribute emits a const assertion comparing the two lists. A
 /// field's wire name is its `#[param(rename)]`, else serde's `rename`, else
 /// its identifier under the struct's `rename_all`, cased as the
-/// [`Schema`](macro@Schema) derive cases a property, so the parameters are
-/// the group schema's properties. Each field's type, or an `Option`'s inner
-/// type, is a `kynos::schema::ParamValue`.
+/// [`Schema`](macro@Schema) derive cases a property, so a field no Kynos
+/// attribute renames carries the name that derive would give its property.
+/// Each field's type, or an `Option`'s inner type, is a
+/// `kynos::schema::ParamValue`.
 ///
 /// # Rejected, because a parameter has one name
 ///
@@ -513,8 +514,11 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 ///
 /// A field's wire name is its `#[param(rename)]`, else serde's `rename`, else
 /// its identifier under the struct's `rename_all`, cased as the
-/// [`Schema`](macro@Schema) derive cases a property, so the parameters are
-/// the group schema's properties.
+/// [`Schema`](macro@Schema) derive cases a property, so a field no Kynos
+/// attribute renames carries the name the `Schema` derive gives its property.
+/// The `Schema` derive never reads `#[param(rename)]`, so a field that
+/// attribute renames is a parameter under one name and a property under
+/// another.
 ///
 /// # Rejected, because a parameter has one name
 ///
