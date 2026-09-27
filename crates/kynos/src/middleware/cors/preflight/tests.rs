@@ -11,7 +11,7 @@ use crate::{
 fn preflight(config: CorsConfig) -> Preflight {
     Preflight::new(
         vec![Scope::new(config, vec![Method::Get, Method::Delete])],
-        HeaderValue::from_static("GET, DELETE"),
+        Some(HeaderValue::from_static("GET, DELETE")),
         FallbackPolicy::Problem,
     )
 }

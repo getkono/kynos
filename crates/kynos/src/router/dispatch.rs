@@ -239,6 +239,9 @@ pub(crate) struct Dispatch<C> {
     pub(crate) method_not_allowed: FallbackPolicy,
     pub(crate) trailing_slashes: TrailingSlashPolicy,
     pub(crate) trusted_proxies: crate::http::forwarded::TrustedProxies,
+    /// Every method some operation in the service answers, which is what
+    /// tells a 405 from a 501. See [`implemented`].
+    pub(crate) implemented: Vec<Method>,
 }
 
 /// Where in the table an operation sits.
@@ -263,6 +266,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         // Whatever answers a HEAD -- an operation, a fallback, a redirect --
         // sends no content, so this is read before anything can answer.
         let head = request.method() == crate::http::Method::HEAD;
+        let method = Method::from_wire_str(request.method().as_str());
 
         // The captures are taken here, while the match still holds them, and
         // are ranges rather than borrows -- which is what lets the request be
@@ -270,7 +274,13 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         let (index, captures) = {
             let path = request.uri().path();
             let Ok(matched) = self.matcher.at(path) else {
-                let response = self.unmatched(&request);
+                // RFC 9110 section 15.6.2: a 501 is about the server, not the
+                // resource, so no 404 or redirect is owed first.
+                let response = if self.implements(method) {
+                    self.unmatched(&request)
+                } else {
+                    method_refusal(None, &self.method_not_allowed)
+                };
                 return self.finish(response, None, started, head);
             };
 
@@ -289,11 +299,10 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         };
 
         let entry = &self.paths[index];
-        let method = Method::from_wire_str(request.method().as_str());
 
         let Some(position) = method.and_then(|method| entry.position(method)) else {
-            let response = fallback(StatusCode::METHOD_NOT_ALLOWED, &self.method_not_allowed);
-            let response = with_allow(response, &entry.allow);
+            let allow = self.implements(method).then_some(&entry.allow);
+            let response = method_refusal(allow, &self.method_not_allowed);
             return self.finish(response, None, started, head);
         };
 
@@ -337,6 +346,13 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
 
         let response = self.run(operation, route, request).await;
         self.finish(response, Some(at), started, head)
+    }
+
+    /// Whether some operation in the service answers `method`.
+    ///
+    /// `None` is a token no description can declare, which nothing answers.
+    fn implements(&self, method: Option<Method>) -> bool {
+        method.is_some_and(|method| self.implemented.contains(&method))
     }
 
     /// Where `request` came from, as far as the trusted proxies say.
@@ -533,8 +549,20 @@ fn fallback(status: StatusCode, policy: &FallbackPolicy) -> Response {
     }
 }
 
-/// Attaches the `Allow` header RFC 9110 requires on a 405.
-fn with_allow(mut response: Response, allow: &HeaderValue) -> Response {
+/// What a request whose method no operation on its path answers gets.
+///
+/// RFC 9110 section 9.1 splits the two cases. With `allow`, the method is one
+/// the service implements elsewhere: a 405 carrying the path's `Allow`, which
+/// section 15.5.6 requires on one. Without, nothing implements it: a 501, with
+/// no `Allow` to offer. Either takes the router's method-not-allowed policy's
+/// shape, and the CORS preflight answers a plain `OPTIONS` through here too, so
+/// mounting CORS changes neither.
+pub(crate) fn method_refusal(allow: Option<&HeaderValue>, policy: &FallbackPolicy) -> Response {
+    let Some(allow) = allow else {
+        return fallback(StatusCode::NOT_IMPLEMENTED, policy);
+    };
+
+    let mut response = fallback(StatusCode::METHOD_NOT_ALLOWED, policy);
     response.headers_mut().insert(header::ALLOW, allow.clone());
     response
 }
@@ -601,6 +629,27 @@ pub(crate) fn allow_header(methods: &[Method]) -> HeaderValue {
         .join(", ");
 
     HeaderValue::from_str(&joined).unwrap_or_else(|_| HeaderValue::from_static(""))
+}
+
+/// Every method some operation in `paths` answers: each declared one, and
+/// `HEAD` wherever a `GET` is declared.
+///
+/// Read before the CORS preflights are installed, so the `OPTIONS` one answers
+/// is not counted: a preflight is not an operation, and counting it would turn
+/// a plain `OPTIONS` from a 501 into a 405 the moment CORS was mounted.
+pub(crate) fn implemented<C>(paths: &[PathEntry<C>]) -> Vec<Method> {
+    let mut methods: Vec<Method> = Vec::new();
+
+    for operation in paths.iter().flat_map(|entry| &entry.operations) {
+        let derived = (operation.method == Method::Get).then_some(Method::Head);
+        for method in std::iter::once(operation.method).chain(derived) {
+            if !methods.contains(&method) {
+                methods.push(method);
+            }
+        }
+    }
+
+    methods
 }
 
 /// Interns a path variable name for the life of the process.

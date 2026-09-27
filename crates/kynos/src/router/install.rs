@@ -191,7 +191,13 @@ type CoveringCors<'a, C> = (
 pub(super) fn install_preflight<C: Send + Sync + 'static>(
     paths: &mut [PathEntry<C>],
     method_not_allowed: &FallbackPolicy,
+    implemented: &[kynos_openapi::Method],
 ) {
+    // A plain `OPTIONS` keeps the answer the dispatcher would give it: a 405
+    // with the path's `Allow` where the service implements `OPTIONS`
+    // elsewhere, and a 501 where it does not.
+    let options_implemented = implemented.contains(&kynos_openapi::Method::Options);
+
     for entry in paths {
         if entry
             .operations
@@ -246,7 +252,7 @@ pub(super) fn install_preflight<C: Send + Sync + 'static>(
 
         let preflight = crate::middleware::cors::preflight::Preflight::new(
             scopes,
-            entry.allow.clone(),
+            options_implemented.then(|| entry.allow.clone()),
             method_not_allowed.clone(),
         );
 

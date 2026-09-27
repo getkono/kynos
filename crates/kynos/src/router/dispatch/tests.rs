@@ -49,6 +49,7 @@ fn dispatch_fields(dispatch: &Dispatch<()>) {
         method_not_allowed,
         trailing_slashes,
         trusted_proxies,
+        implemented,
     } = dispatch;
 
     let _ = (
@@ -60,6 +61,7 @@ fn dispatch_fields(dispatch: &Dispatch<()>) {
         method_not_allowed,
         trailing_slashes,
         trusted_proxies,
+        implemented,
     );
 }
 
