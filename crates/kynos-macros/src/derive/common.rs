@@ -11,6 +11,8 @@ use syn::{
     Attribute, Data, DataStruct, DeriveInput, Field, Fields, FieldsNamed, LitStr, spanned::Spanned,
 };
 
+use crate::derive::schema::property_names;
+
 /// The named fields of a struct, or a diagnostic naming what was found instead.
 pub(crate) fn named_fields<'a>(
     input: &'a DeriveInput,
@@ -98,23 +100,98 @@ pub(crate) fn skip_value(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<(
     Ok(())
 }
 
-/// The wire name of a field: its `rename` if it has one, else its identifier.
+/// The wire name of every field of a parameter group, in declaration order.
+///
+/// `attribute` is the derive's own attribute -- `param`, `header` or
+/// `cookie` -- whose `rename` is consulted first. After it come serde's field
+/// `rename`, then the identifier under the container's `rename_all`: serde's
+/// precedence. The case rule is the `Schema` derive's own, taken from
+/// `property_names` rather than restated, so a field no Kynos attribute
+/// renames carries the name the `Schema` derive gives its property, even
+/// where that rule and serde's part. The `Schema` derive never reads the
+/// Kynos `rename`, so a field that attribute renames is a parameter under one
+/// name and a property under another.
+///
+/// A parameter has exactly one name, so whatever gives a field a second is
+/// refused rather than dropped: a field `alias`, and the split forms of
+/// `rename` and `rename_all`.
+pub(crate) fn wire_names(
+    input: &DeriveInput,
+    fields: &FieldsNamed,
+    attribute: &str,
+) -> syn::Result<Vec<String>> {
+    reject_split_rename_all(input)?;
+    fields
+        .named
+        .iter()
+        .zip(property_names(input, fields))
+        .map(|(field, fallback)| {
+            reject_alias(field)?;
+            wire_name(field, attribute, fallback)
+        })
+        .collect()
+}
+
+/// The wire name of a field: its `rename` if it has one, else `fallback`.
 ///
 /// Both the Kynos attribute and serde's are consulted, in that order, so that a
 /// type already carrying `#[serde(rename = "...")]` does not have to repeat
 /// itself — and cannot end up describing one name while serializing another.
-pub(crate) fn wire_name(field: &Field, attribute: &str) -> syn::Result<String> {
+fn wire_name(field: &Field, attribute: &str, fallback: String) -> syn::Result<String> {
     if let Some(renamed) = kynos_rename(field, attribute)? {
         return Ok(renamed);
     }
     if let Some(renamed) = serde_rename(field)? {
         return Ok(renamed);
     }
-    Ok(field
-        .ident
-        .as_ref()
-        .map(ToString::to_string)
-        .unwrap_or_default())
+    Ok(fallback)
+}
+
+/// Refuses a container `rename_all(serialize = ..., deserialize = ...)`.
+///
+/// The `Schema` derive reads only the `= "..."` form and passes over this one,
+/// so it is refused here, before a name is taken from that derive's rule.
+fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
+    for attr in &input.attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("rename_all") && meta.input.peek(syn::token::Paren) {
+                return Err(meta.error(
+                    "a split `rename_all` gives every field two wire names, and a description \
+                     can carry one. Say which with `rename_all = \"...\"`",
+                ));
+            }
+            skip_value(&meta)
+        })?;
+    }
+    Ok(())
+}
+
+/// Refuses a field's `#[serde(alias = "...")]`.
+///
+/// serde reads the field under every alias, and the description can name one:
+/// dropping the alias leaves a value sent under it unread, and a required
+/// field refused, while the `Schema` derive lists both. Checked before the
+/// Kynos `rename`, which settles the described name but not what serde reads.
+fn reject_alias(field: &Field) -> syn::Result<()> {
+    for attr in &field.attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("alias") {
+                return Err(meta.error(
+                    "an `alias` gives this field a second wire name, and a parameter has \
+                     exactly one. Drop the `alias`, or make the name it carries the field's \
+                     `rename`",
+                ));
+            }
+            skip_value(&meta)
+        })?;
+    }
+    Ok(())
 }
 
 /// The `rename = "..."` inside a Kynos attribute.

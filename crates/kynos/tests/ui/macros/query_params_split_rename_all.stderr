@@ -1,0 +1,5 @@
+error: a split `rename_all` gives every field two wire names, and a description can carry one. Say which with `rename_all = "..."`
+ --> tests/ui/macros/query_params_split_rename_all.rs:2:9
+  |
+2 | #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+  |         ^^^^^^^^^^

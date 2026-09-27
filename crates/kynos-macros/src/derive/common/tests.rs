@@ -2,18 +2,18 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{Data, DataStruct, DeriveInput, Fields, FieldsNamed};
 
-use super::{named_fields, reject_duplicate_names, unit_struct, wire_name};
+use super::{named_fields, reject_duplicate_names, unit_struct, wire_names};
 
-/// The single named field of a struct wrapped around `declaration`.
+/// The wire name `attribute`'s derive gives the one field of `declaration`.
 ///
-/// `Field` has no `Parse`, and a field only means anything inside the item
-/// that holds it, so the wrapper is the shortest honest way to build one.
-fn only_field(declaration: &TokenStream2) -> syn::Field {
-    named(quote!(struct Holder { #declaration }))
-        .named
-        .into_iter()
-        .next()
-        .expect("one field")
+/// Built from the whole item because the container's `rename_all` is part of
+/// the answer, and a field alone does not carry it.
+fn name_of(declaration: TokenStream2, attribute: &str) -> syn::Result<String> {
+    let input = item(declaration);
+    let fields = named_fields(&input, "QueryParams").expect("a struct with named fields");
+    let mut names = wire_names(&input, fields, attribute)?;
+    assert_eq!(names.len(), 1, "one field, one name");
+    Ok(names.remove(0))
 }
 
 fn item(declaration: TokenStream2) -> DeriveInput {
@@ -30,33 +30,94 @@ fn named(declaration: TokenStream2) -> FieldsNamed {
     }
 }
 
-/// Which of the three sources a wire name comes from, over every
-/// combination of the two that can be absent.
+/// Which of the four sources a wire name comes from, over every combination
+/// of the three that can be absent.
 ///
-/// A sweep rather than three examples: the rule is a precedence, and a
-/// precedence is only wrong when two sources are present at once. Reading
-/// serde's own `rename` is what stops a type describing one field name
-/// while serializing another, so which one wins when both are set is the
-/// whole point.
+/// A sweep rather than examples: the rule is a precedence, and a precedence
+/// is only wrong when two sources are present at once. Reading serde's own
+/// `rename` and `rename_all` is what stops a type describing one field name
+/// while serializing another, so which one wins when several are set is the
+/// whole point. Below the Kynos `rename`, which only the parameter derives
+/// read, the precedence is serde's, and the `Schema` derive's.
 #[test]
-fn a_wire_name_prefers_the_kynos_rename_then_serdes_then_the_identifier() {
-    for kynos in [None, Some("from_kynos")] {
-        for serde in [None, Some("from_serde")] {
-            let kynos_attribute = kynos.map(|name| quote!(#[param(rename = #name)]));
-            let serde_attribute = serde.map(|name| quote!(#[serde(rename = #name)]));
-            let field = only_field(&quote! {
-                #kynos_attribute
-                #serde_attribute
-                user_id: u64
-            });
+fn a_wire_name_prefers_the_kynos_rename_then_serdes_then_rename_all_then_the_identifier() {
+    for rename_all in [false, true] {
+        for kynos in [None, Some("from_kynos")] {
+            for serde in [None, Some("from_serde")] {
+                let container = rename_all.then(|| quote!(#[serde(rename_all = "camelCase")]));
+                let kynos_attribute = kynos.map(|name| quote!(#[param(rename = #name)]));
+                let serde_attribute = serde.map(|name| quote!(#[serde(rename = #name)]));
+                let declaration = quote! {
+                    #container
+                    struct Holder {
+                        #kynos_attribute
+                        #serde_attribute
+                        user_id: u64
+                    }
+                };
 
-            let expected = kynos.or(serde).unwrap_or("user_id");
-            assert_eq!(
-                wire_name(&field, "param").expect("a wire name"),
-                expected,
-                "kynos: {kynos:?}, serde: {serde:?}"
-            );
+                let expected =
+                    kynos
+                        .or(serde)
+                        .unwrap_or(if rename_all { "userId" } else { "user_id" });
+                assert_eq!(
+                    name_of(declaration, "param").expect("a wire name"),
+                    expected,
+                    "rename_all: {rename_all}, kynos: {kynos:?}, serde: {serde:?}"
+                );
+            }
         }
+    }
+}
+
+/// `rename_all` is the container's, so every derive's attribute reads it --
+/// a header name is where `kebab-case` is the convention rather than a style.
+#[test]
+fn rename_all_reaches_every_location_attribute() {
+    for attribute in ["param", "header", "cookie"] {
+        let declaration = quote! {
+            #[serde(rename_all = "kebab-case")]
+            struct Holder {
+                x_request_id: String
+            }
+        };
+
+        assert_eq!(
+            name_of(declaration, attribute).expect("a wire name"),
+            "x-request-id",
+            "{attribute}"
+        );
+    }
+}
+
+/// An alias is refused however else the field is named, the Kynos `rename`
+/// included: that `rename` settles the name the description carries, and
+/// serde would still read the alias beside it.
+#[test]
+fn an_alias_is_refused_whatever_else_names_the_field() {
+    for (shape, attributes) in [
+        ("alone", quote!(#[serde(alias = "userId")])),
+        (
+            "beside the Kynos rename",
+            quote!(#[param(rename = "id")] #[serde(alias = "userId")]),
+        ),
+        (
+            "beside serde's rename",
+            quote!(#[serde(rename = "id", alias = "userId")]),
+        ),
+    ] {
+        let declaration = quote! {
+            struct Holder {
+                #attributes
+                user_id: u64
+            }
+        };
+
+        let error = name_of(declaration, "param").expect_err(shape);
+        assert!(
+            error.to_string().contains("a second wire name"),
+            "{shape}: {error}"
+        );
     }
 }
 
@@ -76,13 +137,15 @@ fn an_unrecognized_key_does_not_swallow_the_keys_after_it() {
         ("a parenthesized group", quote!(unknown(a, b))),
         ("a bare path", quote!(unknown)),
     ] {
-        let field = only_field(&quote! {
-            #[param(#skipped, rename = "chosen")]
-            user_id: u64
-        });
+        let declaration = quote! {
+            struct Holder {
+                #[param(#skipped, rename = "chosen")]
+                user_id: u64
+            }
+        };
 
         assert_eq!(
-            wire_name(&field, "param").expect("a wire name"),
+            name_of(declaration, "param").expect("a wire name"),
             "chosen",
             "{shape} must be stepped over, not consumed"
         );
@@ -93,23 +156,33 @@ fn an_unrecognized_key_does_not_swallow_the_keys_after_it() {
 /// does not know is skipped rather than refused.
 #[test]
 fn an_unrecognized_key_alone_is_not_an_error() {
-    let field = only_field(&quote! {
-        #[param(unknown = 1)]
-        user_id: u64
-    });
+    let declaration = quote! {
+        struct Holder {
+            #[param(unknown = 1)]
+            user_id: u64
+        }
+    };
 
-    assert_eq!(wire_name(&field, "param").expect("a wire name"), "user_id");
+    assert_eq!(
+        name_of(declaration, "param").expect("a wire name"),
+        "user_id"
+    );
 }
 
 /// A Kynos attribute belonging to another derive is not this one's to read.
 #[test]
 fn only_the_named_attribute_is_consulted() {
-    let field = only_field(&quote! {
-        #[header(rename = "X-Other")]
-        user_id: u64
-    });
+    let declaration = quote! {
+        struct Holder {
+            #[header(rename = "X-Other")]
+            user_id: u64
+        }
+    };
 
-    assert_eq!(wire_name(&field, "param").expect("a wire name"), "user_id");
+    assert_eq!(
+        name_of(declaration, "param").expect("a wire name"),
+        "user_id"
+    );
 }
 
 #[test]
@@ -171,12 +244,18 @@ fn a_duplicate_names_the_field_that_claimed_it_first() {
 }
 
 /// One row per diagnostic site in this module.
+// Long because it is one row per site, and `every_shared_diagnostic_has_a_case`
+// counts them: splitting the table would split the list that count reads.
+#[expect(clippy::too_many_lines)]
 fn cases() -> Vec<(&'static str, syn::Result<()>, &'static str)> {
     fn shape(input: &DeriveInput) -> syn::Result<()> {
         named_fields(input, "QueryParams").map(|_| ())
     }
     fn unit(input: &DeriveInput) -> syn::Result<()> {
         unit_struct(input, "Tag", "names a group of operations")
+    }
+    fn named_by(declaration: TokenStream2) -> syn::Result<()> {
+        name_of(declaration, "param").map(|_| ())
     }
 
     let duplicate = named(quote!(
@@ -241,15 +320,33 @@ fn cases() -> Vec<(&'static str, syn::Result<()>, &'static str)> {
         ),
         (
             "serde's split rename, which gives one field two wire names",
-            wire_name(
-                &only_field(&quote! {
+            named_by(quote!(
+                struct Holder {
                     #[serde(rename(serialize = "a", deserialize = "b"))]
-                    user_id: u64
-                }),
-                "param",
-            )
-            .map(|_| ()),
+                    user_id: u64,
+                }
+            )),
             "two wire names",
+        ),
+        (
+            "serde's alias, which gives one field a second wire name",
+            named_by(quote!(
+                struct Holder {
+                    #[serde(alias = "userId")]
+                    user_id: u64,
+                }
+            )),
+            "a second wire name",
+        ),
+        (
+            "serde's split rename_all, which gives every field two wire names",
+            named_by(quote!(
+                #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+                struct Holder {
+                    user_id: u64,
+                }
+            )),
+            "split `rename_all`",
         ),
         (
             "two fields on one wire name",

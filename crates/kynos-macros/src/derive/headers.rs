@@ -5,7 +5,7 @@ use quote::quote;
 use syn::{DeriveInput, parse_macro_input, spanned::Spanned};
 
 use crate::derive::{
-    common::{named_fields, names_const, reject_duplicate_names, wire_name},
+    common::{named_fields, names_const, reject_duplicate_names, wire_names},
     params::{
         Param, construct, decode_field, header_encode_body, parameters_body, response_headers_body,
     },
@@ -45,9 +45,8 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
 pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "Headers")?;
 
-    let mut names = Vec::with_capacity(fields.named.len());
-    for field in &fields.named {
-        let name = wire_name(field, "header")?;
+    let names = wire_names(input, fields, "header")?;
+    for (field, name) in fields.named.iter().zip(&names) {
         // HTTP field names are case-insensitive, so the check must be too.
         let folded = name.to_ascii_lowercase();
         if let Some((_, remedy)) = RESERVED.iter().find(|(reserved, _)| *reserved == folded) {
@@ -56,7 +55,6 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 format!("`{name}` must not be declared as a header parameter: {remedy}"),
             ));
         }
-        names.push(name);
     }
     reject_duplicate_names(fields, &names, "header")?;
 

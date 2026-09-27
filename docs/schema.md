@@ -650,6 +650,8 @@ properties do. The `allOf` makes a closed object's closing keyword
 The default [`QueryParams::parameters`](../crates/kynos/src/extract/params/query.rs)
 makes each name of an aliased field its own optional query parameter, because
 a Parameter Object cannot express the `allOf` bounds above.
+`#[derive(QueryParams)]` refuses an aliased field at compile time instead of
+splitting it, as do the other parameter derives.
 
 ### On a variant
 

@@ -482,10 +482,22 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 
 /// Declares a group of path parameters.
 ///
-/// Wire names, each a field's name or its `rename`, must match the route
-/// template's variables in declaration order; the route attribute emits a const
-/// assertion comparing the two lists. Each field's type, or an `Option`'s inner
-/// type, is a `kynos::schema::ParamValue`.
+/// Wire names must match the route template's variables in declaration order;
+/// the route attribute emits a const assertion comparing the two lists. A
+/// field's wire name is its `#[param(rename)]`, else serde's `rename`, else
+/// its identifier under the struct's `rename_all`, cased as the
+/// [`Schema`](macro@Schema) derive cases a property, so a field no Kynos
+/// attribute renames carries the name that derive would give its property.
+/// Each field's type, or an `Option`'s inner type, is a
+/// `kynos::schema::ParamValue`.
+///
+/// # Rejected, because a parameter has one name
+///
+/// - `#[serde(alias = "...")]` on any field: serde would read the field under
+///   a second name, and a Parameter Object carries one.
+/// - serde's split `rename(serialize = ..., deserialize = ...)` on a field the
+///   Kynos attribute does not name, and `rename_all(serialize = ...,
+///   deserialize = ...)` on the struct.
 #[proc_macro_derive(PathParams, attributes(param))]
 pub fn derive_path_params(item: TokenStream) -> TokenStream {
     derive::path_params::expand(item)
@@ -499,6 +511,22 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// since the default `form` style with `explode` would describe it as `x=1&y=2`
 /// while the decoder reads one `name=` pair. For a structured query,
 /// `QueryString<T, M>` describes the whole query string under `openapi32`.
+///
+/// A field's wire name is its `#[param(rename)]`, else serde's `rename`, else
+/// its identifier under the struct's `rename_all`, cased as the
+/// [`Schema`](macro@Schema) derive cases a property, so a field no Kynos
+/// attribute renames carries the name the `Schema` derive gives its property.
+/// The `Schema` derive never reads `#[param(rename)]`, so a field that
+/// attribute renames is a parameter under one name and a property under
+/// another.
+///
+/// # Rejected, because a parameter has one name
+///
+/// - `#[serde(alias = "...")]` on any field: serde would read the field under
+///   a second name, and a Parameter Object carries one.
+/// - serde's split `rename(serialize = ..., deserialize = ...)` on a field the
+///   Kynos attribute does not name, and `rename_all(serialize = ...,
+///   deserialize = ...)` on the struct.
 #[proc_macro_derive(QueryParams, attributes(param))]
 pub fn derive_query_params(item: TokenStream) -> TokenStream {
     derive::query_params::expand(item)
@@ -513,6 +541,20 @@ pub fn derive_query_params(item: TokenStream) -> TokenStream {
 /// diagnostic names the right tool for each reserved field. Each field's type,
 /// or an `Option`'s inner type, is a `kynos::schema::ParamValue`, in either
 /// direction.
+///
+/// A field's wire name is its `#[header(rename)]`, else serde's `rename`, else
+/// its identifier under the struct's `rename_all`, cased as the
+/// [`Schema`](macro@Schema) derive cases a property, so `rename_all =
+/// "kebab-case"` names `x_request_id` as `x-request-id`. The reserved names
+/// are checked against that final name.
+///
+/// # Rejected, because a parameter has one name
+///
+/// - `#[serde(alias = "...")]` on any field: serde would read the field under
+///   a second name, and a Parameter Object carries one.
+/// - serde's split `rename(serialize = ..., deserialize = ...)` on a field the
+///   Kynos attribute does not name, and `rename_all(serialize = ...,
+///   deserialize = ...)` on the struct.
 #[proc_macro_derive(HeaderParams, attributes(header))]
 pub fn derive_headers(item: TokenStream) -> TokenStream {
     derive::headers::expand(item)
@@ -521,7 +563,18 @@ pub fn derive_headers(item: TokenStream) -> TokenStream {
 /// Declares a group of request cookies.
 ///
 /// Each field's type, or an `Option`'s inner type, is a
-/// `kynos::schema::ParamValue`.
+/// `kynos::schema::ParamValue`. A field's wire name is its
+/// `#[cookie(rename)]`, else serde's `rename`, else its identifier under the
+/// struct's `rename_all`, cased as the [`Schema`](macro@Schema) derive cases a
+/// property.
+///
+/// # Rejected, because a parameter has one name
+///
+/// - `#[serde(alias = "...")]` on any field: serde would read the field under
+///   a second name, and a Parameter Object carries one.
+/// - serde's split `rename(serialize = ..., deserialize = ...)` on a field the
+///   Kynos attribute does not name, and `rename_all(serialize = ...,
+///   deserialize = ...)` on the struct.
 #[proc_macro_derive(CookieParams, attributes(cookie))]
 pub fn derive_cookies(item: TokenStream) -> TokenStream {
     derive::cookies::expand(item)
