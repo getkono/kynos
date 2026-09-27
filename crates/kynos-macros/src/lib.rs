@@ -419,7 +419,9 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   two sides differ, or which names one side only, and the same of an enum's
 ///   `rename_all_fields` or a variant's own `rename_all`. The style reaches
 ///   every member serde both writes and reads under it, so no one schema is
-///   true in both directions. Say which with `rename_all = "..."`. Sides that
+///   true in both directions. Say which with the same key's single form:
+///   `rename_all = "..."` for a container's or a variant's `rename_all`, and
+///   `rename_all_fields = "..."` for an enum's `rename_all_fields`. Sides that
 ///   agree are read as that one style.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
