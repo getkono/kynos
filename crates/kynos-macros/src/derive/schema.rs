@@ -994,29 +994,15 @@ fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
 /// describes both directions, so the form is refused as the parameter derives
 /// refuse it. Sides that agree are the `rename_all = "..."` they spell, and
 /// [`Container`] reads them so. Runs before any check that reads a
-/// [`Container`]; shape errors in the list stay serde's to report.
+/// [`Container`].
 fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
-    let mut refused = None;
-    for attr in &input.attrs {
-        if !attr.path().is_ident("serde") {
-            continue;
-        }
-        let _ = attr.parse_nested_meta(|meta| {
-            if !meta.path.is_ident("rename_all") {
-                return skip_value(&meta);
-            }
-            let sides = sides(&meta)?;
-            if sides.serialize != sides.deserialize {
-                refused.get_or_insert(meta.error(
-                    "a split `rename_all` whose sides differ gives every member two wire \
-                     names, and one schema describes both directions. Say which with \
-                     `rename_all = \"...\"`",
-                ));
-            }
-            Ok(())
-        });
-    }
-    refused.map_or(Ok(()), Err)
+    split_rename_all(input).map_or(Ok(()), |span| {
+        Err(syn::Error::new(
+            span,
+            "a split `rename_all` whose sides differ gives every member two wire names, and one \
+             schema describes both directions. Say which with `rename_all = \"...\"`",
+        ))
+    })
 }
 
 /// `#[serde(other)]` makes an enum accept every tag it does not name.
@@ -1750,4 +1736,30 @@ pub(super) fn split_renamed_field(input: &DeriveInput, fields: &syn::FieldsNamed
         .map(|field| {
             serde_key_span(&field.attrs, &["rename"]).map_or_else(|| field.span(), |(_, span)| span)
         })
+}
+
+/// The span of a container `rename_all(serialize = ..., deserialize = ...)`
+/// whose sides differ, one side left out included, at that `rename_all`.
+///
+/// Read by this derive's refusal and by [`multipart`](super::multipart), whose
+/// part carries one name in both directions. Shape errors in the list stay
+/// serde's to report.
+pub(super) fn split_rename_all(input: &DeriveInput) -> Option<Span> {
+    let mut found = None;
+    for attr in &input.attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        let _ = attr.parse_nested_meta(|meta| {
+            if !meta.path.is_ident("rename_all") {
+                return skip_value(&meta);
+            }
+            let sides = sides(&meta)?;
+            if found.is_none() && sides.serialize != sides.deserialize {
+                found = Some(meta.path.span());
+            }
+            Ok(())
+        });
+    }
+    found
 }

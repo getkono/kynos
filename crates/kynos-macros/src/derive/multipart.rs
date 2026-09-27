@@ -8,8 +8,9 @@
 //! The names themselves come from [`schema`](super::schema), which is what
 //! keeps the part a body carries and the property the description names from
 //! being two rules that agree until a `rename_all` is added. A split `rename`
-//! whose sides differ is refused, whichever way serde uses the field: a part has
-//! one name, and serde's directions play no part in a multipart body.
+//! whose sides differ is refused, whichever way serde uses the field, and so is
+//! a split container `rename_all` whose sides differ: a part has one name, and
+//! serde's directions play no part in a multipart body.
 //!
 //! # How a part becomes a field
 //!
@@ -31,7 +32,7 @@ use syn::{
 
 use crate::derive::{
     common::{named_fields, reject_duplicate_names},
-    schema::{property_names, split_renamed_field},
+    schema::{property_names, split_rename_all, split_renamed_field},
 };
 
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
@@ -44,6 +45,13 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
 
 pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let fields = named_fields(input, "MultipartForm")?;
+    if let Some(span) = split_rename_all(input) {
+        return Err(syn::Error::new(
+            span,
+            "a split `rename_all` whose sides differ gives every field two part names, and a part \
+             carries one in both directions. Say which with `rename_all = \"...\"`",
+        ));
+    }
     if let Some(span) = split_renamed_field(input, fields) {
         return Err(syn::Error::new(
             span,
