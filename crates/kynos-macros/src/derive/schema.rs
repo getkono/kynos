@@ -1735,3 +1735,19 @@ pub(super) fn property_names(input: &DeriveInput, fields: &syn::FieldsNamed) -> 
         .map(|field| field_name(field, &container))
         .collect()
 }
+
+/// The span of the first field whose split `rename` gives serde's two
+/// directions different names, at that `rename`.
+///
+/// Read by [`multipart`](super::multipart), whose part carries one name in both
+/// directions, so no side of such a rename is the part's name.
+pub(super) fn split_renamed_field(input: &DeriveInput, fields: &syn::FieldsNamed) -> Option<Span> {
+    let container = Container::read(input);
+    fields
+        .named
+        .iter()
+        .find(|field| field_name(field, &container) != field_read_name(field, &container))
+        .map(|field| {
+            serde_key_span(&field.attrs, &["rename"]).map_or_else(|| field.span(), |(_, span)| span)
+        })
+}

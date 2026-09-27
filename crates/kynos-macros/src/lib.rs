@@ -623,6 +623,9 @@ pub fn derive_cookies(item: TokenStream) -> TokenStream {
 /// this derive says how the parts travel and `Schema` is what puts them in the
 /// description, and both read the part names from the same place — the field's
 /// identifier, or serde's `rename` and `rename_all` when the type carries them.
+/// A split `rename(serialize = ..., deserialize = ...)` whose sides differ is
+/// refused on any field, even one serde uses one way: the part is read and
+/// written under one name, so neither side can be it.
 #[proc_macro_derive(MultipartForm)]
 pub fn derive_multipart_form(item: TokenStream) -> TokenStream {
     derive::multipart::expand(item)
