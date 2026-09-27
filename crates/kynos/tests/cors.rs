@@ -467,6 +467,36 @@ async fn a_preflight_refuses_an_origin_the_covering_cors_does_not_permit() {
     );
 }
 
+/// A service implementing `OPTIONS` somewhere refuses a plain `OPTIONS` on a
+/// path without one with a 405 and that path's `Allow`, and mounting CORS over
+/// the path changes neither.
+#[kynos::options("/gadgets")]
+async fn describe_gadgets() -> NoContent {
+    NoContent
+}
+
+#[tokio::test]
+async fn a_plain_options_stays_a_405_where_the_service_implements_options_elsewhere() {
+    let bare = router()
+        .mount(kynos::routes![describe_gadgets])
+        .build(())
+        .expect("a describable router");
+    let covered = router()
+        .mount(kynos::routes![describe_gadgets])
+        .intercept(Cors::new().allow_origins(["https://app.example.com"]))
+        .build(())
+        .expect("a describable router");
+
+    let (bare_status, bare_fields) = send(&bare, Method::OPTIONS, "/widgets", &[]).await;
+    let (covered_status, covered_fields) = send(&covered, Method::OPTIONS, "/widgets", &[]).await;
+
+    assert_eq!(bare_status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(covered_status, bare_status);
+
+    let allow = field(&bare_fields, header::ALLOW).expect("an Allow header");
+    assert_eq!(field(&covered_fields, header::ALLOW), Some(allow));
+}
+
 /// A known limit, characterized rather than left to be discovered.
 ///
 /// An endpoint-scoped interceptor stays inside the endpoint — that is what runs
