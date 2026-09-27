@@ -1264,6 +1264,8 @@ fn a_query_value_that_is_not_utf8_is_refused_naming_its_parameter() {
         ("other=%FF&name=x", "x"),
         ("%FF=1&name=x", "x"),
         ("na%6De=x", "x"),
+        ("name=a+b", "a b"),
+        ("name=a%2Bb", "a+b"),
     ] {
         match <Named as DecodeQuery>::decode(Some(query)) {
             Ok(decoded) => assert_eq!(decoded.name, expected, "{query}"),
