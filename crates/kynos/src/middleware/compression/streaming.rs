@@ -182,6 +182,19 @@ impl Streamed {
     }
 }
 
+/// What the encoder's answer to a write of pending bytes means: how many it
+/// took, or why the body cannot go on.
+///
+/// `Ok(0)` is a writer that accepts nothing, and polling it again would spin
+/// forever, so it is the broken writer `WriteZero` names. Pure, so that case is
+/// tested even though no encoder over a `Vec` produces it.
+fn accepted(result: io::Result<usize>) -> io::Result<usize> {
+    match result {
+        Ok(0) => Err(io::Error::from(io::ErrorKind::WriteZero)),
+        other => other,
+    }
+}
+
 impl HttpBody for Streamed {
     type Data = Bytes;
     type Error = BoxError;
@@ -235,16 +248,10 @@ impl HttpBody for Streamed {
                     // partial write is ordinary rather than exceptional: the
                     // encoder's own buffer decides how much it takes.
                     if !this.pending.is_empty() {
-                        let written = match ready!(
+                        let written = match accepted(ready!(
                             this.encoder
                                 .with(|encoder| encoder.poll_write(context, &this.pending))
-                        ) {
-                            // A writer that accepts nothing would spin here
-                            // forever, so treat it as the broken writer it is.
-                            Ok(0) => {
-                                return this
-                                    .fail(Box::new(io::Error::from(io::ErrorKind::WriteZero)));
-                            }
+                        )) {
                             Ok(written) => written,
                             Err(error) => return this.fail(Box::new(error)),
                         };

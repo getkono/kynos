@@ -6,6 +6,7 @@ use tokio::io::AsyncReadExt as _;
 
 use super::{
     Bytes, Coding, Context, Frame, HttpBody, LatencyMode, Levels, Pin, Poll, SizeHint, Streamed,
+    accepted, io,
 };
 
 /// A body that yields the frames it was given and states no length.
@@ -277,5 +278,26 @@ async fn a_finished_stream_reports_its_end() {
     assert_eq!(
         delivery_of(finishing()).await,
         vec![crate::http::body::Delivery::Complete]
+    );
+}
+
+/// An encoder that took nothing of what it was given is broken, not busy:
+/// taking it at its word would poll it again forever.
+#[test]
+fn a_write_that_took_nothing_is_a_write_zero_failure() {
+    assert_eq!(
+        accepted(Ok(0)).map_err(|error| error.kind()),
+        Err(io::ErrorKind::WriteZero)
+    );
+}
+
+/// The control: a write that took something is that many bytes taken, and a
+/// write that failed is its own failure rather than `WriteZero`.
+#[test]
+fn a_write_that_took_bytes_or_failed_is_reported_as_it_was() {
+    assert_eq!(accepted(Ok(3)).map_err(|error| error.kind()), Ok(3));
+    assert_eq!(
+        accepted(Err(io::Error::from(io::ErrorKind::BrokenPipe))).map_err(|error| error.kind()),
+        Err(io::ErrorKind::BrokenPipe)
     );
 }
