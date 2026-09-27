@@ -213,8 +213,8 @@ impl HttpBody for Streamed {
                     return Poll::Ready(this.trailers.take().map(Ok));
                 }
 
-                // Held trailers are dropped: trailers after a body that
-                // failed are not trailers.
+                // Held trailers are never yielded, only kept until this body
+                // drops: trailers after a body that failed are not trailers.
                 State::Failed => return Poll::Ready(None),
 
                 State::Finishing => {
