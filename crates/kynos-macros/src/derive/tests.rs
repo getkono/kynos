@@ -490,6 +490,40 @@ mod schema {
         }
     }
 
+    /// A variant serde only reads claims the name it is read under, so its
+    /// split `rename` shadows an earlier variant by the deserialize side
+    /// alone: a serialize side naming the earlier variant is never used, and a
+    /// deserialize side naming it leaves the variant unreadable.
+    #[test]
+    fn a_read_only_variant_is_shadowed_by_the_side_serde_reads() {
+        let accepted: syn::DeriveInput = syn::parse2(quote::quote!(
+            enum Change {
+                Now,
+                #[serde(skip_serializing, rename(serialize = "Now", deserialize = "later"))]
+                Queued,
+            }
+        ))
+        .expect("the case itself must parse");
+        if let Err(error) = expand_inner(&accepted) {
+            panic!("a variant serde never writes under a claimed name was refused: {error}");
+        }
+
+        each_case_is_refused(
+            vec![case(
+                "a variant serde only reads, under an earlier variant's name",
+                quote::quote!(
+                    enum Change {
+                        Now,
+                        #[serde(skip_serializing, rename(serialize = "later", deserialize = "Now"))]
+                        Queued,
+                    }
+                ),
+                "this variant's own name",
+            )],
+            expand_inner,
+        );
+    }
+
     /// A tag is refused only where no schema is true of it, so each shape
     /// that has one is accepted: an open struct, a transparent one serde
     /// writes without its tag, and a field under the tag's name serde never

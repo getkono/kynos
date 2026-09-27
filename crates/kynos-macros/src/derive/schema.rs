@@ -37,9 +37,10 @@ mod shape;
 
 use aliases::shadowed_variant;
 use attributes::{
-    constraints, described_members, field_name, is_described, is_flattened, is_open, is_option,
-    is_phantom, is_required, is_skipped_both_ways, is_unit_like, open_span, serde_flag,
-    serde_key_span, transparent_member, transparent_picks, variant_name,
+    constraints, described_members, field_name, field_read_name, is_described, is_flattened,
+    is_open, is_option, is_phantom, is_required, is_skipped_both_ways, is_unit_like, open_span,
+    serde_flag, serde_key_span, transparent_member, transparent_picks, variant_name,
+    variant_read_name,
 };
 use shape::{enum_body, struct_body};
 
@@ -99,6 +100,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     reject_container_conversions(input)?;
     reject_untagged(input)?;
     reject_unread_variant(input)?;
+    reject_split_rename(input)?;
     reject_shadowed_variant(input)?;
     reject_wire_form_overrides(input)?;
     reject_catch_all(input)?;
@@ -904,9 +906,82 @@ fn reject_shadowed_variant(input: &DeriveInput) -> syn::Result<()> {
              that also claims it, so `{later}` goes on the wire under a name that reads back as \
              `{earlier}`, and no schema describing `{later}` is true in both directions. Drop \
              the `rename` or `alias` that gives both variants the name",
-            name = variant_name(later, &container),
+            name = variant_read_name(later, &container),
             earlier = earlier.ident,
             later = later.ident,
+        ),
+    ))
+}
+
+/// A member serde both writes and reads is refused where a split `rename`
+/// gives the two directions different names.
+///
+/// One schema serves both directions, so no name it gives the member is true of
+/// both: under the written name it describes a request serde refuses, under the
+/// read name a response serde never writes. A member serde uses one way is
+/// named by that side, so it is exempt: a field serde skips in either
+/// direction, every field of a variant serde never writes, and a variant serde
+/// only reads. A flattened field's own name is neither written nor read, and
+/// neither is a transparent struct's field's. A variant serde only writes is
+/// refused before this runs, by [`reject_unread_variant`].
+fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
+    let container = Container::read(input);
+    let fields = if container.transparent {
+        Vec::new()
+    } else {
+        written_groups(input)
+    };
+    let field = fields
+        .into_iter()
+        .flatten()
+        .filter(|field| {
+            !is_flattened(field)
+                && !serde_flag(
+                    &field.attrs,
+                    &["skip", "skip_serializing", "skip_deserializing"],
+                )
+        })
+        .find_map(|field| {
+            let ident = field.ident.as_ref()?;
+            let written = field_name(field, &container);
+            let read = field_read_name(field, &container);
+            (written != read).then(|| {
+                let skip = "`skip_serializing` or `skip_deserializing` the field";
+                ("field", skip, &field.attrs, ident.span(), written, read)
+            })
+        });
+    let variant = match &input.data {
+        Data::Enum(data) => described_variants(data)
+            .into_iter()
+            .filter(|variant| is_written(variant))
+            .find_map(|variant| {
+                let written = variant_name(variant, &container);
+                let read = variant_read_name(variant, &container);
+                (written != read).then(|| {
+                    let skip = "`skip_serializing` the variant";
+                    (
+                        "variant",
+                        skip,
+                        &variant.attrs,
+                        variant.ident.span(),
+                        written,
+                        read,
+                    )
+                })
+            }),
+        _ => None,
+    };
+
+    let Some((member, skip, attrs, ident, written, read)) = field.or(variant) else {
+        return Ok(());
+    };
+    let span = serde_key_span(attrs, &["rename"]).map_or(ident, |(_, span)| span);
+    Err(syn::Error::new(
+        span,
+        format!(
+            "serde writes this {member} as `{written}` and reads it as `{read}`, so no schema \
+             naming it is true in both directions. Give both sides one name with \
+             `rename = \"...\"`, or {skip}"
         ),
     ))
 }
