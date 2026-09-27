@@ -85,6 +85,14 @@ async fn observed_responses_match_the_description() {
         .await
         .assert_status(StatusCode::OK);
 
+    // No `head` is declared: the router answers from `get`, and the harness
+    // reads the exchange against it.
+    client
+        .head("/users/42")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+
     client.assert_conformance();
 }
 
