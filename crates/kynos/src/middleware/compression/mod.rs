@@ -139,8 +139,9 @@ fn strongly_tagged(headers: &http::HeaderMap) -> bool {
 /// Acceptable) response or disregard the header field". Kynos honours it, since
 /// disregarding a `q=0` means sending octets the client said it cannot decode.
 ///
-/// Reachable only through `Accept-Encoding`: it takes refusing identity *and*
-/// every coding this build offers, which no ordinary client does.
+/// Reachable only through `Accept-Encoding`: it takes excluding identity *and*
+/// leaving every coding this build offers unacceptable, refused or unlisted
+/// with no wildcard, which no ordinary client does.
 ///
 /// `T` names the problem type the body carries; `()` leaves `about:blank`. Set
 /// it with [`Compression::problem_type`].
@@ -273,10 +274,11 @@ fn negotiate(headers: &http::HeaderMap) -> Negotiated {
         return if identity > 0 {
             Negotiated::Identity
         } else {
-            // Every coding this build offers was refused *and* identity was
-            // refused. An empty field value reaches here too: it "implies that
-            // the user agent does not want any content coding in response",
-            // which excludes nothing, so it resolves to identity above.
+            // Every coding this build offers was refused or left unlisted with
+            // no wildcard, *and* identity was excluded. An empty field value
+            // reaches here too: it "implies that the user agent does not want
+            // any content coding in response", which excludes nothing, so it
+            // resolves to identity above.
             Negotiated::Nothing
         };
     };
