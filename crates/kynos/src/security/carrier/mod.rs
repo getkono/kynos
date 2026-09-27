@@ -278,7 +278,7 @@ pub fn api_key(
             Ok(Some(ApiKey(value.to_owned())))
         }
 
-        KeyLocation::Query => Ok(query_value(parts, name).map(|value| ApiKey(value.into_owned()))),
+        KeyLocation::Query => Ok(query_value(parts, name)?.map(ApiKey)),
 
         KeyLocation::Cookie => Ok(crate::http::cookie::value_of(&parts.headers, name)
             .map(|value| ApiKey(value.to_owned()))),
@@ -287,25 +287,26 @@ pub fn api_key(
 
 /// The first value of `name` in the request target's query string.
 ///
-/// Percent-decoded, since a key is a value rather than a piece of the URL's
-/// syntax; owned when decoding changed something, borrowed when it did not. The
-/// decoder is the one [`Query`](crate::extract::params::query::Query) already
-/// reaches for, so a key and a parameter cannot disagree about an escape.
+/// An API key `in: query` is a query parameter, so it is read exactly as a
+/// derived [`Query`](crate::extract::params::query::Query) parameter of the same
+/// name is: through the same decoder, which applies the form rules OpenAPI
+/// requires of every `in: query` parameter (`+` is a space, `%2B` a plus sign),
+/// and from the first pair that names it. A later pair never stands in for one
+/// that could not be read, since two readers of one request would then pick
+/// different credentials.
 ///
-/// `+` is a plus sign rather than a space. That is `application/x-www-form-
-/// urlencoded`'s rule and a query string is not a form; a key containing a
-/// literal `+` is far likelier than one whose issuer form-encoded a space into
-/// it.
-fn query_value<'r>(parts: &'r Parts, name: &str) -> Option<std::borrow::Cow<'r, str>> {
-    parts.uri.query()?.split('&').find_map(|pair| {
-        let (key, value) = pair.split_once('=')?;
-        // A name is percent-encoded too, so comparing raw bytes would miss the
-        // client that wrote `api%5Fkey`.
-        let key = crate::__private::uri::decode_path_value(key).ok()?;
-        (key == name)
-            .then(|| crate::__private::uri::decode_path_value(value).ok())
-            .flatten()
-    })
+/// # Errors
+///
+/// When that first value's octets are not UTF-8: present and malformed.
+fn query_value(parts: &Parts, name: &str) -> Result<Option<String>, AuthRejection> {
+    let Some((_, value)) = crate::__private::uri::query_pairs(parts.uri.query())
+        .find(|(key, _)| **key == *name.as_bytes())
+    else {
+        return Ok(None);
+    };
+    String::from_utf8(value.into_owned())
+        .map(Some)
+        .map_err(|_| AuthRejection::unauthenticated())
 }
 
 /// The certificate chain the peer presented during the TLS handshake.
