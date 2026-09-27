@@ -601,7 +601,7 @@ fn each_standard_scalar_writes_its_format_and_reads_it_back() {
     carries_as(&-0.5_f64, "-0.5", Some("double"));
 }
 
-/// The exception the `ParamValue` docs state: a non-finite float writes text no
+/// One exception the `ParamValue` docs state: a non-finite float writes text no
 /// `number` schema admits, and reads it back.
 #[test]
 fn a_non_finite_float_writes_what_no_number_admits() {
@@ -610,6 +610,59 @@ fn a_non_finite_float_writes_what_no_number_admits() {
     assert_eq!(f32::NEG_INFINITY.to_string(), "-inf");
     assert_eq!("inf".parse::<f64>(), Ok(f64::INFINITY));
     assert!("NaN".parse::<f32>().is_ok_and(f32::is_nan));
+}
+
+/// The chrono exception the `ParamValue` docs state: a year outside 0000–9999
+/// takes a sign and, past 9999, a fifth digit, neither of which RFC 3339's
+/// `date` admits. serde writes the same text, and `FromStr` reads it back.
+#[cfg(feature = "time-chrono")]
+#[test]
+fn a_chrono_date_outside_four_digit_years_writes_what_no_date_admits() {
+    use chrono::NaiveDate;
+
+    for (year, text) in [(10_000, "+10000-01-01"), (-1, "-0001-01-01")] {
+        let day = NaiveDate::from_ymd_opt(year, 1, 1).expect("a representable date");
+        assert_eq!(day.to_string(), text);
+        assert_eq!(
+            serde_json::to_value(day).expect("a date serializes"),
+            serde_json::Value::String(text.to_owned())
+        );
+        assert_eq!(text.parse::<NaiveDate>(), Ok(day));
+    }
+}
+
+/// The jiff exceptions the `ParamValue` docs state: a year before 0 takes a
+/// sign and six digits, and a negative duration a leading `-`, neither of which
+/// RFC 3339 admits. serde writes the same text, and `FromStr` reads it back.
+#[cfg(feature = "time-jiff")]
+#[test]
+fn a_jiff_value_before_zero_writes_what_no_format_admits() {
+    use jiff::{SignedDuration, Span, civil};
+
+    let day = civil::date(-1, 1, 1);
+    assert_eq!(day.to_string(), "-000001-01-01");
+    assert_eq!(
+        serde_json::to_value(day).expect("a date serializes"),
+        serde_json::Value::String("-000001-01-01".to_owned())
+    );
+    assert_eq!("-000001-01-01".parse::<civil::Date>().ok(), Some(day));
+
+    let back = SignedDuration::from_hours(-1);
+    assert_eq!(back.to_string(), "-PT1H");
+    assert_eq!(
+        serde_json::to_value(back).expect("a duration serializes"),
+        serde_json::Value::String("-PT1H".to_owned())
+    );
+    assert_eq!("-PT1H".parse::<SignedDuration>().ok(), Some(back));
+
+    let span = Span::new().days(-1);
+    assert_eq!(span.to_string(), "-P1D");
+    assert_eq!(
+        serde_json::to_value(span).expect("a span serializes"),
+        serde_json::Value::String("-P1D".to_owned())
+    );
+    let read: Span = "-P1D".parse().expect("a negative ISO 8601 duration parses");
+    assert_eq!(read.fieldwise(), span.fieldwise());
 }
 
 /// A type whose `Schema` is written by hand, saying so.
