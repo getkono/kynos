@@ -176,3 +176,27 @@ fn a_bodiless_status_states_no_length_on_a_head() {
         );
     }
 }
+
+/// A `Content-Length` the response already carries is the one a HEAD states,
+/// never replaced by the length of the body being dropped.
+///
+/// RFC 9110 section 8.6 lets a HEAD carry the length a GET would have sent,
+/// which a handler answering a declared `head` can know without building that
+/// representation -- so the body it hands over is no better evidence.
+#[test]
+fn a_head_keeps_the_length_the_response_states() {
+    let mut response = crate::http::Response::new(crate::http::body::Body::from_bytes(
+        bytes::Bytes::from_static(b"1234"),
+    ));
+    response.headers_mut().insert(
+        ::http::header::CONTENT_LENGTH,
+        ::http::HeaderValue::from_static("11"),
+    );
+
+    let head = super::without_content(response);
+
+    assert_eq!(
+        head.headers().get(::http::header::CONTENT_LENGTH),
+        Some(&::http::HeaderValue::from_static("11"))
+    );
+}

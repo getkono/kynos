@@ -357,6 +357,69 @@ async fn a_head_states_no_length_of_zero() {
     }
 }
 
+/// A path declaring `post` and nothing else.
+#[kynos::post("/submissions")]
+async fn submit() -> NoContent {
+    NoContent
+}
+
+/// A HEAD refused on a matched path loses its content like any other: the
+/// service implements HEAD through `GET /users`, so a HEAD to a POST-only path
+/// is a 405, and its problem body would reach an HTTP/2 peer if it were kept.
+#[tokio::test]
+async fn a_head_refused_on_a_matched_path_carries_no_content() {
+    let service = support::router()
+        .mount(kynos::routes![submit])
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = send(&service, Method::HEAD, "/submissions").call().await;
+
+    assert_eq!(reply.status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(reply.field(header::ALLOW.as_str()).as_deref(), Some("POST"));
+    assert!(reply.body.is_empty(), "{:?}", reply.text());
+}
+
+/// A path declaring both `get` and `head` names HEAD once in a 405's `Allow`:
+/// the declared one, and no second one derived from the GET.
+#[tokio::test]
+async fn a_declared_head_is_named_once_in_allow() {
+    let service = support::router()
+        .mount(kynos::routes![both_get, both_head])
+        .build(App::new())
+        .expect("a describable router");
+
+    // `POST` is implemented on `/users`, so this is a 405 rather than a 501.
+    let reply = send(&service, Method::POST, "/both").call().await;
+
+    assert_eq!(reply.status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(
+        reply.field(header::ALLOW.as_str()).as_deref(),
+        Some("GET, HEAD")
+    );
+}
+
+/// A `tower` layer wraps the operation from outside, and its response still
+/// leaves the dispatcher as a HEAD's: no content, and the GET's length.
+#[cfg(feature = "unchecked")]
+#[tokio::test]
+async fn a_head_through_an_unchecked_layer_carries_no_content() {
+    let service = support::router()
+        .layer_unchecked(tower::layer::util::Identity::new())
+        .build(App::new())
+        .expect("a describable router");
+
+    let full = get(&service, "/users/42").call().await;
+    let head = send(&service, Method::HEAD, "/users/42").call().await;
+
+    assert_eq!(head.status, StatusCode::OK);
+    assert!(head.body.is_empty(), "{:?}", head.text());
+    assert_eq!(
+        head.field(header::CONTENT_LENGTH.as_str()),
+        Some(full.body.len().to_string())
+    );
+}
+
 // --- What `Lenient` accepts, and what it still refuses --------------------
 
 /// A route whose declared spelling carries the trailing slash, which is the
