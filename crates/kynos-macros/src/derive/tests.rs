@@ -426,7 +426,8 @@ mod schema {
 
     /// A split `rename` is refused on every member serde both writes and
     /// reads, not only on a struct's field: a variant, and a field of a
-    /// variant serde writes.
+    /// variant serde writes. A `rename` giving one side is split too: its other
+    /// side is the identifier without its `r#` under `rename_all`.
     ///
     /// Beside the ledger rather than in it: the ledger's row proves the site
     /// fires, and these prove each member reaches it.
@@ -479,6 +480,39 @@ mod schema {
                         }
                     ),
                     "serde writes this variant as `x` and reads it as `y`",
+                ),
+                case(
+                    "a `rename` giving only the serialize side of a field",
+                    quote::quote!(
+                        #[serde(rename_all = "camelCase")]
+                        struct Stamp {
+                            #[serde(rename(serialize = "a"))]
+                            r#type_name: u64,
+                        }
+                    ),
+                    "serde writes this field as `a` and reads it as `typeName`",
+                ),
+                case(
+                    "a `rename` giving only the deserialize side of a field",
+                    quote::quote!(
+                        struct Stamp {
+                            #[serde(rename(deserialize = "b"))]
+                            r#type: u64,
+                        }
+                    ),
+                    "serde writes this field as `type` and reads it as `b`",
+                ),
+                case(
+                    "a `rename` giving only the deserialize side of a variant",
+                    quote::quote!(
+                        #[serde(rename_all = "snake_case")]
+                        enum Change {
+                            Now,
+                            #[serde(rename(deserialize = "b"))]
+                            QueuedLater,
+                        }
+                    ),
+                    "serde writes this variant as `queued_later` and reads it as `b`",
                 ),
             ],
             expand_inner,
