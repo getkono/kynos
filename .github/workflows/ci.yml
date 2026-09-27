@@ -85,6 +85,12 @@ jobs:
       - name: Test the cost sweep's parsers and report
         run: mise run cost:test
 
+      # The same for the request-path profile: its Callgrind reader, its
+      # calibration and its baseline, over text written for the purpose.
+      # `profile:requests` -- the half that needs Valgrind -- is `cost.yml`.
+      - name: Test the request-path profile's parsers and report
+        run: mise run profile:test
+
       # Here rather than in the `commits` job below, which the rule is about:
       # that job is `if: github.event_name == 'pull_request'`, so a task placed
       # there would not run on a push to master.
