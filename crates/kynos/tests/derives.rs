@@ -2712,7 +2712,8 @@ fn a_split_rename_is_described_under_the_side_serde_uses() {
 /// Each identifier is one a rule that splits it into words names otherwise
 /// than serde, which reads a field as `snake_case` and a variant as `PascalCase`:
 /// a leading, trailing or doubled `_`, an uppercase letter in a field, an `_`
-/// and an acronym in a variant, and a non-ASCII capital.
+/// and an acronym in a variant, and a non-ASCII letter, which serde never
+/// changes the case of: first and mid-word in a field, a capital in a variant.
 macro_rules! styled {
     ($($module:ident => $style:literal),* $(,)?) => {
         $(
@@ -2727,6 +2728,7 @@ macro_rules! styled {
                     very_tasty: u8,
                     aB: u8,
                     z42: u8,
+                    naïve_é: u8,
                 }
 
                 #[derive(kynos::Schema, serde::Serialize)]
