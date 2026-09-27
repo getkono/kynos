@@ -196,21 +196,24 @@ names: chrono's `NaiveDateTime` and `DateTime` put a space where RFC 3339 has a
 writes RFC 3339, carries a date-time; `rust_decimal`, or a newtype whose
 `Display` writes fixed-point digits, carries a decimal.
 
-Kept in despite it, at the edges of their range, where `Display` writes text
-the schema does not admit and `FromStr` reads it back:
+Kept in despite it, where `Display` writes text the schema does not admit and
+`FromStr` reads it back:
 
 - `f32` and `f64` write `NaN`, `inf` or `-inf` for a non-finite value, which no
   `number` admits.
 - chrono's `NaiveDate` writes a sign outside the years 0000–9999,
-  `+10000-01-01` or `-0001-01-01`, and a jiff date or date-time before year 0 a
-  sign and six digits, `-000001-01-01`, neither of which RFC 3339 admits.
-- jiff's `Span` and `SignedDuration` write a leading `-` for a negative
-  duration, `-P1D` or `-PT1H`, which RFC 3339's `duration` does not admit.
+  `+10000-01-01` or `-0001-01-01`, and jiff's `civil::Date`, `civil::DateTime`,
+  `Timestamp` and `Zoned` a sign and six digits before year 0,
+  `-000001-01-01`, which neither RFC 3339 nor `Zoned`'s pattern admits.
+- jiff's `Span` and `SignedDuration` write ISO 8601 durations, which RFC 3339's
+  `duration` only partly admits: a leading `-` (`-PT1H`), fractional seconds
+  (`PT0.5S`), a skipped unit (`PT1H30S`) and weeks with days (`P1W2D`) fall
+  outside it.
 
 The dates and durations write what serde writes for a body, so a parameter of
 one claims nothing its body's description does not; the exclusions above are
 values the format can express that `Display` writes otherwise. A newtype whose
-`FromStr` refuses the edge values is the remedy.
+`FromStr` refuses those values is the remedy.
 
 Your own newtype or enum opts in with `impl ParamValue for UserId {}` once its
 schema describes the one value its `Display` writes. A structured query, such
@@ -750,7 +753,7 @@ re-walked. A second call would reuse the same maps and agree with itself.
 | 37 | Under `#[serde(deny_unknown_fields)]`, a flattened field of an object rule 32 closes is bounded by `ClosedFlatten` beside `Flatten`, since serde takes a flattened key only through `deserialize_struct`: the derive implements it beside `Flatten` for a struct with no flattened field serde reads, a flattened `PhantomData` counting and one skipped both ways not, and no container `#[serde(tag = "...")]`, and for an adjacently tagged enum, never for an internally tagged one; a `#[serde(transparent)]` struct closes no object, so its flattened field is bounded by `Flatten` alone; `Box<T>` and `Arc<T>` carry it, `Problem` does not implement it, and an internally tagged newtype variant's payload is bounded by `Flatten` alone | the `ClosedFlatten`-claim and witness rows in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); `a_type_serde_reads_by_name_can_be_flattened_into_a_closed_object` in [`schema/tests.rs`](../crates/kynos/src/schema/tests.rs) for the wrappers, and a `compile_fail` doctest on the trait for `Problem`; `a_closed_object_reads_a_flattened_adjacently_tagged_enum_as_serde_does` in [`tests/flatten.rs`](../crates/kynos/tests/flatten.rs), against the `jsonschema` validator and serde's read; and `tests/ui/macros/schema_flatten_internally_tagged_denying_unknown_fields.rs` and `tests/ui/macros/schema_flatten_nested_flatten_denying_unknown_fields.rs` for the wording, and `tests/ui/macros/schema_flatten_externally_tagged_denying_unknown_fields.rs` for the two refusals a type that is not `Flatten` gets there |
 | 38 | A named struct's `#[serde(tag = "...")]` is a required property whose `const` is the struct's serde name, its container `rename`, the serialize side where the rename is split, otherwise its identifier without a raw identifier's `r#`, never through `rename_all`, with no `discriminator`; a flattened tagged struct's tag reaches the parent through its `$ref`; a `#[serde(transparent)]` struct writes no tag and is its field's schema; a tuple or unit struct is left to serde, which refuses the tag | `a_tagged_struct_names_its_tag_as_a_required_const`, `a_tagged_structs_tag_is_the_name_serde_writes` and `a_transparent_structs_tag_is_in_no_schema` in [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde writes and reads; `a_flattened_tagged_struct_holds_its_tag_through_the_parent` in [`tests/flatten.rs`](../crates/kynos/tests/flatten.rs), against the `jsonschema` validator; `a_tag_on_a_tuple_or_unit_struct_is_left_to_serde` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); and `tests/ui/pass/schema_tagged_struct.rs` |
 | 39 | A tagged named struct is refused under `#[serde(deny_unknown_fields)]` unless it is `#[serde(transparent)]`, and so is one holding a named field serde writes or reads under the tag's own name, as its wire name or an `alias`; a field serde skips in the colliding direction or skips both ways is left alone, and so is a flattened field under its own name, though the keys its type writes are not checked, the limit serde's own check of an enum's internal tag has | the derive's ledger, `a_field_under_the_tags_name_is_refused_in_either_direction`, `a_tag_on_a_struct_with_a_true_schema_is_accepted` and `a_flattened_field_is_exempt_from_the_tag_whatever_its_type_writes` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs), and `tests/ui/macros/schema_tagged_struct_denying_unknown_fields.rs` and `tests/ui/macros/schema_tagged_struct_field_named_as_tag.rs` for the wording |
-| 40 | A parameter-derive field's type, or an `Option`'s inner type, implements `ParamValue`, which is implemented only for a type whose schema is one value that `Display` writes and `FromStr` reads, the edge values [above](#parameter-values) aside: a non-finite float, a date outside RFC 3339's four-digit years, and a negative jiff duration | the per-field bound in [`derive/params.rs`](../crates/kynos-macros/src/derive/params.rs), `tests/ui/macros/*_params_object_field.rs` for the wording, and in [`schema/tests.rs`](../crates/kynos/src/schema/tests.rs) the `every_shipped_scalar_is_a_parameter_value` witness and the per-backend cases that write each type's text and read it back, and beside `a_non_finite_float_writes_what_no_number_admits` the cases that pin each edge value's text |
+| 40 | A parameter-derive field's type, or an `Option`'s inner type, implements `ParamValue`, which is implemented only for a type whose schema is one value that `Display` writes and `FromStr` reads, the exceptions [above](#parameter-values) aside: a non-finite float, a date outside RFC 3339's four-digit years, and a jiff duration outside RFC 3339's `duration` | the per-field bound in [`derive/params.rs`](../crates/kynos-macros/src/derive/params.rs), `tests/ui/macros/*_params_object_field.rs` for the wording, and in [`schema/tests.rs`](../crates/kynos/src/schema/tests.rs) the `every_shipped_scalar_is_a_parameter_value` witness and the per-backend cases that write each type's text and read it back, and beside `a_non_finite_float_writes_what_no_number_admits` the cases that pin each exception's text |
 
 ## Rationale
 

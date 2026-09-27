@@ -77,10 +77,12 @@ impl Schema for ::jiff::SignedDuration {
 
 // jiff's serde integration writes through `Display`, so a parameter of each of
 // these carries the text a body would, the form its schema names, and `FromStr`
-// reads it back. Two accepted exceptions sit at the edges of their range: a
-// negative duration's leading `-` (`-P1D`, `-PT1H`) is outside RFC 3339's
-// `duration`, and a year before 0 (`-000001-01-01`) outside its `date`, in a
-// parameter exactly as in a body.
+// reads it back. Two accepted exceptions hold in a parameter exactly as in a
+// body: a year before 0 (`-000001-01-01`) is outside RFC 3339 and `Zoned`'s
+// pattern, and the ISO 8601 durations both duration types write are only
+// partly RFC 3339's `duration`, which refuses a leading `-` (`-PT1H`),
+// fractional seconds (`PT0.5S`), a skipped unit (`PT1H30S`) and weeks with
+// days (`P1W2D`).
 impl ParamValue for ::jiff::civil::Date {}
 impl ParamValue for ::jiff::civil::Time {}
 impl ParamValue for ::jiff::civil::DateTime {}

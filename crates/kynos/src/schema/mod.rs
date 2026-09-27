@@ -238,25 +238,26 @@ impl MapKey for String {}
 /// an array over several values, which one `FromStr` never reads.
 ///
 /// Implemented for the scalars Kynos describes whose `Display` writes the form
-/// their schema names, with accepted exceptions at the edges of their range,
-/// where `Display` writes text the schema does not admit and `FromStr` reads it
-/// back, so a field accepts it:
+/// their schema names, with accepted exceptions where `Display` writes text the
+/// schema does not admit and `FromStr` reads it back, so a field accepts it:
 ///
 /// - a non-finite `f32` or `f64` writes `NaN`, `inf` or `-inf`, which no
 ///   `number` admits;
 /// - a chrono `NaiveDate` outside the years 0000–9999 writes a sign, as in
-///   `+10000-01-01` or `-0001-01-01`, and a jiff date or date-time before year
-///   0 writes a sign and six digits, as in `-000001-01-01`, neither of which
-///   RFC 3339 admits;
-/// - a negative jiff `Span` or `SignedDuration` writes a leading `-`, as in
-///   `-P1D` or `-PT1H`, which RFC 3339's `duration` does not admit.
+///   `+10000-01-01` or `-0001-01-01`, and a jiff `civil::Date`,
+///   `civil::DateTime`, `Timestamp` or `Zoned` before year 0 writes a sign and
+///   six digits, as in `-000001-01-01`, which neither RFC 3339 nor `Zoned`'s
+///   pattern admits;
+/// - jiff's `Span` and `SignedDuration` write ISO 8601 durations, which RFC
+///   3339's `duration` only partly admits: a leading `-` (`-PT1H`), fractional
+///   seconds (`PT0.5S`), a skipped unit (`PT1H30S`) and weeks with days
+///   (`P1W2D`) fall outside it.
 ///
 /// The dates and durations write the text serde writes for a body, so a
 /// parameter of one makes no claim the body's description does not already
-/// make. A newtype whose `FromStr`
-/// refuses them is the remedy where that matters. An `Option<T>` field is a
-/// derive's business, not this trait's: the derive makes it optional and bounds
-/// `T`.
+/// make. A newtype whose `FromStr` refuses them is the remedy where that
+/// matters. An `Option<T>` field is a derive's business, not this trait's: the
+/// derive makes it optional and bounds `T`.
 ///
 /// ```compile_fail
 /// # use std::{fmt, str::FromStr};
