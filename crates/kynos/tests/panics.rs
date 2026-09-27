@@ -285,6 +285,29 @@ fn a_panic_recovered_at_two_scopes_is_reported_once() {
     assert_eq!(heard.paths(), ["/guarded"]);
 }
 
+/// A `tower` layer re-enters the table beneath itself, so the endpoint's 500
+/// reaches the dispatcher by that second way in and is reported there.
+///
+/// `Identity` is enough: what is under test is the re-entry, not anything a
+/// layer does to the response.
+#[cfg(feature = "unchecked")]
+#[test]
+fn a_panic_an_endpoint_recovered_beneath_an_unchecked_layer_is_reported_once() {
+    let heard = Heard::default();
+    let service = Router::<()>::new()
+        .layer_unchecked(tower::layer::util::Identity::new())
+        .mount(kynos::routes![attributed])
+        .observe(heard.clone())
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(
+        outcome(&service, "/attributed"),
+        Ok(StatusCode::INTERNAL_SERVER_ERROR)
+    );
+    assert_eq!(heard.paths(), ["/attributed"]);
+}
+
 /// A recovered operation declares the 500 it can now produce.
 ///
 /// The whole design says a response a service can send is a response the
