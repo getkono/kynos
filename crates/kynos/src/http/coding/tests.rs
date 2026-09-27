@@ -116,3 +116,18 @@ fn a_malformed_identity_weight_does_not_exclude_identity() {
     }
     assert_eq!(identity_quality("identity;q=1.5, *;q=0"), 1_000);
 }
+
+/// `quality` reads the weight the field gives `identity`, not whether identity
+/// is acceptable; rule 2 is `identity_quality`'s alone.
+///
+/// A weight that is not a qvalue is a refusal to one and states no exclusion to
+/// the other, and a silent field is `None` to one and the default to the other.
+#[test]
+fn quality_reads_identitys_weight_not_its_acceptability() {
+    for field in ["identity;q=1.5", "*;q=1.5"] {
+        assert_eq!(quality(field, "identity"), Some(0), "{field}");
+        assert_eq!(identity_quality(field), 1_000, "{field}");
+    }
+    assert_eq!(quality("gzip", "identity"), None);
+    assert_eq!(identity_quality("gzip"), 1_000);
+}
