@@ -256,9 +256,12 @@ both, and no `head` is minted into the document; a declared `head` wins. No
 response to a HEAD carries content, whatever answered it.
 
 A method no operation in the service implements is a 501 with no `Allow`,
-decided before the path is matched: RFC 9110 §15.6.2 makes it a property of the
-server, so no 404 or redirect precedes it. A method implemented on some other
-path is still a 405.
+decided before the 404 or 308 on an unmatched path and instead of the 405 on a
+matched one: RFC 9110 §15.6.2 makes it a property of the server, so no 404 or
+redirect precedes it. A method implemented on some other path is still a 405. A
+CORS preflight is answered by the synthesized preflight on a covered path even
+where nothing implements `OPTIONS` — see
+[`middleware.md`](middleware.md#preflight).
 
 ## The `matchit` contract
 

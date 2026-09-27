@@ -90,9 +90,10 @@ async fn a_method_implemented_elsewhere_is_refused_with_what_is_allowed() {
 /// 9.1: "An origin server that receives a request method that is unrecognized
 /// or not implemented SHOULD respond with the 501 (Not Implemented) status
 /// code." Section 15.6.2 makes that a property of the server rather than of a
-/// resource, so it is decided before the path is: an unmatched path is no 404
-/// and a flipped spelling no 308 for a method nothing could serve. No `Allow`
-/// either -- section 10.2.1 requires one on a 405 only.
+/// resource, so it is decided before the 404 or 308 on an unmatched path and
+/// instead of the 405 on a matched one: an unmatched path is no 404 and a
+/// flipped spelling no 308 for a method nothing could serve. No `Allow` either
+/// -- section 10.2.1 requires one on a 405 only.
 #[tokio::test]
 async fn a_method_no_operation_implements_is_not_implemented() {
     let frob = Method::from_bytes(b"FROB").expect("a method token");
