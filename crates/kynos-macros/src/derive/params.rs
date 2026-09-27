@@ -381,71 +381,16 @@ fn query_encoder() -> TokenStream2 {
 /// The reverse: the pairs a raw query string carries, each half decoded to
 /// octets, so a name is compared as octets.
 ///
-/// `+` is a space, which is what `application/x-www-form-urlencoded` says and
-/// what every client that builds a query string does. A malformed escape is
-/// kept as the literal `%` rather than rejected: a query parameter this group
-/// does not declare is none of its business, and a value it does declare fails
-/// where the field is parsed, with the field's name in the diagnostic. A value
-/// it declares whose octets are not UTF-8 is refused where the field is read,
-/// naming the field, rather than repaired into text the client never sent.
+/// The decoding is `kynos::__private::uri::query_pairs`, the one a query API
+/// key is read through too, so a parameter and a key cannot disagree about an
+/// escape; its rules are written there. A value this group declares whose
+/// octets are not UTF-8 is refused where the field is read, naming the field,
+/// rather than repaired into text the client never sent.
 pub(crate) fn query_pairs() -> TokenStream2 {
     quote! {
-        fn decode(raw: &str) -> ::std::vec::Vec<u8> {
-            fn digit(byte: u8) -> ::core::option::Option<u8> {
-                match byte {
-                    b'0'..=b'9' => ::core::option::Option::Some(byte - b'0'),
-                    b'a'..=b'f' => ::core::option::Option::Some(byte - b'a' + 10),
-                    b'A'..=b'F' => ::core::option::Option::Some(byte - b'A' + 10),
-                    _ => ::core::option::Option::None,
-                }
-            }
-
-            let bytes = raw.as_bytes();
-            let mut decoded = ::std::vec::Vec::with_capacity(bytes.len());
-            let mut index = 0;
-            while index < bytes.len() {
-                match bytes[index] {
-                    b'+' => {
-                        decoded.push(b' ');
-                        index += 1;
-                    }
-                    b'%' if index + 2 < bytes.len() => {
-                        match (digit(bytes[index + 1]), digit(bytes[index + 2])) {
-                            (
-                                ::core::option::Option::Some(high),
-                                ::core::option::Option::Some(low),
-                            ) => {
-                                decoded.push(high * 16 + low);
-                                index += 3;
-                            }
-                            _ => {
-                                decoded.push(b'%');
-                                index += 1;
-                            }
-                        }
-                    }
-                    byte => {
-                        decoded.push(byte);
-                        index += 1;
-                    }
-                }
-            }
-            decoded
-        }
-
-        let mut pairs: ::std::vec::Vec<(
-            ::std::vec::Vec<u8>,
-            ::std::vec::Vec<u8>,
-        )> = ::std::vec::Vec::new();
-        for pair in ::core::option::Option::unwrap_or_default(query).split('&') {
-            if pair.is_empty() {
-                continue;
-            }
-            let (name, value) = match pair.split_once('=') {
-                ::core::option::Option::Some(split) => split,
-                ::core::option::Option::None => (pair, ""),
-            };
-            pairs.push((decode(name), decode(value)));
-        }
+        let pairs: ::std::vec::Vec<(
+            ::std::borrow::Cow<'_, [u8]>,
+            ::std::borrow::Cow<'_, [u8]>,
+        )> = ::kynos::__private::uri::query_pairs(query).collect();
     }
 }

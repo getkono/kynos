@@ -1,7 +1,7 @@
 use crate::{
     __private::{
         path::path_parameter_names_match,
-        uri::{decode_path_value, encode_ext_value, endpoint_uri_with_path},
+        uri::{decode_path_value, encode_ext_value, endpoint_uri_with_path, query_pairs},
     },
     extract::params::path::{EncodePath, PathParams},
 };
@@ -117,5 +117,60 @@ fn an_extended_parameter_value_decodes_back_to_what_it_encoded() {
             decode_path_value(&encoded).expect("the encoder emits UTF-8 octets"),
             fixture
         );
+    }
+}
+
+/// The pairs `query` carries, as owned octets, for comparing against literals.
+fn pairs_of(query: Option<&str>) -> Vec<(Vec<u8>, Vec<u8>)> {
+    query_pairs(query)
+        .map(|(name, value)| (name.into_owned(), value.into_owned()))
+        .collect()
+}
+
+/// Total over the octets, in either case of hex digit and in either half of a
+/// pair: the expected octet is the one the escape was built from, never one
+/// the decoder produced.
+#[test]
+fn every_percent_escaped_octet_decodes_to_itself() {
+    for byte in 0u8..=0xff {
+        for query in [
+            format!("%{byte:02X}=%{byte:02X}"),
+            format!("%{byte:02x}=%{byte:02x}"),
+        ] {
+            assert_eq!(
+                pairs_of(Some(&query)),
+                [(vec![byte], vec![byte])],
+                "{query}"
+            );
+        }
+    }
+}
+
+/// OpenAPI's form rules for an `in: query` parameter, and the pair rules a
+/// derived group and a query API key both read by.
+#[test]
+fn a_query_string_splits_and_decodes_with_form_rules() {
+    type Pairs = &'static [(&'static [u8], &'static [u8])];
+
+    let cases: [(Option<&str>, Pairs); 11] = [
+        (None, &[]),
+        (Some(""), &[]),
+        (Some("a+b=c+d"), &[(b"a b", b"c d")]),
+        (Some("k=a%2Bb"), &[(b"k", b"a+b")]),
+        (Some("k=a%20b"), &[(b"k", b"a b")]),
+        (Some("k=%+%4+%zz%%41"), &[(b"k", b"% %4 %zz%A")]),
+        (Some("k"), &[(b"k", b"")]),
+        (Some("k=a=b"), &[(b"k", b"a=b")]),
+        (Some("&&k=1&&"), &[(b"k", b"1")]),
+        (Some("=v"), &[(b"", b"v")]),
+        (Some("k=1&k=2"), &[(b"k", b"1"), (b"k", b"2")]),
+    ];
+
+    for (query, expected) in cases {
+        let expected: Vec<(Vec<u8>, Vec<u8>)> = expected
+            .iter()
+            .map(|(name, value)| (name.to_vec(), value.to_vec()))
+            .collect();
+        assert_eq!(pairs_of(query), expected, "{query:?}");
     }
 }

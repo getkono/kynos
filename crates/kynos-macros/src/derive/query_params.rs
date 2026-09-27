@@ -38,7 +38,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         // declared value is held to being text.
         let found = quote! {
             match pairs.iter().find_map(|(name, value)| {
-                (name.as_slice() == #wire.as_bytes()).then_some(value.as_slice())
+                (**name == *#wire.as_bytes()).then_some(&**value)
             }) {
                 ::core::option::Option::Some(octets) => match ::core::str::from_utf8(octets) {
                     ::core::result::Result::Ok(text) => ::core::option::Option::Some(text),

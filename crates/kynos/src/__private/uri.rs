@@ -73,6 +73,45 @@ pub fn decode_path_value(value: &str) -> Result<std::borrow::Cow<'_, str>, std::
     percent_encoding::percent_decode_str(value).decode_utf8()
 }
 
+/// The pairs a raw query string carries, each half decoded to octets, in the
+/// order the target wrote them.
+///
+/// The one reading of a query string that a derived `QueryParams` group and a
+/// query API key share, so a parameter and a key named alike cannot disagree
+/// about what the client sent. The halves are octets rather than text so a name
+/// is compared as octets and each reader decides what a value that is not UTF-8
+/// means to it.
+///
+/// Form rules, because OpenAPI requires them of every `in: query` parameter:
+/// `+` is a space and `%2B` a plus sign. An empty pair is skipped, a pair with
+/// no `=` has an empty value, and a malformed escape is kept as the literal `%`
+/// rather than rejected, since a pair its reader never asks for is none of its
+/// business.
+pub fn query_pairs(
+    query: Option<&str>,
+) -> impl Iterator<Item = (std::borrow::Cow<'_, [u8]>, std::borrow::Cow<'_, [u8]>)> {
+    query
+        .unwrap_or_default()
+        .split('&')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| {
+            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (decode_form_value(name), decode_form_value(value))
+        })
+}
+
+/// `+` to a space, then percent-decoding; borrowed when neither changed
+/// anything.
+fn decode_form_value(raw: &str) -> std::borrow::Cow<'_, [u8]> {
+    if raw.contains('+') {
+        std::borrow::Cow::Owned(
+            percent_encoding::percent_decode_str(&raw.replace('+', " ")).collect(),
+        )
+    } else {
+        percent_encoding::percent_decode_str(raw).into()
+    }
+}
+
 /// Builds a URI for a generated endpoint without dynamic parameters.
 #[must_use]
 pub fn endpoint_uri(template: &str) -> Uri {
