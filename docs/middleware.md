@@ -712,9 +712,11 @@ An `OPTIONS` that is *not* a preflight — no `Origin`, or no
 mounted: the same `method_not_allowed` policy, and the same answer — a 405 with
 the same `Allow`, or a 501 where no operation implements `OPTIONS`.
 
-The methods a preflight advertises are the ones the covering scope declares, so
-a `Cors` on a group owning `GET /x` advertises `GET` even where the router also
-owns `POST /x`. `Cors::allow_methods` overrides that, for a deployment fronting
+The methods a preflight advertises are the ones the covering scope declares, and
+the HEAD each of its GETs implies where the path declares no `head` — the Fetch
+standard preflights a HEAD carrying an unsafelisted header, and that HEAD runs
+under the GET's chain. So a `Cors` on a group owning `GET /x` advertises
+`GET, HEAD` even where the router also owns `POST /x`. `Cors::allow_methods` overrides that, for a deployment fronting
 routes Kynos does not serve.
 
 **A path can be covered by more than one `Cors`.** A group's interceptor stack

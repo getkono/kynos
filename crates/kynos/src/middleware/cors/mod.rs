@@ -328,8 +328,8 @@ impl<D> Cors<D> {
     /// Overrides the methods advertised on preflight.
     ///
     /// By default these are derived from the operations declared on the matched
-    /// path, so what preflight advertises and what the description promises
-    /// cannot disagree. Overriding is for a deployment that fronts routes Kynos
+    /// path, and the HEAD each GET answers where the path declares none, so what
+    /// preflight advertises and what `Allow` names cannot disagree. Overriding is for a deployment that fronts routes Kynos
     /// does not serve.
     #[must_use]
     pub fn allow_methods<I>(mut self, methods: I) -> Self

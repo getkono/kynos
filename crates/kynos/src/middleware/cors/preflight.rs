@@ -35,8 +35,9 @@ const PREFLIGHT_VARIES: &[&str] = &[
 pub(crate) struct Scope {
     /// The configuration of the `Cors` covering these methods.
     config: CorsConfig,
-    /// The methods on this path that this configuration actually covers, which
-    /// is what a proposed method is matched against.
+    /// The methods on this path that this configuration actually covers, with
+    /// the HEAD a covered GET answers where the path declares none, which is
+    /// what a proposed method is matched against.
     covered: Vec<Method>,
     /// The methods this scope advertises: the ones it covers, unless
     /// `allow_methods` overrode them.

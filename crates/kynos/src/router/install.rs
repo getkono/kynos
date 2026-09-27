@@ -242,6 +242,25 @@ pub(super) fn install_preflight<C: Send + Sync + 'static>(
             continue;
         }
 
+        // A HEAD on a path declaring none runs under the GET's chain, so the
+        // scope covering GET covers it too -- the Fetch standard preflights a
+        // HEAD carrying an unsafelisted header -- and names it after GET, as
+        // `Allow` does.
+        if !entry
+            .operations
+            .iter()
+            .any(|operation| operation.method == kynos_openapi::Method::Head)
+        {
+            for (_, covered) in &mut scopes {
+                if let Some(at) = covered
+                    .iter()
+                    .position(|method| *method == kynos_openapi::Method::Get)
+                {
+                    covered.insert(at + 1, kynos_openapi::Method::Head);
+                }
+            }
+        }
+
         let scopes = scopes
             .into_iter()
             .map(|(interceptor, covered)| {
