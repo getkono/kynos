@@ -102,8 +102,8 @@ impl Schema for f64 {
 
 // Each one's `Display` writes the single value its schema describes, and its
 // `FromStr` reads that back, except a non-finite float, one of the accepted
-// edge exceptions `ParamValue` lists: `NaN`, `inf` and `-inf` are what
-// `Display` writes and `FromStr` reads, and no `number` admits them.
+// exceptions `ParamValue` lists: `NaN`, `inf` and `-inf` are what `Display`
+// writes and `FromStr` reads, and no `number` admits them.
 impl ParamValue for bool {}
 impl ParamValue for char {}
 impl ParamValue for String {}
