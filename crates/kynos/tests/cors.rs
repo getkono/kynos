@@ -467,6 +467,57 @@ async fn a_preflight_refuses_an_origin_the_covering_cors_does_not_permit() {
     );
 }
 
+/// A HEAD on a path declaring no `head` runs under the `GET` operation's
+/// chain, so its preflight is answered by the `Cors` covering `GET`.
+///
+/// The Fetch standard preflights a HEAD like any other method once it carries
+/// a header outside the safelist, such as `Authorization`. The group covering
+/// `DELETE` is mounted first, so a preflight that matched declared methods
+/// only would fall back to it and permit no origin the real HEAD is served to.
+#[tokio::test]
+async fn a_head_preflight_answers_from_the_cors_covering_get() {
+    use kynos::router::group::Group;
+
+    let service = Router::<()>::new()
+        .group(
+            Group::new("/")
+                .mount(kynos::routes![delete_widget])
+                .intercept(Cors::new().allow_origins(["https://admin.example.com"])),
+        )
+        .group(
+            Group::new("/")
+                .mount(kynos::routes![list_widgets])
+                .intercept(Cors::new().allow_origins(["https://reader.example.com"])),
+        )
+        .build(())
+        .expect("a describable router");
+
+    let (status, fields) = send(
+        &service,
+        Method::OPTIONS,
+        "/widgets",
+        &[
+            ("origin", "https://reader.example.com"),
+            ("access-control-request-method", "HEAD"),
+            ("access-control-request-headers", "authorization"),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_ORIGIN).as_deref(),
+        Some("https://reader.example.com"),
+        "answered a HEAD preflight from a configuration not covering GET"
+    );
+
+    // Advertised the way `Allow` names it: after the `GET` that answers it.
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS).as_deref(),
+        Some("GET, HEAD")
+    );
+}
+
 /// A service implementing `OPTIONS` somewhere refuses a plain `OPTIONS` on a
 /// path without one with a 405 and that path's `Allow`, and mounting CORS over
 /// the path changes neither.
