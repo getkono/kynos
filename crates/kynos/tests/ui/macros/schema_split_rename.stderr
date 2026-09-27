@@ -1,4 +1,4 @@
-error: serde writes this field as `a` and reads it as `b`, so no schema naming it is true in both directions. Give both sides one name with `rename = "..."`, or `skip_serializing` or `skip_deserializing` the field
+error: serde writes this field as `a` and reads it as `b`, never as `a`, so no schema naming it is true in both directions. Give both sides one name with `rename = "..."`, or `skip_serializing` or `skip_deserializing` the field
  --> tests/ui/macros/schema_split_rename.rs:7:13
   |
 7 |     #[serde(rename(serialize = "a", deserialize = "b"))]
