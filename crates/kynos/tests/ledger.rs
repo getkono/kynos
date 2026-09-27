@@ -130,6 +130,10 @@ const RECORDED: &[(&str, &str)] = &[
         "under the name of its struct's own",
         "macros/schema_tagged_struct_field_named_as_tag.stderr",
     ),
+    (
+        "split `rename(serialize = ..., deserialize = ...)` whose two sides differ",
+        "macros/schema_split_rename.stderr",
+    ),
 ];
 
 /// The attributes the `Schema` derive's rustdoc lists as refused, each named
