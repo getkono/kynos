@@ -58,7 +58,7 @@ fn a_jar_is_split_the_way_the_grammar_writes_it() {
     }
 }
 
-/// A field no `&str` can hold is skipped, and the rest of the jar survives.
+/// A cookie outside ASCII is skipped, and the rest of the jar survives.
 ///
 /// One unreadable cookie hiding every other one would turn a client's
 /// mistake into the service losing a session it was sent.

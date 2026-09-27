@@ -25,6 +25,11 @@ use crate::http::{HeaderMap, header::COOKIE};
 /// what is skipped, not the field it travels in: section 5.4 has a client send
 /// one `Cookie` field, so a field is usually the whole jar.
 ///
+/// Skipping a pair means the jar cannot tell a cookie it could not read from
+/// one that was never sent, and a later cookie of the same name can come first
+/// in it. Look a cookie up by name, a credential above all, with [`value_of`],
+/// which tells them apart.
+///
 /// A value written in RFC 6265's quoted form is unwrapped: the quotes delimit
 /// the value rather than belonging to it. A pair with no `=` is a name with an
 /// empty value, which is what a client sending a bare flag produces.
