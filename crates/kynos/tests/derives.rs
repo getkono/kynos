@@ -8,8 +8,9 @@
 //!
 //! A derive is a type-level surface, so what a derived decoder does is not
 //! checked here, with one recorded exception: the query decoder's refusal of a
-//! declared value that is not UTF-8, which no other target exercises. Its test
-//! calls `DecodeQuery::decode` directly, with no server. What *is* checked
+//! declared value that is not UTF-8, and its decoding of `+` as a space and of
+//! an escaped `+` as a `+`, which no other target exercises. Its test calls
+//! `DecodeQuery::decode` directly, with no server. What *is* checked
 //! beyond compiling is the description a derive emits, and what the default
 //! `QueryParams::parameters` makes of a derived schema.
 
@@ -1221,9 +1222,11 @@ fn a_oneof_or_ref_schema_projects_to_no_parameter() {
 
 // --- The derived query decoder reads only octets that are text -------------
 //
-// The one runtime property checked here, because no other target exercises
-// this refusal and the macro crate cannot run an expansion. It calls the
-// derived decoder directly, with no server.
+// The recorded runtime exception checked here, because no other target
+// exercises this refusal or the decoder's `+` handling and the macro crate
+// cannot run an expansion: a declared value that is not UTF-8 is refused, `+`
+// decodes to a space and an escaped `+` stays a `+`. It calls the derived
+// decoder directly, with no server.
 
 #[derive(Schema, QueryParams)]
 struct Named {
@@ -1235,8 +1238,9 @@ struct Named {
 
 /// A declared value whose percent-decoded octets are not UTF-8 is refused,
 /// naming the parameter by its wire name, rather than repaired into text the
-/// client never sent. A name is matched once percent-decoded, and an undeclared
-/// pair is ignored whatever its octets.
+/// client never sent. A name is matched once percent-decoded, an undeclared
+/// pair is ignored whatever its octets, `+` decodes to a space and an escaped
+/// `+` (`%2B`) is kept as a `+`.
 #[test]
 fn a_query_value_that_is_not_utf8_is_refused_naming_its_parameter() {
     use kynos::{error::rejection::QueryRejection, extract::params::query::DecodeQuery};
