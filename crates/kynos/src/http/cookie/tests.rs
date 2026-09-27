@@ -134,3 +134,14 @@ fn an_unreadable_value_is_told_apart_from_an_absent_one() {
     let unreadable_name = from_octets(&[b"s\xffssion=x; session=s-42"]);
     assert_eq!(value_of(&unreadable_name, "session"), Ok(Some("s-42")));
 }
+
+/// Text here is ASCII, not UTF-8: `caf\xc3\xa9` is well-formed UTF-8 and still
+/// unreadable, since the `Header` location refuses the same octets and one
+/// credential reads alike in either.
+#[test]
+fn a_utf8_value_outside_ascii_is_unreadable() {
+    let headers = from_octets(&[b"session=caf\xc3\xa9; other=1"]);
+
+    assert_eq!(value_of(&headers, "session"), Err(Unreadable));
+    assert_eq!(jar(&headers).collect::<Vec<_>>(), [("other", "1")]);
+}
