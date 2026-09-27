@@ -149,8 +149,8 @@ fn wire_name(field: &Field, attribute: &str, fallback: String) -> syn::Result<St
 
 /// Refuses a container `rename_all(serialize = ..., deserialize = ...)`.
 ///
-/// The `Schema` derive reads only the `= "..."` form and passes over this one,
-/// so it is refused here, before a name is taken from that derive's rule.
+/// Refused whatever its sides say, before a name is taken from the `Schema`
+/// derive's rule, which reads the serialize side of this form.
 fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
     for attr in &input.attrs {
         if !attr.path().is_ident("serde") {

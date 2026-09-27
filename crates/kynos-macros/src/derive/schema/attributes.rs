@@ -57,21 +57,43 @@ fn default_variant_name(variant: &Variant, container: &Container) -> String {
         .map_or(ident.clone(), |style| rename_variant(&ident, style))
 }
 
-/// The names a member's `rename` gives each direction, where it gives one.
+/// What one serde key gives each direction, where it gives one.
 #[derive(Default)]
-struct Renames {
-    serialize: Option<String>,
-    deserialize: Option<String>,
+pub(super) struct Sides {
+    pub(super) serialize: Option<String>,
+    pub(super) deserialize: Option<String>,
 }
 
-/// The `rename` of a `#[serde(...)]` list: `rename = "..."` names both
-/// directions, and `rename(serialize = "...", deserialize = "...")` each side
-/// it writes.
+/// The sides of one serde key: `key = "..."` gives both directions, and
+/// `key(serialize = "...", deserialize = "...")` each side it writes.
 ///
-/// Shape errors in the list are serde's to report, so this raises none. The
-/// parenthesised form is consumed whole, so a key after it is still read.
-fn serde_renames(attrs: &[syn::Attribute]) -> Renames {
-    let mut renames = Renames::default();
+/// The parenthesised form is consumed whole, so a key after it is still read.
+pub(super) fn sides(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<Sides> {
+    let mut sides = Sides::default();
+    if !meta.input.peek(syn::token::Paren) {
+        let both = string_value(meta)?;
+        sides.serialize.clone_from(&both);
+        sides.deserialize = both;
+        return Ok(sides);
+    }
+    meta.parse_nested_meta(|side| {
+        if side.path.is_ident("serialize") {
+            sides.serialize = string_value(&side)?;
+        } else if side.path.is_ident("deserialize") {
+            sides.deserialize = string_value(&side)?;
+        } else {
+            skip_value(&side)?;
+        }
+        Ok(())
+    })?;
+    Ok(sides)
+}
+
+/// The [`sides`] of the `rename` in a member's `#[serde(...)]` lists.
+///
+/// Shape errors in the list are serde's to report, so this raises none.
+fn serde_renames(attrs: &[syn::Attribute]) -> Sides {
+    let mut renames = Sides::default();
     for attr in attrs {
         if !attr.path().is_ident("serde") {
             continue;
@@ -80,21 +102,7 @@ fn serde_renames(attrs: &[syn::Attribute]) -> Renames {
             if !meta.path.is_ident("rename") {
                 return skip_value(&meta);
             }
-            if meta.input.peek(syn::token::Paren) {
-                return meta.parse_nested_meta(|side| {
-                    if side.path.is_ident("serialize") {
-                        renames.serialize = string_value(&side)?;
-                    } else if side.path.is_ident("deserialize") {
-                        renames.deserialize = string_value(&side)?;
-                    } else {
-                        skip_value(&side)?;
-                    }
-                    Ok(())
-                });
-            }
-            let both = string_value(&meta)?;
-            renames.serialize.clone_from(&both);
-            renames.deserialize = both;
+            renames = sides(&meta)?;
             Ok(())
         });
     }
