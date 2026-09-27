@@ -1,4 +1,4 @@
-use super::{jar, value_of};
+use super::{Unreadable, jar, value_of};
 use crate::http::HeaderMap;
 
 /// A jar built from the `Cookie` fields `fields` holds.
@@ -101,11 +101,36 @@ fn an_unprintable_pair_does_not_hide_the_rest_of_its_field() {
 #[test]
 fn a_repeated_name_reads_back_as_the_first_one_sent() {
     let headers = from(&["session=narrow", "session=wide"]);
-    assert_eq!(value_of(&headers, "session"), Some("narrow"));
+    assert_eq!(value_of(&headers, "session"), Ok(Some("narrow")));
 }
 
 #[test]
 fn a_name_the_jar_does_not_hold_reads_back_as_absent() {
     let headers = from(&["a=1"]);
-    assert_eq!(value_of(&headers, "b"), None);
+    assert_eq!(value_of(&headers, "b"), Ok(None));
+}
+
+/// A jar built from `Cookie` fields that need not be text.
+fn from_octets(fields: &[&[u8]]) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    for field in fields {
+        headers.append(
+            crate::http::header::COOKIE,
+            crate::http::HeaderValue::from_bytes(field).expect("a legal field value"),
+        );
+    }
+    headers
+}
+
+/// The first cookie of the name asked for decides, even when it cannot be
+/// read: it was sent, so it is not absent, and a later one of that name does
+/// not stand in for it. A cookie whose *name* cannot be read is never the one
+/// asked for, so it hides nothing.
+#[test]
+fn an_unreadable_value_is_told_apart_from_an_absent_one() {
+    let unreadable = from_octets(&[b"s\xffssion=x; session=s-\xff", b"session=s-42"]);
+    assert_eq!(value_of(&unreadable, "session"), Err(Unreadable));
+
+    let unreadable_name = from_octets(&[b"s\xffssion=x; session=s-42"]);
+    assert_eq!(value_of(&unreadable_name, "session"), Ok(Some("s-42")));
 }
