@@ -160,6 +160,44 @@ fn a_query_api_key_is_percent_decoded() {
     );
 }
 
+/// A request head whose target is `target`.
+fn targeting(target: &str) -> Parts {
+    let mut request = Request::new(crate::http::body::Body::empty());
+    *request.uri_mut() = target.parse().expect("a legal target");
+    request.into_parts().0
+}
+
+/// An API key `in: query` is a query parameter, so it is read with form rules,
+/// as `references/3.1.2.md` requires of every `in: query` parameter: an
+/// unescaped `+` is a space, and a literal plus arrives as `%2B`.
+#[test]
+fn a_query_api_key_reads_plus_as_a_space() {
+    for (raw, expected) in [("a+b", "a b"), ("a%2Bb", "a+b"), ("a%20b", "a b")] {
+        let head = targeting(&format!("/reports?api_key={raw}"));
+        let key = api_key(&head, KeyLocation::Query, "api_key")
+            .expect("a credential")
+            .expect("present");
+        assert_eq!(key.as_str(), expected, "{raw}");
+    }
+}
+
+/// The first pair named the key decides, as it does for a derived query
+/// parameter; a later pair never stands in for one that could not be read.
+#[test]
+fn a_query_api_key_is_the_first_pair_named_the_key() {
+    let head = targeting("/reports?api_key&api_key=second");
+    let key = api_key(&head, KeyLocation::Query, "api_key")
+        .expect("a credential")
+        .expect("present");
+    assert_eq!(key.as_str(), "", "a pair with no `=` has an empty value");
+
+    let head = targeting("/reports?api_key=%FF&api_key=second");
+    assert!(
+        api_key(&head, KeyLocation::Query, "api_key").is_err(),
+        "a first value that is not UTF-8 is present and malformed"
+    );
+}
+
 #[test]
 fn a_query_api_key_the_target_does_not_carry_is_absent() {
     let mut request = Request::new(crate::http::body::Body::empty());
