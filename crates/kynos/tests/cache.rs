@@ -474,7 +474,7 @@ mod streamed {
         response::{headers::WithHeaders, stream::binary::BinaryStream},
     };
 
-    use super::{CacheControl, Stored, get};
+    use super::{CacheControl, Stored, get, is_empty};
 
     /// Hand-written rather than from a stream crate, which the tests do not
     /// depend on.
@@ -514,14 +514,7 @@ mod streamed {
 
         assert_eq!(reply.status, StatusCode::OK);
         assert_eq!(reply.body, [chunk(), chunk()].concat());
-        assert!(
-            store
-                .0
-                .lock()
-                .expect("no test panics while holding this")
-                .is_empty(),
-            "a stream was stored"
-        );
+        assert!(is_empty(&store), "a stream was stored");
     }
 }
 
