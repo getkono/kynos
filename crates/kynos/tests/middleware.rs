@@ -697,6 +697,86 @@ mod partial {
         );
         assert!(reply.body.len() < octets().len());
     }
+
+    /// A body of unknown length under a handler-stated `Content-Length`.
+    ///
+    /// The encoder cannot restate the length here, since it is not known until
+    /// after the head has gone, so the only true length field is none.
+    #[cfg(feature = "openapi32")]
+    mod streamed {
+        use std::convert::Infallible;
+
+        use bytes::Bytes;
+        use kynos::{
+            Router,
+            extract::media::OctetStream,
+            http::{StatusCode, header},
+            middleware::compression::Compression,
+            response::{headers::WithHeaders, stream::binary::BinaryStream},
+        };
+
+        use super::{
+            super::support::{App, get},
+            StatedLength,
+        };
+
+        /// Yields each chunk, then ends; no length is known in advance.
+        struct Chunks(std::vec::IntoIter<Bytes>);
+
+        impl futures_core::Stream for Chunks {
+            type Item = Result<Bytes, Infallible>;
+
+            fn poll_next(
+                self: std::pin::Pin<&mut Self>,
+                _: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Option<Self::Item>> {
+                std::task::Poll::Ready(self.get_mut().0.next().map(Ok))
+            }
+        }
+
+        fn chunk() -> Bytes {
+            Bytes::from(b"the quick brown fox jumps over the lazy dog. ".repeat(32))
+        }
+
+        #[kynos::get("/recordings/streamed")]
+        async fn streamed() -> WithHeaders<BinaryStream<Chunks, OctetStream>, StatedLength> {
+            WithHeaders::new(
+                BinaryStream::new(Chunks(vec![chunk(), chunk()].into_iter())),
+                StatedLength(chunk().len() * 2),
+            )
+        }
+
+        /// A streamed encode states no length at all.
+        ///
+        /// RFC 9110 section 8.6: "a sender MUST NOT forward a message with a
+        /// Content-Length header field value that is known to be incorrect".
+        /// The handler's length counts the identity octets, so it is wrong the
+        /// moment the body is encoded.
+        #[tokio::test]
+        async fn a_streamed_encode_states_no_length() {
+            let service = Router::<App>::new()
+                .mount(kynos::routes![streamed])
+                .intercept(Compression::new())
+                .build(App::new())
+                .expect("a describable router");
+            let reply = get(&service, "/recordings/streamed")
+                .header("accept-encoding", "gzip")
+                .call()
+                .await;
+
+            assert_eq!(reply.status, StatusCode::OK);
+            assert_eq!(
+                reply.field(header::CONTENT_ENCODING.as_str()).as_deref(),
+                Some("gzip")
+            );
+            assert_eq!(
+                reply.field(header::CONTENT_LENGTH.as_str()),
+                None,
+                "the encoded body kept the identity representation's Content-Length"
+            );
+            assert!(reply.body.len() < chunk().len() * 2);
+        }
+    }
 }
 
 /// A served asset is where the unsound splice was reachable end to end.
