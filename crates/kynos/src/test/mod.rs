@@ -198,6 +198,10 @@ impl<C> TestClient<C> {
     /// Coverage over the *contract* rather than over the code: it finds the 409
     /// that the description promises and no test has ever produced.
     ///
+    /// A `HEAD` answered by a path's `get` never counts toward that operation's
+    /// responses: its content is never observed, so it cannot stand in for the
+    /// `GET` exchange a declared response describes.
+    ///
     /// # Panics
     ///
     /// Panics listing every declared response that was never seen.
