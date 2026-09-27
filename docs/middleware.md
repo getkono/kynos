@@ -610,15 +610,24 @@ and the headers have already left, so a body that runs out of time is a
 truncated response and an error on the stream rather than a status a client can
 read.
 
-`BodyTimeout` belongs *outside* anything that rewrites a body. An interceptor
-that rewrites one has to read it, and one that buffers — `Compression` over a
-body of known length, `Cache` storing a response — reads to the end before
-writing anything. Handed a body that fails part-way, either one hands on a body
-that fails the same way and stores nothing, so the driver still resets the
-stream; but it does so having sent none of the octets that arrived, and a timer
-mounted beneath it measures the handler's pace rather than the client's. Outside,
-the error is the last frame after everything that was read. Like the slow-body
-rule above, the types do not enforce this.
+`BodyTimeout` starts its clock when the chain beneath it has returned a head,
+and bounds only the body it is then handed. An interceptor that buffers —
+`Compression` over a body of known length, `Cache` storing a response — reads
+that body to the end inside the chain, before any of it is written, so where
+the limit sits decides what it covers:
+
+- **Outside** the interceptor, it bounds a body the interceptor streams through
+  or declines unread. It does not bound a buffered read: that read runs before
+  the clock starts, and what it wraps afterwards is already in memory.
+- **Beneath** the interceptor, it bounds the buffered read. A body the timer
+  ends fails the read, and the interceptor hands on a body that fails the same
+  way and stores nothing, so the driver resets the stream; none of the octets
+  read before the failure reach the client.
+- **`Timeout` outside** the interceptor bounds the chain's future, which is
+  where the buffered read runs, so it bounds that read too.
+
+The types check none of this: `CompatibleWith` compares sets, and a set has no
+positions.
 
 An idle limit polls the inner body *before* its clock, which is not an
 optimization. The gap the timer measures is between polls rather than between
