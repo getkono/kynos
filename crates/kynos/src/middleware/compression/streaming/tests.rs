@@ -301,3 +301,56 @@ fn a_write_that_took_bytes_or_failed_is_reported_as_it_was() {
         Err(io::ErrorKind::BrokenPipe)
     );
 }
+
+/// A body of unknown length that yields one data frame and its trailers, then
+/// fails.
+struct FailsAfterTrailers(u8);
+
+impl HttpBody for FailsAfterTrailers {
+    type Data = Bytes;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        let this = self.get_mut();
+        this.0 += 1;
+
+        match this.0 {
+            1 => Poll::Ready(Some(Ok(Frame::data(Bytes::from_static(b"first frame\n"))))),
+            2 => Poll::Ready(Some(Ok(Frame::trailers(http::HeaderMap::new())))),
+            3 => Poll::Ready(Some(Err("the producer failed part-way".into()))),
+            _ => Poll::Ready(None),
+        }
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        SizeHint::default()
+    }
+}
+
+/// Trailers describe a whole body, and a failed one has no whole to describe,
+/// so the trailers held for the end are never yielded after the failure.
+#[tokio::test]
+async fn a_failed_stream_yields_no_trailers_after_its_error() {
+    let mut body = Streamed::new(
+        crate::http::body::Body::from_body(FailsAfterTrailers(0)),
+        Coding::Gzip,
+        Levels::default(),
+        LatencyMode::Interactive,
+    );
+
+    while let Ok(frame) = Pin::new(&mut body)
+        .frame()
+        .await
+        .expect("the failure is yielded before the body ends")
+    {
+        assert!(!frame.is_trailers(), "trailers were yielded before the end");
+    }
+
+    assert!(
+        Pin::new(&mut body).frame().await.is_none(),
+        "a failed stream yielded its held trailers after its error"
+    );
+}
