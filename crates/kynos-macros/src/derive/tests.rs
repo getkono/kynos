@@ -4070,18 +4070,35 @@ mod multipart {
     use crate::derive::multipart::expand_inner;
 
     /// A field serde only reads is still refused: a part has one name in both
-    /// directions, whichever side serde uses.
+    /// directions, whichever side serde uses. A container `rename_all` whose
+    /// sides differ is refused beside it, since it names every part twice.
     fn ledger() -> Vec<Case> {
-        vec![case(
-            "a split `rename` whose sides differ on a field serde only reads",
-            quote::quote!(
-                struct Upload {
-                    #[serde(skip_serializing, default, rename(serialize = "a", deserialize = "b"))]
-                    caption: String,
-                }
+        vec![
+            case(
+                "a split `rename` whose sides differ on a field serde only reads",
+                quote::quote!(
+                    struct Upload {
+                        #[serde(
+                            skip_serializing,
+                            default,
+                            rename(serialize = "a", deserialize = "b")
+                        )]
+                        caption: String,
+                    }
+                ),
+                "gives this field two part names",
             ),
-            "gives this field two part names",
-        )]
+            case(
+                "a split container `rename_all` whose sides differ",
+                quote::quote!(
+                    #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+                    struct Upload {
+                        file_name: String,
+                    }
+                ),
+                "gives every field two part names",
+            ),
+        ]
     }
 
     #[test]
@@ -4089,11 +4106,17 @@ mod multipart {
         each_case_is_refused(ledger(), expand_inner);
     }
 
-    /// A split `rename` whose sides agree gives the part one name, so it is
-    /// accepted, as `rename = "..."` is.
+    /// A split `rename` or `rename_all` whose sides agree gives the part one
+    /// name, so it is accepted, as the single form is.
     #[test]
     fn a_rename_giving_one_part_name_is_accepted() {
         for declaration in [
+            quote::quote!(
+                #[serde(rename_all(serialize = "camelCase", deserialize = "camelCase"))]
+                struct Upload {
+                    file_name: String,
+                }
+            ),
             quote::quote!(
                 struct Upload {
                     #[serde(rename(serialize = "a", deserialize = "a"))]
