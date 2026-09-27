@@ -593,7 +593,7 @@ mod schema {
                         Queued,
                     }
                 ),
-                "this variant's own name",
+                "serde reads `Now`, this variant's own name",
             )],
             expand_inner,
         );
