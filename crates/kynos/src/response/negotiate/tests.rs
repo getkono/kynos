@@ -3,7 +3,8 @@ use crate::{
         body::{binary::Binary, text::Text},
         media::Pdf,
     },
-    response::negotiate::Accept,
+    http::header,
+    response::{IntoResponse, negotiate::Accept},
 };
 
 #[test]
@@ -47,4 +48,34 @@ fn accept_rejects_zero_quality_and_malformed_values() {
             .is_err()
     );
     assert!(Accept::<(Text, Binary<Pdf>)>::parse("text/plain;q=1.1").is_err());
+}
+
+#[test]
+fn a_negotiated_response_varies_on_accept_whichever_arm_wins() {
+    for field in ["text/plain", "application/pdf", "*/*"] {
+        let response = Accept::<(Text, Binary<Pdf>)>::parse(field)
+            .expect("valid Accept header")
+            .respond_with(
+                &(),
+                (
+                    |(): &()| Text(String::new()),
+                    |(): &()| Binary::<Pdf>::new(Vec::new()),
+                ),
+            )
+            .expect("a representation matches")
+            .into_response();
+
+        let vary = response
+            .headers()
+            .get(header::VARY)
+            .expect("a Vary on a response selected by Accept")
+            .to_str()
+            .expect("a visible-ASCII Vary");
+
+        assert!(
+            vary.split(',')
+                .any(|name| name.trim().eq_ignore_ascii_case("accept")),
+            "Accept: {field} selected a response whose Vary `{vary}` omits the Accept field"
+        );
+    }
 }
