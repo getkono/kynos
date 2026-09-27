@@ -902,7 +902,9 @@ async fn a_body_that_finished_is_not_reported_as_interrupted() {
 /// The same report through `Compression`, which re-encodes a body of unknown
 /// length as it streams and so stands between `Watched` and the body that
 /// ended. Whether that body ended is a question it has to answer truthfully
-/// too, for a producer that failed and for one this timer destroyed alike.
+/// too when this timer destroyed it. A producer that failed with no limit
+/// mounted is `Compression`'s property alone, and is asserted in
+/// `middleware.rs`.
 #[cfg(all(feature = "openapi32", feature = "compression"))]
 mod beneath_compression {
     use std::{
@@ -915,40 +917,12 @@ mod beneath_compression {
 
     use kynos::{
         Router,
-        extract::media::OctetStream,
         http::{Request, body::Body, header},
         middleware::{compression::Compression, limits::BodyTimeout},
-        response::stream::binary::BinaryStream,
         router::service::Service,
     };
 
     use super::{CountingEnds, EndCounts, read_to_end, stalled, steady};
-
-    /// A stream that yields one chunk, then fails.
-    struct FailsAfterOne(u8);
-
-    impl futures_core::Stream for FailsAfterOne {
-        type Item = Result<bytes::Bytes, std::io::Error>;
-
-        fn poll_next(
-            self: std::pin::Pin<&mut Self>,
-            _: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Option<Self::Item>> {
-            let this = self.get_mut();
-            this.0 += 1;
-
-            std::task::Poll::Ready(match this.0 {
-                1 => Some(Ok(bytes::Bytes::from_static(b"chunk"))),
-                2 => Some(Err(std::io::Error::other("the producer failed part-way"))),
-                _ => None,
-            })
-        }
-    }
-
-    #[kynos::get("/failing")]
-    async fn failing() -> BinaryStream<FailsAfterOne, OctetStream> {
-        BinaryStream::new(FailsAfterOne(0))
-    }
 
     /// Serves `target` gzip-encoded, reads the body to its end or its first
     /// error, and hands back the outcome with the disconnects observed.
@@ -981,26 +955,6 @@ mod beneath_compression {
             responses: AtomicUsize::new(0),
             disconnects: AtomicUsize::new(0),
         })
-    }
-
-    /// A response whose producer failed part-way was not delivered.
-    #[tokio::test]
-    async fn a_failed_stream_is_reported_as_interrupted() {
-        let counts = counts();
-        let service = Router::<()>::new()
-            .mount(kynos::routes![failing])
-            .observe(CountingEnds(Arc::clone(&counts)))
-            .intercept(Compression::new())
-            .build(())
-            .expect("a describable router");
-
-        let (finished, disconnects) = ended(&service, &counts, "/failing").await;
-
-        assert!(!finished, "a failing producer's body read to its end");
-        assert_eq!(
-            disconnects, 1,
-            "a compressed response that failed part-way was reported as delivered"
-        );
     }
 
     /// `BodyTimeout` beneath `Compression`: the timer's error comes out
