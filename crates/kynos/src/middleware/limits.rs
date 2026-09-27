@@ -1175,3 +1175,6 @@ impl http_body::Body for Bounded {
         self.inner.size_hint()
     }
 }
+
+#[cfg(test)]
+mod tests;
