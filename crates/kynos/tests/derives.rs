@@ -6,9 +6,10 @@
 //! that difference existed, no example, doctest or compile-fail case could name
 //! a user type at all.
 //!
-//! What a derived decoder then *does* is not checked here. That is the macro
-//! crate's, and `docs/testing.md` allocates it there. What *is* checked beyond
-//! compiling is the description a derive emits, and what the default
+//! What a derived decoder does is checked here only where the emitted code
+//! alone decides it and no other target runs it: the query decoder's refusal
+//! of a declared value that is not UTF-8. What *is* checked beyond compiling is
+//! the description a derive emits, and what the default
 //! `QueryParams::parameters` makes of a derived schema.
 
 #![cfg(feature = "macros")]
@@ -1215,6 +1216,52 @@ fn a_oneof_or_ref_schema_projects_to_no_parameter() {
 
     assert_eq!(query_parameters::<Audience>(), serde_json::json!([]));
     assert_eq!(query_parameters::<WrappedOrigin>(), serde_json::json!([]));
+}
+
+// --- The derived query decoder reads only octets that are text -------------
+//
+// The one runtime property checked here: no other target runs the emitted
+// decoder, and the macro crate cannot.
+
+#[derive(Schema, QueryParams)]
+struct Named {
+    name: String,
+    note: Option<String>,
+}
+
+/// A declared value whose percent-decoded octets are not UTF-8 is refused,
+/// naming the parameter, rather than repaired into text the client never sent.
+/// An undeclared pair is ignored whatever its octets.
+#[test]
+fn a_query_value_that_is_not_utf8_is_refused_naming_its_parameter() {
+    use kynos::{error::rejection::QueryRejection, extract::params::query::DecodeQuery};
+
+    for (query, parameter) in [
+        ("name=caf%E9", "name"),
+        ("name=%FF%FE", "name"),
+        ("name=ok&note=%FF", "note"),
+        ("name=%FF&name=ok", "name"),
+    ] {
+        match <Named as DecodeQuery>::decode(Some(query)) {
+            Err(QueryRejection::Invalid { name, detail }) => {
+                assert_eq!(name, parameter, "{query}");
+                assert!(detail.contains("UTF-8"), "{query}: {detail}");
+            }
+            Err(other) => panic!("{query}: refused for another reason: {other}"),
+            Ok(decoded) => panic!("{query}: accepted as {:?}", decoded.name),
+        }
+    }
+
+    for (query, expected) in [
+        ("name=caf%C3%A9", "caf\u{e9}"),
+        ("other=%FF&name=x", "x"),
+        ("%FF=1&name=x", "x"),
+    ] {
+        match <Named as DecodeQuery>::decode(Some(query)) {
+            Ok(decoded) => assert_eq!(decoded.name, expected, "{query}"),
+            Err(rejection) => panic!("{query}: refused: {rejection}"),
+        }
+    }
 }
 
 // --- A variant serde reads under an alias is described under each name ------
