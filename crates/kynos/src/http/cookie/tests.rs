@@ -78,6 +78,24 @@ fn an_unprintable_field_does_not_hide_the_others() {
     assert_eq!(read, [("a", "1"), ("c", "3")]);
 }
 
+/// A pair is what an unreadable byte hides, not the field it travels in.
+///
+/// RFC 6265 section 5.4 has a user agent send one `Cookie` field, so over
+/// HTTP/1.1 a field is the whole jar: skipping it would lose every cookie the
+/// client sent to one byte in any of them.
+#[test]
+fn an_unprintable_pair_does_not_hide_the_rest_of_its_field() {
+    let mut headers = HeaderMap::new();
+    headers.append(
+        crate::http::header::COOKIE,
+        crate::http::HeaderValue::from_bytes(b"a=1; b=\xff; \xfe=2; c=3")
+            .expect("a legal field value"),
+    );
+
+    let read: Vec<_> = jar(&headers).collect();
+    assert_eq!(read, [("a", "1"), ("c", "3")]);
+}
+
 /// RFC 6265 section 5.4 orders a jar most-specific first, so where a client
 /// sends one name twice the earlier is the one for the narrower path.
 #[test]

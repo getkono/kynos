@@ -7,9 +7,10 @@
 //! a user type at all.
 //!
 //! A derive is a type-level surface, so what a derived decoder does is not
-//! checked here, with one recorded exception: the query decoder's refusal of a
-//! declared value that is not UTF-8, which no other target exercises. Its test
-//! calls `DecodeQuery::decode` directly, with no server. What *is* checked
+//! checked here, with two recorded exceptions: the query decoder's refusal of a
+//! declared value that is not UTF-8, and the cookie decoder's refusal of a
+//! declared cookie that is not ASCII, which no other target exercises. Their
+//! tests call the derived decoder directly, with no server. What *is* checked
 //! beyond compiling is the description a derive emits, and what the default
 //! `QueryParams::parameters` makes of a derived schema.
 
@@ -1272,6 +1273,60 @@ fn a_query_value_that_is_not_utf8_is_refused_naming_its_parameter() {
             Err(rejection) => panic!("{query}: refused: {rejection}"),
         }
     }
+}
+
+// --- The derived cookie decoder reads only a cookie that is text -----------
+//
+// The second runtime property checked here, for the reason the query one is:
+// no other target exercises this refusal, and the macro crate cannot run an
+// expansion.
+
+/// The first cookie of a declared name decides: one whose value is not ASCII is
+/// refused, naming the cookie by its wire name, rather than reported missing or
+/// stood in for by a later cookie of that name. An unreadable cookie that is not
+/// declared hides only itself, even on the field that carries the declared one.
+#[cfg(feature = "cookie")]
+#[test]
+fn a_cookie_value_that_is_not_ascii_is_refused_naming_its_cookie() {
+    use kynos::{
+        error::rejection::CookieRejection,
+        extract::params::cookie::CookieParams,
+        http::{HeaderMap, HeaderValue, header::COOKIE},
+    };
+
+    let jar = |fields: &[&[u8]]| {
+        let mut headers = HeaderMap::new();
+        for field in fields {
+            headers.append(
+                COOKIE,
+                HeaderValue::from_bytes(field).expect("a legal field value"),
+            );
+        }
+        headers
+    };
+
+    for fields in [
+        &[b"session_id=s-\xff".as_slice()][..],
+        &[b"session_id=s-\xff; session_id=s-42"],
+        &[b"session_id=s-\xff", b"session_id=s-42"],
+    ] {
+        let shown: Vec<_> = fields
+            .iter()
+            .map(|field| field.escape_ascii().to_string())
+            .collect();
+        match Session::decode(&jar(fields)) {
+            Err(CookieRejection::Invalid { name, detail }) => {
+                assert_eq!(name, "session_id", "{shown:?}");
+                assert!(detail.contains("ASCII"), "{shown:?}: {detail}");
+            }
+            Err(other) => panic!("{shown:?}: refused for another reason: {other}"),
+            Ok(decoded) => panic!("{shown:?}: accepted as {:?}", decoded.session),
+        }
+    }
+
+    let decoded = Session::decode(&jar(&[b"other=\xff; session_id=s-42"]))
+        .expect("an unreadable undeclared cookie is ignored");
+    assert_eq!(decoded.session, "s-42");
 }
 
 // --- A variant serde reads under an alias is described under each name ------

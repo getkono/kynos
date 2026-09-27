@@ -226,6 +226,51 @@ fn a_cookie_api_key_reads_the_same_jar_a_parameter_does() {
     assert_eq!(key.as_str(), "s-42");
 }
 
+/// A request head carrying each of `fields` as a `Cookie` field, in order.
+fn with_cookies(fields: &[&[u8]]) -> Parts {
+    let mut request = Request::new(crate::http::body::Body::empty());
+    for field in fields {
+        request.headers_mut().append(
+            crate::http::header::COOKIE,
+            HeaderValue::from_bytes(field).expect("a legal field value"),
+        );
+    }
+    request.into_parts().0
+}
+
+/// The first cookie of the key's name decides, as the first query pair does: a
+/// key that was sent and cannot be read is refused, never read as absent and
+/// never stood in for by a later cookie of the same name.
+#[test]
+fn a_cookie_api_key_that_is_not_ascii_is_refused() {
+    for fields in [
+        &[b"session=s-\xff".as_slice()][..],
+        &[b"session=s-\xff; session=s-42"],
+        &[b"session=s-\xff", b"session=s-42"],
+    ] {
+        let shown: Vec<_> = fields
+            .iter()
+            .map(|field| field.escape_ascii().to_string())
+            .collect();
+        assert!(
+            api_key(&with_cookies(fields), KeyLocation::Cookie, "session").is_err(),
+            "{shown:?}"
+        );
+    }
+}
+
+/// An unreadable cookie of another name hides only itself, even on the line
+/// that carries the key.
+#[test]
+fn an_unreadable_cookie_of_another_name_does_not_hide_the_key() {
+    let head = with_cookies(&[b"other=\xff; session=s-42"]);
+
+    let key = api_key(&head, KeyLocation::Cookie, "session")
+        .expect("a credential")
+        .expect("present");
+    assert_eq!(key.as_str(), "s-42");
+}
+
 /// Every location an API key may travel in, and the case that covers it.
 ///
 /// The mapping is an exhaustive match rather than a count of source text, so a
