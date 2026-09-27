@@ -489,7 +489,7 @@ halve.
 | the `time-jiff` feature | `jiff`, `feature = "time-jiff"` | `lib.rs`, `schema/impls/temporal/{mod,jiff}.rs` | the same, for the other backend: `Schema` implementations reachable only through a registry a build has already consumed, and `ParamValue`, a marker with no items |
 | the `decimal` feature | `feature = "decimal"` | `lib.rs`, `schema/impls/mod.rs` | as `time`: no types of its own, a `compile_error!` without a backend, and the two sites are the gate and the module it opens |
 | the `decimal-rust` feature | `rust_decimal`, `feature = "decimal-rust"` | `lib.rs`, `schema/impls/decimal/{mod,rust_decimal}.rs` | `Schema` implementations for the crate's decimal type, behind the `&mut Registry` only `describe` mints, and `ParamValue`, a marker with no items |
-| the `decimal-big` feature | `bigdecimal`, `feature = "decimal-big"` | `lib.rs`, `schema/impls/decimal/{mod,bigdecimal}.rs` | the same, for the other backend |
+| the `decimal-big` feature | `bigdecimal`, `feature = "decimal-big"` | `lib.rs`, `schema/impls/decimal/{mod,bigdecimal}.rs` | `Schema` implementations for the crate's decimal type, behind the `&mut Registry` only `describe` mints |
 
 A site path is relative to `crates/kynos/src/` unless it starts at `crates/`,
 which makes it relative to the repository root and is how a row names a file in
