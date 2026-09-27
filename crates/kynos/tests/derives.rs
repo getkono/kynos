@@ -2685,6 +2685,72 @@ fn a_split_rename_is_described_under_the_side_serde_uses() {
     assert_eq!(keys(&schema["properties"]), keys(&written));
 }
 
+// A split container rename_all
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "camelCase"))]
+struct SplitRenameAll {
+    user_id: u8,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(
+    rename_all(serialize = "lowercase", deserialize = "lowercase"),
+    tag = "kind"
+)]
+enum SplitRenameAllThenTag {
+    Circle { radius: u8 },
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(
+    rename_all(serialize = "camelCase", deserialize = "camelCase"),
+    deny_unknown_fields
+)]
+struct SplitRenameAllThenClosed {
+    user_id: u8,
+}
+
+/// A split `rename_all` whose sides agree names every member by that one
+/// style, as serde does, and every key after it in the same attribute is still
+/// read: the `tag` that makes the enum internally tagged, and the
+/// `deny_unknown_fields` that closes the struct.
+#[test]
+fn a_split_rename_all_whose_sides_agree_is_read() {
+    let schema = emitted::<SplitRenameAll>();
+    let written = serde_json::to_value(SplitRenameAll { user_id: 1 }).expect("a struct serializes");
+    assert_eq!(keys(&schema["properties"]), vec!["userId"], "{schema}");
+    assert_eq!(keys(&schema["properties"]), keys(&written));
+    assert_eq!(
+        schema["required"],
+        serde_json::json!(["userId"]),
+        "{schema}"
+    );
+
+    let schema = emitted::<SplitRenameAllThenTag>();
+    let written = serde_json::to_value(SplitRenameAllThenTag::Circle { radius: 1 })
+        .expect("a variant serializes");
+    assert_eq!(written, serde_json::json!({"kind": "circle", "radius": 1}));
+    assert_eq!(
+        schema["oneOf"][0]["properties"]["kind"],
+        serde_json::json!({"type": "string", "const": "circle"}),
+        "{schema}"
+    );
+    assert_eq!(keys(&schema["oneOf"][0]["properties"]), keys(&written));
+
+    let schema = emitted::<SplitRenameAllThenClosed>();
+    assert_eq!(keys(&schema["properties"]), vec!["userId"], "{schema}");
+    assert_eq!(
+        schema["additionalProperties"],
+        serde_json::json!(false),
+        "{schema}"
+    );
+    assert!(
+        serde_json::from_str::<SplitRenameAllThenClosed>(r#"{"userId":1,"z":2}"#).is_err(),
+        "serde must refuse the member `additionalProperties` refuses"
+    );
+}
+
 // rename_all, against serde
 
 /// The fields and variants of `rename_all_names_every_member_as_serde_does`,

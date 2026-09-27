@@ -386,18 +386,31 @@ mod schema {
     /// The refusal a split `rename` raises where serde writes a member under
     /// one name and reads it under another.
     ///
-    /// A sixth function, since a split rename is neither a skip nor a tag.
+    /// A sixth function, since a split rename is neither a skip nor a tag. A
+    /// container `rename_all` whose sides differ is refused beside it.
     fn rename_ledger() -> Vec<Case> {
-        vec![case(
-            "a split `rename` whose sides differ on a field serde writes and reads",
-            quote::quote!(
-                struct Stamp {
-                    #[serde(rename(serialize = "a", deserialize = "b"))]
-                    at: u64,
-                }
+        vec![
+            case(
+                "a split `rename` whose sides differ on a field serde writes and reads",
+                quote::quote!(
+                    struct Stamp {
+                        #[serde(rename(serialize = "a", deserialize = "b"))]
+                        at: u64,
+                    }
+                ),
+                "and reads it as",
             ),
-            "and reads it as",
-        )]
+            case(
+                "a split container `rename_all` whose sides differ",
+                quote::quote!(
+                    #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+                    struct Stamp {
+                        created_at: u64,
+                    }
+                ),
+                "a split `rename_all` whose sides differ",
+            ),
+        ]
     }
 
     #[test]
