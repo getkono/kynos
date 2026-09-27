@@ -197,20 +197,35 @@ pub(crate) struct PathEntry<C> {
     /// bounded by the route table, which a program builds at startup.
     pub(crate) variables: Vec<&'static str>,
     /// The `Allow` header a 405 on this path carries, derived from the
-    /// operations below rather than restated beside them.
+    /// operations below rather than restated beside them: their methods, and
+    /// `HEAD` wherever `GET` is one of them.
     pub(crate) allow: HeaderValue,
     pub(crate) operations: Vec<Served<C>>,
 }
 
 impl<C> PathEntry<C> {
-    /// Where this path declares `method`, if it does.
+    /// Where the operation answering `method` sits, if one does.
+    ///
+    /// The one declaring `method`, and for a `HEAD` no operation declares, the
+    /// `GET`: RFC 9110 section 9.3.2 defines a HEAD as that GET without
+    /// content, so the GET operation describes it. A declared `head` wins.
     ///
     /// A position rather than a reference, because an operation wrapped in an
     /// unchecked layer is re-entered by index once the layer calls through.
     fn position(&self, method: Method) -> Option<usize> {
-        self.operations
-            .iter()
-            .position(|operation| operation.method == method)
+        let declared = |method| {
+            self.operations
+                .iter()
+                .position(|operation| operation.method == method)
+        };
+
+        declared(method).or_else(|| {
+            if method == Method::Head {
+                declared(Method::Get)
+            } else {
+                None
+            }
+        })
     }
 }
 
@@ -253,7 +268,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             let path = request.uri().path();
             let Ok(matched) = self.matcher.at(path) else {
                 let response = self.unmatched(&request);
-                return self.finish(response, None, started);
+                return self.finish(response, None, started, false);
             };
 
             let index = *matched.value;
@@ -271,16 +286,17 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         };
 
         let entry = &self.paths[index];
-        let position = Method::from_wire_str(request.method().as_str())
-            .and_then(|method| entry.position(method));
+        let method = Method::from_wire_str(request.method().as_str());
 
-        let Some(position) = position else {
+        let Some(position) = method.and_then(|method| entry.position(method)) else {
             let response = fallback(StatusCode::METHOD_NOT_ALLOWED, &self.method_not_allowed);
             let response = with_allow(response, &entry.allow);
-            return self.finish(response, None, started);
+            return self.finish(response, None, started, false);
         };
 
         let operation = &entry.operations[position];
+        // A HEAD the GET operation answers, whose content is not to be sent.
+        let head = method != Some(operation.method);
         let at = Location {
             path: index,
             position,
@@ -296,19 +312,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         // a log field from having unbounded cardinality.
         request.extensions_mut().insert(entry.matched.clone());
 
-        // Resolved once, here, rather than by each reader. Two interceptors
-        // parsing `Forwarded` for themselves would be two answers to one
-        // security question, and the policy that governs it is the router's.
-        let peer = request
-            .extensions()
-            .get::<crate::extract::connection::Connection>()
-            .filter(|connection| !connection.is_in_process())
-            .map(crate::extract::connection::Connection::peer_addr);
-        let forwarded = crate::http::forwarded::Forwarded::resolve(
-            request.headers(),
-            peer,
-            &self.trusted_proxies,
-        );
+        let forwarded = self.forwarded(&request);
         request.extensions_mut().insert(forwarded);
 
         for observer in &self.observers {
@@ -327,11 +331,26 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
                 request,
             )
             .await;
-            return self.finish(response, Some(at), started);
+            return self.finish(response, Some(at), started, head);
         }
 
         let response = self.run(operation, route, request).await;
-        self.finish(response, Some(at), started)
+        self.finish(response, Some(at), started, head)
+    }
+
+    /// Where `request` came from, as far as the trusted proxies say.
+    ///
+    /// Resolved once, by the dispatcher, rather than by each reader. Two
+    /// interceptors parsing `Forwarded` for themselves would be two answers to
+    /// one security question, and the policy that governs it is the router's.
+    fn forwarded(&self, request: &Request) -> crate::http::forwarded::Forwarded {
+        let peer = request
+            .extensions()
+            .get::<crate::extract::connection::Connection>()
+            .filter(|connection| !connection.is_in_process())
+            .map(crate::extract::connection::Connection::peer_addr);
+
+        crate::http::forwarded::Forwarded::resolve(request.headers(), peer, &self.trusted_proxies)
     }
 
     /// Runs one already-routed operation's chain, with recovery if it asked for
@@ -410,12 +429,22 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
     /// served. Only when there is an observer to tell: a router with none pays
     /// nothing, which keeps the watch off the path of every service that never
     /// asked to observe anything.
+    ///
+    /// A response to a HEAD sheds its content first, so an observer sees what
+    /// the peer will.
     fn finish(
         self: &Arc<Self>,
         response: Response,
         at: Option<Location>,
         started: Instant,
+        head: bool,
     ) -> Response {
+        let response = if head {
+            without_content(response)
+        } else {
+            response
+        };
+
         if self.observers.is_empty() {
             return response;
         }
@@ -509,6 +538,34 @@ fn with_allow(mut response: Response, allow: &HeaderValue) -> Response {
     response
 }
 
+/// `response` as the answer to a HEAD: the same status and fields, and no
+/// content.
+///
+/// RFC 9110 section 9.3.2: the server "MUST NOT send content" in response to a
+/// HEAD. HTTP/1.1 would drop the body on the wire, but hyper's HTTP/2 server
+/// sends whatever body it is handed, so it is dropped here. `Content-Length` is
+/// stated first where the body knows its length, since section 8.6 lets a HEAD
+/// carry the length the GET would have sent; a status that never carries
+/// content gets none.
+fn without_content(response: Response) -> Response {
+    use http_body::Body as _;
+
+    let (mut parts, body) = response.into_parts();
+
+    let bodiless = parts.status.is_informational()
+        || parts.status == StatusCode::NO_CONTENT
+        || parts.status == StatusCode::NOT_MODIFIED;
+    if !bodiless && !parts.headers.contains_key(header::CONTENT_LENGTH) {
+        if let Some(length) = body.size_hint().exact() {
+            parts
+                .headers
+                .insert(header::CONTENT_LENGTH, HeaderValue::from(length));
+        }
+    }
+
+    Response::from_parts(parts, Body::empty())
+}
+
 /// The 308 a trailing-slash redirect answers with.
 fn redirect(path: &str, query: Option<&str>) -> Response {
     let target = match query {
@@ -528,11 +585,17 @@ fn redirect(path: &str, query: Option<&str>) -> Response {
 /// The `Allow` header value for a set of declared methods.
 ///
 /// Derived from the operations actually declared, which is what stops it
-/// disagreeing with the description.
+/// disagreeing with the description, plus the `HEAD` a declared `GET` answers
+/// where no `head` is declared, named right after it.
 pub(crate) fn allow_header(methods: &[Method]) -> HeaderValue {
+    let derives_head = !methods.contains(&Method::Head);
     let joined = methods
         .iter()
-        .map(|method| method.as_wire_str())
+        .flat_map(|method| {
+            let head = (derives_head && *method == Method::Get).then_some(Method::Head);
+            std::iter::once(*method).chain(head)
+        })
+        .map(Method::as_wire_str)
         .collect::<Vec<_>>()
         .join(", ");
 
