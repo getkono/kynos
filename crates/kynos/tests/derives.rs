@@ -3038,3 +3038,49 @@ fn a_split_field_rule_whose_sides_agree_is_read() {
         SplitVariantRule::UserCreated { user_id: 1 },
     );
 }
+
+// A variant serde only reads
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all_fields = "kebab-case")]
+enum ReadOnlyVariantRule {
+    Kept,
+    #[serde(skip_serializing, rename_all(deserialize = "camelCase"))]
+    OwnRule {
+        user_id: u8,
+    },
+    #[serde(skip_serializing, rename_all(serialize = "camelCase"))]
+    FallsBack {
+        user_id: u8,
+    },
+}
+
+/// A variant serde only reads names its fields by its own rule's deserialize
+/// side, else the enum's `rename_all_fields`, as serde reads them: a split rule
+/// naming the serialize side alone leaves the fields to `rename_all_fields`.
+#[test]
+fn a_read_only_variants_fields_are_named_as_serde_reads_them() {
+    let schema = emitted::<ReadOnlyVariantRule>();
+    for (variant, expected) in [("OwnRule", "userId"), ("FallsBack", "user-id")] {
+        let payload = schema["oneOf"]
+            .as_array()
+            .unwrap_or_else(|| panic!("expected a oneOf: {schema}"))
+            .iter()
+            .find_map(|branch| branch["properties"].get(variant))
+            .unwrap_or_else(|| panic!("{variant}: expected a branch: {schema}"));
+        assert_eq!(
+            keys(&payload["properties"]),
+            [expected],
+            "{variant}: {schema}"
+        );
+        assert_eq!(
+            payload["required"],
+            serde_json::json!([expected]),
+            "{variant}: {schema}"
+        );
+        let request = serde_json::json!({ variant: { expected: 1 } });
+        if let Err(error) = serde_json::from_value::<ReadOnlyVariantRule>(request) {
+            panic!("{variant}: serde refuses the field under `{expected}`: {error}");
+        }
+    }
+}
