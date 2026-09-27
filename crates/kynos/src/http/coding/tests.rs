@@ -102,3 +102,17 @@ fn identity_is_acceptable_unless_it_is_excluded() {
     // A more specific entry beats the wildcard.
     assert_eq!(identity_quality("*;q=0, identity;q=1"), 1_000);
 }
+
+/// An identity weight that is not a qvalue does not exclude identity.
+///
+/// RFC 9110 section 12.5.3 rule 2 excludes identity only on an explicit
+/// `identity;q=0` or `*;q=0`, and `identity;q=1.5` states neither, so identity
+/// keeps its default. It is still the more specific entry, so a wildcard
+/// refusal beside it does not reach identity either.
+#[test]
+fn a_malformed_identity_weight_does_not_exclude_identity() {
+    for field in ["identity;q=1.5", "identity;q=inf", "identity;q=NaN"] {
+        assert_eq!(identity_quality(field), 1_000, "{field}");
+    }
+    assert_eq!(identity_quality("identity;q=1.5, *;q=0"), 1_000);
+}

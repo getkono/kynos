@@ -97,6 +97,18 @@ fn every_negotiation_rule_the_specification_states_is_applied() {
             Some("*;q=NaN"),
             Negotiated::Identity,
         ),
+        // Nor is an identity weight that is not a qvalue its explicit
+        // `identity;q=0`, even beside a wildcard refusal.
+        (
+            "an identity weight above 1",
+            Some("identity;q=1.5"),
+            Negotiated::Identity,
+        ),
+        (
+            "an identity weight above 1 beside a wildcard refusal",
+            Some("identity;q=1.5, *;q=0"),
+            Negotiated::Identity,
+        ),
         (
             "every coding and identity refused by name",
             Some("gzip;q=0, br;q=0, zstd;q=0, identity;q=0"),
