@@ -260,6 +260,9 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
     /// continuation that re-enters the table.
     pub(crate) async fn serve(self: Arc<Self>, mut request: Request) -> Response {
         let started = Instant::now();
+        // Whatever answers a HEAD -- an operation, a fallback, a redirect --
+        // sends no content, so this is read before anything can answer.
+        let head = request.method() == crate::http::Method::HEAD;
 
         // The captures are taken here, while the match still holds them, and
         // are ranges rather than borrows -- which is what lets the request be
@@ -268,7 +271,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             let path = request.uri().path();
             let Ok(matched) = self.matcher.at(path) else {
                 let response = self.unmatched(&request);
-                return self.finish(response, None, started, false);
+                return self.finish(response, None, started, head);
             };
 
             let index = *matched.value;
@@ -291,12 +294,10 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         let Some(position) = method.and_then(|method| entry.position(method)) else {
             let response = fallback(StatusCode::METHOD_NOT_ALLOWED, &self.method_not_allowed);
             let response = with_allow(response, &entry.allow);
-            return self.finish(response, None, started, false);
+            return self.finish(response, None, started, head);
         };
 
         let operation = &entry.operations[position];
-        // A HEAD the GET operation answers, whose content is not to be sent.
-        let head = method != Some(operation.method);
         let at = Location {
             path: index,
             position,
