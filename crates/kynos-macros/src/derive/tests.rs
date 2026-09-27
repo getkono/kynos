@@ -424,6 +424,45 @@ mod schema {
         );
     }
 
+    /// A split `rename` is refused on every member serde both writes and
+    /// reads, not only on a struct's field: a variant, and a field of a
+    /// variant serde writes.
+    ///
+    /// Beside the ledger rather than in it: the ledger's row proves the site
+    /// fires, and these prove each member reaches it.
+    #[test]
+    fn a_split_rename_is_refused_on_every_member_serde_writes_and_reads() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a split `rename` whose sides differ on a variant serde writes and reads",
+                    quote::quote!(
+                        enum Change {
+                            Now,
+                            #[serde(rename(serialize = "x", deserialize = "y"))]
+                            Queued,
+                        }
+                    ),
+                    "serde writes this variant as `x` and reads it as `y`",
+                ),
+                case(
+                    "a split `rename` whose sides differ on a field of a variant serde writes",
+                    quote::quote!(
+                        enum Change {
+                            Now(u64),
+                            Queued {
+                                #[serde(rename(serialize = "a", deserialize = "b"))]
+                                at: u64,
+                            },
+                        }
+                    ),
+                    "serde writes this field as `a` and reads it as `b`",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
     /// A split `rename` is refused only where serde uses both sides, so each
     /// member serde names one way is accepted: sides that agree, a field serde
     /// only reads or only writes, a field of a variant serde never writes, a
