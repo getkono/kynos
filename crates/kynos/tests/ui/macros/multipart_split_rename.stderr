@@ -1,0 +1,5 @@
+error: a split `rename` gives this field two part names, and a part carries one in both directions. Say which with `rename = "..."`
+ --> tests/ui/macros/multipart_split_rename.rs:8:40
+  |
+8 |     #[serde(skip_serializing, default, rename(serialize = "a", deserialize = "b"))]
+  |                                        ^^^^^^
