@@ -46,11 +46,13 @@ mod tests {
     /// Every qvalue the grammar admits, against an oracle that never consults
     /// the parser.
     ///
-    /// The space closes: section 12.4.2 allows `0`, `1`, and either followed by
-    /// a decimal point and zero to three digits (`0*3DIGIT`), which is 2,224
-    /// strings. A sweep is total where a draw from the same space samples it, so
-    /// this enumerates rather than generates. The oracle scales a float, which is a different computation
-    /// from the digit-shifting under test rather than a transcription of it.
+    /// The space closes: `0` or `1`, bare or followed by a decimal point and
+    /// zero to three digits, is 2,224 candidates. Section 12.4.2 admits 1,117
+    /// of them, since after `1` it allows only zeros (`0*3("0")`); the oracle
+    /// refuses the rest. A sweep is total where a draw from the same space
+    /// samples it, so this enumerates rather than generates. The oracle scales
+    /// a float, which is a different computation from the digit-shifting under
+    /// test rather than a transcription of it.
     #[test]
     fn every_qvalue_the_grammar_admits_is_read_as_its_thousandths() {
         let mut swept = 0;
@@ -65,8 +67,8 @@ mod tests {
                         .collect();
                 }
 
-                // A bare whole, then the whole with a decimal point: with no
-                // digits after it the point alone is still a qvalue.
+                // The whole with a decimal point, then (once) the bare whole:
+                // with no digits after it the point alone is still a qvalue.
                 let mut values = bodies
                     .iter()
                     .map(|body| format!("{whole}.{body}"))
