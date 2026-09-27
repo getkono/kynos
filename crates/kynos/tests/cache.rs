@@ -475,7 +475,7 @@ mod failing {
         router::service::Service,
     };
 
-    use super::Stored;
+    use super::{Stored, is_empty};
 
     /// The length the source states, past the one span it can read.
     const LENGTH: u64 = 3 * SPAN;
@@ -545,11 +545,7 @@ mod failing {
         assert!(direct.2, "the uncached read succeeded");
         assert_eq!(through, direct);
         assert!(
-            store
-                .0
-                .lock()
-                .expect("no test panics while holding this")
-                .is_empty(),
+            is_empty(&store),
             "a representation that failed part-way was stored"
         );
     }
@@ -607,11 +603,7 @@ mod failing {
             .to_string();
         assert!(failure.contains("did not finish"), "{failure}");
         assert!(
-            store
-                .0
-                .lock()
-                .expect("no test panics while holding this")
-                .is_empty(),
+            is_empty(&store),
             "a representation the timer ended was stored"
         );
     }
