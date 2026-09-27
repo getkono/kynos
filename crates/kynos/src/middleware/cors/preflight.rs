@@ -48,8 +48,9 @@ impl Scope {
     /// Records one configuration and the methods it covers.
     pub(crate) fn new(config: CorsConfig, covered: Vec<Method>) -> Self {
         // The override exists for a deployment fronting routes Kynos does not
-        // serve; without it the advertised set is what this scope declares, so
-        // preflight and the description cannot disagree.
+        // serve; without it the advertised set is what this scope covers --
+        // its declared methods and the HEAD each covered GET answers -- which
+        // is always a subset of `Allow`.
         let advertised = config.methods.clone().unwrap_or_else(|| covered.clone());
 
         Self {
