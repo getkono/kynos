@@ -29,29 +29,34 @@ fn aliases(token: &str) -> &'static [&'static str] {
 /// `q=0`.
 #[must_use]
 pub fn quality(accept: &str, token: &str) -> Option<u16> {
-    entry(accept, token).map(|entry| entry.weight.unwrap_or(0))
+    // A malformed weight is a refusal rather than a default: a client that
+    // wrote something RFC 9110 section 12.4.2 cannot express did not ask for
+    // this coding. That includes a value above 1, which read literally would
+    // let `gzip;q=1.5` outrank a legitimate `q=1`.
+    weight(accept, token).map(|weight| match weight {
+        Weight::Qvalue(thousandths) => thousandths,
+        Weight::Malformed => 0,
+    })
 }
 
-/// The entry that speaks for a token: its own, else the wildcard.
-struct Entry {
-    /// Whether it is the wildcard rather than the token itself.
-    wildcard: bool,
-    /// Its weight in thousandths; `None` when it is not a qvalue.
-    weight: Option<u16>,
+/// The weight an entry states.
+enum Weight {
+    /// A qvalue, in thousandths.
+    Qvalue(u16),
+    /// Something RFC 9110 section 12.4.2 cannot express, which each caller
+    /// reads by its own rule.
+    Malformed,
 }
 
-/// Finds the entry that speaks for `token`, as `accept` states it.
-fn entry(accept: &str, token: &str) -> Option<Entry> {
+/// The weight of the entry that speaks for `token`: its own, else the
+/// wildcard's. `None` when neither appears.
+fn weight(accept: &str, token: &str) -> Option<Weight> {
     let mut wildcard = None;
 
     for entry in accept.split(',') {
         let mut parts = entry.split(';');
         let name = parts.next().unwrap_or_default().trim();
 
-        // A malformed weight is a refusal rather than a default: a client that
-        // wrote something RFC 9110 section 12.4.2 cannot express did not ask
-        // for this coding. That includes a value above 1, which read literally
-        // would let `gzip;q=1.5` outrank a legitimate `q=1`.
         let weight = parts
             .find_map(|parameter| {
                 let parameter = parameter.trim();
@@ -59,24 +64,20 @@ fn entry(accept: &str, token: &str) -> Option<Entry> {
                     .strip_prefix("q=")
                     .or_else(|| parameter.strip_prefix("Q="))
             })
-            .map_or(Some(1_000), |weight| super::quality::parse(weight.trim()));
+            .map_or(Weight::Qvalue(1_000), |weight| {
+                super::quality::parse(weight.trim()).map_or(Weight::Malformed, Weight::Qvalue)
+            });
 
         if name.eq_ignore_ascii_case(token)
             || aliases(token)
                 .iter()
                 .any(|alias| alias.eq_ignore_ascii_case(name))
         {
-            return Some(Entry {
-                wildcard: false,
-                weight,
-            });
+            return Some(weight);
         }
 
         if name == "*" {
-            wildcard = Some(Entry {
-                wildcard: true,
-                weight,
-            });
+            wildcard = Some(weight);
         }
     }
 
@@ -121,19 +122,15 @@ pub fn preferred<'a>(accept: &str, available: &[&'a str]) -> Option<&'a str> {
 /// RFC 9110 section 12.5.3 rule 2: identity "is acceptable by default unless
 /// specifically excluded by the Accept-Encoding header field stating either
 /// `identity;q=0` or `*;q=0` without a more specific entry for `identity`".
-/// Both spellings read as `0`. A wildcard weight that is not a qvalue, such as
-/// `*;q=1.5`, refuses every coding it speaks for but states no `*;q=0`, so it
-/// leaves identity at its default of 1000; an `identity` entry's own weight
-/// that is not a qvalue refuses identity, as it would any coding.
+/// Both spellings read as `0`. A weight that is not a qvalue, such as
+/// `identity;q=1.5` or `*;q=1.5`, states neither, so it leaves identity at its
+/// default of 1000 — even though the same wildcard refuses every coding it
+/// speaks for.
 #[must_use]
 pub fn identity_quality(accept: &str) -> u16 {
-    match entry(accept, "identity") {
-        None
-        | Some(Entry {
-            wildcard: true,
-            weight: None,
-        }) => 1_000,
-        Some(Entry { weight, .. }) => weight.unwrap_or(0),
+    match weight(accept, "identity") {
+        Some(Weight::Qvalue(thousandths)) => thousandths,
+        None | Some(Weight::Malformed) => 1_000,
     }
 }
 
