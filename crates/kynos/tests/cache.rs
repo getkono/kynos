@@ -2,7 +2,8 @@
 //!
 //! One reason: whether a hit happens is a property of a *sequence* of requests
 //! and of what the first one's headers said, which no unit test of the rules
-//! can see.
+//! can see. A response it declines to store is here too, since only a built
+//! service shows it forwarded unchanged.
 
 #![cfg(all(feature = "macros", feature = "json", feature = "cache"))]
 
@@ -386,37 +387,72 @@ async fn page() -> WithHeaders<Json<Page>, CacheControl> {
     )
 }
 
-/// Declining to store a response is not a licence to alter the one forwarded.
-#[tokio::test]
-async fn a_response_past_the_storage_bound_reaches_the_client_whole() {
-    let store = Stored::default();
-    let uncached = Router::<()>::new()
-        .mount(kynos::routes![page])
-        .build(())
-        .expect("a describable router");
-    let cached = Router::<()>::new()
+/// `page` behind a `Cache` that stores bodies of at most `limit` octets.
+fn page_cached_under(store: &Stored, limit: u64) -> kynos::router::service::Service<()> {
+    Router::<()>::new()
         .mount(kynos::routes![page])
         .intercept(
             Cache::new(store.clone())
                 .namespace("test")
-                .max_body_bytes(64),
+                .max_body_bytes(limit),
         )
         .build(())
-        .expect("a describable router");
+        .expect("a describable router")
+}
 
-    let direct = get(&uncached, "/page").call().await;
-    let through = get(&cached, "/page").call().await;
+/// `page` as the chain produces it, with nothing in front.
+fn page_uncached() -> kynos::router::service::Service<()> {
+    Router::<()>::new()
+        .mount(kynos::routes![page])
+        .build(())
+        .expect("a describable router")
+}
+
+fn is_empty(store: &Stored) -> bool {
+    store
+        .0
+        .lock()
+        .expect("no test panics while holding this")
+        .is_empty()
+}
+
+/// Declining to store a response is not a licence to alter the one forwarded.
+#[tokio::test]
+async fn a_response_past_the_storage_bound_reaches_the_client_whole() {
+    let store = Stored::default();
+
+    let direct = get(&page_uncached(), "/page").call().await;
+    let through = get(&page_cached_under(&store, 64), "/page").call().await;
 
     assert_eq!(through.status, direct.status);
+    let content_type = direct.field(header::CONTENT_TYPE.as_str());
+    assert!(content_type.is_some(), "the fixture states its media type");
+    assert_eq!(through.field(header::CONTENT_TYPE.as_str()), content_type);
     assert!(!through.body.is_empty(), "the response body was emptied");
     assert_eq!(through.body, direct.body);
+    assert!(is_empty(&store), "a body past the bound was stored");
+}
+
+/// The bound is inclusive: a body of exactly `max_body_bytes` is stored, and
+/// one octet past it is forwarded unstored.
+#[tokio::test]
+async fn a_body_of_exactly_the_bound_is_stored() {
+    let direct = get(&page_uncached(), "/page").call().await;
+    let length = u64::try_from(direct.body.len()).expect("a small body");
+
+    let at = Stored::default();
+    let stored = get(&page_cached_under(&at, length), "/page").call().await;
+    assert_eq!(stored.body, direct.body);
+    assert!(!is_empty(&at), "a body of exactly the bound was not stored");
+
+    let under = Stored::default();
+    let declined = get(&page_cached_under(&under, length - 1), "/page")
+        .call()
+        .await;
+    assert_eq!(declined.body, direct.body);
     assert!(
-        store
-            .0
-            .lock()
-            .expect("no test panics while holding this")
-            .is_empty(),
-        "a body past the bound was stored"
+        is_empty(&under),
+        "a body one octet past the bound was stored"
     );
 }
 
