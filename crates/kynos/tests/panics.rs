@@ -7,6 +7,10 @@
 //!
 //! Three scopes ask for it — the router, a group and one endpoint — and each is
 //! covered with the control that differs in exactly that.
+//!
+//! A recovered panic is also reported to observers once, whichever scope
+//! recovered it: the scopes differ in what they cover, not in whether anyone
+//! hears about it.
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
