@@ -464,6 +464,94 @@ description = "Test the cost sweep's parsers and its report"
 tools = { python = "3.11.16" }
 run = "python3 -B scripts/cost_features_test.py"
 
+[tasks."profile:valgrind"]
+description = "Build the Valgrind the request-path profile runs under"
+# From source into a user prefix, because Valgrind is a system package and
+# neither mise nor a release binary provides it -- and the development machine
+# this was written on is an immutable image with no root. CI installs it with
+# `gungraun/setup-gungraun` instead, and that is the run of record.
+#
+# The digest pins the tarball, trust-on-first-use: sourceware publishes a
+# signature rather than a digest, and this line is the reviewed copy of what
+# was downloaded when the version was chosen.
+#
+# Idempotent, so `profile:requests` can name it as a dependency without
+# rebuilding anything a second time.
+run = '''
+set -eu
+prefix="${KYNOS_VALGRIND:-$HOME/.local/share/kynos-valgrind}"
+version=3.27.1
+digest=5d589152eb8071c02feab8ce6ab719e431a1fbc3e2b1700f5432632a8b9264dc
+if "$prefix/bin/valgrind" --version 2>/dev/null | grep -qx "valgrind-$version"; then
+  exit 0
+fi
+# A Valgrind already on `PATH` is used if it is new enough for gungraun, which
+# asks for 3.22 with DHAT; that is how CI's installation is picked up.
+if found="$(valgrind --version 2>/dev/null)" \
+  && printf '%s\n%s\n' "valgrind-3.22.0" "$found" | sort -V -C; then
+  exit 0
+fi
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+curl -sSfL "https://sourceware.org/pub/valgrind/valgrind-$version.tar.bz2" -o "$work/valgrind.tar.bz2"
+echo "$digest  $work/valgrind.tar.bz2" | sha256sum -c --quiet -
+tar -xjf "$work/valgrind.tar.bz2" -C "$work"
+cd "$work/valgrind-$version"
+./configure --prefix="$prefix" >/dev/null
+make -j"$(nproc)" >/dev/null
+make install >/dev/null
+"$prefix/bin/valgrind" --version
+'''
+
+[tasks."profile:requests"]
+description = "Count instructions and heap blocks over the in-process request path"
+# The instruction-count kind in `docs/performance.md`: gungraun runs
+# `crates/kynos-profile/benches/requests.rs` under Callgrind and DHAT, and
+# `scripts/profile_report.py` splits what Callgrind counted by object, holds
+# DHAT to `tests/alloc.rs`, and compares against
+# `crates/kynos-profile/requests.tsv`. The script's docstring is where the split
+# is argued: glibc's allocator costs a different number of instructions on
+# every run, and nothing else does.
+#
+# The script runs the benchmark as well as reading it (`--run`), so that
+# refusing an ambient `RUSTFLAGS`, clearing the previous run's output and
+# putting the pinned Valgrind first on `PATH` are written once, for this task
+# and `profile:record` alike.
+#
+# `gungraun-runner` must be the version the library is, exactly, which is why
+# both are pinned to one number: `[workspace.dependencies]` pins the library
+# with `=`, and this pins the runner. Task-scoped for `cost:features`' reason: a
+# `[tools]` entry would download it into every CI job, and one job uses it.
+#
+# Not in `check` and not in `hooks:pre-push`: it needs Valgrind, which
+# `profile:valgrind` builds and nothing else installs. `profile:test` holds
+# the report's parsers and is in `check`.
+tools = { "github:gungraun/gungraun" = "0.20.0", python = "3.11.16" }
+depends = ["profile:valgrind"]
+run = "python3 scripts/profile_report.py --run"
+
+[tasks."profile:record"]
+description = "Record the request-path profile as the committed baseline"
+# The `cost:record` idiom: the report compares unless told to write, so a change
+# in what a request costs reaches review as a diff of
+# `crates/kynos-profile/requests.tsv` rather than as a number retyped by hand.
+# Runs the whole profile first, because a baseline written from a previous
+# run's files records a build that is not this one. The pins are
+# `profile:requests`', for its reasons.
+tools = { "github:gungraun/gungraun" = "0.20.0", python = "3.11.16" }
+depends = ["profile:valgrind"]
+env = { KYNOS_PROFILE = "overwrite" }
+run = "python3 scripts/profile_report.py --run"
+
+[tasks."profile:test"]
+description = "Test the request-path profile's parsers and its report"
+# `cost:test`'s shape and its reasons: the half of the profile that runs
+# nothing, and where a silent regression would live -- a Callgrind line read as
+# a cost that is a call's inclusive cost, or an object attributed wrongly, still
+# prints a table and exits zero. `-B` and the pin for the reasons given there.
+tools = { python = "3.11.16" }
+run = "python3 -B scripts/profile_report_test.py"
+
 [tasks."fixtures:generate"]
 description = "Regenerate the conformance-fixture corpus"
 # The `trybuild` idiom: the test writes when told to and compares otherwise, so
@@ -739,6 +827,7 @@ run = [
   { task = "containment:check" },
   { task = "containment:test" },
   { task = "cost:test" },
+  { task = "profile:test" },
   { task = "commits:test" },
   { task = "docs:check" },
   { task = "panic:check" },
