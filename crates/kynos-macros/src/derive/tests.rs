@@ -3798,6 +3798,7 @@ mod provider {
 mod headers {
     use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
     use crate::derive::headers::expand_inner;
+    use syn::DeriveInput;
 
     fn ledger() -> Vec<Case> {
         vec![case(
@@ -3814,6 +3815,35 @@ mod headers {
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+    }
+
+    /// A field is checked under the name the header carries, not its
+    /// identifier: `content_type` is no header until `rename_all` makes it
+    /// `content-type`.
+    ///
+    /// Beside the ledger rather than in it: the ledger's row proves the site
+    /// fires, and this proves it reads the final name.
+    #[test]
+    fn a_reserved_name_reached_through_rename_all_is_refused() {
+        let unrenamed: DeriveInput = syn::parse_quote!(
+            struct Body {
+                content_type: String,
+            }
+        );
+        expand_inner(&unrenamed).expect("`content_type` is not a reserved header name");
+        each_case_is_refused(
+            vec![case(
+                "`content_type` under `rename_all = \"kebab-case\"`",
+                quote::quote!(
+                    #[serde(rename_all = "kebab-case")]
+                    struct Body {
+                        content_type: String,
+                    }
+                ),
+                "`content-type` must not be declared as a header parameter",
+            )],
+            expand_inner,
+        );
     }
 
     #[test]
