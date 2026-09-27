@@ -1008,6 +1008,9 @@ The cookie rule has no opt-out. Replaying a response that mints a session to a
 second client is the worst bug a cache has, and `Vary` cannot protect against
 it: the cookie is in the *response*, and nothing in the request selects it.
 
+A body `Cache` will not buffer — one past `max_body_bytes`, or a stream, which
+states no length — is not stored either, and is forwarded exactly as it arrived.
+
 **There is no heuristic freshness.** RFC 9111 section 4.2.2 permits one, and
 every heuristic is a guess that turns a correct origin into an incorrect cache.
 A response that did not say how long it may be reused is not reused;
