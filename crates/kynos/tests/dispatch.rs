@@ -240,6 +240,41 @@ async fn a_derived_head_is_reported_as_the_get_operation() {
     assert_eq!(head_route, Some(get_route));
 }
 
+/// A declared `head` whose handler returns a body anyway.
+#[kynos::head("/loud")]
+async fn loud_head() -> Text {
+    Text("loud".to_owned())
+}
+
+/// RFC 9110 section 9.3.2's "MUST NOT send content" is about the method, not
+/// about who answered it: a declared `head` returning a body, a 404 problem and
+/// a 400 rejection all reach the peer with none. HTTP/1.1 would drop it on the
+/// wire; HTTP/2 sends what it is handed.
+#[tokio::test]
+async fn no_response_to_a_head_carries_content() {
+    let service = support::router()
+        .mount(kynos::routes![loud_head])
+        .build(App::new())
+        .expect("a describable router");
+
+    for (target, status) in [
+        ("/loud", StatusCode::OK),
+        ("/widgets", StatusCode::NOT_FOUND),
+        ("/users/nope", StatusCode::BAD_REQUEST),
+    ] {
+        let reply = send(&service, Method::HEAD, target).call().await;
+
+        assert_eq!(reply.status, status, "{target}");
+        assert!(reply.body.is_empty(), "{target}: {:?}", reply.text());
+    }
+
+    let loud = send(&service, Method::HEAD, "/loud").call().await;
+    assert_eq!(
+        loud.field(header::CONTENT_LENGTH.as_str()).as_deref(),
+        Some("4")
+    );
+}
+
 // --- What `Lenient` accepts, and what it still refuses --------------------
 
 /// A route whose declared spelling carries the trailing slash, which is the
