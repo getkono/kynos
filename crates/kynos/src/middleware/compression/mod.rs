@@ -246,13 +246,13 @@ fn negotiate(headers: &http::HeaderMap) -> Negotiated {
         return Negotiated::Identity;
     };
 
-    let mut best: Option<(Coding, f32)> = None;
+    let mut best: Option<(Coding, u16)> = None;
     for coding in Coding::ALL {
         let Some(weight) = crate::http::coding::quality(accept, coding.token()) else {
             continue;
         };
 
-        if weight <= 0.0 {
+        if weight == 0 {
             continue;
         }
 
@@ -264,11 +264,11 @@ fn negotiate(headers: &http::HeaderMap) -> Negotiated {
     // Rule 2: identity "is acceptable by default unless specifically excluded
     // by the Accept-Encoding header field stating either `identity;q=0` or
     // `*;q=0` without a more specific entry for `identity`". `quality` falls
-    // back to the wildcard, so both spellings land here as `Some(0.0)`.
+    // back to the wildcard, so both spellings land here as `Some(0)`.
     let identity = crate::http::coding::identity_quality(accept);
 
     let Some((coding, weight)) = best else {
-        return if identity > 0.0 {
+        return if identity > 0 {
             Negotiated::Identity
         } else {
             // Every coding this build offers was refused *and* identity was

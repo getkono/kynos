@@ -19,13 +19,15 @@ fn aliases(token: &str) -> &'static [&'static str] {
     }
 }
 
-/// The quality `accept` assigns `token`, honouring `*`.
+/// The quality `accept` assigns `token`, honouring `*`, in thousandths.
 ///
-/// `None` when neither the token nor a wildcard appears, which is what
+/// A weight is `0..=1000`: RFC 9110 section 12.4.2 bounds a qvalue at three
+/// decimal places, so thousandths state every one exactly. A weight the
+/// grammar cannot express is `0`, a refusal. `None` when neither the token nor a wildcard appears, which is what
 /// distinguishes "not mentioned" from "mentioned and refused" — the difference
 /// between the two is the whole of `q=0`.
 #[must_use]
-pub fn quality(accept: &str, token: &str) -> Option<f32> {
+pub fn quality(accept: &str, token: &str) -> Option<u16> {
     let mut wildcard = None;
 
     for entry in accept.split(',') {
@@ -43,8 +45,8 @@ pub fn quality(accept: &str, token: &str) -> Option<f32> {
                     .strip_prefix("q=")
                     .or_else(|| parameter.strip_prefix("Q="))
             })
-            .map_or(1.0, |weight| {
-                f32::from(super::quality::parse(weight.trim()).unwrap_or(0)) / 1000.0
+            .map_or(1_000, |weight| {
+                super::quality::parse(weight.trim()).unwrap_or(0)
             });
 
         if name.eq_ignore_ascii_case(token)
@@ -78,13 +80,13 @@ pub fn quality(accept: &str, token: &str) -> Option<f32> {
 /// its own preference by ordering that list.
 #[must_use]
 pub fn preferred<'a>(accept: &str, available: &[&'a str]) -> Option<&'a str> {
-    let mut best: Option<(&'a str, f32)> = None;
+    let mut best: Option<(&'a str, u16)> = None;
 
     for token in available {
         let Some(weight) = quality(accept, token) else {
             continue;
         };
-        if weight <= 0.0 {
+        if weight == 0 {
             continue;
         }
         if best.is_none_or(|(_, best)| weight > best) {
@@ -96,16 +98,16 @@ pub fn preferred<'a>(accept: &str, available: &[&'a str]) -> Option<&'a str> {
     (identity_quality(accept) <= weight).then_some(token)
 }
 
-/// What the client thinks of the unencoded representation.
+/// What the client thinks of the unencoded representation, in thousandths.
 ///
 /// RFC 9110 section 12.5.3 rule 2: identity "is acceptable by default unless
 /// specifically excluded by the Accept-Encoding header field stating either
 /// `identity;q=0` or `*;q=0` without a more specific entry for `identity`".
 /// [`quality`] falls back to the wildcard, so both spellings land here as
-/// `Some(0.0)`.
+/// `Some(0)`.
 #[must_use]
-pub fn identity_quality(accept: &str) -> f32 {
-    quality(accept, "identity").unwrap_or(1.0)
+pub fn identity_quality(accept: &str) -> u16 {
+    quality(accept, "identity").unwrap_or(1_000)
 }
 
 #[cfg(test)]
