@@ -149,13 +149,20 @@ pub enum KeyLocation {
 pub struct ApiKey(String);
 
 impl ApiKey {
-    /// The key, exactly as the client sent it.
+    /// The key: the value of its field, decoded as that field's location
+    /// decodes a value.
+    ///
+    /// A header value is as the client sent it; a cookie value has its
+    /// surrounding whitespace and double quotes removed; a query value is
+    /// decoded by the form rules of every `in: query` parameter, so `a+b`
+    /// arrives as `a b` and `a%2Bb` as `a+b`.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
-    /// Takes ownership of the key.
+    /// Takes ownership of the key, decoded as [`as_str`](Self::as_str)
+    /// describes.
     #[must_use]
     pub fn into_inner(self) -> String {
         self.0
