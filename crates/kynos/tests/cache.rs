@@ -420,6 +420,105 @@ async fn a_response_past_the_storage_bound_reaches_the_client_whole() {
     );
 }
 
+/// A representation whose read fails part-way is neither stored nor forwarded
+/// as complete.
+mod failing {
+    use std::io;
+
+    use bytes::Bytes;
+    use http_body_util::BodyExt;
+    use kynos::{
+        Router,
+        extract::media::OctetStream,
+        http::{Request, StatusCode, body::Body, header},
+        middleware::cache::Cache,
+        response::range::{
+            served::{Conditions, Delivery, Served},
+            source::{ByteSource, SPAN},
+        },
+        router::service::Service,
+    };
+
+    use super::Stored;
+
+    /// The length the source states, past the one span it can read.
+    const LENGTH: u64 = 3 * SPAN;
+
+    /// An object store that fails partway through the object.
+    struct Flaky;
+
+    impl ByteSource for Flaky {
+        type Error = io::Error;
+
+        async fn complete_length(&self) -> Result<u64, Self::Error> {
+            Ok(LENGTH)
+        }
+
+        async fn read_span(&self, first: u64, last: u64) -> Result<Bytes, Self::Error> {
+            if first > 0 {
+                return Err(io::Error::other("object store went away"));
+            }
+            let length = usize::try_from(last - first + 1).expect("a span fits in memory");
+            Ok(Bytes::from(vec![b'a'; length]))
+        }
+    }
+
+    #[kynos::get("/object")]
+    async fn object(conditions: Conditions) -> Delivery<OctetStream> {
+        Served::<_, OctetStream>::new(Flaky)
+            .cache_control("max-age=60")
+            .deliver(&conditions)
+            .await
+            .expect("the length is known")
+    }
+
+    /// The status, the `Content-Length`, and whether reading the body failed.
+    async fn fetch(service: &Service<()>) -> (StatusCode, Option<String>, bool) {
+        let mut request = Request::new(Body::empty());
+        *request.uri_mut() = "/object".parse().expect("a usable request target");
+        let response = service.call(request).await;
+        let length = response
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .map(|value| value.to_str().expect("a printable field").to_owned());
+        (
+            response.status(),
+            length,
+            response.into_body().collect().await.is_err(),
+        )
+    }
+
+    /// RFC 9111 section 3.3: a cache must not send an incomplete response as a
+    /// complete one. The read fails for the client exactly as it does uncached.
+    #[tokio::test]
+    async fn a_representation_that_fails_part_way_fails_for_the_client_and_is_not_stored() {
+        let store = Stored::default();
+        let uncached = Router::<()>::new()
+            .mount(kynos::routes![object])
+            .build(())
+            .expect("a describable router");
+        let cached = Router::<()>::new()
+            .mount(kynos::routes![object])
+            .intercept(Cache::new(store.clone()).namespace("test"))
+            .build(())
+            .expect("a describable router");
+
+        let direct = fetch(&uncached).await;
+        let through = fetch(&cached).await;
+
+        assert!(direct.2, "the uncached read succeeded");
+        assert_eq!(through, direct);
+        assert!(
+            store
+                .0
+                .lock()
+                .expect("no test panics while holding this")
+                .is_empty(),
+            "a representation that failed part-way was stored"
+        );
+    }
+}
+
 /// A stream states no length, so it is never buffered to be stored.
 #[cfg(feature = "openapi32")]
 mod streamed {
