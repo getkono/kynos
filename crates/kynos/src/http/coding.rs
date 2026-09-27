@@ -27,6 +27,15 @@ fn aliases(token: &str) -> &'static [&'static str] {
 /// a wildcard appears, which is what distinguishes "not mentioned" from
 /// "mentioned and refused" — the difference between the two is the whole of
 /// `q=0`.
+///
+/// This reads the weight the field gives a coding, `identity` included; it does
+/// not say whether identity is acceptable, which is RFC 9110 section 12.5.3
+/// rule 2's question and [`identity_quality`]'s. The two differ where a weight
+/// is not a qvalue: `quality("identity;q=1.5", "identity")` and
+/// `quality("*;q=1.5", "identity")` are `Some(0)`, yet neither field states the
+/// `identity;q=0` or `*;q=0` that excludes identity, so `identity_quality`
+/// reads both as 1000. They differ where the field is silent too: `None` here,
+/// 1000 there.
 #[must_use]
 pub fn quality(accept: &str, token: &str) -> Option<u16> {
     // A malformed weight is a refusal rather than a default: a client that
