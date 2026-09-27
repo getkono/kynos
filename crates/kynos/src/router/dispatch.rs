@@ -572,10 +572,14 @@ pub(crate) fn method_refusal(allow: Option<&HeaderValue>, policy: &FallbackPolic
 ///
 /// RFC 9110 section 9.3.2: the server "MUST NOT send content" in response to a
 /// HEAD. HTTP/1.1 would drop the body on the wire, but hyper's HTTP/2 server
-/// sends whatever body it is handed, so it is dropped here. `Content-Length` is
-/// stated first where the body knows its length, since section 8.6 lets a HEAD
-/// carry the length the GET would have sent; a status that never carries
-/// content gets none.
+/// sends whatever body it is handed, so it is dropped here.
+///
+/// `Content-Length` is stated first where the body knows a non-zero length:
+/// section 8.6 lets a HEAD carry the length the GET would have sent and forbids
+/// any other. An empty body is no evidence of an empty GET -- a declared `head`
+/// answers with none -- so a zero is never stated, the rule hyper's HTTP/1.1
+/// encoder keeps. A length the response already carries is left alone, and a
+/// status that never carries content gets none.
 fn without_content(response: Response) -> Response {
     use http_body::Body as _;
 
@@ -585,7 +589,7 @@ fn without_content(response: Response) -> Response {
         || parts.status == StatusCode::NO_CONTENT
         || parts.status == StatusCode::NOT_MODIFIED;
     if !bodiless && !parts.headers.contains_key(header::CONTENT_LENGTH) {
-        if let Some(length) = body.size_hint().exact() {
+        if let Some(length) = body.size_hint().exact().filter(|&length| length != 0) {
             parts
                 .headers
                 .insert(header::CONTENT_LENGTH, HeaderValue::from(length));
