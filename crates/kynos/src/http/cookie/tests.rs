@@ -145,3 +145,14 @@ fn a_utf8_value_outside_ascii_is_unreadable() {
     assert_eq!(value_of(&headers, "session"), Err(Unreadable));
     assert_eq!(jar(&headers).collect::<Vec<_>>(), [("other", "1")]);
 }
+
+/// A name outside ASCII is never the one asked for, even when the name asked
+/// for spells the same UTF-8: `jar` skips the pair, and `value_of` agrees with
+/// it about which names exist rather than matching the octets.
+#[test]
+fn a_utf8_name_outside_ascii_is_never_the_one_asked_for() {
+    let headers = from_octets(&[b"caf\xc3\xa9=1; other=2"]);
+
+    assert_eq!(value_of(&headers, "café"), Ok(None));
+    assert_eq!(jar(&headers).collect::<Vec<_>>(), [("other", "2")]);
+}
