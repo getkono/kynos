@@ -87,6 +87,18 @@ impl Body {
         }
     }
 
+    /// A body whose read fails with `error`, having yielded nothing.
+    ///
+    /// What an interceptor that buffers a body hands on when reading it
+    /// failed: the failure reaches the connection driver, which aborts the
+    /// message rather than framing a short one as complete.
+    #[cfg(any(feature = "cache", feature = "compression"))]
+    pub(crate) fn failed(error: BoxError) -> Self {
+        Self {
+            inner: Mutex::new(Failed { error: Some(error) }.boxed_unsync()),
+        }
+    }
+
     #[cfg(feature = "server")]
     pub(crate) fn from_incoming(body: hyper::body::Incoming) -> Self {
         Self {
@@ -208,6 +220,28 @@ impl Drop for Watched {
         };
 
         self.report(delivery);
+    }
+}
+
+/// A body that fails once and yields nothing else.
+///
+/// Never reports its end, not even after the error: a body that failed was not
+/// delivered, and [`Watched`] reads an ended body as a complete one.
+#[cfg(any(feature = "cache", feature = "compression"))]
+struct Failed {
+    error: Option<BoxError>,
+}
+
+#[cfg(any(feature = "cache", feature = "compression"))]
+impl HttpBody for Failed {
+    type Data = Bytes;
+    type Error = BoxError;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        Poll::Ready(self.get_mut().error.take().map(Err))
     }
 }
 

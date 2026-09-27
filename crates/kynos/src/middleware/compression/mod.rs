@@ -802,8 +802,10 @@ where
             }));
         }
 
-        // Failing to read or to encode leaves the response as the handler
-        // produced it, since neither is something this may answer with.
+        // Failing to encode leaves the response as the handler produced it,
+        // since that is not something this may answer with. Failing to read
+        // hands on a body that fails the same way: the octets are gone, and
+        // an empty body would read as a complete one.
         let encoded = match body.collect().await {
             Ok(collected) => {
                 let bytes = collected.to_bytes();
@@ -816,7 +818,10 @@ where
                     None
                 }
             }
-            Err(_) => None,
+            Err(error) => {
+                continued.set_body(crate::http::body::Body::failed(error));
+                None
+            }
         };
 
         Ok(continued.with_headers(ContentEncoding {

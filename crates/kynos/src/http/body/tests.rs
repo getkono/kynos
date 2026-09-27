@@ -131,3 +131,15 @@ async fn a_watched_body_reports_once_across_both_of_its_ends() {
         "the drop reported a second time over the read that had already reported"
     );
 }
+
+/// A body handed on because its read failed was not delivered, and must not
+/// say it was: `Failed` never states its end, even once its error is out.
+#[cfg(any(feature = "cache", feature = "compression"))]
+#[tokio::test]
+async fn a_watched_failed_body_reports_an_interruption() {
+    let reports = Reports::default();
+    let body = reports.watching(Body::failed("upstream went away".into()));
+
+    assert!(body.collect().await.is_err());
+    assert_eq!(reports.taken(), vec![Delivery::Interrupted]);
+}

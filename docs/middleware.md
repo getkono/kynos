@@ -611,13 +611,14 @@ truncated response and an error on the stream rather than a status a client can
 read.
 
 `BodyTimeout` belongs *outside* anything that rewrites a body. An interceptor
-that rewrites one has to read it, and one that buffers — `Compression` below its
-size threshold, `Cache` storing a response — reads to the end before writing
-anything; handed a body that fails part-way it has no partial response to emit
-and falls back to an empty one, so a timeout mounted beneath it reaches the
-client as a complete, zero-length success. Outside, the error is the body's last
-frame and the driver resets the stream. Like the slow-body rule above, the types
-do not enforce this.
+that rewrites one has to read it, and one that buffers — `Compression` over a
+body of known length, `Cache` storing a response — reads to the end before
+writing anything. Handed a body that fails part-way, either one hands on a body
+that fails the same way and stores nothing, so the driver still resets the
+stream; but it does so having sent none of the octets that arrived, and a timer
+mounted beneath it measures the handler's pace rather than the client's. Outside,
+the error is the last frame after everything that was read. Like the slow-body
+rule above, the types do not enforce this.
 
 An idle limit polls the inner body *before* its clock, which is not an
 optimization. The gap the timer measures is between polls rather than between
