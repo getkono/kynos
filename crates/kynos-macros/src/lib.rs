@@ -411,6 +411,11 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   is true in both directions. Give both sides one name. A member serde uses
 ///   one way is named by that side: a field it skips in either direction, any
 ///   field of a variant it never writes, and a variant it only reads.
+/// - A split container `rename_all(serialize = ..., deserialize = ...)` whose
+///   two sides differ, or which names one side only. The style reaches every
+///   member serde both writes and reads, so no one schema is true in both
+///   directions. Say which with `rename_all = "..."`. Sides that agree are read
+///   as that one style.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)
