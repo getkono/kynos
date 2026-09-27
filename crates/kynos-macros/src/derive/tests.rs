@@ -4052,6 +4052,62 @@ mod headers {
     }
 }
 
+mod multipart {
+    use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
+    use crate::derive::multipart::expand_inner;
+
+    /// A field serde only reads is still refused: a part has one name in both
+    /// directions, whichever side serde uses.
+    fn ledger() -> Vec<Case> {
+        vec![case(
+            "a split `rename` whose sides differ on a field serde only reads",
+            quote::quote!(
+                struct Upload {
+                    #[serde(skip_serializing, default, rename(serialize = "a", deserialize = "b"))]
+                    caption: String,
+                }
+            ),
+            "gives this field two part names",
+        )]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(ledger(), expand_inner);
+    }
+
+    /// A split `rename` whose sides agree gives the part one name, so it is
+    /// accepted, as `rename = "..."` is.
+    #[test]
+    fn a_rename_giving_one_part_name_is_accepted() {
+        for declaration in [
+            quote::quote!(
+                struct Upload {
+                    #[serde(rename(serialize = "a", deserialize = "a"))]
+                    caption: String,
+                }
+            ),
+            quote::quote!(
+                struct Upload {
+                    #[serde(rename = "a")]
+                    caption: String,
+                }
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+            if let Err(error) = expand_inner(&input) {
+                panic!("a field with one part name was refused: {error}");
+            }
+        }
+    }
+
+    #[test]
+    fn every_multipart_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case("multipart.rs", include_str!("multipart.rs"), ledger().len());
+    }
+}
+
 mod tag {
     use super::{Case, each_case_is_refused, every_diagnostic_has_a_case};
     use crate::derive::tag::expand_inner;
