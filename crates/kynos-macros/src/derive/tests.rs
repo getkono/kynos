@@ -661,6 +661,67 @@ mod schema {
         }
     }
 
+    /// A split field rule is refused only where it names a field serde both
+    /// writes and reads: a variant's own rule on a variant serde skips both
+    /// ways or only reads, and an enum's `rename_all_fields` that reaches no
+    /// struct variant, one with no field or every one under its own rule, are
+    /// accepted, as serde accepts them.
+    #[test]
+    fn a_split_field_rule_no_field_is_named_both_ways_by_is_accepted() {
+        let cases = [
+            (
+                "a variant serde skips both ways",
+                quote::quote!(
+                    enum Change {
+                        A,
+                        #[serde(skip, rename_all(serialize = "camelCase"))]
+                        B {
+                            user_id: u8,
+                        },
+                    }
+                ),
+            ),
+            (
+                "a variant serde only reads, under its rule's deserialize side",
+                quote::quote!(
+                    enum Change {
+                        A,
+                        #[serde(skip_serializing, rename_all(deserialize = "camelCase"))]
+                        B {
+                            user_id: u8,
+                        },
+                    }
+                ),
+            ),
+            (
+                "an enum's `rename_all_fields` over unit variants alone",
+                quote::quote!(
+                    #[serde(rename_all_fields(serialize = "camelCase"))]
+                    enum UnitsOnly {
+                        A,
+                        B,
+                    }
+                ),
+            ),
+            (
+                "an enum's `rename_all_fields` over a variant under its own rule",
+                quote::quote!(
+                    #[serde(rename_all_fields(serialize = "camelCase"))]
+                    enum Change {
+                        #[serde(rename_all = "kebab-case")]
+                        B { user_id: u8 },
+                    }
+                ),
+            ),
+        ];
+        for (label, tokens) in cases {
+            let input: syn::DeriveInput = syn::parse2(tokens).expect("the case itself must parse");
+            if let Err(error) = expand_inner(&input) {
+                panic!("{label} was refused: {error}");
+            }
+        }
+    }
+
     /// A variant serde only reads claims the name it is read under, so its
     /// split `rename` shadows an earlier variant by the deserialize side
     /// alone: a serialize side naming the earlier variant is never used, and a
