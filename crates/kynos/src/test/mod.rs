@@ -163,6 +163,10 @@ impl<C> TestClient<C> {
     /// nothing is a claim about the exchange rather than the absence of one, so
     /// a body or a `Content-Type` arriving under it is reported.
     ///
+    /// A `HEAD` is checked against the operation that answered it: its own
+    /// `head`, or the `get` of a path declaring none. It carries no content,
+    /// so only its `Content-Type` is held to the declared representation.
+    ///
     /// # Panics
     ///
     /// Panics listing every response that did not conform.

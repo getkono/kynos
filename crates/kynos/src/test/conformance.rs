@@ -32,12 +32,17 @@ pub(super) fn conformance(document: &Document, record: &Observed) -> Vec<String>
             record.method
         )];
     };
-    let Some(operation) = document
-        .paths
-        .items
-        .get(template)
-        .and_then(|item| item.operation(method))
-    else {
+    // A HEAD on a path declaring no `head` was answered by the `get`, which is
+    // the operation describing it (RFC 9110 section 9.3.2).
+    let Some(operation) = document.paths.items.get(template).and_then(|item| {
+        item.operation(method).or_else(|| {
+            if method == Method::Head {
+                item.operation(Method::Get)
+            } else {
+                None
+            }
+        })
+    }) else {
         return vec![format!(
             "`{template}` declares no `{}` operation",
             record.method
@@ -113,6 +118,13 @@ pub(super) fn conformance(document: &Document, record: &Observed) -> Vec<String>
 /// several and no 200, the wrapper declares nothing while the wire still
 /// carries one of them. That is a disagreement rather than an exemption, and
 /// reporting it is what this branch is for.
+///
+/// # A HEAD
+///
+/// Read against the operation that answered it -- its own `head`, or the `get`
+/// the router answers it from -- and never carrying content (RFC 9110 section
+/// 9.3.2), so where a representation is declared only its `Content-Type` is
+/// held to the declaration, and any octets at all are reported.
 fn body_conformance(
     document: &Document,
     response: &kynos_openapi::Response,
@@ -156,6 +168,18 @@ fn body_conformance(
             declared()
         )];
     };
+
+    // RFC 9110 section 9.3.2: a HEAD's content is never sent, so there is no
+    // instance to validate -- and any octets at all are the violation.
+    if record.method == crate::http::Method::HEAD {
+        if record.body.is_empty() {
+            return Vec::new();
+        }
+        return vec![format!(
+            "a {}-byte body was sent in response to a HEAD",
+            record.body.len()
+        )];
+    }
 
     let Some(schema) = representation.schema.as_ref() else {
         return Vec::new();

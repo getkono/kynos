@@ -470,4 +470,18 @@ fn a_head_declares_content_it_never_sends() {
         "{}",
         reasons[0]
     );
+
+    // A schema that accepts anything, and octets that would satisfy it: the
+    // octets are still the violation.
+    let carrying = crate::test::Observed {
+        method: crate::http::Method::HEAD,
+        ..observed(200, Some("application/json"), "{}")
+    };
+    let reasons = conformance(&document, &carrying);
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(
+        reasons[0].contains("a 2-byte body was sent in response to a HEAD"),
+        "{}",
+        reasons[0]
+    );
 }
