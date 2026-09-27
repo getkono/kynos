@@ -261,9 +261,10 @@ pub fn http_scheme(
 ///
 /// # Errors
 ///
-/// When the key is present and holds bytes no `&str` can carry: the header
-/// field, or the first query pair or cookie of that name, since a later one
-/// never stands in for it.
+/// When the key is present and cannot be read: a header field or the first
+/// cookie of that name whose value is not ASCII, or a first query pair of that
+/// name whose percent-decoded value is not UTF-8. A later pair or cookie never
+/// stands in for the first.
 pub fn api_key(
     parts: &Parts,
     location: KeyLocation,
