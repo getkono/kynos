@@ -137,8 +137,9 @@ It is answered before the chain runs, because the representation the handler
 would produce is one no acceptable coding exists for, so producing it is work
 whose result could not be sent.
 
-Reaching it takes `*;q=0`, or naming every coding and identity with `q=0`. No
-ordinary client does either, which is why 406 appearing on every covered
+Reaching it takes refusing every coding, with `q=0` or a weight that is not a
+qvalue, and excluding identity with an explicit `identity;q=0` or `*;q=0`. No
+ordinary client does both, which is why 406 appearing on every covered
 operation is a description of something real rather than noise.
 
 Two details of the same section are easy to get wrong and are checked. Identity
