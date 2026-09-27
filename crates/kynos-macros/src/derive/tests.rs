@@ -437,6 +437,40 @@ mod schema {
         );
     }
 
+    /// A split container `rename_all` naming one side only leaves the other
+    /// direction on the identifiers, so its sides differ too.
+    ///
+    /// Beside the ledger rather than in it: the ledger's row proves the site
+    /// fires, and this proves an absent side counts as a differing one.
+    #[test]
+    fn a_split_rename_all_naming_one_side_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a split container `rename_all` naming its serialize side only",
+                    quote::quote!(
+                        #[serde(rename_all(serialize = "camelCase"))]
+                        struct Stamp {
+                            created_at: u64,
+                        }
+                    ),
+                    "a split `rename_all` whose sides differ",
+                ),
+                case(
+                    "a split container `rename_all` naming its deserialize side only",
+                    quote::quote!(
+                        #[serde(rename_all(deserialize = "camelCase"))]
+                        struct Stamp {
+                            created_at: u64,
+                        }
+                    ),
+                    "a split `rename_all` whose sides differ",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
     /// A split `rename` is refused on every member serde both writes and
     /// reads, not only on a struct's field: a variant, and a field of a
     /// variant serde writes.
