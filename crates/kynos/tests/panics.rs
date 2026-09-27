@@ -131,6 +131,12 @@ fn recovery_asked_for_on_a_group_covers_that_group_alone() {
     assert_eq!(outcome(&service, "/bare/boom"), Err(()));
 }
 
+/// The third scope, reached through a route attribute.
+#[kynos::get("/attributed", catch_panics)]
+async fn attributed() -> NoContent {
+    panic!("the handler failed");
+}
+
 /// The third scope, reached without a route attribute.
 async fn guarded_endpoint() -> NoContent {
     panic!("the handler failed");
@@ -222,10 +228,23 @@ fn a_panic_recovered_at_any_scope_is_reported_to_observers() {
         .build(())
         .expect("a describable router");
 
+    let attribute = Heard::default();
+    let attribute_scope = Router::<()>::new()
+        .mount(kynos::routes![attributed])
+        .observe(attribute.clone())
+        .build(())
+        .expect("a describable router");
+
     for (scope, service, path, heard) in [
         ("router", &router_scope, "/boom", &router),
         ("group", &group_scope, "/guarded/boom", &group),
         ("endpoint", &endpoint_scope, "/guarded", &endpoint),
+        (
+            "route attribute",
+            &attribute_scope,
+            "/attributed",
+            &attribute,
+        ),
     ] {
         assert_eq!(
             outcome(service, path),
