@@ -104,9 +104,10 @@ pub(crate) fn skip_value(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<(
 ///
 /// `attribute` is the derive's own attribute -- `param`, `header` or
 /// `cookie` -- whose `rename` is consulted first. After it come serde's field
-/// `rename`, then the container's `rename_all` applied to the identifier: the
-/// order serde reads them in, and the one the `Schema` derive names a property
-/// by, so a group's parameters and its schema's properties are one list.
+/// `rename`, then the identifier under the container's `rename_all`: serde's
+/// precedence. The case rule is the `Schema` derive's own, taken from
+/// `property_names` rather than restated, so a group's parameters and its
+/// schema's properties are one list even where that rule and serde's part.
 ///
 /// A parameter has exactly one name, so whatever gives a field a second is
 /// refused rather than dropped: a field `alias`, and the split forms of

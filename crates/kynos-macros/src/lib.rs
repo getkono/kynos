@@ -485,9 +485,10 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 /// Wire names must match the route template's variables in declaration order;
 /// the route attribute emits a const assertion comparing the two lists. A
 /// field's wire name is its `#[param(rename)]`, else serde's `rename`, else
-/// serde's `rename_all` applied to its identifier: the name the
-/// [`Schema`](macro@Schema) derive gives it. Each field's type, or an
-/// `Option`'s inner type, is a `kynos::schema::ParamValue`.
+/// its identifier under the struct's `rename_all`, cased as the
+/// [`Schema`](macro@Schema) derive cases a property, so the parameters are
+/// the group schema's properties. Each field's type, or an `Option`'s inner
+/// type, is a `kynos::schema::ParamValue`.
 ///
 /// # Rejected, because a parameter has one name
 ///
@@ -511,8 +512,9 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// `QueryString<T, M>` describes the whole query string under `openapi32`.
 ///
 /// A field's wire name is its `#[param(rename)]`, else serde's `rename`, else
-/// serde's `rename_all` applied to its identifier: the property name the
-/// [`Schema`](macro@Schema) derive gives it.
+/// its identifier under the struct's `rename_all`, cased as the
+/// [`Schema`](macro@Schema) derive cases a property, so the parameters are
+/// the group schema's properties.
 ///
 /// # Rejected, because a parameter has one name
 ///
@@ -537,7 +539,8 @@ pub fn derive_query_params(item: TokenStream) -> TokenStream {
 /// direction.
 ///
 /// A field's wire name is its `#[header(rename)]`, else serde's `rename`, else
-/// serde's `rename_all` applied to its identifier, so `rename_all =
+/// its identifier under the struct's `rename_all`, cased as the
+/// [`Schema`](macro@Schema) derive cases a property, so `rename_all =
 /// "kebab-case"` names `x_request_id` as `x-request-id`. The reserved names
 /// are checked against that final name.
 ///
@@ -557,8 +560,9 @@ pub fn derive_headers(item: TokenStream) -> TokenStream {
 ///
 /// Each field's type, or an `Option`'s inner type, is a
 /// `kynos::schema::ParamValue`. A field's wire name is its
-/// `#[cookie(rename)]`, else serde's `rename`, else serde's `rename_all`
-/// applied to its identifier.
+/// `#[cookie(rename)]`, else serde's `rename`, else its identifier under the
+/// struct's `rename_all`, cased as the [`Schema`](macro@Schema) derive cases a
+/// property.
 ///
 /// # Rejected, because a parameter has one name
 ///

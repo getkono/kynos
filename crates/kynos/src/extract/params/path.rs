@@ -13,10 +13,10 @@ use crate::{
 /// Variables captured from the path template.
 ///
 /// `T` derives `PathParams`, and its wire names, each a field's `rename` or
-/// else its name after any serde `rename_all`, are checked in order against the
-/// route template's variables at compile time — a mismatch is a compile error,
-/// not a runtime 500, which is the failure mode every other Rust framework has
-/// here.
+/// else its name under any `rename_all` as the `Schema` derive applies it,
+/// are checked in order against the route template's variables at compile
+/// time — a mismatch is a compile error, not a runtime 500, which is the
+/// failure mode every other Rust framework has here.
 ///
 /// # Where the values come from
 ///

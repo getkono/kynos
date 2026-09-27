@@ -58,7 +58,7 @@ pub trait QueryParams: Sized + Schema {
     ///   JSON document.
     /// - Derive `QueryParams`, which helps with aliases only by refusing them.
     ///   It names each field by `#[param(rename)]`, then serde's `rename`, then
-    ///   serde's `rename_all`, as the `Schema` derive does, and refuses an
+    ///   `rename_all` as the `Schema` derive applies it, and refuses an
     ///   `alias` at compile time, so it describes and decodes one name per
     ///   field. It refuses an enum and decodes each field as one `ParamValue`,
     ///   so a flattened or `transparent` type's members have to be written out
