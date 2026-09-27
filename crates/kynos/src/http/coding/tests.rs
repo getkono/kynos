@@ -16,13 +16,34 @@ fn absence_and_refusal_are_distinguishable() {
     assert_eq!(quality("br;q=0", "br"), Some(0.0));
 }
 
-/// A qvalue above 1 is not a qvalue, and must not outrank a legitimate one.
+/// A weight RFC 9110 section 12.4.2 cannot express is a refusal, not a number.
+///
+/// The grammar is the one `Accept` and `Accept-Language` read, so a value
+/// above 1 is refused rather than clamped: it must not outrank a legitimate
+/// `q=1`, and a client that wrote it did not write a qvalue.
+///
+/// The values compared are literals parsed from literals, so equality here is
+/// exact: `float_cmp` is warning about a class of bug this cannot be an
+/// instance of.
+#[allow(clippy::float_cmp)]
 #[test]
-fn an_out_of_range_weight_is_clamped_rather_than_believed() {
-    assert_eq!(quality("gzip;q=1.5", "gzip"), Some(1.0));
-    assert_eq!(quality("gzip;q=-1", "gzip"), Some(0.0));
-    // Unparsable is a refusal: the client wrote something it did not mean.
-    assert_eq!(quality("gzip;q=abc", "gzip"), Some(0.0));
+fn a_weight_that_is_not_a_qvalue_is_a_refusal() {
+    for field in [
+        "gzip;q=NaN",    // a float, not a qvalue
+        "gzip;q=inf",    // nor is infinity
+        "gzip;q=1e-1",   // an exponent the grammar has no room for
+        "gzip;q=0.0001", // a fourth decimal place
+        "gzip;q=-0.5",   // a sign
+        "gzip;q=1.5",    // above the bound
+        "gzip;q=abc",    // not a number at all
+    ] {
+        assert_eq!(quality(field, "gzip"), Some(0.0), "{field}");
+    }
+
+    // A decimal point with no digits after it is still a qvalue.
+    assert_eq!(quality("gzip;q=0.", "gzip"), Some(0.0));
+    assert_eq!(quality("gzip;q=1.", "gzip"), Some(1.0));
+    assert_eq!(quality("gzip;q=0.5", "gzip"), Some(0.5));
 }
 
 #[test]
