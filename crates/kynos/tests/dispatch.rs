@@ -9,6 +9,11 @@
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+
 use kynos::{
     Router,
     extract::{
@@ -16,9 +21,14 @@ use kynos::{
         connection::{ConnectInfo, MatchedPath},
         params::path::Path,
     },
-    http::{Method, StatusCode, header},
+    http::{Method, Request, Response, StatusCode, header},
+    middleware::Observer,
+    openapi,
     response::status::NoContent,
-    router::policy::{FallbackPolicy, TrailingSlashPolicy},
+    router::{
+        operation::Route,
+        policy::{FallbackPolicy, TrailingSlashPolicy},
+    },
 };
 
 #[path = "support/mod.rs"]
@@ -26,7 +36,7 @@ mod support;
 
 use support::{App, get, send, service};
 
-// --- The four outcomes ---------------------------------------------------
+// --- The five outcomes ---------------------------------------------------
 
 /// A request that matches a path and a method reaches its operation.
 #[tokio::test]
@@ -55,9 +65,13 @@ async fn a_path_no_template_matches_is_not_found() {
 
 /// A path that matches with a method that does not is a 405, and RFC 9110
 /// section 15.5.6 requires the `Allow` header on one.
+///
+/// `POST` because the service implements it on `/users`: section 9.1 keeps the
+/// 405 for a method "recognized and implemented, but not allowed for the
+/// target resource".
 #[tokio::test]
-async fn a_method_no_operation_declares_is_refused_with_what_is_allowed() {
-    let reply = send(&service(), Method::PATCH, "/users/42").call().await;
+async fn a_method_implemented_elsewhere_is_refused_with_what_is_allowed() {
+    let reply = send(&service(), Method::POST, "/users/42").call().await;
 
     assert_eq!(reply.status, StatusCode::METHOD_NOT_ALLOWED);
 
@@ -65,10 +79,11 @@ async fn a_method_no_operation_declares_is_refused_with_what_is_allowed() {
     let mut methods: Vec<&str> = allow.split(", ").collect();
     methods.sort_unstable();
 
-    // Exactly the two operations declared on `/users/{id}` and nothing else --
-    // in particular not the `OPTIONS` a preflight would answer, which is
-    // registered after the description is assembled.
-    assert_eq!(methods, ["DELETE", "GET"]);
+    // The two operations declared on `/users/{id}`, and the `HEAD` its `GET`
+    // answers -- and nothing else, in particular not the `OPTIONS` a
+    // preflight would answer, which is registered after the description is
+    // assembled.
+    assert_eq!(methods, ["DELETE", "GET", "HEAD"]);
 }
 
 /// Under `Redirect` a path reaching a declared one by flipping its final slash
@@ -115,6 +130,114 @@ async fn a_redirect_carries_the_query_it_was_given() {
         reply.field(header::LOCATION.as_str()).as_deref(),
         Some("/users?limit=2")
     );
+}
+
+// --- HEAD, which every GET answers ----------------------------------------
+
+/// RFC 9110 section 9.1: "All general-purpose servers MUST support the methods
+/// GET and HEAD." Section 9.3.2 defines a HEAD as the GET with no content, so a
+/// path declaring `get` and no `head` answers one from its GET operation.
+///
+/// The fields are GET's, `Content-Length` included: section 8.6 lets a HEAD
+/// carry the length a GET would have sent, and an emptied body would otherwise
+/// state none.
+#[tokio::test]
+async fn a_head_is_answered_by_the_get_operation_without_content() {
+    let service = service();
+
+    let full = get(&service, "/users/42").call().await;
+    let head = send(&service, Method::HEAD, "/users/42").call().await;
+
+    assert_eq!(full.status, StatusCode::OK);
+    assert_eq!(head.status, full.status);
+    assert!(head.body.is_empty(), "{:?}", head.text());
+    assert_eq!(
+        head.field(header::CONTENT_TYPE.as_str()),
+        full.field(header::CONTENT_TYPE.as_str())
+    );
+    assert_eq!(
+        head.field(header::CONTENT_LENGTH.as_str()),
+        Some(full.body.len().to_string())
+    );
+}
+
+/// A path declaring both answers a HEAD from its own `head` operation. The two
+/// answer with different statuses, so the reply says which one ran.
+#[kynos::get("/both")]
+async fn both_get() -> Text {
+    Text("get".to_owned())
+}
+
+#[kynos::head("/both")]
+async fn both_head() -> NoContent {
+    NoContent
+}
+
+#[tokio::test]
+async fn a_declared_head_wins_over_the_one_get_implies() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![both_get, both_head])
+        .build(())
+        .expect("a describable router");
+
+    let reply = send(&service, Method::HEAD, "/both").call().await;
+
+    assert_eq!(reply.status, StatusCode::NO_CONTENT);
+}
+
+/// What an observer saw of one request: the method on the wire, and the
+/// operation it was routed to.
+type Sighting = (Method, Option<(openapi::Method, String, String)>);
+
+/// Records every request's method and route. Held per test rather than in a
+/// `static`, so no two tests can see each other's traffic.
+#[derive(Clone, Default)]
+struct Sightings(Arc<Mutex<Vec<Sighting>>>);
+
+impl Sightings {
+    fn taken(&self) -> Vec<Sighting> {
+        self.0.lock().expect("an unpoisoned record").clone()
+    }
+}
+
+impl Observer<App> for Sightings {
+    fn on_request(&self, request: &Request, route: Option<Route<'_>>, _: &App) {
+        let route = route.map(|route| {
+            (
+                route.method(),
+                route.path().to_owned(),
+                route.operation_id().to_owned(),
+            )
+        });
+        self.0
+            .lock()
+            .expect("an unpoisoned record")
+            .push((request.method().clone(), route));
+    }
+
+    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration) {}
+}
+
+/// A derived HEAD runs the GET operation, so an observer is told that is the
+/// operation it ran -- while the request it is handed still says `HEAD`.
+#[tokio::test]
+async fn a_derived_head_is_reported_as_the_get_operation() {
+    let sightings = Sightings::default();
+    let service = support::router()
+        .observe(sightings.clone())
+        .build(App::new())
+        .expect("a describable router");
+
+    get(&service, "/users/42").call().await;
+    send(&service, Method::HEAD, "/users/42").call().await;
+
+    let [(get_method, get_route), (head_method, head_route)] =
+        <[Sighting; 2]>::try_from(sightings.taken()).expect("one sighting per request");
+
+    assert_eq!((get_method, head_method), (Method::GET, Method::HEAD));
+    let get_route = get_route.expect("the GET was routed");
+    assert_eq!(get_route.0, openapi::Method::Get);
+    assert_eq!(head_route, Some(get_route));
 }
 
 // --- What `Lenient` accepts, and what it still refuses --------------------
@@ -246,13 +369,13 @@ async fn a_flipped_spelling_reports_the_declared_template() {
 /// `Lenient` chooses what a path matches and never what a method may do, so a
 /// flipped spelling reaches the same 405 and the same `Allow`.
 #[tokio::test]
-async fn a_flipped_spelling_still_refuses_a_method_no_operation_declares() {
+async fn a_flipped_spelling_still_refuses_a_method_the_path_does_not_declare() {
     let service = support::router()
         .trailing_slashes(TrailingSlashPolicy::Lenient)
         .build(App::new())
         .expect("a describable router");
 
-    let reply = send(&service, Method::PATCH, "/users/42/").call().await;
+    let reply = send(&service, Method::POST, "/users/42/").call().await;
 
     assert_eq!(reply.status, StatusCode::METHOD_NOT_ALLOWED);
 
@@ -263,7 +386,7 @@ async fn a_flipped_spelling_still_refuses_a_method_no_operation_declares() {
     let mut methods: Vec<&str> = allow.split(", ").collect();
     methods.sort_unstable();
 
-    assert_eq!(methods, ["DELETE", "GET"]);
+    assert_eq!(methods, ["DELETE", "GET", "HEAD"]);
 }
 
 // --- What the fallback policies choose -----------------------------------
@@ -282,7 +405,7 @@ async fn an_empty_fallback_sends_the_status_and_nothing_else() {
     assert_eq!(missing.status, StatusCode::NOT_FOUND);
     assert!(missing.body.is_empty(), "{:?}", missing.text());
 
-    let refused = send(&service, Method::PATCH, "/users/42").call().await;
+    let refused = send(&service, Method::POST, "/users/42").call().await;
     assert_eq!(refused.status, StatusCode::METHOD_NOT_ALLOWED);
     assert!(refused.body.is_empty(), "{:?}", refused.text());
 

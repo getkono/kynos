@@ -208,12 +208,20 @@ async fn a_preflight_reaches_no_interceptor_that_could_refuse_it() {
     assert_eq!(status, StatusCode::NO_CONTENT);
 }
 
-/// `Allow` names the operations the description declares, and a synthesized
-/// preflight is in neither. A 405 that advertised `OPTIONS` would promise an
-/// operation no `paths` key holds.
+/// A `POST` somewhere else in the service, so a `POST` to `/widgets` is a
+/// method implemented but not allowed there -- a 405 rather than a 501.
+#[kynos::post("/gadgets")]
+async fn create_gadget() -> NoContent {
+    NoContent
+}
+
+/// `Allow` names the operations the description declares and the `HEAD` each
+/// `GET` answers, and a synthesized preflight is neither. A 405 that
+/// advertised `OPTIONS` would promise an operation no `paths` key holds.
 #[tokio::test]
 async fn the_allow_header_on_a_405_never_names_the_synthesized_options() {
     let service = router()
+        .mount(kynos::routes![create_gadget])
         .intercept(Cors::new().allow_origins(["https://app.example.com"]))
         .build(())
         .expect("a describable router");
@@ -223,6 +231,7 @@ async fn the_allow_header_on_a_405_never_names_the_synthesized_options() {
     assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
     let allow = field(&fields, header::ALLOW).expect("an Allow header");
     assert!(!allow.contains("OPTIONS"), "{allow}");
+    assert!(allow.contains("HEAD"), "{allow}");
 }
 
 /// A preflight contributes nothing to the description: it is registered after

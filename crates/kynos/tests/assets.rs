@@ -133,7 +133,10 @@ async fn a_file_answers_only_the_method_it_declares() {
         .await;
 
     assert_eq!(reply.status, StatusCode::METHOD_NOT_ALLOWED);
-    assert_eq!(reply.field(header::ALLOW.as_str()).as_deref(), Some("GET"));
+    assert_eq!(
+        reply.field(header::ALLOW.as_str()).as_deref(),
+        Some("GET, HEAD")
+    );
 }
 
 // --- Conditional requests -------------------------------------------------
