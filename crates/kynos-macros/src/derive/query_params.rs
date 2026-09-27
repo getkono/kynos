@@ -44,7 +44,7 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                     ::core::result::Result::Ok(text) => ::core::option::Option::Some(text),
                     ::core::result::Result::Err(_) => {
                         return ::core::result::Result::Err(
-                            ::kynos::error::rejection::QueryRejection::Invalid {
+                            #rejection::Invalid {
                                 name: ::std::string::String::from(#wire),
                                 detail: ::std::string::String::from(
                                     "the percent-decoded value is not UTF-8",
