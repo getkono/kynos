@@ -33,7 +33,9 @@ pub fn quality(accept: &str, token: &str) -> Option<f32> {
         let name = parts.next().unwrap_or_default().trim();
 
         // A malformed weight is a refusal rather than a default: a client that
-        // wrote something unparsable did not ask for this coding.
+        // wrote something RFC 9110 section 12.4.2 cannot express did not ask
+        // for this coding. That includes a value above 1, which read literally
+        // would let `gzip;q=1.5` outrank a legitimate `q=1`.
         let weight = parts
             .find_map(|parameter| {
                 let parameter = parameter.trim();
@@ -42,15 +44,7 @@ pub fn quality(accept: &str, token: &str) -> Option<f32> {
                     .or_else(|| parameter.strip_prefix("Q="))
             })
             .map_or(1.0, |weight| {
-                weight
-                    .trim()
-                    .parse()
-                    // RFC 9110 section 12.4.2 bounds a qvalue at 1. A larger
-                    // one is not a qvalue, and reading it literally lets
-                    // `gzip;q=1.5` outrank a legitimate `q=1.0` — a preference
-                    // inversion a client cannot have meant. Clamped rather than
-                    // refused: the client did ask for the coding.
-                    .map_or(0.0, |weight: f32| weight.clamp(0.0, 1.0))
+                f32::from(super::quality::parse(weight.trim()).unwrap_or(0)) / 1000.0
             });
 
         if name.eq_ignore_ascii_case(token)

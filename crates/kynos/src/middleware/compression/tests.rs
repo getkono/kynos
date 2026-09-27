@@ -103,7 +103,7 @@ fn every_negotiation_rule_the_specification_states_is_applied() {
 /// RFC 9110 section 12.4.2 bounds it at 1. Read literally, `q=1.5` beats a
 /// legitimate `q=1.0` -- a preference inversion no client can have meant.
 ///
-/// The clamping itself is asserted where it now lives, in
+/// Its refusal is asserted where the weight is read, in
 /// [`http::coding`](crate::http::coding); what belongs here is the outcome it
 /// produces for *this* interceptor's choice among the codings it can produce.
 #[test]

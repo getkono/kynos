@@ -2,17 +2,14 @@
 //!
 //! Private, and `pub(crate)`, because a weight is not a type an application
 //! names — it reaches a handler already folded into whichever alternative won.
-//! It lives here rather than beside either caller because two negotiated axes
-//! read it: [`negotiate`](crate::response::negotiate) ranks media types and
-//! [`language`](crate::response::language) ranks language ranges, and section
-//! 12.4.2 is one grammar shared by every `Accept*` field rather than one per
-//! field.
-//!
-//! [`coding::quality`](super::coding::quality) deliberately does not call this,
-//! and the difference is real rather than accidental: it reads `q=1.5` as `1.0`
-//! on the argument that the client did ask for the coding, where this refuses
-//! the field outright. Unifying them is a behaviour change to one caller or the
-//! other and belongs in its own commit.
+//! It lives here rather than beside any caller because three negotiated axes
+//! read it: [`negotiate`](crate::response::negotiate) ranks media types,
+//! [`language`](crate::response::language) ranks language ranges and
+//! [`coding::quality`](super::coding::quality) weighs content codings, and
+//! section 12.4.2 is one grammar shared by every `Accept*` field rather than
+//! one per field. What a refusal means is each caller's: the first two reject
+//! the field, where a content coding weight that is not a qvalue is a weight
+//! of 0.
 
 /// The weight `value` states, in thousandths.
 ///
