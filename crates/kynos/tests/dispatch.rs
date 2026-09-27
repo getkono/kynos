@@ -311,6 +311,46 @@ async fn no_response_to_a_head_carries_content() {
     );
 }
 
+/// A path whose `GET` has content and whose declared `head` has none.
+#[kynos::get("/quiet")]
+async fn quiet_get() -> Text {
+    Text("hello world".to_owned())
+}
+
+#[kynos::head("/quiet")]
+async fn quiet_head() {}
+
+/// A `GET` whose representation is empty.
+#[kynos::get("/empty")]
+async fn empty_get() -> Text {
+    Text(String::new())
+}
+
+/// RFC 9110 section 8.6: a server "MUST NOT send Content-Length" on a HEAD
+/// "unless its field value equals the decimal number of octets that would have
+/// been sent" to a GET. A handler answering a declared `head` with no body is
+/// not stating that its GET is empty, so a zero is never stated -- the rule
+/// hyper's HTTP/1.1 encoder already keeps, and one a derived HEAD of an empty
+/// GET follows too.
+#[tokio::test]
+async fn a_head_states_no_length_of_zero() {
+    let service = support::router()
+        .mount(kynos::routes![quiet_get, quiet_head, empty_get])
+        .build(App::new())
+        .expect("a describable router");
+
+    for target in ["/quiet", "/empty"] {
+        let reply = send(&service, Method::HEAD, target).call().await;
+
+        assert_eq!(reply.status, StatusCode::OK, "{target}");
+        assert_eq!(
+            reply.field(header::CONTENT_LENGTH.as_str()),
+            None,
+            "{target}"
+        );
+    }
+}
+
 // --- What `Lenient` accepts, and what it still refuses --------------------
 
 /// A route whose declared spelling carries the trailing slash, which is the
