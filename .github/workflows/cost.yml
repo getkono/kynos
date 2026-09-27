@@ -148,7 +148,9 @@ jobs:
         if: ${{ !cancelled() && hashFiles('profile-report.md') != '' }}
         run: cat profile-report.md >> "$GITHUB_STEP_SUMMARY"
       # The Callgrind files are the attribution, not just the totals: a moved
-      # count is read by annotating the file it came from.
+      # count is read by annotating the file it came from. `profile-requests.tsv`
+      # is this run in the baseline's format; CI is the host of record, so
+      # recording the baseline is copying it over `requests.tsv`.
       - name: Upload profile
         if: ${{ !cancelled() && hashFiles('profile-report.md') != '' }}
         uses: actions/upload-artifact@v4
@@ -156,4 +158,5 @@ jobs:
           name: profile
           path: |
             profile-report.md
+            profile-requests.tsv
             target/gungraun/kynos-profile/

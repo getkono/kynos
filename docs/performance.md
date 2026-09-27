@@ -141,7 +141,16 @@ each is the same number. That check earned its place on its first run: gungraun
 finds the region by looking for the benchmark in each allocation's backtrace,
 DHAT keeps twelve frames by default, and eight interceptors allocate deeper than
 that — so an eight-layer stack read *fewer* blocks than no stack at all, with no
-error anywhere.
+error anywhere. Equality is what catches that, where a ceiling would not, and it
+has a cost worth knowing before it arrives: for those five rows `alloc.rs`'s
+ceilings become exact. A change that removes an allocation lowers the ceiling in
+the same change, or the profile job on `master` reports the disagreement after
+the merge.
+
+**The run of record is CI's.** The committed baseline names the host it was
+taken on, and a report from another host says so. The job uploads each run in
+the baseline's format, so recording the baseline is copying that file over
+`requests.tsv` in a pull request of its own.
 
 **No shape owes it, and it replaces nothing a shape owes.** It is the instrument
 the counted kinds are *attributed* with: an allocation count says a request

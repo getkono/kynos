@@ -172,8 +172,10 @@ lto = "fat"
 codegen-units = 1
 panic = "unwind"
 
-# Benchmarks live in getkono/kynos-bench, but a profile that keeps debug info
-# while staying optimized makes local profiling of this workspace possible.
+# Timed benchmarks live in getkono/kynos-bench. This profile keeps debug info
+# while staying optimized, which is what local profiling needs and what
+# `crates/kynos-profile`'s counted benchmark is built with, so every frame in
+# its Callgrind output is named.
 [profile.bench]
 debug = true
 lto = "thin"

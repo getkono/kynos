@@ -304,6 +304,12 @@ class Main(unittest.TestCase):
                     report_path=root / "report.md",
                     toolchain="rustc test",
                     host="test host",
+                    run_path=root / "run.tsv",
+                )
+                self.run_written = (
+                    (root / "run.tsv").read_text()
+                    if (root / "run.tsv").is_file()
+                    else None
                 )
             written = baseline.read_text() if baseline.is_file() else None
             return code, written
@@ -323,6 +329,12 @@ class Main(unittest.TestCase):
             self.run_main([7, 11, 6, 11, 15], "", recorded), (report.MEASURED, recorded)
         )
 
+    def test_every_measured_run_is_written_in_the_baseline_format(self):
+        # What CI uploads, so the baseline can be recorded from its host.
+        _, recorded = self.run_main([7, 11, 6, 11, 15], "overwrite")
+        self.run_main([7, 11, 6, 11, 15], "", recorded)
+        self.assertEqual(self.run_written, recorded)
+
     def test_the_instruments_disagreeing_fails_in_every_mode(self):
         for mode in ("", "overwrite"):
             with self.subTest(mode=mode):
@@ -338,9 +350,10 @@ class Main(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stderr(
             io.StringIO()
         ):
-            self.assertEqual(
-                report.main(mode="", directory=Path(directory)), report.NOTHING
+            code = report.main(
+                mode="", directory=Path(directory), run_path=Path(directory) / "run.tsv"
             )
+            self.assertEqual(code, report.NOTHING)
 
 
 if __name__ == "__main__":

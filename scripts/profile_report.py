@@ -38,17 +38,29 @@ so rather than presenting a CPU's difference as a change.
 `crates/kynos/tests/alloc.rs` counts three request shapes and two interceptor
 stacks with `alloc_counter`, and its `SHAPES` and `STACKS` tables are read off
 disk here rather than copied, so DHAT's block count for each has to equal the
-count those tables record. Equality rather than the `<=` that file asserts, and
-that file is why: it records its counts "so that closing the gap turns
-something red rather than nothing", and a ceiling alone stays green when an
-allocation is removed. Two instruments that share no line of code agreeing on
-one region is what says both measure the request and neither measures the
+count those tables record. Two instruments that share no line of code agreeing
+on one region is what says both measure the request and neither measures the
 harness around it.
+
+Equality rather than the `<=` that file asserts, because the failure this check
+exists for is DHAT counting *too few*: gungraun finds the region through each
+allocation's backtrace, and at DHAT's default depth an eight-layer stack read
+fewer blocks than no stack at all. A ceiling passes that silently. The price is
+that `alloc.rs`'s ceilings become exact for these five rows: a change that
+removes an allocation must lower the ceiling in the same change, or the next
+profile reports `DISAGREE`. `alloc.rs` itself only asserts `<=`, so a pull
+request that forgets passes its own checks and the profile job on `master` is
+where it goes red.
 
 `KYNOS_PROFILE=overwrite` records this run as
 `crates/kynos-profile/requests.tsv`; otherwise the run is compared with it and
-reported. Exit codes follow `cost_features.py`'s rule: zero whenever a
-measurement was made, whatever it says, because no threshold is set here and
+reported. Either way the run is also written, in the baseline's own format, to
+`profile-requests.tsv` at the repository root: CI uploads that file, so the
+baseline can be recorded from the host of record by copying it over the
+committed one, the way `cost.yml`'s artifacts are read.
+
+Exit codes follow `cost_features.py`'s rule: zero whenever a measurement was
+made, whatever it says, because no threshold is set here and
 [`nfr.md`](../docs/nfr.md#thresholds) sets none without a recorded
 measurement. Non-zero when nothing could be measured or read (`NOTHING`), and
 when the two instruments disagree (`DISAGREE`), which no mode tolerates.
@@ -68,6 +80,7 @@ ROOT = Path(__file__).resolve().parent.parent
 BASELINE = ROOT / "crates/kynos-profile/requests.tsv"
 ALLOC = ROOT / "crates/kynos/tests/alloc.rs"
 REPORT = ROOT / "profile-report.md"
+RUN = ROOT / "profile-requests.tsv"
 
 # Where `profile:valgrind` installs, unless `KYNOS_VALGRIND` says otherwise.
 VALGRIND = Path(
@@ -411,6 +424,7 @@ def main(
     report_path=REPORT,
     toolchain=None,
     host=None,
+    run_path=RUN,
 ):
     mode = os.environ.get("KYNOS_PROFILE", "") if mode is None else mode
     try:
@@ -441,12 +455,15 @@ def main(
             file=sys.stderr,
         )
         return DISAGREE
+    try:
+        toolchain = toolchain or output(["rustc", "-V"])
+    except (subprocess.CalledProcessError, OSError) as error:
+        print(f"profile: the toolchain could not be named: {error}", file=sys.stderr)
+        return NOTHING
+    measured = write_baseline(rows, toolchain, host or "unrecorded host")
+    run_path.write_text(measured)
     if mode == "overwrite":
-        baseline.write_text(
-            write_baseline(
-                rows, toolchain or output(["rustc", "-V"]), host or "unrecorded host"
-            )
-        )
+        baseline.write_text(measured)
     return MEASURED
 
 
@@ -460,8 +477,12 @@ if __name__ == "__main__":
         target = target_directory()
         if arguments.run:
             run_benchmarks(target)
-        host = describe_host()
     except (Unreadable, subprocess.CalledProcessError, OSError) as error:
         print(f"profile: the benchmark could not be run: {error}", file=sys.stderr)
+        sys.exit(NOTHING)
+    try:
+        host = describe_host()
+    except (subprocess.CalledProcessError, OSError) as error:
+        print(f"profile: the host could not be described: {error}", file=sys.stderr)
         sys.exit(NOTHING)
     sys.exit(main(directory=target / "gungraun/kynos-profile", host=host))

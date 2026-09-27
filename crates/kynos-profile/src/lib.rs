@@ -149,9 +149,9 @@ pub const SCENARIOS: &[Scenario] = &[
 /// same handlers and stacks, so that DHAT and `alloc_counter` read the same
 /// request.
 ///
-/// In the order that file's `SHAPES` table writes them, which is the order
-/// `scripts/profile_report.py` pairs them with its counts in. The counts are
-/// read from that table rather than repeated here.
+/// `scripts/profile_report.py` pairs each with its row by request target or
+/// stack depth, and reads the counts from those tables rather than repeating
+/// them here.
 pub const CALIBRATION: &[Scenario] = &[
     Scenario {
         name: "calibration-static",

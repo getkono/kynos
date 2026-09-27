@@ -1,4 +1,4 @@
-//! Instructions, estimated cycles and heap blocks for one request of each
+//! Instructions and heap blocks for one request of each
 //! scenario, counted under Callgrind and DHAT.
 //!
 //! The region is [`kynos_profile::serve`] and nothing else. Building the

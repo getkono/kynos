@@ -38,8 +38,10 @@ cost-codec.tsv
 cost-codegen.tsv
 
 # Written by `profile:requests`. The reviewed copy is
-# `crates/kynos-profile/requests.tsv`, which `profile:record` writes.
+# `crates/kynos-profile/requests.tsv`, which `profile:record` writes, or which
+# CI's copy of `profile-requests.tsv` replaces.
 profile-report.md
+profile-requests.tsv
 
 # Bytecode an import from scripts/ writes. No task writes any: the gates run
 # their script as `__main__`, which is never cached, and the test tasks pass

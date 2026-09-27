@@ -485,10 +485,10 @@ digest=5d589152eb8071c02feab8ce6ab719e431a1fbc3e2b1700f5432632a8b9264dc
 if "$prefix/bin/valgrind" --version 2>/dev/null | grep -qx "valgrind-$version"; then
   exit 0
 fi
-# A Valgrind already on `PATH` is used if it is new enough for gungraun, which
-# asks for 3.22 with DHAT; that is how CI's installation is picked up.
-if found="$(valgrind --version 2>/dev/null)" \
-  && printf '%s\n%s\n' "valgrind-3.22.0" "$found" | sort -V -C; then
+# A Valgrind already on `PATH` is used only if it is this version, which is
+# how CI's installation is picked up. Another version would record a different
+# host into the baseline, and which CPU features Valgrind reports moves with it.
+if [ "$(valgrind --version 2>/dev/null)" = "valgrind-$version" ]; then
   exit 0
 fi
 work="$(mktemp -d)"
@@ -515,7 +515,7 @@ description = "Count instructions and heap blocks over the in-process request pa
 #
 # The script runs the benchmark as well as reading it (`--run`), so that
 # refusing an ambient `RUSTFLAGS`, clearing the previous run's output and
-# putting the pinned Valgrind first on `PATH` are written once, for this task
+# putting `profile:valgrind`'s prefix first on `PATH` are written once, for this task
 # and `profile:record` alike.
 #
 # `gungraun-runner` must be the version the library is, exactly, which is why
