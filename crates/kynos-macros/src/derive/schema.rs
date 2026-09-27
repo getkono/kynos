@@ -1001,8 +1001,7 @@ fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
 /// one schema describes both directions, so the form is refused as the
 /// parameter derives refuse a split `rename_all`. Sides that agree are the
 /// `key = "..."` they spell, and [`Container`] and [`variant_rename_all`] read
-/// them so. Runs before any check that reads a [`Container`]; shape errors in
-/// the list stay serde's to report.
+/// them so. Runs before any check that reads a [`Container`].
 fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
     let variants = match &input.data {
         Data::Enum(data) => data.variants.iter().collect(),
@@ -1019,36 +1018,17 @@ fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
             .map(|variant| (&variant.attrs, "rename_all", "every field of this variant")),
     );
     for (attrs, key, reach) in rules {
-        if let Some(refused) = split_rule(attrs, key, reach) {
-            return Err(refused);
+        if let Some(span) = split_rule(attrs, key) {
+            return Err(syn::Error::new(
+                span,
+                format!(
+                    "a split `{key}` whose sides differ gives {reach} two wire names, and one \
+                     schema describes both directions. Say which with `{key} = \"...\"`",
+                ),
+            ));
         }
     }
     Ok(())
-}
-
-/// The refusal of a split `key` in `attrs` whose sides differ, where there is
-/// one; `reach` says whose names the rule gives.
-fn split_rule(attrs: &[syn::Attribute], key: &str, reach: &str) -> Option<syn::Error> {
-    let mut refused = None;
-    for attr in attrs {
-        if !attr.path().is_ident("serde") {
-            continue;
-        }
-        let _ = attr.parse_nested_meta(|meta| {
-            if !meta.path.is_ident(key) {
-                return skip_value(&meta);
-            }
-            let sides = sides(&meta)?;
-            if sides.serialize != sides.deserialize {
-                refused.get_or_insert(meta.error(format!(
-                    "a split `{key}` whose sides differ gives {reach} two wire names, and one \
-                     schema describes both directions. Say which with `{key} = \"...\"`",
-                )));
-            }
-            Ok(())
-        });
-    }
-    refused
 }
 
 /// `#[serde(other)]` makes an enum accept every tag it does not name.
@@ -1584,8 +1564,9 @@ struct Container {
     /// name serde writes a struct's `#[serde(tag = "...")]` as.
     rename: Option<String>,
     /// The container `rename_all` style, on the serialize side where it is
-    /// split. [`reject_split_rename_all`] refuses sides that differ before
-    /// any name is taken from it, so it is the style of both directions.
+    /// split. [`split_rule`] finds sides that differ, which this derive and
+    /// [`multipart`](super::multipart) refuse before any name is taken from
+    /// it, so it is the style of both directions.
     ///
     /// It names the members this container describes directly: a struct's
     /// fields, an enum's variants, and in [`Container::fields_of`] a variant's
@@ -1789,4 +1770,48 @@ pub(super) fn property_names(input: &DeriveInput, fields: &syn::FieldsNamed) -> 
         .iter()
         .map(|field| field_name(field, &container))
         .collect()
+}
+
+/// The span of the first field whose split `rename` gives serde's two
+/// directions different names, at that `rename`.
+///
+/// Read by [`multipart`](super::multipart), whose part carries one name in both
+/// directions, so no side of such a rename is the part's name.
+pub(super) fn split_renamed_field(input: &DeriveInput, fields: &syn::FieldsNamed) -> Option<Span> {
+    let container = Container::read(input);
+    fields
+        .named
+        .iter()
+        .find(|field| field_name(field, &container) != field_read_name(field, &container))
+        .map(|field| {
+            serde_key_span(&field.attrs, &["rename"]).map_or_else(|| field.span(), |(_, span)| span)
+        })
+}
+
+/// The span of a split `key(serialize = ..., deserialize = ...)` in `attrs`
+/// whose sides differ, one side left out included, at that `key`.
+///
+/// Read by this derive's refusal of a split container `rename_all`, enum
+/// `rename_all_fields` or variant `rename_all`, and by
+/// [`multipart`](super::multipart)'s of a split container `rename_all`, whose
+/// part carries one name in both directions. Shape errors in the list stay
+/// serde's to report.
+pub(super) fn split_rule(attrs: &[syn::Attribute], key: &str) -> Option<Span> {
+    let mut found = None;
+    for attr in attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        let _ = attr.parse_nested_meta(|meta| {
+            if !meta.path.is_ident(key) {
+                return skip_value(&meta);
+            }
+            let sides = sides(&meta)?;
+            if found.is_none() && sides.serialize != sides.deserialize {
+                found = Some(meta.path.span());
+            }
+            Ok(())
+        });
+    }
+    found
 }

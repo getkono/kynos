@@ -2,4 +2,4 @@ error: a split `rename_all` whose sides differ gives every member two wire names
  --> tests/ui/macros/schema_split_rename_all.rs:6:9
   |
 6 | #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |         ^^^^^^^^^^

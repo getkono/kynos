@@ -437,6 +437,79 @@ mod schema {
         );
     }
 
+    /// A split container `rename_all` naming one side only leaves the other
+    /// direction on the identifiers, so its sides differ too.
+    ///
+    /// Beside the ledger rather than in it: the ledger's row proves the site
+    /// fires, and this proves an absent side counts as a differing one.
+    #[test]
+    fn a_split_rename_all_naming_one_side_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a split container `rename_all` naming its serialize side only",
+                    quote::quote!(
+                        #[serde(rename_all(serialize = "camelCase"))]
+                        struct Stamp {
+                            created_at: u64,
+                        }
+                    ),
+                    "a split `rename_all` whose sides differ",
+                ),
+                case(
+                    "a split container `rename_all` naming its deserialize side only",
+                    quote::quote!(
+                        #[serde(rename_all(deserialize = "camelCase"))]
+                        struct Stamp {
+                            created_at: u64,
+                        }
+                    ),
+                    "a split `rename_all` whose sides differ",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// A split `rename` is refused on every member serde both writes and
+    /// reads, not only on a struct's field: a variant, and a field of a
+    /// variant serde writes.
+    ///
+    /// Beside the ledger rather than in it: the ledger's row proves the site
+    /// fires, and these prove each member reaches it.
+    #[test]
+    fn a_split_rename_is_refused_on_every_member_serde_writes_and_reads() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a split `rename` whose sides differ on a variant serde writes and reads",
+                    quote::quote!(
+                        enum Change {
+                            Now,
+                            #[serde(rename(serialize = "x", deserialize = "y"))]
+                            Queued,
+                        }
+                    ),
+                    "serde writes this variant as `x` and reads it as `y`",
+                ),
+                case(
+                    "a split `rename` whose sides differ on a field of a variant serde writes",
+                    quote::quote!(
+                        enum Change {
+                            Now(u64),
+                            Queued {
+                                #[serde(rename(serialize = "a", deserialize = "b"))]
+                                at: u64,
+                            },
+                        }
+                    ),
+                    "serde writes this field as `a` and reads it as `b`",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
     /// A split `rename` is refused only where serde uses both sides, so each
     /// member serde names one way is accepted: sides that agree, a field serde
     /// only reads or only writes, a field of a variant serde never writes, a
@@ -4108,6 +4181,85 @@ mod headers {
     #[test]
     fn every_headers_diagnostic_has_a_case() {
         every_diagnostic_has_a_case("headers.rs", include_str!("headers.rs"), ledger().len());
+    }
+}
+
+mod multipart {
+    use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
+    use crate::derive::multipart::expand_inner;
+
+    /// A field serde only reads is still refused: a part has one name in both
+    /// directions, whichever side serde uses. A container `rename_all` whose
+    /// sides differ is refused beside it, since it names every part twice.
+    fn ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a split `rename` whose sides differ on a field serde only reads",
+                quote::quote!(
+                    struct Upload {
+                        #[serde(
+                            skip_serializing,
+                            default,
+                            rename(serialize = "a", deserialize = "b")
+                        )]
+                        caption: String,
+                    }
+                ),
+                "gives this field two part names",
+            ),
+            case(
+                "a split container `rename_all` whose sides differ",
+                quote::quote!(
+                    #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+                    struct Upload {
+                        file_name: String,
+                    }
+                ),
+                "gives every field two part names",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(ledger(), expand_inner);
+    }
+
+    /// A split `rename` or `rename_all` whose sides agree gives the part one
+    /// name, so it is accepted, as the single form is.
+    #[test]
+    fn a_rename_giving_one_part_name_is_accepted() {
+        for declaration in [
+            quote::quote!(
+                #[serde(rename_all(serialize = "camelCase", deserialize = "camelCase"))]
+                struct Upload {
+                    file_name: String,
+                }
+            ),
+            quote::quote!(
+                struct Upload {
+                    #[serde(rename(serialize = "a", deserialize = "a"))]
+                    caption: String,
+                }
+            ),
+            quote::quote!(
+                struct Upload {
+                    #[serde(rename = "a")]
+                    caption: String,
+                }
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+            if let Err(error) = expand_inner(&input) {
+                panic!("a field with one part name was refused: {error}");
+            }
+        }
+    }
+
+    #[test]
+    fn every_multipart_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case("multipart.rs", include_str!("multipart.rs"), ledger().len());
     }
 }
 

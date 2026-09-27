@@ -2668,6 +2668,25 @@ fn a_raw_identifier_is_named_as_serde_names_it() {
     assert_eq!(schema["enum"], written);
 }
 
+#[derive(Schema, QueryParams, serde::Deserialize)]
+struct RawQuery {
+    r#type: u8,
+}
+
+/// A parameter derive names a raw identifier as serde does, without its `r#`,
+/// since it takes the name the `Schema` derive gives the property.
+#[test]
+fn a_raw_identifier_parameter_is_named_as_serde_names_it() {
+    let read: RawQuery = serde_json::from_str(r#"{"type":1}"#).expect("serde reads the unraw name");
+    assert_eq!(read.r#type, 1);
+    assert_eq!(
+        query_parameters::<RawQuery>(),
+        serde_json::json!([
+            {"name": "type", "in": "query", "required": true, "schema": emitted::<u8>()},
+        ])
+    );
+}
+
 /// A member serde uses in one direction is named by that side of its split
 /// `rename`, and one whose two sides agree by the name both give.
 #[test]
@@ -2759,7 +2778,8 @@ fn a_split_rename_all_whose_sides_agree_is_read() {
 /// Each identifier is one a rule that splits it into words names otherwise
 /// than serde, which reads a field as `snake_case` and a variant as `PascalCase`:
 /// a leading, trailing or doubled `_`, an uppercase letter in a field, an `_`
-/// and an acronym in a variant, and a non-ASCII capital.
+/// and an acronym in a variant, and a non-ASCII letter, which serde never
+/// changes the case of: first and mid-word in a field, a capital in a variant.
 macro_rules! styled {
     ($($module:ident => $style:literal),* $(,)?) => {
         $(
@@ -2774,6 +2794,7 @@ macro_rules! styled {
                     very_tasty: u8,
                     aB: u8,
                     z42: u8,
+                    naïve_é: u8,
                 }
 
                 #[derive(kynos::Schema, serde::Serialize)]

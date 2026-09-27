@@ -1,0 +1,5 @@
+error: a split `rename_all` whose sides differ gives every field two part names, and a part carries one in both directions. Say which with `rename_all = "..."`
+ --> tests/ui/macros/multipart_split_rename_all.rs:8:9
+  |
+8 | #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+  |         ^^^^^^^^^^
