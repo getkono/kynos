@@ -1538,8 +1538,9 @@ struct Container {
     /// name serde writes a struct's `#[serde(tag = "...")]` as.
     rename: Option<String>,
     /// The container `rename_all` style, on the serialize side where it is
-    /// split. [`reject_split_rename_all`] refuses sides that differ before
-    /// any name is taken from it, so it is the style of both directions.
+    /// split. [`split_rename_all`] finds sides that differ, which this derive
+    /// and [`multipart`](super::multipart) refuse before any name is taken
+    /// from it, so it is the style of both directions.
     rename_all: Option<String>,
     tag: Option<String>,
     content: Option<String>,
