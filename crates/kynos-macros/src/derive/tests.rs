@@ -458,16 +458,39 @@ mod schema {
                     ),
                     "serde writes this field as `a` and reads it as `b`",
                 ),
+                case(
+                    "a split `rename` whose written side no `alias` covers",
+                    quote::quote!(
+                        struct Stamp {
+                            #[serde(rename(serialize = "a", deserialize = "b"), alias = "c")]
+                            at: u64,
+                        }
+                    ),
+                    "serde writes this field as `a` and reads it as `b`",
+                ),
+                case(
+                    "a split `rename` whose written side is an `alias` an earlier variant claims",
+                    quote::quote!(
+                        enum Change {
+                            #[serde(alias = "x")]
+                            Now,
+                            #[serde(rename(serialize = "x", deserialize = "y"), alias = "x")]
+                            Queued,
+                        }
+                    ),
+                    "serde writes this variant as `x` and reads it as `y`",
+                ),
             ],
             expand_inner,
         );
     }
 
-    /// A split `rename` is refused only where serde uses both sides, so each
-    /// member serde names one way is accepted: sides that agree, a field serde
-    /// only reads or only writes, a field of a variant serde never writes, a
-    /// flattened field, a transparent struct's field, and a variant serde only
-    /// reads.
+    /// A split `rename` is refused only where serde uses both sides and never
+    /// reads the written one, so each member one schema is true of is accepted:
+    /// sides that agree, a field or a variant whose written side is also an
+    /// `alias`, a field serde only reads or only writes, a field of a variant
+    /// serde never writes, a flattened field, a transparent struct's field,
+    /// and a variant serde only reads.
     #[test]
     fn a_split_rename_one_schema_is_true_of_is_accepted() {
         for declaration in [
@@ -475,6 +498,19 @@ mod schema {
                 struct Stamp {
                     #[serde(rename(serialize = "a", deserialize = "a"))]
                     at: u64,
+                }
+            ),
+            quote::quote!(
+                struct Stamp {
+                    #[serde(rename(serialize = "a", deserialize = "b"), alias = "a")]
+                    at: u64,
+                }
+            ),
+            quote::quote!(
+                enum Change {
+                    Now,
+                    #[serde(rename(serialize = "x", deserialize = "y"), alias = "x")]
+                    Queued,
                 }
             ),
             quote::quote!(
