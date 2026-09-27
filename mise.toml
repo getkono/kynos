@@ -297,12 +297,15 @@ description = "Compile every target, not only the library, at each feature"
 # The exclusions are `features:check`'s, for its reasons: `server` and `tls`
 # need an HTTP protocol, `time` and `decimal` are umbrellas that do not compile
 # alone, and `full` would pull in everything and check nothing partial.
+# `kynos-profile` is excluded because it declares no feature, so there is
+# nothing to vary -- and `--features openapi31` names a flag it does not have,
+# which Cargo refuses outright.
 # Incremental compilation is off for the reason `features:check` gives: this
 # task never builds the same feature set twice either, so a session written
 # here is one nothing will read.
 env = { CARGO_INCREMENTAL = "0" }
 run = '''
-cargo hack check --workspace --each-feature --all-targets \
+cargo hack check --workspace --exclude kynos-profile --each-feature --all-targets \
   --features openapi31 \
   --exclude-features default,server,tls,time,decimal,full
 '''
@@ -586,9 +589,12 @@ grep -F 'Kynos panic recovery requires `panic = "unwind"`' "$panic_check_output"
 
 [tasks."msrv:check"]
 description = "Verify the crate still builds on the declared MSRV"
+# `kynos-profile` is excluded because it states its own floor, gungraun's 1.88,
+# and is published nowhere: the MSRV is what an application needs to build
+# Kynos, and no application builds a measurement harness.
 run = '''
 rustup toolchain install 1.85 --profile minimal --no-self-update
-cargo +1.85 check --workspace --all-features
+cargo +1.85 check --workspace --all-features --exclude kynos-profile
 '''
 
 [tasks."publish:check"]
@@ -623,23 +629,27 @@ description = "Package every crate exactly as crates.io will receive it"
 # The `--list` loop runs first because it costs a second and the failure it
 # catches would otherwise surface only after three from-scratch all-feature
 # builds. It checks `LICENSE` and nothing else: `readme` in each manifest
-# already makes a missing README a manifest error, which `--list` itself raises,
-# while nothing at all points at `LICENSE` -- and MIT requires the notice to
-# travel with the copy, so this is the only thing that would notice it going
-# missing. The members come from `cargo metadata`, so a fourth crate is covered
-# the day it is added rather than the day someone remembers this list.
+# already makes a missing README a manifest error, which `--list` itself
+# raises, while nothing at all points at `LICENSE` -- and MIT requires the
+# notice to travel with the copy, so this is the only thing that would notice it
+# going missing. The members come from `cargo metadata`, so a new crate is
+# covered the day it is added rather than the day someone remembers this list.
+#
+# A member that declares `publish = false` is skipped by both halves, since no
+# registry will ever receive it: `kynos-profile` today, which `cargo package`
+# would refuse anyway for its unversioned path dependency on `kynos`.
 run = '''
 set -eu
 
 for package in $(cargo metadata --no-deps --format-version 1 \
-  | python3 -c 'import json,sys; print(" ".join(p["name"] for p in json.load(sys.stdin)["packages"]))'); do
+  | python3 -c 'import json,sys; print(" ".join(p["name"] for p in json.load(sys.stdin)["packages"] if p["publish"] != []))'); do
   if ! cargo package --list --quiet -p "$package" | grep -qx LICENSE; then
     echo "$package would be published without LICENSE" >&2
     exit 1
   fi
 done
 
-cargo package --workspace --all-features
+cargo package --workspace --all-features --exclude kynos-profile
 '''
 
 [tasks."semver:check"]
