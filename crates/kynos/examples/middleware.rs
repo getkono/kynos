@@ -355,11 +355,10 @@ async fn main() -> kynos::Result<()> {
         // before this could fire. That empty declaration is why it collides
         // with nothing and composes with everything here.
         //
-        // Mounted *outside* `Compression`, which is what makes the failure
-        // reach the client. An interceptor that rewrites a body has to read it,
-        // and one that buffers -- `Compression` below a size threshold,
-        // `Cache` -- turns a body that fails mid-read into an empty success. A
-        // body limit belongs outside anything that reads what it bounds.
+        // Mounted *outside* `Compression`, it bounds a body `Compression`
+        // streams through or leaves alone. It does not bound a body
+        // `Compression` buffers: that read runs inside the chain, before this
+        // clock starts. `docs/middleware.md` states what each placement bounds.
         .intercept(BodyTimeout::idle(Duration::from_secs(15)))
         // `GzipLevel::new` and its siblings refuse a number their own format
         // does not define, so a typo is `None` here rather than a runtime
