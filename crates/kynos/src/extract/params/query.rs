@@ -14,10 +14,9 @@ use crate::extract::media::MediaType;
 /// Named query string parameters.
 ///
 /// `T` derives `QueryParams`, which decodes each field from one parameter's
-/// value through `FromStr`. A field whose schema is an object is therefore
-/// misdescribed: the default `form` style with `explode` spreads it as
-/// `x=1&y=2`, while the decoder reads one `name=` pair
-/// ([#216](https://github.com/getkono/kynos/issues/216)). For a structured
+/// value, so each field's type is a
+/// [`ParamValue`](crate::schema::ParamValue): one value, not an object the
+/// default `form` style would spread over several pairs. For a structured
 /// query such as a search filter, reach for [`QueryString`] under `openapi32`
 /// instead.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -61,7 +60,7 @@ pub trait QueryParams: Sized + Schema {
     ///   dropping them. It names each field by `#[param(rename)]`, then serde's
     ///   `rename`, and ignores every other serde attribute, `alias` included. So
     ///   it describes and decodes one name per field. It refuses an enum and
-    ///   decodes each field as one `FromStr` value, so a flattened or
+    ///   decodes each field as one `ParamValue`, so a flattened or
     ///   `transparent` type's members have to be written out as fields.
     ///
     /// `style` is left unstated: `form` with `explode` is the default for a

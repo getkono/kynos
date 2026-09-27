@@ -5,7 +5,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use kynos_openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType};
 
 use crate::schema::{
-    Schema,
+    ParamValue, Schema,
     impls::{formatted, with_object},
     registry::Registry,
 };
@@ -34,3 +34,8 @@ impl Schema for IpAddr {
         })
     }
 }
+
+// Both families write the dotted or colon-separated text their formats name.
+impl ParamValue for Ipv4Addr {}
+impl ParamValue for Ipv6Addr {}
+impl ParamValue for IpAddr {}

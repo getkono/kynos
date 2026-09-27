@@ -483,13 +483,13 @@ halve.
 | the `openapi31` feature | `not(feature = "openapi31")` | `lib.rs`, `crates/kynos-openapi/src/lib.rs` | nothing is conditional on it. Both sites are the `#[cfg(not(feature = "openapi31"))] compile_error!` that refuses a build without it, and the 3.1 object model it names is compiled unconditionally. What that model does is held by the document, registry and validator rows above, and a request reaches none of the three |
 | the `yaml` feature | `serde_yaml_ng`, `feature = "yaml"` | `crates/kynos-openapi/src/emit/mod.rs`, `error/mod.rs` | `Document::to_yaml` is a method on the emitted document, reached only through `Service::openapi` after the build has finished. `Error::Yaml` carries a failure that emitter produced and is constructible nowhere else |
 | the `test-util` feature | `feature = "test-util"` | `lib.rs` | one gate, on `pub mod test`. What it compiles is the conformance harness, whose interpreter is the `jsonschema` row above |
-| the `uuid` feature | `uuid`, `feature = "uuid"` | `schema/impls/{mod,identifier}.rs` | its whole contribution is `impl Schema for Uuid`, and `Schema::schema` takes the `&mut Registry` that only `describe` mints |
+| the `uuid` feature | `uuid`, `feature = "uuid"` | `schema/impls/{mod,identifier}.rs` | its whole contribution is `impl Schema for Uuid`, whose `Schema::schema` takes the `&mut Registry` that only `describe` mints, and `impl ParamValue for Uuid`, a marker with no items |
 | the `time` feature | `feature = "time"` | `lib.rs`, `schema/impls/mod.rs` | it carries no types: enabled without a backend it is a `compile_error!`, which `features:check` probes. The two sites are the gate that says so and the module it would open; the cost is its backends' rows |
-| the `time-chrono` feature | `chrono`, `feature = "time-chrono"` | `lib.rs`, `schema/impls/temporal/{mod,chrono}.rs` | `Schema` implementations for the crate's date and time types, behind the `&mut Registry` only `describe` mints |
-| the `time-jiff` feature | `jiff`, `feature = "time-jiff"` | `lib.rs`, `schema/impls/temporal/{mod,jiff}.rs` | the same, for the other backend: `Schema` implementations reachable only through a registry a build has already consumed |
+| the `time-chrono` feature | `chrono`, `feature = "time-chrono"` | `lib.rs`, `schema/impls/temporal/{mod,chrono}.rs` | `Schema` implementations for the crate's date and time types, behind the `&mut Registry` only `describe` mints, and `ParamValue` for two of them, a marker with no items |
+| the `time-jiff` feature | `jiff`, `feature = "time-jiff"` | `lib.rs`, `schema/impls/temporal/{mod,jiff}.rs` | the same, for the other backend: `Schema` implementations reachable only through a registry a build has already consumed, and `ParamValue`, a marker with no items |
 | the `decimal` feature | `feature = "decimal"` | `lib.rs`, `schema/impls/mod.rs` | as `time`: no types of its own, a `compile_error!` without a backend, and the two sites are the gate and the module it opens |
-| the `decimal-rust` feature | `rust_decimal`, `feature = "decimal-rust"` | `lib.rs`, `schema/impls/decimal/{mod,rust_decimal}.rs` | `Schema` implementations for the crate's decimal type, behind the `&mut Registry` only `describe` mints |
-| the `decimal-big` feature | `bigdecimal`, `feature = "decimal-big"` | `lib.rs`, `schema/impls/decimal/{mod,bigdecimal}.rs` | the same, for the other backend |
+| the `decimal-rust` feature | `rust_decimal`, `feature = "decimal-rust"` | `lib.rs`, `schema/impls/decimal/{mod,rust_decimal}.rs` | `Schema` implementations for the crate's decimal type, behind the `&mut Registry` only `describe` mints, and `ParamValue`, a marker with no items |
+| the `decimal-big` feature | `bigdecimal`, `feature = "decimal-big"` | `lib.rs`, `schema/impls/decimal/{mod,bigdecimal}.rs` | `Schema` implementations for the crate's decimal type, behind the `&mut Registry` only `describe` mints |
 
 A site path is relative to `crates/kynos/src/` unless it starts at `crates/`,
 which makes it relative to the repository root and is how a row names a file in
@@ -805,9 +805,9 @@ text. `mise.toml` therefore lists it: a snapshot suite that passes on the
 machine that recorded it and fails everywhere else is testing the environment.
 
 **`on_unimplemented` attributes must land before any snapshot is recorded.**
-Twenty-two traits carry `#[diagnostic::on_unimplemented]` —
+Twenty-three traits carry `#[diagnostic::on_unimplemented]` —
 `Provides`, `Handler`, `FromRequestParts`, `FromRequest`, `Describe`,
-`RequestContent`, `IntoResponse`, `Responses`, `Schema`, `MapKey`, `Flatten`,
+`RequestContent`, `IntoResponse`, `Responses`, `Schema`, `MapKey`, `ParamValue`, `Flatten`,
 `ClosedFlatten`, `OpenMap`, `AdmitsAny`, `Alternative`, `ShortCircuit`, `EndpointMeta`, `IntoEndpoints`, `Carries`,
 `Languages`, `Rangeable` and `ByteSource`.
 Each one replaces the compiler's generic "the trait bound is not satisfied"
@@ -818,7 +818,7 @@ with a message naming the fix.
 records it and counts the pairs against the attributes in the source. Eight of
 the fourteen guided traits *at the time it was written* had none, so more than
 half of what this requirement named was unchecked; the count has grown to
-twenty-two since, and the test is what kept the mapping level with it. The
+twenty-three since, and the test is what kept the mapping level with it. The
 mapping is written out rather than searched for, because half the
 messages deliberately never spell the trait: `Handler`'s says "is not a Kynos
 handler", which is the improvement rather than something to grep for.

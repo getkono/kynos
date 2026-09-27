@@ -12,3 +12,7 @@ impl Schema for ::bigdecimal::BigDecimal {
         decimal::decimal()
     }
 }
+
+// Not a `ParamValue`: `Display` writes an exponent, `1E-19` for a value far below
+// one or `1e+30` for one read as `1e30`, which is not the fixed-point text
+// `decimal` names.

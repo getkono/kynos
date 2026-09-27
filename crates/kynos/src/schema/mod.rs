@@ -225,5 +225,112 @@ pub trait MapKey: Schema {
 
 impl MapKey for String {}
 
+/// A value one parameter carries: a path variable, a query parameter, a header
+/// or a cookie.
+///
+/// A parameter is text. The parameter derives read a field with
+/// [`FromStr`](std::str::FromStr), write it with [`Display`](std::fmt::Display),
+/// and describe it by its [`Schema`], so implementing this promises that the
+/// three agree on one value: `Display` writes what the schema describes,
+/// `FromStr` reads it back, and the schema is not an object or an array. That
+/// last part is what the compiler cannot check, and why this is a marker rather
+/// than a blanket implementation — a parameter's `style` spreads an object or
+/// an array over several values, which one `FromStr` never reads.
+///
+/// Implemented for the scalars Kynos describes whose `Display` writes the form
+/// their schema names, with accepted exceptions where `Display` writes text the
+/// schema does not admit and `FromStr` reads it back, so a field accepts it:
+///
+/// - a non-finite `f32` or `f64` writes `NaN`, `inf` or `-inf`, which no
+///   `number` admits;
+/// - a chrono `NaiveDate` outside the years 0000–9999 writes a sign, as in
+///   `+10000-01-01` or `-0001-01-01`, and a jiff `civil::Date`,
+///   `civil::DateTime`, `Timestamp` or `Zoned` before year 0 writes a sign and
+///   six digits, as in `-000001-01-01`, which neither RFC 3339 nor `Zoned`'s
+///   pattern admits;
+/// - jiff's `Span` and `SignedDuration` write ISO 8601 durations, which RFC
+///   3339's `duration` only partly admits: a leading `-` (`-PT1H`), fractional
+///   seconds (`PT0.5S`), a skipped unit (`PT1H30S`) and weeks with days
+///   (`P1W2D`) fall outside it.
+///
+/// The dates and durations write the text serde writes for a body, so a
+/// parameter of one makes no claim the body's description does not already
+/// make. A newtype whose `FromStr` refuses them is the remedy where that
+/// matters. An `Option<T>` field is a derive's business, not this trait's: the
+/// derive makes it optional and bounds `T`.
+///
+/// ```compile_fail
+/// # use std::{fmt, str::FromStr};
+/// fn param_value<T: kynos::schema::ParamValue>() {}
+///
+/// // An object, whatever its `FromStr` and `Display` say.
+/// #[derive(kynos::Schema)]
+/// struct Point {
+///     x: i32,
+///     y: i32,
+/// }
+/// # impl FromStr for Point {
+/// #     type Err = fmt::Error;
+/// #     fn from_str(_: &str) -> Result<Self, Self::Err> { Err(fmt::Error) }
+/// # }
+/// # impl fmt::Display for Point {
+/// #     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+/// #         write!(f, "{},{}", self.x, self.y)
+/// #     }
+/// # }
+///
+/// param_value::<Point>();
+/// ```
+///
+/// A newtype or an enum whose schema is one value opts in:
+///
+/// ```
+/// use std::{fmt, num::ParseIntError, str::FromStr};
+///
+/// use kynos::schema::{ParamValue, Schema, registry::Registry};
+///
+/// struct UserId(u64);
+///
+/// impl Schema for UserId {
+///     fn schema(registry: &mut Registry) -> kynos::openapi::Schema {
+///         u64::schema(registry)
+///     }
+/// }
+///
+/// impl FromStr for UserId {
+///     type Err = ParseIntError;
+///
+///     fn from_str(raw: &str) -> Result<Self, Self::Err> {
+///         raw.parse().map(Self)
+///     }
+/// }
+///
+/// impl fmt::Display for UserId {
+///     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+///         self.0.fmt(f)
+///     }
+/// }
+///
+/// impl ParamValue for UserId {}
+///
+/// #[derive(kynos::PathParams)]
+/// struct UserPath {
+///     id: UserId,
+/// }
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a value one parameter carries",
+    label = "not one parameter value",
+    note = "a parameter field is read with `FromStr`, written with `Display` and described by \
+            its `Schema`, so that schema must describe one value, not an object or an array; \
+            implement `kynos::schema::ParamValue` for a newtype or enum whose schema does",
+    note = "for a structured query such as a search filter, take the whole query string as \
+            `kynos::extract::params::query::QueryString` under `openapi32`"
+)]
+pub trait ParamValue:
+    Schema + std::str::FromStr<Err: std::fmt::Display> + std::fmt::Display
+{
+}
+
 #[cfg(test)]
 mod tests;

@@ -10,7 +10,7 @@ use kynos_openapi::{
 };
 
 use crate::schema::{
-    MapKey, Schema,
+    MapKey, ParamValue, Schema,
     flatten::{ClosedFlatten, Flatten},
     registry::Registry,
 };
@@ -34,6 +34,23 @@ fn object_of<T: Schema>() -> SchemaObject {
 fn describable<T: Schema>() {}
 
 fn keyable<T: MapKey>() {}
+
+fn param_value<T: ParamValue>() {}
+
+/// The `ParamValue` promise for one value: its schema names `format`, its
+/// `Display` writes `text`, which is that format's form, and its `FromStr`
+/// reads `text` back to the same value.
+///
+/// A `ParamValue` impl is a claim about the wire form a witness cannot see, so
+/// it is worth only as much as a test that produces the text.
+fn carries_as<T>(value: &T, text: &str, format: Option<&str>)
+where
+    T: ParamValue + PartialEq + std::fmt::Debug,
+{
+    assert_eq!(object_of::<T>().format.as_deref(), format);
+    assert_eq!(value.to_string(), text);
+    assert_eq!(text.parse::<T>().ok().as_ref(), Some(value));
+}
 
 fn flattenable<T: Flatten>() {}
 
@@ -123,11 +140,18 @@ fn a_uuid_serializes_as_the_string_its_format_promises() {
     );
 }
 
+#[cfg(feature = "uuid")]
+#[test]
+fn a_uuid_writes_its_format_and_reads_it_back() {
+    let value = uuid::Uuid::from_u128(0x67e5_5044_10b1_426f_9247_bb68_0e5f_e0c8);
+    carries_as(&value, "67e55044-10b1-426f-9247-bb680e5fe0c8", Some("uuid"));
+}
+
 #[cfg(feature = "time-chrono")]
 mod chrono_backend {
     use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
-    use super::{object_of, schema_of};
+    use super::{carries_as, object_of, schema_of};
 
     fn format_of<T: super::Schema>() -> Option<String> {
         object_of::<T>().format
@@ -191,6 +215,33 @@ mod chrono_backend {
     fn the_backend_describes_only_what_it_was_given() {
         let _ = schema_of::<DateTime<Utc>>();
     }
+
+    #[test]
+    fn a_date_and_a_time_write_their_formats_and_read_them_back() {
+        let day = NaiveDate::from_ymd_opt(2026, 3, 15).expect("a representable date");
+        carries_as(&day, "2026-03-15", Some("date"));
+        let clock = NaiveTime::from_hms_opt(12, 30, 0).expect("a representable time");
+        carries_as(&clock, "12:30:00", Some("time-local"));
+    }
+
+    /// Why the date-times are not parameter values: `Display` writes a space
+    /// where RFC 3339 has a `T`, and `Utc` appends a zone name, so each writes
+    /// text its own format refuses. The civil one cannot even read its own.
+    #[test]
+    fn a_date_time_displays_other_than_its_format() {
+        let civil = NaiveDate::from_ymd_opt(2026, 3, 15)
+            .and_then(|date| date.and_hms_opt(12, 30, 0))
+            .expect("a representable civil date and time");
+        assert_eq!(civil.to_string(), "2026-03-15 12:30:00");
+        civil
+            .to_string()
+            .parse::<NaiveDateTime>()
+            .expect_err("a civil date-time does not read its own display");
+
+        let utc = DateTime::<Utc>::from_timestamp(0, 0).expect("the epoch is representable");
+        assert_eq!(utc.to_string(), "1970-01-01 00:00:00 UTC");
+        assert_eq!(utc.fixed_offset().to_string(), "1970-01-01 00:00:00 +00:00");
+    }
 }
 
 #[cfg(feature = "time-jiff")]
@@ -200,7 +251,7 @@ mod jiff_backend {
         civil::{self, date},
     };
 
-    use super::object_of;
+    use super::{carries_as, object_of};
 
     fn format_of<T: super::Schema>() -> Option<String> {
         object_of::<T>().format
@@ -289,6 +340,46 @@ mod jiff_backend {
         assert_eq!(encode(span), "PT1H30M");
         assert_eq!(encode(SignedDuration::from_secs(5_400)), "PT1H30M");
     }
+
+    #[test]
+    fn each_type_writes_its_format_and_reads_it_back() {
+        carries_as(&date(2026, 3, 15), "2026-03-15", Some("date"));
+        carries_as(&civil::time(12, 30, 0, 0), "12:30:00", Some("time-local"));
+        carries_as(
+            &date(2026, 3, 15).at(12, 30, 0, 0),
+            "2026-03-15T12:30:00",
+            Some("date-time-local"),
+        );
+        carries_as(
+            &Timestamp::UNIX_EPOCH,
+            "1970-01-01T00:00:00Z",
+            Some("date-time"),
+        );
+        let zoned: Zoned = date(2024, 6, 19)
+            .at(15, 22, 0, 0)
+            .in_tz("America/New_York")
+            .expect("a bundled zone resolves");
+        carries_as(
+            &zoned,
+            "2024-06-19T15:22:00-04:00[America/New_York]",
+            Some("date-time-zoned"),
+        );
+        carries_as(
+            &SignedDuration::from_secs(5_400),
+            "PT1H30M",
+            Some("duration"),
+        );
+    }
+
+    /// `Span` compares only field by field, so it cannot go through
+    /// `carries_as`.
+    #[test]
+    fn a_span_writes_its_format_and_reads_it_back() {
+        let span = Span::new().hours(1).minutes(30);
+        assert_eq!(span.to_string(), "PT1H30M");
+        let read: Span = "PT1H30M".parse().expect("an ISO 8601 duration parses");
+        assert_eq!(read.fieldwise(), span.fieldwise());
+    }
 }
 
 #[cfg(feature = "decimal")]
@@ -338,6 +429,30 @@ mod decimal_backends {
             wide,
         );
     }
+
+    #[cfg(feature = "decimal-rust")]
+    #[test]
+    fn a_fixed_decimal_writes_its_format_and_reads_it_back() {
+        let value = "-1.2300"
+            .parse::<rust_decimal::Decimal>()
+            .expect("a decimal");
+        super::carries_as(&value, "-1.2300", Some("decimal"));
+    }
+
+    /// Why `BigDecimal` is not a parameter value: its `Display` writes an
+    /// exponent for a value far below one, or for one read from exponent
+    /// notation, and the fixed-point `decimal` format refuses both.
+    #[cfg(feature = "decimal-big")]
+    #[test]
+    fn an_arbitrary_decimal_displays_other_than_its_format() {
+        let display = |text: &str| {
+            text.parse::<bigdecimal::BigDecimal>()
+                .expect("an arbitrary-precision decimal")
+                .to_string()
+        };
+        assert_eq!(display("0.0000000000000000001"), "1E-19");
+        assert_eq!(display("1e30"), "1e+30");
+    }
 }
 
 #[test]
@@ -348,6 +463,15 @@ fn addresses_use_their_named_formats() {
     let either = object_of::<IpAddr>();
     assert_eq!(either.ty, None);
     assert_eq!(either.any_of.map(|branches| branches.len()), Some(2));
+}
+
+#[test]
+fn each_address_writes_its_format_and_reads_it_back() {
+    carries_as(&Ipv4Addr::new(192, 0, 2, 1), "192.0.2.1", Some("ipv4"));
+    let v6 = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1);
+    carries_as(&v6, "2001:db8::1", Some("ipv6"));
+    // Either format, through its `anyOf`.
+    carries_as(&IpAddr::V6(v6), "2001:db8::1", None);
 }
 
 #[test]
@@ -407,6 +531,169 @@ fn every_standard_type_the_docs_promise_is_describable() {
 #[test]
 fn a_string_is_a_map_key() {
     keyable::<String>();
+}
+
+/// The scalars a parameter field may be. Losing one is breaking, so each one is
+/// named here.
+#[test]
+fn every_shipped_scalar_is_a_parameter_value() {
+    param_value::<bool>();
+    param_value::<char>();
+    param_value::<String>();
+    param_value::<i8>();
+    param_value::<i16>();
+    param_value::<i32>();
+    param_value::<i64>();
+    param_value::<u8>();
+    param_value::<u16>();
+    param_value::<u32>();
+    param_value::<u64>();
+    param_value::<f32>();
+    param_value::<f64>();
+
+    param_value::<Ipv4Addr>();
+    param_value::<Ipv6Addr>();
+    param_value::<IpAddr>();
+
+    #[cfg(feature = "uuid")]
+    param_value::<uuid::Uuid>();
+
+    #[cfg(feature = "time-chrono")]
+    {
+        param_value::<chrono::NaiveDate>();
+        param_value::<chrono::NaiveTime>();
+    }
+
+    #[cfg(feature = "time-jiff")]
+    {
+        param_value::<jiff::civil::Date>();
+        param_value::<jiff::civil::Time>();
+        param_value::<jiff::civil::DateTime>();
+        param_value::<jiff::Timestamp>();
+        param_value::<jiff::Zoned>();
+        param_value::<jiff::Span>();
+        param_value::<jiff::SignedDuration>();
+    }
+
+    #[cfg(feature = "decimal-rust")]
+    param_value::<rust_decimal::Decimal>();
+}
+
+#[test]
+fn each_standard_scalar_writes_its_format_and_reads_it_back() {
+    carries_as(&true, "true", None);
+    carries_as(&'é', "é", Some("char"));
+    carries_as(&"a b".to_owned(), "a b", None);
+    carries_as(&i8::MIN, "-128", Some("int8"));
+    carries_as(&i16::MIN, "-32768", Some("int16"));
+    carries_as(&i32::MIN, "-2147483648", Some("int32"));
+    carries_as(&i64::MIN, "-9223372036854775808", Some("int64"));
+    carries_as(&u8::MAX, "255", Some("uint8"));
+    carries_as(&u16::MAX, "65535", Some("uint16"));
+    carries_as(&u32::MAX, "4294967295", Some("uint32"));
+    carries_as(&u64::MAX, "18446744073709551615", Some("uint64"));
+    // No exponent even far from one, which a JSON number would also admit.
+    carries_as(
+        &1.0e30_f32,
+        "1000000000000000000000000000000",
+        Some("float"),
+    );
+    carries_as(&-0.5_f64, "-0.5", Some("double"));
+}
+
+/// One exception the `ParamValue` docs state: a non-finite float writes text no
+/// `number` schema admits, and reads it back.
+#[test]
+fn a_non_finite_float_writes_what_no_number_admits() {
+    assert_eq!(f64::NAN.to_string(), "NaN");
+    assert_eq!(f64::INFINITY.to_string(), "inf");
+    assert_eq!(f32::NEG_INFINITY.to_string(), "-inf");
+    assert_eq!("inf".parse::<f64>(), Ok(f64::INFINITY));
+    assert!("NaN".parse::<f32>().is_ok_and(f32::is_nan));
+}
+
+/// The chrono exception the `ParamValue` docs state: a year outside 0000–9999
+/// takes a sign and, past 9999, a fifth digit, neither of which RFC 3339's
+/// `date` admits. serde writes the same text, and `FromStr` reads it back.
+#[cfg(feature = "time-chrono")]
+#[test]
+fn a_chrono_date_outside_four_digit_years_writes_what_no_date_admits() {
+    use chrono::NaiveDate;
+
+    for (year, text) in [(10_000, "+10000-01-01"), (-1, "-0001-01-01")] {
+        let day = NaiveDate::from_ymd_opt(year, 1, 1).expect("a representable date");
+        assert_eq!(day.to_string(), text);
+        assert_eq!(
+            serde_json::to_value(day).expect("a date serializes"),
+            serde_json::Value::String(text.to_owned())
+        );
+        assert_eq!(text.parse::<NaiveDate>(), Ok(day));
+    }
+}
+
+/// Two jiff exceptions the `ParamValue` docs state: a year before 0 takes a
+/// sign and six digits, and a negative duration a leading `-`, neither of which
+/// RFC 3339 admits. serde writes the same text, and `FromStr` reads it back.
+#[cfg(feature = "time-jiff")]
+#[test]
+fn a_jiff_value_before_zero_writes_what_no_format_admits() {
+    use jiff::{SignedDuration, Span, civil};
+
+    let day = civil::date(-1, 1, 1);
+    assert_eq!(day.to_string(), "-000001-01-01");
+    assert_eq!(
+        serde_json::to_value(day).expect("a date serializes"),
+        serde_json::Value::String("-000001-01-01".to_owned())
+    );
+    assert_eq!("-000001-01-01".parse::<civil::Date>().ok(), Some(day));
+
+    let back = SignedDuration::from_hours(-1);
+    assert_eq!(back.to_string(), "-PT1H");
+    assert_eq!(
+        serde_json::to_value(back).expect("a duration serializes"),
+        serde_json::Value::String("-PT1H".to_owned())
+    );
+    assert_eq!("-PT1H".parse::<SignedDuration>().ok(), Some(back));
+
+    let span = Span::new().days(-1);
+    assert_eq!(span.to_string(), "-P1D");
+    assert_eq!(
+        serde_json::to_value(span).expect("a span serializes"),
+        serde_json::Value::String("-P1D".to_owned())
+    );
+    let read: Span = "-P1D".parse().expect("a negative ISO 8601 duration parses");
+    assert_eq!(read.fieldwise(), span.fieldwise());
+}
+
+/// The other jiff duration exception the `ParamValue` docs state: an ordinary
+/// non-negative duration can take an ISO 8601 form RFC 3339's `duration` does
+/// not admit, with fractional seconds, a skipped unit, or weeks beside days.
+/// serde writes the same text, and `FromStr` reads it back.
+#[cfg(feature = "time-jiff")]
+#[test]
+fn a_jiff_duration_writes_iso_8601_forms_no_rfc_3339_duration_admits() {
+    use jiff::{SignedDuration, Span};
+
+    for (duration, text) in [
+        (SignedDuration::from_secs(3630), "PT1H30S"),
+        (SignedDuration::from_millis(500), "PT0.5S"),
+    ] {
+        assert_eq!(duration.to_string(), text);
+        assert_eq!(
+            serde_json::to_value(duration).expect("a duration serializes"),
+            serde_json::Value::String(text.to_owned())
+        );
+        assert_eq!(text.parse::<SignedDuration>().ok(), Some(duration));
+    }
+
+    let span = Span::new().weeks(1).days(2);
+    assert_eq!(span.to_string(), "P1W2D");
+    assert_eq!(
+        serde_json::to_value(span).expect("a span serializes"),
+        serde_json::Value::String("P1W2D".to_owned())
+    );
+    let read: Span = "P1W2D".parse().expect("an ISO 8601 duration parses");
+    assert_eq!(read.fieldwise(), span.fieldwise());
 }
 
 /// A type whose `Schema` is written by hand, saying so.

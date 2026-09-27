@@ -3,7 +3,7 @@
 use kynos_openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType};
 
 use crate::schema::{
-    Schema,
+    ParamValue, Schema,
     impls::{formatted, integer, with_object},
     registry::Registry,
 };
@@ -99,3 +99,21 @@ impl Schema for f64 {
         formatted(SchemaType::Number, "double")
     }
 }
+
+// Each one's `Display` writes the single value its schema describes, and its
+// `FromStr` reads that back, except a non-finite float, one of the accepted
+// exceptions `ParamValue` lists: `NaN`, `inf` and `-inf` are what `Display`
+// writes and `FromStr` reads, and no `number` admits them.
+impl ParamValue for bool {}
+impl ParamValue for char {}
+impl ParamValue for String {}
+impl ParamValue for i8 {}
+impl ParamValue for i16 {}
+impl ParamValue for i32 {}
+impl ParamValue for i64 {}
+impl ParamValue for u8 {}
+impl ParamValue for u16 {}
+impl ParamValue for u32 {}
+impl ParamValue for u64 {}
+impl ParamValue for f32 {}
+impl ParamValue for f64 {}
