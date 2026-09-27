@@ -54,7 +54,8 @@ requirement with an allocation one and calling it a refiling would leave the
 latency unmeasured in both repositories while this column claimed otherwise.
 
 Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
-`trybuild`, `proptest`, `alloc_counter`, `cargo-llvm-lines`, rustdoc with
+`trybuild`, `proptest`, `alloc_counter`, `cargo-llvm-lines`, `gungraun` over
+Valgrind, rustdoc with
 `missing_docs = "deny"`, and `cargo-semver-checks` — the last through both
 release-plz, at default features and fail-open, and `mise run semver:check`, at
 every feature. Not yet present: `cargo-public-api`, `cargo-fuzz`. `criterion` is
@@ -188,12 +189,27 @@ of which anything here would currently catch.
 | performance | Route dispatch allocates at most a recorded number of times per route shape, and a replayed request costs what the first one did | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), over a handler that allocates nothing, counting fresh allocations and reallocations across a 10k-request replay | `enforced` |
 | performance | Zero heap allocations on the routing path | — | `absent`. The row above enforces a ceiling, which is the opposite direction; nothing asserts the zero, and the measurement below is why |
 | performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `kynos-bench` |
+| performance | What one request of each `kynos-bench` scenario executes in process is recorded as an exact count: instructions in the program object, and heap blocks and bytes | `mise run profile:requests`: gungraun over Callgrind and DHAT on [`kynos-profile`](../crates/kynos-profile/), split by object and compared with [`requests.tsv`](../crates/kynos-profile/requests.tsv) by [`profile_report.py`](../scripts/profile_report.py), which also holds DHAT's block counts to `tests/alloc.rs`'s | `partial`: a trend after each merge in `cost.yml`, with no ceiling and no gate, and over `Service::call` rather than a socket — below |
 | performance | Erasing a body through the boxed trait object costs a recorded number of allocations per construction | [`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs), counting `Body::empty` and `Body::from_bytes` | `enforced` |
 | reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; [`tests/routing.rs`](../crates/kynos/tests/routing.rs) over `Router::validate` for those only visible once the tree is assembled, each refusal with its pass control | `enforced` |
 | security | A served asset path is enumerated, never joined from request input | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) asserting an embedded set registers only literal `paths` keys, and [`router/assets/fs/tests.rs`](../crates/kynos/src/router/assets/fs/tests.rs) sweeping every escape a resolver must refuse against a control that must not be | `enforced` |
 | correctness | A route with no expressible template is recorded rather than described | [`tests/unchecked.rs`](../crates/kynos/tests/unchecked.rs) asserting a catch-all takes no `paths` key and reaches `x-kynos-opaque-routes` | `enforced` |
 | operability | Metric labels derive from operation IDs, never request paths | [`tests/dispatch.rs`](../crates/kynos/tests/dispatch.rs) asserting `MatchedPath` is the template rather than the request target, so two concrete paths under one template produce one label | `enforced` |
 | correctness | The description a service serves is the description it emits | [`tests/docs.rs`](../crates/kynos/tests/docs.rs), byte-comparing the description route's body against `Router::openapi`'s JSON, and asserting a nested mount moves both routes and the page's pointer with them | `enforced` |
+
+**The first instruction counts say where a request's work goes, and it is
+rarely routing.** Recorded at rustc 1.97.1 in
+[`requests.tsv`](../crates/kynos-profile/requests.tsv), with the host it was
+taken on: a static match executes 1732 instructions in the program and a miss
+1831, while `echo-post` executes 35253. Read with
+`callgrind_annotate --inclusive=yes` over that scenario's Callgrind file, 57%
+of everything Callgrind counted for the request, libc included, is inside the
+`Json` extractor and 28% inside `serde_json::to_vec`. A transparent
+interceptor costs 315 program instructions and one heap block per layer, the
+same at depth four and eight. `json-large` executes 1027125 program
+instructions, and `serde_json`'s string writer alone is 36% of all it counted.
+The ceiling this row would need stays unset for [Thresholds](#thresholds)'
+reason; the counts are the first measurement, not a target.
 
 **The zero was never measured, and it is wrong.** The row above asked for
 `alloc_count == 0` and was `planned` for as long as this document has existed;
