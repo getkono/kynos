@@ -518,6 +518,51 @@ async fn a_head_preflight_answers_from_the_cors_covering_get() {
     );
 }
 
+/// A `head` declared beside the `GET` on `/widgets`.
+#[kynos::head("/widgets")]
+async fn probe_widgets() -> NoContent {
+    NoContent
+}
+
+/// Where a path declares its own `head`, the GET implies no second one: a
+/// preflight advertises HEAD once, exactly as the 405's `Allow` names it.
+#[tokio::test]
+async fn a_declared_head_is_advertised_once() {
+    let service = router()
+        .mount(kynos::routes![probe_widgets, create_gadget])
+        .intercept(Cors::new().allow_origins(["https://app.example.com"]))
+        .build(())
+        .expect("a describable router");
+
+    let (status, fields) = send(
+        &service,
+        Method::OPTIONS,
+        "/widgets",
+        &[
+            ("origin", "https://app.example.com"),
+            ("access-control-request-method", "HEAD"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let advertised =
+        field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS).expect("an advertised list");
+
+    let (status, fields) = send(&service, Method::POST, "/widgets", &[]).await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    let allow = field(&fields, header::ALLOW).expect("an Allow header");
+
+    assert_eq!(
+        advertised
+            .split(", ")
+            .filter(|method| *method == "HEAD")
+            .count(),
+        1,
+        "{advertised}"
+    );
+    assert_eq!(advertised, allow);
+}
+
 /// A service implementing `OPTIONS` somewhere refuses a plain `OPTIONS` on a
 /// path without one with a 405 and that path's `Allow`, and mounting CORS over
 /// the path changes neither.
