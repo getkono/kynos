@@ -183,6 +183,9 @@ fn a_ratio_that_would_overflow_falls_back_to_the_absolute_limit() {
 /// `limits/tests.rs` writes its own: no public surface builds a body that
 /// fails.
 struct Failing {
+    /// The octets that arrive before the failure.
+    arrived: &'static [u8],
+    /// How many times the body has been polled.
     polls: u8,
 }
 
@@ -196,7 +199,7 @@ impl http_body::Body for Failing {
     ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         self.polls += 1;
         Poll::Ready(match self.polls {
-            1 => Some(Ok(Frame::data(Bytes::from_static(b"the first half of")))),
+            1 => Some(Ok(Frame::data(Bytes::from_static(self.arrived)))),
             2 => Some(Err(Box::new(io::Error::new(
                 io::ErrorKind::ConnectionReset,
                 "peer went away",
@@ -219,7 +222,11 @@ fn service(limit: Option<u64>) -> Service<()> {
         PathTemplate::parse("/upload").expect("a valid path"),
         upload,
     );
-    let router = Router::<()>::new().mount(endpoint);
+    decompressed(Router::<()>::new().mount(endpoint), limit)
+}
+
+/// `router` built under `Decompression` when `limit` names one.
+fn decompressed(router: Router<()>, limit: Option<u64>) -> Service<()> {
     match limit {
         Some(limit) => router.intercept(Decompression::new(limit)).build(()),
         None => router.build(()),
@@ -227,18 +234,25 @@ fn service(limit: Option<u64>) -> Service<()> {
     .expect("a describable router")
 }
 
-/// An upload that fails part-way, under `coding` when it names one.
-fn interrupted(coding: Option<&str>) -> Request {
+/// A `content_type` upload of `arrived` that then fails, under `coding` when
+/// it names one.
+fn interrupted_as(content_type: &str, coding: Option<&str>, arrived: &'static [u8]) -> Request {
     let mut builder = ::http::Request::builder()
         .method("POST")
         .uri("/upload")
-        .header(http::header::CONTENT_TYPE, "application/octet-stream");
+        .header(http::header::CONTENT_TYPE, content_type);
     if let Some(coding) = coding {
         builder = builder.header(http::header::CONTENT_ENCODING, coding);
     }
     builder
-        .body(Body::from_body(Failing { polls: 0 }))
+        .body(Body::from_body(Failing { arrived, polls: 0 }))
         .expect("a well-formed request")
+}
+
+/// An octet-stream upload that fails part-way, under `coding` when it names
+/// one.
+fn interrupted(coding: Option<&str>) -> Request {
+    interrupted_as("application/octet-stream", coding, b"the first half of")
 }
 
 /// A response's status and body bytes.
@@ -274,5 +288,72 @@ async fn a_body_that_fails_part_way_is_refused_as_it_is_without_decompression() 
             String::from_utf8_lossy(&decoded_body)
         );
         assert_eq!(decoded_body, plain_body, "coding {coding:?}");
+    }
+}
+
+/// What a streaming extractor beneath `Decompression` reads, which is where
+/// handing on only the failure would differ from handing on what arrived with
+/// it.
+#[cfg(all(feature = "json", feature = "openapi32"))]
+mod streamed {
+    use super::{decompressed, interrupted_as, read};
+    use crate::{
+        Router,
+        extract::body::{
+            json_lines::{JsonLines, records::Records},
+            text::Text,
+        },
+        http::StatusCode,
+        openapi::{Method, PathTemplate},
+        router::{endpoint::builder::EndpointBuilder, service::Service},
+    };
+
+    /// Reads records until the body ends or fails, and says which it did.
+    async fn tally(JsonLines { mut items }: JsonLines<Records<u32>>) -> Text {
+        let mut read = Vec::new();
+        let ending = loop {
+            match items.next().await {
+                Some(Ok(record)) => read.push(record),
+                Some(Err(_)) => break "a rejection",
+                None => break "the end of the body",
+            }
+        };
+        Text(format!("read {read:?}, then {ending}"))
+    }
+
+    /// The tally operation, under `Decompression` when `limit` names one.
+    fn service(limit: Option<u64>) -> Service<()> {
+        let endpoint = EndpointBuilder::new(
+            Method::Post,
+            PathTemplate::parse("/upload").expect("a valid path"),
+            tally,
+        );
+        decompressed(Router::<()>::new().mount(endpoint), limit)
+    }
+
+    /// The records that arrived before the failure reach the handler, and the
+    /// failure after them: the read fails where it would with no
+    /// `Decompression` mounted, not earlier. Uncoded, because that is the body
+    /// a streaming reader parses as it arrives.
+    #[tokio::test]
+    async fn records_before_a_failure_reach_a_streaming_handler_as_without_decompression() {
+        let request = || interrupted_as("application/x-ndjson", None, b"1\n2\n");
+        let (plain, plain_body) = read(service(None).call(request()).await).await;
+        let (decoded, decoded_body) = read(service(Some(1024)).call(request()).await).await;
+
+        assert_eq!(plain, StatusCode::OK);
+        assert_eq!(
+            plain_body.as_ref(),
+            b"read [1, 2], then a rejection",
+            "{}",
+            String::from_utf8_lossy(&plain_body)
+        );
+        assert_eq!(decoded, plain);
+        assert_eq!(
+            decoded_body,
+            plain_body,
+            "{}",
+            String::from_utf8_lossy(&decoded_body)
+        );
     }
 }
