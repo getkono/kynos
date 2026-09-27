@@ -50,6 +50,7 @@ edit.
 | `Decompression` | RFC 9110 §8.4 (`Content-Encoding`), §15.5.16 (415), RFC 7932 (`br`), RFC 9659 (`zstd`) | [`rfc9110.txt`](../references/rfc9110.txt), [`rfc7932.txt`](../references/rfc7932.txt), [`rfc9659.txt`](../references/rfc9659.txt) |
 | Forwarded addresses | RFC 7239 §5.2 (`for`), §6 (`nodename`), §8.1 (what it is worth) | [`rfc7239.txt`](../references/rfc7239.txt) |
 | Message framing, wherever a body's length changes | RFC 9110 §8.6 (`Content-Length`), RFC 9112 §6 (HTTP/1.1), RFC 9113 §8.1.1 and §8.2.2 (HTTP/2) | [`rfc9112.txt`](../references/rfc9112.txt), [`rfc9113.txt`](../references/rfc9113.txt) |
+| `response::negotiate` | RFC 9110 §12.5.1 (`Accept`), §12.4.2 (qvalues), §12.5.5 (`Vary`), §15.5.7 (406) | [`rfc9110.txt`](../references/rfc9110.txt) |
 | `response::language` | RFC 9110 §12.5.4 (`Accept-Language`), §8.5 (`Content-Language`), §8.5.1 (language tags), §12.4.2 (qvalues), §12.4.3 (wildcards), §12.5.5 (`Vary`), §12.1 and §15.5.7 (serving a default rather than a 406); RFC 4647 §2.1 (language ranges), §3.3.1 (Basic Filtering), §3.4 (Lookup); RFC 5646 §2.1 (the tag grammar), §2.1.1 (casing) | [`rfc9110.txt`](../references/rfc9110.txt), [`rfc4647.txt`](../references/rfc4647.txt), [`rfc5646.txt`](../references/rfc5646.txt) |
 | Problem responses | RFC 9457 | [`rfc9457.txt`](../references/rfc9457.txt) |
 | `response::disposition` | RFC 6266, RFC 8187 | [`rfc6266.txt`](../references/rfc6266.txt), [`rfc8187.txt`](../references/rfc8187.txt) |
