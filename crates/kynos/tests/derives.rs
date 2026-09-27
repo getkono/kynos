@@ -2981,3 +2981,60 @@ where
     assert_eq!(properties, written, "{tagging:?}: {schema}");
     assert_eq!(required, written, "{tagging:?}: {schema}");
 }
+
+// A split field rule
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(
+    rename_all_fields(serialize = "camelCase", deserialize = "camelCase"),
+    tag = "kind"
+)]
+enum SplitFieldsRuleThenTag {
+    UserCreated { user_id: u8 },
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum SplitVariantRule {
+    #[serde(rename_all(serialize = "camelCase", deserialize = "camelCase"))]
+    UserCreated { user_id: u8 },
+}
+
+/// A split `rename_all_fields`, and a variant's split `rename_all` with no
+/// `rename_all_fields` beside it, whose sides agree name the variant's fields
+/// by that one style, as serde does; and the `tag` after the split
+/// `rename_all_fields` in the same attribute is still read.
+#[test]
+fn a_split_field_rule_whose_sides_agree_is_read() {
+    let written = serde_json::to_value(SplitFieldsRuleThenTag::UserCreated { user_id: 1 })
+        .expect("a variant serializes");
+    assert_eq!(
+        written,
+        serde_json::json!({"kind": "UserCreated", "userId": 1})
+    );
+    assert!(
+        serde_json::from_value::<SplitFieldsRuleThenTag>(written).is_ok(),
+        "serde reads what it writes under one style"
+    );
+    let schema = emitted::<SplitFieldsRuleThenTag>();
+    assert_eq!(
+        schema["oneOf"][0]["properties"]["kind"],
+        serde_json::json!({"type": "string", "const": "UserCreated"}),
+        "{schema}"
+    );
+    assert_variant_fields_named_as_serde_names(
+        Tagging::Internal,
+        SplitFieldsRuleThenTag::UserCreated { user_id: 1 },
+    );
+
+    let written = serde_json::to_value(SplitVariantRule::UserCreated { user_id: 1 })
+        .expect("a variant serializes");
+    assert_eq!(written, serde_json::json!({"UserCreated": {"userId": 1}}));
+    assert!(
+        serde_json::from_value::<SplitVariantRule>(written).is_ok(),
+        "serde reads what it writes under one style"
+    );
+    assert_variant_fields_named_as_serde_names(
+        Tagging::External,
+        SplitVariantRule::UserCreated { user_id: 1 },
+    );
+}
