@@ -219,6 +219,11 @@ async fn a_declared_head_wins_over_the_one_get_implies() {
     let reply = send(&service, Method::HEAD, "/both").call().await;
 
     assert_eq!(reply.status, StatusCode::NO_CONTENT);
+    // RFC 9110 section 8.6: "A server MUST NOT send a Content-Length header
+    // field in any response with a status code of 1xx (Informational) or 204
+    // (No Content)."
+    assert_eq!(reply.field(header::CONTENT_LENGTH.as_str()), None);
+    assert!(reply.body.is_empty(), "{:?}", reply.text());
 }
 
 /// What an observer saw of one request: the method on the wire, and the
