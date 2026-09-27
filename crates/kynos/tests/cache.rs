@@ -302,10 +302,10 @@ async fn a_failed_unsafe_method_leaves_the_stored_response_alone() {
         StatusCode::OK
     );
 
-    // No handler answers PUT here, so this is a 405 — an error status.
+    // No handler answers PUT anywhere, so this is a 501 — an error status.
     assert_eq!(
         send(&service, Method::PUT, "/reports").call().await.status,
-        StatusCode::METHOD_NOT_ALLOWED
+        StatusCode::NOT_IMPLEMENTED
     );
 
     assert_eq!(

@@ -86,6 +86,42 @@ async fn a_method_implemented_elsewhere_is_refused_with_what_is_allowed() {
     assert_eq!(methods, ["DELETE", "GET", "HEAD"]);
 }
 
+/// A method no operation in the service implements is a 501, RFC 9110 section
+/// 9.1: "An origin server that receives a request method that is unrecognized
+/// or not implemented SHOULD respond with the 501 (Not Implemented) status
+/// code." Section 15.6.2 makes that a property of the server rather than of a
+/// resource, so it is decided before the path is: an unmatched path is no 404
+/// and a flipped spelling no 308 for a method nothing could serve. No `Allow`
+/// either -- section 10.2.1 requires one on a 405 only.
+#[tokio::test]
+async fn a_method_no_operation_implements_is_not_implemented() {
+    let frob = Method::from_bytes(b"FROB").expect("a method token");
+    let strict = service();
+    let redirecting = support::router()
+        .trailing_slashes(TrailingSlashPolicy::Redirect)
+        .build(App::new())
+        .expect("a describable router");
+
+    for (service, method, target) in [
+        (&strict, Method::PATCH, "/users/42"),
+        (&strict, frob.clone(), "/users/42"),
+        (&strict, frob.clone(), "/widgets"),
+        (&redirecting, frob, "/users/42/"),
+    ] {
+        let reply = send(service, method.clone(), target).call().await;
+        let asked = format!("{method} {target}");
+
+        assert_eq!(reply.status, StatusCode::NOT_IMPLEMENTED, "{asked}");
+        assert_eq!(reply.field(header::ALLOW.as_str()), None, "{asked}");
+        assert_eq!(
+            reply.field(header::CONTENT_TYPE.as_str()).as_deref(),
+            Some("application/problem+json"),
+            "{asked}"
+        );
+        assert_eq!(reply.json()["status"], 501, "{asked}");
+    }
+}
+
 /// Under `Redirect` a path reaching a declared one by flipping its final slash
 /// is redirected there with 308, which preserves the method and the body.
 #[tokio::test]
@@ -446,6 +482,12 @@ async fn an_empty_fallback_sends_the_status_and_nothing_else() {
 
     // The status is not the policy's to choose, so `Allow` survives the shape.
     assert!(refused.field(header::ALLOW.as_str()).is_some());
+
+    // The 501 takes the method-not-allowed policy's shape: both refuse a
+    // method, and a second policy would be a second answer to one question.
+    let unimplemented = send(&service, Method::PATCH, "/users/42").call().await;
+    assert_eq!(unimplemented.status, StatusCode::NOT_IMPLEMENTED);
+    assert!(unimplemented.body.is_empty(), "{:?}", unimplemented.text());
 }
 
 // --- `MatchedPath` cardinality -------------------------------------------

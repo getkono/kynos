@@ -170,7 +170,9 @@ async fn a_plain_options_request_answers_exactly_as_it_did_before_cors_was_mount
     let (bare_status, bare_fields) = send(&bare, Method::OPTIONS, "/widgets", &[]).await;
     let (covered_status, covered_fields) = send(&covered, Method::OPTIONS, "/widgets", &[]).await;
 
-    assert_eq!(bare_status, StatusCode::METHOD_NOT_ALLOWED);
+    // Nothing in the service implements `OPTIONS`: the preflight CORS
+    // registers is not an operation, so it does not turn this into a 405.
+    assert_eq!(bare_status, StatusCode::NOT_IMPLEMENTED);
     assert_eq!(covered_status, bare_status);
     assert_eq!(
         field(&covered_fields, header::ALLOW),
@@ -504,7 +506,7 @@ async fn a_cors_mounted_on_one_endpoint_answers_no_preflight() {
 
     assert_eq!(
         status,
-        StatusCode::METHOD_NOT_ALLOWED,
+        StatusCode::NOT_IMPLEMENTED,
         "endpoint-scoped CORS started answering preflights; that is an improvement, and this \
          characterization is what should change"
     );

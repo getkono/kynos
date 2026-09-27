@@ -164,8 +164,9 @@ async fn head_and_options_are_reachable() {
 async fn any_method_can_be_sent() {
     let refused = client().method(Method::PUT, "/probe").send().await;
 
-    // Routed, and declined for the right reason rather than not routed at all.
-    assert_eq!(refused.status(), StatusCode::METHOD_NOT_ALLOWED);
+    // Reached the router, and declined for the right reason: nothing in this
+    // service implements `PUT`.
+    assert_eq!(refused.status(), StatusCode::NOT_IMPLEMENTED);
 }
 
 // --- What a request can carry ---------------------------------------------
