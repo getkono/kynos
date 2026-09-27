@@ -368,6 +368,127 @@ async fn a_derived_tag_is_the_same_on_a_hit_as_on_a_miss() {
     assert_eq!(second.field(header::ETAG.as_str()).as_deref(), Some(&*tag));
 }
 
+// --- What is not stored ---------------------------------------------------
+
+#[derive(Schema, Serialize, Deserialize)]
+struct Page {
+    rows: Vec<u64>,
+}
+
+/// Cacheable, and longer than a small bound.
+#[kynos::get("/page")]
+async fn page() -> WithHeaders<Json<Page>, CacheControl> {
+    WithHeaders::new(
+        Json(Page {
+            rows: (0..64).collect(),
+        }),
+        CacheControl,
+    )
+}
+
+/// Declining to store a response is not a licence to alter the one forwarded.
+#[tokio::test]
+async fn a_response_past_the_storage_bound_reaches_the_client_whole() {
+    let store = Stored::default();
+    let uncached = Router::<()>::new()
+        .mount(kynos::routes![page])
+        .build(())
+        .expect("a describable router");
+    let cached = Router::<()>::new()
+        .mount(kynos::routes![page])
+        .intercept(
+            Cache::new(store.clone())
+                .namespace("test")
+                .max_body_bytes(64),
+        )
+        .build(())
+        .expect("a describable router");
+
+    let direct = get(&uncached, "/page").call().await;
+    let through = get(&cached, "/page").call().await;
+
+    assert_eq!(through.status, direct.status);
+    assert!(!through.body.is_empty(), "the response body was emptied");
+    assert_eq!(through.body, direct.body);
+    assert!(
+        store
+            .0
+            .lock()
+            .expect("no test panics while holding this")
+            .is_empty(),
+        "a body past the bound was stored"
+    );
+}
+
+/// A stream states no length, so it is never buffered to be stored.
+#[cfg(feature = "openapi32")]
+mod streamed {
+    use std::{
+        convert::Infallible,
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
+    use bytes::Bytes;
+    use kynos::{
+        Router,
+        extract::media::OctetStream,
+        http::StatusCode,
+        middleware::cache::Cache,
+        response::{headers::WithHeaders, stream::binary::BinaryStream},
+    };
+
+    use super::{CacheControl, Stored, get};
+
+    /// Hand-written rather than from a stream crate, which the tests do not
+    /// depend on.
+    struct Chunks(std::vec::IntoIter<Bytes>);
+
+    impl futures_core::Stream for Chunks {
+        type Item = Result<Bytes, Infallible>;
+
+        fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            Poll::Ready(self.get_mut().0.next().map(Ok))
+        }
+    }
+
+    fn chunk() -> Bytes {
+        Bytes::from(b"a streamed row\n".repeat(8))
+    }
+
+    /// Cacheable by its headers, and a stream.
+    #[kynos::get("/feed")]
+    async fn feed() -> WithHeaders<BinaryStream<Chunks, OctetStream>, CacheControl> {
+        WithHeaders::new(
+            BinaryStream::new(Chunks(vec![chunk(), chunk()].into_iter())),
+            CacheControl,
+        )
+    }
+
+    #[tokio::test]
+    async fn a_streamed_response_reaches_the_client_whole() {
+        let store = Stored::default();
+        let service = Router::<()>::new()
+            .mount(kynos::routes![feed])
+            .intercept(Cache::new(store.clone()).namespace("test"))
+            .build(())
+            .expect("a describable router");
+
+        let reply = get(&service, "/feed").call().await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(reply.body, [chunk(), chunk()].concat());
+        assert!(
+            store
+                .0
+                .lock()
+                .expect("no test panics while holding this")
+                .is_empty(),
+            "a stream was stored"
+        );
+    }
+}
+
 // --- Conditional over a cache --------------------------------------------
 
 /// The arrangement worth having: a hit turned into a 304.
