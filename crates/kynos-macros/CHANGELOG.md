@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/getkono/kynos/compare/kynos-macros-v0.2.0...kynos-macros-v0.3.0) - 2026-09-27
+
+### Documentation
+
+- *(macros)* limit the parameter-property name claim to fields no Kynos attribute renames
+- *(macros)* name parameters by the Schema derive's case rule, not serde's
+- *(macros)* list what the parameter derives refuse
+- *(params)* state the ParamValue bound and drop the #216 notes
+- *(macros)* say the path capture lookup sits behind an ordered check
+- *(macros)* link the QueryParams object-field limit to #216
+- *(macros)* state the object-field limit of the QueryParams derive
+- *(macros)* say the path parameter check is ordered
+- *(macros)* state what the parameter derives actually check
+- *(macros)* name the two shapes serde lends every key in the Schema rustdoc
+- *(schema)* state the tag, transparent and two-refusal cases of ClosedFlatten
+- *(schema)* state which flattened types a closed object admits
+- *(macros)* list where the Schema derive refuses a wire-form override
+- *(schema)* state the transparent override scan by each direction's single pick
+
+### Fixed
+
+- *(macros)* refuse serde alias and read rename_all in the parameter derives
+- *(params)* [**breaking**] bound each parameter field by ParamValue
+- *(macros)* [**breaking**] describe a struct's serde tag, and refuse it where no schema is true
+- *(macros)* withhold ClosedFlatten from a struct carrying a serde tag
+- *(schema)* [**breaking**] bound a closed object's flattened field by ClosedFlatten
+- *(macros)* refuse a wire-form override on a flattened PhantomData serde reads
+- *(macros)* scan a transparent struct only through the field serde picks per direction
+
+### Other
+
+- *(schema)* [**breaking**] move the flatten markers to kynos::schema::flatten
+
 ## [0.2.0](https://github.com/getkono/kynos/compare/kynos-macros-v0.1.0...kynos-macros-v0.2.0) - 2026-09-24
 
 ### Documentation
