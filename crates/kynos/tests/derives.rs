@@ -1227,11 +1227,14 @@ fn a_oneof_or_ref_schema_projects_to_no_parameter() {
 struct Named {
     name: String,
     note: Option<String>,
+    #[param(rename = "sortBy")]
+    sort: Option<String>,
 }
 
 /// A declared value whose percent-decoded octets are not UTF-8 is refused,
-/// naming the parameter, rather than repaired into text the client never sent.
-/// An undeclared pair is ignored whatever its octets.
+/// naming the parameter by its wire name, rather than repaired into text the
+/// client never sent. A name is matched once percent-decoded, and an undeclared
+/// pair is ignored whatever its octets.
 #[test]
 fn a_query_value_that_is_not_utf8_is_refused_naming_its_parameter() {
     use kynos::{error::rejection::QueryRejection, extract::params::query::DecodeQuery};
@@ -1241,6 +1244,8 @@ fn a_query_value_that_is_not_utf8_is_refused_naming_its_parameter() {
         ("name=%FF%FE", "name"),
         ("name=ok&note=%FF", "note"),
         ("name=%FF&name=ok", "name"),
+        ("name=ok&sortBy=%FF", "sortBy"),
+        ("na%6De=%FF", "name"),
     ] {
         match <Named as DecodeQuery>::decode(Some(query)) {
             Err(QueryRejection::Invalid { name, detail }) => {
@@ -1256,6 +1261,7 @@ fn a_query_value_that_is_not_utf8_is_refused_naming_its_parameter() {
         ("name=caf%C3%A9", "caf\u{e9}"),
         ("other=%FF&name=x", "x"),
         ("%FF=1&name=x", "x"),
+        ("na%6De=x", "x"),
     ] {
         match <Named as DecodeQuery>::decode(Some(query)) {
             Ok(decoded) => assert_eq!(decoded.name, expected, "{query}"),
