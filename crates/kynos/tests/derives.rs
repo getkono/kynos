@@ -2592,3 +2592,95 @@ fn untyped_variants_sharing_a_status_are_each_named() {
         "{responses}"
     );
 }
+
+// --- A member is named as serde names it ------------------------------------
+//
+// serde names a raw identifier without its `r#`, and uses each side of a split
+// `rename` in the direction it names. These pin the emitted names against what
+// serde writes and reads; `docs/schema.md` states the rule. None carries a doc
+// comment, for the reason `Labels` gives.
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct RawField {
+    r#type: u8,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawRenamed {
+    r#type_name: u8,
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum RawVariant {
+    r#match,
+    Other,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct ReadOnlyRenamed {
+    #[serde(skip_serializing, default, rename(serialize = "w", deserialize = "r"))]
+    x: u8,
+    y: u8,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct SameSides {
+    #[serde(rename(serialize = "n", deserialize = "n"))]
+    x: u8,
+}
+
+/// The keys of the object `value` is, in order.
+fn keys(value: &serde_json::Value) -> Vec<&str> {
+    value
+        .as_object()
+        .unwrap_or_else(|| panic!("expected an object: {value}"))
+        .keys()
+        .map(String::as_str)
+        .collect()
+}
+
+/// A raw identifier is named without its `r#`, before `rename_all` reaches it,
+/// as serde names it.
+#[test]
+fn a_raw_identifier_is_named_as_serde_names_it() {
+    let schema = emitted::<RawField>();
+    let written = serde_json::to_value(RawField { r#type: 1 }).expect("a struct serializes");
+    assert_eq!(keys(&schema["properties"]), vec!["type"], "{schema}");
+    assert_eq!(keys(&schema["properties"]), keys(&written));
+
+    let schema = emitted::<RawRenamed>();
+    let written = serde_json::to_value(RawRenamed { r#type_name: 1 }).expect("a struct serializes");
+    assert_eq!(keys(&schema["properties"]), vec!["typeName"], "{schema}");
+    assert_eq!(keys(&schema["properties"]), keys(&written));
+
+    let schema = emitted::<RawVariant>();
+    let written = serde_json::json!([
+        serde_json::to_value(RawVariant::r#match).expect("a variant serializes"),
+        serde_json::to_value(RawVariant::Other).expect("a variant serializes"),
+    ]);
+    assert_eq!(
+        schema["enum"],
+        serde_json::json!(["match", "Other"]),
+        "{schema}"
+    );
+    assert_eq!(schema["enum"], written);
+}
+
+/// A member serde uses in one direction is named by that side of its split
+/// `rename`, and one whose two sides agree by the name both give.
+#[test]
+fn a_split_rename_is_described_under_the_side_serde_uses() {
+    let schema = emitted::<ReadOnlyRenamed>();
+    assert!(schema["properties"].get("r").is_some(), "{schema}");
+    assert!(schema["properties"].get("x").is_none(), "{schema}");
+    let read: ReadOnlyRenamed =
+        serde_json::from_str(r#"{"r":1,"y":2}"#).expect("serde reads the deserialize side");
+    assert_eq!(read.x, 1);
+
+    let schema = emitted::<SameSides>();
+    let written = serde_json::to_value(SameSides { x: 1 }).expect("a struct serializes");
+    assert_eq!(keys(&schema["properties"]), vec!["n"], "{schema}");
+    assert_eq!(keys(&schema["properties"]), keys(&written));
+}

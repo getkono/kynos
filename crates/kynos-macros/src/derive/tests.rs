@@ -383,6 +383,23 @@ mod schema {
         ]
     }
 
+    /// The refusal a split `rename` raises where serde writes a member under
+    /// one name and reads it under another.
+    ///
+    /// A sixth function, since a split rename is neither a skip nor a tag.
+    fn rename_ledger() -> Vec<Case> {
+        vec![case(
+            "a split `rename` whose sides differ on a field serde writes and reads",
+            quote::quote!(
+                struct Stamp {
+                    #[serde(rename(serialize = "a", deserialize = "b"))]
+                    at: u64,
+                }
+            ),
+            "and reads it as",
+        )]
+    }
+
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
@@ -390,6 +407,7 @@ mod schema {
         each_case_is_refused(variant_ledger(), expand_inner);
         each_case_is_refused(field_ledger(), expand_inner);
         each_case_is_refused(tag_ledger(), expand_inner);
+        each_case_is_refused(rename_ledger(), expand_inner);
     }
 
     #[test]
@@ -401,8 +419,75 @@ mod schema {
                 + serde_ledger().len()
                 + variant_ledger().len()
                 + field_ledger().len()
-                + tag_ledger().len(),
+                + tag_ledger().len()
+                + rename_ledger().len(),
         );
+    }
+
+    /// A split `rename` is refused only where serde uses both sides, so each
+    /// member serde names one way is accepted: sides that agree, a field serde
+    /// only reads or only writes, a field of a variant serde never writes, a
+    /// flattened field, a transparent struct's field, and a variant serde only
+    /// reads.
+    #[test]
+    fn a_split_rename_one_schema_is_true_of_is_accepted() {
+        for declaration in [
+            quote::quote!(
+                struct Stamp {
+                    #[serde(rename(serialize = "a", deserialize = "a"))]
+                    at: u64,
+                }
+            ),
+            quote::quote!(
+                struct Stamp {
+                    #[serde(skip_serializing, default, rename(serialize = "a", deserialize = "b"))]
+                    at: u64,
+                }
+            ),
+            quote::quote!(
+                struct Stamp {
+                    #[serde(skip_deserializing, rename(serialize = "a", deserialize = "b"))]
+                    at: u64,
+                }
+            ),
+            quote::quote!(
+                enum Change {
+                    Now(u64),
+                    #[serde(skip_serializing)]
+                    Queued {
+                        #[serde(rename(serialize = "a", deserialize = "b"))]
+                        at: u64,
+                    },
+                }
+            ),
+            quote::quote!(
+                struct Stamp {
+                    at: u64,
+                    #[serde(flatten, rename(serialize = "a", deserialize = "b"))]
+                    audit: Audit,
+                }
+            ),
+            quote::quote!(
+                #[serde(transparent)]
+                struct Stamp {
+                    #[serde(rename(serialize = "a", deserialize = "b"))]
+                    at: u64,
+                }
+            ),
+            quote::quote!(
+                enum Change {
+                    Now,
+                    #[serde(skip_serializing, rename(serialize = "a", deserialize = "b"))]
+                    Queued,
+                }
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+            if let Err(error) = expand_inner(&input) {
+                panic!("a split rename with a true schema was refused: {error}");
+            }
+        }
     }
 
     /// A tag is refused only where no schema is true of it, so each shape
@@ -497,6 +582,48 @@ mod schema {
                             at: u64,
                             #[serde(skip_deserializing)]
                             kind: String,
+                        }
+                    ),
+                    "is also this struct's",
+                ),
+                case(
+                    "a raw identifier serde names as the tag",
+                    quote::quote!(
+                        #[serde(tag = "type")]
+                        struct Stamp {
+                            at: u64,
+                            r#type: String,
+                        }
+                    ),
+                    "is also this struct's",
+                ),
+                case(
+                    "a field serde writes under the tag's name by a split `rename`",
+                    quote::quote!(
+                        #[serde(tag = "kind")]
+                        struct Stamp {
+                            at: u64,
+                            #[serde(
+                                skip_deserializing,
+                                rename(serialize = "kind", deserialize = "k")
+                            )]
+                            x: String,
+                        }
+                    ),
+                    "is also this struct's",
+                ),
+                case(
+                    "a field serde reads under the tag's name by a split `rename`",
+                    quote::quote!(
+                        #[serde(tag = "kind")]
+                        struct Stamp {
+                            at: u64,
+                            #[serde(
+                                skip_serializing,
+                                default,
+                                rename(serialize = "x", deserialize = "kind")
+                            )]
+                            y: String,
                         }
                     ),
                     "is also this struct's",
