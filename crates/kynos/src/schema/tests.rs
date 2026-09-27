@@ -631,7 +631,7 @@ fn a_chrono_date_outside_four_digit_years_writes_what_no_date_admits() {
     }
 }
 
-/// The jiff exceptions the `ParamValue` docs state: a year before 0 takes a
+/// Two jiff exceptions the `ParamValue` docs state: a year before 0 takes a
 /// sign and six digits, and a negative duration a leading `-`, neither of which
 /// RFC 3339 admits. serde writes the same text, and `FromStr` reads it back.
 #[cfg(feature = "time-jiff")]
@@ -662,6 +662,37 @@ fn a_jiff_value_before_zero_writes_what_no_format_admits() {
         serde_json::Value::String("-P1D".to_owned())
     );
     let read: Span = "-P1D".parse().expect("a negative ISO 8601 duration parses");
+    assert_eq!(read.fieldwise(), span.fieldwise());
+}
+
+/// The other jiff duration exception the `ParamValue` docs state: an ordinary
+/// non-negative duration can take an ISO 8601 form RFC 3339's `duration` does
+/// not admit, with fractional seconds, a skipped unit, or weeks beside days.
+/// serde writes the same text, and `FromStr` reads it back.
+#[cfg(feature = "time-jiff")]
+#[test]
+fn a_jiff_duration_writes_iso_8601_forms_no_rfc_3339_duration_admits() {
+    use jiff::{SignedDuration, Span};
+
+    for (duration, text) in [
+        (SignedDuration::from_secs(3630), "PT1H30S"),
+        (SignedDuration::from_millis(500), "PT0.5S"),
+    ] {
+        assert_eq!(duration.to_string(), text);
+        assert_eq!(
+            serde_json::to_value(duration).expect("a duration serializes"),
+            serde_json::Value::String(text.to_owned())
+        );
+        assert_eq!(text.parse::<SignedDuration>().ok(), Some(duration));
+    }
+
+    let span = Span::new().weeks(1).days(2);
+    assert_eq!(span.to_string(), "P1W2D");
+    assert_eq!(
+        serde_json::to_value(span).expect("a span serializes"),
+        serde_json::Value::String("P1W2D".to_owned())
+    );
+    let read: Span = "P1W2D".parse().expect("an ISO 8601 duration parses");
     assert_eq!(read.fieldwise(), span.fieldwise());
 }
 
