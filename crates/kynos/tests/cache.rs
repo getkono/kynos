@@ -425,6 +425,9 @@ async fn a_response_past_the_storage_bound_reaches_the_client_whole() {
     let through = get(&page_cached_under(&store, 64), "/page").call().await;
 
     assert_eq!(through.status, direct.status);
+    let content_type = direct.field(header::CONTENT_TYPE.as_str());
+    assert!(content_type.is_some(), "the fixture states its media type");
+    assert_eq!(through.field(header::CONTENT_TYPE.as_str()), content_type);
     assert!(!through.body.is_empty(), "the response body was emptied");
     assert_eq!(through.body, direct.body);
     assert!(is_empty(&store), "a body past the bound was stored");
