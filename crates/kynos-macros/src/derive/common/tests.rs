@@ -121,6 +121,26 @@ fn an_alias_is_refused_whatever_else_names_the_field() {
     }
 }
 
+/// A split `rename_all` is refused even where its sides agree, unlike in the
+/// `Schema` derive, which reads agreeing sides as the single form.
+///
+/// Beside the table rather than in it: the table's row proves the site fires,
+/// and this proves it fires whatever the sides say.
+#[test]
+fn a_split_rename_all_is_refused_even_where_its_sides_agree() {
+    let error = name_of(
+        quote! {
+            #[serde(rename_all(serialize = "camelCase", deserialize = "camelCase"))]
+            struct Holder {
+                user_id: u64
+            }
+        },
+        "param",
+    )
+    .expect_err("a split `rename_all` whose sides agree");
+    assert!(error.to_string().contains("split `rename_all`"), "{error}");
+}
+
 /// Each shape of value `skip_value` has to step over, with a `rename`
 /// behind it.
 ///

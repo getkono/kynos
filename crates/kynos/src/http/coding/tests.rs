@@ -3,8 +3,8 @@ use super::{identity_quality, preferred, quality};
 /// The aliases the specification asks a recipient to honour.
 #[test]
 fn x_gzip_is_gzip() {
-    assert_eq!(quality("x-gzip", "gzip"), Some(1.0));
-    assert_eq!(quality("X-GZIP;q=0.5", "gzip"), Some(0.5));
+    assert_eq!(quality("x-gzip", "gzip"), Some(1_000));
+    assert_eq!(quality("X-GZIP;q=0.5", "gzip"), Some(500));
     // And no other coding has one.
     assert_eq!(quality("x-br", "br"), None);
 }
@@ -13,23 +13,39 @@ fn x_gzip_is_gzip() {
 #[test]
 fn absence_and_refusal_are_distinguishable() {
     assert_eq!(quality("gzip", "br"), None);
-    assert_eq!(quality("br;q=0", "br"), Some(0.0));
+    assert_eq!(quality("br;q=0", "br"), Some(0));
 }
 
-/// A qvalue above 1 is not a qvalue, and must not outrank a legitimate one.
+/// A weight RFC 9110 section 12.4.2 cannot express is a refusal, not a number.
+///
+/// The grammar is the one `Accept` and `Accept-Language` read, so a value
+/// above 1 is refused rather than clamped: it must not outrank a legitimate
+/// `q=1`, and a client that wrote it did not write a qvalue.
 #[test]
-fn an_out_of_range_weight_is_clamped_rather_than_believed() {
-    assert_eq!(quality("gzip;q=1.5", "gzip"), Some(1.0));
-    assert_eq!(quality("gzip;q=-1", "gzip"), Some(0.0));
-    // Unparsable is a refusal: the client wrote something it did not mean.
-    assert_eq!(quality("gzip;q=abc", "gzip"), Some(0.0));
+fn a_weight_that_is_not_a_qvalue_is_a_refusal() {
+    for field in [
+        "gzip;q=NaN",    // a float, not a qvalue
+        "gzip;q=inf",    // nor is infinity
+        "gzip;q=1e-1",   // an exponent the grammar has no room for
+        "gzip;q=0.0001", // a fourth decimal place
+        "gzip;q=-0.5",   // a sign
+        "gzip;q=1.5",    // above the bound
+        "gzip;q=abc",    // not a number at all
+    ] {
+        assert_eq!(quality(field, "gzip"), Some(0), "{field}");
+    }
+
+    // A decimal point with no digits after it is still a qvalue.
+    assert_eq!(quality("gzip;q=0.", "gzip"), Some(0));
+    assert_eq!(quality("gzip;q=1.", "gzip"), Some(1_000));
+    assert_eq!(quality("gzip;q=0.5", "gzip"), Some(500));
 }
 
 #[test]
 fn a_wildcard_answers_for_anything_not_named() {
-    assert_eq!(quality("*;q=0.3", "br"), Some(0.3));
+    assert_eq!(quality("*;q=0.3", "br"), Some(300));
     // A specific entry wins over the wildcard.
-    assert_eq!(quality("br;q=0.9, *;q=0.3", "br"), Some(0.9));
+    assert_eq!(quality("br;q=0.9, *;q=0.3", "br"), Some(900));
 }
 
 /// A tie goes to the coding, which is what plain `Accept-Encoding: gzip` means.
@@ -78,15 +94,40 @@ fn a_tie_between_codings_goes_to_the_callers_order() {
     assert_eq!(preferred("gzip, br", &["gzip", "br"]), Some("gzip"));
 }
 
-/// The values compared are literals parsed from literals, so equality here is
-/// exact: `float_cmp` is warning about a class of bug this cannot be an
-/// instance of.
-#[allow(clippy::float_cmp)]
 #[test]
 fn identity_is_acceptable_unless_it_is_excluded() {
-    assert_eq!(identity_quality("gzip"), 1.0);
-    assert_eq!(identity_quality("identity;q=0"), 0.0);
-    assert_eq!(identity_quality("*;q=0"), 0.0);
+    assert_eq!(identity_quality("gzip"), 1_000);
+    assert_eq!(identity_quality("identity;q=0"), 0);
+    assert_eq!(identity_quality("*;q=0"), 0);
     // A more specific entry beats the wildcard.
-    assert_eq!(identity_quality("*;q=0, identity;q=1"), 1.0);
+    assert_eq!(identity_quality("*;q=0, identity;q=1"), 1_000);
+}
+
+/// An identity weight that is not a qvalue does not exclude identity.
+///
+/// RFC 9110 section 12.5.3 rule 2 excludes identity only on an explicit
+/// `identity;q=0` or `*;q=0`, and `identity;q=1.5` states neither, so identity
+/// keeps its default. It is still the more specific entry, so a wildcard
+/// refusal beside it does not reach identity either.
+#[test]
+fn a_malformed_identity_weight_does_not_exclude_identity() {
+    for field in ["identity;q=1.5", "identity;q=inf", "identity;q=NaN"] {
+        assert_eq!(identity_quality(field), 1_000, "{field}");
+    }
+    assert_eq!(identity_quality("identity;q=1.5, *;q=0"), 1_000);
+}
+
+/// `quality` reads the weight the field gives `identity`, not whether identity
+/// is acceptable; rule 2 is `identity_quality`'s alone.
+///
+/// A weight that is not a qvalue is a refusal to one and states no exclusion to
+/// the other, and a silent field is `None` to one and the default to the other.
+#[test]
+fn quality_reads_identitys_weight_not_its_acceptability() {
+    for field in ["identity;q=1.5", "*;q=1.5"] {
+        assert_eq!(quality(field, "identity"), Some(0), "{field}");
+        assert_eq!(identity_quality(field), 1_000, "{field}");
+    }
+    assert_eq!(quality("gzip", "identity"), None);
+    assert_eq!(identity_quality("gzip"), 1_000);
 }

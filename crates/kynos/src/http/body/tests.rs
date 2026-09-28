@@ -1,6 +1,9 @@
 use http_body_util::BodyExt;
 
-use std::sync::{Arc, Mutex};
+use std::{
+    io,
+    sync::{Arc, Mutex},
+};
 
 use super::{Body, Bytes, Delivery, HttpBody};
 
@@ -130,4 +133,30 @@ async fn a_watched_body_reports_once_across_both_of_its_ends() {
         vec![Delivery::Complete],
         "the drop reported a second time over the read that had already reported"
     );
+}
+
+/// A body that failed was not delivered, however far it was read: a request
+/// that failed part-way and is echoed back as a response must not report the
+/// response as complete, or `Observer::on_disconnect` never fires for it.
+#[tokio::test]
+async fn a_watched_body_that_failed_part_way_reports_an_interruption() {
+    let reports = Reports::default();
+    let error = io::Error::new(io::ErrorKind::ConnectionReset, "peer went away");
+    let mut body = reports.watching(Body::failed_after(
+        Bytes::from_static(b"1234"),
+        Box::new(error),
+    ));
+
+    let arrived = body.frame().await.expect("the bytes that arrived");
+    assert_eq!(
+        arrived.expect("a data frame").into_data().ok(),
+        Some(Bytes::from_static(b"1234"))
+    );
+    assert!(
+        body.frame().await.expect("the failure").is_err(),
+        "the failure after the bytes that arrived"
+    );
+    drop(body);
+
+    assert_eq!(reports.taken(), vec![Delivery::Interrupted]);
 }

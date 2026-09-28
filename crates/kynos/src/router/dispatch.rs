@@ -10,7 +10,13 @@
 //! `docs/architecture.md` gives it.
 
 use std::{
-    future::Future, panic::AssertUnwindSafe, pin::Pin, sync::Arc, task::Poll, time::Instant,
+    any::Any,
+    future::Future,
+    panic::AssertUnwindSafe,
+    pin::Pin,
+    sync::{Arc, Mutex, PoisonError},
+    task::Poll,
+    time::Instant,
 };
 
 use kynos_openapi::Method;
@@ -42,7 +48,7 @@ use crate::{
 /// that `Pin::as_mut` supplies the projection, and each poll is wrapped in
 /// [`catch_unwind`](std::panic::catch_unwind). A future that unwound is
 /// reported once and then dropped, never polled again.
-pub(crate) async fn recover<F>(future: F) -> Result<Response, Box<dyn std::any::Any + Send>>
+pub(crate) async fn recover<F>(future: F) -> Result<Response, Box<dyn Any + Send>>
 where
     F: Future<Output = Response>,
 {
@@ -64,6 +70,36 @@ where
 /// service's author wrote for themselves, and a client is not its audience.
 pub(crate) fn panic_response() -> Response {
     Problem::new(StatusCode::INTERNAL_SERVER_ERROR).into_response()
+}
+
+/// The payload of a panic an endpoint recovered, on its way to the dispatcher.
+///
+/// Carried on the 500's extensions because `Endpoint::call` has no other way
+/// out, and reported where the route and the observers already are. Behind a
+/// lock because an extension must be `Clone + Sync` and a payload is only
+/// `Send`. Private, so nothing between the endpoint and the dispatcher can
+/// name it.
+#[derive(Clone)]
+struct Recovered(Arc<Mutex<Option<Box<dyn Any + Send>>>>);
+
+/// [`panic_response`], carrying the payload it was recovered from.
+pub(crate) fn recovered_response(payload: Box<dyn Any + Send>) -> Response {
+    let mut response = panic_response();
+    response
+        .extensions_mut()
+        .insert(Recovered(Arc::new(Mutex::new(Some(payload)))));
+    response
+}
+
+/// Removes the payload [`recovered_response`] attached, if this is one.
+fn take_recovered(response: &mut Response) -> Option<Box<dyn Any + Send>> {
+    response
+        .extensions_mut()
+        .remove::<Recovered>()?
+        .0
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take()
 }
 
 /// The 500 a recovery branch contributes to every operation it covers.
@@ -300,6 +336,9 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
 
     /// Runs one already-routed operation's chain, with recovery if it asked for
     /// it.
+    ///
+    /// A panic is reported here whichever scope recovered it: this one, or the
+    /// endpoint's own, whose 500 carries the payload out.
     async fn run(&self, operation: &Served<C>, route: Route<'_>, request: Request) -> Response {
         let served = Next::new(
             &operation.interceptors,
@@ -309,18 +348,30 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         )
         .run(request);
 
-        if operation.catch_panics {
+        let mut response = if operation.catch_panics {
             match recover(async move { served.await.into_response() }).await {
                 Ok(response) => response,
                 Err(payload) => {
-                    for observer in &self.observers {
-                        observer.on_panic(payload.as_ref(), Some(route));
-                    }
+                    self.report_panic(payload.as_ref(), route);
                     panic_response()
                 }
             }
         } else {
             served.await.into_response()
+        };
+
+        // Taken whether or not anyone observes, so the marker never reaches the
+        // driver.
+        if let Some(payload) = take_recovered(&mut response) {
+            self.report_panic(payload.as_ref(), route);
+        }
+        response
+    }
+
+    /// Tells every observer about a recovered panic.
+    fn report_panic(&self, payload: &(dyn Any + Send), route: Route<'_>) {
+        for observer in &self.observers {
+            observer.on_panic(payload, Some(route));
         }
     }
 

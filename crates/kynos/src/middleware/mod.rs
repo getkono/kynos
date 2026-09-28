@@ -372,6 +372,30 @@ impl<H> Continued<H> {
         *self.response.body_mut() = body;
     }
 
+    /// Removes a field the declared group `G` names.
+    ///
+    /// For the one case [`with_headers`](Continued::with_headers) cannot
+    /// express: a field the chain set that the interceptor owns and that has
+    /// stopped being true — `Compression`'s `Content-Length` over a streamed
+    /// encode, whose length is not known when the head goes. Held to the rule
+    /// `with_headers` writes under: only a name `G::NAMES` declares.
+    #[cfg(feature = "compression")]
+    pub(crate) fn remove_declared<G: crate::extract::params::header::HeaderParams>(
+        &mut self,
+        name: &crate::http::HeaderName,
+    ) {
+        debug_assert!(
+            G::NAMES
+                .iter()
+                .any(|declared| stack::header_name_eq(declared, name.as_str())),
+            "`{}` removes `{}`, which its `NAMES` does not declare",
+            std::any::type_name::<G>(),
+            name.as_str(),
+        );
+
+        self.response.headers_mut().remove(name);
+    }
+
     /// Unwraps into the response, for the machinery that writes it.
     pub(crate) fn into_response(self) -> Response {
         self.response
@@ -504,7 +528,17 @@ pub trait Observer<C>: Send + Sync + 'static {
         let _ = (route, elapsed);
     }
 
-    /// Called when a handler panicked.
+    /// Called when a panic was recovered, at whichever scope asked for
+    /// recovery — the router, a group or one endpoint — before
+    /// [`on_response`](Observer::on_response) sees the 500 it became.
+    ///
+    /// `route` is always `Some`, naming the operation the panic unwound out
+    /// of: only a routed operation runs anything that can panic. A panic is
+    /// reported once, by the innermost scope that recovered it. One nothing
+    /// recovers is not reported here: it unwinds past the dispatcher. Nor is
+    /// one an endpoint recovered beneath an interceptor that then replaced the
+    /// 500 with a short circuit of its own, because the response that carried
+    /// it never reached the dispatcher.
     fn on_panic(&self, payload: &(dyn std::any::Any + Send), route: Option<Route<'_>>) {
         let _ = (payload, route);
     }

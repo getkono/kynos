@@ -899,6 +899,105 @@ async fn a_body_that_finished_is_not_reported_as_interrupted() {
     );
 }
 
+/// The same report through `Compression`, which re-encodes a body of unknown
+/// length as it streams and so stands between `Watched` and the body that
+/// ended. Whether that body ended is a question it has to answer truthfully
+/// too when this timer destroyed it. A producer that failed with no limit
+/// mounted is `Compression`'s property alone, and is asserted in
+/// `middleware.rs`.
+#[cfg(all(feature = "openapi32", feature = "compression"))]
+mod beneath_compression {
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
+
+    use kynos::{
+        Router,
+        http::{Request, body::Body, header},
+        middleware::{compression::Compression, limits::BodyTimeout},
+        router::service::Service,
+    };
+
+    use super::{CountingEnds, EndCounts, read_to_end, stalled, steady};
+
+    /// Serves `target` gzip-encoded, reads the body to its end or its first
+    /// error, and hands back the outcome with the disconnects observed.
+    async fn ended(service: &Service<()>, counts: &EndCounts, target: &str) -> (bool, usize) {
+        let mut request = Request::new(Body::empty());
+        *request.uri_mut() = target.parse().expect("a usable request target");
+        request.headers_mut().insert(
+            header::ACCEPT_ENCODING,
+            header::HeaderValue::from_static("gzip"),
+        );
+
+        let response = service.call(request).await;
+
+        // Otherwise the case below is about the uncompressed path, which the
+        // cases above already cover.
+        assert_eq!(
+            response.headers().get(header::CONTENT_ENCODING),
+            Some(&header::HeaderValue::from_static("gzip"))
+        );
+
+        let finished = read_to_end(response.into_body()).await.is_ok();
+
+        assert_eq!(counts.responses.load(Ordering::SeqCst), 1);
+
+        (finished, counts.disconnects.load(Ordering::SeqCst))
+    }
+
+    fn counts() -> Arc<EndCounts> {
+        Arc::new(EndCounts {
+            responses: AtomicUsize::new(0),
+            disconnects: AtomicUsize::new(0),
+        })
+    }
+
+    /// `BodyTimeout` beneath `Compression`: the timer's error comes out
+    /// through the encoder, and the killed response is still not delivered.
+    #[tokio::test]
+    async fn a_body_the_timer_ended_is_reported_as_interrupted() {
+        let counts = counts();
+        let service = Router::<()>::new()
+            .mount(kynos::routes![stalled])
+            .observe(CountingEnds(Arc::clone(&counts)))
+            .intercept(Compression::new())
+            .intercept(BodyTimeout::idle(Duration::from_millis(100)))
+            .build(())
+            .expect("a describable router");
+
+        let (finished, disconnects) = ended(&service, &counts, "/stalled").await;
+
+        assert!(!finished, "a stalled body outlived its idle limit");
+        assert_eq!(
+            disconnects, 1,
+            "a compressed response the body timer destroyed was reported as delivered"
+        );
+    }
+
+    /// The pass control: an encoded body that finished reports no disconnect.
+    #[tokio::test]
+    async fn a_body_that_finished_is_not_reported_as_interrupted() {
+        let counts = counts();
+        let service = Router::<()>::new()
+            .mount(kynos::routes![steady])
+            .observe(CountingEnds(Arc::clone(&counts)))
+            .intercept(Compression::new())
+            .intercept(BodyTimeout::idle(Duration::from_millis(200)))
+            .build(())
+            .expect("a describable router");
+
+        let (finished, disconnects) = ended(&service, &counts, "/steady").await;
+
+        assert!(finished, "a steady stream did not complete");
+        assert_eq!(disconnects, 0);
+    }
+}
+
 // --- The problem type a limit's refusal names -----------------------------
 
 /// The type this fixture's 413 publishes.

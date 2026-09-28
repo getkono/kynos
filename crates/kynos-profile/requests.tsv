@@ -1,0 +1,21 @@
+# Written by `mise run profile:record`; read by `mise run profile:requests`.
+# toolchain: rustc 1.97.1 (8bab26f4f 2026-07-14)
+# host: AMD Ryzen 7 7800X3D 8-Core Processor, valgrind-3.27.1
+benchmark	program_instructions	heap_blocks	heap_bytes
+alloc_counter_agreement.capture	2443	11	3852
+alloc_counter_agreement.miss	1831	6	2768
+alloc_counter_agreement.stacked_4	2992	11	7580
+alloc_counter_agreement.stacked_8	4252	15	11804
+alloc_counter_agreement.static_match	1732	7	3356
+scenarios.echo_post	35253	50	10830
+scenarios.headers	8331	28	5300
+scenarios.json_large	1027125	2122	230712
+scenarios.json_small	3262	14	4223
+scenarios.layers_0	3262	14	4223
+scenarios.layers_4	4522	18	8447
+scenarios.layers_8	5782	22	12671
+scenarios.method_not_allowed	2266	6	2768
+scenarios.not_found	1831	6	2768
+scenarios.path_params	5709	25	5100
+scenarios.plaintext	2017	11	4057
+scenarios.rejection	7262	22	5959

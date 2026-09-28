@@ -12,23 +12,23 @@
 //! variants claim is read as the first alone, so only that one names it.
 
 use super::{
-    Container, Field, TokenStream2, Variant, close, field_name, is_required, quote,
-    shape::member_schema, skip_value, string_value, variant_name,
+    Container, Field, TokenStream2, Variant, close, field_read_name, is_required, quote,
+    shape::member_schema, skip_value, string_value, variant_read_name,
 };
 
-/// Every name serde reads a named field under: its wire name first, then each
+/// Every name serde reads a named field under: its read name first, then each
 /// `alias` in the order written, each once.
 ///
 /// An alias is the literal name serde reads, since `rename_all` does not reach
 /// it, and one repeating a name already listed adds nothing, as serde reads its
 /// aliases as a set.
 pub(super) fn read_names(field: &Field, container: &Container) -> Vec<String> {
-    names(field_name(field, container), &field.attrs)
+    names(field_read_name(field, container), &field.attrs)
 }
 
-/// The same for a variant: its wire name first, then each distinct `alias`.
+/// The same for a variant: its read name first, then each distinct `alias`.
 pub(super) fn variant_names(variant: &Variant, container: &Container) -> Vec<String> {
-    names(variant_name(variant, container), &variant.attrs)
+    names(variant_read_name(variant, container), &variant.attrs)
 }
 
 /// The names serde reads as each of `variants`, in order: its
@@ -56,14 +56,18 @@ pub(super) fn variants_read_names(
         .collect()
 }
 
-/// The first of `variants` whose own wire name an earlier one claims, with
-/// that earlier variant: serde reads the name as the earlier one.
+/// The first of `variants` whose own name an earlier one claims, with that
+/// earlier variant: serde reads the name as the earlier one.
+///
+/// The own name is the read name: once `reject_split_rename` has run, a
+/// variant serde both writes and reads is written under a name it is read
+/// under, and one serde only reads is named by the side it is read under.
 pub(super) fn shadowed_variant<'a>(
     variants: &[&'a Variant],
     container: &Container,
 ) -> Option<(&'a Variant, &'a Variant)> {
     variants.iter().enumerate().find_map(|(index, later)| {
-        let wire = variant_name(later, container);
+        let wire = variant_read_name(later, container);
         variants[..index]
             .iter()
             .find(|earlier| variant_names(earlier, container).contains(&wire))

@@ -137,9 +137,12 @@ It is answered before the chain runs, because the representation the handler
 would produce is one no acceptable coding exists for, so producing it is work
 whose result could not be sent.
 
-Reaching it takes `*;q=0`, or naming every coding and identity with `q=0`. No
-ordinary client does either, which is why 406 appearing on every covered
-operation is a description of something real rather than noise.
+Reaching it takes leaving every coding unacceptable — refused with `q=0` or a
+weight that is not a qvalue, or left unlisted with no wildcard to speak for it —
+and excluding identity with an explicit `identity;q=0` or `*;q=0`, so
+`identity;q=0` alone is enough. No ordinary client writes such a field, which is
+why 406 appearing on every covered operation is a description of something real
+rather than noise.
 
 Two details of the same section are easy to get wrong and are checked. Identity
 is excluded by `identity;q=0` **or** by `*;q=0` with no more specific identity
@@ -207,7 +210,8 @@ mounted.
 length is known is collected and encoded once. One whose length is not — an
 event stream, a log tail, an export written as it is read — is encoded frame by
 frame rather than skipped. `min_size` does not apply there: it is a statement
-about a length nobody has. No `Content-Length` rides on the result, because the
+about a length nobody has. No `Content-Length` rides on the result — one the
+handler stated counts the identity octets and is removed — because the
 encoded length is not known until after the head has gone and RFC 9110 §8.6
 forbids forwarding one known to be incorrect.
 
@@ -1007,6 +1011,9 @@ shareable.
 The cookie rule has no opt-out. Replaying a response that mints a session to a
 second client is the worst bug a cache has, and `Vary` cannot protect against
 it: the cookie is in the *response*, and nothing in the request selects it.
+
+A body `Cache` will not buffer — one past `max_body_bytes`, or a stream, which
+states no length — is not stored either, and is forwarded exactly as it arrived.
 
 **There is no heuristic freshness.** RFC 9111 section 4.2.2 permits one, and
 every heuristic is a guess that turns a correct origin into an incorrect cache.
