@@ -1135,6 +1135,29 @@ mod encoding_policy {
         );
     }
 
+    /// `Required` outranks `min_size`: a body under the threshold, to a client
+    /// that accepts a coding, is encoded rather than refused. The policy
+    /// promises "encode it, or refuse the request with 406", and the 406 is
+    /// for a client that takes only identity — this one did not.
+    #[tokio::test]
+    async fn a_required_encoding_under_min_size_is_still_encoded() {
+        let service = Router::<App>::new()
+            .mount(kynos::routes![export])
+            .intercept(Compression::new().min_size(4_096))
+            .build(App::new())
+            .expect("a describable router");
+        let reply = get(&service, "/export")
+            .header("accept-encoding", "gzip")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(
+            reply.field(header::CONTENT_ENCODING.as_str()).as_deref(),
+            Some("gzip")
+        );
+    }
+
     /// The point of `Required`. A client that will take only identity is told
     /// no, rather than handed the whole representation uncompressed.
     #[tokio::test]
