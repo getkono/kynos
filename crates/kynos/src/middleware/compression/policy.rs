@@ -46,6 +46,11 @@ pub enum Encoding {
     /// that will take only identity is told 406 rather than handed forty
     /// megabytes uncompressed.
     ///
+    /// It also outranks [`min_size`](super::Compression::min_size): a body
+    /// under the threshold is encoded all the same when the client accepts a
+    /// coding. An empty body has nothing to encode, so it is refused with 406
+    /// whatever the client accepts.
+    ///
     /// This is the one setting that can turn a 200 into an error, and the error
     /// is one [`Compression`](super::Compression) already declares — mounting
     /// it contributes 406 to every covered operation whether or not any handler

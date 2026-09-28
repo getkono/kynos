@@ -14,7 +14,7 @@ use kynos::{
     Router,
     extract::body::text::Text,
     http::{HeaderValue, Method, Request, body::Body, header},
-    middleware::{Continued, Interceptor, Next},
+    middleware::{Continued, Interceptor, Next, compression::Compression},
     prelude::*,
     router::service::Service,
 };
@@ -62,9 +62,18 @@ struct Large {
 const LARGE_ENTRIES: u64 = 300;
 
 fn large() -> Large {
+    entries(LARGE_ENTRIES)
+}
+
+/// `json-large`'s shape at `count` entries, each about 195 octets written.
+///
+/// The compression sweep serves the same document at several sizes, so that
+/// what changes between two of its rows is the length alone and not what the
+/// encoder is handed to find repeats in.
+fn entries(count: u64) -> Large {
     Large {
-        total: LARGE_ENTRIES,
-        entries: (0..LARGE_ENTRIES)
+        total: count,
+        entries: (0..count)
             .map(|id| Entry {
                 id,
                 title: format!("entry number {id} of the large document"),
@@ -187,6 +196,23 @@ async fn json_large() -> Json<Large> {
     Json(large())
 }
 
+/// The compression sweep's middle sizes: about 1, 2 and 4 KiB of the
+/// `json-large` shape. `json-small` and `json-large` are its two ends.
+#[kynos::get("/json/1k")]
+async fn json_1k() -> Json<Large> {
+    Json(entries(5))
+}
+
+#[kynos::get("/json/2k")]
+async fn json_2k() -> Json<Large> {
+    Json(entries(10))
+}
+
+#[kynos::get("/json/4k")]
+async fn json_4k() -> Json<Large> {
+    Json(entries(21))
+}
+
 #[kynos::post("/echo")]
 async fn echo(Json(echo): Json<Echo>) -> Json<Echo> {
     Json(echo)
@@ -217,6 +243,37 @@ fn router() -> Router<()> {
     Router::<()>::new().mount(kynos::routes![
         plaintext, json_small, json_large, echo, items, headers, ping, user
     ])
+}
+
+/// The JSON documents at every size the compression sweep reads, behind
+/// `Compression`.
+///
+/// A table of its own rather than the catalog's with more routes, so that the
+/// catalog's scenarios keep the route table their recorded counts were taken
+/// over.
+///
+/// `min_size(0)` rather than the default, because the sweep measures what
+/// encoding a body costs at each length, and the default's threshold is what
+/// that measurement is read to choose: measured through it, the rows below the
+/// threshold would report the skip instead.
+#[must_use]
+pub fn compressed() -> Service<()> {
+    Router::<()>::new()
+        .mount(kynos::routes![
+            json_small, json_1k, json_2k, json_4k, json_large
+        ])
+        .intercept(Compression::new().min_size(0))
+        .build(())
+        .expect("a describable router")
+}
+
+/// A bodiless `GET` offering exactly `coding`.
+pub(crate) fn get_encoded(target: &str, coding: &'static str) -> Request {
+    let mut request = get(target);
+    request
+        .headers_mut()
+        .insert(header::ACCEPT_ENCODING, HeaderValue::from_static(coding));
+    request
 }
 
 /// The service every scenario but the two deeper stacks is sent to.

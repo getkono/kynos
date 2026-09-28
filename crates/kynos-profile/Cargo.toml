@@ -18,8 +18,13 @@ publish = false
 
 [dependencies]
 # The default feature set, because that is the build an application gets
-# without asking and so the one a request-path number should describe.
-kynos = { path = "../kynos" }
+# without asking and so the one a request-path number should describe, plus
+# `compression` for the sweep that weighs encoding against the octets it saves.
+# The catalog's scenarios mount no `Compression`, and a feature that is never
+# mounted never reaches the request path. Because Cargo unifies it into any
+# build that selects this package, `test:baseline` and `lint:baseline` exclude
+# this package so `kynos` is still built with it off.
+kynos = { path = "../kynos", features = ["compression"] }
 bytes = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 # Builds the `echo-post` body outside the measured region; the region itself

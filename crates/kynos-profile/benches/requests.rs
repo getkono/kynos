@@ -113,10 +113,40 @@ fn calibration((service, request, expected): Prepared) -> Served {
     (service, black_box(response), expected)
 }
 
+// `lib.rs`'s `COMPRESSION` sweep: what an encode costs at each size, read
+// against the octets it saves to choose `Compression`'s default `min_size`.
+#[library_benchmark(setup = prepared, teardown = checked, config = heap())]
+#[bench::identity_small("compressed-identity-small")]
+#[bench::identity_1k("compressed-identity-1k")]
+#[bench::identity_2k("compressed-identity-2k")]
+#[bench::identity_4k("compressed-identity-4k")]
+#[bench::identity_large("compressed-identity-large")]
+#[bench::gzip_small("compressed-gzip-small")]
+#[bench::gzip_1k("compressed-gzip-1k")]
+#[bench::gzip_2k("compressed-gzip-2k")]
+#[bench::gzip_4k("compressed-gzip-4k")]
+#[bench::gzip_large("compressed-gzip-large")]
+#[bench::br_small("compressed-br-small")]
+#[bench::br_1k("compressed-br-1k")]
+#[bench::br_2k("compressed-br-2k")]
+#[bench::br_4k("compressed-br-4k")]
+#[bench::br_large("compressed-br-large")]
+#[bench::zstd_small("compressed-zstd-small")]
+#[bench::zstd_1k("compressed-zstd-1k")]
+#[bench::zstd_2k("compressed-zstd-2k")]
+#[bench::zstd_4k("compressed-zstd-4k")]
+#[bench::zstd_large("compressed-zstd-large")]
+fn sweep((service, request, expected): Prepared) -> Served {
+    let response = serve(black_box(&service), black_box(request));
+    (service, black_box(response), expected)
+}
+
 library_benchmark_group!(name = scenarios, benchmarks = request);
 library_benchmark_group!(name = alloc_counter_agreement, benchmarks = calibration);
+library_benchmark_group!(name = compression, benchmarks = sweep);
 
 main!(
     library_benchmark_groups = scenarios,
-    alloc_counter_agreement
+    alloc_counter_agreement,
+    compression
 );
