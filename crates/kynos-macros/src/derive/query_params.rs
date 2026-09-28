@@ -34,10 +34,27 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     // describes one -- 3.2's whole-query parameter is.
     let reads = params.iter().map(|param| {
         let wire = param.name();
+        // A name that is not UTF-8 never equals a declared one, so only a
+        // declared value is held to being text.
         let found = quote! {
-            pairs
-                .iter()
-                .find_map(|(name, value)| (name.as_str() == #wire).then_some(value.as_str()))
+            match pairs.iter().find_map(|(name, value)| {
+                (name.as_slice() == #wire.as_bytes()).then_some(value.as_slice())
+            }) {
+                ::core::option::Option::Some(octets) => match ::core::str::from_utf8(octets) {
+                    ::core::result::Result::Ok(text) => ::core::option::Option::Some(text),
+                    ::core::result::Result::Err(_) => {
+                        return ::core::result::Result::Err(
+                            #rejection::Invalid {
+                                name: ::std::string::String::from(#wire),
+                                detail: ::std::string::String::from(
+                                    "the percent-decoded value is not UTF-8",
+                                ),
+                            },
+                        );
+                    }
+                },
+                ::core::option::Option::None => ::core::option::Option::None,
+            }
         };
         decode_field(param, &rejection, &found, "the parameter is required")
     });
