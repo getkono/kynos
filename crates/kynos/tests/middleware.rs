@@ -1375,9 +1375,13 @@ mod default_threshold {
     }
 
     fn service() -> Service<App> {
+        service_with(Compression::new())
+    }
+
+    fn service_with(compression: Compression) -> Service<App> {
         Router::<App>::new()
             .mount(kynos::routes![just_under, at, required])
-            .intercept(Compression::new())
+            .intercept(compression)
             .build(App::new())
             .expect("a describable router")
     }
@@ -1392,6 +1396,26 @@ mod default_threshold {
         assert_eq!(reply.status, StatusCode::OK);
         assert_eq!(reply.field(header::CONTENT_ENCODING.as_str()), None);
         assert_eq!(reply.body, octets(2_047));
+    }
+
+    /// `Default` is a second constructor, and it states the same boundary.
+    #[tokio::test]
+    async fn the_default_value_has_the_same_boundary() {
+        let service = service_with(Compression::default());
+        let under = get(&service, "/just-under")
+            .header("accept-encoding", "gzip")
+            .call()
+            .await;
+        let at = get(&service, "/at")
+            .header("accept-encoding", "gzip")
+            .call()
+            .await;
+
+        assert_eq!(under.field(header::CONTENT_ENCODING.as_str()), None);
+        assert_eq!(
+            at.field(header::CONTENT_ENCODING.as_str()).as_deref(),
+            Some("gzip")
+        );
     }
 
     #[tokio::test]
