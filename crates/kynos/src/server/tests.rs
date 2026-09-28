@@ -94,6 +94,27 @@ fn a_tcp_keepalive_the_kernel_would_refuse_is_refused() {
     }
 }
 
+/// `prepare` refuses what the validator refuses, rather than binding with it.
+#[tokio::test]
+async fn prepare_refuses_a_tcp_keepalive_the_kernel_would_refuse() {
+    use std::time::Duration;
+
+    use crate::server::tcp::TcpKeepAlive;
+
+    let error = crate::server::Server::new(test_service())
+        .tcp_keepalive(Some(TcpKeepAlive::default().idle(Duration::ZERO)))
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .prepare()
+        .await
+        .expect_err("a refused keepalive prevents preparation");
+    assert!(matches!(
+        error,
+        crate::Error::Server(crate::server::error::ServerError::InvalidConfiguration(
+            "TCP keepalive durations must be between 1 and 32767 seconds"
+        ))
+    ));
+}
+
 /// Accepts one loopback connection and applies `options` to it, as the accept
 /// loop does, returning the server's side for inspection.
 async fn accepted_with(
