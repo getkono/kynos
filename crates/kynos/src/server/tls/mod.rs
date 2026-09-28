@@ -87,10 +87,11 @@ pub enum SessionResumption {
     /// so resuming depends on nothing the server stored and no cache bounds how
     /// many clients can resume.
     ///
-    /// The ticket keys are random and rotated every six hours, and a key stays
-    /// accepted for one rotation after it stops issuing, so a ticket is honoured
-    /// for six to twelve hours depending on when in its key's period it was
-    /// issued. The keys live only in this process. Replicas behind a load
+    /// The ticket keys are random, and a key stays accepted for one rotation
+    /// after it stops issuing. Rotation happens on the first handshake more than
+    /// six hours after the last one, so a ticket is honoured for at least six
+    /// hours, for about twelve on a server with steady traffic, and for longer
+    /// on one that goes quiet. The keys live only in this process. Replicas behind a load
     /// balancer therefore cannot resume one another's sessions, and neither can
     /// a restarted process. Tickets use RFC 5077 §4's construction, with
     /// AES-256 and HMAC-SHA256, sealed by `aws-lc-rs` even when a caller installed
@@ -98,7 +99,8 @@ pub enum SessionResumption {
     /// interface carries no ticketer.
     ///
     /// A TLS 1.2 ticket carries the session's master secret, so anyone who later
-    /// obtains a ticket key — held in memory for about twelve hours — can
+    /// obtains a ticket key — held in memory until two rotations have passed,
+    /// about twelve hours under steady traffic — can
     /// decrypt the TLS 1.2 sessions recorded under it. TLS 1.3 resumption
     /// always runs a fresh key exchange, so its sessions keep forward secrecy.
     ///
