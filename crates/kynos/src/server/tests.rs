@@ -1,7 +1,7 @@
 #[cfg(feature = "http1")]
 use crate::server::protocol::Http1Config;
 #[cfg(feature = "http2")]
-use crate::server::protocol::{Http2Config, Http2FlowControl};
+use crate::server::protocol::{Http2Config, Http2FlowControl, Http2KeepAlive};
 
 #[cfg(feature = "http1")]
 #[test]
@@ -24,6 +24,13 @@ fn http2_defaults_are_owned_by_kynos() {
             initial_stream_window_size: 1024 * 1024,
             initial_connection_window_size: 1024 * 1024,
         }
+    );
+    assert_eq!(
+        http2.keep_alive,
+        Some(Http2KeepAlive {
+            interval: std::time::Duration::from_secs(30),
+            timeout: std::time::Duration::from_secs(20),
+        })
     );
 }
 
@@ -692,6 +699,86 @@ async fn http2_prior_knowledge_serves_over_a_real_socket() {
         .await
         .expect("client connection task joins")
         .expect("client connection closes cleanly");
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// An HTTP/2 peer that stops answering is pinged, then disconnected.
+///
+/// The client is raw bytes rather than hyper's, because hyper's client
+/// acknowledges every PING itself: the case under test is a peer that has
+/// vanished, which a conforming client cannot play. It opens the connection
+/// with no stream, acknowledges the server's SETTINGS so nothing else is owed,
+/// and then reads until the server closes.
+#[cfg(feature = "http2")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_http2_peer_that_never_acknowledges_a_ping_is_disconnected() {
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    const SETTINGS: u8 = 0x4;
+    const PING: u8 = 0x6;
+    const ACK: u8 = 0x1;
+
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(test_service())
+        .http2(Http2Config::default().keep_alive(Some(Http2KeepAlive {
+            interval: Duration::from_millis(100),
+            timeout: Duration::from_millis(100),
+        })))
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let address = bound.local_addrs()[0];
+    let server = tokio::spawn(bound.serve());
+
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    stream
+        .write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\0\0\0\x04\0\0\0\0\0")
+        .await
+        .expect("preface and empty SETTINGS send");
+
+    let frames = tokio::time::timeout(Duration::from_secs(10), async {
+        let mut seen = Vec::new();
+        loop {
+            let mut header = [0_u8; 9];
+            if stream.read_exact(&mut header).await.is_err() {
+                return seen;
+            }
+            let length =
+                usize::from(header[0]) << 16 | usize::from(header[1]) << 8 | usize::from(header[2]);
+            let mut payload = vec![0_u8; length];
+            if stream.read_exact(&mut payload).await.is_err() {
+                return seen;
+            }
+            let (kind, flags) = (header[3], header[4]);
+            if kind == SETTINGS && flags & ACK == 0 {
+                stream
+                    .write_all(&[0, 0, 0, SETTINGS, ACK, 0, 0, 0, 0])
+                    .await
+                    .expect("SETTINGS acknowledgement sends");
+            }
+            seen.push((kind, flags));
+        }
+    })
+    .await
+    .expect("the server closes a connection whose PING goes unanswered");
+
+    assert!(
+        frames.contains(&(PING, 0)),
+        "the server pinged the silent peer before closing: {frames:?}"
+    );
+
     let _ = shutdown_sender.send(());
     server
         .await
