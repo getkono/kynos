@@ -272,7 +272,7 @@ The levels are the knob that bounds an encode's cost today.
 
 **An encoder's fixed cost is mostly the memory it sets up, and zstd's is the
 largest.** Each encode allocates its context afresh — 3.66 MB for zstd, about
-320 KB for gzip, 570 KB and up for brotli — and most of the glibc column is that
+320 KB for gzip, 567 KB and up for brotli — and most of the glibc column is that
 memory being prepared. So at the small end zstd is the most expensive coding in
 total, about 830 000 instructions whatever the body, and brotli the cheapest;
 only at the large end, where the fixed cost is amortised, does zstd's program
