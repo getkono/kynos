@@ -117,10 +117,12 @@ fn every_payload_is_the_size_the_catalog_names() {
 /// the 2 KiB row is the smallest at which every coding saves at least one
 /// Ethernet segment's payload, 1460 octets.
 ///
-/// This holds the reason rather than the number. A codec upgrade or a level
-/// change that moved the crossing past the 2 KiB row, or below the 1 KiB one,
+/// This holds the reason rather than the number, and in one direction only. A
+/// codec upgrade or a level change that moved the crossing past the 2 KiB row
 /// fails here and sends someone back to `middleware.md`'s table, where
-/// `tests/middleware.rs` would still pass on the constant alone.
+/// `tests/middleware.rs` would still pass on the constant alone. No row can
+/// show it moving down: `every_sweep_size_is_the_size_it_names` holds the
+/// 1 KiB row under a segment unencoded, so it can never save one.
 #[test]
 fn the_default_threshold_is_where_every_coding_first_saves_a_segment() {
     const SEGMENT: usize = 1_460;
@@ -140,12 +142,6 @@ fn the_default_threshold_is_where_every_coding_first_saves_a_segment() {
             "{coding} saves {at_2k} octets at the 2 KiB row, under a segment"
         );
     }
-    assert!(
-        ["gzip", "br", "zstd"]
-            .into_iter()
-            .any(|coding| saved("/json/1k", coding) < SEGMENT),
-        "every coding saves a segment at the 1 KiB row, so the default is higher than the rule reads"
-    );
 }
 
 /// The sweep's middle rows are the sizes their names say, measured through the

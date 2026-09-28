@@ -246,11 +246,13 @@ between runs ([`performance.md`](performance.md#the-taxonomy)):
 | 59395 | br | 1343 | 58052 | 2283646 | ~1156000 | 1.46 MB |
 | 59395 | zstd | 1409 | 57986 | 366161 | ~868000 | 3.67 MB |
 
-The 1954-octet row is the smallest at which every coding saves a segment, and
-the 988-octet row is not; by interpolation each crosses near 1.7 KB. The default
-is 2 KiB, the round number past that row rather than the row itself.
-`kynos-profile`'s tests hold the rule to the sweep, so a codec that moved the
-crossing fails there and not only here.
+The 1954-octet row is the smallest at which every coding saves a segment; the
+988-octet row is smaller than a segment to begin with. By interpolation each
+coding crosses near 1.7 KB. The default is 2 KiB, the round number past that row
+rather than the row itself. `kynos-profile`'s tests hold the rule to the sweep,
+so a codec that moved the crossing past the 2 KiB row fails there and not only
+here. No row lies between a segment and 2 KiB, so a crossing that moved down
+fails nothing.
 
 **The default is a bet on compressibility, and this is its condition.** At
 2048 octets a coding must shrink a body by 71% to save a segment. This document
