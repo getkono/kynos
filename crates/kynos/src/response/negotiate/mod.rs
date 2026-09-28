@@ -243,6 +243,13 @@ impl<T> Describe for Accept<T> {
 /// operation's `content` map. Note that `Accept` itself is never declared as a
 /// parameter — the specification says such a declaration is ignored, and the
 /// `content` map is what actually describes the negotiation.
+///
+/// Every response this produces carries `Vary: accept`, merged into whatever
+/// `Vary` is already there, on every arm and when the client sent no `Accept`
+/// at all. Like the `Vary` of a
+/// [`ContentLanguage`](crate::response::language::headers::ContentLanguage),
+/// it is never described: a shared cache reads it, and a client generator has
+/// no use for it.
 // A response is neither `Clone` nor `PartialEq` -- a body is a stream, not a
 // value -- so `Negotiated` cannot be either now that it holds one rather than
 // the alternatives it might have built.
@@ -259,9 +266,14 @@ pub struct Negotiated<T> {
     offer: std::marker::PhantomData<fn() -> T>,
 }
 
+/// The request field every negotiated response was selected by.
+const VARIES: &[&str] = &["accept"];
+
 impl<T: representation::Representations> IntoResponse for Negotiated<T> {
     fn into_response(self) -> Response {
-        self.response
+        let mut response = self.response;
+        crate::middleware::vary_on(response.headers_mut(), VARIES);
+        response
     }
 }
 
