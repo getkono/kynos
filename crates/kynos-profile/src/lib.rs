@@ -30,7 +30,10 @@ use kynos::{
     router::service::Service,
 };
 
-use crate::app::{echo_body, get, headers_request, layers_4, layers_8, post, request, service};
+use crate::app::{
+    compressed, echo_body, get, get_encoded, headers_request, layers_4, layers_8, post, request,
+    service,
+};
 
 pub mod app;
 
@@ -191,7 +194,54 @@ pub const CALIBRATION: &[Scenario] = &[
     },
 ];
 
-/// Looks a scenario up by name, from either table.
+/// One sweep row: `$name` asks `/json/$size` for `$coding`.
+macro_rules! sweep {
+    ($name:literal, $size:literal, $coding:literal) => {
+        Scenario {
+            name: $name,
+            service: compressed,
+            request: || get_encoded(concat!("/json/", $size), $coding),
+            expected: StatusCode::OK,
+        }
+    };
+}
+
+/// The compression sweep: one JSON document at five sizes, each encoded by
+/// each coding `Compression` ships, and the two ends passed through.
+///
+/// Not kynos-bench's: what encoding costs against what it saves is a question
+/// only a framework with this interceptor asks, which is `performance.md`'s
+/// boundary. The rows are what `Compression::new()`'s default `min_size` is
+/// read from — the instructions an encode costs here, and the octets it saves,
+/// which this crate's tests hold to the rule — and `middleware.md` records the
+/// reading.
+///
+/// The `identity` rows are the interceptor declining, one per size, so the
+/// difference to a coded row at the same size is the encode alone.
+pub const COMPRESSION: &[Scenario] = &[
+    sweep!("compressed-identity-small", "small", "identity"),
+    sweep!("compressed-identity-1k", "1k", "identity"),
+    sweep!("compressed-identity-2k", "2k", "identity"),
+    sweep!("compressed-identity-4k", "4k", "identity"),
+    sweep!("compressed-identity-large", "large", "identity"),
+    sweep!("compressed-gzip-small", "small", "gzip"),
+    sweep!("compressed-gzip-1k", "1k", "gzip"),
+    sweep!("compressed-gzip-2k", "2k", "gzip"),
+    sweep!("compressed-gzip-4k", "4k", "gzip"),
+    sweep!("compressed-gzip-large", "large", "gzip"),
+    sweep!("compressed-br-small", "small", "br"),
+    sweep!("compressed-br-1k", "1k", "br"),
+    sweep!("compressed-br-2k", "2k", "br"),
+    sweep!("compressed-br-4k", "4k", "br"),
+    sweep!("compressed-br-large", "large", "br"),
+    sweep!("compressed-zstd-small", "small", "zstd"),
+    sweep!("compressed-zstd-1k", "1k", "zstd"),
+    sweep!("compressed-zstd-2k", "2k", "zstd"),
+    sweep!("compressed-zstd-4k", "4k", "zstd"),
+    sweep!("compressed-zstd-large", "large", "zstd"),
+];
+
+/// Looks a scenario up by name, from any table.
 ///
 /// # Panics
 ///
@@ -203,6 +253,7 @@ pub fn scenario(name: &str) -> Scenario {
         .iter()
         .copied()
         .chain(CALIBRATION.iter().copied())
+        .chain(COMPRESSION.iter().copied())
         .find(|scenario| scenario.name == name)
         .unwrap_or_else(|| panic!("no scenario is named {name:?}"))
 }

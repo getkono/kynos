@@ -50,7 +50,9 @@ description = "Lint all workspace targets at baseline features"
 # `--all-features` compiles every `#[cfg(feature = ...)]` arm and no
 # `#[cfg(not(feature = ...))]` one. Widening `lint` without this would have
 # traded one blind spot for another.
-run = "cargo clippy --workspace --all-targets -- -D warnings"
+#
+# `kynos-profile` is excluded for `test:baseline`'s reason.
+run = "cargo clippy --workspace --exclude kynos-profile --all-targets -- -D warnings"
 
 [tasks."lint:codecs"]
 description = "Lint every kynos target at each codec's own feature set"
@@ -150,7 +152,13 @@ description = "Test all workspace targets at baseline features"
 # The `ui` suite is excluded for the reason `ui:check` exists: trybuild
 # snapshots record the diagnostics of an `--all-features` build, and a trait
 # that is absent here rewords them.
-run = "cargo nextest run --workspace --all-targets -E 'not binary(ui)'"
+#
+# `kynos-profile` is excluded because it enables `kynos/compression` for its
+# compression sweep, and Cargo unifies a feature across every package a build
+# selects: with it in, `kynos` is never tested with `compression` off, and the
+# `cfg(not(feature = "compression"))` arms this task exists for go unbuilt. The
+# harness has no feature arms of its own; `test` runs its tests.
+run = "cargo nextest run --workspace --exclude kynos-profile --all-targets -E 'not binary(ui)'"
 
 [tasks."test:doc"]
 description = "Run doc tests, which carry the compile-fail guarantees"
