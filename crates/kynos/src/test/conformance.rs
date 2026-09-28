@@ -102,9 +102,10 @@ pub(super) fn conformance(document: &Document, record: &Observed) -> Vec<String>
 /// guards its media type behind the status; the asset 304 writes only `ETag`,
 /// `Cache-Control`, `Content-Encoding` and `Vary`; and a HEAD keeps its
 /// `Content-Type` on statuses that *do* declare a representation, so it never
-/// takes this branch. The HEAD is the one entry nothing exercises: no test in
-/// the suite drives a HEAD through `assert_conformance`, so what holds it is
-/// this reasoning rather than a run.
+/// takes this branch. `tests/conformance.rs`'s
+/// `observed_responses_match_the_description` holds that: it drives a HEAD
+/// answered from a `get` through `assert_conformance` on a status that declares
+/// a representation.
 ///
 /// The CORS preflight 204 is not among them although it also sends neither. It
 /// is never *described* -- `middleware::cors` answers `OPTIONS` by routing
