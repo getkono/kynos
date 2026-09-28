@@ -349,10 +349,13 @@ pub(crate) fn query_encode_body(params: &[Param<'_>]) -> TokenStream2 {
 
 /// A form-encoder for one query string component.
 ///
-/// Emitted into the body rather than called through the facade because
-/// `percent-encoding` is contained to one module there and a parameter group
-/// lives in the application's crate; the unreserved set is RFC 3986's, so a
-/// value carrying `&`, `=` or a space survives the round trip.
+/// Emitted into the body rather than called through `__private::uri`, unlike
+/// the decoder below: the decoder moved there because a query API key reads
+/// the same pairs and two readings had drifted, while this is the only query
+/// encoder Kynos has, so there is no second one to agree with, and it names no
+/// `percent-encoding` item for the containment rule to relocate. It escapes
+/// everything outside RFC 3986's unreserved set, so a value carrying `&`, `=`,
+/// `+` or a space survives the round trip through that decoder.
 fn query_encoder() -> TokenStream2 {
     quote! {
         fn encode(raw: &str) -> ::std::string::String {
