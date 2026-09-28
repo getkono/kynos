@@ -716,6 +716,23 @@ mod schema {
                     ),
                     "a split `rename_all` whose sides differ gives every field of this variant",
                 ),
+                case(
+                    "a split `rename_all_fields` reaching a variant's side its own rule leaves",
+                    quote::quote!(
+                        #[serde(rename_all_fields(
+                            serialize = "camelCase",
+                            deserialize = "kebab-case"
+                        ))]
+                        enum Change {
+                            A,
+                            #[serde(skip_serializing, rename_all(serialize = "snake_case"))]
+                            B {
+                                user_id: u8,
+                            },
+                        }
+                    ),
+                    "a split `rename_all_fields` whose sides differ",
+                ),
             ],
             expand_inner,
         );
