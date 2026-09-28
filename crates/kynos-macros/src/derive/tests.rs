@@ -752,7 +752,8 @@ mod schema {
 
     /// A split field rule is refused only where it names a field serde both
     /// writes and reads: a variant's own rule on a variant serde skips both
-    /// ways or only reads, and an enum's `rename_all_fields` that reaches no
+    /// ways or only reads, or on a unit or tuple variant, which has no named
+    /// field, and an enum's `rename_all_fields` that reaches no
     /// struct variant, one with no field or every one under its own rule, are
     /// accepted, as serde accepts them.
     #[test]
@@ -779,6 +780,24 @@ mod schema {
                         B {
                             user_id: u8,
                         },
+                    }
+                ),
+            ),
+            (
+                "a unit variant serde writes and reads",
+                quote::quote!(
+                    enum Change {
+                        #[serde(rename_all(serialize = "camelCase"))]
+                        A,
+                    }
+                ),
+            ),
+            (
+                "a tuple variant serde writes and reads",
+                quote::quote!(
+                    enum Change {
+                        #[serde(rename_all(serialize = "camelCase", deserialize = "kebab-case"))]
+                        A(u8),
                     }
                 ),
             ),
