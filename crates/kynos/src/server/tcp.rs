@@ -28,7 +28,8 @@ use crate::server::error::ServerError;
 /// [`keep_alive`](crate::server::protocol::Http2Config::keep_alive) bounds that
 /// case for an HTTP/2 connection; nothing Kynos sets bounds it for HTTP/1.
 ///
-/// Both durations are whole seconds on the wire, so each must be at least one.
+/// Both durations are whole seconds on the wire, from one to Linux's ceiling of
+/// 32767.
 /// The probe count is the operating system's rather than a field here, because
 /// not every platform lets a socket set it. `interval` is applied where the
 /// platform lets a socket set that — Linux, Android, the Apple platforms,
@@ -76,20 +77,29 @@ impl TcpKeepAlive {
     }
 }
 
-/// Refuses a keepalive shorter than a second.
+/// The longest idle time or interval Linux accepts, in seconds.
+const MAX_KEEPALIVE_SECONDS: u64 = 32_767;
+
+/// Refuses a keepalive the kernel would refuse.
 ///
 /// The socket options carry whole seconds, and `socket2` truncates, so half a
-/// second reaches the kernel as zero — which Linux refuses after it has already
-/// turned `SO_KEEPALIVE` on, leaving the socket probing at the system's
-/// two-hour default rather than failing.
+/// second reaches the kernel as zero; Linux caps both at 32767 seconds. It
+/// refuses either only after it has turned `SO_KEEPALIVE` on, which leaves the
+/// socket probing at the system's two-hour default rather than failing.
 pub(in crate::server) fn validate_tcp_keepalive(
     keepalive: Option<TcpKeepAlive>,
 ) -> std::result::Result<(), ServerError> {
-    if keepalive
-        .is_some_and(|keepalive| keepalive.idle.as_secs() == 0 || keepalive.interval.as_secs() == 0)
+    let accepted = |duration: Duration| (1..=MAX_KEEPALIVE_SECONDS).contains(&duration.as_secs());
+    if keepalive.is_some_and(|keepalive| !accepted(keepalive.idle) || !accepted(keepalive.interval))
     {
+        // `InvalidConfiguration` carries a `&'static str`, so the ceiling is
+        // spelled out below; this keeps the two from parting company.
+        const _: () = assert!(
+            MAX_KEEPALIVE_SECONDS == 32_767,
+            "MAX_KEEPALIVE_SECONDS moved; the message below still says 32767"
+        );
         return Err(ServerError::InvalidConfiguration(
-            "TCP keepalive durations must be at least one second",
+            "TCP keepalive durations must be between 1 and 32767 seconds",
         ));
     }
     Ok(())
