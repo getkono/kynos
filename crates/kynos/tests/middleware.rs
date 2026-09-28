@@ -526,7 +526,9 @@ mod partial {
                 weakly_tagged,
                 measured
             ])
-            .intercept(Compression::new())
+            // Every size encoded, because these cases are about which
+            // representations may be encoded rather than which are worth it.
+            .intercept(Compression::new().min_size(0))
             .build(App::new())
             .expect("a describable router")
     }
@@ -820,7 +822,10 @@ mod ranged_assets {
     fn service() -> Service<()> {
         Router::<()>::new()
             .group(Group::new("/static").mount(Fixture::assets()))
-            .intercept(Compression::new())
+            // Every size encoded: the file is 36 octets, under the default
+            // threshold, and what is asserted is that the range guard, not the
+            // threshold, leaves it alone.
+            .intercept(Compression::new().min_size(0))
             .build(())
             .expect("a describable router")
     }
@@ -1330,6 +1335,98 @@ mod streamed_failure {
     }
 }
 
+/// The default `min_size`, at its boundary: a body one octet short of 2 KiB is
+/// sent as it is and one of exactly 2 KiB is encoded. `middleware.md` records
+/// the measurement the number is read from; this is what holds the number.
+#[cfg(feature = "compression")]
+mod default_threshold {
+    use kynos::{
+        Router,
+        extract::{body::binary::Binary, media::OctetStream},
+        http::{StatusCode, header},
+        middleware::compression::{
+            Compression,
+            policy::{Encoding, WithEncoding},
+        },
+        router::service::Service,
+    };
+
+    use super::support::{App, get};
+
+    /// `length` octets that compress well, so an encoded reply is visibly one.
+    fn octets(length: usize) -> Vec<u8> {
+        b"0123456789".iter().copied().cycle().take(length).collect()
+    }
+
+    #[kynos::get("/just-under")]
+    async fn just_under() -> Binary<OctetStream> {
+        Binary::new(octets(2_047))
+    }
+
+    #[kynos::get("/at")]
+    async fn at() -> Binary<OctetStream> {
+        Binary::new(octets(2_048))
+    }
+
+    /// Under the threshold, but the handler says identity is not an answer.
+    #[kynos::get("/required")]
+    async fn required() -> WithEncoding<Binary<OctetStream>> {
+        WithEncoding::new(Binary::new(octets(2_047)), Encoding::Required)
+    }
+
+    fn service() -> Service<App> {
+        Router::<App>::new()
+            .mount(kynos::routes![just_under, at, required])
+            .intercept(Compression::new())
+            .build(App::new())
+            .expect("a describable router")
+    }
+
+    #[tokio::test]
+    async fn a_body_under_two_kibibytes_is_sent_as_it_is_by_default() {
+        let reply = get(&service(), "/just-under")
+            .header("accept-encoding", "gzip, br, zstd")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(reply.field(header::CONTENT_ENCODING.as_str()), None);
+        assert_eq!(reply.body, octets(2_047));
+    }
+
+    #[tokio::test]
+    async fn a_body_of_two_kibibytes_is_encoded_by_default() {
+        let reply = get(&service(), "/at")
+            .header("accept-encoding", "gzip")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(
+            reply.field(header::CONTENT_ENCODING.as_str()).as_deref(),
+            Some("gzip")
+        );
+        assert!(reply.body.len() < 2_048);
+    }
+
+    /// The threshold is the service's opinion, and a response that requires an
+    /// encoding outranks it: under the default, to a client accepting gzip, it
+    /// is encoded.
+    #[tokio::test]
+    async fn a_required_encoding_outranks_the_default_threshold() {
+        let reply = get(&service(), "/required")
+            .header("accept-encoding", "gzip")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(
+            reply.field(header::CONTENT_ENCODING.as_str()).as_deref(),
+            Some("gzip")
+        );
+    }
+}
+
 /// Request-body decompression: the direction `Accept-Encoding` says nothing
 /// about.
 ///
@@ -1442,7 +1539,8 @@ mod decompression {
     async fn gzipped(bytes: &str) -> bytes::Bytes {
         let encoder = Router::<App>::new()
             .mount(kynos::routes![echo])
-            .intercept(Compression::new())
+            // Payloads as short as five octets are encoded all the same.
+            .intercept(Compression::new().min_size(0))
             .build(App::new())
             .expect("a describable router");
 

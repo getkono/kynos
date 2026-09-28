@@ -336,7 +336,10 @@ async fn main() -> kynos::Result<()> {
                 .record_headers(&["x-correlation-id", "x-tenant"]),
         )
         // Compression negotiates on `Accept-Encoding`. `min_size` exists
-        // because compressing a 40-byte body costs more than it saves.
+        // because compressing a 40-byte body costs more than it saves, and it
+        // defaults to 2 KiB: the smallest body at which every coding saves a
+        // packet. This service lowers it because its bodies compress well and
+        // its clients pay by the octet.
         //
         // Levels are per algorithm and do not share a scale: the three formats
         // number them differently and put the knee of the curve in a different

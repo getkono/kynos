@@ -387,7 +387,8 @@ pub struct Levels {
 /// use kynos::middleware::compression::{Compression, levels::GzipLevel};
 ///
 /// // Everything at its default level, except gzip, which this service serves
-/// // enough of to care about the CPU.
+/// // enough of to care about the CPU; and bodies from 1 KiB rather than the
+/// // default 2 KiB, because this service's clients pay by the octet.
 /// let compression = Compression::new()
 ///     .min_size(1_024)
 ///     .gzip_level(GzipLevel::FASTEST);
@@ -520,12 +521,28 @@ pub struct Compression<T = ()> {
     problem_type: PhantomData<fn() -> T>,
 }
 
+/// The smallest body encoded by default: 2 KiB.
+///
+/// Encoding pays for itself on the wire by saving a packet, and a body under
+/// one Ethernet segment's payload — 1460 octets, a simplification of the wire
+/// that the docs spell out — goes out in the same number of packets either
+/// way. So the default is the smallest body at which every coding saves at
+/// least that much. `kynos-profile`'s compression sweep reads it off a JSON
+/// document every coding shrinks by more than 85%: at 988 octets each saves
+/// under 800, and at 1954 each saves over 1680. 2048 is the round number past
+/// that row, and it assumes a body shrinks by at least 71%, which is what a
+/// segment of 2048 is; a body that compresses worse should raise
+/// [`Compression::min_size`]. [`middleware.md`](../../../../docs/middleware.md)
+/// records the sweep.
+pub(crate) const DEFAULT_MIN_SIZE: u64 = 2_048;
+
 impl Compression<()> {
-    /// Enables every compiled-in algorithm, at each one's default level.
+    /// Enables every compiled-in algorithm, at each one's default level, for
+    /// bodies of at least 2 KiB — see [`min_size`](Self::min_size).
     #[must_use]
     pub fn new() -> Self {
         Self {
-            min_size: 0,
+            min_size: DEFAULT_MIN_SIZE,
             levels: Levels::default(),
             latency: LatencyMode::default(),
             problem_type: PhantomData,
@@ -566,7 +583,13 @@ impl Compression<()> {
 }
 
 impl<T> Compression<T> {
-    /// Skips responses smaller than `bytes`.
+    /// Skips responses whose known length is smaller than `bytes`.
+    ///
+    /// 2048 by default: under one Ethernet segment of saving, a response takes
+    /// the same packets encoded or not, and encoding it only spends CPU. Lower
+    /// it for a body that compresses unusually well or a link that charges by
+    /// the octet; `0` encodes every non-empty body. A body with no known length
+    /// is encoded as it streams whatever this says.
     #[must_use]
     pub fn min_size(mut self, bytes: u64) -> Self {
         self.min_size = bytes;
@@ -645,7 +668,7 @@ impl<T> std::fmt::Debug for Compression<T> {
 impl<T> Default for Compression<T> {
     fn default() -> Self {
         Self {
-            min_size: 0,
+            min_size: DEFAULT_MIN_SIZE,
             levels: Levels::default(),
             latency: LatencyMode::default(),
             problem_type: PhantomData,
@@ -764,7 +787,8 @@ where
         let body = continued.take_body();
 
         // Zero bytes compress to a frame header and nothing else, and a body
-        // under `min_size` costs more to encode than it saves.
+        // under `min_size` is one the service has judged not worth encoding;
+        // `DEFAULT_MIN_SIZE` records the measurement the default is read from.
         //
         // A body that cannot state its length is neither: it is one being
         // produced as it goes, and `min_size` is a statement about a length

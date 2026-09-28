@@ -1153,11 +1153,13 @@ mod compression {
         Binary::new(BODIES[3].clone())
     }
 
-    /// The four operations with `Compression` over them.
+    /// The four operations with `Compression` over them, encoding at every
+    /// size: what is counted is what an encode costs as the body grows, so the
+    /// 1 KiB row has to be one, below the default threshold or not.
     fn mounted() -> Service<()> {
         Router::<()>::new()
             .mount(kynos::routes![empty, small, medium, large])
-            .intercept(Compression::new())
+            .intercept(Compression::new().min_size(0))
             .build(())
             .expect("a describable router")
     }
