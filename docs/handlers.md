@@ -174,6 +174,10 @@ the negotiation chose from `Languages::TAGS`. Neither adds a status — a client
 whose language is missing is served the default with `Content-Language` saying
 so, never a 406.
 
+Both response negotiators merge the field they read into `Vary` — `accept`
+for `Negotiated`, `accept-language` for `Localized` — and neither describes
+it: a shared cache reads `Vary`, and a client generator has no use for it.
+
 [`Accept<T>`](../crates/kynos/src/response/negotiate/mod.rs) contributes **no**
 `Accept` parameter, because the specification says a parameter definition for
 that field shall be ignored. What describes the negotiation is the operation's

@@ -100,3 +100,47 @@ fn served_fields(served: &Served<()>) {
 
     let _ = (method, operation_id, terminal, interceptors, catch_panics);
 }
+
+// --- What leaves the table ------------------------------------------------
+
+/// An endpoint's recovered 500 leaves the table without the payload it carried
+/// in, with no observer to report it to.
+///
+/// Nothing outside the crate can name [`Recovered`](super::Recovered), so this
+/// is the one place its absence can be asserted, and a router that observes
+/// nothing is where taking it would look optional.
+#[tokio::test]
+async fn an_endpoint_recovered_500_leaves_without_its_payload() {
+    async fn boom() -> crate::response::status::NoContent {
+        panic!("the handler failed");
+    }
+
+    let service = crate::Router::<()>::new()
+        .mount(
+            crate::router::endpoint::builder::EndpointBuilder::<(), _, _>::new(
+                kynos_openapi::Method::Get,
+                kynos_openapi::PathTemplate::parse("/boom").expect("a usable path template"),
+                boom,
+            )
+            .catch_panics(),
+        )
+        .build(())
+        .expect("a describable router");
+    let request = ::http::Request::builder()
+        .uri("/boom")
+        .body(crate::http::body::Body::empty())
+        .expect("a well-formed request");
+
+    // Silenced: a passing test that prints a backtrace teaches a reader to
+    // ignore backtraces.
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let response = service.call(request).await;
+    std::panic::set_hook(hook);
+
+    assert_eq!(response.status(), ::http::StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        response.extensions().get::<super::Recovered>().is_none(),
+        "the recovered payload left the dispatcher on the response"
+    );
+}

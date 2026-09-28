@@ -7,17 +7,29 @@
 //!
 //! Three scopes ask for it — the router, a group and one endpoint — and each is
 //! covered with the control that differs in exactly that.
+//!
+//! A recovered panic is also reported to observers once, whichever scope
+//! recovered it: the scopes differ in what they cover, not in whether anyone
+//! hears about it.
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
-use std::panic::AssertUnwindSafe;
+use std::{
+    any::Any,
+    panic::AssertUnwindSafe,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use kynos::{
     Router,
-    http::StatusCode,
+    http::{Request, Response, StatusCode},
+    middleware::Observer,
     openapi::{Method as OpenApiMethod, PathTemplate},
     response::status::NoContent,
-    router::{endpoint::builder::EndpointBuilder, group::Group, service::Service},
+    router::{
+        endpoint::builder::EndpointBuilder, group::Group, operation::Route, service::Service,
+    },
 };
 
 #[path = "support/mod.rs"]
@@ -123,6 +135,12 @@ fn recovery_asked_for_on_a_group_covers_that_group_alone() {
     assert_eq!(outcome(&service, "/bare/boom"), Err(()));
 }
 
+/// The third scope, reached through a route attribute.
+#[kynos::get("/attributed", catch_panics)]
+async fn attributed() -> NoContent {
+    panic!("the handler failed");
+}
+
 /// The third scope, reached without a route attribute.
 async fn guarded_endpoint() -> NoContent {
     panic!("the handler failed");
@@ -153,6 +171,145 @@ fn recovery_asked_for_on_one_endpoint_covers_that_endpoint_alone() {
         Ok(StatusCode::INTERNAL_SERVER_ERROR)
     );
     assert_eq!(outcome(&service, "/bare"), Err(()));
+}
+
+/// Records the path of every operation a panic was reported against.
+///
+/// Held per test rather than in a `static`, so no two tests can hear each
+/// other's panics.
+#[derive(Clone, Default)]
+struct Heard(Arc<Mutex<Vec<String>>>);
+
+impl Heard {
+    fn paths(&self) -> Vec<String> {
+        self.0.lock().expect("an unpoisoned record").clone()
+    }
+}
+
+impl Observer<()> for Heard {
+    fn on_request(&self, _: &Request, _: Option<Route<'_>>, (): &()) {}
+
+    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration) {}
+
+    fn on_panic(&self, _: &(dyn Any + Send), route: Option<Route<'_>>) {
+        let path = route.map_or_else(|| "<unmatched>".to_owned(), |route| route.path().to_owned());
+        self.0.lock().expect("an unpoisoned record").push(path);
+    }
+}
+
+/// A recovered panic is reported whichever scope recovered it: the scopes
+/// differ in what they cover, not in whether an observer hears about it.
+#[test]
+fn a_panic_recovered_at_any_scope_is_reported_to_observers() {
+    let at = |path: &str| PathTemplate::parse(path).expect("a usable path template");
+
+    let router = Heard::default();
+    let router_scope = Router::<()>::new()
+        .catch_panics()
+        .mount(kynos::routes![boom])
+        .observe(router.clone())
+        .build(())
+        .expect("a describable router");
+
+    let group = Heard::default();
+    let group_scope = Router::<()>::new()
+        .group(
+            Group::<()>::new("/guarded")
+                .catch_panics()
+                .mount(kynos::routes![boom]),
+        )
+        .observe(group.clone())
+        .build(())
+        .expect("a describable router");
+
+    let endpoint = Heard::default();
+    let endpoint_scope = Router::<()>::new()
+        .mount(
+            EndpointBuilder::<(), _, _>::new(OpenApiMethod::Get, at("/guarded"), guarded_endpoint)
+                .catch_panics(),
+        )
+        .observe(endpoint.clone())
+        .build(())
+        .expect("a describable router");
+
+    let attribute = Heard::default();
+    let attribute_scope = Router::<()>::new()
+        .mount(kynos::routes![attributed])
+        .observe(attribute.clone())
+        .build(())
+        .expect("a describable router");
+
+    for (scope, service, path, heard) in [
+        ("router", &router_scope, "/boom", &router),
+        ("group", &group_scope, "/guarded/boom", &group),
+        ("endpoint", &endpoint_scope, "/guarded", &endpoint),
+        (
+            "route attribute",
+            &attribute_scope,
+            "/attributed",
+            &attribute,
+        ),
+    ] {
+        assert_eq!(
+            outcome(service, path),
+            Ok(StatusCode::INTERNAL_SERVER_ERROR),
+            "{scope} scope"
+        );
+        assert_eq!(
+            heard.paths(),
+            [path],
+            "a panic recovered at {scope} scope was not reported exactly once"
+        );
+    }
+}
+
+/// Two scopes asked, one caught: the innermost recovery is the only one that
+/// saw the unwind, so the panic is one event, not two.
+#[test]
+fn a_panic_recovered_at_two_scopes_is_reported_once() {
+    let heard = Heard::default();
+    let service = Router::<()>::new()
+        .catch_panics()
+        .mount(
+            EndpointBuilder::<(), _, _>::new(
+                OpenApiMethod::Get,
+                PathTemplate::parse("/guarded").expect("a usable path template"),
+                guarded_endpoint,
+            )
+            .catch_panics(),
+        )
+        .observe(heard.clone())
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(
+        outcome(&service, "/guarded"),
+        Ok(StatusCode::INTERNAL_SERVER_ERROR)
+    );
+    assert_eq!(heard.paths(), ["/guarded"]);
+}
+
+/// A `tower` layer re-enters the table beneath itself, so the endpoint's 500
+/// reaches the dispatcher by that second way in and is reported there.
+///
+/// `Identity` is enough: what is under test is the re-entry, not anything a
+/// layer does to the response.
+#[cfg(feature = "unchecked")]
+#[test]
+fn a_panic_an_endpoint_recovered_beneath_an_unchecked_layer_is_reported_once() {
+    let heard = Heard::default();
+    let service = Router::<()>::new()
+        .layer_unchecked(tower::layer::util::Identity::new())
+        .mount(kynos::routes![attributed])
+        .observe(heard.clone())
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(
+        outcome(&service, "/attributed"),
+        Ok(StatusCode::INTERNAL_SERVER_ERROR)
+    );
+    assert_eq!(heard.paths(), ["/attributed"]);
 }
 
 /// A recovered operation declares the 500 it can now produce.

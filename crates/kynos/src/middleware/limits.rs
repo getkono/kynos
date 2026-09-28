@@ -15,7 +15,10 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::{
     error::problem::{ProblemType, refusal_problem, refusal_response},
-    http,
+    http::{
+        self,
+        body::{Body, BoxError},
+    },
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
     schema::registry::Registry,
@@ -110,15 +113,15 @@ impl<T: ProblemType> Responses for BodySizeExceeded<T> {
 /// the handler is entered. Records then still arrive one at a time, but the
 /// memory the streaming was for has already been spent.
 ///
-/// That follows from what the declared 413 promises, not from what
-/// [`Body`](crate::http::body::Body) can be built from. A count that runs while
-/// the handler reads reaches its verdict only after the handler has acted on
-/// the bytes it was given, so streaming here would not restore the cap — it
-/// would move the refusal behind whatever an oversized payload had already
-/// caused. The alternatives are a 413 sent after those side effects, or a 411
-/// refusing every length-less body and with it every chunked upload; both are
-/// worse trades than the buffer. `docs/nfr.md` records the same conclusion, and
-/// there is no missing constructor to write.
+/// That follows from what the declared 413 promises, not from what [`Body`] can
+/// be built from. A count that runs while the handler reads reaches its verdict
+/// only after the handler has acted on the bytes it was given, so streaming
+/// here would not restore the cap — it would move the refusal behind whatever
+/// an oversized payload had already caused. The alternatives are a 413 sent
+/// after those side effects, or a 411 refusing every length-less body and with
+/// it every chunked upload; both are worse trades than the buffer.
+/// `docs/nfr.md` records the same conclusion, and there is no missing
+/// constructor to write.
 ///
 /// # Naming what the 413 is
 ///
@@ -210,20 +213,27 @@ fn declared_length(headers: &http::HeaderMap) -> Option<u64> {
         .ok()
 }
 
-/// Reads `body` while the running total stays within `limit`.
+/// Reads `body` while the running total stays within `limit`, returning the
+/// body to hand on.
 ///
 /// `None` once the limit is passed, which is decided on the frame that passes
 /// it rather than after the whole body has arrived — a chunked body declares no
 /// length, so the count is the only bound there is.
 ///
-/// A read that fails yields what arrived before it did. That is not a size
-/// violation and must not be reported as one; the body extractor beneath sees a
-/// truncated payload and rejects it with the status it already describes.
-async fn read_capped(mut body: crate::http::body::Body, limit: u64) -> Option<Bytes> {
+/// A read that fails is handed on as it failed — the bytes that arrived, then
+/// the same error — so the extractor beneath refuses it with the status it
+/// already describes, whatever that extractor parses. Swallowing the error
+/// would hand a truncated payload to one that parses nothing.
+async fn read_capped(mut body: Body, limit: u64) -> Option<Body> {
     let mut collected = BytesMut::new();
 
     while let Some(frame) = body.frame().await {
-        let Ok(frame) = frame else { break };
+        let frame = match frame {
+            Ok(frame) => frame,
+            Err(error) => {
+                return Some(Body::failed_after(collected.freeze(), error));
+            }
+        };
         let Ok(data) = frame.into_data() else {
             continue;
         };
@@ -237,7 +247,7 @@ async fn read_capped(mut body: crate::http::body::Body, limit: u64) -> Option<By
         collected.extend_from_slice(&data);
     }
 
-    Some(collected.freeze())
+    Some(Body::from_bytes(collected.freeze()))
 }
 
 impl<C, T> Interceptor<C> for BodySize<T>
@@ -273,14 +283,14 @@ where
 
         // No declared length, so the count is the only bound: the body is read
         // frame by frame and abandoned the moment it passes the limit. What
-        // arrives within it is handed on verbatim, since the only body Kynos can
-        // rebuild is one built from bytes.
+        // arrives within it is handed on verbatim — a failure included — since
+        // the only body Kynos can rebuild is one built from what was read.
         let (parts, body) = request.into_parts();
-        let Some(bytes) = read_capped(body, self.limit).await else {
+        let Some(body) = read_capped(body, self.limit).await else {
             return Err(BodySizeExceeded::new(self.limit));
         };
 
-        let request = http::Request::from_parts(parts, crate::http::body::Body::from_bytes(bytes));
+        let request = http::Request::from_parts(parts, body);
         Ok(next.run(request).await)
     }
 }
@@ -1105,7 +1115,7 @@ struct Bounded {
 
 impl http_body::Body for Bounded {
     type Data = Bytes;
-    type Error = crate::http::body::BoxError;
+    type Error = BoxError;
 
     fn poll_frame(
         self: std::pin::Pin<&mut Self>,
@@ -1183,3 +1193,6 @@ impl http_body::Body for Bounded {
         self.inner.size_hint()
     }
 }
+
+#[cfg(test)]
+mod tests;

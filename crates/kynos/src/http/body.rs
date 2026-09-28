@@ -47,6 +47,21 @@ impl Body {
         }
     }
 
+    /// A body that yields `arrived` and then fails with `error`.
+    ///
+    /// What an interceptor that buffers a request body hands on when reading
+    /// it failed part-way: the extractor beneath sees the read fail after the
+    /// same bytes it would have seen with nothing buffering, and refuses it as
+    /// it would then. Rebuilding what arrived as a whole body would hand a
+    /// truncated payload to an extractor that parses nothing.
+    pub(crate) fn failed_after(arrived: Bytes, error: BoxError) -> Self {
+        Self::from_body(FailedAfter {
+            // No empty data frame: nothing arrived, so nothing is replayed.
+            arrived: (!arrived.is_empty()).then_some(arrived),
+            error: Some(error),
+        })
+    }
+
     /// A body whose bytes arrive as a stream.
     ///
     /// The one place a stream becomes a body, which is what keeps
@@ -273,6 +288,39 @@ where
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
+    }
+}
+
+/// The bytes that arrived before a read failed, followed by the failure.
+///
+/// Both fields are [`Unpin`], so `poll_frame` reaches them through
+/// [`Pin::get_mut`].
+struct FailedAfter {
+    /// `None` once replayed, or when nothing arrived.
+    arrived: Option<Bytes>,
+    /// `None` once reported.
+    error: Option<BoxError>,
+}
+
+impl HttpBody for FailedAfter {
+    type Data = Bytes;
+    type Error = BoxError;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        let this = self.get_mut();
+        if let Some(arrived) = this.arrived.take() {
+            return Poll::Ready(Some(Ok(Frame::data(arrived))));
+        }
+        Poll::Ready(this.error.take().map(Err))
+    }
+
+    // Never, not even once the error is taken: a body that failed was not
+    // delivered, and a `Watched` that finds it ended reports it as complete.
+    fn is_end_stream(&self) -> bool {
+        false
     }
 }
 

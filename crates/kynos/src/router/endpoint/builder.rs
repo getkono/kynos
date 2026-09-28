@@ -128,7 +128,9 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
     ///
     /// Extraction and handler execution are covered. The policy is carried in
     /// the endpoint's type, so an endpoint that does not select it installs no
-    /// recovery branch.
+    /// recovery branch. A panic recovered here reaches the router's observers
+    /// through [`Observer::on_panic`](crate::middleware::Observer::on_panic),
+    /// as one recovered at router or group scope does.
     ///
     /// # Compile-time requirement
     ///
@@ -345,7 +347,7 @@ where
         if recovers::<P>() {
             match dispatch::recover(served).await {
                 Ok(response) => response,
-                Err(_) => dispatch::panic_response(),
+                Err(payload) => dispatch::recovered_response(payload),
             }
         } else {
             served.await

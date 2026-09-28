@@ -427,6 +427,19 @@ a counter: a backtrace per allocation, and six crates this tree does not
 otherwise have. `alloc_counter` is `0.0.4` and last published in 2019, taken
 knowingly for one function — `count_alloc` — in the four test targets above.
 
+`gungraun` is a sixth, and it is the instruction-count kind in
+[`performance.md`](performance.md#the-taxonomy): a library-benchmark harness
+that runs one function under Callgrind and DHAT and centres both on it. It is
+named by [`crates/kynos-profile`](../crates/kynos-profile/) alone, a member
+that is never published, so it reaches no archive and no application's graph —
+and its floor, Rust 1.88, binds that member rather than the workspace's 1.85.
+The runner binary it drives must be its exact version, which is why both are
+pinned to one number. Valgrind is the one thing it needs that no manifest can
+declare: CI installs it, and `mise run profile:valgrind` builds it for a machine
+without one. `criterion` and `divan` were the alternatives, and both time: the
+exclusion [`nfr.md`](nfr.md#tooling-gaps) records is of a wall-clock gate, and
+a count taken under Callgrind is not one.
+
 ### What each feature gates
 
 The [README](../README.md#feature-flags) says what a flag *adds*, which is what

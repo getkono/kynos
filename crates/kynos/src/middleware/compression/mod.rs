@@ -139,8 +139,9 @@ fn strongly_tagged(headers: &http::HeaderMap) -> bool {
 /// Acceptable) response or disregard the header field". Kynos honours it, since
 /// disregarding a `q=0` means sending octets the client said it cannot decode.
 ///
-/// Reachable only through `Accept-Encoding`: it takes refusing identity *and*
-/// every coding this build offers, which no ordinary client does.
+/// Reachable only through `Accept-Encoding`: it takes excluding identity *and*
+/// leaving every coding this build offers unacceptable, refused or unlisted
+/// with no wildcard, which no ordinary client does.
 ///
 /// `T` names the problem type the body carries; `()` leaves `about:blank`. Set
 /// it with [`Compression::problem_type`].
@@ -246,13 +247,13 @@ fn negotiate(headers: &http::HeaderMap) -> Negotiated {
         return Negotiated::Identity;
     };
 
-    let mut best: Option<(Coding, f32)> = None;
+    let mut best: Option<(Coding, u16)> = None;
     for coding in Coding::ALL {
         let Some(weight) = crate::http::coding::quality(accept, coding.token()) else {
             continue;
         };
 
-        if weight <= 0.0 {
+        if weight == 0 {
             continue;
         }
 
@@ -263,18 +264,21 @@ fn negotiate(headers: &http::HeaderMap) -> Negotiated {
 
     // Rule 2: identity "is acceptable by default unless specifically excluded
     // by the Accept-Encoding header field stating either `identity;q=0` or
-    // `*;q=0` without a more specific entry for `identity`". `quality` falls
-    // back to the wildcard, so both spellings land here as `Some(0.0)`.
+    // `*;q=0` without a more specific entry for `identity`". Both spellings
+    // read as 0. A weight that is not a qvalue, identity's own or the
+    // wildcard's, is neither, so it leaves identity acceptable, even where
+    // the wildcard's refused every coding above.
     let identity = crate::http::coding::identity_quality(accept);
 
     let Some((coding, weight)) = best else {
-        return if identity > 0.0 {
+        return if identity > 0 {
             Negotiated::Identity
         } else {
-            // Every coding this build offers was refused *and* identity was
-            // refused. An empty field value reaches here too: it "implies that
-            // the user agent does not want any content coding in response",
-            // which excludes nothing, so it resolves to identity above.
+            // Every coding this build offers was refused or left unlisted with
+            // no wildcard, *and* identity was excluded. An empty field value
+            // reaches here too: it "implies that the user agent does not want
+            // any content coding in response", which excludes nothing, so it
+            // resolves to identity above.
             Negotiated::Nothing
         };
     };
@@ -793,6 +797,11 @@ where
                 self.levels,
                 self.latency,
             )));
+
+            // A length the handler stated counts the identity octets. RFC 9110
+            // section 8.6 forbids forwarding one known to be incorrect, and the
+            // encoded length is not known until after the head has gone.
+            continued.remove_declared::<ContentEncoding>(&http::header::CONTENT_LENGTH);
 
             return Ok(continued.with_headers(ContentEncoding {
                 coding: Some(coding),

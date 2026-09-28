@@ -54,7 +54,8 @@ requirement with an allocation one and calling it a refiling would leave the
 latency unmeasured in both repositories while this column claimed otherwise.
 
 Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
-`trybuild`, `proptest`, `alloc_counter`, `cargo-llvm-lines`, rustdoc with
+`trybuild`, `proptest`, `alloc_counter`, `cargo-llvm-lines`, `gungraun` over
+Valgrind, rustdoc with
 `missing_docs = "deny"`, and `cargo-semver-checks` — the last through both
 release-plz, at default features and fail-open, and `mise run semver:check`, at
 every feature. Not yet present: `cargo-public-api`, `cargo-fuzz`. `criterion` is
@@ -188,12 +189,27 @@ of which anything here would currently catch.
 | performance | Route dispatch allocates at most a recorded number of times per route shape, and a replayed request costs what the first one did | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), over a handler that allocates nothing, counting fresh allocations and reallocations across a 10k-request replay | `enforced` |
 | performance | Zero heap allocations on the routing path | — | `absent`. The row above enforces a ceiling, which is the opposite direction; nothing asserts the zero, and the measurement below is why |
 | performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `kynos-bench` |
+| performance | What one request of each `kynos-bench` scenario executes in process is recorded as a count exact on one host: instructions in the program object, and heap blocks and bytes | `mise run profile:requests`: gungraun over Callgrind and DHAT on [`kynos-profile`](../crates/kynos-profile/), split by object and compared with [`requests.tsv`](../crates/kynos-profile/requests.tsv) by [`profile_report.py`](../scripts/profile_report.py), which also holds DHAT's block counts to `tests/alloc.rs`'s | `partial`: a trend after each merge in `cost.yml`, with no ceiling and no gate, and over `Service::call` rather than a socket — below |
 | performance | Erasing a body through the boxed trait object costs a recorded number of allocations per construction | [`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs), counting `Body::empty` and `Body::from_bytes` | `enforced` |
 | reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; [`tests/routing.rs`](../crates/kynos/tests/routing.rs) over `Router::validate` for those only visible once the tree is assembled, each refusal with its pass control | `enforced` |
 | security | A served asset path is enumerated, never joined from request input | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) asserting an embedded set registers only literal `paths` keys, and [`router/assets/fs/tests.rs`](../crates/kynos/src/router/assets/fs/tests.rs) sweeping every escape a resolver must refuse against a control that must not be | `enforced` |
 | correctness | A route with no expressible template is recorded rather than described | [`tests/unchecked.rs`](../crates/kynos/tests/unchecked.rs) asserting a catch-all takes no `paths` key and reaches `x-kynos-opaque-routes` | `enforced` |
 | operability | Metric labels derive from operation IDs, never request paths | [`tests/dispatch.rs`](../crates/kynos/tests/dispatch.rs) asserting `MatchedPath` is the template rather than the request target, so two concrete paths under one template produce one label | `enforced` |
 | correctness | The description a service serves is the description it emits | [`tests/docs.rs`](../crates/kynos/tests/docs.rs), byte-comparing the description route's body against `Router::openapi`'s JSON, and asserting a nested mount moves both routes and the page's pointer with them | `enforced` |
+
+**The first instruction counts say where a request's work goes, and it is
+rarely routing.** Recorded at rustc 1.97.1 in
+[`requests.tsv`](../crates/kynos-profile/requests.tsv), with the host it was
+taken on: a static match executes 1732 instructions in the program and a miss
+1831, while `echo-post` executes 35253. Read with
+`callgrind_annotate --inclusive=yes` over that scenario's Callgrind file, 57%
+of everything Callgrind counted for the request, libc included, is inside the
+`Json` extractor and 28% inside `serde_json::to_vec`. A transparent
+interceptor costs 315 program instructions and one heap block per layer, the
+same at depth four and eight. `json-large` executes 1027125 program
+instructions, and `serde_json`'s string writer alone is 36% of all it counted.
+The ceiling this row would need stays unset for [Thresholds](#thresholds)'
+reason; the counts are the first measurement, not a target.
 
 **The zero was never measured, and it is wrong.** The row above asked for
 `alloc_count == 0` and was `planned` for as long as this document has existed;
@@ -453,9 +469,9 @@ where someone mounting a cap will meet it.
 
 AGENTS.md: *"A module becomes a directory once it holds two
 independently-changing concerns … Passing ~400 lines excluding tests is when to
-ask that question, not an answer to it."* Thirty files under `crates/*/src`
-are past that line and asked it, and `containment:check` holds that number so it
-can only move on purpose.
+ask that question, not an answer to it."* Thirty-one files under
+`crates/*/src` are past that line and asked it, and `containment:check` holds
+that number so it can only move on purpose.
 
 The line count is a prompt rather than a trigger because the rule interacts with
 the one directly above it in AGENTS.md — *"Submodules are `pub` with no parent
@@ -464,7 +480,7 @@ public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: it is one of
 them, it declares eight rejection types, and splitting it would turn
 `error::rejection::PathRejection` into
-`error::rejection::path::PathRejection`. Seventeen of the thirty are that
+`error::rejection::path::PathRejection`. Seventeen of the thirty-one are that
 shape, worth roughly a hundred public paths between them — and each is one
 cohesive family, which is precisely what the concern test says may stay a file.
 So they stay: a longer path is a worse name, and the rule's first clause already
@@ -502,6 +518,14 @@ and it does not, because the reason it is a function rather than tokens in
 separated the spelling from the only thing holding it to one place would put the
 next reader one file away from the argument. One concern, so one file — the
 first clause of the rule, reached by the second's not applying.
+
+`derive/schema/attributes.rs` is the thirty-first, and it is `problem.rs`'s
+argument: nothing in `kynos-macros` is public but the derives, so a split would
+cost no path. It holds what the `Schema` derive reads off one member's
+attribute list — its names, whether it is described, required or open, and its
+constraints — each a question the shape code asks of the same list. What pushed
+it over was reading both sides of a split `rename`, so a member now has the name
+serde writes and the one it reads. One concern, so one file.
 
 ## Dependencies
 
@@ -598,7 +622,7 @@ open against a `kynos-otel` that may never be written.
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
 | reliability | Every test target is built at the feature sets its own `#[cfg]` gates decide, not only at all-on, default and baseline | `mise run lint:codecs`, six `-p kynos --all-targets` Clippy runs over `openapi31 + macros` and each optional codec in turn | `enforced` for the codec flags, which is where a per-feature-gated target lives today; a target gated on some other flag would need its set added to that list |
 | reliability | Tests are hermetic; no shared state, no ordering dependence, no retries | `cargo-nextest` process isolation, `retries = 0`, guarded by `crates/kynos/tests/hermeticity.rs` | `enforced` |
-| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 30 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
+| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 31 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
 | dx | A worktree's `target/` stays near the 17 GiB [PR #126](https://github.com/getkono/kynos/pull/126) measured, against the 44 GiB before it | `mise run containment:check`, holding [`.cargo/config.toml`](../.cargo/config.toml) to declaring `profile.dev.debug` and `profile.dev.package."*".debug`, and to carrying no top-level table but `profile` | `partial`: it holds the cause and not the size. No job takes a `du -sh target` reading, so a build that grows for some other reason passes; the two keys' *values* are unchecked, and so are the two `CARGO_INCREMENTAL = "0"` task envs #126 added beside them. What it closes is the half nobody can review — below |
 | reliability | Panic recovery refuses to compile under `panic = "abort"` | `mise run panic:check` | `enforced` |
 | reliability | Commits follow Conventional Commits, merge commits exempt | `convco`, twice over: the `conventional-commit` `commit-msg` step runs `mise run commits:message` over the one message being written, exempting a merge on the presence of the `MERGE_HEAD` *file*; `mise run commits:check` and the `commits` CI job run `convco check` over a range, where the exemption is convco's own parent-count filter. `mise run commits:test` runs *both* halves over the same commits, since a divergence between them fails neither | `enforced`, with one case out of reach: amending an *existing* merge commit runs the hook with `MERGE_HEAD` already gone over a commit that still has two parents, so the hook rejects what the range form exempts, and `--no-verify` is the escape. `commits:test` pins that residual in both directions, so closing or widening it fails this row |
