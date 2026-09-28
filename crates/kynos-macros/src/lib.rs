@@ -202,9 +202,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// so the schema and the wire form come from one declaration. A named field or
 /// variant is named as serde names it: its `rename`, each side where the rename
 /// is split, otherwise its identifier without a raw identifier's `r#` under
-/// `rename_all`. A named field serde reads under an `alias` is a property under
-/// each name it reads, present under exactly one where it is required and
-/// under at most one otherwise, since serde refuses a document naming two. A
+/// `rename_all`, whose split form is read where its two sides agree. A named
+/// field serde reads under an `alias` is a property under each name it reads,
+/// present under exactly one where it is required and under at most one
+/// otherwise, since serde refuses a document naming two. A
 /// variant serde reads under an `alias` is named under each name it reads: in
 /// the `enum` of an all-unit enum, in the `enum` a tag or an externally tagged
 /// unit variant then is in place of a `const`, and as a property of an
@@ -412,6 +413,11 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   true in both directions. Give both sides one name. A member serde uses
 ///   one way is named by that side: a field it skips in either direction, any
 ///   field of a variant it never writes, and a variant it only reads.
+/// - A split container `rename_all(serialize = ..., deserialize = ...)` whose
+///   two sides differ, or which names one side only. The style reaches every
+///   member serde both writes and reads, so no one schema is true in both
+///   directions. Say which with `rename_all = "..."`. Sides that agree are read
+///   as that one style.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::schema::expand(item)
@@ -623,8 +629,11 @@ pub fn derive_cookies(item: TokenStream) -> TokenStream {
 /// description, and both read the part names from the same place — the field's
 /// identifier, or serde's `rename` and `rename_all` when the type carries them.
 /// A split `rename(serialize = ..., deserialize = ...)` whose sides differ is
-/// refused on any field, even one serde uses one way: the part is read and
-/// written under one name, so neither side can be it.
+/// refused on any field, even one serde uses one way, and so is a split
+/// container `rename_all(serialize = ..., deserialize = ...)` whose sides
+/// differ or which names one side only: the part is read and written under one
+/// name, so neither side can be it. Sides that agree are the one name or style
+/// they spell.
 #[proc_macro_derive(MultipartForm)]
 pub fn derive_multipart_form(item: TokenStream) -> TokenStream {
     derive::multipart::expand(item)

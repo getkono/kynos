@@ -386,18 +386,31 @@ mod schema {
     /// The refusal a split `rename` raises where serde writes a member under
     /// one name and reads it under another.
     ///
-    /// A sixth function, since a split rename is neither a skip nor a tag.
+    /// A sixth function, since a split rename is neither a skip nor a tag. A
+    /// container `rename_all` whose sides differ is refused beside it.
     fn rename_ledger() -> Vec<Case> {
-        vec![case(
-            "a split `rename` whose sides differ on a field serde writes and reads",
-            quote::quote!(
-                struct Stamp {
-                    #[serde(rename(serialize = "a", deserialize = "b"))]
-                    at: u64,
-                }
+        vec![
+            case(
+                "a split `rename` whose sides differ on a field serde writes and reads",
+                quote::quote!(
+                    struct Stamp {
+                        #[serde(rename(serialize = "a", deserialize = "b"))]
+                        at: u64,
+                    }
+                ),
+                "and reads it as",
             ),
-            "and reads it as",
-        )]
+            case(
+                "a split container `rename_all` whose sides differ",
+                quote::quote!(
+                    #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+                    struct Stamp {
+                        created_at: u64,
+                    }
+                ),
+                "a split `rename_all` whose sides differ",
+            ),
+        ]
     }
 
     #[test]
@@ -421,6 +434,40 @@ mod schema {
                 + field_ledger().len()
                 + tag_ledger().len()
                 + rename_ledger().len(),
+        );
+    }
+
+    /// A split container `rename_all` naming one side only leaves the other
+    /// direction on the identifiers, so its sides differ too.
+    ///
+    /// Beside the ledger rather than in it: the ledger's row proves the site
+    /// fires, and this proves an absent side counts as a differing one.
+    #[test]
+    fn a_split_rename_all_naming_one_side_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a split container `rename_all` naming its serialize side only",
+                    quote::quote!(
+                        #[serde(rename_all(serialize = "camelCase"))]
+                        struct Stamp {
+                            created_at: u64,
+                        }
+                    ),
+                    "a split `rename_all` whose sides differ",
+                ),
+                case(
+                    "a split container `rename_all` naming its deserialize side only",
+                    quote::quote!(
+                        #[serde(rename_all(deserialize = "camelCase"))]
+                        struct Stamp {
+                            created_at: u64,
+                        }
+                    ),
+                    "a split `rename_all` whose sides differ",
+                ),
+            ],
+            expand_inner,
         );
     }
 
@@ -4127,18 +4174,35 @@ mod multipart {
     use crate::derive::multipart::expand_inner;
 
     /// A field serde only reads is still refused: a part has one name in both
-    /// directions, whichever side serde uses.
+    /// directions, whichever side serde uses. A container `rename_all` whose
+    /// sides differ is refused beside it, since it names every part twice.
     fn ledger() -> Vec<Case> {
-        vec![case(
-            "a split `rename` whose sides differ on a field serde only reads",
-            quote::quote!(
-                struct Upload {
-                    #[serde(skip_serializing, default, rename(serialize = "a", deserialize = "b"))]
-                    caption: String,
-                }
+        vec![
+            case(
+                "a split `rename` whose sides differ on a field serde only reads",
+                quote::quote!(
+                    struct Upload {
+                        #[serde(
+                            skip_serializing,
+                            default,
+                            rename(serialize = "a", deserialize = "b")
+                        )]
+                        caption: String,
+                    }
+                ),
+                "gives this field two part names",
             ),
-            "gives this field two part names",
-        )]
+            case(
+                "a split container `rename_all` whose sides differ",
+                quote::quote!(
+                    #[serde(rename_all(serialize = "camelCase", deserialize = "snake_case"))]
+                    struct Upload {
+                        file_name: String,
+                    }
+                ),
+                "gives every field two part names",
+            ),
+        ]
     }
 
     #[test]
@@ -4146,11 +4210,17 @@ mod multipart {
         each_case_is_refused(ledger(), expand_inner);
     }
 
-    /// A split `rename` whose sides agree gives the part one name, so it is
-    /// accepted, as `rename = "..."` is.
+    /// A split `rename` or `rename_all` whose sides agree gives the part one
+    /// name, so it is accepted, as the single form is.
     #[test]
     fn a_rename_giving_one_part_name_is_accepted() {
         for declaration in [
+            quote::quote!(
+                #[serde(rename_all(serialize = "camelCase", deserialize = "camelCase"))]
+                struct Upload {
+                    file_name: String,
+                }
+            ),
             quote::quote!(
                 struct Upload {
                     #[serde(rename(serialize = "a", deserialize = "a"))]
