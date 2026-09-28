@@ -200,8 +200,9 @@ deployment, so the reader reports none in every case that produces none.
 
 A resumed session reports the certificate its full handshake verified, and that
 verification is not repeated. Each resumption issues fresh tickets, so under the
-default stateless tickets a client that reconnects at least every twelve hours
-keeps its identity past the certificate's expiry for the life of the process; a
+default stateless tickets a client that keeps reconnecting before its ticket
+lapses — within six hours is always soon enough — keeps its identity past the
+certificate's expiry for the life of the process; a
 deployment that must hold every connection to the validity period sets
 `SessionResumption::Disabled` on its `TlsConfig`.
 

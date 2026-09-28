@@ -75,9 +75,10 @@ impl ClientCertificateConfig {
 /// its full handshake verified.
 ///
 /// That certificate is not verified again on resumption, and each resumption
-/// issues fresh tickets carrying it, so a client that reconnects at least every
-/// twelve hours keeps the identity past its certificate's expiry for the life
-/// of the process. A deployment that must re-verify every connection against
+/// issues fresh tickets carrying it, so a client that keeps reconnecting before
+/// its ticket lapses — within six hours is always soon enough — keeps the
+/// identity past its certificate's expiry for the life of the process. A
+/// deployment that must re-verify every connection against
 /// the certificate's validity period uses [`Disabled`](Self::Disabled).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -86,8 +87,10 @@ pub enum SessionResumption {
     /// so resuming depends on nothing the server stored and no cache bounds how
     /// many clients can resume.
     ///
-    /// The ticket keys are random, rotated every six hours and accepted for
-    /// twelve, and they live only in this process. Replicas behind a load
+    /// The ticket keys are random and rotated every six hours, and a key stays
+    /// accepted for one rotation after it stops issuing, so a ticket is honoured
+    /// for six to twelve hours depending on when in its key's period it was
+    /// issued. The keys live only in this process. Replicas behind a load
     /// balancer therefore cannot resume one another's sessions, and neither can
     /// a restarted process. Tickets use RFC 5077 §4's construction, with
     /// AES-256 and HMAC-SHA256, sealed by `aws-lc-rs` even when a caller installed
@@ -95,13 +98,13 @@ pub enum SessionResumption {
     /// interface carries no ticketer.
     ///
     /// A TLS 1.2 ticket carries the session's master secret, so anyone who later
-    /// obtains a ticket key — held in memory for at most twelve hours — can
+    /// obtains a ticket key — held in memory for about twelve hours — can
     /// decrypt the TLS 1.2 sessions recorded under it. TLS 1.3 resumption
     /// always runs a fresh key exchange, so its sessions keep forward secrecy.
     ///
-    /// rustls's in-memory cache of 256 sessions stays beside the tickets: each
-    /// TLS 1.2 full handshake still writes one entry to it, and a TLS 1.2
-    /// client that takes no tickets resumes from it.
+    /// rustls's in-memory cache of 256 sessions stays beside the tickets: a
+    /// TLS 1.2 full handshake that presented no ticket still writes one entry
+    /// to it, and a TLS 1.2 client that takes no tickets resumes from it.
     #[default]
     Tickets,
     /// A server-side cache of at most `capacity` entries, and no stateless
