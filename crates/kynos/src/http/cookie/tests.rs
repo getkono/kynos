@@ -1,4 +1,4 @@
-use super::{jar, value_of};
+use super::{Unreadable, jar, value_of};
 use crate::http::HeaderMap;
 
 /// A jar built from the `Cookie` fields `fields` holds.
@@ -58,7 +58,7 @@ fn a_jar_is_split_the_way_the_grammar_writes_it() {
     }
 }
 
-/// A field no `&str` can hold is skipped, and the rest of the jar survives.
+/// A cookie outside ASCII is skipped, and the rest of the jar survives.
 ///
 /// One unreadable cookie hiding every other one would turn a client's
 /// mistake into the service losing a session it was sent.
@@ -78,16 +78,81 @@ fn an_unprintable_field_does_not_hide_the_others() {
     assert_eq!(read, [("a", "1"), ("c", "3")]);
 }
 
+/// A pair is what an unreadable byte hides, not the field it travels in.
+///
+/// RFC 6265 section 5.4 has a user agent send one `Cookie` field, so over
+/// HTTP/1.1 a field is the whole jar: skipping it would lose every cookie the
+/// client sent to one byte in any of them.
+#[test]
+fn an_unprintable_pair_does_not_hide_the_rest_of_its_field() {
+    let mut headers = HeaderMap::new();
+    headers.append(
+        crate::http::header::COOKIE,
+        crate::http::HeaderValue::from_bytes(b"a=1; b=\xff; \xfe=2; c=3")
+            .expect("a legal field value"),
+    );
+
+    let read: Vec<_> = jar(&headers).collect();
+    assert_eq!(read, [("a", "1"), ("c", "3")]);
+}
+
 /// RFC 6265 section 5.4 orders a jar most-specific first, so where a client
 /// sends one name twice the earlier is the one for the narrower path.
 #[test]
 fn a_repeated_name_reads_back_as_the_first_one_sent() {
     let headers = from(&["session=narrow", "session=wide"]);
-    assert_eq!(value_of(&headers, "session"), Some("narrow"));
+    assert_eq!(value_of(&headers, "session"), Ok(Some("narrow")));
 }
 
 #[test]
 fn a_name_the_jar_does_not_hold_reads_back_as_absent() {
     let headers = from(&["a=1"]);
-    assert_eq!(value_of(&headers, "b"), None);
+    assert_eq!(value_of(&headers, "b"), Ok(None));
+}
+
+/// A jar built from `Cookie` fields that need not be text.
+fn from_octets(fields: &[&[u8]]) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    for field in fields {
+        headers.append(
+            crate::http::header::COOKIE,
+            crate::http::HeaderValue::from_bytes(field).expect("a legal field value"),
+        );
+    }
+    headers
+}
+
+/// The first cookie of the name asked for decides, even when it cannot be
+/// read: it was sent, so it is not absent, and a later one of that name does
+/// not stand in for it. A cookie whose *name* cannot be read is never the one
+/// asked for, so it hides nothing.
+#[test]
+fn an_unreadable_value_is_told_apart_from_an_absent_one() {
+    let unreadable = from_octets(&[b"s\xffssion=x; session=s-\xff", b"session=s-42"]);
+    assert_eq!(value_of(&unreadable, "session"), Err(Unreadable));
+
+    let unreadable_name = from_octets(&[b"s\xffssion=x; session=s-42"]);
+    assert_eq!(value_of(&unreadable_name, "session"), Ok(Some("s-42")));
+}
+
+/// Text here is ASCII, not UTF-8: `caf\xc3\xa9` is well-formed UTF-8 and still
+/// unreadable, since the `Header` location refuses the same octets and one
+/// credential reads alike in either.
+#[test]
+fn a_utf8_value_outside_ascii_is_unreadable() {
+    let headers = from_octets(&[b"session=caf\xc3\xa9; other=1"]);
+
+    assert_eq!(value_of(&headers, "session"), Err(Unreadable));
+    assert_eq!(jar(&headers).collect::<Vec<_>>(), [("other", "1")]);
+}
+
+/// A name outside ASCII is never the one asked for, even when the name asked
+/// for spells the same UTF-8: `jar` skips the pair, and `value_of` agrees with
+/// it about which names exist rather than matching the octets.
+#[test]
+fn a_utf8_name_outside_ascii_is_never_the_one_asked_for() {
+    let headers = from_octets(&[b"caf\xc3\xa9=1; other=2"]);
+
+    assert_eq!(value_of(&headers, "café"), Ok(None));
+    assert_eq!(jar(&headers).collect::<Vec<_>>(), [("other", "2")]);
 }

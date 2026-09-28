@@ -261,7 +261,10 @@ pub fn http_scheme(
 ///
 /// # Errors
 ///
-/// When the field is present and holds bytes no `&str` can carry.
+/// When the key is present and cannot be read: a header field or the first
+/// cookie of that name whose value is not ASCII, or a first query pair of that
+/// name whose percent-decoded value is not UTF-8. A later pair or cookie never
+/// stands in for the first.
 pub fn api_key(
     parts: &Parts,
     location: KeyLocation,
@@ -288,6 +291,7 @@ pub fn api_key(
         KeyLocation::Query => Ok(query_value(parts, name)?.map(ApiKey)),
 
         KeyLocation::Cookie => Ok(crate::http::cookie::value_of(&parts.headers, name)
+            .map_err(|_| AuthRejection::unauthenticated())?
             .map(|value| ApiKey(value.to_owned()))),
     }
 }

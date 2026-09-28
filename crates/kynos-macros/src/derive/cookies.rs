@@ -32,10 +32,22 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     // Splitting a jar is `http::cookie`'s job, not an expansion's: the rules
     // are RFC 6265's, they belong in one place, and a credential carried in a
     // cookie reads them from there in a build with no `cookie` feature at all.
+    // A declared cookie that was sent but cannot be read is refused rather
+    // than reported missing: it was not absent. The detail is a literal, as
+    // the query and header derives write theirs, so a 400's wording does not
+    // move with `Unreadable`'s `Display`.
     let reads = params.iter().map(|param| {
         let wire = param.name();
         let found = quote! {
-            ::kynos::http::cookie::value_of(headers, #wire)
+            match ::kynos::http::cookie::value_of(headers, #wire) {
+                ::core::result::Result::Ok(found) => found,
+                ::core::result::Result::Err(_) => {
+                    return ::core::result::Result::Err(#rejection::Invalid {
+                        name: ::std::string::String::from(#wire),
+                        detail: ::std::string::String::from("the cookie value is not ASCII"),
+                    });
+                }
+            }
         };
         decode_field(param, &rejection, &found, "the cookie is required")
     });
