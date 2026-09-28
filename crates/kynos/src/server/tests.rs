@@ -50,10 +50,14 @@ fn tcp_keepalive_defaults_are_owned_by_kynos() {
     );
 }
 
-/// Half a second is refused alongside zero, because the socket option carries
-/// whole seconds and would receive zero for it.
+/// A keepalive the kernel would refuse is refused before a socket is bound.
+///
+/// Both ends matter for the same reason. Half a second reaches the socket
+/// option as zero, and an hour past Linux's 32767-second ceiling is over it;
+/// either way Linux rejects the time only after enabling `SO_KEEPALIVE`, which
+/// leaves the socket probing at the system's two-hour default instead.
 #[test]
-fn a_tcp_keepalive_under_a_second_is_refused() {
+fn a_tcp_keepalive_the_kernel_would_refuse_is_refused() {
     use std::time::Duration;
 
     use crate::server::{
@@ -66,24 +70,28 @@ fn a_tcp_keepalive_under_a_second_is_refused() {
         TcpKeepAlive::default().interval(Duration::ZERO),
         TcpKeepAlive::default().idle(Duration::from_millis(500)),
         TcpKeepAlive::default().interval(Duration::from_millis(999)),
+        TcpKeepAlive::default().idle(Duration::from_secs(32_768)),
+        TcpKeepAlive::default().interval(Duration::from_secs(32_768)),
     ] {
         assert!(
             matches!(
                 validate_tcp_keepalive(Some(keepalive)),
                 Err(ServerError::InvalidConfiguration(
-                    "TCP keepalive durations must be at least one second"
+                    "TCP keepalive durations must be between 1 and 32767 seconds"
                 ))
             ),
             "{keepalive:?} must be refused"
         );
     }
     validate_tcp_keepalive(None).expect("no keepalive is a configuration");
-    validate_tcp_keepalive(Some(
-        TcpKeepAlive::default()
-            .idle(Duration::from_secs(1))
-            .interval(Duration::from_secs(1)),
-    ))
-    .expect("one second is the floor, and accepted");
+    for bound in [1, 32_767] {
+        validate_tcp_keepalive(Some(
+            TcpKeepAlive::default()
+                .idle(Duration::from_secs(bound))
+                .interval(Duration::from_secs(bound)),
+        ))
+        .expect("both bounds are accepted");
+    }
 }
 
 /// Accepts one loopback connection and applies `options` to it, as the accept
