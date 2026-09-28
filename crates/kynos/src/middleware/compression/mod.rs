@@ -771,8 +771,13 @@ where
         // nobody has. It takes the streaming path below instead of being
         // skipped, which is what makes an event stream or a long export
         // compressible at all.
+        //
+        // A body under `min_size` whose handler required an encoding is
+        // encoded all the same: the client accepted a coding, and honouring
+        // `min_size` over the response would read the service's own
+        // configuration as outranking the response's.
         let worth_encoding = match body.size_hint().exact() {
-            Some(length) => length > 0 && length >= self.min_size,
+            Some(length) => length > 0 && (length >= self.min_size || policy == Encoding::Required),
             None => true,
         };
 
@@ -780,9 +785,8 @@ where
             continued.set_body(body);
 
             if policy == Encoding::Required {
-                // Small, but the handler said identity is not an answer.
-                // Honouring `min_size` over that would be reading the
-                // service's own configuration as outranking the response's.
+                // Empty, so there is nothing to encode, and the handler said
+                // identity is not an answer.
                 return Err(NotAcceptable::new());
             }
 
