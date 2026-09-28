@@ -1,7 +1,7 @@
 use std::net::{IpAddr, SocketAddr};
 
 use super::{Forwarded, TrustedProxies, node_address, within};
-use crate::http::{HeaderMap, HeaderValue};
+use crate::http::{HeaderMap, HeaderValue, Request, body::Body};
 
 /// A header map from pairs, appending so a repeated name stays repeated.
 fn map(fields: &[(&str, &str)]) -> HeaderMap {
@@ -269,4 +269,36 @@ fn a_scheme_claimed_by_a_trusted_sender_is_believed() {
 fn a_request_from_no_socket_resolves_to_no_client() {
     let resolved = Forwarded::resolve(&HeaderMap::new(), None, &TrustedProxies::none());
     assert_eq!(resolved.client(), None);
+}
+
+/// Only the router's record answers `of`, and only once the router wrote it.
+///
+/// Neither a forwarding field nor a `Forwarded` inserted by hand stands in for
+/// the resolution: the field is unvetted, and the extension is one the router
+/// stopped reading.
+#[test]
+fn only_a_routed_request_has_a_resolved_origin() {
+    let mut request = Request::new(Body::empty());
+    request.headers_mut().insert(
+        "forwarded",
+        HeaderValue::from_static("for=203.0.113.7;proto=https"),
+    );
+    request.extensions_mut().insert(Forwarded {
+        client: Some(ip("203.0.113.8")),
+        proto: None,
+    });
+    assert_eq!(Forwarded::of(&request), None);
+
+    let resolved = Forwarded {
+        client: Some(ip("10.0.0.1")),
+        proto: None,
+    };
+    request
+        .extensions_mut()
+        .insert(crate::router::dispatch::Routed {
+            matched: crate::extract::connection::MatchedPath("/origin"),
+            captures: None,
+            forwarded: resolved.clone(),
+        });
+    assert_eq!(Forwarded::of(&request), Some(&resolved));
 }
