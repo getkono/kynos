@@ -1011,17 +1011,19 @@ fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
 /// names a member serde both writes and reads: a container
 /// `rename_all(serialize = ..., deserialize = ...)`, an enum's
 /// `rename_all_fields(...)` that reaches a struct variant, or the own
-/// `rename_all(...)` of a variant serde both writes and reads.
+/// `rename_all(...)` of a struct variant serde writes.
 ///
 /// Such a rule gives a member two wire names, and one schema describes both
 /// directions, so the form is refused as the parameter derives refuse a split
-/// `rename_all`. A rule naming only members serde uses one way is not, as
-/// [`reject_split_rename`] exempts them: a variant serde skips both ways is in
-/// no schema, a variant serde only reads has its fields named by its rule's
-/// deserialize side in [`Container::fields_of`], and a `rename_all_fields`
-/// every struct variant overrides on both sides, or on an enum with none,
-/// names nothing. A variant serde only writes is refused before this runs, by
-/// [`reject_unread_variant`]. Sides that agree are the `key = "..."` they
+/// `rename_all`. A variant serde writes is one it also reads, since a lone
+/// `skip_deserializing` is refused before this runs, by
+/// [`reject_unread_variant`], so the variant filter is [`is_written`], as in
+/// [`reject_split_rename`]. A rule naming no field serde both writes and reads
+/// is not refused: a variant serde skips both ways is in no schema, a variant
+/// serde only reads has its fields named by its rule's deserialize side in
+/// [`Container::fields_of`], a unit or tuple variant has no named field for its
+/// own rule to name, and a `rename_all_fields` every struct variant overrides
+/// on both sides, or on an enum with none, names nothing. Sides that agree are the `key = "..."` they
 /// spell, and [`Container`] and [`variant_rename_all`] read them so. Runs
 /// before any check that reads a [`Container`].
 fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
@@ -1048,9 +1050,7 @@ fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
     .chain(
         variants
             .into_iter()
-            .filter(|variant| {
-                is_written(variant) && !serde_flag(&variant.attrs, &["skip_deserializing"])
-            })
+            .filter(|variant| matches!(variant.fields, Fields::Named(_)) && is_written(variant))
             .map(|variant| (&variant.attrs, "rename_all", "every field of this variant")),
     );
     for (attrs, key, reach) in rules {
@@ -1677,8 +1677,8 @@ impl Container {
     ///
     /// The side is the one serde uses the variant's fields on: the serialize
     /// side for a variant serde writes, and the deserialize side for one it
-    /// only reads. [`reject_split_rename_all`] refuses a variant rule whose
-    /// sides differ where serde uses both, and a split `rename_all_fields`
+    /// only reads. [`reject_split_rename_all`] refuses a struct variant's rule
+    /// whose sides differ where serde uses both, and a split `rename_all_fields`
     /// reaching any struct variant, so the serialize side read into
     /// [`Container::rename_all_fields`] is its deserialize side too.
     fn fields_of(&self, variant: &Variant) -> Self {
