@@ -5,6 +5,13 @@ fail-fast = false
 # Async tests deadlock instead of failing; bound them so the culprit is named.
 slow-timeout = { period = "30s", terminate-after = 4 }
 leak-timeout = { period = "100ms", result = "fail" }
+# `kynos-profile`'s benchmark is a gungraun binary: it runs only under
+# gungraun-runner and Valgrind, and without them it cannot even list itself,
+# so `--all-targets` would fail every run on a binary that holds no tests. A
+# binary-level predicate, so nextest never executes it to ask. It runs as
+# `mise run profile:requests` instead, and that package's fixture is held by
+# its ordinary tests, which this leaves in.
+default-filter = "not (package(kynos-profile) & kind(bench))"
 
 # The compile-fail suite is one test that drives `rustc` over every fixture in
 # `tests/ui/` -- each compile-fail case and its control, a set that grows with

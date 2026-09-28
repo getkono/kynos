@@ -108,6 +108,13 @@ binary cannot be depended on — each crate that counts installs the counter
 itself. `support/` beside them is not a target — it is the generator module the
 property files share, included by `#[path]` for the same reason.
 
+`crates/kynos-profile/` is a fourth member and holds no integration target:
+its benchmark runs only under gungraun and Valgrind, so nextest's default filter
+leaves it out, and its sibling `tests.rs` holds the one thing that can go wrong
+without either — a scenario answered with a status other than the one its
+count is meant to be of, or a payload no longer the size `kynos-bench` names.
+The count itself is [`performance.md`](performance.md#the-taxonomy)'s.
+
 `crates/kynos/tests/support/` is the same idiom: the fixture app the runtime
 targets drive, one request builder over the public `Service::call`, and
 `counting.rs`, whose `#[global_allocator]` line a target installs
