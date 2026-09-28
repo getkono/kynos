@@ -295,6 +295,25 @@ one: the accept path holds the socket and the rustls session as separable
 values, so a kernel-TLS path could be introduced additively later. That costs
 nothing today and is not a commitment — see the rationale below.
 
+**Session resumption is decided, not inherited.** rustls on its own resumes
+from an in-memory cache of 256 sessions and issues no stateless tickets, so a
+service with more recently-connected clients than that evicts them into a full
+handshake, which costs an asymmetric signature and a key exchange each time.
+Kynos defaults to stateless tickets instead
+([`SessionResumption::Tickets`](../crates/kynos/src/server/tls/mod.rs)): the
+session travels with the client, so no client count evicts one. Its costs are
+written on the variant: a leaked ticket key exposes recorded TLS 1.2 sessions,
+and a resumed mutual-TLS session is not checked against its certificate's
+expiry again. The keys are
+random per process and rotate every six hours, so replicas behind a load
+balancer cannot yet resume each other's sessions; sharing them needs a key
+source the operator supplies, which is
+[#269](https://github.com/getkono/kynos/issues/269). A bounded cache and no
+resumption are the two alternatives, each a knob on `TlsConfig`. What a
+resumed handshake saves in CPU is `kynos-bench`'s to measure, by
+[`performance.md`](performance.md#the-boundary)'s boundary; that it resumes at
+all is asserted here, over a real socket.
+
 **Two date backends and two decimal backends, not one each.** These are the only
 rows where Kynos ships alternatives, and the reason is that the alternatives are
 not competing answers to one question. `chrono` and `jiff` divide by ecosystem
