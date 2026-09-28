@@ -29,9 +29,10 @@ pub struct Path<T>(pub T);
 
 /// Where in the request path a matched route found each of its variables.
 ///
-/// Internal, and the contract between the router and [`Path`]: the router
-/// inserts one into [`Parts::extensions`] for every request whose route
-/// template has variables, and nothing else reads it.
+/// Internal, and the contract between the router and its two readers, [`Path`]
+/// and [`captured`](crate::unchecked::captured): the router records one, in the
+/// request's routing record, for every request whose route template has
+/// variables.
 ///
 /// Ranges into the request's own path rather than owned strings, because a
 /// capture *is* a slice of that path — keeping it one means a match costs one
@@ -204,7 +205,10 @@ impl<C: Sync, T: DecodePath + Send> FromRequestParts<C> for Path<T> {
 
     async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
         let path = parts.uri.path();
-        let captures = parts.extensions.get::<PathCaptures>();
+        let captures = parts
+            .extensions
+            .get::<crate::router::dispatch::Routed>()
+            .and_then(|routed| routed.captures.as_ref());
 
         let mut decoded: Vec<(&'static str, Cow<'_, str>)> = Vec::with_capacity(T::NAMES.len());
         for name in T::NAMES {

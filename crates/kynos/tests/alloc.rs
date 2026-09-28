@@ -27,7 +27,7 @@
 //!
 //! **These numbers record a requirement that is not met.**
 //! [`nfr.md`](../../../docs/nfr.md#routing) asks for zero allocations on the
-//! routing path and the path allocates six times for a static match. The
+//! routing path and the path allocates five times for a static match. The
 //! ceilings are the measurement rather than the target, as
 //! [`nfr.md`](../../../docs/nfr.md#thresholds) requires of a first
 //! measurement — and this file is the characterization that row points at, so
@@ -81,9 +81,9 @@ use counting::request;
 const SHAPES: [(&str, StatusCode, usize); 3] = [
     // A static match, with no parameter to capture. Also the row `STACKED`
     // and the depth-0 stack ceiling are read from.
-    ("/ping", StatusCode::NO_CONTENT, 6),
+    ("/ping", StatusCode::NO_CONTENT, 5),
     // One path parameter, captured and deserialized.
-    ("/users/7", StatusCode::NO_CONTENT, 10),
+    ("/users/7", StatusCode::NO_CONTENT, 8),
     // A request matching no route at all.
     ("/nope", StatusCode::NOT_FOUND, 6),
 ];
@@ -296,12 +296,12 @@ const STACKS: [Stack; 3] = [
     // No stack at all: what the same target costs in `SHAPES`, not a second
     // recording of it.
     (0, service, STACKED_ALONE),
-    (4, depth_4, 10),
-    (8, depth_8, 14),
+    (4, depth_4, 9),
+    (8, depth_8, 13),
 ];
 
-/// What one layer adds, transcribed from the ceilings above: fourteen at depth
-/// eight less six at depth zero, over eight layers.
+/// What one layer adds, transcribed from the ceilings above: thirteen at depth
+/// eight less five at depth zero, over eight layers.
 const PER_LAYER: usize = 1;
 
 /// How wide the future [`Service::call`] returns is allowed to be, measured
@@ -325,8 +325,8 @@ const DISPATCH_FUTURE_BYTES: usize = 280;
 /// The record, for the middleware half: what one request costs at each depth a
 /// stack is mounted at, over interceptors that allocate nothing of their own.
 ///
-/// Ten allocations at depth 4 and fourteen at depth 8, against the
-/// [`STACKED_ALONE`] six the routing path costs with no stack in front of
+/// Nine allocations at depth 4 and thirteen at depth 8, against the
+/// [`STACKED_ALONE`] five the routing path costs with no stack in front of
 /// it — one heap allocation per layer. That one is the object-safe form of
 /// `Interceptor` boxing the future it returns, which is the price of a
 /// heterogeneous chain fitting in one slice.
@@ -533,15 +533,15 @@ const CALIBRATION: usize = 2;
 /// fresh allocations and reallocations alike.
 ///
 /// **Stated as a delta rather than as an absolute, because an absolute would
-/// be mostly the router's.** One request through [`calibrated`] costs nine
-/// today, of which seven is the routing path's [`STACKED_ALONE`] and the boxed
+/// be mostly the router's.** One request through [`calibrated`] costs eight
+/// today, of which six is the routing path's [`STACKED_ALONE`] and the boxed
 /// future one layer costs — both recorded above as ceilings, and both free to
-/// fall. Pinning the nine would turn a rustc or dependency bump that made the
+/// fall. Pinning the eight would turn a rustc or dependency bump that made the
 /// static match one allocation cheaper into a red *instrument* test: every
 /// ceiling would pass, both equalities over differences would pass, and this
 /// would be the only failure in either target, saying the driver had changed
 /// when the router had merely got cheaper. Reading it against a transparent
-/// layer at the same depth cancels all seven. What is left is what
+/// layer at the same depth cancels all six. What is left is what
 /// [`Calibrating`] does, which nothing outside this file can move — the
 /// arrangement [`performance.md`](../../../docs/performance.md#thresholds)
 /// asks for, where relations outlive absolutes.

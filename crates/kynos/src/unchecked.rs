@@ -80,7 +80,9 @@ use crate::{
 pub fn captured<'r>(request: &'r Request, name: &str) -> Option<std::borrow::Cow<'r, str>> {
     let captures = request
         .extensions()
-        .get::<crate::extract::params::path::PathCaptures>()?;
+        .get::<crate::router::dispatch::Routed>()?
+        .captures
+        .as_ref()?;
 
     let raw = captures.get(request.uri().path(), name)?;
     crate::__private::uri::decode_path_value(raw).ok()
