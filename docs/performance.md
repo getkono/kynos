@@ -20,9 +20,10 @@ recounted by hand when the taxonomy moves, and the sentence is held as written:
 rewording it means editing the rule in the same commit.
 
 The allocation count has already earned the document: the routing path was
-required to allocate nothing, had never been measured, and allocates seven
-times for a static match. [`nfr.md`](nfr.md#routing) carries the numbers and
-what they do and do not establish.
+required to allocate nothing, had never been measured, and allocated seven
+times for a static match — five since the count was attributed.
+[`nfr.md`](nfr.md#routing) carries the numbers and what they do and do not
+establish.
 
 ## The boundary
 
@@ -154,7 +155,7 @@ the baseline's format, so recording the baseline is copying that file over
 
 **No shape owes it, and it replaces nothing a shape owes.** It is the instrument
 the counted kinds are *attributed* with: an allocation count says a request
-allocates eleven times, and this says which frames spent the instructions around
+allocates eight times, and this says which frames spent the instructions around
 them. A number here is work done rather than time taken — one vector instruction
 counts as one — so it is not a latency and says nothing `kynos-bench` would.
 
