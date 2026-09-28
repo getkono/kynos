@@ -9,6 +9,8 @@
 # `mise run references:verify` checks it, so a filter that touched one byte on
 # checkout would fail that gate -- and the point of vendoring a specification is
 # that it is the bytes the standards body published, not a normalized copy.
-references/** -text
+# Marked vendored too, so its HTML specifications stay out of GitHub's language
+# statistics.
+references/** -text linguist-vendored
 
 references/rfc9110.txt -text whitespace=-trailing-space
