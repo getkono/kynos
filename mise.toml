@@ -677,9 +677,10 @@ grep -F 'Kynos panic recovery requires `panic = "unwind"`' "$panic_check_output"
 
 [tasks."msrv:check"]
 description = "Verify the crate still builds on the declared MSRV"
-# `kynos-profile` is excluded because it states its own floor, gungraun's 1.88,
-# and is published nowhere: the MSRV is what an application needs to build
-# Kynos, and no application builds a measurement harness.
+# `kynos-profile` is excluded because it cannot build on 1.85 -- gungraun's
+# floor is 1.88, which the member deliberately leaves undeclared (its manifest
+# says why) -- and is published nowhere: the MSRV is what an application needs
+# to build Kynos, and no application builds a measurement harness.
 run = '''
 rustup toolchain install 1.85 --profile minimal --no-self-update
 cargo +1.85 check --workspace --all-features --exclude kynos-profile
