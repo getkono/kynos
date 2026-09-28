@@ -1353,10 +1353,12 @@ async fn a_returning_client_resumes_its_session_by_default() {
         .expect("server exits cleanly");
 }
 
-/// Tickets hold no state on the server, so no number of other clients evicts
-/// a session.
+/// By default a session is a ticket the client holds, so no number of other
+/// clients evicts it.
 ///
-/// This is what separates the default from rustls's own. There, every session
+/// This is what separates the default from rustls's own, so it runs on
+/// `SessionResumption::default()` rather than naming a variant: reverting the
+/// default to a cache fails it. In rustls's own, every session
 /// was an entry in a cache of 256 — each TLS 1.3 handshake stores two and each
 /// TLS 1.2 one stores one — so three hundred clients in between pushed the
 /// first one's out and it paid a full handshake on return. With stateless
@@ -1366,13 +1368,13 @@ async fn a_returning_client_resumes_its_session_by_default() {
 /// satisfy every other case here.
 #[cfg(all(feature = "tls", feature = "http1"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_ticketed_session_survives_any_number_of_other_clients() {
+async fn a_default_session_survives_any_number_of_other_clients() {
     use tokio_rustls::rustls::{HandshakeKind, version};
 
     use crate::server::tls::SessionResumption;
 
     let (address, issued, shutdown_sender, server) =
-        resumption_server(SessionResumption::Tickets, false).await;
+        resumption_server(SessionResumption::default(), false).await;
 
     for version in [&version::TLS13, &version::TLS12] {
         let returning = resuming_client(&issued, version, false);
@@ -1383,7 +1385,7 @@ async fn a_ticketed_session_survives_any_number_of_other_clients() {
         assert_eq!(
             connect(&returning, address).await.0,
             HandshakeKind::Resumed,
-            "{version:?}: a ticketed session is not evicted by other clients"
+            "{version:?}: a default session is not evicted by other clients"
         );
     }
 
