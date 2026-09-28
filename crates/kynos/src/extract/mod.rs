@@ -8,8 +8,9 @@
 //!
 //! An argument that contributes nothing says so, by implementing `Describe`
 //! with an empty body. [`Inject`](crate::di::inject::Inject),
-//! [`MatchedPath`](connection::MatchedPath) and
-//! [`ConnectInfo`](connection::ConnectInfo) all do: none of them is visible to
+//! [`MatchedPath`](connection::MatchedPath),
+//! [`ConnectInfo`](connection::ConnectInfo) and
+//! [`Forwarded`](crate::http::forwarded::Forwarded) all do: none of them is visible to
 //! a consumer, and each is making that claim rather than skipping a step.
 //!
 //! Tools that infer a description from axum handlers produce documents with

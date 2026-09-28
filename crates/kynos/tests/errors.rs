@@ -134,12 +134,13 @@ fn negotiation_rejects_with_the_negotiation_type() {
     head_rejects_with::<NegotiationRejection, (), Accept<()>>();
 }
 
-/// Nothing about the connection can fail once a route has matched, so both of
-/// these say `Infallible` rather than naming a status they never produce.
+/// Nothing about the connection can fail once a route has matched, so each of
+/// these says `Infallible` rather than naming a status it never produces.
 #[test]
 fn the_connection_extractors_cannot_fail() {
     head_rejects_with::<Infallible, (), MatchedPath>();
     head_rejects_with::<Infallible, (), ConnectInfo>();
+    head_rejects_with::<Infallible, (), kynos::http::forwarded::Forwarded>();
 }
 
 /// Reading a `Range` cannot fail, which is the surprising half of that design.

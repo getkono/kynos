@@ -171,8 +171,8 @@ fn within(address: IpAddr, network: IpAddr, prefix: u8) -> bool {
 /// applied.
 ///
 /// Built once per request and read by anything that needs to know who is
-/// calling — the rate limiter's [`ByClientAddress`] key, and whether a response
-/// may carry HSTS.
+/// calling — the rate limiter's [`ByClientAddress`] key, a handler taking it as
+/// an argument, and whether a response may carry HSTS.
 ///
 /// [`ByClientAddress`]: crate::middleware::rate_limit::key::ByClientAddress
 #[derive(Clone, Debug, PartialEq, Eq)]

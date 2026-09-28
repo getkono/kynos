@@ -258,6 +258,32 @@ impl Describe for MatchedPath {
     }
 }
 
+/// Where the request came from, as far as
+/// [`Router::trusted_proxies`](crate::Router::trusted_proxies) lets its
+/// forwarding fields be believed.
+///
+/// Infallible for the reason [`MatchedPath`] is: the router resolves this once,
+/// under its own trust policy, before any argument is built. Until a trust
+/// policy is set it is the socket peer, and nothing a client writes in a header
+/// changes it.
+impl<C: Sync> FromRequestParts<C> for crate::http::forwarded::Forwarded {
+    type Rejection = Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
+        Ok(parts
+            .extensions
+            .get::<crate::router::dispatch::Routed>()
+            .map(|routed| routed.forwarded.clone())
+            .expect("the router resolves the request's origin before building an argument"))
+    }
+}
+
+impl Describe for crate::http::forwarded::Forwarded {
+    fn describe(operation: &mut OperationCx<'_>) {
+        let _ = operation;
+    }
+}
+
 /// Infallible because the transport answers this question rather than the
 /// client, so there is no request a client could send that fails to produce an
 /// answer. A service with no socket under it reports the in-process address.
