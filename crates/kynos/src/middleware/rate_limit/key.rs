@@ -78,10 +78,8 @@ impl<C> RateLimitKey<C> for ByClientAddress {
         let _ = (route, context);
 
         Some(Cow::Owned(
-            request
-                .extensions()
-                .get::<crate::router::dispatch::Routed>()
-                .and_then(|routed| routed.forwarded.client())
+            crate::http::forwarded::Forwarded::of(request)
+                .and_then(crate::http::forwarded::Forwarded::client)
                 .map_or_else(
                     || "client:none".to_owned(),
                     |address| format!("client:{address}"),

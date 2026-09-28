@@ -184,6 +184,24 @@ pub struct Forwarded {
 }
 
 impl Forwarded {
+    /// What the router resolved for `request`, borrowed.
+    ///
+    /// For code handed a `&Request` rather than an argument list: an
+    /// [`Observer`](crate::middleware::Observer), a
+    /// [`RateLimitKey`](crate::middleware::rate_limit::key::RateLimitKey), an
+    /// interceptor. A handler takes `Forwarded` as an argument instead.
+    ///
+    /// `None` until the request has been routed — the router resolves it once,
+    /// under [`Router::trusted_proxies`](crate::Router::trusted_proxies), before
+    /// any interceptor runs.
+    #[must_use]
+    pub fn of(request: &crate::http::Request) -> Option<&Self> {
+        request
+            .extensions()
+            .get::<crate::router::dispatch::Routed>()
+            .map(|routed| &routed.forwarded)
+    }
+
     /// Resolves what `headers` claim, as far as `trusted` permits.
     ///
     /// `peer` is the socket the request actually arrived on, and it is the
