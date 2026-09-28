@@ -168,7 +168,7 @@ async fn an_accepted_socket_carries_the_configured_keepalive() {
 /// The kernel's timer for the server's end of a loopback connection, read from
 /// `/proc/net/tcp`: `2` is the keepalive timer, and it runs only on a socket
 /// with `SO_KEEPALIVE` set and nothing awaiting acknowledgement.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "http1"))]
 fn server_side_timer(server: std::net::SocketAddr, client: std::net::SocketAddr) -> Option<u8> {
     fn hex((ip, port): (std::net::Ipv4Addr, u16)) -> String {
         // The kernel prints the network-order address as a native word, so the
