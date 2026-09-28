@@ -20,7 +20,7 @@ use tokio::io::{AsyncRead, ReadBuf};
 
 use crate::{
     error::problem::{ProblemType, refusal_problem, refusal_response},
-    http,
+    http::{self, body::Body},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
     schema::registry::Registry,
@@ -631,9 +631,19 @@ where
         // Read once, whether or not a coding was applied: the limit is the
         // route's body limit, and a request that skipped the coding is not
         // thereby exempt from it.
-        let arrived = collect_capped(body, self.limit)
+        let arrived = match collect_capped(body, self.limit)
             .await
-            .map_err(Undecodable::of)?;
+            .map_err(Undecodable::of)?
+        {
+            Collected::Whole(bytes) => bytes,
+            // Not the request the client sent, coded or not: handed on as it
+            // failed, headers and all, so the extractor beneath refuses it as
+            // it would with nothing mounted here. Decoding the part that
+            // arrived would blame the coding for what the transport did.
+            Collected::FailedPartWay(body) => {
+                return Ok(next.run(http::Request::from_parts(parts, body)).await);
+            }
+        };
 
         let mut bytes = arrived;
         // Applied in the order listed, so undone in the reverse of it.
@@ -664,21 +674,40 @@ where
             }
         }
 
-        let request = http::Request::from_parts(parts, crate::http::body::Body::from_bytes(bytes));
+        let request = http::Request::from_parts(parts, Body::from_bytes(bytes));
 
         Ok(next.run(request).await)
     }
 }
 
+/// What reading a request body within the limit produced.
+enum Collected {
+    /// Every byte the body carried.
+    Whole(Bytes),
+    /// What arrived before the read failed, then the same failure.
+    FailedPartWay(Body),
+}
+
 /// Reads `body` while the running total stays within `limit`.
-async fn collect_capped(mut body: crate::http::body::Body, limit: u64) -> Result<Bytes, Reason> {
+///
+/// A read that fails is neither a size violation nor a coding the body got
+/// wrong, and is reported as neither: it comes back as it failed, so the
+/// extractor beneath refuses it with the status it already describes, whatever
+/// that extractor parses. Swallowing the error would hand a truncated payload
+/// to one that parses nothing.
+async fn collect_capped(mut body: Body, limit: u64) -> Result<Collected, Reason> {
     let mut collected = BytesMut::new();
 
     while let Some(frame) = body.frame().await {
-        // A read that fails is not a size violation and must not be reported as
-        // one: what arrived is handed on, and the extractor beneath rejects a
-        // truncated payload with the status it already describes.
-        let Ok(frame) = frame else { break };
+        let frame = match frame {
+            Ok(frame) => frame,
+            Err(error) => {
+                return Ok(Collected::FailedPartWay(Body::failed_after(
+                    collected.freeze(),
+                    error,
+                )));
+            }
+        };
         let Ok(data) = frame.into_data() else {
             continue;
         };
@@ -692,7 +721,7 @@ async fn collect_capped(mut body: crate::http::body::Body, limit: u64) -> Result
         collected.extend_from_slice(&data);
     }
 
-    Ok(collected.freeze())
+    Ok(Collected::Whole(collected.freeze()))
 }
 
 #[cfg(test)]
