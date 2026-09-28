@@ -49,6 +49,7 @@ fn dispatch_fields(dispatch: &Dispatch<()>) {
         method_not_allowed,
         trailing_slashes,
         trusted_proxies,
+        implemented,
     } = dispatch;
 
     let _ = (
@@ -60,6 +61,7 @@ fn dispatch_fields(dispatch: &Dispatch<()>) {
         method_not_allowed,
         trailing_slashes,
         trusted_proxies,
+        implemented,
     );
 }
 
@@ -142,5 +144,59 @@ async fn an_endpoint_recovered_500_leaves_without_its_payload() {
     assert!(
         response.extensions().get::<super::Recovered>().is_none(),
         "the recovered payload left the dispatcher on the response"
+    );
+}
+
+// --- What a HEAD is answered with -----------------------------------------
+
+/// A status that never carries content states no `Content-Length` on a HEAD,
+/// even from a body that knows a non-zero length.
+///
+/// RFC 9110 section 8.6: "A server MUST NOT send a Content-Length header field
+/// in any response with a status code of 1xx (Informational) or 204 (No
+/// Content)." Asserted on [`without_content`](super::without_content) itself,
+/// since no handler reaching the wire hands a 204 a body to measure.
+#[test]
+fn a_bodiless_status_states_no_length_on_a_head() {
+    for status in [
+        ::http::StatusCode::NO_CONTENT,
+        ::http::StatusCode::NOT_MODIFIED,
+    ] {
+        let mut response = crate::http::Response::new(crate::http::body::Body::from_bytes(
+            bytes::Bytes::from_static(b"1234"),
+        ));
+        *response.status_mut() = status;
+
+        let head = super::without_content(response);
+
+        assert_eq!(
+            head.headers().get(::http::header::CONTENT_LENGTH),
+            None,
+            "{status}"
+        );
+    }
+}
+
+/// A `Content-Length` the response already carries is the one a HEAD states,
+/// never replaced by the length of the body being dropped.
+///
+/// RFC 9110 section 8.6 lets a HEAD carry the length a GET would have sent,
+/// which a handler answering a declared `head` can know without building that
+/// representation -- so the body it hands over is no better evidence.
+#[test]
+fn a_head_keeps_the_length_the_response_states() {
+    let mut response = crate::http::Response::new(crate::http::body::Body::from_bytes(
+        bytes::Bytes::from_static(b"1234"),
+    ));
+    response.headers_mut().insert(
+        ::http::header::CONTENT_LENGTH,
+        ::http::HeaderValue::from_static("11"),
+    );
+
+    let head = super::without_content(response);
+
+    assert_eq!(
+        head.headers().get(::http::header::CONTENT_LENGTH),
+        Some(&::http::HeaderValue::from_static("11"))
     );
 }

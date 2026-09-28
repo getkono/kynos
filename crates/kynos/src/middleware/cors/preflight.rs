@@ -13,7 +13,6 @@ use kynos_openapi::Method;
 use super::CorsConfig;
 use crate::{
     http::{self, HeaderValue, Request, Response, StatusCode, header},
-    response::IntoResponse,
     router::policy::FallbackPolicy,
 };
 
@@ -36,8 +35,9 @@ const PREFLIGHT_VARIES: &[&str] = &[
 pub(crate) struct Scope {
     /// The configuration of the `Cors` covering these methods.
     config: CorsConfig,
-    /// The methods on this path that this configuration actually covers, which
-    /// is what a proposed method is matched against.
+    /// The methods on this path that this configuration actually covers, with
+    /// the HEAD a covered GET answers where the path declares none, which is
+    /// what a proposed method is matched against.
     covered: Vec<Method>,
     /// The methods this scope advertises: the ones it covers, unless
     /// `allow_methods` overrode them.
@@ -48,8 +48,9 @@ impl Scope {
     /// Records one configuration and the methods it covers.
     pub(crate) fn new(config: CorsConfig, covered: Vec<Method>) -> Self {
         // The override exists for a deployment fronting routes Kynos does not
-        // serve; without it the advertised set is what this scope declares, so
-        // preflight and the description cannot disagree.
+        // serve; without it the advertised set is what this scope covers --
+        // its declared methods and the HEAD each covered GET answers -- which
+        // is always a subset of `Allow`.
         let advertised = config.methods.clone().unwrap_or_else(|| covered.clone());
 
         Self {
@@ -74,8 +75,9 @@ pub(crate) struct Preflight {
     /// Every `Cors` covering this path, in mount order.
     scopes: Vec<Scope>,
     /// The `Allow` header a non-preflight `OPTIONS` carries, so that request
-    /// keeps the answer it had before CORS was mounted.
-    allow: HeaderValue,
+    /// keeps the answer it had before CORS was mounted. `None` where nothing
+    /// in the service implements `OPTIONS`, whose answer is a 501 instead.
+    allow: Option<HeaderValue>,
     /// The body shape a non-preflight `OPTIONS` takes, which is the router's
     /// own method-not-allowed policy rather than a second one invented here.
     fallback: FallbackPolicy,
@@ -86,7 +88,11 @@ impl Preflight {
     ///
     /// `scopes` is non-empty: a path with no CORS on it gets no `Preflight` at
     /// all.
-    pub(crate) fn new(scopes: Vec<Scope>, allow: HeaderValue, fallback: FallbackPolicy) -> Self {
+    pub(crate) fn new(
+        scopes: Vec<Scope>,
+        allow: Option<HeaderValue>,
+        fallback: FallbackPolicy,
+    ) -> Self {
         debug_assert!(!scopes.is_empty(), "a preflight with nothing covering it");
 
         Self {
@@ -112,8 +118,8 @@ impl Preflight {
     /// Answers `request`.
     ///
     /// Implements the Fetch standard's preflight in order: a request that is not
-    /// a preflight falls through to exactly the 405 the dispatcher would have
-    /// produced, an origin the covering configuration does not permit is
+    /// a preflight falls through to exactly the 405 or 501 the dispatcher would
+    /// have produced, an origin the covering configuration does not permit is
     /// answered with no CORS header at all, and a permitted one gets the full
     /// set.
     pub(crate) fn answer(&self, request: &Request) -> Response {
@@ -192,25 +198,10 @@ impl Preflight {
 
     /// The answer an `OPTIONS` that is not a preflight gets.
     ///
-    /// Reuses the dispatcher's own policy and `Allow` value rather than
-    /// reimplementing them, so mounting CORS changes nothing about it.
+    /// Reuses the dispatcher's own refusal, policy and `Allow` value rather
+    /// than reimplementing them, so mounting CORS changes nothing about it.
     fn not_a_preflight(&self) -> Response {
-        let mut response = match self.fallback {
-            FallbackPolicy::Problem => {
-                crate::error::problem::Problem::new(StatusCode::METHOD_NOT_ALLOWED).into_response()
-            }
-            FallbackPolicy::Empty => {
-                let mut response = Response::new(crate::http::body::Body::empty());
-                *response.status_mut() = StatusCode::METHOD_NOT_ALLOWED;
-                response
-            }
-        };
-
-        response
-            .headers_mut()
-            .insert(header::ALLOW, self.allow.clone());
-
-        response
+        crate::router::dispatch::method_refusal(self.allow.as_ref(), &self.fallback)
     }
 }
 

@@ -325,7 +325,7 @@ impl Flatten for Problem {}
 /// component. One writer, because eight interceptor short circuits each
 /// spelling it by hand is how eight of them came to spell it as nothing at all.
 ///
-/// The qualification is [`FallbackPolicy::Empty`], under which a 404 or a 405
+/// The qualification is [`FallbackPolicy::Empty`], under which a 404, 405 or 501
 /// answers with the status and no body at all. Such a response is described by
 /// declaring no content rather than by this function, and it is the one error
 /// Kynos emits that no problem document covers.

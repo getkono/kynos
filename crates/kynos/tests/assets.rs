@@ -123,17 +123,31 @@ async fn an_excluded_file_is_not_served() {
     );
 }
 
-/// Only `GET`. A `POST` to a file is a 405, with the `Allow` a 405 owes.
+/// Only `GET`, and the `HEAD` it answers. Nothing in this service implements
+/// `POST`, so a `POST` to a file is a 501 with no `Allow`; a `HEAD` gets the
+/// `GET`'s fields and no content.
 #[tokio::test]
 async fn a_file_answers_only_the_method_it_declares() {
     let service = served().build(()).expect("a describable router");
 
-    let reply = send(&service, Method::POST, "/static/css/app.css")
+    let refused = send(&service, Method::POST, "/static/css/app.css")
         .call()
         .await;
 
-    assert_eq!(reply.status, StatusCode::METHOD_NOT_ALLOWED);
-    assert_eq!(reply.field(header::ALLOW.as_str()).as_deref(), Some("GET"));
+    assert_eq!(refused.status, StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(refused.field(header::ALLOW.as_str()), None);
+
+    let full = get(&service, "/static/css/app.css").call().await;
+    let head = send(&service, Method::HEAD, "/static/css/app.css")
+        .call()
+        .await;
+
+    assert_eq!(head.status, StatusCode::OK);
+    assert!(head.body.is_empty());
+    assert_eq!(
+        head.field(header::ETAG.as_str()),
+        full.field(header::ETAG.as_str())
+    );
 }
 
 // --- Conditional requests -------------------------------------------------

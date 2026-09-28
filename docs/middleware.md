@@ -54,6 +54,10 @@ occurs has merely written dead code.
 Stating the weaker invariant is what makes it enforceable, and an enforceable
 weak claim is worth more than an unenforceable strong one.
 
+A HEAD is observed against the operation that answered it: its own `head`, or
+the `get` of a path declaring none, whose responses describe the HEAD's with no
+content (RFC 9110 §9.3.2).
+
 ## Why the declaration is the signature
 
 Three properties, each load-bearing:
@@ -697,7 +701,8 @@ after the description has been assembled. That ordering is the whole design:
   because `describe` had already finished when it was created.
 - **It appears in no `Allow` header.** The `Allow` loop runs before
   registration, so a 405 still names only the operations the description
-  declares.
+  declares, and the HEAD each GET implies. Nor does it count as implementing
+  `OPTIONS`, which is what decides a 405 from a 501.
 - **A path that declares its own `OPTIONS` gets no synthesized one.** The
   user's operation wins by construction rather than by a race.
 - **It runs no interceptor.** A browser sends a preflight with no credentials
@@ -708,11 +713,14 @@ after the description has been assembled. That ordering is the whole design:
 
 An `OPTIONS` that is *not* a preflight — no `Origin`, or no
 `Access-Control-Request-Method` — is answered exactly as it was before CORS was
-mounted: the same `method_not_allowed` policy, the same `Allow` value.
+mounted: the same `method_not_allowed` policy, and the same answer — a 405 with
+the same `Allow`, or a 501 where no operation implements `OPTIONS`.
 
-The methods a preflight advertises are the ones the covering scope declares, so
-a `Cors` on a group owning `GET /x` advertises `GET` even where the router also
-owns `POST /x`. `Cors::allow_methods` overrides that, for a deployment fronting
+The methods a preflight advertises are the ones the covering scope declares, and
+the HEAD each of its GETs implies where the path declares no `head` — the Fetch
+standard preflights a HEAD carrying an unsafelisted header, and that HEAD runs
+under the GET's chain. So a `Cors` on a group owning `GET /x` advertises
+`GET, HEAD` even where the router also owns `POST /x`. `Cors::allow_methods` overrides that, for a deployment fronting
 routes Kynos does not serve.
 
 **A path can be covered by more than one `Cors`.** A group's interceptor stack
@@ -1346,7 +1354,7 @@ point:
 | `expose_headers(Any / list)` | `expose_any_header`, `expose_headers` |
 | `max_age(Duration)` | `max_age` |
 | `allow_credentials(bool)` | `allow_credentials` |
-| `allow_methods(Any / list / mirror_request)` | derived from the operations the covering scope declares; `allow_methods` overrides |
+| `allow_methods(Any / list / mirror_request)` | derived from the methods the covering scope declares, plus the HEAD each covered GET answers; `allow_methods` overrides |
 | `vary(list)` | derived; a declared header name is a `const`, so it is not a builder's to set |
 | `allow_credentials(predicate)`, `max_age(dynamic)` | absent |
 | `allow_private_network` | absent |
@@ -1355,7 +1363,8 @@ point:
 The last four rows are decisions rather than gaps.
 
 `allow_methods` is derived because the alternative is a second place to state
-what the path already declares, and two statements of one fact drift. `vary`
+what the router already answers on the path, and two statements of one fact
+drift. `vary`
 is derived because `HeaderParams::VARIES` is a `const` the collision check
 reads while the program is compiled; a value a builder set at run time is not
 one the compiler can check two interceptors against.

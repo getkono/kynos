@@ -106,8 +106,9 @@ async fn preflight(service: &Service<()>) {
     println!("preflight -> {}", response.status());
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
-    // Derived from the operations declared on the path, so what the preflight
-    // advertises and what the description promises cannot disagree.
+    // Derived rather than configured: the methods the covering scope declares
+    // on the path, plus the `HEAD` each covered `GET` answers — so `GET, HEAD,
+    // DELETE` here, always a subset of what `Allow` names.
     show(&response, &header::ACCESS_CONTROL_ALLOW_METHODS);
     show(&response, &header::ACCESS_CONTROL_ALLOW_HEADERS);
     show(&response, &header::ACCESS_CONTROL_MAX_AGE);

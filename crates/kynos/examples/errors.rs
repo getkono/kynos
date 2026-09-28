@@ -25,8 +25,8 @@
 //!   would be sound and would still make a handler that reads one path
 //!   parameter advertise the 401 it can never answer — which a client generator
 //!   turns into dead retry logic.
-//! * **Four of the responses below come from no handler at all.** A fallback
-//!   policy produces the 404 and the 405, `catch_panics` produces the 500, and
+//! * **Five of the responses below come from no handler at all.** A fallback
+//!   policy produces the 404, the 405 and the 501, `catch_panics` produces the 500, and
 //!   an interceptor produces the 503. Each reaches the description by a
 //!   different route, and not one of them appears in a signature.
 //!
@@ -243,7 +243,8 @@ async fn main() -> kynos::Result<()> {
         // Both are already `Problem`; naming them is what makes it deliberate.
         // A client that meets one error shape everywhere can parse errors once,
         // and the two responses no operation describes are exactly the ones a
-        // client that has gone wrong will meet first.
+        // client that has gone wrong will meet first. The second policy also
+        // shapes the 501 for a method nothing here implements.
         .not_found(FallbackPolicy::Problem)
         .method_not_allowed(FallbackPolicy::Problem)
         .mount(kynos::routes![get_user, list_users, create_user]);

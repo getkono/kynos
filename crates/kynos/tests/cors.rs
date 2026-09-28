@@ -170,7 +170,9 @@ async fn a_plain_options_request_answers_exactly_as_it_did_before_cors_was_mount
     let (bare_status, bare_fields) = send(&bare, Method::OPTIONS, "/widgets", &[]).await;
     let (covered_status, covered_fields) = send(&covered, Method::OPTIONS, "/widgets", &[]).await;
 
-    assert_eq!(bare_status, StatusCode::METHOD_NOT_ALLOWED);
+    // Nothing in the service implements `OPTIONS`: the preflight CORS
+    // registers is not an operation, so it does not turn this into a 405.
+    assert_eq!(bare_status, StatusCode::NOT_IMPLEMENTED);
     assert_eq!(covered_status, bare_status);
     assert_eq!(
         field(&covered_fields, header::ALLOW),
@@ -208,12 +210,20 @@ async fn a_preflight_reaches_no_interceptor_that_could_refuse_it() {
     assert_eq!(status, StatusCode::NO_CONTENT);
 }
 
-/// `Allow` names the operations the description declares, and a synthesized
-/// preflight is in neither. A 405 that advertised `OPTIONS` would promise an
-/// operation no `paths` key holds.
+/// A `POST` somewhere else in the service, so a `POST` to `/widgets` is a
+/// method implemented but not allowed there -- a 405 rather than a 501.
+#[kynos::post("/gadgets")]
+async fn create_gadget() -> NoContent {
+    NoContent
+}
+
+/// `Allow` names the operations the description declares and the `HEAD` each
+/// `GET` answers, and a synthesized preflight is neither. A 405 that
+/// advertised `OPTIONS` would promise an operation no `paths` key holds.
 #[tokio::test]
 async fn the_allow_header_on_a_405_never_names_the_synthesized_options() {
     let service = router()
+        .mount(kynos::routes![create_gadget])
         .intercept(Cors::new().allow_origins(["https://app.example.com"]))
         .build(())
         .expect("a describable router");
@@ -223,6 +233,7 @@ async fn the_allow_header_on_a_405_never_names_the_synthesized_options() {
     assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
     let allow = field(&fields, header::ALLOW).expect("an Allow header");
     assert!(!allow.contains("OPTIONS"), "{allow}");
+    assert!(allow.contains("HEAD"), "{allow}");
 }
 
 /// A preflight contributes nothing to the description: it is registered after
@@ -267,8 +278,9 @@ async fn a_cross_origin_response_varies_on_the_origin_it_answered() {
     );
 }
 
-/// A group-scoped `Cors` advertises the methods *that group* declares, not
-/// every method on the path. Scope in the router is scope in the answer, which
+/// A group-scoped `Cors` advertises the methods *that group* covers — its
+/// declared methods and the `HEAD` each `GET` answers — not every method on
+/// the path. Scope in the router is scope in the answer, which
 /// is the property shape (a) of the design could not have preserved.
 #[tokio::test]
 async fn a_group_scoped_cors_advertises_only_the_methods_it_covers() {
@@ -456,6 +468,132 @@ async fn a_preflight_refuses_an_origin_the_covering_cors_does_not_permit() {
     );
 }
 
+/// A HEAD on a path declaring no `head` runs under the `GET` operation's
+/// chain, so its preflight is answered by the `Cors` covering `GET`.
+///
+/// The Fetch standard preflights a HEAD like any other method once it carries
+/// a header outside the safelist, such as `Authorization`. The group covering
+/// `DELETE` is mounted first, so a preflight that matched declared methods
+/// only would fall back to it and permit no origin the real HEAD is served to.
+#[tokio::test]
+async fn a_head_preflight_answers_from_the_cors_covering_get() {
+    use kynos::router::group::Group;
+
+    let service = Router::<()>::new()
+        .group(
+            Group::new("/")
+                .mount(kynos::routes![delete_widget])
+                .intercept(Cors::new().allow_origins(["https://admin.example.com"])),
+        )
+        .group(
+            Group::new("/")
+                .mount(kynos::routes![list_widgets])
+                .intercept(Cors::new().allow_origins(["https://reader.example.com"])),
+        )
+        .build(())
+        .expect("a describable router");
+
+    let (status, fields) = send(
+        &service,
+        Method::OPTIONS,
+        "/widgets",
+        &[
+            ("origin", "https://reader.example.com"),
+            ("access-control-request-method", "HEAD"),
+            ("access-control-request-headers", "authorization"),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_ORIGIN).as_deref(),
+        Some("https://reader.example.com"),
+        "answered a HEAD preflight from a configuration not covering GET"
+    );
+
+    // Advertised the way `Allow` names it: after the `GET` that answers it.
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS).as_deref(),
+        Some("GET, HEAD")
+    );
+}
+
+/// A `head` declared beside the `GET` on `/widgets`.
+#[kynos::head("/widgets")]
+async fn probe_widgets() -> NoContent {
+    NoContent
+}
+
+/// Where a path declares its own `head`, the GET implies no second one: a
+/// preflight advertises HEAD once, exactly as the 405's `Allow` names it.
+#[tokio::test]
+async fn a_declared_head_is_advertised_once() {
+    let service = router()
+        .mount(kynos::routes![probe_widgets, create_gadget])
+        .intercept(Cors::new().allow_origins(["https://app.example.com"]))
+        .build(())
+        .expect("a describable router");
+
+    let (status, fields) = send(
+        &service,
+        Method::OPTIONS,
+        "/widgets",
+        &[
+            ("origin", "https://app.example.com"),
+            ("access-control-request-method", "HEAD"),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let advertised =
+        field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS).expect("an advertised list");
+
+    let (status, fields) = send(&service, Method::POST, "/widgets", &[]).await;
+    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    let allow = field(&fields, header::ALLOW).expect("an Allow header");
+
+    assert_eq!(
+        advertised
+            .split(", ")
+            .filter(|method| *method == "HEAD")
+            .count(),
+        1,
+        "{advertised}"
+    );
+    assert_eq!(advertised, allow);
+}
+
+/// A service implementing `OPTIONS` somewhere refuses a plain `OPTIONS` on a
+/// path without one with a 405 and that path's `Allow`, and mounting CORS over
+/// the path changes neither.
+#[kynos::options("/gadgets")]
+async fn describe_gadgets() -> NoContent {
+    NoContent
+}
+
+#[tokio::test]
+async fn a_plain_options_stays_a_405_where_the_service_implements_options_elsewhere() {
+    let bare = router()
+        .mount(kynos::routes![describe_gadgets])
+        .build(())
+        .expect("a describable router");
+    let covered = router()
+        .mount(kynos::routes![describe_gadgets])
+        .intercept(Cors::new().allow_origins(["https://app.example.com"]))
+        .build(())
+        .expect("a describable router");
+
+    let (bare_status, bare_fields) = send(&bare, Method::OPTIONS, "/widgets", &[]).await;
+    let (covered_status, covered_fields) = send(&covered, Method::OPTIONS, "/widgets", &[]).await;
+
+    assert_eq!(bare_status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(covered_status, bare_status);
+
+    let allow = field(&bare_fields, header::ALLOW).expect("an Allow header");
+    assert_eq!(field(&covered_fields, header::ALLOW), Some(allow));
+}
+
 /// A known limit, characterized rather than left to be discovered.
 ///
 /// An endpoint-scoped interceptor stays inside the endpoint — that is what runs
@@ -495,7 +633,7 @@ async fn a_cors_mounted_on_one_endpoint_answers_no_preflight() {
 
     assert_eq!(
         status,
-        StatusCode::METHOD_NOT_ALLOWED,
+        StatusCode::NOT_IMPLEMENTED,
         "endpoint-scoped CORS started answering preflights; that is an improvement, and this \
          characterization is what should change"
     );

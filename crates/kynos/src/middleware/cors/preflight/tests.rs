@@ -11,7 +11,7 @@ use crate::{
 fn preflight(config: CorsConfig) -> Preflight {
     Preflight::new(
         vec![Scope::new(config, vec![Method::Get, Method::Delete])],
-        HeaderValue::from_static("GET, DELETE"),
+        Some(HeaderValue::from_static("GET, DELETE")),
         FallbackPolicy::Problem,
     )
 }
@@ -94,10 +94,10 @@ fn an_unpermitted_origin_is_answered_with_no_cors_header_at_all() {
     assert_eq!(field(&response, header::ACCESS_CONTROL_ALLOW_METHODS), None);
 }
 
-/// Derived from the operations declared on the path, which is what stops
-/// preflight advertising a method the description does not promise.
+/// Exactly the methods the scope covers, which is what stops preflight
+/// advertising a method the router does not answer on the path.
 #[test]
-fn a_permitted_preflight_advertises_exactly_the_methods_the_path_declares() {
+fn a_permitted_preflight_advertises_exactly_the_methods_its_scope_covers() {
     let response =
         preflight(named()).answer(&asking(Some("https://app.example.com"), Some("GET"), None));
 
@@ -114,7 +114,7 @@ fn a_permitted_preflight_advertises_exactly_the_methods_the_path_declares() {
 
 /// The override is for a deployment fronting routes Kynos does not serve.
 #[test]
-fn an_overridden_method_list_replaces_the_declared_one() {
+fn an_overridden_method_list_replaces_the_covered_one() {
     let config = CorsConfig {
         methods: Some(vec![Method::Patch]),
         ..named()

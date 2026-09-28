@@ -199,11 +199,12 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             entry.allow = dispatch::allow_header(&methods);
         }
 
-        // After the `Allow` loop, so the synthesized `OPTIONS` is in no `Allow`
-        // header, and after `describe` has already run, so it is in no `paths`
-        // key either. Both are properties of *when* this happens rather than of
-        // a filter someone has to maintain.
-        install_preflight(&mut paths, &self.method_not_allowed);
+        // After the `Allow` loop and the implemented set, so the synthesized
+        // `OPTIONS` is in neither, and after `describe` has already run, so it
+        // is in no `paths` key either. All three are properties of *when* this
+        // happens rather than of a filter someone has to maintain.
+        let implemented = dispatch::implemented(&paths);
+        install_preflight(&mut paths, &self.method_not_allowed, &implemented);
 
         let dispatch = Arc::new(Dispatch {
             matcher,
@@ -214,6 +215,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             method_not_allowed: self.method_not_allowed,
             trailing_slashes: self.trailing_slashes,
             trusted_proxies: self.trusted_proxies.clone(),
+            implemented,
         });
 
         Ok(Service::new(document, move |request| {

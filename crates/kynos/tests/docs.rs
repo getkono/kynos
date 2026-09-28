@@ -245,7 +245,7 @@ async fn either_docs_route_answers_only_get() {
         let reply = post(&service, path).call().await;
 
         assert_eq!(reply.status, StatusCode::METHOD_NOT_ALLOWED, "{path}");
-        assert_eq!(reply.field("allow").as_deref(), Some("GET"), "{path}");
+        assert_eq!(reply.field("allow").as_deref(), Some("GET, HEAD"), "{path}");
     }
 }
 

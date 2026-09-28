@@ -85,7 +85,32 @@ async fn observed_responses_match_the_description() {
         .await
         .assert_status(StatusCode::OK);
 
+    // No `head` is declared: the router answers from `get`, and the harness
+    // reads the exchange against it.
+    client
+        .head("/users/42")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+
     client.assert_conformance();
+}
+
+/// A HEAD answered by a `get` exercises none of that operation's responses: its
+/// content is never observed, so it cannot stand in for the GET exchange a
+/// declared response describes.
+#[tokio::test]
+#[should_panic(expected = "GET /users/{id} -> 200")]
+async fn a_head_exercises_none_of_the_get_responses() {
+    let client = TestClient::new(service().expect("a describable router"));
+
+    client
+        .head("/users/42")
+        .send()
+        .await
+        .assert_status(StatusCode::OK);
+
+    client.assert_declared_responses_covered();
 }
 
 /// Every response the description declares was produced at least once.

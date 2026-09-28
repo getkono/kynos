@@ -416,3 +416,72 @@ fn a_response_that_sends_nothing_and_declares_nothing_conforms() {
 
     assert!(conformance(&document, &record).is_empty());
 }
+
+/// A 200 declaring an `application/json` body.
+fn json_ok() -> kynos_openapi::Responses {
+    let mut ok = kynos_openapi::Response::new("the thing");
+    ok.content = content(&["application/json"]);
+    kynos_openapi::Responses::new().with(200, ok)
+}
+
+/// One `HEAD /thing` exchange: the fields a GET would send, and no content.
+fn observed_head(status: u16, content_type: Option<&str>) -> crate::test::Observed {
+    crate::test::Observed {
+        method: crate::http::Method::HEAD,
+        ..observed(status, content_type, "")
+    }
+}
+
+/// The router answers a HEAD on a path declaring `get` and no `head` from the
+/// GET operation, so that is the operation the exchange is read against -- and
+/// a harness reading it against a `head` nobody declared would report Kynos's
+/// own behaviour as a violation.
+#[test]
+fn a_head_is_checked_against_the_get_operation_it_was_answered_by() {
+    let document = document_declaring(json_ok());
+
+    let reasons = conformance(&document, &observed_head(200, Some("application/json")));
+
+    assert!(reasons.is_empty(), "{reasons:?}");
+}
+
+/// RFC 9110 section 9.3.2: no response to a HEAD carries content, whatever the
+/// operation declares. The fields are still held to the declaration.
+#[test]
+fn a_head_declares_content_it_never_sends() {
+    let mut document = document_declaring(kynos_openapi::Responses::new());
+    document
+        .paths
+        .items
+        .get_mut("/thing")
+        .expect("the template just inserted")
+        .head = Some(Box::new(Operation {
+        responses: json_ok(),
+        ..Operation::default()
+    }));
+
+    let reasons = conformance(&document, &observed_head(200, Some("application/json")));
+    assert!(reasons.is_empty(), "{reasons:?}");
+
+    let reasons = conformance(&document, &observed_head(200, Some("text/plain")));
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(
+        reasons[0].contains("`text/plain` is not a declared representation"),
+        "{}",
+        reasons[0]
+    );
+
+    // A schema that accepts anything, and octets that would satisfy it: the
+    // octets are still the violation.
+    let carrying = crate::test::Observed {
+        method: crate::http::Method::HEAD,
+        ..observed(200, Some("application/json"), "{}")
+    };
+    let reasons = conformance(&document, &carrying);
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(
+        reasons[0].contains("a 2-byte body was sent in response to a HEAD"),
+        "{}",
+        reasons[0]
+    );
+}

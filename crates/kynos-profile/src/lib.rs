@@ -129,7 +129,9 @@ pub const SCENARIOS: &[Scenario] = &[
     Scenario {
         name: "method-not-allowed",
         service,
-        request: || request(Method::DELETE, "/plaintext", None, Body::empty()),
+        // POST, which `/echo` implements: a method no operation implements is
+        // a 501, not the 405 this scenario measures.
+        request: || request(Method::POST, "/plaintext", None, Body::empty()),
         expected: StatusCode::METHOD_NOT_ALLOWED,
     },
     Scenario {

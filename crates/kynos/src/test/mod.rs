@@ -163,6 +163,10 @@ impl<C> TestClient<C> {
     /// nothing is a claim about the exchange rather than the absence of one, so
     /// a body or a `Content-Type` arriving under it is reported.
     ///
+    /// A `HEAD` is checked against the operation that answered it: its own
+    /// `head`, or the `get` of a path declaring none. It carries no content,
+    /// so only its `Content-Type` is held to the declared representation.
+    ///
     /// # Panics
     ///
     /// Panics listing every response that did not conform.
@@ -193,6 +197,10 @@ impl<C> TestClient<C> {
     ///
     /// Coverage over the *contract* rather than over the code: it finds the 409
     /// that the description promises and no test has ever produced.
+    ///
+    /// A `HEAD` answered by a path's `get` never counts toward that operation's
+    /// responses: its content is never observed, so it cannot stand in for the
+    /// `GET` exchange a declared response describes.
     ///
     /// # Panics
     ///
