@@ -80,6 +80,42 @@ fn every_negotiation_rule_the_specification_states_is_applied() {
         ),
         // Nothing left at all: this is the 406.
         ("everything refused", Some("*;q=0"), Negotiated::Nothing),
+        // With no wildcard, a coding the field does not list is unacceptable
+        // too, so excluding identity alone leaves nothing.
+        (
+            "identity alone refused",
+            Some("identity;q=0"),
+            Negotiated::Nothing,
+        ),
+        // A wildcard weight that is not a qvalue refuses every coding, but it
+        // is not the explicit `*;q=0` rule 2 needs to exclude identity.
+        (
+            "a wildcard weight above 1",
+            Some("*;q=1.5"),
+            Negotiated::Identity,
+        ),
+        (
+            "a wildcard weight of infinity",
+            Some("*;q=inf"),
+            Negotiated::Identity,
+        ),
+        (
+            "a wildcard weight that is not a number",
+            Some("*;q=NaN"),
+            Negotiated::Identity,
+        ),
+        // Nor is an identity weight that is not a qvalue its explicit
+        // `identity;q=0`, even beside a wildcard refusal.
+        (
+            "an identity weight above 1",
+            Some("identity;q=1.5"),
+            Negotiated::Identity,
+        ),
+        (
+            "an identity weight above 1 beside a wildcard refusal",
+            Some("identity;q=1.5, *;q=0"),
+            Negotiated::Identity,
+        ),
         (
             "every coding and identity refused by name",
             Some("gzip;q=0, br;q=0, zstd;q=0, identity;q=0"),
@@ -103,7 +139,7 @@ fn every_negotiation_rule_the_specification_states_is_applied() {
 /// RFC 9110 section 12.4.2 bounds it at 1. Read literally, `q=1.5` beats a
 /// legitimate `q=1.0` -- a preference inversion no client can have meant.
 ///
-/// The clamping itself is asserted where it now lives, in
+/// Its refusal is asserted where the weight is read, in
 /// [`http::coding`](crate::http::coding); what belongs here is the outcome it
 /// produces for *this* interceptor's choice among the codings it can produce.
 #[test]

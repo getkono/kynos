@@ -6,9 +6,12 @@
 //! that difference existed, no example, doctest or compile-fail case could name
 //! a user type at all.
 //!
-//! What a derived decoder then *does* is not checked here. That is the macro
-//! crate's, and `docs/testing.md` allocates it there. What *is* checked beyond
-//! compiling is the description a derive emits, and what the default
+//! A derive is a type-level surface, so what a derived decoder does is not
+//! checked here, with one recorded exception: the query decoder's refusal of a
+//! declared value that is not UTF-8, and its decoding of `+` as a space and of
+//! an escaped `+` as a `+`, which no other target exercises. Its test calls
+//! `DecodeQuery::decode` directly, with no server. What *is* checked
+//! beyond compiling is the description a derive emits, and what the default
 //! `QueryParams::parameters` makes of a derived schema.
 
 #![cfg(feature = "macros")]
@@ -1215,6 +1218,64 @@ fn a_oneof_or_ref_schema_projects_to_no_parameter() {
 
     assert_eq!(query_parameters::<Audience>(), serde_json::json!([]));
     assert_eq!(query_parameters::<WrappedOrigin>(), serde_json::json!([]));
+}
+
+// --- The derived query decoder reads only octets that are text -------------
+//
+// The recorded runtime exception checked here, because no other target
+// exercises this refusal or the decoder's `+` handling and the macro crate
+// cannot run an expansion: a declared value that is not UTF-8 is refused, `+`
+// decodes to a space and an escaped `+` stays a `+`. It calls the derived
+// decoder directly, with no server.
+
+#[derive(Schema, QueryParams)]
+struct Named {
+    name: String,
+    note: Option<String>,
+    #[param(rename = "sortBy")]
+    sort: Option<String>,
+}
+
+/// A declared value whose percent-decoded octets are not UTF-8 is refused,
+/// naming the parameter by its wire name, rather than repaired into text the
+/// client never sent. A name is matched once percent-decoded, an undeclared
+/// pair is ignored whatever its octets, `+` decodes to a space and an escaped
+/// `+` (`%2B`) is kept as a `+`.
+#[test]
+fn a_query_value_that_is_not_utf8_is_refused_naming_its_parameter() {
+    use kynos::{error::rejection::QueryRejection, extract::params::query::DecodeQuery};
+
+    for (query, parameter) in [
+        ("name=caf%E9", "name"),
+        ("name=%FF%FE", "name"),
+        ("name=ok&note=%FF", "note"),
+        ("name=%FF&name=ok", "name"),
+        ("name=ok&sortBy=%FF", "sortBy"),
+        ("na%6De=%FF", "name"),
+    ] {
+        match <Named as DecodeQuery>::decode(Some(query)) {
+            Err(QueryRejection::Invalid { name, detail }) => {
+                assert_eq!(name, parameter, "{query}");
+                assert!(detail.contains("UTF-8"), "{query}: {detail}");
+            }
+            Err(other) => panic!("{query}: refused for another reason: {other}"),
+            Ok(decoded) => panic!("{query}: accepted as {:?}", decoded.name),
+        }
+    }
+
+    for (query, expected) in [
+        ("name=caf%C3%A9", "caf\u{e9}"),
+        ("other=%FF&name=x", "x"),
+        ("%FF=1&name=x", "x"),
+        ("na%6De=x", "x"),
+        ("name=a+b", "a b"),
+        ("name=a%2Bb", "a+b"),
+    ] {
+        match <Named as DecodeQuery>::decode(Some(query)) {
+            Ok(decoded) => assert_eq!(decoded.name, expected, "{query}"),
+            Err(rejection) => panic!("{query}: refused: {rejection}"),
+        }
+    }
 }
 
 // --- A variant serde reads under an alias is described under each name ------
@@ -2590,5 +2651,378 @@ fn untyped_variants_sharing_a_status_are_each_named() {
         responses["404"]["description"],
         serde_json::json!("File not found; Source file missing"),
         "{responses}"
+    );
+}
+
+// --- A member is named as serde names it ------------------------------------
+//
+// serde names a raw identifier without its `r#`, and uses each side of a split
+// `rename` in the direction it names. These pin the emitted names against what
+// serde writes and reads; `docs/schema.md` states the rule. None carries a doc
+// comment, for the reason `Labels` gives.
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct RawField {
+    r#type: u8,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawRenamed {
+    r#type_name: u8,
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum RawVariant {
+    r#match,
+    Other,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct ReadOnlyRenamed {
+    #[serde(skip_serializing, default, rename(serialize = "w", deserialize = "r"))]
+    x: u8,
+    y: u8,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct AliasedWrittenSide {
+    #[serde(rename(serialize = "a", deserialize = "b"), alias = "a")]
+    x: u8,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct SameSides {
+    #[serde(rename(serialize = "n", deserialize = "n"))]
+    x: u8,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+struct OneSidedRenames {
+    #[serde(rename(deserialize = "r"), alias = "TYPE")]
+    r#type: u8,
+    #[serde(skip_serializing, default, rename(serialize = "w"))]
+    r#match: u8,
+    #[serde(rename(serialize = "a"), alias = "a")]
+    r#loop: u8,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum OneSidedVariant {
+    Now,
+    #[serde(skip_serializing, rename(serialize = "w"))]
+    LaterOn,
+}
+
+/// The keys of the object `value` is, in order.
+fn keys(value: &serde_json::Value) -> Vec<&str> {
+    value
+        .as_object()
+        .unwrap_or_else(|| panic!("expected an object: {value}"))
+        .keys()
+        .map(String::as_str)
+        .collect()
+}
+
+/// A raw identifier is named without its `r#`, before `rename_all` reaches it,
+/// as serde names it.
+#[test]
+fn a_raw_identifier_is_named_as_serde_names_it() {
+    let schema = emitted::<RawField>();
+    let written = serde_json::to_value(RawField { r#type: 1 }).expect("a struct serializes");
+    assert_eq!(keys(&schema["properties"]), vec!["type"], "{schema}");
+    assert_eq!(keys(&schema["properties"]), keys(&written));
+
+    let schema = emitted::<RawRenamed>();
+    let written = serde_json::to_value(RawRenamed { r#type_name: 1 }).expect("a struct serializes");
+    assert_eq!(keys(&schema["properties"]), vec!["typeName"], "{schema}");
+    assert_eq!(keys(&schema["properties"]), keys(&written));
+
+    let schema = emitted::<RawVariant>();
+    let written = serde_json::json!([
+        serde_json::to_value(RawVariant::r#match).expect("a variant serializes"),
+        serde_json::to_value(RawVariant::Other).expect("a variant serializes"),
+    ]);
+    assert_eq!(
+        schema["enum"],
+        serde_json::json!(["match", "Other"]),
+        "{schema}"
+    );
+    assert_eq!(schema["enum"], written);
+}
+
+#[derive(Schema, QueryParams, serde::Deserialize)]
+struct RawQuery {
+    r#type: u8,
+}
+
+/// A parameter derive names a raw identifier as serde does, without its `r#`,
+/// since it takes the name the `Schema` derive gives the property.
+#[test]
+fn a_raw_identifier_parameter_is_named_as_serde_names_it() {
+    let read: RawQuery = serde_json::from_str(r#"{"type":1}"#).expect("serde reads the unraw name");
+    assert_eq!(read.r#type, 1);
+    assert_eq!(
+        query_parameters::<RawQuery>(),
+        serde_json::json!([
+            {"name": "type", "in": "query", "required": true, "schema": emitted::<u8>()},
+        ])
+    );
+}
+
+/// A member serde uses in one direction is named by that side of its split
+/// `rename`, and one whose two sides agree by the name both give.
+#[test]
+fn a_split_rename_is_described_under_the_side_serde_uses() {
+    let schema = emitted::<ReadOnlyRenamed>();
+    assert!(schema["properties"].get("r").is_some(), "{schema}");
+    assert!(schema["properties"].get("x").is_none(), "{schema}");
+    let read: ReadOnlyRenamed =
+        serde_json::from_str(r#"{"r":1,"y":2}"#).expect("serde reads the deserialize side");
+    assert_eq!(read.x, 1);
+
+    let schema = emitted::<SameSides>();
+    let written = serde_json::to_value(SameSides { x: 1 }).expect("a struct serializes");
+    assert_eq!(keys(&schema["properties"]), vec!["n"], "{schema}");
+    assert_eq!(keys(&schema["properties"]), keys(&written));
+}
+
+/// A split `rename` whose written side serde also reads, as an `alias`, is
+/// described under every name serde reads, the written one among them, so the
+/// one schema is true of what serde writes and of what it reads.
+#[test]
+fn a_split_rename_whose_written_side_is_an_alias_is_described_under_both() {
+    let schema = emitted::<AliasedWrittenSide>();
+    let mut described = keys(&schema["properties"]);
+    described.sort_unstable();
+    assert_eq!(described, vec!["a", "b"], "{schema}");
+    let written = serde_json::to_value(AliasedWrittenSide { x: 1 }).expect("a struct serializes");
+    assert_eq!(keys(&written), vec!["a"]);
+    for document in [r#"{"a":1}"#, r#"{"b":1}"#] {
+        let read: AliasedWrittenSide =
+            serde_json::from_str(document).expect("serde reads either name");
+        assert_eq!(read.x, 1, "{document}");
+    }
+}
+
+/// A `rename` giving one side leaves the other to the identifier without its
+/// `r#` under `rename_all`, as serde does, on a member serde uses one way and
+/// on one whose written side is also an `alias`. A one-sided `rename` whose
+/// sides then differ, with no `alias` covering the written one, is refused;
+/// `a_split_rename_is_refused_on_every_member_serde_writes_and_reads` pins that.
+#[test]
+fn a_one_sided_rename_leaves_the_other_side_to_rename_all() {
+    let schema = emitted::<OneSidedRenames>();
+    let mut described = keys(&schema["properties"]);
+    described.sort_unstable();
+    assert_eq!(
+        described,
+        vec!["LOOP", "MATCH", "TYPE", "a", "r"],
+        "{schema}"
+    );
+    let written = serde_json::to_value(OneSidedRenames {
+        r#type: 1,
+        r#match: 2,
+        r#loop: 3,
+    })
+    .expect("a struct serializes");
+    assert_eq!(keys(&written), vec!["TYPE", "a"]);
+    for document in [
+        r#"{"r":1,"MATCH":2,"LOOP":3}"#,
+        r#"{"TYPE":1,"MATCH":2,"a":3}"#,
+    ] {
+        let read: OneSidedRenames =
+            serde_json::from_str(document).expect("serde reads every described name");
+        assert_eq!(
+            (read.r#type, read.r#match, read.r#loop),
+            (1, 2, 3),
+            "{document}"
+        );
+    }
+
+    let schema = emitted::<OneSidedVariant>();
+    assert_eq!(
+        schema["enum"],
+        serde_json::json!(["now", "later_on"]),
+        "{schema}"
+    );
+    let read: OneSidedVariant =
+        serde_json::from_str(r#""later_on""#).expect("serde reads the described name");
+    assert!(matches!(read, OneSidedVariant::LaterOn));
+}
+
+// A split container rename_all
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all(serialize = "camelCase", deserialize = "camelCase"))]
+struct SplitRenameAll {
+    user_id: u8,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(
+    rename_all(serialize = "lowercase", deserialize = "lowercase"),
+    tag = "kind"
+)]
+enum SplitRenameAllThenTag {
+    Circle { radius: u8 },
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(
+    rename_all(serialize = "camelCase", deserialize = "camelCase"),
+    deny_unknown_fields
+)]
+struct SplitRenameAllThenClosed {
+    user_id: u8,
+}
+
+/// A split `rename_all` whose sides agree names every member by that one
+/// style, as serde does, and every key after it in the same attribute is still
+/// read: the `tag` that makes the enum internally tagged, and the
+/// `deny_unknown_fields` that closes the struct.
+#[test]
+fn a_split_rename_all_whose_sides_agree_is_read() {
+    let schema = emitted::<SplitRenameAll>();
+    let written = serde_json::to_value(SplitRenameAll { user_id: 1 }).expect("a struct serializes");
+    assert_eq!(keys(&schema["properties"]), vec!["userId"], "{schema}");
+    assert_eq!(keys(&schema["properties"]), keys(&written));
+    assert_eq!(
+        schema["required"],
+        serde_json::json!(["userId"]),
+        "{schema}"
+    );
+
+    let schema = emitted::<SplitRenameAllThenTag>();
+    let written = serde_json::to_value(SplitRenameAllThenTag::Circle { radius: 1 })
+        .expect("a variant serializes");
+    assert_eq!(written, serde_json::json!({"kind": "circle", "radius": 1}));
+    assert_eq!(
+        schema["oneOf"][0]["properties"]["kind"],
+        serde_json::json!({"type": "string", "const": "circle"}),
+        "{schema}"
+    );
+    assert_eq!(keys(&schema["oneOf"][0]["properties"]), keys(&written));
+
+    let schema = emitted::<SplitRenameAllThenClosed>();
+    assert_eq!(keys(&schema["properties"]), vec!["userId"], "{schema}");
+    assert_eq!(
+        schema["additionalProperties"],
+        serde_json::json!(false),
+        "{schema}"
+    );
+    assert!(
+        serde_json::from_str::<SplitRenameAllThenClosed>(r#"{"userId":1,"z":2}"#).is_err(),
+        "serde must refuse the member `additionalProperties` refuses"
+    );
+}
+
+// rename_all, against serde
+
+/// The fields and variants of `rename_all_names_every_member_as_serde_does`,
+/// under each of serde's styles.
+///
+/// Each identifier is one a rule that splits it into words names otherwise
+/// than serde, which reads a field as `snake_case` and a variant as `PascalCase`:
+/// a leading, trailing or doubled `_`, an uppercase letter in a field, an `_`
+/// and an acronym in a variant, and a non-ASCII letter, which serde never
+/// changes the case of: first and mid-word in a field, a capital in a variant.
+macro_rules! styled {
+    ($($module:ident => $style:literal),* $(,)?) => {
+        $(
+            mod $module {
+                #[derive(kynos::Schema, serde::Serialize, Default)]
+                #[serde(rename_all = $style)]
+                #[allow(non_snake_case)]
+                pub(super) struct Fields {
+                    type_: u8,
+                    _private: u8,
+                    page__size: u8,
+                    very_tasty: u8,
+                    aB: u8,
+                    z42: u8,
+                    naïve_é: u8,
+                }
+
+                #[derive(kynos::Schema, serde::Serialize)]
+                #[serde(rename_all = $style)]
+                #[allow(non_camel_case_types)]
+                pub(super) enum Variants {
+                    Outcome,
+                    VeryTasty,
+                    Foo_Bar,
+                    HTTPServer,
+                    Z42,
+                    NaïveÉtat,
+                }
+
+                pub(super) const VARIANTS: [Variants; 6] = [
+                    Variants::Outcome,
+                    Variants::VeryTasty,
+                    Variants::Foo_Bar,
+                    Variants::HTTPServer,
+                    Variants::Z42,
+                    Variants::NaïveÉtat,
+                ];
+            }
+        )*
+
+        /// Under every style serde accepts, a field is named as serde's
+        /// `apply_to_field` names it and a variant as its `apply_to_variant`
+        /// does, down to the byte: serde's own output is the oracle.
+        #[test]
+        fn rename_all_names_every_member_as_serde_does() {
+            $(
+                assert_named_as_serde_names::<$module::Fields, _>($style, &$module::VARIANTS);
+            )*
+        }
+    };
+}
+
+styled! {
+    lowercase => "lowercase",
+    uppercase => "UPPERCASE",
+    pascal_case => "PascalCase",
+    camel_case => "camelCase",
+    snake_case => "snake_case",
+    screaming_snake_case => "SCREAMING_SNAKE_CASE",
+    kebab_case => "kebab-case",
+    screaming_kebab_case => "SCREAMING-KEBAB-CASE",
+}
+
+/// `S`'s properties and required list, and `E`'s compact `enum`, are the
+/// names serde writes `S::default()` and each of `variants` under.
+fn assert_named_as_serde_names<S, E>(style: &str, variants: &[E])
+where
+    S: SchemaTrait + serde::Serialize + Default,
+    E: SchemaTrait + serde::Serialize,
+{
+    use std::collections::BTreeSet;
+
+    let schema = emitted::<S>();
+    let written = serde_json::to_value(S::default()).expect("a struct serializes");
+    let written: BTreeSet<&str> = keys(&written).into_iter().collect();
+    let properties: BTreeSet<&str> = keys(&schema["properties"]).into_iter().collect();
+    let required: BTreeSet<&str> = schema["required"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{style}: expected a required list: {schema}"))
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert_eq!(properties, written, "{style}: {schema}");
+    assert_eq!(required, written, "{style}: {schema}");
+
+    let schema = emitted::<E>();
+    let written: Vec<serde_json::Value> = variants
+        .iter()
+        .map(|variant| serde_json::to_value(variant).expect("a variant serializes"))
+        .collect();
+    assert_eq!(
+        schema["enum"],
+        serde_json::Value::Array(written),
+        "{style}: {schema}"
     );
 }

@@ -131,6 +131,9 @@ enum State {
     Finishing,
     /// Everything has been yielded.
     Done,
+    /// The inner body or the encoder failed: nothing more is yielded, and the
+    /// body did not end.
+    Failed,
 }
 
 /// A body that encodes another as its frames arrive.
@@ -168,6 +171,28 @@ impl Streamed {
         let encoded = self.encoder.take();
         (!encoded.is_empty()).then(|| Frame::data(encoded))
     }
+
+    /// Yields `error` and ends the body as failed.
+    ///
+    /// The only way an error leaves this body, so every failure is fused and
+    /// none is mistaken for an ending.
+    fn fail(&mut self, error: BoxError) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+        self.state = State::Failed;
+        Poll::Ready(Some(Err(error)))
+    }
+}
+
+/// What the encoder's answer to a write of pending bytes means: how many it
+/// took, or why the body cannot go on.
+///
+/// `Ok(0)` is a writer that accepts nothing, and polling it again would spin
+/// forever, so it is the broken writer `WriteZero` names. Pure, so that case is
+/// tested even though no encoder over a `Vec` produces it.
+fn accepted(result: io::Result<usize>) -> io::Result<usize> {
+    match result {
+        Ok(0) => Err(io::Error::from(io::ErrorKind::WriteZero)),
+        other => other,
+    }
 }
 
 impl HttpBody for Streamed {
@@ -188,8 +213,16 @@ impl HttpBody for Streamed {
                     return Poll::Ready(this.trailers.take().map(Ok));
                 }
 
+                // Held trailers are never yielded, only kept until this body
+                // drops: trailers after a body that failed are not trailers.
+                State::Failed => return Poll::Ready(None),
+
                 State::Finishing => {
-                    ready!(this.encoder.with(|encoder| encoder.poll_shutdown(context)))?;
+                    if let Err(error) =
+                        ready!(this.encoder.with(|encoder| encoder.poll_shutdown(context)))
+                    {
+                        return this.fail(Box::new(error));
+                    }
                     this.state = State::Done;
 
                     if let Some(frame) = this.emit() {
@@ -198,7 +231,11 @@ impl HttpBody for Streamed {
                 }
 
                 State::Flushing => {
-                    ready!(this.encoder.with(|encoder| encoder.poll_flush(context)))?;
+                    if let Err(error) =
+                        ready!(this.encoder.with(|encoder| encoder.poll_flush(context)))
+                    {
+                        return this.fail(Box::new(error));
+                    }
                     this.state = State::Feeding;
 
                     if let Some(frame) = this.emit() {
@@ -211,19 +248,13 @@ impl HttpBody for Streamed {
                     // partial write is ordinary rather than exceptional: the
                     // encoder's own buffer decides how much it takes.
                     if !this.pending.is_empty() {
-                        let written = ready!(
+                        let written = match accepted(ready!(
                             this.encoder
                                 .with(|encoder| encoder.poll_write(context, &this.pending))
-                        )?;
-
-                        // A writer that accepts nothing would spin here
-                        // forever, so treat it as the broken writer it is.
-                        if written == 0 {
-                            this.state = State::Done;
-                            return Poll::Ready(Some(Err(Box::new(io::Error::from(
-                                io::ErrorKind::WriteZero,
-                            )))));
-                        }
+                        )) {
+                            Ok(written) => written,
+                            Err(error) => return this.fail(Box::new(error)),
+                        };
 
                         this.pending.advance(written);
 
@@ -244,10 +275,7 @@ impl HttpBody for Streamed {
 
                     match ready!(Pin::new(&mut this.inner).poll_frame(context)) {
                         None => this.state = State::Finishing,
-                        Some(Err(error)) => {
-                            this.state = State::Done;
-                            return Poll::Ready(Some(Err(error)));
-                        }
+                        Some(Err(error)) => return this.fail(error),
                         Some(Ok(frame)) => match frame.into_data() {
                             Ok(data) => this.pending = data,
                             // Not data, so it is trailers. Held rather than
@@ -262,6 +290,11 @@ impl HttpBody for Streamed {
         }
     }
 
+    // `Done` only, never `Failed`. A body that failed did not end, and
+    // `Watched` decides `Delivery::Complete` against `Interrupted` by asking
+    // exactly this when it is dropped, so a `true` after a failure would report
+    // a broken response as delivered and `Observer::on_disconnect` would never
+    // fire.
     fn is_end_stream(&self) -> bool {
         self.state == State::Done && self.trailers.is_none()
     }

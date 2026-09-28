@@ -19,21 +19,53 @@ fn aliases(token: &str) -> &'static [&'static str] {
     }
 }
 
-/// The quality `accept` assigns `token`, honouring `*`.
+/// The quality `accept` assigns `token`, honouring `*`, in thousandths.
 ///
-/// `None` when neither the token nor a wildcard appears, which is what
-/// distinguishes "not mentioned" from "mentioned and refused" — the difference
-/// between the two is the whole of `q=0`.
+/// A weight is `0..=1000`: RFC 9110 section 12.4.2 bounds a qvalue at three
+/// decimal places, so thousandths state every one exactly. A weight the
+/// grammar cannot express is `0`, a refusal. `None` when neither the token nor
+/// a wildcard appears, which is what distinguishes "not mentioned" from
+/// "mentioned and refused" — the difference between the two is the whole of
+/// `q=0`.
+///
+/// This reads the weight the field gives a coding, `identity` included; it does
+/// not say whether identity is acceptable, which is RFC 9110 section 12.5.3
+/// rule 2's question and [`identity_quality`]'s. The two differ where a weight
+/// is not a qvalue: `quality("identity;q=1.5", "identity")` and
+/// `quality("*;q=1.5", "identity")` are `Some(0)`, yet neither field states the
+/// `identity;q=0` or `*;q=0` that excludes identity, so `identity_quality`
+/// reads both as 1000. They differ where the field is silent too: `None` here,
+/// 1000 there.
 #[must_use]
-pub fn quality(accept: &str, token: &str) -> Option<f32> {
+pub fn quality(accept: &str, token: &str) -> Option<u16> {
+    // A malformed weight is a refusal rather than a default: a client that
+    // wrote something RFC 9110 section 12.4.2 cannot express did not ask for
+    // this coding. That includes a value above 1, which read literally would
+    // let `gzip;q=1.5` outrank a legitimate `q=1`.
+    weight(accept, token).map(|weight| match weight {
+        Weight::Qvalue(thousandths) => thousandths,
+        Weight::Malformed => 0,
+    })
+}
+
+/// The weight an entry states.
+enum Weight {
+    /// A qvalue, in thousandths.
+    Qvalue(u16),
+    /// Something RFC 9110 section 12.4.2 cannot express, which each caller
+    /// reads by its own rule.
+    Malformed,
+}
+
+/// The weight of the entry that speaks for `token`: its own, else the
+/// wildcard's. `None` when neither appears.
+fn weight(accept: &str, token: &str) -> Option<Weight> {
     let mut wildcard = None;
 
     for entry in accept.split(',') {
         let mut parts = entry.split(';');
         let name = parts.next().unwrap_or_default().trim();
 
-        // A malformed weight is a refusal rather than a default: a client that
-        // wrote something unparsable did not ask for this coding.
         let weight = parts
             .find_map(|parameter| {
                 let parameter = parameter.trim();
@@ -41,16 +73,8 @@ pub fn quality(accept: &str, token: &str) -> Option<f32> {
                     .strip_prefix("q=")
                     .or_else(|| parameter.strip_prefix("Q="))
             })
-            .map_or(1.0, |weight| {
-                weight
-                    .trim()
-                    .parse()
-                    // RFC 9110 section 12.4.2 bounds a qvalue at 1. A larger
-                    // one is not a qvalue, and reading it literally lets
-                    // `gzip;q=1.5` outrank a legitimate `q=1.0` — a preference
-                    // inversion a client cannot have meant. Clamped rather than
-                    // refused: the client did ask for the coding.
-                    .map_or(0.0, |weight: f32| weight.clamp(0.0, 1.0))
+            .map_or(Weight::Qvalue(1_000), |weight| {
+                super::quality::parse(weight.trim()).map_or(Weight::Malformed, Weight::Qvalue)
             });
 
         if name.eq_ignore_ascii_case(token)
@@ -84,13 +108,13 @@ pub fn quality(accept: &str, token: &str) -> Option<f32> {
 /// its own preference by ordering that list.
 #[must_use]
 pub fn preferred<'a>(accept: &str, available: &[&'a str]) -> Option<&'a str> {
-    let mut best: Option<(&'a str, f32)> = None;
+    let mut best: Option<(&'a str, u16)> = None;
 
     for token in available {
         let Some(weight) = quality(accept, token) else {
             continue;
         };
-        if weight <= 0.0 {
+        if weight == 0 {
             continue;
         }
         if best.is_none_or(|(_, best)| weight > best) {
@@ -102,16 +126,21 @@ pub fn preferred<'a>(accept: &str, available: &[&'a str]) -> Option<&'a str> {
     (identity_quality(accept) <= weight).then_some(token)
 }
 
-/// What the client thinks of the unencoded representation.
+/// What the client thinks of the unencoded representation, in thousandths.
 ///
 /// RFC 9110 section 12.5.3 rule 2: identity "is acceptable by default unless
 /// specifically excluded by the Accept-Encoding header field stating either
 /// `identity;q=0` or `*;q=0` without a more specific entry for `identity`".
-/// [`quality`] falls back to the wildcard, so both spellings land here as
-/// `Some(0.0)`.
+/// Both spellings read as `0`. A weight that is not a qvalue, such as
+/// `identity;q=1.5` or `*;q=1.5`, states neither, so it leaves identity at its
+/// default of 1000 — even though the same wildcard refuses every coding it
+/// speaks for.
 #[must_use]
-pub fn identity_quality(accept: &str) -> f32 {
-    quality(accept, "identity").unwrap_or(1.0)
+pub fn identity_quality(accept: &str) -> u16 {
+    match weight(accept, "identity") {
+        Some(Weight::Qvalue(thousandths)) => thousandths,
+        None | Some(Weight::Malformed) => 1_000,
+    }
 }
 
 #[cfg(test)]

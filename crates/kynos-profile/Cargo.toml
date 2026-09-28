@@ -1,0 +1,40 @@
+[package]
+name = "kynos-profile"
+description = "Instruction and heap counts over Kynos's in-process request path."
+version = "0.0.0"
+edition.workspace = true
+# No `rust-version`. The floor is gungraun's 1.88, above the workspace's 1.85,
+# and stating it would set this package against `clippy.toml`'s `msrv`, which
+# Clippy reports as a warning on every lint run. This package is never
+# published and nothing depends on it, so a floor would bind only the machine
+# running the profile -- which is why `msrv:check` excludes it rather than the
+# workspace floor moving for a measurement harness.
+license.workspace = true
+repository.workspace = true
+# A measurement harness rather than a library anyone depends on. Keeping it out
+# of every archive is also what keeps gungraun out of `kynos`'s dev-dependency
+# graph, its MSRV resolution and its tarball.
+publish = false
+
+[dependencies]
+# The default feature set, because that is the build an application gets
+# without asking and so the one a request-path number should describe.
+kynos = { path = "../kynos" }
+bytes = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+# Builds the `echo-post` body outside the measured region; the region itself
+# reaches serde_json only through `kynos`.
+serde_json = { workspace = true }
+
+[dev-dependencies]
+gungraun = { workspace = true }
+http-body-util = { workspace = true }
+
+# `harness = false` because gungraun brings its own: each benchmark runs under
+# Valgrind in a process gungraun-runner spawns, not in a libtest one.
+[[bench]]
+name = "requests"
+harness = false
+
+[lints]
+workspace = true
