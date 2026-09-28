@@ -34,7 +34,9 @@ use crate::server::error::ServerError;
 /// not every platform lets a socket set it. `interval` is applied where the
 /// platform lets a socket set that — Linux, Android, the Apple platforms,
 /// FreeBSD, NetBSD, illumos, Fuchsia and Windows among them — and is
-/// the operating system's default elsewhere.
+/// the operating system's default elsewhere. `idle` is ignored on Haiku,
+/// OpenBSD, QNX Neutrino and Vita, which do not let a socket set it either, so
+/// the operating system's default applies there.
 ///
 /// `#[non_exhaustive]`, so start from [`default`](Self::default):
 ///
