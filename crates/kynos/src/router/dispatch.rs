@@ -185,7 +185,10 @@ pub(crate) struct Served<C> {
 /// value, so three facts inserted separately cost three allocations; carried
 /// together they cost one. Every field is filled at the same point in
 /// [`Dispatch::serve`] the separate insertions ran at, so each reader sees
-/// exactly what it saw before.
+/// exactly what it saw before. Inserting a `MatchedPath` or `Forwarded` into
+/// the extensions, by contrast, no longer has any effect: every reader goes
+/// through this record, and code holding a `&Request` borrows the origin with
+/// [`Forwarded::of`](crate::http::forwarded::Forwarded::of).
 ///
 /// Read through the extractors and keys that expose each fact —
 /// [`MatchedPath`](crate::extract::connection::MatchedPath),
