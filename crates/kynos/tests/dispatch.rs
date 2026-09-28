@@ -21,7 +21,11 @@ use kynos::{
         connection::{ConnectInfo, MatchedPath},
         params::path::Path,
     },
-    http::{Method, Request, Response, StatusCode, header},
+    http::{
+        Method, Request, Response, StatusCode,
+        forwarded::{Forwarded, TrustedProxies},
+        header,
+    },
     middleware::Observer,
     openapi,
     response::status::NoContent,
@@ -631,6 +635,45 @@ async fn the_matched_path_is_the_template_and_not_the_request_target() {
         second.text(),
         "two concrete paths under one template produced two labels"
     );
+}
+
+// --- `Forwarded` as an argument -------------------------------------------
+
+/// The client the router resolved, or `none` when it resolved none.
+#[kynos::get("/origin")]
+async fn origin(forwarded: Forwarded) -> Text {
+    Text(
+        forwarded
+            .client()
+            .map_or_else(|| "none".to_owned(), |client| client.to_string()),
+    )
+}
+
+/// A handler reads the origin the router resolved, under the router's trust
+/// policy and nobody else's.
+///
+/// The same `Forwarded` field is sent to both services. Trusting one hop
+/// believes it; trusting none leaves the socket peer, which a driven service
+/// has none of. A handler that could see the field without the policy would
+/// answer the address both times.
+#[tokio::test]
+async fn a_handler_reads_the_origin_the_router_resolved() {
+    for (trusted, expected) in [
+        (TrustedProxies::hops(1), "203.0.113.7"),
+        (TrustedProxies::none(), "none"),
+    ] {
+        let service = Router::<()>::new()
+            .mount(kynos::routes![origin])
+            .trusted_proxies(trusted)
+            .build(())
+            .expect("a describable router");
+
+        let answered = get(&service, "/origin")
+            .header("forwarded", "for=203.0.113.7")
+            .call()
+            .await;
+        assert_eq!(answered.text(), expected);
+    }
 }
 
 // --- The one operation that declares no body ------------------------------

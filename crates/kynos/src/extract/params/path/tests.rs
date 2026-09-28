@@ -52,7 +52,18 @@ fn matched(path: &'static str, captures: &[(&'static str, &'static str)]) -> Req
             (*name, &path[start..start + value.len()])
         }),
     );
-    request.extensions_mut().insert(recorded);
+    let forwarded = crate::http::forwarded::Forwarded::resolve(
+        request.headers(),
+        None,
+        &crate::http::forwarded::TrustedProxies::none(),
+    );
+    request
+        .extensions_mut()
+        .insert(crate::router::dispatch::Routed {
+            matched: crate::extract::connection::MatchedPath(path),
+            captures: Some(recorded),
+            forwarded,
+        });
 
     request
 }

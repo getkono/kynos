@@ -27,7 +27,7 @@
 //!
 //! **These numbers record a requirement that is not met.**
 //! [`nfr.md`](../../../docs/nfr.md#routing) asks for zero allocations on the
-//! routing path and the path allocates seven times for a static match. The
+//! routing path and the path allocates five times for a static match. The
 //! ceilings are the measurement rather than the target, as
 //! [`nfr.md`](../../../docs/nfr.md#thresholds) requires of a first
 //! measurement — and this file is the characterization that row points at, so
@@ -81,9 +81,9 @@ use counting::request;
 const SHAPES: [(&str, StatusCode, usize); 3] = [
     // A static match, with no parameter to capture. Also the row `STACKED`
     // and the depth-0 stack ceiling are read from.
-    ("/ping", StatusCode::NO_CONTENT, 7),
+    ("/ping", StatusCode::NO_CONTENT, 5),
     // One path parameter, captured and deserialized.
-    ("/users/7", StatusCode::NO_CONTENT, 11),
+    ("/users/7", StatusCode::NO_CONTENT, 8),
     // A request matching no route at all.
     ("/nope", StatusCode::NOT_FOUND, 6),
 ];
@@ -296,12 +296,12 @@ const STACKS: [Stack; 3] = [
     // No stack at all: what the same target costs in `SHAPES`, not a second
     // recording of it.
     (0, service, STACKED_ALONE),
-    (4, depth_4, 11),
-    (8, depth_8, 15),
+    (4, depth_4, 9),
+    (8, depth_8, 13),
 ];
 
-/// What one layer adds, transcribed from the ceilings above: fifteen at depth
-/// eight less seven at depth zero, over eight layers.
+/// What one layer adds, transcribed from the ceilings above: thirteen at depth
+/// eight less five at depth zero, over eight layers.
 const PER_LAYER: usize = 1;
 
 /// How wide the future [`Service::call`] returns is allowed to be, measured
@@ -325,8 +325,8 @@ const DISPATCH_FUTURE_BYTES: usize = 280;
 /// The record, for the middleware half: what one request costs at each depth a
 /// stack is mounted at, over interceptors that allocate nothing of their own.
 ///
-/// Eleven allocations at depth 4 and fifteen at depth 8, against the
-/// [`STACKED_ALONE`] seven the routing path costs with no stack in front of
+/// Nine allocations at depth 4 and thirteen at depth 8, against the
+/// [`STACKED_ALONE`] five the routing path costs with no stack in front of
 /// it — one heap allocation per layer. That one is the object-safe form of
 /// `Interceptor` boxing the future it returns, which is the price of a
 /// heterogeneous chain fitting in one slice.
@@ -533,15 +533,15 @@ const CALIBRATION: usize = 2;
 /// fresh allocations and reallocations alike.
 ///
 /// **Stated as a delta rather than as an absolute, because an absolute would
-/// be mostly the router's.** One request through [`calibrated`] costs ten
-/// today, of which eight is the routing path's [`STACKED_ALONE`] and the boxed
+/// be mostly the router's.** One request through [`calibrated`] costs eight
+/// today, of which six is the routing path's [`STACKED_ALONE`] and the boxed
 /// future one layer costs — both recorded above as ceilings, and both free to
-/// fall. Pinning the ten would turn a rustc or dependency bump that made the
+/// fall. Pinning the eight would turn a rustc or dependency bump that made the
 /// static match one allocation cheaper into a red *instrument* test: every
 /// ceiling would pass, both equalities over differences would pass, and this
 /// would be the only failure in either target, saying the driver had changed
 /// when the router had merely got cheaper. Reading it against a transparent
-/// layer at the same depth cancels all eight. What is left is what
+/// layer at the same depth cancels all six. What is left is what
 /// [`Calibrating`] does, which nothing outside this file can move — the
 /// arrangement [`performance.md`](../../../docs/performance.md#thresholds)
 /// asks for, where relations outlive absolutes.
@@ -623,34 +623,35 @@ fn the_routing_path_allocates_where_the_requirement_asks_for_nothing() {
 
 /// The relation the absolutes are there to hold, and the one that survives a
 /// change to any of them: reading a parameter costs more than the static match
-/// that found it, and a request that matched nothing costs least of all.
+/// that found it.
+///
+/// A miss is held by its ceiling alone. It once also had to cost less than a
+/// match, but that compared two response bodies rather than two routes: the
+/// miss builds a problem document and `/ping` builds nothing, so once the match
+/// stopped boxing its handler's future the two tied, and every further cut to
+/// the routing path takes the match below the miss. The relation was never
+/// about what routing costs.
 #[test]
 fn a_capture_is_what_a_path_parameter_costs() {
     let service = service();
 
     // Each shape reaches this test through the const that names it, rather
     // than by destructuring `SHAPES` here. That centralises the row-position
-    // binding rather than removing it — `STACKED`, `CAPTURED` and `MISSED` are
-    // still `SHAPES[0].0`, `[1].0` and `[2].0` — but it puts the binding in one
+    // binding rather than removing it — `STACKED` and `CAPTURED` are still
+    // `SHAPES[0].0` and `[1].0` — but it puts the binding in one
     // place, beside the doc that says which shape each names, instead of
     // three hundred lines away in a destructure that would silently rebind
-    // `matched`, `captured` and `missed` and leave this test passing about the
-    // wrong three requests. Removing it outright wants named fields, which is
-    // what `alloc_codecs.rs`'s `Table` is a struct rather than a
-    // `[Measured; 5]` for.
+    // `matched` and `captured` and leave this test passing about the wrong two
+    // requests. Removing it outright wants named fields, which is what
+    // `alloc_codecs.rs`'s `Table` is a struct rather than a `[Measured; 5]`
+    // for.
     let matched = counted(&service, STACKED, STACKED_STATUS);
     let captured = counted(&service, CAPTURED, CAPTURED_STATUS);
-    let missed = counted(&service, MISSED, MISSED_STATUS);
 
     assert!(
         captured > matched,
         "a captured parameter ({captured}) should cost more than the static \
          match that found it ({matched})"
-    );
-    assert!(
-        missed < matched,
-        "a request matching no route ({missed}) should cost less than one that \
-         reached a handler ({matched})"
     );
 }
 

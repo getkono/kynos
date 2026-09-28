@@ -11,7 +11,7 @@
 //! **The entry this answers predicted the wrong thing.**
 //! [`architecture.md`](../../../docs/architecture.md#why-hyper-stays) names
 //! erasing every body as a cheap win worth "once per request". It is not one of
-//! the seven [`alloc.rs`](alloc.rs) records: the request body there is built
+//! the five [`alloc.rs`](alloc.rs) records: the request body there is built
 //! before the counted region opens, and the response body a `204` sends is
 //! `Body::empty`, which erases a zero-sized type — and `Box::pin` of a
 //! zero-sized value allocates nothing. What the entry describes is real one

@@ -177,6 +177,41 @@ pub(crate) struct Served<C> {
     pub(crate) unchecked_layers: Vec<Arc<dyn crate::unchecked::ErasedLayer>>,
 }
 
+/// What routing learned about one request, for whatever reads it afterwards.
+///
+/// Inserted once per matched request, and the one extension routing adds; an
+/// unchecked layer adds its own continuation, and only where one is mounted.
+/// Each insertion into [`http::Extensions`](crate::http::Extensions) boxes its
+/// value, so three facts inserted separately cost three allocations; carried
+/// together they cost one. Every field is filled at the same point in
+/// [`Dispatch::serve`] the separate insertions ran at, so each reader sees
+/// exactly what it saw before. Inserting a `MatchedPath` or `Forwarded` into
+/// the extensions, by contrast, no longer has any effect: every reader goes
+/// through this record, and code holding a `&Request` borrows the origin with
+/// [`Forwarded::of`](crate::http::forwarded::Forwarded::of).
+///
+/// Read through the extractors and keys that expose each fact —
+/// [`MatchedPath`](crate::extract::connection::MatchedPath),
+/// [`Path`](crate::extract::params::path::Path),
+/// [`Forwarded`](crate::http::forwarded::Forwarded),
+/// [`captured`](crate::unchecked::captured) and
+/// [`ByClientAddress`](crate::middleware::rate_limit::key::ByClientAddress) —
+/// never by name outside the crate.
+#[derive(Clone, Debug)]
+pub(crate) struct Routed {
+    /// The `paths` key that matched.
+    pub(crate) matched: crate::extract::connection::MatchedPath,
+    /// What the match captured, when the template has variables.
+    pub(crate) captures: Option<PathCaptures>,
+    /// Where the request came from, resolved under the router's trust policy
+    /// before any interceptor runs.
+    ///
+    /// Resolved once, by the dispatcher, rather than by each reader. Two
+    /// interceptors parsing `Forwarded` for themselves would be two answers to
+    /// one security question, and the policy that governs it is the router's.
+    pub(crate) forwarded: crate::http::forwarded::Forwarded,
+}
+
 /// Every operation declared on one `paths` key.
 pub(crate) struct PathEntry<C> {
     /// The `paths` key, exactly as the description spells it.
@@ -313,17 +348,15 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         };
         let route = Route::new(&entry.template, &operation.operation_id, operation.method);
 
-        if let Some(captures) = captures {
-            request.extensions_mut().insert(captures);
-        }
-
-        // The template rather than the request's own path: `MatchedPath` is
-        // documented as the `paths` key, which is what keeps a metric label or
-        // a log field from having unbounded cardinality.
-        request.extensions_mut().insert(entry.matched.clone());
-
         let forwarded = self.forwarded(&request);
-        request.extensions_mut().insert(forwarded);
+        request.extensions_mut().insert(Routed {
+            // The template rather than the request's own path: `MatchedPath`
+            // is documented as the `paths` key, which is what keeps a metric
+            // label or a log field from having unbounded cardinality.
+            matched: entry.matched.clone(),
+            captures,
+            forwarded,
+        });
 
         for observer in &self.observers {
             observer.on_request(&request, Some(route), &self.context);
@@ -356,10 +389,6 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
     }
 
     /// Where `request` came from, as far as the trusted proxies say.
-    ///
-    /// Resolved once, by the dispatcher, rather than by each reader. Two
-    /// interceptors parsing `Forwarded` for themselves would be two answers to
-    /// one security question, and the policy that governs it is the router's.
     fn forwarded(&self, request: &Request) -> crate::http::forwarded::Forwarded {
         let peer = request
             .extensions()
