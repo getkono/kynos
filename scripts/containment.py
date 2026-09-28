@@ -1579,6 +1579,8 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
          "`hyper` and `hyper-util` are named only in `server/connection.rs` and `http/body.rs`"),
         (("rustls", "tokio_rustls"), UNDER, "crates/kynos/src/server/tls/",
          "`tokio-rustls` and `rustls` are named only under `server/tls/`"),
+        (("socket2",), ONLY_IN, {"crates/kynos/src/server/tcp.rs"},
+         "`socket2` is named only in `server/tcp.rs`"),
         (("matchit",), UNDER, "crates/kynos/src/router/",
          "`matchit` may be named only under `router/`"),
         (("h2", "httparse"), ONLY_IN, set(), "`h2` and `httparse` are never named"),

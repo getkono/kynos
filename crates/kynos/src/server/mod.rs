@@ -19,7 +19,7 @@
 //! The runtime coupling is five points, and each has a module: [`address`] for
 //! the listener, [`accept`] for the accept loop, [`connection`] for socket read
 //! and write, [`shutdown`] for the signal, and the timers that live with the
-//! work they bound. [`protocol`] and [`tls`] are configuration;
+//! work they bound. [`protocol`], [`tcp`] and [`tls`] are configuration;
 //! [`lifecycle`] is the state every part observes.
 
 mod describe;
@@ -31,6 +31,7 @@ pub mod error;
 pub mod lifecycle;
 pub mod protocol;
 pub mod shutdown;
+pub mod tcp;
 
 #[cfg(feature = "tls")]
 pub mod tls;
@@ -53,6 +54,7 @@ use crate::{
         lifecycle::{Drain, Lifecycle},
         protocol::validate_protocol_config,
         shutdown::{ForceFuture, Shutdown, ShutdownFuture},
+        tcp::{SocketOptions, TcpKeepAlive, validate_tcp_keepalive},
     },
 };
 
@@ -81,6 +83,7 @@ pub struct Server<C> {
     shutdown: Option<Shutdown>,
     shutdown_timeout: Duration,
     max_connections: NonZeroUsize,
+    tcp_keepalive: Option<TcpKeepAlive>,
 }
 
 impl<C: 'static> Server<C> {
@@ -101,6 +104,7 @@ impl<C: 'static> Server<C> {
             shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
             max_connections: NonZeroUsize::new(DEFAULT_CONNECTION_LIMIT)
                 .expect("the default connection limit is non-zero"),
+            tcp_keepalive: Some(TcpKeepAlive::default()),
         }
     }
 
@@ -167,6 +171,16 @@ impl<C: 'static> Server<C> {
         self
     }
 
+    /// Sets TCP keepalive on accepted sockets, or `None` to leave it off.
+    ///
+    /// On by default at [`TcpKeepAlive::default`], which bounds how long a peer
+    /// that vanished without closing its connection holds a connection permit.
+    #[must_use]
+    pub fn tcp_keepalive(mut self, keepalive: Option<TcpKeepAlive>) -> Self {
+        self.tcp_keepalive = keepalive;
+        self
+    }
+
     /// Resolves and binds every configured listener atomically.
     pub async fn prepare(self) -> Result<BoundServer<C>> {
         validate_protocol_config(
@@ -175,6 +189,7 @@ impl<C: 'static> Server<C> {
             #[cfg(feature = "http2")]
             self.http2,
         )?;
+        validate_tcp_keepalive(self.tcp_keepalive)?;
 
         #[cfg(feature = "tls")]
         let mut service = self.service;
@@ -230,6 +245,7 @@ impl<C: 'static> Server<C> {
             service: Arc::new(service),
             listeners,
             local_addrs,
+            socket: SocketOptions::new(self.tcp_keepalive),
             config: TransportConfig {
                 #[cfg(feature = "http1")]
                 http1: self.http1,
@@ -256,6 +272,9 @@ pub struct BoundServer<C> {
     service: Arc<Service<C>>,
     listeners: Vec<TcpListener>,
     local_addrs: Vec<SocketAddr>,
+    /// Apart from `TransportConfig`, which is cloned per accepted socket: these
+    /// are applied to every socket but held once per listener.
+    socket: SocketOptions,
     config: TransportConfig,
     shutdown: Option<Shutdown>,
 }
@@ -290,6 +309,7 @@ impl<C: 'static> BoundServer<C> {
                 listener,
                 local_addr,
                 Arc::clone(&self.service),
+                self.socket.clone(),
                 self.config.clone(),
                 Arc::clone(&permits),
                 lifecycle_receiver.clone(),

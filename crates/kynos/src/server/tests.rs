@@ -27,6 +27,218 @@ fn http2_defaults_are_owned_by_kynos() {
     );
 }
 
+#[test]
+fn tcp_keepalive_defaults_are_owned_by_kynos() {
+    use std::time::Duration;
+
+    use crate::server::tcp::TcpKeepAlive;
+
+    let keepalive = TcpKeepAlive::default();
+    assert_eq!(keepalive.idle, Duration::from_secs(60));
+    assert_eq!(keepalive.interval, Duration::from_secs(15));
+    assert_eq!(
+        crate::server::Server::new(test_service()).tcp_keepalive,
+        Some(keepalive),
+        "a server keeps accepted sockets alive unless told not to"
+    );
+}
+
+/// Half a second is refused alongside zero, because the socket option carries
+/// whole seconds and would receive zero for it.
+#[test]
+fn a_tcp_keepalive_under_a_second_is_refused() {
+    use std::time::Duration;
+
+    use crate::server::{
+        error::ServerError,
+        tcp::{TcpKeepAlive, validate_tcp_keepalive},
+    };
+
+    for keepalive in [
+        TcpKeepAlive::default().idle(Duration::ZERO),
+        TcpKeepAlive::default().interval(Duration::ZERO),
+        TcpKeepAlive::default().idle(Duration::from_millis(500)),
+        TcpKeepAlive::default().interval(Duration::from_millis(999)),
+    ] {
+        assert!(
+            matches!(
+                validate_tcp_keepalive(Some(keepalive)),
+                Err(ServerError::InvalidConfiguration(
+                    "TCP keepalive durations must be at least one second"
+                ))
+            ),
+            "{keepalive:?} must be refused"
+        );
+    }
+    validate_tcp_keepalive(None).expect("no keepalive is a configuration");
+    validate_tcp_keepalive(Some(
+        TcpKeepAlive::default()
+            .idle(Duration::from_secs(1))
+            .interval(Duration::from_secs(1)),
+    ))
+    .expect("one second is the floor, and accepted");
+}
+
+/// Accepts one loopback connection and applies `options` to it, as the accept
+/// loop does, returning the server's side for inspection.
+async fn accepted_with(
+    options: &crate::server::tcp::SocketOptions,
+) -> (tokio::net::TcpStream, tokio::net::TcpStream) {
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("loopback listener binds");
+    let local_addr = listener.local_addr().expect("listener has an address");
+    let client = tokio::net::TcpStream::connect(local_addr)
+        .await
+        .expect("client connects");
+    let (accepted, peer_addr) = listener.accept().await.expect("server accepts");
+    options.apply(&accepted, local_addr, peer_addr);
+    (accepted, client)
+}
+
+/// What the accept loop sets is what the kernel holds for the socket.
+///
+/// Read back through the socket rather than through Kynos's own value, because
+/// the value is not the claim: a keepalive computed and never set would satisfy
+/// an assertion on it. Linux only, because reading the idle time and interval
+/// back is not portable, and CI's runner is Linux.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn an_accepted_socket_carries_the_configured_keepalive() {
+    use std::time::Duration;
+
+    use crate::server::tcp::{SocketOptions, TcpKeepAlive};
+
+    let keepalive = TcpKeepAlive::default()
+        .idle(Duration::from_secs(42))
+        .interval(Duration::from_secs(7));
+    let (accepted, _client) = accepted_with(&SocketOptions::new(Some(keepalive))).await;
+    let socket = socket2::SockRef::from(&accepted);
+
+    assert!(socket.keepalive().expect("SO_KEEPALIVE reads"));
+    assert_eq!(
+        socket.tcp_keepalive_time().expect("TCP_KEEPIDLE reads"),
+        Duration::from_secs(42)
+    );
+    assert_eq!(
+        socket
+            .tcp_keepalive_interval()
+            .expect("TCP_KEEPINTVL reads"),
+        Duration::from_secs(7)
+    );
+    assert!(accepted.nodelay().expect("TCP_NODELAY reads"));
+}
+
+/// The kernel's timer for the server's end of a loopback connection, read from
+/// `/proc/net/tcp`: `2` is the keepalive timer, and it runs only on a socket
+/// with `SO_KEEPALIVE` set and nothing awaiting acknowledgement.
+#[cfg(target_os = "linux")]
+fn server_side_timer(server: std::net::SocketAddr, client: std::net::SocketAddr) -> Option<u8> {
+    fn hex((ip, port): (std::net::Ipv4Addr, u16)) -> String {
+        // The address is the kernel's in-memory word, so little-endian here.
+        format!("{:08X}:{port:04X}", u32::from_le_bytes(ip.octets()))
+    }
+    let v4 = |address: std::net::SocketAddr| match address {
+        std::net::SocketAddr::V4(address) => (*address.ip(), address.port()),
+        std::net::SocketAddr::V6(_) => unreachable!("the test binds IPv4 loopback"),
+    };
+    let (local, remote) = (hex(v4(server)), hex(v4(client)));
+
+    std::fs::read_to_string("/proc/net/tcp")
+        .expect("/proc/net/tcp reads")
+        .lines()
+        .skip(1)
+        .find_map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            (fields[1] == local && fields[2] == remote)
+                .then(|| fields[5].split(':').next()?.parse().ok())
+                .flatten()
+        })
+}
+
+/// What `Server::tcp_keepalive` configures reaches the socket the accept loop
+/// accepted, through `prepare` and the loop rather than beside them.
+///
+/// The test above proves `SocketOptions::apply` sets what it is given; this one
+/// is what fails if the loop stops calling it or `prepare` stops handing it the
+/// configured value. The socket the server holds is not reachable from a test,
+/// so the kernel is asked instead: its keepalive timer runs on the server's end
+/// of the connection exactly when `SO_KEEPALIVE` is set there. Linux only, for
+/// `/proc/net/tcp`.
+#[cfg(all(target_os = "linux", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_accept_loop_sets_the_configured_keepalive_on_what_it_accepts() {
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    use crate::server::tcp::TcpKeepAlive;
+
+    for (keepalive, expected) in [(Some(TcpKeepAlive::default()), 2), (None, 0)] {
+        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let bound = crate::server::Server::new(test_service())
+            .tcp_keepalive(keepalive)
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+                let _ = shutdown_receiver.await;
+            }))
+            .prepare()
+            .await
+            .expect("loopback listener binds");
+        let address = bound.local_addrs()[0];
+        let server = tokio::spawn(bound.serve());
+
+        // One exchange, so the server has certainly accepted and configured the
+        // socket before the kernel is asked about it.
+        let mut stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        stream
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .expect("request writes");
+        let mut response = [0_u8; 64];
+        let read = stream.read(&mut response).await.expect("response reads");
+        assert!(response[..read].starts_with(b"HTTP/1.1 200"));
+
+        let client = stream.local_addr().expect("client has an address");
+        // The response's retransmission timer holds the slot until the client's
+        // acknowledgement lands, so wait for the socket to settle.
+        let timer = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match server_side_timer(address, client) {
+                    Some(timer) if timer != 1 => return timer,
+                    _ => tokio::time::sleep(Duration::from_millis(10)).await,
+                }
+            }
+        })
+        .await
+        .expect("the server's socket settles");
+        assert_eq!(timer, expected, "keepalive {keepalive:?}");
+
+        drop(stream);
+        let _ = shutdown_sender.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+}
+
+#[tokio::test]
+async fn no_keepalive_leaves_an_accepted_socket_without_one() {
+    use crate::server::tcp::SocketOptions;
+
+    let (accepted, _client) = accepted_with(&SocketOptions::new(None)).await;
+
+    assert!(
+        !socket2::SockRef::from(&accepted)
+            .keepalive()
+            .expect("SO_KEEPALIVE reads")
+    );
+    assert!(accepted.nodelay().expect("TCP_NODELAY reads"));
+}
+
 /// `accept.rs` clones the whole `TransportConfig` per accepted socket, so this
 /// is a per-connection cost rather than a per-server one. Measured at 40 bytes
 /// and rounded up to the next multiple of 64, since `docs/nfr.md#thresholds`

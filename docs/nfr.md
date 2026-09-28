@@ -538,6 +538,7 @@ fails the build when a crate is named outside the module that owns it.
 | compatibility | `hyper` and `hyper-util` are named only in `server/connection.rs` and `http/body.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `tokio-rustls` and `rustls` are named only under `server/tls/` | `mise run containment:check` | `enforced` |
 | compatibility | `matchit` may be named only under `router/` | `mise run containment:check` | `enforced` |
+| compatibility | `socket2` is named only in `server/tcp.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `h2` and `httparse` are never named | `mise run containment:check` | `enforced` |
 | compatibility | `tower` and `tower-service` are named only in `unchecked.rs` | `mise run containment:check` | `enforced` |
 | dx | Every crate in `[workspace.dependencies]` is consumed by a member | `cargo-udeps` or an equivalent manifest check | `needs-tooling` |
