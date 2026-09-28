@@ -80,7 +80,7 @@ impl ClientCertificateConfig {
 /// identity past its certificate's expiry for the life of the process. A
 /// deployment that must re-verify every connection against
 /// the certificate's validity period uses [`Disabled`](Self::Disabled).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub enum SessionResumption {
     /// Stateless tickets: the session is sealed into a ticket the client holds,
