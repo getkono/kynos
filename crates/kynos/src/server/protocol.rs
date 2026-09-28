@@ -131,6 +131,12 @@ pub enum Http2FlowControl {
 }
 
 /// HTTP/2 keep-alive ping policy.
+///
+/// A PING is sent once a connection has read nothing for `interval`, and the
+/// connection is closed if it is not acknowledged within `timeout`, so a busy
+/// connection is never pinged. This is what releases an HTTP/2 connection
+/// whose peer vanished with no stream open: HTTP/1's header-read timeout has no
+/// counterpart there.
 #[cfg(feature = "http2")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Http2KeepAlive {
@@ -157,7 +163,9 @@ pub struct Http2Config {
     pub max_concurrent_streams: u32,
     /// Flow-control policy.
     pub flow_control: Http2FlowControl,
-    /// Optional keep-alive policy.
+    /// Keep-alive policy. Pings after 30 seconds of silence and allows 20 for
+    /// the acknowledgement by default, so a vanished peer holds its connection
+    /// permit for at most 50 seconds past the last frame it sent.
     pub keep_alive: Option<Http2KeepAlive>,
     /// Maximum decoded request header-list size.
     pub max_header_list_size: u32,
@@ -178,7 +186,10 @@ impl Default for Http2Config {
                 initial_stream_window_size: 1024 * 1024,
                 initial_connection_window_size: 1024 * 1024,
             },
-            keep_alive: None,
+            keep_alive: Some(Http2KeepAlive {
+                interval: Duration::from_secs(30),
+                timeout: Duration::from_secs(20),
+            }),
             max_header_list_size: 16 * 1024,
             max_send_buffer_size: 400 * 1024,
             max_pending_accept_reset_streams: 20,
@@ -203,7 +214,8 @@ impl Http2Config {
         self
     }
 
-    /// Sets the keep-alive policy, or `None` to send no keep-alive pings.
+    /// Sets the keep-alive policy, or `None` to send no keep-alive pings, which
+    /// leaves an idle connection open for as long as its peer's socket does.
     #[must_use]
     pub fn keep_alive(mut self, keep_alive: Option<Http2KeepAlive>) -> Self {
         self.keep_alive = keep_alive;

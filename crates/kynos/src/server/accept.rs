@@ -20,6 +20,7 @@ use crate::{
         connection::serve_connection,
         error::ServerError,
         lifecycle::{Lifecycle, wait_until_forced, wait_until_stopping},
+        tcp::SocketOptions,
     },
 };
 
@@ -31,6 +32,7 @@ pub(in crate::server) async fn accept_loop<C: 'static>(
     listener: TcpListener,
     local_addr: SocketAddr,
     service: Arc<Service<C>>,
+    socket: SocketOptions,
     config: TransportConfig,
     permits: Arc<Semaphore>,
     mut lifecycle: watch::Receiver<Lifecycle>,
@@ -67,9 +69,7 @@ pub(in crate::server) async fn accept_loop<C: 'static>(
         match accepted {
             Ok((stream, peer_addr)) => {
                 failures = 0;
-                if let Err(error) = stream.set_nodelay(true) {
-                    tracing::debug!(%error, %local_addr, %peer_addr, "could not enable TCP_NODELAY");
-                }
+                socket.apply(&stream, local_addr, peer_addr);
                 let service = Arc::clone(&service);
                 let connection_config = config.clone();
                 let connection_lifecycle = lifecycle.clone();

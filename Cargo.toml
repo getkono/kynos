@@ -103,6 +103,11 @@ serde = "1.0.219"
 serde_json = "1.0.145"
 serde_urlencoded = "0.7.1"
 serde_yaml_ng = "0.10.0"
+# Accepted-socket options tokio's `TcpStream` does not expose: TCP keepalive
+# with an idle time. Already in the graph through tokio's `net`, at this major
+# version and with `all`, so declaring it adds no crate and no feature. `all` is
+# what lets `server/tests.rs` read the idle time and interval back.
+socket2 = { version = "0.6.5", features = ["all"] }
 syn = "2.0.106"
 thiserror = "2.0.19"
 tokio = "1.53.1"
