@@ -1,18 +1,46 @@
 use super::{
-    COUNTS, Container, Field, Fields, Lit, LitFloat, LitInt, NUMERIC, Span, Spanned, TokenStream2,
-    Type, Variant, quote, skip_value, string_value,
+    COUNTS, Container, Field, Fields, IdentExt, Lit, LitFloat, LitInt, NUMERIC, Span, Spanned,
+    TokenStream2, Type, Variant, quote, skip_value, string_value,
 };
 
-/// The wire name of a field: serde's `rename` if it has one, the container's
-/// `rename_all` applied to the identifier otherwise.
+/// The name serde writes a named field under: the serialize side of its
+/// `rename`, its [`default_field_name`] otherwise.
 pub(super) fn field_name(field: &Field, container: &Container) -> String {
-    if let Some(renamed) = serde_rename(&field.attrs) {
-        return renamed;
-    }
+    serde_renames(&field.attrs)
+        .serialize
+        .unwrap_or_else(|| default_field_name(field, container))
+}
+
+/// The name serde reads a named field under before any `alias`: the
+/// deserialize side of its `rename`, its [`default_field_name`] otherwise.
+pub(super) fn field_read_name(field: &Field, container: &Container) -> String {
+    serde_renames(&field.attrs)
+        .deserialize
+        .unwrap_or_else(|| default_field_name(field, container))
+}
+
+/// The name serde writes a variant under, as [`field_name`] is for a field.
+pub(super) fn variant_name(variant: &Variant, container: &Container) -> String {
+    serde_renames(&variant.attrs)
+        .serialize
+        .unwrap_or_else(|| default_variant_name(variant, container))
+}
+
+/// The name serde reads a variant under before any `alias`, as
+/// [`field_read_name`] is for a field.
+pub(super) fn variant_read_name(variant: &Variant, container: &Container) -> String {
+    serde_renames(&variant.attrs)
+        .deserialize
+        .unwrap_or_else(|| default_variant_name(variant, container))
+}
+
+/// A named field's name where no `rename` gives one: its identifier without a
+/// raw identifier's `r#`, under the container's `rename_all`.
+fn default_field_name(field: &Field, container: &Container) -> String {
     let ident = field
         .ident
         .as_ref()
-        .map(ToString::to_string)
+        .map(|ident| ident.unraw().to_string())
         .unwrap_or_default();
     container
         .rename_all
@@ -21,34 +49,56 @@ pub(super) fn field_name(field: &Field, container: &Container) -> String {
 }
 
 /// The same for a variant.
-pub(super) fn variant_name(variant: &Variant, container: &Container) -> String {
-    if let Some(renamed) = serde_rename(&variant.attrs) {
-        return renamed;
-    }
-    let ident = variant.ident.to_string();
+fn default_variant_name(variant: &Variant, container: &Container) -> String {
+    let ident = variant.ident.unraw().to_string();
     container
         .rename_all
         .as_deref()
         .map_or(ident.clone(), |style| rename(&ident, style))
 }
 
-/// The `rename = "..."` of a `#[serde(...)]` list, if one is written.
-pub(super) fn serde_rename(attrs: &[syn::Attribute]) -> Option<String> {
-    let mut found = None;
+/// The names a member's `rename` gives each direction, where it gives one.
+#[derive(Default)]
+struct Renames {
+    serialize: Option<String>,
+    deserialize: Option<String>,
+}
+
+/// The `rename` of a `#[serde(...)]` list: `rename = "..."` names both
+/// directions, and `rename(serialize = "...", deserialize = "...")` each side
+/// it writes.
+///
+/// Shape errors in the list are serde's to report, so this raises none. The
+/// parenthesised form is consumed whole, so a key after it is still read.
+fn serde_renames(attrs: &[syn::Attribute]) -> Renames {
+    let mut renames = Renames::default();
     for attr in attrs {
         if !attr.path().is_ident("serde") {
             continue;
         }
         let _ = attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("rename") {
-                found = string_value(&meta)?;
-            } else {
-                skip_value(&meta)?;
+            if !meta.path.is_ident("rename") {
+                return skip_value(&meta);
             }
+            if meta.input.peek(syn::token::Paren) {
+                return meta.parse_nested_meta(|side| {
+                    if side.path.is_ident("serialize") {
+                        renames.serialize = string_value(&side)?;
+                    } else if side.path.is_ident("deserialize") {
+                        renames.deserialize = string_value(&side)?;
+                    } else {
+                        skip_value(&side)?;
+                    }
+                    Ok(())
+                });
+            }
+            let both = string_value(&meta)?;
+            renames.serialize.clone_from(&both);
+            renames.deserialize = both;
             Ok(())
         });
     }
-    found
+    renames
 }
 
 /// serde's `rename_all` styles, applied to one identifier.
