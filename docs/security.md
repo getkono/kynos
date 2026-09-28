@@ -206,6 +206,13 @@ certificate's expiry for the life of the process; a
 deployment that must hold every connection to the validity period sets
 `SessionResumption::Disabled` on its `TlsConfig`.
 
+That certificate is read from the ticket, so a ticket key vouches for identity:
+anyone holding one can mint a ticket naming any certificate chain and resume as
+any mutual-TLS identity, over TLS 1.2 or 1.3, while that key is accepted. The
+keys never leave the process, and the default stays tickets under mutual TLS; a
+deployment that cannot accept the risk sets `SessionResumption::Disabled` or
+`SessionResumption::Cache`.
+
 ### A scheme may be published without being required
 
 `Router::security_scheme::<S>()` registers a scheme that no operation yet

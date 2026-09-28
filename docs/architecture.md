@@ -302,9 +302,12 @@ handshake, which costs an asymmetric signature and a key exchange each time.
 Kynos defaults to stateless tickets instead
 ([`SessionResumption::Tickets`](../crates/kynos/src/server/tls/mod.rs)): the
 session travels with the client, so no client count evicts one. Its costs are
-written on the variant: a leaked ticket key exposes recorded TLS 1.2 sessions,
-and a resumed mutual-TLS session is not checked against its certificate's
-expiry again. The keys are
+written on the variant: a leaked ticket key exposes recorded TLS 1.2 sessions
+and, while it is accepted, lets its holder mint a ticket resuming as any
+mutual-TLS identity over either version; and a resumed mutual-TLS session is
+not checked against its certificate's expiry again. Mutual TLS keeps the
+default; a deployment that cannot accept the forgery risk chooses `Disabled` or
+`Cache`. The keys are
 random per process and rotate every six hours, so replicas behind a load
 balancer cannot yet resume each other's sessions; sharing them needs a key
 source the operator supplies, which is

@@ -104,6 +104,13 @@ pub enum SessionResumption {
     /// decrypt the TLS 1.2 sessions recorded under it. TLS 1.3 resumption
     /// always runs a fresh key exchange, so its sessions keep forward secrecy.
     ///
+    /// A ticket key also vouches for identity: a resumed session takes its
+    /// client certificate chain from the ticket, so anyone holding a key can
+    /// mint a ticket naming any chain and resume as any mutual-TLS identity,
+    /// over TLS 1.2 or 1.3, for as long as that key is accepted. A mutual-TLS
+    /// deployment that cannot accept that uses [`Disabled`](Self::Disabled) or
+    /// [`Cache`](Self::Cache).
+    ///
     /// rustls's in-memory cache of 256 sessions stays beside the tickets: a
     /// TLS 1.2 full handshake that presented no ticket still writes one entry
     /// to it, and a TLS 1.2 client that takes no tickets resumes from it.
