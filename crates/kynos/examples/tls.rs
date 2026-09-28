@@ -30,6 +30,10 @@
 //! * **`handshake_timeout` is fallible.** Zero is rejected rather than accepted
 //!   as "no timeout", because a handshake that never completes is the cheapest
 //!   way to hold a connection open forever.
+//! * **Resumption is set here only because this server requires client
+//!   certificates.** Stateless tickets, the default, let a returning client
+//!   skip the full handshake; they also let a resumed session keep a
+//!   certificate that has since expired, which a partner API may not accept.
 //! * **Both protocol configs are set here because ALPN is where the choice is
 //!   made.** Under TLS the client and server negotiate `h2` or `http/1.1`
 //!   during the handshake, so a server offering both needs both configured.
@@ -47,7 +51,7 @@ use kynos::{
     server::{
         Server,
         protocol::{Http1Config, Http2Config},
-        tls::{ClientCertificateConfig, TlsConfig, error::TlsError},
+        tls::{ClientCertificateConfig, SessionResumption, TlsConfig, error::TlsError},
     },
 };
 
@@ -104,6 +108,11 @@ fn tls_config(
         )?)
         // Fallible: zero is rejected rather than read as "wait forever".
         .handshake_timeout(Duration::from_secs(5))
+        // Resumption is stateless tickets by default. A resumed session keeps
+        // the client certificate its full handshake verified without checking
+        // it again, so a partner API that must hold every connection to the
+        // certificate's expiry pays a full handshake each time instead.
+        .map(|config| config.session_resumption(SessionResumption::Disabled))
 }
 
 #[tokio::main]
