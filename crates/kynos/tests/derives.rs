@@ -2626,9 +2626,34 @@ struct ReadOnlyRenamed {
 }
 
 #[derive(Schema, serde::Serialize, serde::Deserialize)]
+struct AliasedWrittenSide {
+    #[serde(rename(serialize = "a", deserialize = "b"), alias = "a")]
+    x: u8,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
 struct SameSides {
     #[serde(rename(serialize = "n", deserialize = "n"))]
     x: u8,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+struct OneSidedRenames {
+    #[serde(rename(deserialize = "r"), alias = "TYPE")]
+    r#type: u8,
+    #[serde(skip_serializing, default, rename(serialize = "w"))]
+    r#match: u8,
+    #[serde(rename(serialize = "a"), alias = "a")]
+    r#loop: u8,
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum OneSidedVariant {
+    Now,
+    #[serde(skip_serializing, rename(serialize = "w"))]
+    LaterOn,
 }
 
 /// The keys of the object `value` is, in order.
@@ -2702,6 +2727,70 @@ fn a_split_rename_is_described_under_the_side_serde_uses() {
     let written = serde_json::to_value(SameSides { x: 1 }).expect("a struct serializes");
     assert_eq!(keys(&schema["properties"]), vec!["n"], "{schema}");
     assert_eq!(keys(&schema["properties"]), keys(&written));
+}
+
+/// A split `rename` whose written side serde also reads, as an `alias`, is
+/// described under every name serde reads, the written one among them, so the
+/// one schema is true of what serde writes and of what it reads.
+#[test]
+fn a_split_rename_whose_written_side_is_an_alias_is_described_under_both() {
+    let schema = emitted::<AliasedWrittenSide>();
+    let mut described = keys(&schema["properties"]);
+    described.sort_unstable();
+    assert_eq!(described, vec!["a", "b"], "{schema}");
+    let written = serde_json::to_value(AliasedWrittenSide { x: 1 }).expect("a struct serializes");
+    assert_eq!(keys(&written), vec!["a"]);
+    for document in [r#"{"a":1}"#, r#"{"b":1}"#] {
+        let read: AliasedWrittenSide =
+            serde_json::from_str(document).expect("serde reads either name");
+        assert_eq!(read.x, 1, "{document}");
+    }
+}
+
+/// A `rename` giving one side leaves the other to the identifier without its
+/// `r#` under `rename_all`, as serde does, on a member serde uses one way and
+/// on one whose written side is also an `alias`. A one-sided `rename` whose
+/// sides then differ, with no `alias` covering the written one, is refused;
+/// `a_split_rename_is_refused_on_every_member_serde_writes_and_reads` pins that.
+#[test]
+fn a_one_sided_rename_leaves_the_other_side_to_rename_all() {
+    let schema = emitted::<OneSidedRenames>();
+    let mut described = keys(&schema["properties"]);
+    described.sort_unstable();
+    assert_eq!(
+        described,
+        vec!["LOOP", "MATCH", "TYPE", "a", "r"],
+        "{schema}"
+    );
+    let written = serde_json::to_value(OneSidedRenames {
+        r#type: 1,
+        r#match: 2,
+        r#loop: 3,
+    })
+    .expect("a struct serializes");
+    assert_eq!(keys(&written), vec!["TYPE", "a"]);
+    for document in [
+        r#"{"r":1,"MATCH":2,"LOOP":3}"#,
+        r#"{"TYPE":1,"MATCH":2,"a":3}"#,
+    ] {
+        let read: OneSidedRenames =
+            serde_json::from_str(document).expect("serde reads every described name");
+        assert_eq!(
+            (read.r#type, read.r#match, read.r#loop),
+            (1, 2, 3),
+            "{document}"
+        );
+    }
+
+    let schema = emitted::<OneSidedVariant>();
+    assert_eq!(
+        schema["enum"],
+        serde_json::json!(["now", "later_on"]),
+        "{schema}"
+    );
+    let read: OneSidedVariant =
+        serde_json::from_str(r#""later_on""#).expect("serde reads the described name");
+    assert!(matches!(read, OneSidedVariant::LaterOn));
 }
 
 // A split container rename_all

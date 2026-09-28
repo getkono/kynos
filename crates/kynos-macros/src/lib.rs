@@ -410,9 +410,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   internal tag cannot, and one named as the tag gets a schema serde's
 ///   document does not meet.
 /// - A split `rename(serialize = ..., deserialize = ...)` whose two sides differ
-///   on a named field or a variant serde both writes and reads. serde writes
-///   the member under one name and reads it under the other, so no one schema
-///   is true in both directions. Give both sides one name. A member serde uses
+///   on a named field or a variant serde both writes and reads, unless serde
+///   also reads the written side as an `alias` of that member. Otherwise serde
+///   writes the member under a name it never reads back, so no one schema is
+///   true in both directions. Give both sides one name. A member serde uses
 ///   one way is named by that side: a field it skips in either direction, any
 ///   field of a variant it never writes, and a variant it only reads.
 /// - A split container `rename_all(serialize = ..., deserialize = ...)` whose
