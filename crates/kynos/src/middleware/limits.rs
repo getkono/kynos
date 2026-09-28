@@ -1007,18 +1007,26 @@ impl std::error::Error for BodyTimedOut {}
 /// operator means; it earns its place over a body with a bounded size, where
 /// exceeding a wall-clock budget really is a fault.
 ///
-/// # Mount it outside anything that rewrites a body
+/// # Where it sits around a buffering interceptor
 ///
-/// An interceptor that rewrites a response body has to read it, and one that
-/// *buffers* -- [`Compression`](super::compression::Compression) below its size
-/// threshold, a cache storing a response -- reads to the end before writing
-/// anything. Handed a body that fails part-way, those paths have no partial
-/// response to emit and fall back to an empty one, so a timeout mounted beneath
-/// them reaches the client as a complete, zero-length success.
+/// The clock starts when the chain beneath has returned a head, and bounds
+/// only the body it is then handed. An interceptor that *buffers* --
+/// [`Compression`](super::compression::Compression) over a body of known
+/// length, a cache storing a response -- reads that body to the end inside the
+/// chain, so the placement decides what is covered:
 ///
-/// Outside them, the error is the body's last frame and the protocol driver
-/// resets the stream, which is what a client needs to see. Nothing enforces
-/// this: `CompatibleWith` compares sets, and a set has no positions.
+/// - Outside the interceptor, this bounds a body it streams through or
+///   declines unread, but not a buffered read: that read runs before the clock
+///   starts, and what it wraps afterwards is already in memory.
+/// - Beneath it, this bounds the buffered read. The interceptor hands on a body
+///   that fails the same way and stores nothing, so the driver resets the
+///   stream, though none of the octets read before the failure reach the
+///   client.
+/// - [`Timeout`] outside the interceptor bounds the chain's future, which is
+///   where the buffered read runs, so it bounds that read too.
+///
+/// Nothing checks the placement: `CompatibleWith` compares sets, and a set has
+/// no positions.
 ///
 /// # Server-Sent Events reset an idle timer
 ///

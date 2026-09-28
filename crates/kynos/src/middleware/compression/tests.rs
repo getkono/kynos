@@ -1,4 +1,5 @@
-//! Negotiation, and the guard that keeps a strong validator honest.
+//! Negotiation, the guard that keeps a strong validator honest, and a body
+//! that fails while it is buffered.
 
 use super::{Coding, Negotiated, negotiate, strongly_tagged};
 use crate::http::{HeaderMap, HeaderValue, header};
@@ -184,5 +185,140 @@ fn only_a_strong_validator_stops_the_encoder() {
 
     for (description, tag, expected) in cases {
         assert_eq!(strongly_tagged(&tagged(*tag)), *expected, "{description}");
+    }
+}
+
+/// A response body that fails while `Compression` buffers it.
+///
+/// In-crate because no public surface builds a body that fails on demand:
+/// `Body::from_body` is `pub(crate)`. Nor does one reach this path through
+/// `Served`, whose `Accept-Ranges` makes `Compression` leave it alone.
+mod failing {
+    use std::{
+        convert::Infallible,
+        io,
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
+    use bytes::Bytes;
+    use http_body::{Frame, SizeHint};
+    use http_body_util::BodyExt;
+
+    use crate::{
+        Router,
+        extract::body::text::Text,
+        http::{
+            Request,
+            body::{Body, BoxError},
+            header,
+        },
+        middleware::{Continued, Interceptor, Next, compression::Compression},
+        openapi::{Method, PathTemplate},
+        router::{endpoint::builder::EndpointBuilder, service::Service},
+    };
+
+    /// States 4096 octets, yields 1024 of them, then the connection fails.
+    struct Failing(u8);
+
+    impl http_body::Body for Failing {
+        type Data = Bytes;
+        type Error = BoxError;
+
+        fn poll_frame(
+            mut self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+        ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+            self.0 += 1;
+            Poll::Ready(match self.0 {
+                1 => Some(Ok(Frame::data(Bytes::from(vec![b'a'; 1024])))),
+                2 => Some(Err(Box::new(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "upstream went away",
+                )))),
+                _ => None,
+            })
+        }
+
+        fn size_hint(&self) -> SizeHint {
+            SizeHint::with_exact(4096)
+        }
+    }
+
+    /// Replaces whatever the handler produced with a [`Failing`] body.
+    struct FailPartWay;
+
+    impl Interceptor<()> for FailPartWay {
+        type Reads = ();
+        type Adds = ();
+        type Short = Infallible;
+
+        async fn intercept(
+            &self,
+            request: Request,
+            (): (),
+            (): &(),
+            next: Next<'_, ()>,
+        ) -> Result<Continued, Infallible> {
+            let mut continued = next.run(request).await;
+            drop(continued.take_body());
+            continued.set_body(Body::from_body(Failing(0)));
+            Ok(continued)
+        }
+    }
+
+    async fn page() -> Text {
+        Text("x".repeat(4096))
+    }
+
+    /// The page with its body replaced by a failing one, beneath `Compression`
+    /// when `compressed`.
+    fn service(compressed: bool) -> Service<()> {
+        let endpoint = EndpointBuilder::new(
+            Method::Get,
+            PathTemplate::parse("/page").expect("a valid path"),
+            page,
+        );
+        let router = Router::<()>::new().mount(endpoint);
+        if compressed {
+            router
+                .intercept(Compression::new())
+                .intercept(FailPartWay)
+                .build(())
+        } else {
+            router.intercept(FailPartWay).build(())
+        }
+        .expect("a describable router")
+    }
+
+    /// Whether reading the response body to its end failed.
+    async fn read_fails(service: &Service<()>) -> bool {
+        let request = http::Request::builder()
+            .method("GET")
+            .uri("/page")
+            .header(header::ACCEPT_ENCODING, "gzip")
+            .body(Body::empty())
+            .expect("a well-formed request");
+        service
+            .call(request)
+            .await
+            .into_body()
+            .collect()
+            .await
+            .is_err()
+    }
+
+    /// A read that fails part-way is handed on failing, as it is with nothing
+    /// encoding it, rather than as a complete, empty body.
+    #[tokio::test]
+    async fn a_body_that_fails_part_way_is_handed_on_failing() {
+        assert!(
+            read_fails(&service(false)).await,
+            "the control read succeeded"
+        );
+        assert!(
+            read_fails(&service(true)).await,
+            "a failed read reached the client as a complete body"
+        );
     }
 }

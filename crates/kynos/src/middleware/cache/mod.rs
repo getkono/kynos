@@ -351,11 +351,12 @@ where
         };
 
         // Declining to store a response is not a licence to alter the one
-        // being forwarded, so a body not buffered is handed on as it arrived.
+        // being forwarded, so a body not buffered is handed on as it arrived,
+        // and one whose read failed is handed on failing.
         let bytes = match bounded(continued.take_body(), self.max_body_bytes).await {
             Ok(bytes) => bytes,
-            Err(unread) => {
-                continued.set_body(unread.unwrap_or_else(crate::http::body::Body::empty));
+            Err(unbuffered) => {
+                continued.set_body(unbuffered);
                 return Ok(continued.with_headers(D::headers(Duration::ZERO, None)));
             }
         };
@@ -448,22 +449,24 @@ fn refuses_cross_origin(headers: &HeaderMap) -> bool {
 /// The decision is taken on the size hint before the body is read, so a body
 /// declined is one nothing has consumed. A body that cannot state its length is
 /// a stream, and buffering one to cache it defeats the reason it is a stream.
-/// `Err(None)` is a read that failed part-way, which leaves nothing to hand on;
-/// see the `BodyTimeout` ordering rule in `docs/middleware.md`.
+///
+/// A read that fails part-way comes back as a body that fails the same way, so
+/// the client sees the failure rather than a complete, shorter response: RFC
+/// 9111 section 3.3 forbids a cache sending an incomplete response unmarked.
 async fn bounded(
     body: crate::http::body::Body,
     limit: u64,
-) -> Result<bytes::Bytes, Option<crate::http::body::Body>> {
+) -> Result<bytes::Bytes, crate::http::body::Body> {
     use http_body::Body as _;
 
     if body.size_hint().exact().is_none_or(|length| length > limit) {
-        return Err(Some(body));
+        return Err(body);
     }
 
     http_body_util::BodyExt::collect(body)
         .await
         .map(http_body_util::Collected::to_bytes)
-        .map_err(|_| None)
+        .map_err(crate::http::body::Body::failed)
 }
 
 #[cfg(test)]
