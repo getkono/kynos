@@ -142,8 +142,9 @@ async fn an_accepted_socket_carries_the_configured_keepalive() {
 #[cfg(target_os = "linux")]
 fn server_side_timer(server: std::net::SocketAddr, client: std::net::SocketAddr) -> Option<u8> {
     fn hex((ip, port): (std::net::Ipv4Addr, u16)) -> String {
-        // The address is the kernel's in-memory word, so little-endian here.
-        format!("{:08X}:{port:04X}", u32::from_le_bytes(ip.octets()))
+        // The kernel prints the network-order address as a native word, so the
+        // octets are read back in this host's byte order.
+        format!("{:08X}:{port:04X}", u32::from_ne_bytes(ip.octets()))
     }
     let v4 = |address: std::net::SocketAddr| match address {
         std::net::SocketAddr::V4(address) => (*address.ip(), address.port()),
