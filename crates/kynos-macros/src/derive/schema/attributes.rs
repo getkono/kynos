@@ -35,7 +35,8 @@ pub(super) fn variant_read_name(variant: &Variant, container: &Container) -> Str
 }
 
 /// A named field's name where no `rename` gives one: its identifier without a
-/// raw identifier's `r#`, under the container's `rename_all`.
+/// raw identifier's `r#`, under the container's `rename_all`, which for a
+/// variant's fields is [`Container::fields_of`]'s rule.
 fn default_field_name(field: &Field, container: &Container) -> String {
     let ident = field
         .ident
@@ -93,20 +94,33 @@ pub(super) fn sides(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<Sides>
 ///
 /// Shape errors in the list are serde's to report, so this raises none.
 fn serde_renames(attrs: &[syn::Attribute]) -> Sides {
-    let mut renames = Sides::default();
+    serde_sides(attrs, "rename")
+}
+
+/// A variant's own `rename_all` style on each side: the rule serde names the
+/// variant's fields by on that side ahead of the enum's `rename_all_fields`.
+/// `reject_split_rename_all` refuses sides that differ on a variant serde both
+/// writes and reads.
+pub(super) fn variant_rename_all(variant: &Variant) -> Sides {
+    serde_sides(&variant.attrs, "rename_all")
+}
+
+/// The [`sides`] of `key` in `#[serde(...)]` lists, the last one written.
+fn serde_sides(attrs: &[syn::Attribute], key: &str) -> Sides {
+    let mut found = Sides::default();
     for attr in attrs {
         if !attr.path().is_ident("serde") {
             continue;
         }
         let _ = attr.parse_nested_meta(|meta| {
-            if !meta.path.is_ident("rename") {
+            if !meta.path.is_ident(key) {
                 return skip_value(&meta);
             }
-            renames = sides(&meta)?;
+            found = sides(&meta)?;
             Ok(())
         });
     }
-    renames
+    found
 }
 
 /// A field's identifier under a `rename_all` style: `serde_derive` 1.0.229's

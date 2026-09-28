@@ -646,6 +646,190 @@ mod schema {
         }
     }
 
+    /// A struct variant's field is judged by the name serde gives it under the
+    /// variant's field rule, not the enum's `rename_all`: a one-sided `rename`
+    /// the rule's default matches is one name, and one it does not match is
+    /// two.
+    #[test]
+    fn a_split_rename_is_judged_by_the_variants_field_rule() {
+        let accepted: syn::DeriveInput = syn::parse2(quote::quote!(
+            enum Change {
+                #[serde(rename_all = "camelCase")]
+                Created {
+                    #[serde(rename(serialize = "userId"))]
+                    user_id: u64,
+                },
+            }
+        ))
+        .expect("the case itself must parse");
+        if let Err(error) = expand_inner(&accepted) {
+            panic!("a field serde writes and reads as `userId` was refused: {error}");
+        }
+
+        each_case_is_refused(
+            vec![case(
+                "a one-sided `rename` the enum's `rename_all_fields` does not match",
+                quote::quote!(
+                    #[serde(rename_all_fields = "camelCase")]
+                    enum Change {
+                        Created {
+                            #[serde(rename(deserialize = "user_id"))]
+                            user_id: u64,
+                        },
+                    }
+                ),
+                "serde writes this field as `userId` and reads it as `user_id`",
+            )],
+            expand_inner,
+        );
+    }
+
+    /// A field rule serde reads in split form is refused where its sides
+    /// differ, as a container `rename_all` is, where it names a field serde
+    /// both writes and reads: the enum's `rename_all_fields` over a struct
+    /// variant, and the own `rename_all` of a variant serde writes and reads.
+    /// Sides that agree are the one style.
+    #[test]
+    fn a_split_field_rule_whose_sides_differ_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a split `rename_all_fields` whose sides differ",
+                    quote::quote!(
+                        #[serde(rename_all_fields(
+                            serialize = "camelCase",
+                            deserialize = "snake_case"
+                        ))]
+                        enum Change {
+                            Created { user_id: u64 },
+                        }
+                    ),
+                    "a split `rename_all_fields` whose sides differ",
+                ),
+                case(
+                    "a variant's split `rename_all` naming one side only",
+                    quote::quote!(
+                        enum Change {
+                            #[serde(rename_all(serialize = "camelCase"))]
+                            Created { user_id: u64 },
+                        }
+                    ),
+                    "a split `rename_all` whose sides differ gives every field of this variant",
+                ),
+                case(
+                    "a split `rename_all_fields` reaching a variant's side its own rule leaves",
+                    quote::quote!(
+                        #[serde(rename_all_fields(
+                            serialize = "camelCase",
+                            deserialize = "kebab-case"
+                        ))]
+                        enum Change {
+                            A,
+                            #[serde(skip_serializing, rename_all(serialize = "snake_case"))]
+                            B {
+                                user_id: u8,
+                            },
+                        }
+                    ),
+                    "a split `rename_all_fields` whose sides differ",
+                ),
+            ],
+            expand_inner,
+        );
+
+        let accepted: syn::DeriveInput = syn::parse2(quote::quote!(
+            #[serde(rename_all_fields(serialize = "camelCase", deserialize = "camelCase"))]
+            enum Change {
+                #[serde(rename_all(serialize = "kebab-case", deserialize = "kebab-case"))]
+                Created { user_id: u64 },
+            }
+        ))
+        .expect("the case itself must parse");
+        if let Err(error) = expand_inner(&accepted) {
+            panic!("a split field rule whose sides agree was refused: {error}");
+        }
+    }
+
+    /// A split field rule is refused only where it names a field serde both
+    /// writes and reads: a variant's own rule on a variant serde skips both
+    /// ways or only reads, or on a unit or tuple variant, which has no named
+    /// field, and an enum's `rename_all_fields` that reaches no
+    /// struct variant, one with no field or every one under its own rule, are
+    /// accepted, as serde accepts them.
+    #[test]
+    fn a_split_field_rule_no_field_is_named_both_ways_by_is_accepted() {
+        let cases = [
+            (
+                "a variant serde skips both ways",
+                quote::quote!(
+                    enum Change {
+                        A,
+                        #[serde(skip, rename_all(serialize = "camelCase"))]
+                        B {
+                            user_id: u8,
+                        },
+                    }
+                ),
+            ),
+            (
+                "a variant serde only reads, under its rule's deserialize side",
+                quote::quote!(
+                    enum Change {
+                        A,
+                        #[serde(skip_serializing, rename_all(deserialize = "camelCase"))]
+                        B {
+                            user_id: u8,
+                        },
+                    }
+                ),
+            ),
+            (
+                "a unit variant serde writes and reads",
+                quote::quote!(
+                    enum Change {
+                        #[serde(rename_all(serialize = "camelCase"))]
+                        A,
+                    }
+                ),
+            ),
+            (
+                "a tuple variant serde writes and reads",
+                quote::quote!(
+                    enum Change {
+                        #[serde(rename_all(serialize = "camelCase", deserialize = "kebab-case"))]
+                        A(u8),
+                    }
+                ),
+            ),
+            (
+                "an enum's `rename_all_fields` over unit variants alone",
+                quote::quote!(
+                    #[serde(rename_all_fields(serialize = "camelCase"))]
+                    enum UnitsOnly {
+                        A,
+                        B,
+                    }
+                ),
+            ),
+            (
+                "an enum's `rename_all_fields` over a variant under its own rule",
+                quote::quote!(
+                    #[serde(rename_all_fields(serialize = "camelCase"))]
+                    enum Change {
+                        #[serde(rename_all = "kebab-case")]
+                        B { user_id: u8 },
+                    }
+                ),
+            ),
+        ];
+        for (label, tokens) in cases {
+            let input: syn::DeriveInput = syn::parse2(tokens).expect("the case itself must parse");
+            if let Err(error) = expand_inner(&input) {
+                panic!("{label} was refused: {error}");
+            }
+        }
+    }
+
     /// A variant serde only reads claims the name it is read under, so its
     /// split `rename` shadows an earlier variant by the deserialize side
     /// alone: a serialize side naming the earlier variant is never used, and a

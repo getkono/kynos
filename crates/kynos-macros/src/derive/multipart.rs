@@ -32,7 +32,7 @@ use syn::{
 
 use crate::derive::{
     common::{named_fields, reject_duplicate_names},
-    schema::{property_names, split_rename_all, split_renamed_field},
+    schema::{property_names, split_renamed_field, split_rule},
 };
 
 pub(crate) fn expand(item: TokenStream) -> TokenStream {
@@ -45,7 +45,7 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
 
 pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let fields = named_fields(input, "MultipartForm")?;
-    if let Some(span) = split_rename_all(input) {
+    if let Some(span) = split_rule(&input.attrs, "rename_all") {
         return Err(syn::Error::new(
             span,
             "a split `rename_all` whose sides differ gives every field two part names, and a part \

@@ -3026,3 +3026,211 @@ where
         "{style}: {schema}"
     );
 }
+
+// Struct-variant fields, against serde
+
+/// Per tagging, three enums whose one struct variant serde writes with its
+/// fields named by a different rule: by nothing under an enum `rename_all`,
+/// which serde applies to variant names alone; by the enum's
+/// `rename_all_fields`; and by the variant's own `rename_all` over a
+/// `rename_all_fields` it overrides.
+macro_rules! variant_fields {
+    ($($module:ident => $tagging:ident [$($serde:tt)*]),* $(,)?) => {
+        $(
+            mod $module {
+                #[derive(kynos::Schema, serde::Serialize)]
+                #[serde($($serde)* rename_all = "camelCase")]
+                pub(super) enum EnumRule {
+                    UserCreated { user_id: u8, made_at: u8 },
+                }
+
+                #[derive(kynos::Schema, serde::Serialize)]
+                #[serde($($serde)* rename_all_fields = "camelCase")]
+                pub(super) enum FieldsRule {
+                    UserCreated { user_id: u8, made_at: u8 },
+                }
+
+                #[derive(kynos::Schema, serde::Serialize)]
+                #[serde($($serde)* rename_all_fields = "kebab-case")]
+                pub(super) enum VariantRule {
+                    #[serde(rename_all = "camelCase")]
+                    UserCreated { user_id: u8, made_at: u8 },
+                }
+            }
+        )*
+
+        /// Under every tagging, a struct variant's field is named by the
+        /// variant's `rename_all`, else the enum's `rename_all_fields`, else
+        /// its identifier, and never by the enum's `rename_all`: serde's own
+        /// output is the oracle.
+        #[test]
+        fn a_struct_variants_fields_are_named_as_serde_names_them() {
+            $(
+                assert_variant_fields_named_as_serde_names(
+                    Tagging::$tagging,
+                    $module::EnumRule::UserCreated { user_id: 1, made_at: 2 },
+                );
+                assert_variant_fields_named_as_serde_names(
+                    Tagging::$tagging,
+                    $module::FieldsRule::UserCreated { user_id: 1, made_at: 2 },
+                );
+                assert_variant_fields_named_as_serde_names(
+                    Tagging::$tagging,
+                    $module::VariantRule::UserCreated { user_id: 1, made_at: 2 },
+                );
+            )*
+        }
+    };
+}
+
+variant_fields! {
+    external => External [],
+    internal => Internal [tag = "kind",],
+    adjacent => Adjacent [tag = "t", content = "c",],
+}
+
+/// Where a struct variant's fields travel under each of serde's taggings.
+#[derive(Debug, Clone, Copy)]
+enum Tagging {
+    /// In the object under the variant's name.
+    External,
+    /// Beside the tag, in the variant's own object.
+    Internal,
+    /// In the object under the content key, `c`.
+    Adjacent,
+}
+
+/// The object the only branch of `E`'s schema describes a variant's fields by
+/// names, in its properties and its required list, exactly the keys serde
+/// writes `value`'s fields under.
+fn assert_variant_fields_named_as_serde_names<E>(tagging: Tagging, value: E)
+where
+    E: SchemaTrait + serde::Serialize,
+{
+    use std::collections::BTreeSet;
+
+    let schema = emitted::<E>();
+    let branch = &schema["oneOf"][0];
+    let written = serde_json::to_value(value).expect("a variant serializes");
+    let (described, written) = match tagging {
+        Tagging::External => {
+            let name = keys(&written)[0];
+            (&branch["properties"][name], &written[name])
+        }
+        Tagging::Internal => (branch, &written),
+        Tagging::Adjacent => (&branch["properties"]["c"], &written["c"]),
+    };
+    let written: BTreeSet<&str> = keys(written).into_iter().collect();
+    let properties: BTreeSet<&str> = keys(&described["properties"]).into_iter().collect();
+    let required: BTreeSet<&str> = described["required"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{tagging:?}: expected a required list: {schema}"))
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert_eq!(properties, written, "{tagging:?}: {schema}");
+    assert_eq!(required, written, "{tagging:?}: {schema}");
+}
+
+// A split field rule
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(
+    rename_all_fields(serialize = "camelCase", deserialize = "camelCase"),
+    tag = "kind"
+)]
+enum SplitFieldsRuleThenTag {
+    UserCreated { user_id: u8 },
+}
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+enum SplitVariantRule {
+    #[serde(rename_all(serialize = "camelCase", deserialize = "camelCase"))]
+    UserCreated { user_id: u8 },
+}
+
+/// A split `rename_all_fields`, and a variant's split `rename_all` with no
+/// `rename_all_fields` beside it, whose sides agree name the variant's fields
+/// by that one style, as serde does; and the `tag` after the split
+/// `rename_all_fields` in the same attribute is still read.
+#[test]
+fn a_split_field_rule_whose_sides_agree_is_read() {
+    let written = serde_json::to_value(SplitFieldsRuleThenTag::UserCreated { user_id: 1 })
+        .expect("a variant serializes");
+    assert_eq!(
+        written,
+        serde_json::json!({"kind": "UserCreated", "userId": 1})
+    );
+    assert!(
+        serde_json::from_value::<SplitFieldsRuleThenTag>(written).is_ok(),
+        "serde reads what it writes under one style"
+    );
+    let schema = emitted::<SplitFieldsRuleThenTag>();
+    assert_eq!(
+        schema["oneOf"][0]["properties"]["kind"],
+        serde_json::json!({"type": "string", "const": "UserCreated"}),
+        "{schema}"
+    );
+    assert_variant_fields_named_as_serde_names(
+        Tagging::Internal,
+        SplitFieldsRuleThenTag::UserCreated { user_id: 1 },
+    );
+
+    let written = serde_json::to_value(SplitVariantRule::UserCreated { user_id: 1 })
+        .expect("a variant serializes");
+    assert_eq!(written, serde_json::json!({"UserCreated": {"userId": 1}}));
+    assert!(
+        serde_json::from_value::<SplitVariantRule>(written).is_ok(),
+        "serde reads what it writes under one style"
+    );
+    assert_variant_fields_named_as_serde_names(
+        Tagging::External,
+        SplitVariantRule::UserCreated { user_id: 1 },
+    );
+}
+
+// A variant serde only reads
+
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all_fields = "kebab-case")]
+enum ReadOnlyVariantRule {
+    Kept,
+    #[serde(skip_serializing, rename_all(deserialize = "camelCase"))]
+    OwnRule {
+        user_id: u8,
+    },
+    #[serde(skip_serializing, rename_all(serialize = "camelCase"))]
+    FallsBack {
+        user_id: u8,
+    },
+}
+
+/// A variant serde only reads names its fields by its own rule's deserialize
+/// side, else the enum's `rename_all_fields`, as serde reads them: a split rule
+/// naming the serialize side alone leaves the fields to `rename_all_fields`.
+#[test]
+fn a_read_only_variants_fields_are_named_as_serde_reads_them() {
+    let schema = emitted::<ReadOnlyVariantRule>();
+    for (variant, expected) in [("OwnRule", "userId"), ("FallsBack", "user-id")] {
+        let payload = schema["oneOf"]
+            .as_array()
+            .unwrap_or_else(|| panic!("expected a oneOf: {schema}"))
+            .iter()
+            .find_map(|branch| branch["properties"].get(variant))
+            .unwrap_or_else(|| panic!("{variant}: expected a branch: {schema}"));
+        assert_eq!(
+            keys(&payload["properties"]),
+            [expected],
+            "{variant}: {schema}"
+        );
+        assert_eq!(
+            payload["required"],
+            serde_json::json!([expected]),
+            "{variant}: {schema}"
+        );
+        let request = serde_json::json!({ variant: { expected: 1 } });
+        if let Err(error) = serde_json::from_value::<ReadOnlyVariantRule>(request) {
+            panic!("{variant}: serde refuses the field under `{expected}`: {error}");
+        }
+    }
+}
