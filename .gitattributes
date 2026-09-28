@@ -14,3 +14,9 @@
 references/** -text linguist-vendored
 
 references/rfc9110.txt -text whitespace=-trailing-space
+
+# The Python under `scripts/` is first-party repository tooling, not part of
+# the framework, so it stays out of GitHub's language statistics. It is not
+# vendored or generated, so diffs keep rendering it and it is marked only as
+# undetectable.
+scripts/** linguist-detectable=false
