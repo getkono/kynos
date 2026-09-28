@@ -128,6 +128,10 @@ pub enum SessionResumption {
     Cache {
         /// The most entries the cache holds before evicting; rustls may round
         /// it up.
+        ///
+        /// The cache's table is reserved for that many up front when the
+        /// server is [prepared](crate::server::Server::prepare), not grown as
+        /// entries arrive.
         capacity: NonZeroUsize,
     },
     /// No resumption: every connection pays a full handshake.

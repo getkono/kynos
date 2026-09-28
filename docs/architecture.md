@@ -311,7 +311,8 @@ mutual-TLS identity over either version; and a resumed mutual-TLS session is
 not checked against its certificate's expiry again. Mutual TLS keeps the
 default; a deployment that cannot accept the forgery risk chooses `Disabled` or
 `Cache`. The keys are
-random per process and rotate every six hours, so replicas behind a load
+random per process and rotate on the first handshake more than six hours after
+the last rotation, so replicas behind a load
 balancer cannot yet resume each other's sessions; sharing them needs a key
 source the operator supplies, which is
 [#269](https://github.com/getkono/kynos/issues/269). A bounded cache and no
