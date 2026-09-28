@@ -504,7 +504,17 @@ pub trait Observer<C>: Send + Sync + 'static {
         let _ = (route, elapsed);
     }
 
-    /// Called when a handler panicked.
+    /// Called when a panic was recovered, at whichever scope asked for
+    /// recovery — the router, a group or one endpoint — before
+    /// [`on_response`](Observer::on_response) sees the 500 it became.
+    ///
+    /// `route` is always `Some`, naming the operation the panic unwound out
+    /// of: only a routed operation runs anything that can panic. A panic is
+    /// reported once, by the innermost scope that recovered it. One nothing
+    /// recovers is not reported here: it unwinds past the dispatcher. Nor is
+    /// one an endpoint recovered beneath an interceptor that then replaced the
+    /// 500 with a short circuit of its own, because the response that carried
+    /// it never reached the dispatcher.
     fn on_panic(&self, payload: &(dyn std::any::Any + Send), route: Option<Route<'_>>) {
         let _ = (payload, route);
     }
