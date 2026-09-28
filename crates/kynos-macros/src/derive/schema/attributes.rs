@@ -45,7 +45,7 @@ fn default_field_name(field: &Field, container: &Container) -> String {
     container
         .rename_all
         .as_deref()
-        .map_or(ident.clone(), |style| rename(&ident, style))
+        .map_or(ident.clone(), |style| rename_field(&ident, style))
 }
 
 /// The same for a variant.
@@ -54,7 +54,7 @@ fn default_variant_name(variant: &Variant, container: &Container) -> String {
     container
         .rename_all
         .as_deref()
-        .map_or(ident.clone(), |style| rename(&ident, style))
+        .map_or(ident.clone(), |style| rename_variant(&ident, style))
 }
 
 /// The names a member's `rename` gives each direction, where it gives one.
@@ -101,56 +101,83 @@ fn serde_renames(attrs: &[syn::Attribute]) -> Renames {
     renames
 }
 
-/// serde's `rename_all` styles, applied to one identifier.
-pub(super) fn rename(ident: &str, style: &str) -> String {
-    let words = || {
-        let mut words: Vec<String> = Vec::new();
-        let mut current = String::new();
-        for character in ident.chars() {
+/// A field's identifier under a `rename_all` style: `serde_derive` 1.0.229's
+/// `RenameRule::apply_to_field` (`internals/case.rs`), transcribed.
+///
+/// serde reads the identifier as `snake_case` and never splits it on case, so
+/// an underscore maps wherever it stands, and letters change case only in
+/// ASCII.
+fn rename_field(field: &str, style: &str) -> String {
+    let pascal = || {
+        let mut pascal = String::new();
+        let mut capitalize = true;
+        for character in field.chars() {
             if character == '_' {
-                if !current.is_empty() {
-                    words.push(std::mem::take(&mut current));
-                }
-                continue;
+                capitalize = true;
+            } else if capitalize {
+                pascal.push(character.to_ascii_uppercase());
+                capitalize = false;
+            } else {
+                pascal.push(character);
             }
-            if character.is_uppercase() && !current.is_empty() {
-                words.push(std::mem::take(&mut current));
-            }
-            current.extend(character.to_lowercase());
         }
-        if !current.is_empty() {
-            words.push(current);
-        }
-        words
+        pascal
     };
-
-    let capitalize = |word: &str| {
-        let mut characters = word.chars();
-        characters.next().map_or_else(String::new, |first| {
-            first.to_uppercase().collect::<String>() + characters.as_str()
-        })
-    };
-
     match style {
-        "lowercase" => ident.to_lowercase(),
-        "UPPERCASE" => ident.to_uppercase(),
-        "snake_case" => words().join("_"),
-        "SCREAMING_SNAKE_CASE" => words().join("_").to_uppercase(),
-        "kebab-case" => words().join("-"),
-        "SCREAMING-KEBAB-CASE" => words().join("-").to_uppercase(),
-        "PascalCase" => words().iter().map(|word| capitalize(word)).collect(),
-        "camelCase" => {
-            let words = words();
-            let mut renamed = words.first().cloned().unwrap_or_default();
-            for word in words.iter().skip(1) {
-                renamed.push_str(&capitalize(word));
-            }
-            renamed
-        }
-        // A style this derive has not learned leaves the name alone, so that
+        "UPPERCASE" | "SCREAMING_SNAKE_CASE" => field.to_ascii_uppercase(),
+        "PascalCase" => pascal(),
+        "camelCase" => lower_first(&pascal()),
+        "kebab-case" => field.replace('_', "-"),
+        "SCREAMING-KEBAB-CASE" => field.to_ascii_uppercase().replace('_', "-"),
+        // `lowercase` and `snake_case` are the identity for a field, and a
+        // style this derive has not learned leaves the name alone, so that
         // serde owns the diagnostic for a style neither of them knows.
-        _ => ident.to_owned(),
+        _ => field.to_owned(),
     }
+}
+
+/// A variant's identifier under a `rename_all` style: `serde_derive` 1.0.229's
+/// `RenameRule::apply_to_variant` (`internals/case.rs`), transcribed.
+///
+/// serde reads the identifier as `PascalCase`: it splits only before an
+/// uppercase letter, keeps an underscore already there, and changes case only
+/// in ASCII.
+fn rename_variant(variant: &str, style: &str) -> String {
+    let snake = || {
+        let mut snake = String::new();
+        for (index, character) in variant.char_indices() {
+            if index > 0 && character.is_uppercase() {
+                snake.push('_');
+            }
+            snake.push(character.to_ascii_lowercase());
+        }
+        snake
+    };
+    match style {
+        "lowercase" => variant.to_ascii_lowercase(),
+        "UPPERCASE" => variant.to_ascii_uppercase(),
+        "camelCase" => lower_first(variant),
+        "snake_case" => snake(),
+        "SCREAMING_SNAKE_CASE" => snake().to_ascii_uppercase(),
+        "kebab-case" => snake().replace('_', "-"),
+        "SCREAMING-KEBAB-CASE" => snake().to_ascii_uppercase().replace('_', "-"),
+        // `PascalCase` is the identity for a variant; an unknown style is
+        // serde's to refuse, as for a field.
+        _ => variant.to_owned(),
+    }
+}
+
+/// `name` with its first character lowered in ASCII.
+///
+/// serde lowers the first byte, and panics where that splits a character, so
+/// what this gives for a non-ASCII first letter is never observable.
+fn lower_first(name: &str) -> String {
+    let mut characters = name.chars();
+    characters.next().map_or_else(String::new, |first| {
+        let mut lowered = String::from(first.to_ascii_lowercase());
+        lowered.push_str(characters.as_str());
+        lowered
+    })
 }
 
 /// Whether a named field is in the object serde reads.

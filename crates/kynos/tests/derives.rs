@@ -2853,3 +2853,110 @@ fn a_one_sided_rename_leaves_the_other_side_to_rename_all() {
         serde_json::from_str(r#""later_on""#).expect("serde reads the described name");
     assert!(matches!(read, OneSidedVariant::LaterOn));
 }
+
+// rename_all, against serde
+
+/// The fields and variants of `rename_all_names_every_member_as_serde_does`,
+/// under each of serde's styles.
+///
+/// Each identifier is one a rule that splits it into words names otherwise
+/// than serde, which reads a field as `snake_case` and a variant as `PascalCase`:
+/// a leading, trailing or doubled `_`, an uppercase letter in a field, an `_`
+/// and an acronym in a variant, and a non-ASCII letter, which serde never
+/// changes the case of: first and mid-word in a field, a capital in a variant.
+macro_rules! styled {
+    ($($module:ident => $style:literal),* $(,)?) => {
+        $(
+            mod $module {
+                #[derive(kynos::Schema, serde::Serialize, Default)]
+                #[serde(rename_all = $style)]
+                #[allow(non_snake_case)]
+                pub(super) struct Fields {
+                    type_: u8,
+                    _private: u8,
+                    page__size: u8,
+                    very_tasty: u8,
+                    aB: u8,
+                    z42: u8,
+                    naïve_é: u8,
+                }
+
+                #[derive(kynos::Schema, serde::Serialize)]
+                #[serde(rename_all = $style)]
+                #[allow(non_camel_case_types)]
+                pub(super) enum Variants {
+                    Outcome,
+                    VeryTasty,
+                    Foo_Bar,
+                    HTTPServer,
+                    Z42,
+                    NaïveÉtat,
+                }
+
+                pub(super) const VARIANTS: [Variants; 6] = [
+                    Variants::Outcome,
+                    Variants::VeryTasty,
+                    Variants::Foo_Bar,
+                    Variants::HTTPServer,
+                    Variants::Z42,
+                    Variants::NaïveÉtat,
+                ];
+            }
+        )*
+
+        /// Under every style serde accepts, a field is named as serde's
+        /// `apply_to_field` names it and a variant as its `apply_to_variant`
+        /// does, down to the byte: serde's own output is the oracle.
+        #[test]
+        fn rename_all_names_every_member_as_serde_does() {
+            $(
+                assert_named_as_serde_names::<$module::Fields, _>($style, &$module::VARIANTS);
+            )*
+        }
+    };
+}
+
+styled! {
+    lowercase => "lowercase",
+    uppercase => "UPPERCASE",
+    pascal_case => "PascalCase",
+    camel_case => "camelCase",
+    snake_case => "snake_case",
+    screaming_snake_case => "SCREAMING_SNAKE_CASE",
+    kebab_case => "kebab-case",
+    screaming_kebab_case => "SCREAMING-KEBAB-CASE",
+}
+
+/// `S`'s properties and required list, and `E`'s compact `enum`, are the
+/// names serde writes `S::default()` and each of `variants` under.
+fn assert_named_as_serde_names<S, E>(style: &str, variants: &[E])
+where
+    S: SchemaTrait + serde::Serialize + Default,
+    E: SchemaTrait + serde::Serialize,
+{
+    use std::collections::BTreeSet;
+
+    let schema = emitted::<S>();
+    let written = serde_json::to_value(S::default()).expect("a struct serializes");
+    let written: BTreeSet<&str> = keys(&written).into_iter().collect();
+    let properties: BTreeSet<&str> = keys(&schema["properties"]).into_iter().collect();
+    let required: BTreeSet<&str> = schema["required"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{style}: expected a required list: {schema}"))
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    assert_eq!(properties, written, "{style}: {schema}");
+    assert_eq!(required, written, "{style}: {schema}");
+
+    let schema = emitted::<E>();
+    let written: Vec<serde_json::Value> = variants
+        .iter()
+        .map(|variant| serde_json::to_value(variant).expect("a variant serializes"))
+        .collect();
+    assert_eq!(
+        schema["enum"],
+        serde_json::Value::Array(written),
+        "{style}: {schema}"
+    );
+}

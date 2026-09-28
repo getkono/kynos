@@ -105,10 +105,10 @@ pub(crate) fn skip_value(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<(
 /// `attribute` is the derive's own attribute -- `param`, `header` or
 /// `cookie` -- whose `rename` is consulted first. After it come serde's field
 /// `rename`, then the identifier under the container's `rename_all`: serde's
-/// precedence. The case rule is the `Schema` derive's own, taken from
-/// `property_names` rather than restated, so a field no Kynos attribute
-/// renames carries the name the `Schema` derive gives its property, even
-/// where that rule and serde's part. The `Schema` derive never reads the
+/// precedence. The case rule is the `Schema` derive's, taken from
+/// `property_names` rather than restated, and is serde's own
+/// `apply_to_field`, so a field no Kynos attribute renames carries the name
+/// serde and the `Schema` derive give it. The `Schema` derive never reads the
 /// Kynos `rename`, so a field that attribute renames is a parameter under one
 /// name and a property under another.
 ///
