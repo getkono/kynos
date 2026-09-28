@@ -1165,6 +1165,148 @@ mod encoding_policy {
     }
 }
 
+/// A streamed response whose producer failed, told apart from one that ended.
+///
+/// `Compression` re-encodes a body of unknown length as it streams, so it
+/// stands between `Watched` and the body that failed: whether the response was
+/// delivered is a question it answers, and an `Observer` is the only place the
+/// answer is visible.
+#[cfg(all(feature = "compression", feature = "openapi32"))]
+mod streamed_failure {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    use kynos::{
+        Router,
+        extract::media::OctetStream,
+        http::{Request, body::Body, header},
+        middleware::{Observer, compression::Compression},
+        response::stream::binary::BinaryStream,
+        router::{operation::Route, service::Service},
+    };
+
+    /// Counts the responses reported as not delivered.
+    struct Disconnects(Arc<AtomicUsize>);
+
+    impl Observer<()> for Disconnects {
+        fn on_request(&self, _: &Request, _: Option<Route<'_>>, (): &()) {}
+
+        fn on_response(
+            &self,
+            _: &kynos::http::Response,
+            _: Option<Route<'_>>,
+            _: std::time::Duration,
+        ) {
+        }
+
+        fn on_disconnect(&self, _: Option<Route<'_>>, _: std::time::Duration) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// A stream that yields one chunk, then fails if `fails`, else ends.
+    struct OneChunk {
+        polls: u8,
+        fails: bool,
+    }
+
+    impl futures_core::Stream for OneChunk {
+        type Item = Result<bytes::Bytes, std::io::Error>;
+
+        fn poll_next(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Self::Item>> {
+            let this = self.get_mut();
+            this.polls += 1;
+
+            std::task::Poll::Ready(match this.polls {
+                1 => Some(Ok(bytes::Bytes::from_static(b"chunk"))),
+                2 if this.fails => Some(Err(std::io::Error::other("the producer failed part-way"))),
+                _ => None,
+            })
+        }
+    }
+
+    #[kynos::get("/failing")]
+    async fn failing() -> BinaryStream<OneChunk, OctetStream> {
+        BinaryStream::new(OneChunk {
+            polls: 0,
+            fails: true,
+        })
+    }
+
+    #[kynos::get("/finishing")]
+    async fn finishing() -> BinaryStream<OneChunk, OctetStream> {
+        BinaryStream::new(OneChunk {
+            polls: 0,
+            fails: false,
+        })
+    }
+
+    /// Serves `target` gzip-encoded under `Compression`, reads the body to its
+    /// end or its first error, and hands back whether it finished with the
+    /// disconnects observed.
+    async fn ended(target: &str) -> (bool, usize) {
+        let disconnects = Arc::new(AtomicUsize::new(0));
+        let service: Service<()> = Router::<()>::new()
+            .mount(kynos::routes![failing, finishing])
+            .observe(Disconnects(Arc::clone(&disconnects)))
+            .intercept(Compression::new())
+            .build(())
+            .expect("a describable router");
+
+        let mut request = Request::new(Body::empty());
+        *request.uri_mut() = target.parse().expect("a usable request target");
+        request.headers_mut().insert(
+            header::ACCEPT_ENCODING,
+            header::HeaderValue::from_static("gzip"),
+        );
+
+        let response = service.call(request).await;
+
+        // Otherwise the case is about the uncompressed path, where `Watched`
+        // sees the producer's body directly.
+        assert_eq!(
+            response.headers().get(header::CONTENT_ENCODING),
+            Some(&header::HeaderValue::from_static("gzip"))
+        );
+
+        let finished = http_body_util::BodyExt::collect(response.into_body())
+            .await
+            .is_ok();
+
+        (finished, disconnects.load(Ordering::SeqCst))
+    }
+
+    /// A compressed response whose producer failed part-way was not delivered.
+    #[tokio::test]
+    async fn a_failed_stream_is_reported_as_interrupted() {
+        let (finished, disconnects) = ended("/failing").await;
+
+        assert!(!finished, "a failing producer's body read to its end");
+        assert_eq!(
+            disconnects, 1,
+            "a compressed response that failed part-way was reported as delivered"
+        );
+    }
+
+    /// The pass control: the same stream, ending instead of failing, is
+    /// reported as delivered.
+    #[tokio::test]
+    async fn a_finished_stream_is_not_reported_as_interrupted() {
+        let (finished, disconnects) = ended("/finishing").await;
+
+        assert!(
+            finished,
+            "a finishing producer's body did not read to its end"
+        );
+        assert_eq!(disconnects, 0);
+    }
+}
+
 /// Request-body decompression: the direction `Accept-Encoding` says nothing
 /// about.
 ///
