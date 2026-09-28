@@ -37,9 +37,10 @@ mod shape;
 
 use aliases::shadowed_variant;
 use attributes::{
-    constraints, described_members, field_name, is_described, is_flattened, is_open, is_option,
-    is_phantom, is_required, is_skipped_both_ways, is_unit_like, open_span, serde_flag,
-    serde_key_span, transparent_member, transparent_picks, variant_name,
+    constraints, described_members, field_name, field_read_name, is_described, is_flattened,
+    is_open, is_option, is_phantom, is_required, is_skipped_both_ways, is_unit_like, open_span,
+    serde_flag, serde_key_span, sides, transparent_member, transparent_picks, variant_name,
+    variant_read_name,
 };
 use shape::{enum_body, struct_body};
 
@@ -99,6 +100,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     reject_container_conversions(input)?;
     reject_untagged(input)?;
     reject_unread_variant(input)?;
+    reject_split_rename_all(input)?;
+    reject_split_rename(input)?;
     reject_shadowed_variant(input)?;
     reject_wire_form_overrides(input)?;
     reject_catch_all(input)?;
@@ -904,11 +907,116 @@ fn reject_shadowed_variant(input: &DeriveInput) -> syn::Result<()> {
              that also claims it, so `{later}` goes on the wire under a name that reads back as \
              `{earlier}`, and no schema describing `{later}` is true in both directions. Drop \
              the `rename` or `alias` that gives both variants the name",
-            name = variant_name(later, &container),
+            name = variant_read_name(later, &container),
             earlier = earlier.ident,
             later = later.ident,
         ),
     ))
+}
+
+/// A member serde both writes and reads is refused where a split `rename`
+/// gives the two directions different names and serde never reads the written
+/// one.
+///
+/// One schema serves both directions, so no name it gives the member is true of
+/// both: under the written name it describes a request serde refuses, under the
+/// read name a response serde never writes. Where serde also reads the written
+/// name, through an `alias`, the member is described under every name serde
+/// reads it as, the written one among them, which is true both ways; a variant's
+/// alias an earlier variant claims is not read as it, so it does not count. A
+/// member serde uses one way is
+/// named by that side, so it is exempt: a field serde skips in either
+/// direction, every field of a variant serde never writes, and a variant serde
+/// only reads. A flattened field's own name is neither written nor read, and
+/// neither is a transparent struct's field's. A variant serde only writes is
+/// refused before this runs, by [`reject_unread_variant`].
+fn reject_split_rename(input: &DeriveInput) -> syn::Result<()> {
+    let container = Container::read(input);
+    let fields = if container.transparent {
+        Vec::new()
+    } else {
+        written_groups(input)
+    };
+    let field = fields
+        .into_iter()
+        .flatten()
+        .filter(|field| {
+            !is_flattened(field)
+                && !serde_flag(
+                    &field.attrs,
+                    &["skip", "skip_serializing", "skip_deserializing"],
+                )
+        })
+        .find_map(|field| {
+            let ident = field.ident.as_ref()?;
+            let written = field_name(field, &container);
+            let read = field_read_name(field, &container);
+            let unread = !aliases::read_names(field, &container).contains(&written);
+            unread.then(|| {
+                let skip = "`skip_serializing` or `skip_deserializing` the field";
+                ("field", skip, &field.attrs, ident.span(), written, read)
+            })
+        });
+    let variant = match &input.data {
+        Data::Enum(data) => {
+            let variants = described_variants(data);
+            let read_names = aliases::variants_read_names(&variants, &container);
+            variants
+                .into_iter()
+                .zip(read_names)
+                .filter(|(variant, _)| is_written(variant))
+                .find_map(|(variant, read_names)| {
+                    let written = variant_name(variant, &container);
+                    let read = variant_read_name(variant, &container);
+                    // An unsplit name an earlier variant claims is
+                    // `reject_shadowed_variant`'s to refuse.
+                    let unread = written != read && !read_names.contains(&written);
+                    unread.then(|| {
+                        let skip = "`skip_serializing` the variant";
+                        (
+                            "variant",
+                            skip,
+                            &variant.attrs,
+                            variant.ident.span(),
+                            written,
+                            read,
+                        )
+                    })
+                })
+        }
+        _ => None,
+    };
+
+    let Some((member, skip, attrs, ident, written, read)) = field.or(variant) else {
+        return Ok(());
+    };
+    let span = serde_key_span(attrs, &["rename"]).map_or(ident, |(_, span)| span);
+    Err(syn::Error::new(
+        span,
+        format!(
+            "serde writes this {member} as `{written}` and reads it as `{read}`, never as \
+             `{written}`, so no schema naming it is true in both directions. Give both sides \
+             one name with `rename = \"...\"`, or {skip}"
+        ),
+    ))
+}
+
+/// A container `rename_all(serialize = ..., deserialize = ...)` whose sides
+/// differ, one side left out included.
+///
+/// The rule reaches every member serde both writes and reads, and one schema
+/// describes both directions, so the form is refused as the parameter derives
+/// refuse it. Sides that agree are the `rename_all = "..."` they spell, and
+/// [`Container`] reads them so. Runs before any check that reads a
+/// [`Container`].
+fn reject_split_rename_all(input: &DeriveInput) -> syn::Result<()> {
+    split_rename_all(input).map_or(Ok(()), |span| {
+        Err(syn::Error::new(
+            span,
+            "a split `rename_all` whose sides differ gives every member two wire names, and one \
+             schema describes both directions. Say which with `rename_all = \"...\"`",
+        ))
+    })
 }
 
 /// `#[serde(other)]` makes an enum accept every tag it does not name.
@@ -1443,6 +1551,10 @@ struct Container {
     /// The container `rename`, on the serialize side where it is split: the
     /// name serde writes a struct's `#[serde(tag = "...")]` as.
     rename: Option<String>,
+    /// The container `rename_all` style, on the serialize side where it is
+    /// split. [`split_rename_all`] finds sides that differ, which this derive
+    /// and [`multipart`](super::multipart) refuse before any name is taken
+    /// from it, so it is the style of both directions.
     rename_all: Option<String>,
     tag: Option<String>,
     content: Option<String>,
@@ -1480,17 +1592,8 @@ impl Container {
                     return skip_value(&meta);
                 };
                 match key.to_string().as_str() {
-                    "rename" if meta.input.peek(syn::token::Paren) => {
-                        meta.parse_nested_meta(|side| {
-                            if side.path.is_ident("serialize") {
-                                container.rename = string_value(&side)?;
-                                return Ok(());
-                            }
-                            skip_value(&side)
-                        })?;
-                    }
-                    "rename" => container.rename = string_value(&meta)?,
-                    "rename_all" => container.rename_all = string_value(&meta)?,
+                    "rename" => container.rename = sides(&meta)?.serialize,
+                    "rename_all" => container.rename_all = sides(&meta)?.serialize,
                     "tag" => container.tag = string_value(&meta)?,
                     "content" => container.content = string_value(&meta)?,
                     "transparent" => container.transparent = true,
@@ -1632,4 +1735,46 @@ pub(super) fn property_names(input: &DeriveInput, fields: &syn::FieldsNamed) -> 
         .iter()
         .map(|field| field_name(field, &container))
         .collect()
+}
+
+/// The span of the first field whose split `rename` gives serde's two
+/// directions different names, at that `rename`.
+///
+/// Read by [`multipart`](super::multipart), whose part carries one name in both
+/// directions, so no side of such a rename is the part's name.
+pub(super) fn split_renamed_field(input: &DeriveInput, fields: &syn::FieldsNamed) -> Option<Span> {
+    let container = Container::read(input);
+    fields
+        .named
+        .iter()
+        .find(|field| field_name(field, &container) != field_read_name(field, &container))
+        .map(|field| {
+            serde_key_span(&field.attrs, &["rename"]).map_or_else(|| field.span(), |(_, span)| span)
+        })
+}
+
+/// The span of a container `rename_all(serialize = ..., deserialize = ...)`
+/// whose sides differ, one side left out included, at that `rename_all`.
+///
+/// Read by this derive's refusal and by [`multipart`](super::multipart), whose
+/// part carries one name in both directions. Shape errors in the list stay
+/// serde's to report.
+pub(super) fn split_rename_all(input: &DeriveInput) -> Option<Span> {
+    let mut found = None;
+    for attr in &input.attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        let _ = attr.parse_nested_meta(|meta| {
+            if !meta.path.is_ident("rename_all") {
+                return skip_value(&meta);
+            }
+            let sides = sides(&meta)?;
+            if found.is_none() && sides.serialize != sides.deserialize {
+                found = Some(meta.path.span());
+            }
+            Ok(())
+        });
+    }
+    found
 }

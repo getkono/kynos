@@ -5,7 +5,7 @@ measurement a given shape of code owes. [`nfr.md`](nfr.md) records which of
 these run today; this document is about the method.
 
 Every section except [Rationale](#rationale) states a rule that binds
-implementation work. All five of the kinds below run today, four of them only
+implementation work. All six of the kinds below run today, five of them only
 for part of what they cover, and the [taxonomy](#the-taxonomy)'s last column is
 where that is admitted rather than implied.
 
@@ -61,6 +61,7 @@ What each kind of measurement proves that no other kind does.
 | Off-path proof | a sibling `tests.rs`, and a table [`containment:check`](../scripts/containment.py) reads | `python3 scripts/containment.py`, `cargo nextest` | that a feature is unreachable from the request path | in use, for the off-path flags and for the document, the registry, the validators and `jsonschema`: a table in [`testing.md`](testing.md#the-off-path-proof) held by `mise run containment:check`, plus the field witness in [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs); `describe` is the one off-path shape no row holds, and the emitters are held by the `yaml` flag's row rather than by one of their own |
 | Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | in use, via `mise run cost:features` over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs); reports a trend after each merge, refuses a release whose numbers are not the recorded ones, and sets no ceiling, and sees the generics that fixture instantiates rather than the whole surface — so a feature that grows the dependency graph can shrink this number by sharing instantiations out of upstream rlibs, and a negative row is a relocation rather than a saving |
 | Binary delta | a feature sweep | `.text` of a fixed fixture | what a feature costs a linked artifact | in use, over [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv); reports a trend after each merge, refuses a release whose numbers are not the recorded ones, and sets no ceiling. The fixture uses none of these features, so a zero row says the linker stripped — or the collector never instantiated — what nothing called, rather than that the feature is free to a program that uses it. A second sweep answers the question that fixture structurally cannot, over [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv): what mounting a codec costs, weighed on a fixture that mounts one |
+| Instruction count | [`kynos-profile`](../crates/kynos-profile/), an unpublished member | `mise run profile:requests`: gungraun over Callgrind and DHAT, read by [`profile_report.py`](../scripts/profile_report.py) | what a request of each [`kynos-bench`](https://github.com/getkono/kynos-bench) scenario executes between a built request and a built response, once the process has served one — instructions in the program object, and heap blocks and bytes — and which functions they were spent in | in use, in process only: nothing between the socket and `Service::call` is on the measured path. Recorded in [`requests.tsv`](../crates/kynos-profile/requests.tsv); reports a trend after each merge and sets no ceiling |
 
 **An allocation count needs its own target because a global allocator is
 process-wide.** Installing one in the library's unit-test binary would perturb
@@ -116,6 +117,46 @@ therefore answer opposite questions and neither subsumes the other:
 `binary.tsv`'s `compression` row is +160 bytes and `codec.tsv`'s is +951556.
 `mise run cost:codecs` runs this half alone; `mise run cost:record` writes its
 baseline with the other two.
+
+**An instruction count is exact only in the program object, so that is the
+number recorded.** Callgrind's total for one request moves between runs of one
+binary, and every instruction that moves is glibc's: `malloc`'s cost depends on
+the heap's history, and `memcpy`'s on where the allocator put the buffers.
+[`profile_report.py`](../scripts/profile_report.py) therefore splits each count
+by object, records what ran in the benchmark binary — Kynos and every Rust
+dependency, statically linked — and reports what ran in libc beside it without
+comparing it. The allocator's work is not dropped by that: DHAT's block and byte
+counts depend on what was asked for rather than on how it was found, and both
+are recorded. The program count is exact per host rather than everywhere:
+`memchr`, which `serde_json` scans with, picks its routines from the CPU it
+finds. So the benchmark serves one request before the measured one, which moves
+the one-time detection out of the region, and the baseline names the host it was
+taken on so that a report from another one says so.
+
+**It is held to the allocation count rather than trusted alongside it.** Five of
+its benchmarks are the shapes and stacks
+[`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) counts with `alloc_counter`,
+and the report reads that file's tables and fails unless DHAT's block count for
+each is the same number. That check earned its place on its first run: gungraun
+finds the region by looking for the benchmark in each allocation's backtrace,
+DHAT keeps twelve frames by default, and eight interceptors allocate deeper than
+that — so an eight-layer stack read *fewer* blocks than no stack at all, with no
+error anywhere. Equality is what catches that, where a ceiling would not, and it
+has a cost worth knowing before it arrives: for those five rows `alloc.rs`'s
+ceilings become exact. A change that removes an allocation lowers the ceiling in
+the same change, or the profile job on `master` reports the disagreement after
+the merge.
+
+**The run of record is CI's.** The committed baseline names the host it was
+taken on, and a report from another host says so. The job uploads each run in
+the baseline's format, so recording the baseline is copying that file over
+`requests.tsv` in a pull request of its own.
+
+**No shape owes it, and it replaces nothing a shape owes.** It is the instrument
+the counted kinds are *attributed* with: an allocation count says a request
+allocates eleven times, and this says which frames spent the instructions around
+them. A number here is work done rather than time taken — one vector instruction
+counts as one — so it is not a latency and says nothing `kynos-bench` would.
 
 ## The allocation
 
@@ -302,6 +343,17 @@ an exact gate fails on the change that caused it rather than three merges later.
 `[profile.bench]` in the workspace manifest keeps debug info under optimization
 for anyone who does want a profile locally — that affordance already exists and
 this document does not replace it.
+
+### Profiling locally
+
+Where a count says *how much* and the question is *where*, the Callgrind files
+`profile:requests` leaves under `target/gungraun/kynos-profile/` already hold
+the answer per function: `callgrind_annotate --inclusive=yes` over one of them
+ranks the frames a scenario spent its instructions in, and
+`--tree=caller` says who called the allocator. A timed profile — `perf record`
+over the same benchmark binary, which `[profile.bench]` builds with symbols — is
+the corroboration a count cannot give, and it stays on the machine that took it
+for the reason the section above gives.
 
 ### Why the measurements live beside the features
 
