@@ -1080,6 +1080,12 @@ mod encoding_policy {
         WithEncoding::new(Binary::new(octets()), Encoding::Required)
     }
 
+    /// Requires an encoding of a body with nothing in it.
+    #[kynos::get("/empty-export")]
+    async fn empty_export() -> WithEncoding<Binary<OctetStream>> {
+        WithEncoding::new(Binary::new(Vec::new()), Encoding::Required)
+    }
+
     /// The control: the same octets, saying nothing.
     #[kynos::get("/report")]
     async fn report() -> Binary<OctetStream> {
@@ -1088,7 +1094,7 @@ mod encoding_policy {
 
     fn service() -> Service<App> {
         Router::<App>::new()
-            .mount(kynos::routes![confirm, export, report])
+            .mount(kynos::routes![confirm, export, empty_export, report])
             .intercept(Compression::new())
             .build(App::new())
             .expect("a describable router")
@@ -1161,6 +1167,18 @@ mod encoding_policy {
             reply.field(header::CONTENT_ENCODING.as_str()).as_deref(),
             Some("gzip")
         );
+    }
+
+    /// An empty body has no encoded form to send, and identity is not an
+    /// answer, so even a client that accepts gzip is refused.
+    #[tokio::test]
+    async fn an_empty_body_that_requires_encoding_is_refused() {
+        let reply = get(&service(), "/empty-export")
+            .header("accept-encoding", "gzip")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::NOT_ACCEPTABLE);
     }
 
     /// The point of `Required`. A client that will take only identity is told
