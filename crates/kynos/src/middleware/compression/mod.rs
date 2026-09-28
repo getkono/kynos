@@ -794,6 +794,11 @@ where
                 self.latency,
             )));
 
+            // A length the handler stated counts the identity octets. RFC 9110
+            // section 8.6 forbids forwarding one known to be incorrect, and the
+            // encoded length is not known until after the head has gone.
+            continued.remove_declared::<ContentEncoding>(&http::header::CONTENT_LENGTH);
+
             return Ok(continued.with_headers(ContentEncoding {
                 coding: Some(coding),
                 // Not known until the encoding finishes, which is after the

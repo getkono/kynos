@@ -207,7 +207,8 @@ mounted.
 length is known is collected and encoded once. One whose length is not — an
 event stream, a log tail, an export written as it is read — is encoded frame by
 frame rather than skipped. `min_size` does not apply there: it is a statement
-about a length nobody has. No `Content-Length` rides on the result, because the
+about a length nobody has. No `Content-Length` rides on the result — one the
+handler stated counts the identity octets and is removed — because the
 encoded length is not known until after the head has gone and RFC 9110 §8.6
 forbids forwarding one known to be incorrect.
 
