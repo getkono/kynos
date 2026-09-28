@@ -199,10 +199,11 @@ What answers "can this deployment authenticate a client certificate" is the
 deployment, so the reader reports none in every case that produces none.
 
 A resumed session reports the certificate its full handshake verified, and that
-verification is not repeated. Under the default stateless tickets a client that
-keeps reconnecting keeps its identity past the certificate's expiry for as long
-as the ticket keys accept it; a deployment that must hold every connection to
-the validity period sets `SessionResumption::Disabled` on its `TlsConfig`.
+verification is not repeated. Each resumption issues fresh tickets, so under the
+default stateless tickets a client that reconnects at least every twelve hours
+keeps its identity past the certificate's expiry for the life of the process; a
+deployment that must hold every connection to the validity period sets
+`SessionResumption::Disabled` on its `TlsConfig`.
 
 ### A scheme may be published without being required
 
