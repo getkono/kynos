@@ -14,6 +14,10 @@ call into libc -- cut down to what each assertion reads. The two lines a
 different Callgrind configuration would add, a `positions:` column and a
 `jump=` line, are spliced in by the tests that need them.
 
+What runs around Valgrind without needing it is tested with `cargo bench`
+replaced: the ambient `RUSTFLAGS` refusal, the stale-output removal, and the
+host key a report compares across hosts.
+
 Run it as `mise run profile:test`, or directly.
 """
 
@@ -24,6 +28,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -354,6 +359,101 @@ class Main(unittest.TestCase):
                 mode="", directory=Path(directory), run_path=Path(directory) / "run.tsv"
             )
             self.assertEqual(code, report.NOTHING)
+
+
+class RunBenchmarks(unittest.TestCase):
+    """`run_benchmarks` with `cargo bench` replaced, so no Valgrind runs."""
+
+    def setUp(self):
+        self.environ = mock.patch.dict(report.os.environ, clear=False)
+        self.environ.start()
+        self.addCleanup(self.environ.stop)
+        for name in report.RUSTFLAGS:
+            report.os.environ.pop(name, None)
+        self.cargo = mock.patch.object(report.subprocess, "run")
+        self.run_cargo = self.cargo.start()
+        self.addCleanup(self.cargo.stop)
+
+    def test_an_ambient_rustflags_variable_is_refused_before_anything_runs(self):
+        for name in report.RUSTFLAGS:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                stale = Path(directory) / "gungraun/kynos-profile/stale"
+                stale.mkdir(parents=True)
+                with mock.patch.dict(report.os.environ, {name: "-C target-cpu=native"}):
+                    with self.assertRaisesRegex(report.Unreadable, name):
+                        report.run_benchmarks(Path(directory))
+                self.run_cargo.assert_not_called()
+                self.assertTrue(stale.is_dir())
+
+    def test_an_empty_rustflags_variable_is_not_a_flag(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
+            report.os.environ, {"RUSTFLAGS": ""}
+        ):
+            report.run_benchmarks(Path(directory))
+        self.run_cargo.assert_called_once()
+
+    def test_the_previous_output_is_gone_before_the_benchmark_runs(self):
+        # A deleted benchmark's summary would otherwise be read as this run's.
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            output = target / "gungraun/kynos-profile"
+            (output / "scenarios/gone.old").mkdir(parents=True)
+            (output / "scenarios/gone.old/summary.json").write_text("{}")
+            sibling = target / "gungraun/other"
+            sibling.mkdir()
+            self.run_cargo.side_effect = lambda *_, **__: self.assertFalse(
+                output.exists()
+            )
+            report.run_benchmarks(target)
+            self.run_cargo.assert_called_once()
+            self.assertTrue(sibling.is_dir())
+
+    def test_the_benchmark_runs_under_the_pinned_valgrind_first(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report.run_benchmarks(Path(directory))
+        environment = self.run_cargo.call_args.kwargs["env"]
+        self.assertTrue(
+            environment["PATH"].startswith(f"{report.VALGRIND / 'bin'}{report.os.pathsep}")
+        )
+
+
+class DescribeHost(unittest.TestCase):
+    """The host key: the CPU model string and the Valgrind that will run."""
+
+    def describe(self, cpuinfo_text, valgrind):
+        with tempfile.TemporaryDirectory() as directory:
+            cpuinfo = Path(directory) / "cpuinfo"
+            if cpuinfo_text is not None:
+                cpuinfo.write_text(cpuinfo_text)
+            with mock.patch.object(
+                report.shutil, "which", return_value=valgrind
+            ) as which, mock.patch.object(
+                report, "output", return_value="valgrind-3.27.1"
+            ) as version:
+                host = report.describe_host(cpuinfo)
+        return host, which, version
+
+    def test_the_key_is_the_model_name_and_the_valgrind_version(self):
+        host, which, version = self.describe(
+            "processor\t: 0\nvendor_id\t: AuthenticAMD\n"
+            "model name\t: AMD Ryzen 7 7800X3D 8-Core Processor \nflags\t: sse2\n",
+            "/opt/valgrind/bin/valgrind",
+        )
+        self.assertEqual(host, "AMD Ryzen 7 7800X3D 8-Core Processor, valgrind-3.27.1")
+        version.assert_called_once_with(["/opt/valgrind/bin/valgrind", "--version"])
+        # The Valgrind `profile:valgrind` builds is the one asked, not the distro's.
+        self.assertTrue(
+            which.call_args.kwargs["path"].startswith(str(report.VALGRIND / "bin"))
+        )
+
+    def test_a_host_without_cpuinfo_or_valgrind_is_named_as_such(self):
+        host, _, version = self.describe(None, None)
+        self.assertEqual(host, "unknown CPU, no valgrind")
+        version.assert_not_called()
+
+    def test_cpuinfo_without_a_model_name_is_an_unknown_cpu(self):
+        host, _, _ = self.describe("processor\t: 0\n", "/usr/bin/valgrind")
+        self.assertEqual(host, "unknown CPU, valgrind-3.27.1")
 
 
 if __name__ == "__main__":

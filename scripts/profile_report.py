@@ -363,10 +363,9 @@ def search_path():
     return f"{VALGRIND / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}"
 
 
-def describe_host():
+def describe_host(cpuinfo=Path("/proc/cpuinfo")):
     """The CPU and the Valgrind a count was taken under."""
     model = "unknown CPU"
-    cpuinfo = Path("/proc/cpuinfo")
     if cpuinfo.is_file():
         found = re.search(r"^model name\s*:\s*(.+)$", cpuinfo.read_text(), re.M)
         if found:
