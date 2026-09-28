@@ -234,7 +234,7 @@ decision.** DHAT over `alloc_counter_agreement.static_match`, the same request
 | Was | Site | Decision |
 | --- | --- | --- |
 | 264 B | the handler's future, boxed again by the endpoint's terminal | **removed**: with no interceptors of its own an endpoint awaits the handler in place, inside the box its own future already has |
-| 16 B, 48 B | `MatchedPath` and `Forwarded`, each its own extension | **merged**: the router inserts one record holding the matched path, the captures and the resolved origin, read back through `MatchedPath`, `Path`, `Forwarded` (an argument, or `Forwarded::of` from a `&Request`) and `ByClientAddress`; a capture's own insert goes the same way |
+| 16 B, 48 B → 88 B | `MatchedPath` and `Forwarded`, each its own extension | **merged**: the router inserts one record holding the matched path, the captures and the resolved origin, read back through `MatchedPath`, `Path`, `Forwarded` (an argument, or `Forwarded::of` from a `&Request`) and `ByClientAddress`; a capture's own insert goes the same way |
 | 32 B, 148 B | the extension map's box and its table, on first insert | **kept**: any extension costs them, and a request from the server already pays both for its `Connection` |
 | 1928 B → 1904 B | the dispatch future, boxed by `Service::call` | **kept, and characterized below** |
 | 920 B → 912 B | the endpoint's future, boxed by `DynEndpoint` | **kept**: it is the erasure every operation in one table needs |

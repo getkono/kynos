@@ -109,7 +109,7 @@ fn a_body_holding_bytes_is_not_zero_sized() {
 /// `Body::from_incoming` is the server path's erasure, and what it erases is
 /// hyper's own body. It is not zero-sized, so every request that arrives over a
 /// socket costs the `Box::pin` `alloc_body.rs`'s second row measures — outside
-/// the region [`alloc.rs`](alloc.rs) counts, which is why none of its seven is
+/// the region [`alloc.rs`](alloc.rs) counts, which is why none of its five is
 /// this one.
 #[test]
 fn the_body_the_server_erases_is_not_zero_sized() {
