@@ -196,6 +196,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | Body trait and erasure | `http-body`, `http-body-util` | [`http/body.rs`](../crates/kynos/src/http/body.rs), [`extract/body/`](../crates/kynos/src/extract/body/), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
 | Protocol driver, HTTP/1 and HTTP/2 | `hyper` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs), [`http/body.rs`](../crates/kynos/src/http/body.rs) | built |
 | tokio adapters for the driver | `hyper-util` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs) | built |
+| Accepted-socket options tokio does not expose | `socket2` | [`server/tcp.rs`](../crates/kynos/src/server/tcp.rs) | built |
 | HTTP/1 parsing | `httparse` | never — reached through `hyper` | built |
 | HTTP/2 framing | `h2` | never — reached through `hyper` | built |
 | TLS | `rustls`, via `tokio-rustls`, on the `aws-lc-rs` provider it names | [`server/tls/`](../crates/kynos/src/server/tls/) | built |
@@ -284,7 +285,7 @@ number exists it stays closed.
 `/`, and captures a borrowed slice of the request path rather than an owned
 string — the property the routing path's allocation requirements rest on.
 [`nfr.md`](nfr.md#routing) records zero heap allocations there as `absent` and
-unmet, since a static match measures seven, and enforces recorded ceilings in
+unmet, since a static match measures five, and enforces recorded ceilings in
 the meantime; lowering one is what closing the gap looks like. matchit also
 understands catch-all
 patterns, which Kynos does not: a catch-all has no OpenAPI equivalent, so the
@@ -702,7 +703,7 @@ counts poll `Service` directly, with no socket
 ([`tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs)), and
 a per-request figure over a socket is the general measurement
 [`performance.md`](performance.md#the-boundary) sends to `kynos-bench`. What
-Kynos's routing path adds is counted: [`nfr.md`](nfr.md#routing) records seven
+Kynos's routing path adds is counted: [`nfr.md`](nfr.md#routing) records five
 allocations for a static match. What its server path adds around each request
 is counted by nothing: the per-connection handler in
 [`server/connection.rs`](../crates/kynos/src/server/connection.rs) inserts the
@@ -809,7 +810,7 @@ way. What is left is the heap copy: `read_version` collects up to 24 bytes into
 a `Vec`, and one byte lives inline. A connection with no ALPN waits for
 nothing and is built immediately, exactly as before.
 
-Erasing a body is not on the routing path at all. None of the seven allocations
+Erasing a body is not on the routing path at all. None of the five allocations
 [`alloc.rs`](../crates/kynos/tests/alloc.rs) records for a static match is a
 body erasure — the request body there is built before the counted region opens,
 and a `204`'s response body is `Body::empty`, which erases a zero-sized type, so

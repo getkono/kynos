@@ -189,7 +189,7 @@ of which anything here would currently catch.
 | performance | Route dispatch allocates at most a recorded number of times per route shape, and a replayed request costs what the first one did | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), over a handler that allocates nothing, counting fresh allocations and reallocations across a 10k-request replay | `enforced` |
 | performance | Zero heap allocations on the routing path | — | `absent`. The row above enforces a ceiling, which is the opposite direction; nothing asserts the zero, and the measurement below is why |
 | performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `kynos-bench` |
-| performance | What one request of each `kynos-bench` scenario executes in process is recorded as a count exact on one host: instructions in the program object, and heap blocks and bytes | `mise run profile:requests`: gungraun over Callgrind and DHAT on [`kynos-profile`](../crates/kynos-profile/), split by object and compared with [`requests.tsv`](../crates/kynos-profile/requests.tsv) by [`profile_report.py`](../scripts/profile_report.py), which also holds DHAT's block counts to `tests/alloc.rs`'s | `partial`: a trend after each merge in `cost.yml`, with no ceiling and no gate, and over `Service::call` rather than a socket — below |
+| performance | What one request of each `kynos-bench` scenario, and of each row of the compression sweep `Compression`'s default `min_size` is read from, executes in process is recorded as a count exact on one host: instructions in the program object, and heap blocks and bytes | `mise run profile:requests`: gungraun over Callgrind and DHAT on [`kynos-profile`](../crates/kynos-profile/), split by object and compared with [`requests.tsv`](../crates/kynos-profile/requests.tsv) by [`profile_report.py`](../scripts/profile_report.py), which also holds DHAT's block counts to `tests/alloc.rs`'s | `partial`: a trend after each merge in `cost.yml`, with no ceiling and no gate, and over `Service::call` rather than a socket — below |
 | performance | Erasing a body through the boxed trait object costs a recorded number of allocations per construction | [`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs), counting `Body::empty` and `Body::from_bytes` | `enforced` |
 | reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; [`tests/routing.rs`](../crates/kynos/tests/routing.rs) over `Router::validate` for those only visible once the tree is assembled, each refusal with its pass control | `enforced` |
 | security | A served asset path is enumerated, never joined from request input | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) asserting an embedded set registers only literal `paths` keys, and [`router/assets/fs/tests.rs`](../crates/kynos/src/router/assets/fs/tests.rs) sweeping every escape a resolver must refuse against a control that must not be | `enforced` |
@@ -213,21 +213,68 @@ reason; the counts are the first measurement, not a target.
 
 **The zero was never measured, and it is wrong.** The row above asked for
 `alloc_count == 0` and was `planned` for as long as this document has existed;
-wiring it reports seven allocations for a static match, eleven once a path
+wiring it reported seven allocations for a static match, eleven once a path
 parameter is captured and read, and six for a request that matches no route.
 Every one of the three is stable to the allocation across a
 ten-thousand-request replay, so these are properties of the path rather than
-noisy readings.
+noisy readings. Attribution
+([#235](https://github.com/getkono/kynos/issues/235)) has since removed two
+from every routed request and a third from a capture: a static match is five
+and a capture eight, and a miss is still six.
 
-The eleven is dispatch *and* the `Path` extractor that deserializes the
-capture, so the excess over a static match is not the router's alone. Which of
-the four belongs to which is part of the attribution below.
+The capture's excess is dispatch *and* the `Path` extractor that deserializes
+it: one block is the capture vector the router records, and two are the
+extractor's own — the handler's decoded-value vector and the pairs it hands
+the derive.
 
-Nothing here attributes those seven to the lines that make them, and this
-document does not guess: the candidates a reader will think of first — the
-extension map, the capture vector — are the obvious suspects and not evidence.
-Attribution is the next piece of work, and it is what turns a ceiling into a
-decision about which allocation to remove.
+**Each of the seven was attributed with DHAT's per-site output, and each got a
+decision.** DHAT over `alloc_counter_agreement.static_match`, the same request
+[`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) counts:
+
+| Was | Site | Decision |
+| --- | --- | --- |
+| 264 B | the handler's future, boxed again by the endpoint's terminal | **removed**: with no interceptors of its own an endpoint awaits the handler in place, inside the box its own future already has |
+| 16 B, 48 B → 88 B | `MatchedPath` and `Forwarded`, each its own extension | **merged**: the router inserts one record holding the matched path, the captures and the resolved origin, read back through `MatchedPath`, `Path`, `Forwarded` (an argument, or `Forwarded::of` from a `&Request`) and `ByClientAddress`; a capture's own insert goes the same way |
+| 32 B, 148 B | the extension map's box and its table, on first insert | **kept**: any extension costs them, and a request from the server already pays both for its `Connection` |
+| 1928 B → 1904 B | the dispatch future, boxed by `Service::call` | **kept, and characterized below** |
+| 920 B → 912 B | the endpoint's future, boxed by `DynEndpoint` | **kept**: it is the erasure every operation in one table needs |
+
+**The origin is still resolved eagerly, and that is a decision.** Resolving it
+on first read instead would spare a request nothing reads it on, but it would
+resolve against whatever headers an interceptor had left by then, where today
+every reader sees what the router saw before any interceptor ran, and carrying
+the trust policy to the reader would cost a reference count per request. Under
+the default policy resolution allocates nothing. Behind a trusted proxy, which
+is where a production deployment sets one, it collects the forwarding elements
+into a vector — and a string where a hop states a scheme — on every matched
+request, as it did before the record existed.
+
+Program instructions for a static match fell from 1776 to 1561 against
+`master`'s own profile at the same host and toolchain, and by about 200 in
+every scenario that reaches a handler.
+
+**What the boxed dispatch future holds is mostly one request, several times.**
+This is the future `Service::call` boxes, not the 280-byte one it returns and
+[`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) guards.
+`-Zprint-type-sizes` puts its 1904 bytes at the `serve` future's 1640 plus the
+256 the service closure's `async move` block keeps for its own captures, with
+its state discriminant and padding making up the rest, and
+the 248-byte `Request` appears in it five times over: once as the closure's
+capture, once as `serve`'s and once as its local, once as `run`'s, and again
+inside `Next::run`. A moved-from capture keeps its slot in every state of a
+coroutine, so none of them overlap. `run` also reserves 728 bytes for the
+panic-recovery future whether or not the operation catches panics. Returning
+`serve`'s future from the closure instead of awaiting it inside another would
+drop the box to 1640 bytes and its `memcpy` with it; that is the next cut, and
+it is left for a change of its own so that its count is reviewed on its own.
+
+**A path's first 405 allocates once more than its later ones, and that is
+`bytes`, not Kynos.** The `Allow` value is built once per path at
+[`Router::build`](../crates/kynos/src/router/describe.rs) with
+`HeaderValue::from_str`, which copies into a `Vec`-backed `Bytes`. The first
+clone of such a `Bytes` promotes it by boxing a shared header, and every later
+clone is a reference count. So the one-time block is per path rather than per
+process, and nothing lazy in the router causes it.
 
 **One suspect is off the list rather than unconvicted.** The body wrapper that
 reports a disconnect was the third name here, and erasing a body is none of the
@@ -384,8 +431,8 @@ guarantee. It has already earned its keep twice — see
 [`testing.md`](testing.md#what-the-harness-found-on-its-first-run).
 
 **A layer costs one heap allocation and no future width.** A static match costs
-seven allocations with no stack in front of it, eleven behind four layers and
-fifteen behind eight; the future a driver holds is 280 bytes at every one of
+five allocations with no stack in front of it, nine behind four layers and
+thirteen behind eight; the future a driver holds is 280 bytes at every one of
 those depths, and at both feature sets that target is built at. The one
 allocation is the object-safe form of `Interceptor` boxing the future it
 returns, which is the price of a heterogeneous chain fitting in one slice. Both
@@ -401,6 +448,7 @@ paragraph in [Status](#status).
 | --- | --- | --- | --- |
 | reliability | Graceful shutdown drains all in-flight requests with zero dropped responses | Integration tests in `crates/kynos/src/server/tests.rs` covering HTTP/1 drain, HTTP/2 stream drain, TLS handshake cancellation, a completed TLS handshake that then sends nothing, and timeout exhaustion | `enforced` |
 | reliability | Backpressure is bounded by default via connection count, queue depth and timeouts | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting a request past the concurrency cap is shed with 503 rather than queued; a load test at 2× capacity for the memory bound | `enforced` for the shedding; `planned` for the load test |
+| reliability | A peer that vanishes without a FIN or RST releases its connection permit and buffers within a bounded time, by default | [`server/tests.rs`](../crates/kynos/src/server/tests.rs) over real sockets: an HTTP/2 peer that never acknowledges a PING is pinged and then disconnected, and a socket the server accepted carries the configured TCP keepalive as the kernel reads it back. The defaults — a PING after 30 s of silence with 20 s to answer, and TCP probes after 60 s idle every 15 s — release an HTTP/2 connection within 50 s, and any connection with nothing in flight within 195 s at Linux's nine probes | `enforced` for HTTP/2 and for an idle connection; `absent` for an HTTP/1 peer lost mid-response, which only retransmission timeouts bound because the kernel sends no probe while data is unacknowledged and Kynos sets no `TCP_USER_TIMEOUT` |
 | performance | A returning TLS client resumes its session rather than paying a full handshake, by default, whatever the number of other clients | [`server/tests.rs`](../crates/kynos/src/server/tests.rs) over real sockets, with `HandshakeKind` read from the client: resumption over TLS 1.3 and 1.2 under the default stateless tickets, a ticketed session still resumed after three hundred other clients (rustls's own 256-entry cache evicted it), the bounded cache evicting past its capacity, `Disabled` paying a full handshake every time, and a resumed mutual-TLS session keeping its client certificate | `enforced` for one process; `absent` across replicas, whose ticket keys differ ([#269](https://github.com/getkono/kynos/issues/269)); the CPU a resumption saves is `kynos-bench` |
 | reliability | HTTP/2 request-body flow control is released as the body is consumed, not as frames arrive | Load test streaming a large body to a slow consumer, asserting the receive window closes | `blocked-on-dependency` |
 | reliability | A streamed request body is decoded as it arrives rather than after it has been collected | [`extract/body/json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) reading a body delivered one frame per byte, and every frame boundary of a fixed body | `enforced` for a body declaring a `Content-Length`; `by-design` under `BodySize` for a chunked one |
@@ -539,6 +587,7 @@ fails the build when a crate is named outside the module that owns it.
 | compatibility | `hyper` and `hyper-util` are named only in `server/connection.rs` and `http/body.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `tokio-rustls` and `rustls` are named only under `server/tls/` | `mise run containment:check` | `enforced` |
 | compatibility | `matchit` may be named only under `router/` | `mise run containment:check` | `enforced` |
+| compatibility | `socket2` is named only in `server/tcp.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `h2` and `httparse` are never named | `mise run containment:check` | `enforced` |
 | compatibility | `tower` and `tower-service` are named only in `unchecked.rs` | `mise run containment:check` | `enforced` |
 | dx | Every crate in `[workspace.dependencies]` is consumed by a member | `cargo-udeps` or an equivalent manifest check | `needs-tooling` |

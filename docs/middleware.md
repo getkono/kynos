@@ -210,6 +210,81 @@ with a per-endpoint override: two `Compression`s covering one operation both add
 `Content-Encoding`, and `header_names_disjoint` refuses that pair where it is
 mounted.
 
+**`min_size` defaults to 2 KiB, read off a measurement
+([#239](https://github.com/getkono/kynos/issues/239)).** Encoding pays for itself
+on the wire by saving packets, and a response under one Ethernet segment's
+payload — 1460 octets over IPv4 — takes the same number either way. So the
+default is the smallest body at which every coding saves at least that. The
+segment is a simplification, and a deliberate one: IPv6 carries 1440, a TLS
+record and an HTTP/2 frame add a few dozen octets, the head shares the first
+segment, and what a saving actually buys a new connection is fitting inside the
+initial congestion window. None of those moves the answer below, because the
+row that meets the rule saves over 1680 octets under every coding.
+
+The compression sweep in [`kynos-profile`](../crates/kynos-profile/) serves one
+JSON document at five sizes under each coding, and `mise run profile:requests`
+counts each encode against the same request declined. A local run at rustc
+1.97.1 on the baseline's host, with instructions split as the report splits
+them — the program object exactly, and glibc as reported, since its count moves
+between runs ([`performance.md`](performance.md#the-taxonomy)). The octet
+columns reproduce from the sweep on any host. The instruction and heap columns
+are that local run, not [CI's run of record](performance.md#the-taxonomy), and
+are to be replaced from the `requests.tsv` CI records:
+
+| Body (identity) | Coding | Encoded | Saved | Instructions added, program | Instructions added, glibc | Heap added |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 83 | gzip | 97 | −14 | 42695 | ~376000 | 320 KB |
+| 83 | br | 73 | 10 | 92009 | ~63000 | 567 KB |
+| 83 | zstd | 83 | 0 | 25517 | ~807000 | 3.66 MB |
+| 988 | gzip | 227 | 761 | 112150 | ~377000 | 320 KB |
+| 988 | br | 201 | 787 | 206687 | ~78000 | 581 KB |
+| 988 | zstd | 215 | 773 | 48649 | ~807000 | 3.66 MB |
+| 1954 | gzip | 268 | 1686 | 155451 | ~378000 | 320 KB |
+| 1954 | br | 227 | 1727 | 239111 | ~226000 | 595 KB |
+| 1954 | zstd | 262 | 1692 | 54347 | ~808000 | 3.66 MB |
+| 4110 | gzip | 365 | 3745 | 252637 | ~377000 | 320 KB |
+| 4110 | br | 287 | 3823 | 320261 | ~260000 | 628 KB |
+| 4110 | zstd | 375 | 3735 | 68324 | ~808000 | 3.66 MB |
+| 59395 | gzip | 2789 | 56606 | 2967290 | ~413000 | 323 KB |
+| 59395 | br | 1343 | 58052 | 2283646 | ~1156000 | 1.46 MB |
+| 59395 | zstd | 1409 | 57986 | 366161 | ~868000 | 3.67 MB |
+
+The 1954-octet row is the smallest at which every coding saves a segment; the
+988-octet row is smaller than a segment to begin with. By interpolation each
+coding crosses near 1.7 KB. The default is 2 KiB, the round number past that row
+rather than the row itself. `kynos-profile`'s tests hold the rule to the sweep,
+so a codec that moved the crossing past the 2 KiB row fails there and not only
+here. No row lies between a segment and 2 KiB, so a crossing that moved down
+fails nothing.
+
+**The default is a bet on compressibility, and this is its condition.** At
+2048 octets a coding must shrink a body by 71% to save a segment. This document
+shrinks by more than 85%; API JSON commonly shrinks by 70–85%, so the default
+encodes some bodies from 2 KiB that save a little under a segment, and a body
+that compresses worse should raise `min_size`. The small rows are the case for a
+threshold at all: an 83-octet body costs gzip about 420 000 instructions in all
+— twenty times what the whole request costs unencoded — to come out fourteen
+octets larger. What an octet saved is worth is still a deployment's call, and
+`min_size` is where it makes it.
+
+**Encoding stays on the worker serving the request, and that is a decision.**
+The sweep counts what an encode costs; whether a 60 KB gzip encode at three
+million instructions holds up the other tasks queued on that worker is a
+latency question, and latencies are [`kynos-bench`](performance.md#the-boundary)'s
+to measure. Until it says otherwise nothing moves to a blocking thread, which
+would add a hand-off to every encode to spare the few large ones.
+The levels are the knob that bounds an encode's cost today.
+
+**An encoder's fixed cost is mostly the memory it sets up, and zstd's is the
+largest.** Each encode allocates its context afresh — 3.66 MB for zstd, about
+320 KB for gzip, 567 KB and up for brotli — and most of the glibc column is that
+memory being prepared. So at the small end zstd is the most expensive coding in
+total, about 830 000 instructions whatever the body, and brotli the cheapest;
+only at the large end, where the fixed cost is amortised, does zstd's program
+work — the smallest per octet saved — make it the cheapest. On a service
+answering many concurrent compressed requests zstd's context is also resident
+memory to budget for.
+
 **A body still being produced is encoded as it arrives.** A response whose
 length is known is collected and encoded once. One whose length is not — an
 event stream, a log tail, an export written as it is read — is encoded frame by
@@ -564,7 +639,8 @@ four different answers depending on which layer is asked.
 | Body size | — | — | — | `BodySize`, when mounted | **no, deliberately** |
 | Request-head read time | `header_read_timeout`, 30 s | n/a | — | — | yes |
 | Slow body | — | — | — | `Timeout`, *outside* `BodySize` | **no** |
-| Keep-alive idle | `header_read_timeout` covers the wait for the next head | `Http2KeepAlive`, unset | — | — | HTTP/1 only |
+| Keep-alive idle | `header_read_timeout` covers the wait for the next head | — ; a client answering every PING may idle indefinitely | — | — | HTTP/1 only |
+| Vanished peer | `tcp_keepalive`, with nothing in flight | `Http2KeepAlive`, a PING after 30 s silent and 20 s to answer | `tcp_keepalive`, probing after 60 s idle, every 15 s | — | yes; mid-response over HTTP/1 by retransmission only |
 | Handler runtime | — | — | — | `Timeout`, when mounted | **no** |
 | Response body stall | — | — | — | `BodyTimeout::idle`, when mounted | **no** |
 | Response body total time | — | — | — | `BodyTimeout::deadline`, when mounted | **no** |

@@ -46,10 +46,17 @@ const IN_PROCESS: SocketAddr = SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::UN
 ///
 /// # Where the value comes from
 ///
-/// The router inserts the matched template into
-/// [`Parts::extensions`](crate::http::Parts) as a `MatchedPath`, before any
-/// argument is built. Extracting one is reading that back, which is why it
-/// cannot fail: the insertion happens on the same code path as the match.
+/// The router records the matched template in the request before any argument
+/// is built, together with the other facts routing establishes. Extracting one
+/// is reading that back, which is why it cannot fail: the record is made on the
+/// same code path as the match.
+///
+/// Read it through this extractor, or from
+/// [`Route::path`](crate::router::operation::Route::path) in an interceptor. It is
+/// not an entry of its own in
+/// [`Parts::extensions`](crate::http::Parts): each such entry is a heap
+/// allocation on every request, so the router makes one for everything it
+/// learned rather than one per fact.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MatchedPath(pub &'static str);
 
@@ -239,13 +246,39 @@ impl<C: Sync> FromRequestParts<C> for MatchedPath {
     async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
         Ok(parts
             .extensions
-            .get::<Self>()
-            .cloned()
+            .get::<crate::router::dispatch::Routed>()
+            .map(|routed| routed.matched.clone())
             .expect("the router records the matched path template before building an argument"))
     }
 }
 
 impl Describe for MatchedPath {
+    fn describe(operation: &mut OperationCx<'_>) {
+        let _ = operation;
+    }
+}
+
+/// Where the request came from, as far as
+/// [`Router::trusted_proxies`](crate::Router::trusted_proxies) lets its
+/// forwarding fields be believed.
+///
+/// Infallible for the reason [`MatchedPath`] is: the router resolves this once,
+/// under its own trust policy, before any argument is built. Until a trust
+/// policy is set it is the socket peer, and nothing a client writes in a header
+/// changes it.
+impl<C: Sync> FromRequestParts<C> for crate::http::forwarded::Forwarded {
+    type Rejection = Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
+        Ok(parts
+            .extensions
+            .get::<crate::router::dispatch::Routed>()
+            .map(|routed| routed.forwarded.clone())
+            .expect("the router resolves the request's origin before building an argument"))
+    }
+}
+
+impl Describe for crate::http::forwarded::Forwarded {
     fn describe(operation: &mut OperationCx<'_>) {
         let _ = operation;
     }

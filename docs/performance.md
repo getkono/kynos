@@ -20,9 +20,10 @@ recounted by hand when the taxonomy moves, and the sentence is held as written:
 rewording it means editing the rule in the same commit.
 
 The allocation count has already earned the document: the routing path was
-required to allocate nothing, had never been measured, and allocates seven
-times for a static match. [`nfr.md`](nfr.md#routing) carries the numbers and
-what they do and do not establish.
+required to allocate nothing, had never been measured, and allocated seven
+times for a static match — five since the count was attributed.
+[`nfr.md`](nfr.md#routing) carries the numbers and what they do and do not
+establish.
 
 ## The boundary
 
@@ -61,7 +62,7 @@ What each kind of measurement proves that no other kind does.
 | Off-path proof | a sibling `tests.rs`, and a table [`containment:check`](../scripts/containment.py) reads | `python3 scripts/containment.py`, `cargo nextest` | that a feature is unreachable from the request path | in use, for the off-path flags and for the document, the registry, the validators and `jsonschema`: a table in [`testing.md`](testing.md#the-off-path-proof) held by `mise run containment:check`, plus the field witness in [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs); `describe` is the one off-path shape no row holds, and the emitters are held by the `yaml` flag's row rather than by one of their own |
 | Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | in use, via `mise run cost:features` over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs); reports a trend after each merge, refuses a release whose numbers are not the recorded ones, and sets no ceiling, and sees the generics that fixture instantiates rather than the whole surface — so a feature that grows the dependency graph can shrink this number by sharing instantiations out of upstream rlibs, and a negative row is a relocation rather than a saving |
 | Binary delta | a feature sweep | `.text` of a fixed fixture | what a feature costs a linked artifact | in use, over [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv); reports a trend after each merge, refuses a release whose numbers are not the recorded ones, and sets no ceiling. The fixture uses none of these features, so a zero row says the linker stripped — or the collector never instantiated — what nothing called, rather than that the feature is free to a program that uses it. A second sweep answers the question that fixture structurally cannot, over [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv): what mounting a codec costs, weighed on a fixture that mounts one |
-| Instruction count | [`kynos-profile`](../crates/kynos-profile/), an unpublished member | `mise run profile:requests`: gungraun over Callgrind and DHAT, read by [`profile_report.py`](../scripts/profile_report.py) | what a request of each [`kynos-bench`](https://github.com/getkono/kynos-bench) scenario executes between a built request and a built response, once the process has served one — instructions in the program object, and heap blocks and bytes — and which functions they were spent in | in use, in process only: nothing between the socket and `Service::call` is on the measured path. Recorded in [`requests.tsv`](../crates/kynos-profile/requests.tsv); reports a trend after each merge and sets no ceiling |
+| Instruction count | [`kynos-profile`](../crates/kynos-profile/), an unpublished member | `mise run profile:requests`: gungraun over Callgrind and DHAT, read by [`profile_report.py`](../scripts/profile_report.py) | what a request of each [`kynos-bench`](https://github.com/getkono/kynos-bench) scenario executes between a built request and a built response, once the process has served one — instructions in the program object, and heap blocks and bytes — and which functions they were spent in; and, in a compression sweep of Kynos's own, what an encode adds at each body size, which [`middleware.md`](middleware.md) reads `min_size`'s default from | in use, in process only: nothing between the socket and `Service::call` is on the measured path. Recorded in [`requests.tsv`](../crates/kynos-profile/requests.tsv); reports a trend after each merge and sets no ceiling |
 
 **An allocation count needs its own target because a global allocator is
 process-wide.** Installing one in the library's unit-test binary would perturb
@@ -154,7 +155,7 @@ the baseline's format, so recording the baseline is copying that file over
 
 **No shape owes it, and it replaces nothing a shape owes.** It is the instrument
 the counted kinds are *attributed* with: an allocation count says a request
-allocates eleven times, and this says which frames spent the instructions around
+allocates eight times, and this says which frames spent the instructions around
 them. A number here is work done rather than time taken — one vector instruction
 counts as one — so it is not a latency and says nothing `kynos-bench` would.
 

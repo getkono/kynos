@@ -112,7 +112,8 @@ property files share, included by `#[path]` for the same reason.
 its benchmark runs only under gungraun and Valgrind, so nextest's default filter
 leaves it out, and its sibling `tests.rs` holds the one thing that can go wrong
 without either — a scenario answered with a status other than the one its
-count is meant to be of, or a payload no longer the size `kynos-bench` names.
+count is meant to be of, a payload no longer the size `kynos-bench` names, or a
+compression row answered in a coding other than the one it asked for.
 The count itself is [`performance.md`](performance.md#the-taxonomy)'s.
 
 `crates/kynos/tests/support/` is the same idiom: the fixture app the runtime
