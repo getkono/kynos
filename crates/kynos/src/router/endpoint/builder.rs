@@ -318,20 +318,21 @@ where
     }
 
     async fn call(&self, request: Request, context: &C) -> Response {
-        // The terminal owns its handler because `ErasedTerminal` is `'static`,
-        // and `Handler::call` consumes one regardless -- so the clone is the
-        // same one a direct call would have made.
-        let terminal = HandlerTerminal::<C, H, A> {
-            handler: self.handler.clone(),
-            _private: PhantomData,
-        };
-
         // A route with no interceptors pays nothing: no chain is assembled and
-        // the handler is entered directly.
+        // the handler's future is awaited in place, inside the box
+        // `DynEndpoint` already put this one in, rather than behind the
+        // terminal's box of its own.
         let served = async {
             if self.interceptors.is_empty() {
-                ErasedTerminal::call(&terminal, request, context).await
+                Handler::call(self.handler.clone(), request, context).await
             } else {
+                // The terminal owns its handler because `ErasedTerminal` is
+                // `'static`, and `Handler::call` consumes one regardless -- so
+                // the clone is the same one a direct call would have made.
+                let terminal = HandlerTerminal::<C, H, A> {
+                    handler: self.handler.clone(),
+                    _private: PhantomData,
+                };
                 let route = Route::new(
                     self.path.as_str(),
                     self.operation_id.unwrap_or_default(),
