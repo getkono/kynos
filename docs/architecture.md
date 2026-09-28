@@ -179,9 +179,12 @@ by naming the row X displaces rather than by arguing that X is good.
   and `tokio-rustls` is declared with `default-features = false` so that
   provider is guaranteed present rather than inherited. A caller that installed
   a default first still wins — that is how a FIPS or hardware-backed provider
-  stays reachable without a rustls type entering a Kynos signature — and a
-  provider that can serve nothing is reported as `TlsError::CryptoProvider`
-  rather than panicked on.
+  stays reachable without a rustls type entering a Kynos signature — except
+  for session tickets, which rustls's provider interface does not carry: under
+  `SessionResumption::Tickets` they are sealed by `aws-lc-rs` whatever was
+  installed, so a deployment that needs every secret on its own provider
+  chooses `Cache` or `Disabled`. A provider that can serve nothing is reported
+  as `TlsError::CryptoProvider` rather than panicked on.
 
 ### The graph
 
