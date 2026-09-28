@@ -226,7 +226,10 @@ JSON document at five sizes under each coding, and `mise run profile:requests`
 counts each encode against the same request declined. A local run at rustc
 1.97.1 on the baseline's host, with instructions split as the report splits
 them — the program object exactly, and glibc as reported, since its count moves
-between runs ([`performance.md`](performance.md#the-taxonomy)):
+between runs ([`performance.md`](performance.md#the-taxonomy)). The octet
+columns reproduce from the sweep on any host. The instruction and heap columns
+are that local run, not [CI's run of record](performance.md#the-taxonomy), and
+are to be replaced from the `requests.tsv` CI records:
 
 | Body (identity) | Coding | Encoded | Saved | Instructions added, program | Instructions added, glibc | Heap added |
 | ---: | --- | ---: | ---: | ---: | ---: | ---: |
