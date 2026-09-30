@@ -68,7 +68,7 @@ impl ClientCertificateConfig {
 /// exchange; a resumed one costs neither. For a service whose clients reconnect
 /// often, that is most of its TLS work.
 ///
-/// Every server built from one [`TlsConfig`] shares one session store, so a
+/// Every listener of a server shares one session store, so a
 /// session established without a client certificate can never be resumed where
 /// one is required: [`require_client_certificate`](TlsConfig::require_client_certificate)
 /// applies to the whole server, and a resumed session carries the certificate
