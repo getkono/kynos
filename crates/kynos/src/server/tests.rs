@@ -1493,12 +1493,15 @@ fn negotiated_protocol_service() -> crate::router::service::Service<()> {
 /// A TLS listener with `resumption`, optionally requiring a client certificate,
 /// serving how many certificates the client presented.
 ///
+/// `None` never calls the setter, so the listener runs on whatever
+/// [`TlsConfig::from_pem`](crate::server::tls::TlsConfig::from_pem) chose.
+///
 /// The count is what a resumed session must still carry: a resumption that
 /// dropped the verified identity would answer `0` where the full handshake
 /// answered `1`.
 #[cfg(all(feature = "tls", feature = "http1"))]
 async fn resumption_server(
-    resumption: crate::server::tls::SessionResumption,
+    resumption: Option<crate::server::tls::SessionResumption>,
     mutual: bool,
 ) -> (
     std::net::SocketAddr,
@@ -1511,8 +1514,10 @@ async fn resumption_server(
         issued.server.certificate.as_bytes(),
         issued.server.key.as_bytes(),
     )
-    .expect("server identity parses")
-    .session_resumption(resumption);
+    .expect("server identity parses");
+    if let Some(resumption) = resumption {
+        tls = tls.session_resumption(resumption);
+    }
     if mutual {
         tls = tls.require_client_certificate(
             crate::server::tls::ClientCertificateConfig::from_pem_roots(
@@ -1656,10 +1661,7 @@ async fn connect(
 async fn a_returning_client_resumes_its_session_by_default() {
     use tokio_rustls::rustls::{HandshakeKind, version};
 
-    use crate::server::tls::SessionResumption;
-
-    let (address, issued, shutdown_sender, server) =
-        resumption_server(SessionResumption::default(), false).await;
+    let (address, issued, shutdown_sender, server) = resumption_server(None, false).await;
 
     for version in [&version::TLS13, &version::TLS12] {
         let client = resuming_client(&issued, version, false);
@@ -1685,8 +1687,8 @@ async fn a_returning_client_resumes_its_session_by_default() {
 /// By default a session is a ticket the client holds, so no number of other
 /// clients evicts it.
 ///
-/// This is what separates the default from rustls's own, so it runs on
-/// `SessionResumption::default()` rather than naming a variant: reverting the
+/// This is what separates the default from rustls's own, so it builds its
+/// config without the setter rather than naming a variant: reverting the
 /// default to a cache fails it. In rustls's own, every session
 /// was an entry in a cache of 256 — each TLS 1.3 handshake stores two and each
 /// TLS 1.2 one stores one — so three hundred clients in between pushed the
@@ -1700,10 +1702,7 @@ async fn a_returning_client_resumes_its_session_by_default() {
 async fn a_default_session_survives_any_number_of_other_clients() {
     use tokio_rustls::rustls::{HandshakeKind, version};
 
-    use crate::server::tls::SessionResumption;
-
-    let (address, issued, shutdown_sender, server) =
-        resumption_server(SessionResumption::default(), false).await;
+    let (address, issued, shutdown_sender, server) = resumption_server(None, false).await;
 
     for version in [&version::TLS13, &version::TLS12] {
         let returning = resuming_client(&issued, version, false);
@@ -1736,9 +1735,9 @@ async fn a_session_cache_resumes_what_it_holds_and_evicts_past_its_capacity() {
     use crate::server::tls::SessionResumption;
 
     let (address, issued, shutdown_sender, server) = resumption_server(
-        SessionResumption::Cache {
+        Some(SessionResumption::Cache {
             capacity: NonZeroUsize::new(4).expect("four is non-zero"),
-        },
+        }),
         false,
     )
     .await;
@@ -1779,7 +1778,7 @@ async fn disabled_resumption_pays_a_full_handshake_every_time() {
     use crate::server::tls::SessionResumption;
 
     let (address, issued, shutdown_sender, server) =
-        resumption_server(SessionResumption::Disabled, false).await;
+        resumption_server(Some(SessionResumption::Disabled), false).await;
 
     for version in [&version::TLS13, &version::TLS12] {
         let client = resuming_client(&issued, version, false);
@@ -1807,10 +1806,7 @@ async fn disabled_resumption_pays_a_full_handshake_every_time() {
 async fn a_resumed_mutual_tls_session_keeps_the_client_identity() {
     use tokio_rustls::rustls::{HandshakeKind, version};
 
-    use crate::server::tls::SessionResumption;
-
-    let (address, issued, shutdown_sender, server) =
-        resumption_server(SessionResumption::default(), true).await;
+    let (address, issued, shutdown_sender, server) = resumption_server(None, true).await;
 
     for version in [&version::TLS13, &version::TLS12] {
         let client = resuming_client(&issued, version, true);
