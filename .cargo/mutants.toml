@@ -36,6 +36,15 @@ all_features = true
 # crate depends on it and their suites cannot see a `kynos` mutant.
 test_package = ["kynos-openapi", "kynos-macros", "kynos"]
 
+# A floor under the per-mutant test timeout, in seconds. cargo-mutants sets the
+# timeout from the unmutated baseline, and the baseline runs only the mutated
+# crate's tests rather than `test_package`'s: a `kynos-openapi` baseline took
+# 1.6s and set a 20s timeout on runs that then carry `kynos`'s whole suite. A
+# mutant that hangs one test is not what this bounds -- nextest terminates that
+# test after two minutes, by `.config/nextest.toml` -- so the floor is the
+# suite's wall time on a CI runner with room to spare.
+minimum_test_timeout = 600
+
 # Excluded from the tests run against each mutant. `mise run test` keeps all of
 # them; these are excluded only where a mutant's verdict would be wrong.
 #
@@ -55,12 +64,18 @@ test_package = ["kynos-openapi", "kynos-macros", "kynos"]
 #   each under a fresh hash seed. A mutant that sends emission through an
 #   unordered walk is then caught or missed by the luck of the seeds, so its
 #   verdict does not reproduce from one run to the next.
-# - `binary(ui)` is the compile-fail suite. Its `.stderr` snapshots quote
-#   lines of `crates/kynos/src` by number, and a mutant that replaces a
-#   multi-line body shifts every line after it, so the suite fails over a
-#   renumbering. It also runs a nested `cargo` that rebuilds `kynos` for every
-#   mutant.
+# - `binary(ui)` is the compile-fail suite, one test that runs a nested `cargo`
+#   over 183 fixtures: for every mutant it would rebuild `kynos` a second time
+#   and recompile all of them, the most expensive test in the workspace by far.
+#   What it alone can catch -- a mutant that removes a compile-time refusal --
+#   therefore survives here, and is checked against `mise run ui:check` before
+#   it is filed.
+#
+# `--fail-fast` because one failing test is the whole verdict: the default
+# profile runs every test to the end, which is right for a report and wasted on
+# a mutant already caught.
 additional_cargo_test_args = [
+  "--fail-fast",
   "-E",
   """not (\
     binary(/^alloc/) | binary(=determinism) | binary(=ui) \
