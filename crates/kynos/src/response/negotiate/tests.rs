@@ -125,6 +125,49 @@ async fn a_field_that_is_not_text_is_malformed() {
     );
 }
 
+/// Every concatenation of at most `length` of `tokens`, the empty one
+/// included.
+fn every_field(tokens: &'static [&'static str], length: u32) -> impl Iterator<Item = String> {
+    (0..=length).flat_map(move |length| {
+        (0..tokens.len().pow(length)).map(move |mut index| {
+            let mut field = String::new();
+            for _ in 0..length {
+                field.push_str(tokens[index % tokens.len()]);
+                index /= tokens.len();
+            }
+            field
+        })
+    })
+}
+
+/// Every field over a closed alphabet of the grammar's own pieces parses or is
+/// refused without panicking, and each outcome is the one its stage may give:
+/// parsing refuses only as malformed, and choosing refuses only as not
+/// acceptable.
+///
+/// A sweep rather than a property test: the alphabet is small enough to
+/// close, and `proptest` is deliberately not a `kynos` dev-dependency.
+#[test]
+fn every_short_field_parses_or_is_refused_as_malformed() {
+    const TOKENS: &[&str] = &["text", "/", "*", "plain", ";", "q=", "0.5", "1.1", ",", " "];
+
+    for field in every_field(TOKENS, 5) {
+        match Accept::<(Text, Binary<Pdf>)>::parse(&field) {
+            Ok(accept) => match accept.choose::<(Text, Binary<Pdf>)>() {
+                Ok(index) => assert!(index < 2, "{field:?} chose {index}"),
+                Err(rejection) => assert!(
+                    matches!(rejection, NegotiationRejection::NotAcceptable),
+                    "{field:?} chose nothing as {rejection:?}"
+                ),
+            },
+            Err(rejection) => assert!(
+                matches!(rejection, NegotiationRejection::MalformedAccept { .. }),
+                "{field:?} was refused as {rejection:?}"
+            ),
+        }
+    }
+}
+
 #[test]
 fn a_negotiated_response_varies_on_accept_whichever_arm_wins() {
     for field in ["text/plain", "application/pdf", "*/*"] {

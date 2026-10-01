@@ -131,3 +131,55 @@ fn quality_reads_identitys_weight_not_its_acceptability() {
     assert_eq!(quality("gzip", "identity"), None);
     assert_eq!(identity_quality("gzip"), 1_000);
 }
+
+/// Every concatenation of at most `length` of `tokens`, the empty one
+/// included.
+fn every_field(tokens: &'static [&'static str], length: u32) -> impl Iterator<Item = String> {
+    (0..=length).flat_map(move |length| {
+        (0..tokens.len().pow(length)).map(move |mut index| {
+            let mut field = String::new();
+            for _ in 0..length {
+                field.push_str(tokens[index % tokens.len()]);
+                index /= tokens.len();
+            }
+            field
+        })
+    })
+}
+
+/// Every field over a closed alphabet of the grammar's own pieces reads
+/// without panicking, and every answer stays inside the contract.
+///
+/// A sweep rather than a property test: the alphabet is small enough to
+/// close, and `proptest` is deliberately not a `kynos` dev-dependency.
+#[test]
+fn every_short_field_reads_within_bounds() {
+    const TOKENS: &[&str] = &[
+        "gzip", "x-gzip", "identity", "*", ";", "q=", "Q=", "0", "1.5", ",",
+    ];
+    const AVAILABLE: &[&str] = &["br", "gzip"];
+
+    for field in every_field(TOKENS, 5) {
+        for token in ["gzip", "br", "identity"] {
+            let weight = quality(&field, token);
+            assert!(weight.is_none_or(|weight| weight <= 1_000), "{field:?}");
+        }
+
+        let identity = identity_quality(&field);
+        assert!(identity <= 1_000, "{field:?}");
+
+        if let Some(chosen) = preferred(&field, AVAILABLE) {
+            let weight = quality(&field, chosen).unwrap_or_default();
+            assert!(
+                weight > 0 && identity <= weight,
+                "{field:?} chose {chosen} at {weight} over identity at {identity}"
+            );
+            for other in AVAILABLE {
+                assert!(
+                    quality(&field, other).unwrap_or_default() <= weight,
+                    "{field:?} chose {chosen} over the heavier {other}"
+                );
+            }
+        }
+    }
+}
