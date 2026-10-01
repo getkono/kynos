@@ -625,10 +625,11 @@ over `tracing` and the subscriber stays the application's.
 | operability | A response the client did not receive is distinguishable from one it did | [`tests/sse.rs`](../crates/kynos/tests/sse.rs) dropping a live event stream's reader and asserting `on_disconnect` fires exactly once, with a control that reads a finite response to its end | `enforced` |
 
 Both `blocked-on-impl` rows are blocked on the same thing — the OpenTelemetry
-module does not exist — so neither is waiting on tooling. What did land is the seam they need:
-`Observer` receives the matched [`Route`](../crates/kynos/src/router/operation.rs),
-so a label can be keyed by operation rather than by request path, which is the
-property the second row measures.
+module does not exist — so neither is waiting on tooling. What did land is the
+seam they need: `Observer` receives the matched
+[`Route`](../crates/kynos/src/router/operation.rs), so a label can be keyed by
+operation rather than by request path, which is the property the second row
+measures.
 
 The third row is the one that was not simply missing but wrong. `on_response`
 fires when the response head is ready, which for a stream or a download is

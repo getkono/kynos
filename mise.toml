@@ -703,10 +703,10 @@ description = "Package every crate exactly as crates.io will receive it"
 # `--workspace` rather than one `-p` run per crate. The published crates depend
 # on each other, and a per-crate run resolves each sibling from crates.io rather
 # than from this tree: it cannot resolve an unreleased version, and it verifies
-# against the published one otherwise. Multi-package packaging -- stable since Cargo 1.90
-# -- stages the tarballs in a local registry under `target/package/` and
-# resolves each member against the archives of the ones before it: the same
-# mechanism, and the same order, `cargo publish` will use.
+# against the published one otherwise. Multi-package packaging -- stable since
+# Cargo 1.90 -- stages the tarballs in a local registry under
+# `target/package/` and resolves each member against the archives of the ones
+# before it: the same mechanism, and the same order, `cargo publish` will use.
 #
 # That means this needs Cargo 1.90 or later and does not run at the declared
 # MSRV of 1.85. Not a contradiction: the MSRV is what an application needs to
