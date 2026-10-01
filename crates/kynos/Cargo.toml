@@ -452,7 +452,8 @@ assets-fs = ["assets", "unchecked", "tokio/fs", "tokio/io-util"]
 docs = []
 
 # --- Escape hatch ----------------------------------------------------------
-# Unlocks `layer_unchecked`, `route_unchecked` and `upgrade_unchecked`. What
+# Unlocks `layer_unchecked`, `into_tower_unchecked`, `route_unchecked` and
+# `upgrade_unchecked`. What
 # they reach is recorded and flagged rather than dropped -- an operation stays
 # in `paths` marked opaque, a route with no expressible template is listed at
 # the document root -- and the document is stamped non-authoritative.
