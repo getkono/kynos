@@ -616,12 +616,32 @@ mod directory {
         let router =
             Router::<()>::new().assets_directory("/files/{tenant}", Directory::new("tests/assets"));
 
+        // The one violation is the mount itself, under the pattern it would
+        // have registered.
+        let reported = |violations: &[kynos::openapi::Violation]| match violations {
+            [violation] => match &violation.error {
+                kynos::openapi::SpecError::OpaqueRoute { pattern } => Some(pattern.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+
         let violations = router.validate().expect("validation itself succeeds");
-        assert!(
-            !violations.is_empty(),
-            "a prefix with a variable must be reported"
+        assert_eq!(
+            reported(&violations).as_deref(),
+            Some("/files/{tenant}/{*path}"),
+            "{violations:?}"
         );
-        assert!(router.build(()).is_err());
+
+        match router.build(()) {
+            Err(kynos::Error::Invalid { violations }) => assert_eq!(
+                reported(&violations).as_deref(),
+                Some("/files/{tenant}/{*path}"),
+                "{violations:?}"
+            ),
+            Err(other) => panic!("refused for another reason: {other}"),
+            Ok(_) => panic!("a prefix carrying a variable was built"),
+        }
     }
 
     #[tokio::test]

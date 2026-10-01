@@ -246,8 +246,9 @@ async fn the_standard_spelling_reports_both_windows() {
         .field("ratelimit-policy")
         .expect("the policies are advertised");
 
-    assert!(policy.contains(r#""burst";q=5;w=60"#), "{policy}");
-    assert!(policy.contains(r#""daily";q=1000;w=86400"#), "{policy}");
+    // In declaration order, and with no `qu`: requests are the draft's
+    // default unit.
+    assert_eq!(policy, r#""burst";q=5;w=60, "daily";q=1000;w=86400"#);
 }
 
 // --- Keying ---------------------------------------------------------------

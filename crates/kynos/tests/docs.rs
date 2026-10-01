@@ -262,16 +262,29 @@ fn a_docs_path_that_is_not_a_template_is_reported_rather_than_panicking() {
     // a Paths key can be wrong about.
     let router = support::router().docs(Docs::scalar().at("docs"));
 
+    let names_the_bad_path = |violations: &[kynos::openapi::Violation]| {
+        violations.iter().any(|violation| {
+            matches!(
+                &violation.error,
+                kynos::openapi::SpecError::InvalidPathTemplate { template, .. } if template == "docs"
+            )
+        })
+    };
+
     let violations = router.validate().expect("validation itself succeeds");
     assert!(
-        violations.iter().any(|violation| matches!(
-            &violation.error,
-            kynos::openapi::SpecError::InvalidPathTemplate { template, .. } if template == "docs"
-        )),
+        names_the_bad_path(&violations),
         "expected the bad path among the violations, got {violations:?}"
     );
 
     // And the router refuses to build, rather than serving a reference at a
-    // path it could not describe.
-    assert!(router.build(App::new()).is_err());
+    // path it could not describe -- for that path, not for some other reason.
+    match router.build(App::new()) {
+        Err(kynos::Error::Invalid { violations }) => assert!(
+            names_the_bad_path(&violations),
+            "expected the bad path among the violations, got {violations:?}"
+        ),
+        Err(other) => panic!("refused for another reason: {other}"),
+        Ok(_) => panic!("a reference at a path that is not a template was built"),
+    }
 }
