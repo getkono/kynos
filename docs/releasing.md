@@ -65,8 +65,8 @@ Any change touching a manifest, a feature or a shipped file:
 mise run publish:check
 ```
 
-It packages all three crates and rebuilds each from its own tarball, which is
-what `cargo publish` will do. CI runs the same task on every push, in the
+It packages every published crate and rebuilds each from its own tarball, which
+is what `cargo publish` will do. CI runs the same task on every push, in the
 `Package` job.
 
 ## What the pipeline does not check
@@ -74,10 +74,11 @@ what `cargo publish` will do. CI runs the same task on every push, in the
 - **cargo-semver-checks compares default features only**, and treats any failure
   it cannot parse as "compatible". The verdict in the release pull request body
   is evidence for a reviewer, not a gate. [`nfr.md`](nfr.md) records it as
-  `partial` for this reason.
+  `partial` for this reason; `mise run semver:check` covers `--all-features` on
+  every pull request.
 - **The changelog skips `refactor`, `test`, `style`, `build`, `ci` and `chore`.**
-  A breaking commit of any of those types is still listed:
-  `protect_breaking_commits` overrides every skip rule, and it has to, because
+  A breaking commit of any of those types is still listed: the `!` parser in
+  `release-plz.toml` matches it before any skip rule does, and it has to, because
   around two thirds of the breaking commits in this history are `refactor!:`.
 
 ## Trusted Publishing

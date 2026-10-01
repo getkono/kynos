@@ -117,7 +117,7 @@ in [`middleware.md`](middleware.md).
 Departures that are **not** argued — defects, recorded here until they are
 fixed. A row leaves this table only with its fix.
 
-**There are none today.** The seven this document was written to record are all
+**There are none today.** The nine this document was written to record are all
 closed, each by a change that names the requirement it was failing:
 
 | Was | Closed by |
@@ -135,7 +135,7 @@ closed, each by a change that names the requirement it was failing:
 Keeping the table rather than deleting it is the point: an empty one is a claim
 that somebody looked, and it is where the next such reading belongs.
 
-All seven were found by reading each module against its governing text rather
+All nine were found by reading each module against its governing text rather
 than by a failing test, which is the argument for this document existing. Each
 now has one.
 

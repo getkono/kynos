@@ -94,7 +94,7 @@ half and the timed half are separate rows, and only the timed one carries the
 | [Runtime](#runtime) | `crates/kynos/src/server/` |
 | [Dependencies](#dependencies) | the whole workspace |
 | [Macros](#macros) | `crates/kynos-macros/` |
-| [Observability](#observability) | the `trace` feature — no module yet |
+| [Observability](#observability) | the `trace` feature — no OpenTelemetry module yet |
 
 ## Document model
 
@@ -527,7 +527,7 @@ the one directly above it in AGENTS.md — *"Submodules are `pub` with no parent
 re-exports"* — in a way worth stating. Splitting a module that declares several
 public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: it is one of
-them, it declares eight rejection types, and splitting it would turn
+them, it declares every rejection type, and splitting it would turn
 `error::rejection::PathRejection` into
 `error::rejection::path::PathRejection`. Seventeen of the thirty are that
 shape, worth roughly a hundred public paths between them — and each is one
@@ -592,17 +592,6 @@ fails the build when a crate is named outside the module that owns it.
 | compatibility | `tower` and `tower-service` are named only in `unchecked.rs` | `mise run containment:check` | `enforced` |
 | dx | Every crate in `[workspace.dependencies]` is consumed by a member | `cargo-udeps` or an equivalent manifest check | `needs-tooling` |
 
-The last row now passes: `mime` and `pin-project-lite` are gone, `trybuild` and
-`proptest` have consumers, and the codec crates `crates/kynos` declares without
-yet naming are each behind an off-by-default feature.
-[`architecture.md`](architecture.md#dependencies) lists them.
-
-**Deferred by decision, not by oversight.** The eight containment greps above
-and in [Runtime](#runtime) need no tool this repository lacks, and
-`cargo-public-api` is the single highest-leverage addition on the tooling
-list. Both were held back from the API-freeze push so that a committed
-surface baseline is recorded against a surface that has stopped moving.
-
 ## Macros
 
 | Category | Requirement | Method | Status |
@@ -625,8 +614,9 @@ the toolchain, so the row is waiting on wiring rather than on an installation.
 
 ## Observability
 
-No module exists yet; the `trace` feature is a facade over `tracing` and the
-subscriber stays the application's.
+No OpenTelemetry module exists yet; the `trace` feature's
+[`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) is a facade
+over `tracing` and the subscriber stays the application's.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
@@ -634,11 +624,12 @@ subscriber stays the application's.
 | operability | Metric cardinality is bounded by operation count | Test asserting series count is invariant under 10k distinct request paths | `blocked-on-impl` |
 | operability | A response the client did not receive is distinguishable from one it did | [`tests/sse.rs`](../crates/kynos/tests/sse.rs) dropping a live event stream's reader and asserting `on_disconnect` fires exactly once, with a control that reads a finite response to its end | `enforced` |
 
-Both `blocked-on-impl` rows are blocked on the same thing — the module does not
-exist — so neither is waiting on tooling. What did land is the seam they need:
-`Observer` receives the matched [`Route`](../crates/kynos/src/router/operation.rs),
-so a label can be keyed by operation rather than by request path, which is the
-property the second row measures.
+Both `blocked-on-impl` rows are blocked on the same thing — the OpenTelemetry
+module does not exist — so neither is waiting on tooling. What did land is the
+seam they need: `Observer` receives the matched
+[`Route`](../crates/kynos/src/router/operation.rs), so a label can be keyed by
+operation rather than by request path, which is the property the second row
+measures.
 
 The third row is the one that was not simply missing but wrong. `on_response`
 fires when the response head is ready, which for a stream or a download is
@@ -728,17 +719,13 @@ can write.
 
 ## Tooling gaps
 
-Six crates stand between this document and its enforcement. Roughly in order of
-what they unblock:
+Two crates stand between this document and its enforcement. In order of what
+they unblock:
 
 | Tool | Unblocks | Notes |
 | --- | --- | --- |
 | `cargo-public-api` | Four `compatibility`/`dx` rows across the document model and runtime | The single highest-leverage addition: it enforces the architecture policy mechanically rather than by review |
-| `trybuild` | Compile-fail and UI rows in routing, extraction and macros | Already in `[workspace.dependencies]`; needs only a consumer |
-| `proptest` | IR round-tripping, schema projection, the conformance harness | |
 | `cargo-fuzz` | Extractor panic-freedom | Needs a committed corpus and a nightly job |
-| `cargo-llvm-lines` | The codegen-delta kind in [`performance.md`](performance.md#the-taxonomy), which is what a type-level surface owes | Closed. `mise run cost:features` runs it at each feature over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs), in the dev profile because a fat-LTO build deletes the monomorphizations this counts. It counts the example crate's own instantiations, so a feature that grows the dependency graph can shrink the number by sharing generics out of upstream rlibs — a negative row is a relocation, not a saving. It lists, for the features that moved, which monomorphizations that feature instantiates beyond the baseline — its composition in that run, not a per-function drift, which the baseline deliberately does not record. The `.text` half of the same sweep answers the binary-delta row beside it. Neither sets a ceiling — see [Thresholds](#thresholds) |
-| `cargo-semver-checks` | The `compatibility` rows in [Workspace](#workspace) | Closed. `mise run semver:check` runs it at `--all-features` on every pull request, against the last published version — which is what this row asked for once 0.1.0 reached crates.io. Release-plz still runs its own default-features, fail-open copy at release time, and that half is unchanged: the two are recorded separately above because they buy different things |
 
 `criterion` is intentionally absent from this list, and stays absent now that
 three performance rows have come home. Timed measurement lives in

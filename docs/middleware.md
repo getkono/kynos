@@ -402,7 +402,7 @@ it is a second reason the structured spelling is worth taking early.
 ### The migration, and how to take it early
 
 `RateLimit::standard_fields` is the other spelling: `RateLimit` and
-`RateLimit-Policy`, rendered as the RFC 8941 structured-field Lists the draft
+`RateLimit-Policy`, rendered as the RFC 9651 structured-field Lists the draft
 defines. It is a type-state rather than a flag, shaped exactly like
 `Cors::document_response_headers`, because it changes what every covered
 operation declares and what every generated client reads.
@@ -820,7 +820,7 @@ refuses it in the advertised list either way.
 **Mount `Cors` outermost.** A short-circuiting interceptor mounted *outside* it
 answers without the `Access-Control-*` fields, and the browser then reports an
 opaque CORS failure in place of the status the service actually sent. A 429 from
-`RateLimit`, a 413 from `BodySize`, a 503 from `Concurrency` and a 504 from
+`RateLimit`, a 413 from `BodySize`, a 503 from `Concurrency` and a 408 from
 `Timeout` are all worth a client being able to read.
 
 The converse composes already: `erased.rs` turns an inner `Err(Short)` into a
@@ -1169,8 +1169,8 @@ The invariant: **`Opaque` marks affected operations unverified, and never omits
 them.** A document that silently drops an operation is worse than one that flags
 it, because the omission is invisible to the consumer that trusts it.
 
-Today the escape hatches in `crates/kynos/src/unchecked.rs` have three different
-blast radii for the same underlying situation. The waiver must mark exactly what
+The escape hatches have different blast radii for the same underlying
+situation. The waiver must mark exactly what
 it reaches:
 
 | Escape hatch | Record | Where |
@@ -1446,7 +1446,7 @@ point:
 | `allow_private_network` | absent |
 | `CorsLayer::permissive()`, `very_permissive()` | absent |
 
-The last four rows are decisions rather than gaps.
+The derived and absent rows are decisions rather than gaps.
 
 `allow_methods` is derived because the alternative is a second place to state
 what the router already answers on the path, and two statements of one fact
@@ -1472,6 +1472,6 @@ Owning the common layers has an ergonomic dividend beyond correctness: it
 removes `tower-http` version-skew pain, which is a real and recurring tax on
 applications in this ecosystem.
 
-The price is bus factor — on the order of fifteen crates of ongoing maintenance.
+The price is bus factor — every owned layer is ongoing maintenance.
 The mitigation is to keep each one small enough that a single contributor can
 hold it in their head and own it.

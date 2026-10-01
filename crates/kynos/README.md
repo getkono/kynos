@@ -18,10 +18,11 @@ middleware, raw request access, wildcard and catch-all routes, runtime-chosen
 status codes, `serde_json::Value` bodies, erased state maps. Most are refused
 because they would put a claim in the description that the running service does
 not honour; a few are argued on other grounds, and one is advice rather than a
-rule. The `unchecked` feature provides named escape hatches for three of them,
-at the price of a description that is no longer authoritative for the route that
-took one. All eleven, each with its own reasoning, are in the
-[repository README](https://github.com/getkono/kynos#anti-patterns); WebSockets
+rule. The `unchecked` feature provides named escape hatches — `layer_unchecked`,
+`into_tower_unchecked`, `route_unchecked` and `upgrade_unchecked` — at the price
+of a description that is no longer authoritative for the route that took one.
+All eleven, each with its own reasoning, are in the [repository
+README](https://github.com/getkono/kynos#anti-patterns); WebSockets
 and OpenAPI 3.0 support are refused outright and are listed just above it.
 
 ## Feature flags
