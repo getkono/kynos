@@ -55,7 +55,8 @@ impl Paths {
         self.items.get(template.as_str())
     }
 
-    /// Returns `true` when nothing at all is declared.
+    /// Returns `true` when the object holds neither a path item nor an
+    /// extension.
     ///
     /// Extensions count, for the reason
     /// [`Responses::is_empty`](crate::Responses::is_empty)'s do: a Paths

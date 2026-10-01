@@ -49,8 +49,9 @@ pub mod model;
 pub mod validate;
 
 // The curated crate-root facade. Every item below has exactly one canonical
-// path inside `model` or `validate`; these shortcuts exist so that the common
-// names stay one import away despite the module tree being deep.
+// path inside `annotation`, `model` or `validate`; these shortcuts exist so
+// that the common names stay one import away despite the module tree being
+// deep.
 pub use crate::{
     annotation::{MalformedAnnotation, Opaque, OpaqueReason, OpaqueRoute},
     model::{
