@@ -20,8 +20,7 @@ not that module also becomes a directory — the two halves of the layout rule a
 separate, and [`nfr.md`](nfr.md#the-module-size-budget) says why the second one
 is a prompt rather than a trigger. That is why unit tests appear at
 [`error/rejection/tests.rs`](../crates/kynos/src/error/rejection/tests.rs) beside
-a module well past that line — eight rejection types, and a count that moves
-whenever one of them gains a status — and at
+a module well past that line — every rejection type, and a size that moves whenever one of them gains a status — and at
 [`middleware/compression/tests.rs`](../crates/kynos/src/middleware/compression/tests.rs)
 beside another, rather than inline.
 
@@ -29,7 +28,7 @@ The sibling file is the settled shape here even below that line — `di/`,
 `schema/` and `response/negotiate/` all keep one while sitting well under 400 —
 so what the rule really fixes is the point past which staying inline stops being
 a choice. Only one module in the workspace still holds an inline `mod tests`,
-and it is 110 lines.
+and it is well under that line.
 
 Each integration file exists for one reason. `hermeticity.rs` and `ui.rs` are
 different kinds of thing and are covered below.
@@ -299,8 +298,8 @@ Three obligations hold whatever the kind.
 `--all-features`.** [`mise run test`](../mise.toml) passes `--all-features` and
 `features:check` passes `--no-dev-deps`, so until
 [`mise run test:baseline`](../mise.toml) landed, no test target had ever been
-built under `openapi31` alone — against the hundred-odd `openapi32` `#[cfg]`
-sites in `kynos-openapi/src`. A feature gate no test build exercises is a gate
+built under `openapi31` alone — against every `openapi32` `#[cfg]`
+site in `kynos-openapi/src`. A feature gate no test build exercises is a gate
 whose off-state is unknown, and the suite passing on the first baseline run does
 not retire the obligation: it held by luck rather than by check.
 

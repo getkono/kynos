@@ -24,7 +24,7 @@ Kynos is an idiomatic, performance-focused Rust framework for building REST APIs
 ## Workspace
 
 - The root is a Cargo and mise monorepo.
-- The crates are `kynos-openapi` (the OpenAPI document model, runtime-free), `kynos-macros` (procedural macros) and `kynos` (the framework facade, which re-exports both). Application code depends only on `kynos`.
+- The crates are `kynos-openapi` (the OpenAPI document model, runtime-free), `kynos-macros` (procedural macros) and `kynos` (the framework facade, which re-exports both). Application code depends only on `kynos`. A fourth member, `kynos-profile`, is an unpublished measurement harness over `kynos`'s request path.
 - Declare shared dependency versions under `[workspace.dependencies]`.
 - Add a dependency to a member crate with `workspace = true` only when the crate consumes it.
 - A module becomes a directory once it holds two independently-changing concerns; tests move to a sibling `tests.rs`. Passing ~400 lines excluding tests is when to ask that question, not an answer to it: a module holding one concern stays a file, because splitting it would only lengthen the paths of the items it declares. `containment:check` counts the ones that stay.
