@@ -96,6 +96,33 @@ async fn observed_responses_match_the_description() {
     client.assert_conformance();
 }
 
+/// The failing direction: every response the description does not declare is
+/// reported, each on its own line under one count.
+///
+/// Two failures rather than one, so the count's plural and the join between
+/// lines are pinned along with each reason.
+#[tokio::test]
+#[should_panic(expected = "2 responses did not conform to the description:\n  \
+                           GET /nowhere -> 404: no declared path matches this request\n  \
+                           POST /users/42 -> 405: `/users/{id}` declares no `POST` operation")]
+async fn an_undeclared_response_fails_conformance() {
+    let client = TestClient::new(service().expect("a describable router"));
+
+    client
+        .get("/nowhere")
+        .send()
+        .await
+        .assert_status(StatusCode::NOT_FOUND);
+
+    client
+        .post("/users/42")
+        .send()
+        .await
+        .assert_status(StatusCode::METHOD_NOT_ALLOWED);
+
+    client.assert_conformance();
+}
+
 /// A HEAD answered by a `get` exercises none of that operation's responses: its
 /// content is never observed, so it cannot stand in for the GET exchange a
 /// declared response describes.
