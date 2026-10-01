@@ -65,8 +65,8 @@ Any change touching a manifest, a feature or a shipped file:
 mise run publish:check
 ```
 
-It packages every published crate and rebuilds each from its own tarball, which is
-what `cargo publish` will do. CI runs the same task on every push, in the
+It packages every published crate and rebuilds each from its own tarball, which
+is what `cargo publish` will do. CI runs the same task on every push, in the
 `Package` job.
 
 ## What the pipeline does not check
