@@ -1,4 +1,119 @@
-use super::ComponentName;
+use super::{ComponentName, Components};
+use crate::model::{
+    paths::item::PathItem,
+    reference::{Ref, RefOr},
+    schema::Schema,
+};
+
+/// Each field of `components` by name, and whether it holds anything.
+///
+/// The destructuring has no `..`, so a field added to [`Components`] stops this
+/// file compiling until it is listed here — and, through the closure check in
+/// the test below, until it has a case of its own.
+fn occupancy(components: &Components) -> Vec<(&'static str, bool)> {
+    let Components {
+        schemas,
+        responses,
+        parameters,
+        examples,
+        request_bodies,
+        headers,
+        security_schemes,
+        links,
+        callbacks,
+        path_items,
+        #[cfg(feature = "openapi32")]
+        media_types,
+        extensions,
+    } = components;
+
+    vec![
+        ("schemas", !schemas.is_empty()),
+        ("responses", !responses.is_empty()),
+        ("parameters", !parameters.is_empty()),
+        ("examples", !examples.is_empty()),
+        ("request_bodies", !request_bodies.is_empty()),
+        ("headers", !headers.is_empty()),
+        ("security_schemes", !security_schemes.is_empty()),
+        ("links", !links.is_empty()),
+        ("callbacks", !callbacks.is_empty()),
+        ("path_items", !path_items.is_empty()),
+        #[cfg(feature = "openapi32")]
+        ("media_types", !media_types.is_empty()),
+        ("extensions", !extensions.is_empty()),
+    ]
+}
+
+/// A `Components` holding one entry in the field `name` and nothing else.
+fn holding_only(name: &str) -> Components {
+    fn reference<T>() -> RefOr<T> {
+        RefOr::Ref(Ref::new("#/components/x"))
+    }
+
+    let key = || "x".to_owned();
+    let mut components = Components::new();
+    match name {
+        "schemas" => {
+            components.schemas.insert(key(), Schema::component("X"));
+        }
+        "responses" => {
+            components.responses.insert(key(), reference());
+        }
+        "parameters" => {
+            components.parameters.insert(key(), reference());
+        }
+        "examples" => {
+            components.examples.insert(key(), reference());
+        }
+        "request_bodies" => {
+            components.request_bodies.insert(key(), reference());
+        }
+        "headers" => {
+            components.headers.insert(key(), reference());
+        }
+        "security_schemes" => {
+            components.security_schemes.insert(key(), reference());
+        }
+        "links" => {
+            components.links.insert(key(), reference());
+        }
+        "callbacks" => {
+            components.callbacks.insert(key(), reference());
+        }
+        "path_items" => {
+            components.path_items.insert(key(), PathItem::new());
+        }
+        #[cfg(feature = "openapi32")]
+        "media_types" => {
+            components.media_types.insert(key(), reference());
+        }
+        "extensions" => {
+            components.extensions.insert("x-a", 1);
+        }
+        other => panic!("no case populates `{other}`"),
+    }
+    components
+}
+
+#[test]
+fn components_are_empty_only_while_every_field_is() {
+    let empty = Components::new();
+    assert!(empty.is_empty());
+    assert!(occupancy(&empty).iter().all(|&(_, occupied)| !occupied));
+
+    // Every field `occupancy` names has a case, because `holding_only` panics
+    // on a name it cannot populate.
+    for (field, _) in occupancy(&empty) {
+        let components = holding_only(field);
+        let occupied: Vec<_> = occupancy(&components)
+            .into_iter()
+            .filter_map(|(name, occupied)| occupied.then_some(name))
+            .collect();
+
+        assert_eq!(occupied, [field], "the case populates `{field}` alone");
+        assert!(!components.is_empty(), "`{field}` holds an entry");
+    }
+}
 
 #[test]
 fn ordinary_type_names_are_valid_component_names() {
