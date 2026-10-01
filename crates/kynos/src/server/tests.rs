@@ -1490,6 +1490,345 @@ fn negotiated_protocol_service() -> crate::router::service::Service<()> {
     })
 }
 
+/// A TLS listener with `resumption`, optionally requiring a client certificate,
+/// serving how many certificates the client presented.
+///
+/// `None` never calls the setter, so the listener runs on whatever
+/// [`TlsConfig::from_pem`](crate::server::tls::TlsConfig::from_pem) chose.
+///
+/// The count is what a resumed session must still carry: a resumption that
+/// dropped the verified identity would answer `0` where the full handshake
+/// answered `1`.
+#[cfg(all(feature = "tls", feature = "http1"))]
+async fn resumption_server(
+    resumption: Option<crate::server::tls::SessionResumption>,
+    mutual: bool,
+) -> (
+    std::net::SocketAddr,
+    Authority,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<crate::error::Result<()>>,
+) {
+    let issued = authority();
+    let mut tls = crate::server::tls::TlsConfig::from_pem(
+        issued.server.certificate.as_bytes(),
+        issued.server.key.as_bytes(),
+    )
+    .expect("server identity parses");
+    if let Some(resumption) = resumption {
+        tls = tls.session_resumption(resumption);
+    }
+    if mutual {
+        tls = tls.require_client_certificate(
+            crate::server::tls::ClientCertificateConfig::from_pem_roots(
+                issued.certificate.as_bytes(),
+            )
+            .expect("CA parses"),
+        );
+    }
+    let document = kynos_openapi::Document::new(
+        kynos_openapi::SpecVersion::V3_1,
+        kynos_openapi::Info::new("Test", "1"),
+    );
+    let service = crate::router::service::Service::<()>::new(
+        document,
+        |request: crate::http::Request| async move {
+            use crate::extract::FromRequestParts as _;
+
+            let (mut parts, _) = request.into_parts();
+            let connection =
+                crate::extract::connection::Connection::from_request_parts(&mut parts, &())
+                    .await
+                    .expect("extracting a connection is infallible");
+            crate::http::Response::new(crate::http::body::Body::from_bytes(bytes::Bytes::from(
+                connection.peer_certificates().len().to_string(),
+            )))
+        },
+    );
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(service)
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .tls(tls)
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("TLS listener prepares");
+    let address = bound.local_addrs()[0];
+
+    (
+        address,
+        issued,
+        shutdown_sender,
+        tokio::spawn(bound.serve()),
+    )
+}
+
+/// A client speaking only `version`, with a session store of its own, and the
+/// issued client identity when `mutual`.
+///
+/// Each call is a distinct client: resumption state lives in the store, so two
+/// connectors from two calls never resume each other's sessions.
+#[cfg(all(feature = "tls", feature = "http1"))]
+fn resuming_client(
+    issued: &Authority,
+    version: &'static tokio_rustls::rustls::SupportedProtocolVersion,
+    mutual: bool,
+) -> tokio_rustls::TlsConnector {
+    use tokio_rustls::rustls::{
+        ClientConfig,
+        pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject as _},
+    };
+
+    let builder = ClientConfig::builder_with_provider(crate::server::tls::crypto_provider())
+        .with_protocol_versions(&[version])
+        .expect("the named provider serves both versions")
+        .with_root_certificates(trust_anchors(issued.certificate.as_bytes()));
+    let mut config = if mutual {
+        let chain = CertificateDer::pem_slice_iter(issued.client.certificate.as_bytes())
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .expect("client chain parses");
+        let key =
+            PrivateKeyDer::from_pem_slice(issued.client.key.as_bytes()).expect("client key parses");
+        builder
+            .with_client_auth_cert(chain, key)
+            .expect("client identity is valid")
+    } else {
+        builder.with_no_client_auth()
+    };
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+
+    tokio_rustls::TlsConnector::from(std::sync::Arc::new(config))
+}
+
+/// One connection through `connector`: how its handshake went, and what the
+/// server answered.
+///
+/// The response is read to its end because a TLS 1.3 server sends its tickets
+/// after the handshake, and a client only stores what it has read.
+#[cfg(all(feature = "tls", feature = "http1"))]
+async fn connect(
+    connector: &tokio_rustls::TlsConnector,
+    address: std::net::SocketAddr,
+) -> (tokio_rustls::rustls::HandshakeKind, String) {
+    use http_body_util::{BodyExt as _, Empty};
+    use hyper_util::rt::TokioIo;
+    use tokio_rustls::rustls::pki_types::ServerName;
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let stream = connector
+        .connect(
+            ServerName::try_from("localhost").expect("valid DNS name"),
+            stream,
+        )
+        .await
+        .expect("TLS handshake succeeds");
+    let kind = stream
+        .get_ref()
+        .1
+        .handshake_kind()
+        .expect("a completed handshake has a kind");
+    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .expect("HTTP/1 handshake completes");
+    let connection = tokio::spawn(connection);
+    let request = hyper::Request::builder()
+        .uri("/")
+        .header(hyper::header::HOST, "localhost")
+        .body(Empty::<bytes::Bytes>::new())
+        .expect("request builds");
+    let body = sender
+        .send_request(request)
+        .await
+        .expect("request succeeds")
+        .into_body()
+        .collect()
+        .await
+        .expect("response body reads")
+        .to_bytes();
+    drop(sender);
+    connection.abort();
+
+    (kind, String::from_utf8_lossy(&body).into_owned())
+}
+
+/// A returning client resumes by default, over either protocol version.
+#[cfg(all(feature = "tls", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_returning_client_resumes_its_session_by_default() {
+    use tokio_rustls::rustls::{HandshakeKind, version};
+
+    let (address, issued, shutdown_sender, server) = resumption_server(None, false).await;
+
+    for version in [&version::TLS13, &version::TLS12] {
+        let client = resuming_client(&issued, version, false);
+        assert_eq!(
+            connect(&client, address).await.0,
+            HandshakeKind::Full,
+            "{version:?}"
+        );
+        assert_eq!(
+            connect(&client, address).await.0,
+            HandshakeKind::Resumed,
+            "{version:?}"
+        );
+    }
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// By default a session is a ticket the client holds, so no number of other
+/// clients evicts it.
+///
+/// This is what separates the default from rustls's own, so it builds its
+/// config without the setter rather than naming a variant: reverting the
+/// default to a cache fails it. In rustls's own, every session
+/// was an entry in a cache of 256 — each TLS 1.3 handshake stores two and each
+/// TLS 1.2 one stores one — so three hundred clients in between pushed the
+/// first one's out and it paid a full handshake on return. With stateless
+/// tickets the session travels with the client, so nothing it depends on is
+/// stored to push. Over both versions, because the cache still exists under
+/// tickets for a TLS 1.2 client that takes none, and resuming from it would
+/// satisfy every other case here.
+#[cfg(all(feature = "tls", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_default_session_survives_any_number_of_other_clients() {
+    use tokio_rustls::rustls::{HandshakeKind, version};
+
+    let (address, issued, shutdown_sender, server) = resumption_server(None, false).await;
+
+    for version in [&version::TLS13, &version::TLS12] {
+        let returning = resuming_client(&issued, version, false);
+        assert_eq!(connect(&returning, address).await.0, HandshakeKind::Full);
+        for _ in 0..300 {
+            connect(&resuming_client(&issued, version, false), address).await;
+        }
+        assert_eq!(
+            connect(&returning, address).await.0,
+            HandshakeKind::Resumed,
+            "{version:?}: a default session is not evicted by other clients"
+        );
+    }
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// A bounded cache resumes what it holds and evicts what it cannot.
+#[cfg(all(feature = "tls", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_cache_resumes_what_it_holds_and_evicts_past_its_capacity() {
+    use std::num::NonZeroUsize;
+
+    use tokio_rustls::rustls::{HandshakeKind, version};
+
+    use crate::server::tls::SessionResumption;
+
+    let (address, issued, shutdown_sender, server) = resumption_server(
+        Some(SessionResumption::Cache {
+            capacity: NonZeroUsize::new(4).expect("four is non-zero"),
+        }),
+        false,
+    )
+    .await;
+
+    for version in [&version::TLS13, &version::TLS12] {
+        let client = resuming_client(&issued, version, false);
+        connect(&client, address).await;
+        assert_eq!(
+            connect(&client, address).await.0,
+            HandshakeKind::Resumed,
+            "{version:?}"
+        );
+
+        let evicted = resuming_client(&issued, version, false);
+        connect(&evicted, address).await;
+        for _ in 0..50 {
+            connect(&resuming_client(&issued, version, false), address).await;
+        }
+        assert_eq!(
+            connect(&evicted, address).await.0,
+            HandshakeKind::Full,
+            "{version:?}: fifty clients past a capacity of four evict the first"
+        );
+    }
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+#[cfg(all(feature = "tls", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn disabled_resumption_pays_a_full_handshake_every_time() {
+    use tokio_rustls::rustls::{HandshakeKind, version};
+
+    use crate::server::tls::SessionResumption;
+
+    let (address, issued, shutdown_sender, server) =
+        resumption_server(Some(SessionResumption::Disabled), false).await;
+
+    for version in [&version::TLS13, &version::TLS12] {
+        let client = resuming_client(&issued, version, false);
+        for _ in 0..2 {
+            assert_eq!(
+                connect(&client, address).await.0,
+                HandshakeKind::Full,
+                "{version:?}"
+            );
+        }
+    }
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// A resumed session under mutual TLS still carries the certificate its full
+/// handshake verified, so an operation reading the client's identity reads the
+/// same one on either.
+#[cfg(all(feature = "tls", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_resumed_mutual_tls_session_keeps_the_client_identity() {
+    use tokio_rustls::rustls::{HandshakeKind, version};
+
+    let (address, issued, shutdown_sender, server) = resumption_server(None, true).await;
+
+    for version in [&version::TLS13, &version::TLS12] {
+        let client = resuming_client(&issued, version, true);
+        assert_eq!(
+            connect(&client, address).await,
+            (HandshakeKind::Full, "1".to_owned()),
+            "{version:?}"
+        );
+        assert_eq!(
+            connect(&client, address).await,
+            (HandshakeKind::Resumed, "1".to_owned()),
+            "{version:?}"
+        );
+    }
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
 #[cfg(feature = "tls")]
 #[test]
 fn tls_rejects_empty_pem_and_zero_handshake_timeouts() {
@@ -1743,6 +2082,7 @@ fn a_caller_installed_crypto_provider_is_the_one_build_runs_on() {
                 | crate::server::tls::error::TlsError::PrivateKey(_)
                 | crate::server::tls::error::TlsError::ServerName(_)
                 | crate::server::tls::error::TlsError::ClientVerifier(_)
+                | crate::server::tls::error::TlsError::Ticketer(_)
                 | crate::server::tls::error::TlsError::ZeroHandshakeTimeout
         ),
         "an unusable provider is its own failure, not a certificate one: {error}"

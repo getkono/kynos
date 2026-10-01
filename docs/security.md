@@ -198,6 +198,21 @@ service behind a TLS-terminating proxy sees no certificates with the feature on.
 What answers "can this deployment authenticate a client certificate" is the
 deployment, so the reader reports none in every case that produces none.
 
+A resumed session reports the certificate its full handshake verified, and that
+verification is not repeated. Each resumption issues fresh tickets, so under the
+default stateless tickets a client that keeps reconnecting before its ticket
+lapses — within six hours is always soon enough — keeps its identity past the
+certificate's expiry for the life of the process; a
+deployment that must hold every connection to the validity period sets
+`SessionResumption::Disabled` on its `TlsConfig`.
+
+That certificate is read from the ticket, so a ticket key vouches for identity:
+anyone holding one can mint a ticket naming any certificate chain and resume as
+any mutual-TLS identity, over TLS 1.2 or 1.3, while that key is accepted. The
+keys never leave the process, and the default stays tickets under mutual TLS; a
+deployment that cannot accept the risk sets `SessionResumption::Disabled` or
+`SessionResumption::Cache`.
+
 ### A scheme may be published without being required
 
 `Router::security_scheme::<S>()` registers a scheme that no operation yet

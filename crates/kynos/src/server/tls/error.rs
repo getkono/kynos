@@ -56,6 +56,13 @@ pub enum TlsError {
     /// variant exists so that configuring a server reports it instead.
     #[error("the TLS crypto provider serves none of the enabled protocol versions")]
     CryptoProvider(#[source] Cause),
+    /// The session-ticket keys could not be generated.
+    ///
+    /// The keys are fresh random bytes, so this is reached when the system's
+    /// random-number source fails — which is also what rustls reports for any
+    /// other failure constructing them.
+    #[error("could not generate TLS session-ticket keys")]
+    Ticketer(#[source] Cause),
     /// A TLS duration was zero.
     #[error("TLS handshake timeout must be non-zero")]
     ZeroHandshakeTimeout,

@@ -179,9 +179,12 @@ by naming the row X displaces rather than by arguing that X is good.
   and `tokio-rustls` is declared with `default-features = false` so that
   provider is guaranteed present rather than inherited. A caller that installed
   a default first still wins — that is how a FIPS or hardware-backed provider
-  stays reachable without a rustls type entering a Kynos signature — and a
-  provider that can serve nothing is reported as `TlsError::CryptoProvider`
-  rather than panicked on.
+  stays reachable without a rustls type entering a Kynos signature — except
+  for session tickets, which rustls's provider interface does not carry: under
+  `SessionResumption::Tickets` they are sealed by `aws-lc-rs` whatever was
+  installed, so a deployment that needs every secret on its own provider
+  chooses `Cache` or `Disabled`. A provider that can serve nothing is reported
+  as `TlsError::CryptoProvider` rather than panicked on.
 
 ### The graph
 
@@ -295,6 +298,29 @@ application supply another. What the design does preserve is the option to add
 one: the accept path holds the socket and the rustls session as separable
 values, so a kernel-TLS path could be introduced additively later. That costs
 nothing today and is not a commitment — see the rationale below.
+
+**Session resumption is decided, not inherited.** rustls on its own resumes
+from an in-memory cache of 256 sessions and issues no stateless tickets, so a
+service with more recently-connected clients than that evicts them into a full
+handshake, which costs an asymmetric signature and a key exchange each time.
+Kynos defaults to stateless tickets instead
+([`SessionResumption::Tickets`](../crates/kynos/src/server/tls/mod.rs)): the
+session travels with the client, so no client count evicts one. Its costs are
+written on the variant: a leaked ticket key exposes recorded TLS 1.2 sessions
+and, while it is accepted, lets its holder mint a ticket resuming as any
+mutual-TLS identity over either version; and a resumed mutual-TLS session is
+not checked against its certificate's expiry again. Mutual TLS keeps the
+default; a deployment that cannot accept the forgery risk chooses `Disabled` or
+`Cache`. The keys are
+random per process and rotate on the first handshake more than six hours after
+the last rotation, so replicas behind a load
+balancer cannot yet resume each other's sessions; sharing them needs a key
+source the operator supplies, which is
+[#269](https://github.com/getkono/kynos/issues/269). A bounded cache and no
+resumption are the two alternatives, each a knob on `TlsConfig`. What a
+resumed handshake saves in CPU is `kynos-bench`'s to measure, by
+[`performance.md`](performance.md#the-boundary)'s boundary; that it resumes at
+all is asserted here, over a real socket.
 
 **Two date backends and two decimal backends, not one each.** These are the only
 rows where Kynos ships alternatives, and the reason is that the alternatives are
