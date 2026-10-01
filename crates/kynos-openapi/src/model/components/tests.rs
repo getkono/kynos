@@ -141,6 +141,58 @@ fn sanitizing_collapses_runs_and_trims_edges() {
     assert_eq!(name.as_str(), "crate_model_User");
 }
 
+/// The specification's `^[a-zA-Z0-9.\-_]+$`, transcribed rather than read off
+/// [`ComponentName::is_valid_char`], so the sweep below does not trust the
+/// predicate `sanitized` itself consults.
+fn legal_char(c: char) -> bool {
+    matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '.' | '-' | '_')
+}
+
+fn legal(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(legal_char)
+}
+
+/// The documented contract: an error only for empty input, and otherwise a
+/// legal name, whatever the characters.
+///
+/// Every `char` is swept alone and between two legal ones, which is where
+/// replacement and collapsing are observable without the edge trim. The short
+/// strings over one representative per class reach the trim and every run
+/// shape up to three characters.
+#[test]
+fn sanitizing_fails_only_on_empty_input_and_always_yields_a_legal_name() {
+    assert!(ComponentName::sanitized("").is_err());
+
+    for c in char::MIN..=char::MAX {
+        let alone = ComponentName::sanitized(&c.to_string()).expect("non-empty");
+        assert!(legal(alone.as_str()), "{c:?} alone");
+
+        let replaced = if legal_char(c) { c } else { '_' };
+        let inside = ComponentName::sanitized(&format!("a{c}b")).expect("non-empty");
+        assert_eq!(inside.as_str(), format!("a{replaced}b"), "{c:?} inside");
+
+        if !legal_char(c) {
+            let run = ComponentName::sanitized(&format!("a{c}{c}b")).expect("non-empty");
+            assert_eq!(run.as_str(), "a_b", "a run of {c:?}");
+        }
+    }
+
+    let classes = ['a', 'Z', '0', '.', '-', '_', '<', ' ', 'é', '\0'];
+    for first in classes {
+        for second in classes {
+            for third in classes {
+                for input in [
+                    format!("{first}{second}"),
+                    format!("{first}{second}{third}"),
+                ] {
+                    let name = ComponentName::sanitized(&input).expect("non-empty");
+                    assert!(legal(name.as_str()), "{input:?}");
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn sanitizing_an_entirely_illegal_name_still_yields_something_legal() {
     let name = ComponentName::sanitized("<>").expect("non-empty");
