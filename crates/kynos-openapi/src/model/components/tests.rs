@@ -152,13 +152,36 @@ fn legal(name: &str) -> bool {
     !name.is_empty() && name.chars().all(legal_char)
 }
 
+/// The documented mangling, stated over the input rather than the output:
+/// each maximal run of illegal characters becomes one `_`, then leading and
+/// trailing underscores go unless nothing else would remain.
+fn expected_sanitized(input: &str) -> String {
+    let mut replaced = String::new();
+    let mut in_illegal_run = false;
+    for c in input.chars() {
+        if legal_char(c) {
+            replaced.push(c);
+        } else if !in_illegal_run {
+            replaced.push('_');
+        }
+        in_illegal_run = !legal_char(c);
+    }
+    let trimmed = replaced.trim_start_matches('_').trim_end_matches('_');
+    if trimmed.is_empty() {
+        replaced
+    } else {
+        trimmed.to_owned()
+    }
+}
+
 /// The documented contract: an error only for empty input, and otherwise a
 /// legal name, whatever the characters.
 ///
 /// Every `char` is swept alone and between two legal ones, which is where
 /// replacement and collapsing are observable without the edge trim. The short
-/// strings over one representative per class reach the trim and every run
-/// shape up to three characters.
+/// strings over one representative per class are held to the exact output of
+/// [`expected_sanitized`], so they pin the edge trim and every run shape up to
+/// three characters.
 #[test]
 fn sanitizing_fails_only_on_empty_input_and_always_yields_a_legal_name() {
     assert!(ComponentName::sanitized("").is_err());
@@ -187,6 +210,7 @@ fn sanitizing_fails_only_on_empty_input_and_always_yields_a_legal_name() {
                 ] {
                     let name = ComponentName::sanitized(&input).expect("non-empty");
                     assert!(legal(name.as_str()), "{input:?}");
+                    assert_eq!(name.as_str(), expected_sanitized(&input), "{input:?}");
                 }
             }
         }
