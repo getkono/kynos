@@ -142,8 +142,7 @@ run = "cargo nextest run --workspace --all-targets --all-features"
 description = "Test all workspace targets at baseline features"
 # Every other test task passes `--all-features`, and `features:check` passes
 # `--no-dev-deps`, so before this task no test target was ever *built* with an
-# optional feature off -- against 67 `#[cfg]` sites in `kynos-openapi/src`
-# alone. A gate no test build exercises is a gate whose off-state is unknown.
+# optional feature off -- against every `#[cfg]` site in the workspace. A gate no test build exercises is a gate whose off-state is unknown.
 #
 # Baseline is the default feature set: `kynos-openapi`'s default is `openapi31`
 # and `kynos`'s selects it, so `--no-default-features --features openapi31`
@@ -210,7 +209,7 @@ description = "Lint every reachable feature combination"
 # structurally cannot -- `assets-fs` implies `unchecked`, so `--all-features`
 # always carries the caller that kept `record_unchecked_route` from being dead.
 # Cargo passes trailing arguments to the selected package only, so the denial
-# reaches the three crates and no dependency; cargo-hack makes each member the
+# reaches every member and no dependency; cargo-hack makes each member the
 # selected package in turn.
 # `--at-least-one-of` encodes the baseline: a build with neither spec version
 # is rejected by a `compile_error!`, and that rejection is correct rather than
@@ -374,7 +373,7 @@ description = "Measure what each feature costs a linked artifact and monomorphiz
 #
 # `python` is pinned here, and on every other task that runs a file from
 # `scripts/`, because until this pin there was no such thing as the interpreter
-# those five files run under: `python3` resolved to whatever the machine or the
+# those files run under: `python3` resolved to whatever the machine or the
 # runner image happened to ship. `containment.py` declares the floor --
 # `PYTHON_FLOOR`, 3.11, which is what the `tomllib` import at the head of it
 # already required -- and checks the scripts against it. This is the other half
@@ -385,9 +384,9 @@ description = "Measure what each feature costs a linked artifact and monomorphiz
 # means moving `PYTHON_FLOOR` and every line repeating it below in one commit.
 #
 # Task-scoped rather than `[tools]`, and for the cost the entry above is
-# task-scoped over rather than for the `cargo:` backend's reason. Two CI jobs
-# run a task from `scripts/`: `ci.yml`'s `lint`, which runs four of them, and
-# `cost.yml`'s `cost`, which runs this one. A third, `package`, pipes `cargo
+# task-scoped over rather than for the `cargo:` backend's reason. Only the CI
+# jobs that run a task from `scripts/` need it, in `ci.yml` and `cost.yml`.
+# Another, `package`, pipes `cargo
 # metadata` through a `python3 -c` one-liner, which is not a file in `scripts/`
 # and is held to no floor. A `[tools]` entry would download and activate a
 # Python for every job that runs none at all.
@@ -701,9 +700,10 @@ description = "Package every crate exactly as crates.io will receive it"
 # `cargo package` writes each member's `.crate` and then rebuilds it from the
 # extracted tarball, which is the only thing that can notice.
 #
-# `--workspace` rather than three `-p` runs. The three crates depend on each
-# other and none is on crates.io, so a per-crate run cannot resolve
-# `kynos-openapi = "0.1.0"`. Multi-package packaging -- stable since Cargo 1.90
+# `--workspace` rather than one `-p` run per crate. The published crates depend
+# on each other, and a per-crate run resolves each sibling from crates.io rather
+# than from this tree: it cannot resolve an unreleased version, and it verifies
+# against the published one otherwise. Multi-package packaging -- stable since Cargo 1.90
 # -- stages the tarballs in a local registry under `target/package/` and
 # resolves each member against the archives of the ones before it: the same
 # mechanism, and the same order, `cargo publish` will use.
@@ -936,7 +936,7 @@ run = "python3 -B scripts/commits_test.py"
 [tasks."hooks:pre-push"]
 description = "Run all pre-push checks"
 # `docs:check` and `containment:check` are here because neither is slow --
-# rustdoc over three crates, and a script that compiles nothing -- and both fail
+# rustdoc over every member, and a script that compiles nothing -- and both fail
 # on things a push should not carry: an undocumented public item, since
 # `missing_docs` is denied, and a crate named outside the module that owns it.
 # Both were first caught in CI, which is a slower place to learn it.
