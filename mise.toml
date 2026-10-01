@@ -387,9 +387,9 @@ description = "Measure what each feature costs a linked artifact and monomorphiz
 # Task-scoped rather than `[tools]`, and for the cost the entry above is
 # task-scoped over rather than for the `cargo:` backend's reason. Only the CI
 # jobs that run a task from `scripts/` need it, in `ci.yml` and `cost.yml`.
-# Another, `package`, pipes `cargo metadata` through a `python3 -c` one-liner, which is not a file in `scripts/`
-# and is held to no floor. A `[tools]` entry would download and activate a
-# Python for every job that runs none at all.
+# Another, `package`, pipes `cargo metadata` through a `python3 -c` one-liner,
+# which is not a file in `scripts/` and is held to no floor. A `[tools]` entry
+# would download and activate a Python for every job that runs none at all.
 #
 # The patch version is pinned like every other tool in this file. The floor is
 # the minor; the patch is what keeps two machines on the same interpreter.
