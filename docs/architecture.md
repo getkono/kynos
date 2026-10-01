@@ -420,13 +420,12 @@ what an example demonstrates.
 allocation-count kind in [`performance.md`](performance.md#the-taxonomy) needs
 a global allocator that reports what a region allocated, and `forbid` is not
 liftable by an `#[allow]` — so the `unsafe impl GlobalAlloc` such a counter
-requires cannot compile in any crate inheriting those lints, which is all three
-of them. Taking a vetted one is how the invariant is kept
+requires cannot compile in any crate inheriting those lints, which is every
+member. Taking a vetted one is how the invariant is kept
 rather than bent: the unsafe stays upstream, and this tree keeps a rule it
 would otherwise have had to carve an exception into. It is a dev-dependency
 named by four test targets and by nothing under `src/`:
-[`kynos/tests/support/counting.rs`](../crates/kynos/tests/support/counting.rs),
-the harness the routing counts include,
+[`kynos/tests/alloc.rs`](../crates/kynos/tests/alloc.rs) for the routing path,
 [`kynos/tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) for body
 erasure, [`kynos/tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs)
 for what a payload codec adds, and
