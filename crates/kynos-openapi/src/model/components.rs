@@ -46,7 +46,7 @@ impl ComponentName {
     /// character outside `A-Z a-z 0-9 . - _`.
     pub fn new(name: impl Into<String>) -> Result<Self, InvalidComponentName> {
         let name = name.into();
-        if name.is_empty() || !name.chars().all(Self::is_valid_char) {
+        if !Self::is_valid(&name) {
             return Err(InvalidComponentName(name));
         }
         Ok(Self(name))
