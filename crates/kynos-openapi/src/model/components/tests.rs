@@ -1,4 +1,119 @@
-use super::ComponentName;
+use super::{ComponentName, Components};
+use crate::model::{
+    paths::item::PathItem,
+    reference::{Ref, RefOr},
+    schema::Schema,
+};
+
+/// Each field of `components` by name, and whether it holds anything.
+///
+/// The destructuring has no `..`, so a field added to [`Components`] stops this
+/// file compiling until it is listed here — and, through the closure check in
+/// the test below, until it has a case of its own.
+fn occupancy(components: &Components) -> Vec<(&'static str, bool)> {
+    let Components {
+        schemas,
+        responses,
+        parameters,
+        examples,
+        request_bodies,
+        headers,
+        security_schemes,
+        links,
+        callbacks,
+        path_items,
+        #[cfg(feature = "openapi32")]
+        media_types,
+        extensions,
+    } = components;
+
+    vec![
+        ("schemas", !schemas.is_empty()),
+        ("responses", !responses.is_empty()),
+        ("parameters", !parameters.is_empty()),
+        ("examples", !examples.is_empty()),
+        ("request_bodies", !request_bodies.is_empty()),
+        ("headers", !headers.is_empty()),
+        ("security_schemes", !security_schemes.is_empty()),
+        ("links", !links.is_empty()),
+        ("callbacks", !callbacks.is_empty()),
+        ("path_items", !path_items.is_empty()),
+        #[cfg(feature = "openapi32")]
+        ("media_types", !media_types.is_empty()),
+        ("extensions", !extensions.is_empty()),
+    ]
+}
+
+/// A `Components` holding one entry in the field `name` and nothing else.
+fn holding_only(name: &str) -> Components {
+    fn reference<T>() -> RefOr<T> {
+        RefOr::Ref(Ref::new("#/components/x"))
+    }
+
+    let key = || "x".to_owned();
+    let mut components = Components::new();
+    match name {
+        "schemas" => {
+            components.schemas.insert(key(), Schema::component("X"));
+        }
+        "responses" => {
+            components.responses.insert(key(), reference());
+        }
+        "parameters" => {
+            components.parameters.insert(key(), reference());
+        }
+        "examples" => {
+            components.examples.insert(key(), reference());
+        }
+        "request_bodies" => {
+            components.request_bodies.insert(key(), reference());
+        }
+        "headers" => {
+            components.headers.insert(key(), reference());
+        }
+        "security_schemes" => {
+            components.security_schemes.insert(key(), reference());
+        }
+        "links" => {
+            components.links.insert(key(), reference());
+        }
+        "callbacks" => {
+            components.callbacks.insert(key(), reference());
+        }
+        "path_items" => {
+            components.path_items.insert(key(), PathItem::new());
+        }
+        #[cfg(feature = "openapi32")]
+        "media_types" => {
+            components.media_types.insert(key(), reference());
+        }
+        "extensions" => {
+            components.extensions.insert("x-a", 1);
+        }
+        other => panic!("no case populates `{other}`"),
+    }
+    components
+}
+
+#[test]
+fn components_are_empty_only_while_every_field_is() {
+    let empty = Components::new();
+    assert!(empty.is_empty());
+    assert!(occupancy(&empty).iter().all(|&(_, occupied)| !occupied));
+
+    // Every field `occupancy` names has a case, because `holding_only` panics
+    // on a name it cannot populate.
+    for (field, _) in occupancy(&empty) {
+        let components = holding_only(field);
+        let occupied: Vec<_> = occupancy(&components)
+            .into_iter()
+            .filter_map(|(name, occupied)| occupied.then_some(name))
+            .collect();
+
+        assert_eq!(occupied, [field], "the case populates `{field}` alone");
+        assert!(!components.is_empty(), "`{field}` holds an entry");
+    }
+}
 
 #[test]
 fn ordinary_type_names_are_valid_component_names() {
@@ -24,6 +139,82 @@ fn sanitizing_mangles_a_generic_type_name_into_a_legal_key() {
 fn sanitizing_collapses_runs_and_trims_edges() {
     let name = ComponentName::sanitized("crate::model::User").expect("non-empty");
     assert_eq!(name.as_str(), "crate_model_User");
+}
+
+/// The specification's `^[a-zA-Z0-9.\-_]+$`, transcribed rather than read off
+/// [`ComponentName::is_valid_char`], so the sweep below does not trust the
+/// predicate `sanitized` itself consults.
+fn legal_char(c: char) -> bool {
+    matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '.' | '-' | '_')
+}
+
+fn legal(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(legal_char)
+}
+
+/// The documented mangling, stated over the input rather than the output:
+/// each maximal run of illegal characters becomes one `_`, then leading and
+/// trailing underscores go unless nothing else would remain.
+fn expected_sanitized(input: &str) -> String {
+    let mut replaced = String::new();
+    let mut in_illegal_run = false;
+    for c in input.chars() {
+        if legal_char(c) {
+            replaced.push(c);
+        } else if !in_illegal_run {
+            replaced.push('_');
+        }
+        in_illegal_run = !legal_char(c);
+    }
+    let trimmed = replaced.trim_start_matches('_').trim_end_matches('_');
+    if trimmed.is_empty() {
+        replaced
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+/// The documented contract: an error only for empty input, and otherwise a
+/// legal name, whatever the characters.
+///
+/// Every `char` is swept alone and between two legal ones, which is where
+/// replacement and collapsing are observable without the edge trim. The short
+/// strings over one representative per class are held to the exact output of
+/// [`expected_sanitized`], so they pin the edge trim and every run shape up to
+/// three characters.
+#[test]
+fn sanitizing_fails_only_on_empty_input_and_always_yields_a_legal_name() {
+    assert!(ComponentName::sanitized("").is_err());
+
+    for c in char::MIN..=char::MAX {
+        let alone = ComponentName::sanitized(&c.to_string()).expect("non-empty");
+        assert!(legal(alone.as_str()), "{c:?} alone");
+
+        let replaced = if legal_char(c) { c } else { '_' };
+        let inside = ComponentName::sanitized(&format!("a{c}b")).expect("non-empty");
+        assert_eq!(inside.as_str(), format!("a{replaced}b"), "{c:?} inside");
+
+        if !legal_char(c) {
+            let run = ComponentName::sanitized(&format!("a{c}{c}b")).expect("non-empty");
+            assert_eq!(run.as_str(), "a_b", "a run of {c:?}");
+        }
+    }
+
+    let classes = ['a', 'Z', '0', '.', '-', '_', '<', ' ', 'é', '\0'];
+    for first in classes {
+        for second in classes {
+            for third in classes {
+                for input in [
+                    format!("{first}{second}"),
+                    format!("{first}{second}{third}"),
+                ] {
+                    let name = ComponentName::sanitized(&input).expect("non-empty");
+                    assert!(legal(name.as_str()), "{input:?}");
+                    assert_eq!(name.as_str(), expected_sanitized(&input), "{input:?}");
+                }
+            }
+        }
+    }
 }
 
 #[test]

@@ -114,6 +114,26 @@ fn wildcards_cover_their_class_and_nothing_else() {
     }
 }
 
+/// A pattern is a range exactly when it covers a class.
+///
+/// `covered_class` is an exhaustive match, so a variant added to
+/// [`StatusPattern`] has to declare whether it is a class before this compiles.
+/// `Code` is swept over its whole payload, because `is_range` must not consult
+/// the code, legal status or not.
+#[test]
+fn a_pattern_is_a_range_exactly_when_it_covers_a_class() {
+    for &pattern in WILDCARDS {
+        assert!(covered_class(pattern).is_some());
+        assert!(pattern.is_range(), "{pattern:?} is a wildcard");
+    }
+
+    for code in u16::MIN..=u16::MAX {
+        let pattern = StatusPattern::Code(code);
+        assert!(covered_class(pattern).is_none());
+        assert!(!pattern.is_range(), "{pattern:?} is an exact code");
+    }
+}
+
 #[test]
 fn an_exact_code_matches_only_itself() {
     for code in [200u16, 404, 500] {
