@@ -200,14 +200,15 @@ of which anything here would currently catch.
 **The first instruction counts say where a request's work goes, and it is
 rarely routing.** Recorded at rustc 1.97.1 in
 [`requests.tsv`](../crates/kynos-profile/requests.tsv), with the host it was
-taken on: a static match executes 1732 instructions in the program and a miss
-1831, while `echo-post` executes 35253. Read with
-`callgrind_annotate --inclusive=yes` over that scenario's Callgrind file, 57%
-of everything Callgrind counted for the request, libc included, is inside the
-`Json` extractor and 28% inside `serde_json::to_vec`. A transparent
-interceptor costs 315 program instructions and one heap block per layer, the
-same at depth four and eight. `json-large` executes 1027125 program
-instructions, and `serde_json`'s string writer alone is 36% of all it counted.
+taken on: a static match executes 1561 instructions in the program and a miss
+1885, while `echo-post` executes 35104. Read with
+`callgrind_annotate --inclusive=yes` over that scenario's Callgrind file, 52%
+of everything Callgrind counted for the request, libc included, is
+`serde_json`'s deserializer inside the `Json` extractor and 26% inside
+`serde_json::to_vec`. A transparent interceptor costs 315 program instructions
+and one heap block per layer, the same at depth four and eight. `json-large`
+executes 1027297 program instructions, and `serde_json`'s string writer alone
+is 37% of all it counted.
 The ceiling this row would need stays unset for [Thresholds](#thresholds)'
 reason; the counts are the first measurement, not a target.
 

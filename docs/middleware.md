@@ -223,31 +223,31 @@ row that meets the rule saves over 1680 octets under every coding.
 
 The compression sweep in [`kynos-profile`](../crates/kynos-profile/) serves one
 JSON document at five sizes under each coding, and `mise run profile:requests`
-counts each encode against the same request declined. A local run at rustc
-1.97.1 on the baseline's host, with instructions split as the report splits
-them — the program object exactly, and glibc as reported, since its count moves
-between runs ([`performance.md`](performance.md#the-taxonomy)). The octet
-columns reproduce from the sweep on any host. The instruction and heap columns
-are that local run, not [CI's run of record](performance.md#the-taxonomy), and
-are to be replaced from the `requests.tsv` CI records:
+counts each encode against the same request declined. The octet columns
+reproduce from the sweep on any host. The instruction and heap columns are the
+`compression` rows of [`requests.tsv`](../crates/kynos-profile/requests.tsv),
+[CI's run of record](performance.md#the-taxonomy) at rustc 1.97.1, less the
+`identity` row of the same size, with instructions split as the report splits
+them — the program object exactly, and glibc as that run reported, since its
+count moves between runs:
 
 | Body (identity) | Coding | Encoded | Saved | Instructions added, program | Instructions added, glibc | Heap added |
 | ---: | --- | ---: | ---: | ---: | ---: | ---: |
-| 83 | gzip | 97 | −14 | 42695 | ~376000 | 320 KB |
-| 83 | br | 73 | 10 | 92009 | ~63000 | 567 KB |
-| 83 | zstd | 83 | 0 | 25517 | ~807000 | 3.66 MB |
-| 988 | gzip | 227 | 761 | 112150 | ~377000 | 320 KB |
-| 988 | br | 201 | 787 | 206687 | ~78000 | 581 KB |
-| 988 | zstd | 215 | 773 | 48649 | ~807000 | 3.66 MB |
+| 83 | gzip | 97 | −14 | 42695 | ~378000 | 320 KB |
+| 83 | br | 73 | 10 | 92009 | ~69000 | 567 KB |
+| 83 | zstd | 83 | 0 | 27887 | ~803000 | 3.66 MB |
+| 988 | gzip | 227 | 761 | 112150 | ~378000 | 320 KB |
+| 988 | br | 201 | 787 | 206687 | ~84000 | 581 KB |
+| 988 | zstd | 215 | 773 | 51478 | ~803000 | 3.66 MB |
 | 1954 | gzip | 268 | 1686 | 155451 | ~378000 | 320 KB |
-| 1954 | br | 227 | 1727 | 239111 | ~226000 | 595 KB |
-| 1954 | zstd | 262 | 1692 | 54347 | ~808000 | 3.66 MB |
-| 4110 | gzip | 365 | 3745 | 252637 | ~377000 | 320 KB |
-| 4110 | br | 287 | 3823 | 320261 | ~260000 | 628 KB |
-| 4110 | zstd | 375 | 3735 | 68324 | ~808000 | 3.66 MB |
-| 59395 | gzip | 2789 | 56606 | 2967290 | ~413000 | 323 KB |
-| 59395 | br | 1343 | 58052 | 2283646 | ~1156000 | 1.46 MB |
-| 59395 | zstd | 1409 | 57986 | 366161 | ~868000 | 3.67 MB |
+| 1954 | br | 227 | 1727 | 239111 | ~231000 | 595 KB |
+| 1954 | zstd | 262 | 1692 | 57365 | ~803000 | 3.66 MB |
+| 4110 | gzip | 365 | 3745 | 252637 | ~378000 | 320 KB |
+| 4110 | br | 287 | 3823 | 320261 | ~263000 | 628 KB |
+| 4110 | zstd | 375 | 3735 | 71881 | ~804000 | 3.66 MB |
+| 59395 | gzip | 2789 | 56606 | 2967290 | ~568000 | 323 KB |
+| 59395 | br | 1343 | 58052 | 2283646 | ~1315000 | 1.46 MB |
+| 59395 | zstd | 1409 | 57986 | 379965 | ~1019000 | 3.67 MB |
 
 The 1954-octet row is the smallest at which every coding saves a segment; the
 988-octet row is smaller than a segment to begin with. By interpolation each
