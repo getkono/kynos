@@ -359,7 +359,7 @@ impl<C> TestRequest<'_, C> {
     pub fn form<T: serde::Serialize>(self, body: &T) -> Self {
         let encoded = serde_urlencoded::to_string(body).expect("a serializable form body");
         self.body(
-            "application/x-www-form-urlencoded",
+            kynos_openapi::model::body::mime_names::APPLICATION_FORM_URLENCODED,
             Bytes::from(encoded.into_bytes()),
         )
     }

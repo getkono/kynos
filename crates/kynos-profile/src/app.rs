@@ -15,6 +15,7 @@ use kynos::{
     extract::body::text::Text,
     http::{HeaderValue, Method, Request, body::Body, header},
     middleware::{Continued, Interceptor, Next, compression::Compression},
+    openapi::model::body::mime_names,
     prelude::*,
     router::service::Service,
 };
@@ -359,7 +360,12 @@ pub(crate) fn get(target: &str) -> Request {
 
 /// A JSON `POST`.
 pub(crate) fn post(target: &str, body: Body) -> Request {
-    request(Method::POST, target, Some("application/json"), body)
+    request(
+        Method::POST,
+        target,
+        Some(mime_names::APPLICATION_JSON),
+        body,
+    )
 }
 
 /// `headers`: the sixteen declared fields, each about thirty octets.

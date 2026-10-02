@@ -25,7 +25,10 @@ use std::borrow::Cow;
 
 use kynos_openapi::{
     Header, Map, MediaType, Parameter, RefOr, Schema, SchemaObject,
-    model::schema::types::{SchemaType, TypeSet},
+    model::{
+        body::mime_names,
+        schema::types::{SchemaType, TypeSet},
+    },
 };
 use serde_json::Value;
 
@@ -41,7 +44,7 @@ use crate::{
 /// The same call [`range::headers`](crate::response::range::headers) makes, and
 /// for the reason OpenAPI 3.2's Appendix D gives: a header value is not
 /// serialized the way a schema-shaped parameter is.
-const AS_TEXT: &str = "text/plain";
+const AS_TEXT: &str = mime_names::TEXT_PLAIN;
 
 /// The field a client states its language preferences in.
 ///

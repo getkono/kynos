@@ -193,7 +193,7 @@ fn is_json(media_type: &str) -> bool {
         .trim()
         .to_ascii_lowercase();
 
-    base == "application/json" || base.ends_with("+json")
+    base == kynos_openapi::model::body::mime_names::APPLICATION_JSON || base.ends_with("+json")
 }
 
 /// The whole query string is decoded as the document `M` names.

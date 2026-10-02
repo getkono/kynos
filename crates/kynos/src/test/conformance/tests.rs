@@ -485,3 +485,44 @@ fn a_head_declares_content_it_never_sends() {
         reasons[0]
     );
 }
+
+/// A 200 whose every declared representation carries the `false` schema, which
+/// no instance satisfies: a body is reported exactly when it is validated.
+fn refusing_ok(media_types: &[&str]) -> kynos_openapi::Responses {
+    let mut ok = kynos_openapi::Response::new("the thing");
+    ok.content = media_types
+        .iter()
+        .map(|name| {
+            (
+                (*name).to_owned(),
+                kynos_openapi::MediaType::new(kynos_openapi::Schema::Bool(false)),
+            )
+        })
+        .collect();
+    kynos_openapi::Responses::new().with(200, ok)
+}
+
+/// Only a JSON-based body is held to its schema: `application/json` itself and
+/// any `+json` structured syntax suffix (RFC 6839). Any other media type has no
+/// decoder here, so its schema asserts nothing rather than something wrong.
+#[test]
+fn only_a_json_based_body_is_validated_against_its_schema() {
+    let document = document_declaring(refusing_ok(&[
+        "application/json",
+        "application/problem+json",
+        "text/plain",
+    ]));
+
+    for media_type in ["application/json", "application/problem+json"] {
+        let reasons = conformance(&document, &observed(200, Some(media_type), "{}"));
+        assert_eq!(reasons.len(), 1, "{media_type}: {reasons:?}");
+        assert!(
+            reasons[0].contains("the body does not match the declared schema"),
+            "{media_type}: {}",
+            reasons[0]
+        );
+    }
+
+    let reasons = conformance(&document, &observed(200, Some("text/plain"), "{}"));
+    assert!(reasons.is_empty(), "{reasons:?}");
+}

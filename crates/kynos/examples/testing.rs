@@ -28,7 +28,7 @@
 //! happened that the document did not predict, the other says nothing the
 //! document predicts has gone unexercised.
 
-use kynos::{http::StatusCode, prelude::*, test::TestClient};
+use kynos::{http::StatusCode, openapi::model::body::mime_names, prelude::*, test::TestClient};
 use serde::{Deserialize, Serialize};
 
 /// A user of the service.
@@ -99,7 +99,7 @@ async fn main() -> kynos::Result<()> {
     // so a check chains into the next one rather than needing a binding.
     let user: User = client
         .get("/users/42")
-        .header("accept", "application/json")
+        .header("accept", mime_names::APPLICATION_JSON)
         .send()
         .await
         .assert_status(StatusCode::OK)
@@ -157,7 +157,7 @@ async fn exercise_the_rejections(client: &TestClient<()>) {
     // begins, which is a syntax error rather than a schema one.
     client
         .post("/users")
-        .header("content-type", "application/json")
+        .header("content-type", mime_names::APPLICATION_JSON)
         .send()
         .await
         .assert_status(StatusCode::BAD_REQUEST);
@@ -165,7 +165,7 @@ async fn exercise_the_rejections(client: &TestClient<()>) {
     // A media type the operation never claimed.
     client
         .post("/users")
-        .header("content-type", "text/plain")
+        .header("content-type", mime_names::TEXT_PLAIN)
         .send()
         .await
         .assert_status(StatusCode::UNSUPPORTED_MEDIA_TYPE);

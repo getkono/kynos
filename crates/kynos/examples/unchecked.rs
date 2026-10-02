@@ -36,6 +36,7 @@ use std::net::Ipv4Addr;
 
 use kynos::{
     http::{Method, Request, Response, StatusCode, body::Body, header},
+    openapi::model::body::mime_names,
     prelude::*,
     server::Server,
 };
@@ -81,7 +82,7 @@ async fn serve_asset(request: Request) -> Response {
     let mut response = Response::new(Body::from_bytes(bytes::Bytes::from(body)));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
-        kynos::http::HeaderValue::from_static("text/plain"),
+        kynos::http::HeaderValue::from_static(mime_names::TEXT_PLAIN),
     );
     response
 }
