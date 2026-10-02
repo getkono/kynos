@@ -94,9 +94,6 @@ impl<T> Accept<T> {
                 order,
             });
         }
-        if preferences.is_empty() {
-            return Err(invalid_accept());
-        }
         Ok(Self {
             preferences,
             representations: std::marker::PhantomData,
