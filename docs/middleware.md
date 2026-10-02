@@ -935,9 +935,9 @@ invariant as the example of what a layer above Kynos owns.
 interceptor. It is an extractor — `FromRequestParts` in
 [`security/auth.rs`](../crates/kynos/src/security/auth.rs) — and its 403 reaches
 the document through `OperationCx::add_responses`, never through a `const`.
-`CompatibleWith` is instantiated only over pairs of `Interceptor::Short`, and no
-shipped interceptor declares 403 at all, so a CSRF interceptor declaring one
-compiles beside a credential guard.
+`CompatibleWith` compares only interceptor `Short`s, and `Auth<S>` has none, so
+`Csrf`'s 403 (`CrossSite`) never meets the credential guard's in that comparison
+and the two compile beside each other.
 
 The overlap is about *description* rather than compilation: a CSRF 403 and an
 `Auth` 403 on one operation are one entry, since a description files one
