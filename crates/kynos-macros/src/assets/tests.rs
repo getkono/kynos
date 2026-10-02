@@ -1,7 +1,10 @@
 use quote::quote;
 use syn::parse_quote;
 
-use crate::assets::{args::AssetArgs, expand_inner};
+use crate::assets::{
+    args::{AssetArgs, DEFAULT_WARN_OVER},
+    expand_inner, suggest,
+};
 
 /// The fixture directory, beside this crate's manifest.
 const FIXTURE: &str = "assets-fixture";
@@ -119,7 +122,81 @@ fn an_oversized_set_emits_a_deprecation_the_compiler_reports() {
     );
     // The message names the cost, the way out, and the override.
     assert!(expanded.contains("slow to link"), "{expanded}");
-    assert!(expanded.contains("warn_over"), "{expanded}");
+    // The fixture is a few bytes, so the suggested override is the smallest
+    // one `suggest` offers, quoted the way the user would write it.
+    assert!(
+        expanded.contains(r#"Raise the threshold with `warn_over = \"1MiB\"`"#),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains(r#"turn the check off with `warn_over = \"none\"`"#),
+        "{expanded}"
+    );
+}
+
+/// The suggested threshold is the next power-of-two mebibyte at or above the
+/// total, and never below one mebibyte.
+#[test]
+fn the_suggestion_is_the_next_power_of_two_mebibyte() {
+    const MIB: usize = 1024 * 1024;
+
+    for (total, suggested) in [
+        (0, "1MiB"),
+        (1, "1MiB"),
+        (MIB, "1MiB"),
+        (MIB + 1, "2MiB"),
+        (2 * MIB, "2MiB"),
+        (2 * MIB + 1, "4MiB"),
+        (3 * MIB, "4MiB"),
+        (5 * MIB, "8MiB"),
+        (1024 * MIB, "1024MiB"),
+    ] {
+        assert_eq!(suggest(total), suggested, "for {total} bytes");
+    }
+}
+
+/// The threshold `warn_over` resolves to, for one invocation.
+fn warn_over(tokens: proc_macro2::TokenStream) -> Option<usize> {
+    syn::parse2::<AssetArgs>(tokens)
+        .expect("a well-formed invocation")
+        .warn_over
+}
+
+/// Each IEC unit scales by its own power of 1024, and the default is two
+/// mebibytes.
+///
+/// A multiplier of 3 rather than 1 keeps `number * scale` apart from
+/// `number + scale` and from the bare scale.
+#[test]
+fn each_size_unit_scales_exactly() {
+    assert_eq!(DEFAULT_WARN_OVER, 2_097_152);
+    assert_eq!(
+        warn_over(quote! {
+            struct Fixture;
+            dir = #FIXTURE,
+        }),
+        Some(DEFAULT_WARN_OVER),
+        "an invocation without `warn_over` takes the default"
+    );
+
+    for (size, bytes) in [
+        ("0B", Some(0)),
+        ("3B", Some(3)),
+        ("3KiB", Some(3_072)),
+        ("3MiB", Some(3_145_728)),
+        ("3GiB", Some(3_221_225_472)),
+        ("none", None),
+    ] {
+        assert_eq!(
+            warn_over(quote! {
+                struct Fixture;
+                dir = #FIXTURE,
+                warn_over = #size,
+            }),
+            bytes,
+            "`warn_over = {size:?}`"
+        );
+    }
 }
 
 /// The control: a set inside the threshold emits nothing.
@@ -154,21 +231,29 @@ fn the_guard_can_be_turned_off() {
 
 // --- What the grammar refuses ---------------------------------------------
 
-/// One case per diagnostic, counted against the sites.
+/// One case per diagnostic, counted against the sites, each refused in its own
+/// words.
 #[test]
 fn every_grammar_refusal_has_a_case() {
-    let cases: &[(&str, proc_macro2::TokenStream)] = &[
+    const MALFORMED_SIZE: &str = "`warn_over` takes a size such as \"4MiB\" or the word \
+                                  \"none\"; the units are B, KiB, MiB and GiB";
+
+    // The expected message is a prefix where the rest is the operating
+    // system's own wording, which no test here controls.
+    let cases: &[(&str, proc_macro2::TokenStream, &str)] = &[
         (
             "no unit struct to name the set",
             quote! {
                 dir = #FIXTURE,
             },
+            "an asset set needs a unit struct to name it: `pub struct Site;`",
         ),
         (
             "no directory at all",
             quote! {
                 struct Fixture;
             },
+            "an asset set needs `dir = \"...\"`, relative to the crate root",
         ),
         (
             "a directory that is not there",
@@ -176,6 +261,7 @@ fn every_grammar_refusal_has_a_case() {
                 struct Fixture;
                 dir = "no-such-directory",
             },
+            "`no-such-directory` could not be read: ",
         ),
         (
             "a key outside the grammar",
@@ -184,6 +270,8 @@ fn every_grammar_refusal_has_a_case() {
                 dir = #FIXTURE,
                 nonsense = "x",
             },
+            "`nonsense` is not part of the `assets!` grammar, which takes `dir`, `exclude` and \
+             `warn_over`",
         ),
         (
             "a size in units nobody agrees on",
@@ -192,6 +280,7 @@ fn every_grammar_refusal_has_a_case() {
                 dir = #FIXTURE,
                 warn_over = "4KB",
             },
+            MALFORMED_SIZE,
         ),
         (
             "a size that is not a number",
@@ -200,6 +289,7 @@ fn every_grammar_refusal_has_a_case() {
                 dir = #FIXTURE,
                 warn_over = "lots",
             },
+            MALFORMED_SIZE,
         ),
         (
             "an empty exclusion",
@@ -208,13 +298,19 @@ fn every_grammar_refusal_has_a_case() {
                 dir = #FIXTURE,
                 exclude = [""],
             },
+            "an `exclude` entry is a file name or an extension beginning with a dot, and an \
+             empty string is neither",
         ),
     ];
 
-    for (description, tokens) in cases {
+    for (description, tokens, message) in cases {
+        let Err(error) = expand(tokens.clone()) else {
+            panic!("{description} must be refused");
+        };
+        let reported = error.to_string();
         assert!(
-            expand(tokens.clone()).is_err(),
-            "{description} must be refused"
+            reported.starts_with(message),
+            "{description} was refused as {reported:?}, not {message:?}"
         );
     }
 
