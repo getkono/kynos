@@ -39,7 +39,10 @@
 
 use kynos_openapi::{
     Header, MediaType, RefOr, Schema, SchemaObject,
-    model::schema::types::{SchemaType, TypeSet},
+    model::{
+        body::mime_names,
+        schema::types::{SchemaType, TypeSet},
+    },
 };
 
 use crate::{
@@ -55,7 +58,7 @@ use crate::{
 /// Appendix D gives — a header value is not serialized the way a schema-shaped
 /// parameter is. Written once here so the top-level field and a future
 /// per-part one are one shape.
-const AS_TEXT: &str = "text/plain";
+const AS_TEXT: &str = mime_names::TEXT_PLAIN;
 
 /// `^bytes$`, the only `acceptable-ranges` Kynos sends.
 const ACCEPT_RANGES_PATTERN: &str = "^bytes$";

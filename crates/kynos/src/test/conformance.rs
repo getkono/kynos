@@ -9,7 +9,8 @@
 //! `docs/architecture.md` gives it.
 
 use kynos_openapi::{
-    Document, Method, RefOr, Responses, StatusPattern, model::parameter::header::is_ignored_header,
+    Document, Method, RefOr, Responses, StatusPattern,
+    model::{body::mime_names, parameter::header::is_ignored_header},
 };
 use serde_json::Value;
 
@@ -189,7 +190,7 @@ fn body_conformance(
     // applied to. Anything else is declared with a schema describing a shape
     // this module has no decoder for, and asserting nothing beats asserting
     // something wrong.
-    if media_type != "application/json" && !media_type.ends_with("+json") {
+    if media_type != mime_names::APPLICATION_JSON && !media_type.ends_with("+json") {
         return Vec::new();
     }
 

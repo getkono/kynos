@@ -11,6 +11,8 @@
 //! file is, and the emitted description prints it — so a wrong row is visible
 //! rather than silent.
 
+use kynos_openapi::model::body::mime_names;
+
 /// Every extension the built-in table names.
 ///
 /// Longest suffix wins, so `.tar.gz` would beat `.gz` if both were listed.
@@ -30,8 +32,8 @@ pub(crate) const EXTENSIONS: &[(&str, &str)] = &[
     (".jpeg", "image/jpeg"),
     (".jpg", "image/jpeg"),
     (".js", "text/javascript; charset=utf-8"),
-    (".json", "application/json"),
-    (".map", "application/json"),
+    (".json", mime_names::APPLICATION_JSON),
+    (".map", mime_names::APPLICATION_JSON),
     (".md", "text/markdown; charset=utf-8"),
     (".mjs", "text/javascript; charset=utf-8"),
     (".mp3", "audio/mpeg"),
