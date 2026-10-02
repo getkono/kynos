@@ -27,7 +27,9 @@
 
 use kynos_openapi::{
     Document, Info, Method, Operation, PathItem, PathTemplate, Response, Responses, Schema,
-    SpecVersion, model::schema::types::SchemaType, validate::Validator,
+    SpecVersion,
+    model::{body::mime_names, schema::types::SchemaType},
+    validate::Validator,
 };
 
 /// One operation, built by hand.
@@ -44,7 +46,7 @@ fn list_orders() -> Operation {
             200,
             Response::with_content(
                 "Every order the caller may see",
-                "application/json",
+                mime_names::APPLICATION_JSON,
                 order_list(),
             ),
         ),

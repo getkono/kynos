@@ -64,6 +64,7 @@ use kynos::{
     extract::{body::json::Json, params::path::Path},
     http::{Request, header},
     middleware::{Continued, Interceptor, Next},
+    openapi::model::body::mime_names,
     response::language::{
         AcceptLanguage, headers::ContentLanguage, offer::Languages, tag::LanguageTag,
     },
@@ -136,7 +137,7 @@ impl<C: Sync + 'static> Interceptor<C> for Localize {
             .headers()
             .get(header::CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
-            .is_some_and(|value| value.starts_with("application/problem+json"));
+            .is_some_and(|value| value.starts_with(mime_names::APPLICATION_PROBLEM_JSON));
 
         if is_problem {
             let status = continued.status().as_u16();
