@@ -73,6 +73,18 @@ fn an_exact_code_parses_and_renders_as_itself() {
     }
 }
 
+/// A key is accepted only in the spelling it renders back to, so a parsed
+/// document re-emits every key byte for byte.
+#[test]
+fn a_non_canonical_spelling_of_a_code_is_refused() {
+    for key in ["+404", "0404", "00404", " 404", "404 ", "4_04", "٤٠٤"] {
+        assert!(
+            key.parse::<StatusPattern>().is_err(),
+            "{key:?} is not the canonical spelling of a status"
+        );
+    }
+}
+
 /// The wildcards are five, and nothing shaped like a sixth is one.
 #[test]
 fn only_the_five_documented_wildcards_are_accepted() {
