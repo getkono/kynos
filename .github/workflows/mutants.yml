@@ -64,6 +64,9 @@ jobs:
       - name: Set up
         uses: ./.github/actions/setup
       - name: Test the mutants on changed lines
+        # Under the job's own bound, so the report below is still uploaded
+        # when a change carries more mutants than the job has time for.
+        timeout-minutes: 280
         env:
           MUTANTS_BASE: ${{ github.event.pull_request.base.sha }}
         run: mise run mutants:diff --shard ${{ matrix.shard }}/4
