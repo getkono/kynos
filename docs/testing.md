@@ -813,8 +813,15 @@ summary: tests run under nextest, because `hermeticity.rs` fails under
 `cargo test`. Every feature is on, because a mutant in uncompiled code is
 reported missed. `kynos`'s suite runs for every mutant, because it is where
 most of the other two crates are witnessed. Some tests are left out because a
-mutant would decide their verdict for the wrong reason. Some code is left out
-because no test can reach it on the platform running the job.
+mutant would decide their verdict for the wrong reason. Some code is not
+mutated, each for its own reason:
+
+- `kynos-profile`, an unpublished measurement harness nothing depends on.
+- `server/shutdown/signal.rs`, whose arms are `cfg(unix)`, `cfg(windows)` or
+  neither, so on any one platform two are uncompiled and their mutants missed.
+- The proc-macro entry points in `kynos-macros/src/lib.rs`, which only forward
+  to a mutated `expand` function, so a mutant there is unviable.
+- Hand-written `Debug` impls, which hold no contract a test reads.
 
 **What it does not see:**
 
