@@ -68,7 +68,7 @@ use crate::{
 };
 
 /// The media type RFC 9110 section 14.6 defines for several parts.
-pub const MEDIA_TYPE: &str = "multipart/byteranges";
+pub(crate) const MEDIA_TYPE: &str = "multipart/byteranges";
 
 /// What a `range-set` selects once its parts have been merged.
 ///

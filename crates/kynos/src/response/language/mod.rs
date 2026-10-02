@@ -30,7 +30,7 @@
 //! [`architecture.md`](../../../../docs/architecture.md)'s third invariant.
 
 pub mod headers;
-pub mod matching;
+mod matching;
 pub mod offer;
 pub mod tag;
 

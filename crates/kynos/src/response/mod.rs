@@ -132,7 +132,7 @@ pub trait ShortCircuit: IntoResponse + Responses {
 /// claims about one status, and a short circuit that answers with a range has
 /// nothing exact for the conflict check to compare.
 #[must_use]
-pub fn described_statuses(responses: &kynos_openapi::Responses) -> Vec<u16> {
+pub(crate) fn described_statuses(responses: &kynos_openapi::Responses) -> Vec<u16> {
     responses
         .responses
         .keys()

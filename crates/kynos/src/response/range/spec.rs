@@ -40,8 +40,8 @@
 //!   representation, which yields the whole of it.
 //! * *A server that supports range requests MAY ignore or reject a Range header
 //!   field that contains ... a set of many small ranges*, which section 17.15
-//!   names as a denial-of-service indicator. [`MAX_RANGES`] is where Kynos
-//!   draws that line.
+//!   names as a denial-of-service indicator. Eight specs is where Kynos draws
+//!   that line.
 
 use crate::http::{HeaderMap, HeaderValue, Method, etag, header};
 
@@ -50,20 +50,22 @@ use crate::http::{HeaderMap, HeaderValue, Method, etag, header};
 /// A longer field is [`Ignored::TooManyRanges`] and answered with the whole
 /// representation, which RFC 9110 section 14.2 permits outright. The number
 /// reaches the description too, through [`pattern`], so the cap is a stated
-/// fact rather than a surprise.
-pub const MAX_RANGES: usize = 8;
+/// fact rather than a surprise. The public docs on [`Ignored::TooManyRanges`],
+/// [`crate::response::range`] and this module spell the number out, so change
+/// them with it.
+pub(crate) const MAX_RANGES: usize = 8;
 
 /// The range unit Kynos understands, compared ASCII-case-insensitively.
 ///
 /// Section 14.1: *all range unit names are case-insensitive*.
-pub const UNIT: &str = "bytes";
+pub(crate) const UNIT: &str = "bytes";
 
 /// The `pattern` an emitted `Range` parameter carries.
 ///
 /// Built from [`MAX_RANGES`] rather than written out, so the cap the reader
 /// enforces and the cap the description states are one number.
 #[must_use]
-pub fn pattern() -> String {
+pub(crate) fn pattern() -> String {
     format!(
         r"^bytes=(?:\d+-\d*|-\d+)(?:\s*,\s*(?:\d+-\d*|-\d+)){{0,{}}}$",
         MAX_RANGES - 1
@@ -117,7 +119,7 @@ pub enum Ignored {
     UnknownUnit,
     /// The field does not parse, or holds an invalid `range-spec`.
     Malformed,
-    /// The `range-set` holds more than [`MAX_RANGES`] specs.
+    /// The `range-set` holds more than eight specs.
     TooManyRanges,
     /// The selected representation has zero length.
     ///
@@ -132,8 +134,8 @@ pub enum Ignored {
 ///
 /// Crate-internal: a `Range<T>` holds these and every function that reads or
 /// resolves one is private to the framework, so no public signature has ever
-/// mentioned the type. The module is public for [`Ignored`], [`MAX_RANGES`],
-/// [`UNIT`] and [`pattern`], which a caller does reach.
+/// mentioned the type. The module is public for [`Ignored`], which a caller
+/// does reach.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Spec {
     /// `int-range`: an offset from the start, optionally to a last offset.
