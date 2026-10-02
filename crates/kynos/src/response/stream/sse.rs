@@ -7,7 +7,10 @@ use std::{
 
 use kynos_openapi::{
     SchemaObject,
-    model::schema::types::{SchemaType, TypeSet},
+    model::{
+        body::mime_names,
+        schema::types::{SchemaType, TypeSet},
+    },
 };
 
 use crate::{
@@ -344,7 +347,7 @@ where
         let mut response = Response::new(Body::from_stream(records));
         response.headers_mut().insert(
             header::CONTENT_TYPE,
-            HeaderValue::from_static("text/event-stream"),
+            HeaderValue::from_static(mime_names::TEXT_EVENT_STREAM),
         );
         response
     }
@@ -364,7 +367,7 @@ where
             ty: Some(TypeSet::One(SchemaType::String)),
             ..SchemaObject::default()
         };
-        data.content_media_type = Some("application/json".to_owned());
+        data.content_media_type = Some(mime_names::APPLICATION_JSON.to_owned());
         data.content_schema = Some(Box::new(registry.resolve::<T>()));
 
         let mut retry = SchemaObject {
@@ -397,7 +400,7 @@ where
             200,
             kynos_openapi::Response::with_content(
                 "OK",
-                "text/event-stream",
+                mime_names::TEXT_EVENT_STREAM,
                 kynos_openapi::MediaType::sequential(kynos_openapi::Schema::Object(Box::new(
                     event,
                 ))),

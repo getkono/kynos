@@ -14,6 +14,8 @@ pub mod records;
 #[cfg(test)]
 mod tests;
 
+use kynos_openapi::model::body::mime_names;
+
 use crate::{
     error::rejection::BodyRejection,
     extract::{
@@ -28,10 +30,10 @@ use crate::{
 
 /// One spelling, read by every half: what is decoded, what is described, and
 /// what the responding half of this codec sends.
-pub(crate) const LINES_MEDIA_TYPE: &str = "application/x-ndjson";
+pub(crate) const LINES_MEDIA_TYPE: &str = mime_names::APPLICATION_NDJSON;
 
 /// One spelling, read by every half, as [`LINES_MEDIA_TYPE`] is.
-pub(crate) const SEQUENCE_MEDIA_TYPE: &str = "application/json-seq";
+pub(crate) const SEQUENCE_MEDIA_TYPE: &str = mime_names::APPLICATION_JSON_SEQ;
 
 /// A newline-delimited JSON body (`application/x-ndjson`).
 ///
