@@ -1,6 +1,6 @@
 //! Triggering graceful shutdown, and forcing it when a second signal arrives.
 
-pub mod signal;
+mod signal;
 
 use std::{
     fmt,
