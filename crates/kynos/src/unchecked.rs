@@ -206,7 +206,7 @@ where
 fn erase<C, L>(layer: &L) -> Arc<dyn ErasedLayer>
 where
     C: Send + Sync + 'static,
-    L: tower::Layer<UncheckedInner<C>> + Send + Sync + 'static,
+    L: tower_layer::Layer<UncheckedInner<C>> + Send + Sync + 'static,
     L::Service: tower_service::Service<Request, Response = Response, Error = Infallible>
         + Clone
         + Send
@@ -524,7 +524,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     pub fn layer_unchecked<L>(mut self, layer: L) -> Self
     where
         C: Send + Sync + 'static,
-        L: tower::Layer<UncheckedInner<C>> + Send + Sync + 'static,
+        L: tower_layer::Layer<UncheckedInner<C>> + Send + Sync + 'static,
         L::Service: tower_service::Service<
                 crate::http::Request,
                 Response = crate::http::Response,
@@ -751,7 +751,7 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     pub fn layer_unchecked<L>(mut self, layer: L) -> Self
     where
         C: Send + Sync + 'static,
-        L: tower::Layer<UncheckedInner<C>> + Send + Sync + 'static,
+        L: tower_layer::Layer<UncheckedInner<C>> + Send + Sync + 'static,
         L::Service: tower_service::Service<
                 crate::http::Request,
                 Response = crate::http::Response,
