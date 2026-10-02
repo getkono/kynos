@@ -39,17 +39,14 @@ run = "cargo fmt --all -- --check"
 [tasks.lint]
 description = "Lint all workspace targets with every feature enabled"
 # `--all-features` because without it Clippy never compiles an optional
-# feature's module, so it never reports one either. That is not theoretical: a
-# `cache` variant dead since 040a0af reached freeze review, and five `tls`
-# warnings stood the whole time the crate was linted on every push.
+# feature's module, so it never reports one either.
 run = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
 
 [tasks."lint:baseline"]
 description = "Lint all workspace targets at baseline features"
-# The command `lint` used to be, kept for the reason `test:baseline` exists:
-# `--all-features` compiles every `#[cfg(feature = ...)]` arm and no
-# `#[cfg(not(feature = ...))]` one. Widening `lint` without this would have
-# traded one blind spot for another.
+# The reason `test:baseline` exists: `--all-features` compiles every
+# `#[cfg(feature = ...)]` arm and no `#[cfg(not(feature = ...))]` one, so
+# `lint` alone has the opposite blind spot.
 #
 # `kynos-profile` is excluded for `test:baseline`'s reason.
 run = "cargo clippy --workspace --exclude kynos-profile --all-targets -- -D warnings"
