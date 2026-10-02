@@ -69,7 +69,9 @@ pub(crate) fn encode_ext_value(value: &str) -> String {
 /// # Errors
 ///
 /// Returns the error when the decoded bytes are not valid UTF-8.
-pub(crate) fn decode_path_value(value: &str) -> Result<std::borrow::Cow<'_, str>, std::str::Utf8Error> {
+pub(crate) fn decode_path_value(
+    value: &str,
+) -> Result<std::borrow::Cow<'_, str>, std::str::Utf8Error> {
     percent_encoding::percent_decode_str(value).decode_utf8()
 }
 
