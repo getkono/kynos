@@ -257,7 +257,7 @@ fn router() -> Router<()> {
 /// that measurement is read to choose: measured through it, the rows below the
 /// threshold would report the skip instead.
 #[must_use]
-pub fn compressed() -> Service<()> {
+pub(crate) fn compressed() -> Service<()> {
     Router::<()>::new()
         .mount(kynos::routes![
             json_small, json_1k, json_2k, json_4k, json_large
@@ -278,7 +278,7 @@ pub(crate) fn get_encoded(target: &str, coding: &'static str) -> Request {
 
 /// The service every scenario but the two deeper stacks is sent to.
 #[must_use]
-pub fn service() -> Service<()> {
+pub(crate) fn service() -> Service<()> {
     router().build(()).expect("a describable router")
 }
 
@@ -308,7 +308,7 @@ impl<C: Sync + 'static> Interceptor<C> for Transparent {
 /// `intercept` returns a different `Router` type and a loop has none to
 /// iterate at.
 #[must_use]
-pub fn layers_4() -> Service<()> {
+pub(crate) fn layers_4() -> Service<()> {
     router()
         .intercept(Transparent)
         .intercept(Transparent)
@@ -320,7 +320,7 @@ pub fn layers_4() -> Service<()> {
 
 /// Behind eight, for the same reason.
 #[must_use]
-pub fn layers_8() -> Service<()> {
+pub(crate) fn layers_8() -> Service<()> {
     router()
         .intercept(Transparent)
         .intercept(Transparent)
