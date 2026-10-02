@@ -35,14 +35,15 @@ fn http2_defaults_are_owned_by_kynos() {
 }
 
 /// The whole retry schedule: four doubling waits, then the fifth consecutive
-/// failure ends the listener, and every count past it does too.
+/// failure ends the listener, and every failure past it does too.
 #[test]
 fn a_failing_accept_backs_off_by_doubling_and_gives_up_at_the_fifth() {
     use std::time::Duration;
 
-    use crate::server::accept::retry_delay;
+    use crate::server::accept::AcceptBackoff;
 
-    let schedule = (0..=5).map(retry_delay).collect::<Vec<_>>();
+    let mut backoff = AcceptBackoff::default();
+    let schedule = (0..6).map(|_| backoff.fail()).collect::<Vec<_>>();
 
     assert_eq!(
         schedule,
@@ -55,11 +56,22 @@ fn a_failing_accept_backs_off_by_doubling_and_gives_up_at_the_fifth() {
             None,
         ]
     );
-    assert_eq!(
-        retry_delay(u32::MAX),
-        None,
-        "a count past the limit gives up rather than overflowing"
-    );
+}
+
+/// A successful accept starts the schedule over, so failures separated by a
+/// success never add up to the limit.
+#[test]
+fn a_successful_accept_restarts_the_backoff() {
+    use std::time::Duration;
+
+    use crate::server::accept::AcceptBackoff;
+
+    let mut backoff = AcceptBackoff::default();
+    backoff.fail();
+    backoff.fail();
+    backoff.succeed();
+
+    assert_eq!(backoff.fail(), Some(Duration::from_millis(10)));
 }
 
 #[test]
