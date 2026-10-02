@@ -34,8 +34,8 @@ ceiling by the standard [Thresholds](#thresholds) sets.
 [`performance.md`](performance.md#the-boundary) carries the reasoning.
 
 Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
-`trybuild`, `proptest`, `alloc_counter`, `cargo-llvm-lines`, `gungraun` over
-Valgrind, rustdoc with
+`trybuild`, `proptest`, `alloc_counter`, `cargo-llvm-lines`, `cargo-mutants`,
+`gungraun` over Valgrind, rustdoc with
 `missing_docs = "deny"`, and `cargo-semver-checks` — the last through both
 release-plz, at default features and fail-open, and `mise run semver:check`, at
 every feature. Not yet present: `cargo-public-api`, `cargo-fuzz`. `criterion` is
