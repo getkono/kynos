@@ -154,6 +154,12 @@ fn every_entry_point_reports_an_unroutable_path() {
         Some("/files/{*path}")
     );
 
-    assert!(router().openapi().is_err());
-    assert!(router().build(()).is_err());
+    assert_eq!(
+        opaque_route(router().openapi().map(|_| ())).as_deref(),
+        Some("/files/{*path}")
+    );
+    assert_eq!(
+        opaque_route(router().build(()).map(|_| ())).as_deref(),
+        Some("/files/{*path}")
+    );
 }

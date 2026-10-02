@@ -108,6 +108,27 @@ fn the_leap_day_is_admitted_only_where_it_exists() {
     );
 }
 
+/// A leap second is admitted and collapses onto the following minute; the
+/// second after it does not exist.
+#[test]
+fn a_leap_second_rolls_over_and_the_one_after_it_is_refused() {
+    let new_year = parse("Sun, 01 Jan 2017 00:00:00 GMT").expect("a date");
+
+    assert_eq!(parse("Sat, 31 Dec 2016 23:59:60 GMT"), Some(new_year));
+    assert_eq!(parse("Sat Dec 31 23:59:60 2016"), Some(new_year));
+    assert_eq!(parse("Sat, 31 Dec 2016 23:59:61 GMT"), None);
+    assert_eq!(parse("Sat Dec 31 23:59:61 2016"), None);
+}
+
+/// The last second before the epoch has no `SystemTime` past it to name, in
+/// either direction.
+#[test]
+fn a_date_before_the_epoch_is_none() {
+    assert_eq!(parse("Wed, 31 Dec 1969 23:59:59 GMT"), None);
+    assert_eq!(parse("Wed Dec 31 23:59:59 1969"), None);
+    assert_eq!(format(UNIX_EPOCH - Duration::from_secs(1)), None);
+}
+
 /// Surrounding whitespace is not part of the value.
 #[test]
 fn a_padded_value_is_still_a_date() {

@@ -156,3 +156,52 @@ fn a_utf8_name_outside_ascii_is_never_the_one_asked_for() {
     assert_eq!(value_of(&headers, "café"), Ok(None));
     assert_eq!(jar(&headers).collect::<Vec<_>>(), [("other", "2")]);
 }
+
+/// Every concatenation of at most `length` of `pieces`, the empty one included.
+fn every_field(pieces: &'static [&'static [u8]], length: u32) -> impl Iterator<Item = Vec<u8>> {
+    (0..=length).flat_map(move |length| {
+        (0..pieces.len().pow(length)).map(move |mut index| {
+            let mut field = Vec::new();
+            for _ in 0..length {
+                field.extend_from_slice(pieces[index % pieces.len()]);
+                index /= pieces.len();
+            }
+            field
+        })
+    })
+}
+
+/// Every field over a closed alphabet of delimiters, names and a non-ASCII
+/// octet reads without panicking, and `jar` and `value_of` agree about it.
+///
+/// A sweep rather than a property test: the alphabet is small enough to
+/// close, and `proptest` is deliberately not a `kynos` dev-dependency.
+#[test]
+fn every_short_field_reads_and_both_readers_agree() {
+    const PIECES: &[&[u8]] = &[b"a", b"b", b"=", b";", b" ", b"\"", b"\xc3\xa9"];
+
+    for field in every_field(PIECES, 6) {
+        let headers = from_octets(&[&field]);
+        let pairs: Vec<_> = jar(&headers).collect();
+
+        for (name, value) in &pairs {
+            assert!(
+                !name.contains(';') && !value.contains(';'),
+                "{field:?} yielded {name:?}={value:?}"
+            );
+        }
+
+        for name in ["a", "b"] {
+            let first = pairs
+                .iter()
+                .find(|(found, _)| *found == name)
+                .map(|(_, value)| *value);
+            // An `Err` is a first cookie of that name that was sent and is
+            // unreadable, which the jar skipped; it says nothing about later
+            // ones.
+            if let Ok(value) = value_of(&headers, name) {
+                assert_eq!(value, first, "{field:?} for {name}");
+            }
+        }
+    }
+}
