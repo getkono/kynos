@@ -174,3 +174,27 @@ fn a_query_string_splits_and_decodes_with_form_rules() {
         assert_eq!(pairs_of(query), expected, "{query:?}");
     }
 }
+
+/// A `#[derive(Reply)]` variant with a body answers with the status it
+/// declared, the body as JSON, and the type its description names.
+#[tokio::test]
+async fn a_reply_body_is_written_as_json_under_its_declared_status() {
+    use http_body_util::BodyExt;
+
+    use crate::http::{StatusCode, header};
+
+    let response = crate::__private::reply::json(201, &[1, 2]);
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE),
+        Some(&crate::http::HeaderValue::from_static("application/json"))
+    );
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("a readable body")
+        .to_bytes();
+    assert_eq!(&body[..], b"[1,2]");
+}

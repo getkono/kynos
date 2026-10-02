@@ -173,3 +173,22 @@ fn a_body_carries_no_preamble_and_no_epilogue() {
     assert!(body.starts_with(format!("--{delimiter}\r\n").as_bytes()));
     assert!(body.ends_with(format!("--{delimiter}--\r\n").as_bytes()));
 }
+
+/// Typeless bytes state RFC 7578's default for a part with no type, rather
+/// than leaving a reader to infer it, and carry the bytes unchanged.
+#[test]
+fn typeless_bytes_are_written_as_an_octet_stream_part() {
+    use super::IntoPart;
+
+    let bytes = bytes::Bytes::from_static(&[0x00, 0xff]);
+
+    assert_eq!(
+        bytes.clone().into_part("blob"),
+        Part {
+            name: "blob".to_owned(),
+            file_name: None,
+            content_type: Some("application/octet-stream".to_owned()),
+            bytes,
+        }
+    );
+}
