@@ -58,7 +58,7 @@
 //!
 //! # One range, and only the first
 //!
-//! A `range-set` of up to [`spec::MAX_RANGES`] parses, and the first satisfiable
+//! A `range-set` of up to eight specs parses, and the first satisfiable
 //! spec in it is the one served. Section 14.2 says outright that *the above does
 //! not imply that a server will send all requested ranges*, and section 15.3.7
 //! that a 206 is self-descriptive, so a client can tell what it received.
@@ -305,7 +305,7 @@ pub(crate) fn select(
 ///
 /// Written once, because the extractor and the asset server share no type and
 /// must still declare one field with one grammar — and public for the reason
-/// [`spec::pattern`] and [`ContentRange::unsatisfied_header`] are: an endpoint
+/// [`ContentRange::unsatisfied_header`] is: an endpoint
 /// that serves ranges without going through [`Ranged<T>`] still owes a consumer
 /// the same declaration.
 #[must_use]
@@ -326,7 +326,7 @@ pub fn parameter() -> Parameter {
 /// which is why this is a separate constructor rather than part of
 /// [`parameter`].
 #[must_use]
-pub fn conditional_parameter() -> Parameter {
+pub(crate) fn conditional_parameter() -> Parameter {
     Parameter::header(
         "If-Range",
         kynos_openapi::Schema::of_type(kynos_openapi::model::schema::types::SchemaType::String),
@@ -446,7 +446,7 @@ mod tests;
 /// ignored, so there is no 400 here and declaring one would be a promise
 /// nothing keeps.
 #[must_use]
-pub fn delivery_responses(media_type: &str) -> kynos_openapi::Responses {
+pub(crate) fn delivery_responses(media_type: &str) -> kynos_openapi::Responses {
     use kynos_openapi::{Header, MediaType, Response as OpenApiResponse, Schema, StatusPattern};
 
     let content = || MediaType::new(Schema::Object(Box::default()));
