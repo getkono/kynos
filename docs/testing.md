@@ -791,6 +791,50 @@ A flake is an isolation bug. Retrying one hides the bug and keeps the suite
 green, which is why `retries = 0` is in the config rather than left to a flag
 someone might pass.
 
+## Mutation testing
+
+Coverage says a line ran. A mutant says whether anything would notice it being
+wrong: cargo-mutants replaces a function body or an operator, runs the tests,
+and reports the mutant *caught* when one fails and *missed* when none does.
+*Unviable* is a mutant that does not compile, and is neither.
+
+| Command | Mutates | Where it runs |
+| --- | --- | --- |
+| `mise run mutants [crate] [--shard k/n]` | one crate, or all three | locally; nightly in [`mutants.yml`](../.github/workflows/mutants.yml) |
+| `mise run mutants:diff [--shard k/n]` | lines changed since the merge base | every pull request, which fails on a survivor |
+
+The nightly job runs one seventh of the workspace, as 16 of 112 shards picked
+by the UTC weekday, so a week covers every mutant. A shard is a slice of the
+current list, so a week in which the list changes may test a mutant twice or
+not at all.
+
+[`.cargo/mutants.toml`](../.cargo/mutants.toml) argues every setting. In
+summary: tests run under nextest, because `hermeticity.rs` fails under
+`cargo test`. Every feature is on, because a mutant in uncompiled code is
+reported missed. `kynos`'s suite runs for every mutant, because it is where
+most of the other two crates are witnessed. Some tests are left out because a
+mutant would decide their verdict for the wrong reason. Some code is left out
+because no test can reach it on the platform running the job.
+
+**What it does not see:**
+
+- The `cfg(not(feature = ...))` arms. With every feature on they are never
+  compiled, and no mutant falls inside one. `test:baseline` tests them.
+- Doctests, which nextest does not run.
+- The compile-fail suite, which is excluded for its cost.
+
+So a survivor is a candidate, not a finding. Before filing it, check it
+against `mise run test:doc` and, where it removes a compile-time refusal,
+`mise run ui:check`. `PROPTEST_RNG_SEED` is fixed by both tasks, so a rerun
+draws the same cases.
+
+A survivor is resolved by a test that would catch it, or by declaring the
+function unmutatable with `#[cfg_attr(test, mutants::skip)]` and a comment
+giving the reason. The attribute needs `mutants = { workspace = true }` under
+the member's `[dev-dependencies]`. Add that line the first time a member uses
+it. An exclusion that covers a whole kind of code belongs in `exclude_re`
+instead, with its reason beside it.
+
 ## Snapshots
 
 A `.stderr` snapshot is the exact text `rustc` printed. Recording one is
