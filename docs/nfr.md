@@ -23,35 +23,15 @@ and allocates a counted method to each shape of the routing stack. Every
 | `by-design` | The requirement is not met and will not be. The alternative was weighed and refused, and the trade is recorded |
 | `kynos-bench` | A measurement any HTTP server library would answer, owned by [`getkono/kynos-bench`](https://github.com/getkono/kynos-bench) rather than by this repository |
 
-`planned` and `needs-tooling` were one status, which made six rows look
-blocked on a purchase they were not — a CI grep needs no tool. And every
-performance row named `criterion` as something this repository would install,
-while the closing section says it deliberately will not; those rows moved to
-`kynos-bench`, which is where the harness that gives a threshold meaning
-already lives.
-
-**That sweep went one row too wide, and what came back is a counted half
-rather than a whole row.** It filed by *method* — everything that named
-`criterion` left — when the question is *what the requirement names*. Document
-generation, route resolution at scale and per-layer overhead each name
-something only Kynos has, so no comparative harness answers them and sending
-them away left them measured nowhere.
-
-Each is now two requirements rather than one moved requirement, and the split
-is the boundary applied twice. What can be *counted* — allocations, output
-bytes, `size_of` — is specific to Kynos and deterministic, so it is in-repo.
-What can only be *timed* stays in `kynos-bench`, because a wall-clock ceiling
-on a shared runner is a guessed ceiling by the standard
-[Thresholds](#thresholds) sets, whatever the requirement names.
+A performance requirement is filed by *what it names*, not by its method.
+Document generation, route resolution at scale and per-layer overhead each
+name something only Kynos has, so each is two requirements: what can be
+*counted* — allocations, output bytes, `size_of` — is deterministic and
+in-repo, in [Routing](#routing), [Document model](#document-model) and
+[Middleware](#middleware) below, and what can only be *timed* is
+`kynos-bench`'s, because a wall-clock ceiling on a shared runner is a guessed
+ceiling by the standard [Thresholds](#thresholds) sets.
 [`performance.md`](performance.md#the-boundary) carries the reasoning.
-
-The counted halves are the rows in [Routing](#routing),
-[Document model](#document-model) and [Middleware](#middleware) below. This
-paragraph records the split and not a status, so read the status off each row.
-
-Nothing was deleted in the split, and that is deliberate: replacing a latency
-requirement with an allocation one and calling it a refiling would leave the
-latency unmeasured in both repositories while this column claimed otherwise.
 
 Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
 `trybuild`, `proptest`, `alloc_counter`, `cargo-llvm-lines`, `gungraun` over
@@ -146,19 +126,10 @@ in `tests/wire.rs` so the behaviour is on the record. Without the second half an
 exclusion is indistinguishable from an oversight, and closing the gap would turn
 no test red — which is the wrong signal for work that fixes something.
 
-**A JSON `null` used to be the second, and is closed.** The loss was on the way
-in rather than the way out: `Some(Value::Null)` wrote `null` faithfully, and
-`Option<Value>` folded that `null` back into `None` when it was read, which cost
-a parameter's `example`, a schema's `const` and `default`, and every other
-`Option<Value>` field alike. JSON `null` is a legal example and a legal default,
-so a description using one was silently changed. Each of the eight sites now
-carries the `#[serde(default, deserialize_with = ...)]` pair that
+A JSON `null` in an `Option<Value>` field round-trips: each such field carries
+the `#[serde(default, deserialize_with = ...)]` pair
 [`model::nullable`](../crates/kynos-openapi/src/model/nullable.rs) exists for,
-`arb_present_json` is gone, and the generators draw the outermost `null` the
-property was written to avoid.
-
-The row above stays worth reading for what it kept: closing the gap turned the
-recorded case red, exactly as this section said it would.
+and the generators draw an outermost `null`.
 
 The `dx` row currently holds by construction — the crate has no runtime
 dependency at all, which is deliberate — but nothing prevents that from
@@ -212,16 +183,10 @@ is 37% of all it counted.
 The ceiling this row would need stays unset for [Thresholds](#thresholds)'
 reason; the counts are the first measurement, not a target.
 
-**The zero was never measured, and it is wrong.** The row above asked for
-`alloc_count == 0` and was `planned` for as long as this document has existed;
-wiring it reported seven allocations for a static match, eleven once a path
-parameter is captured and read, and six for a request that matches no route.
-Every one of the three is stable to the allocation across a
+**The zero does not hold.** A static match allocates five times, of the seven
+the attribution below decided on, a capture eight and a miss six, each stable to the allocation across a
 ten-thousand-request replay, so these are properties of the path rather than
-noisy readings. Attribution
-([#235](https://github.com/getkono/kynos/issues/235)) has since removed two
-from every routed request and a third from a capture: a static match is five
-and a capture eight, and a miss is still six.
+noisy readings.
 
 The capture's excess is dispatch *and* the `Path` extractor that deserializes
 it: one block is the capture vector the router records, and two are the
@@ -318,10 +283,9 @@ rewrite.
 | performance | What mounting an opt-in payload codec costs a linked artifact is recorded and compared | `mise run cost:codecs` over [`cost/codec.rs`](../crates/kynos/cost/codec.rs), which mounts one operation each way per codec above a transport floor, with `.text` deltas against the committed [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv) | `partial`: a release is refused only for numbers nobody recorded, never a pull request for a cost, and **no ceiling is set** — the figures below are a first recorded measurement in the sense [Thresholds](#thresholds) requires, and none of them yet supports one |
 
 **The codec row records numbers and sets no ceiling, and that is the threshold
-decision rather than a deferral.** The first sweep reads `protobuf` at +44112
-bytes of `.text`, `form` at +46256, `json` at +63936, `multipart` at +109568 and
-`compression` at +951556, over an 883900 byte floor — the fixture with its
-transport operations mounted and no codec. [Thresholds](#thresholds) permits a
+decision rather than a deferral.** The figures are
+[`cost/codec.tsv`](../crates/kynos/cost/codec.tsv)'s, quoted in
+[`performance.md`](performance.md). [Thresholds](#thresholds) permits a
 ceiling at a measured value, but a ceiling is only worth setting where the
 quantity it guards is one this repository controls, and this one is mostly not:
 each delta is the codec's code *and* its dependency's — `serde_json`,
@@ -342,10 +306,9 @@ pulls — rather than the interceptor over them. Read beside
 says what neither says alone.
 
 **There is deliberately no default body cap**, and the row above says so rather
-than claiming one. This document previously read "body size, header count and
-header size limits are enforced by default"; only the second and third were,
-because those are the driver's and a body cap is an interceptor `Router::build`
-does not mount. Making one default was rejected for three reasons, any one
+than claiming one: header count and header size are the driver's, and a body
+cap is an interceptor `Router::build` does not mount. Making one default was
+rejected for three reasons, any one
 sufficient: it would add 413 to every operation of every application that never
 asked for one, it would make a user's own `BodySize` a `const` compile error
 against `statuses_disjoint`, and it would buffer a length-less body — which is
@@ -474,19 +437,11 @@ them and no individual type. That is the split
 shape, which owes a size guard here and sends resident memory at scale to
 `kynos-bench`. Neither row's status may be read off the other's.
 
-The containment row is written against an enumerated table rather than against
-`server/` alone, and that is a correction rather than a loosening: the grep as
-originally stated **failed**, at `middleware/limits.rs` and
-`middleware/compression/`, and had done since before it was written down.
-Counting against the table is checkable in this repository's exhaustiveness
-idiom — a seventh site fails the build — where the older sentence could only
-ever have been wired by deleting it.
-
-Wiring the count is what found the rest of the drift: a sixth site,
-`middleware/decompression/`, that the table did not list, and a row still
-naming `middleware/compression.rs` after that module became a directory. Both
-are corrected in [`architecture.md`](architecture.md#runtime-policy). A count
-asserted only in prose is a count nobody is holding.
+The containment row is written against the enumerated table in
+[`architecture.md`](architecture.md#runtime-policy) rather than against
+`server/` alone, which is checkable in this repository's exhaustiveness idiom:
+a seventh site fails the build. A count asserted only in prose is a count
+nobody is holding.
 
 The `blocked-on-dependency` row is the one requirement a pinned dependency
 prevents rather than delays: hyper releases HTTP/2 flow-control capacity when a
