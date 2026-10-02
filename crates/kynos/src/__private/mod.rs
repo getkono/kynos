@@ -1,8 +1,11 @@
 //! Implementation detail of the `kynos-macros` expansions. Not public API.
 //!
-//! Everything here is `pub` only because expanded code has to name it, and
-//! `#[doc(hidden)]` because no human should. Nothing in this module is covered
-//! by the crate's compatibility promise; it may change in any release.
+//! What lives here is the endpoint, path, problem, reply and URI support a
+//! route attribute or a derive expands to. An item is `pub` only because
+//! expanded code has to name it, and `#[doc(hidden)]` because no human should;
+//! a helper the crate shares with that support but no expansion names, such as
+//! the percent-coding in [`uri`], stays `pub(crate)`. Nothing in this module is
+//! covered by the crate's compatibility promise; it may change in any release.
 //!
 //! Its reason to exist is that the alternative — scattering `#[doc(hidden)] pub`
 //! items through `router`, `extract` and the rest — puts items no caller can
