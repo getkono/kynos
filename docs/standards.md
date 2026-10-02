@@ -61,20 +61,7 @@ references. `RequestId` and `Trace` are governed by nothing, and saying so is th
 point: a reader looking for the specification behind `X-Request-Id` should find
 out here that there is none, rather than concluding the citation was forgotten.
 
-**There is no `SecurityHeaders` row, and there was one.** It cited RFC 6797,
-CSP Level 3, Referrer Policy, Permissions Policy and RFC 7034 for a middleware
-`crates/kynos/src/middleware/` does not contain under any feature — so the
-table asserted a mapping for a module that does not exist, which is the one
-state the policy above says it must not have. The four texts stay vendored:
-[`references/README.md`](../references/README.md) records that they are ahead
-of the code rather than binding it.
-
 ## The document model
-
-The middleware table is about HTTP. The OpenAPI specification governs
-`crates/kynos-openapi/` in exactly the same way and had no entry here at all,
-which left every rule in that crate — and every departure from one — with no
-home under this document's own policy.
 
 | Component | Governed by | Vendored as |
 | --- | --- | --- |
@@ -153,8 +140,3 @@ the HTTP ones. It found nine, and each is closed the same way:
 | A 3.2 requirement naming a scheme by URI was reported as an error | the second spelling 3.2 admits, gated on the version |
 | A Responses Object holding only an extension satisfied "at least one response code" | a predicate that asks about responses rather than about emptiness |
 | Component keys were checked in five of eleven sections, against a MUST that says "**All**" | every section |
-
-Two more were found in the same reading and are *not* in that table, because
-neither is a conformance failure: `#[derive(Tag)]` dropped 3.2-only members
-silently under `openapi31`, and a `Concurrency` limit of zero built a service
-that refused everything. Both are recorded where they live.
