@@ -12,6 +12,8 @@
 //! implementation is the private supertrait below rather than the module being
 //! shut.
 
+use kynos_openapi::model::body::mime_names;
+
 use crate::{
     extract::{
         body::{binary::Binary, text::Text},
@@ -65,7 +67,7 @@ where
     T: serde::Serialize + crate::schema::Schema,
 {
     fn media_type() -> &'static str {
-        "application/json"
+        mime_names::APPLICATION_JSON
     }
 }
 
@@ -73,7 +75,7 @@ impl sealed::Sealed for Text {}
 
 impl Representation for Text {
     fn media_type() -> &'static str {
-        "text/plain"
+        mime_names::TEXT_PLAIN
     }
 }
 
@@ -94,7 +96,7 @@ where
     T: serde::Serialize + crate::schema::Schema,
 {
     fn media_type() -> &'static str {
-        "application/x-www-form-urlencoded"
+        mime_names::APPLICATION_FORM_URLENCODED
     }
 }
 
@@ -107,7 +109,7 @@ where
     T: crate::response::codec::multipart::IntoMultipart + crate::schema::Schema,
 {
     fn media_type() -> &'static str {
-        "multipart/form-data"
+        mime_names::MULTIPART_FORM_DATA
     }
 }
 
