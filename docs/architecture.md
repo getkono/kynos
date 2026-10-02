@@ -497,7 +497,7 @@ module column is also where the `#[cfg]` lives.
 | `assets` | `assets!` and `router/assets/`: a fixed set, so every path is a literal and nothing is waived | [`routing.md`](routing.md) |
 | `assets-fs` | `router/assets/fs/`. Implies `unchecked`, because a directory's membership is not fixed | [`routing.md`](routing.md) |
 | `docs` | `Router::docs`: the reference page and the description, as two described operations | [`routing.md`](routing.md) |
-| `unchecked` | `unchecked.rs`, the only place `tower-layer` and `tower-service` may be named. Documented anti-pattern | [`middleware.md`](middleware.md) |
+| `unchecked` | `unchecked.rs`, the only place `tower`, `tower-layer` and `tower-service` may be named. Documented anti-pattern | [`middleware.md`](middleware.md) |
 | `full` | every flag above except `unchecked` and `assets-fs`. A testing convenience, not a recommended default | — |
 
 ### Scope edges
