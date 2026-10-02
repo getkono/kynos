@@ -50,8 +50,9 @@ use crate::http::{HeaderMap, HeaderValue, Method, etag, header};
 /// A longer field is [`Ignored::TooManyRanges`] and answered with the whole
 /// representation, which RFC 9110 section 14.2 permits outright. The number
 /// reaches the description too, through [`pattern`], so the cap is a stated
-/// fact rather than a surprise. The public docs on [`Ignored::TooManyRanges`]
-/// and [`crate::response::range`] spell the number out, so change them with it.
+/// fact rather than a surprise. The public docs on [`Ignored::TooManyRanges`],
+/// [`crate::response::range`] and this module spell the number out, so change
+/// them with it.
 pub(crate) const MAX_RANGES: usize = 8;
 
 /// The range unit Kynos understands, compared ASCII-case-insensitively.
