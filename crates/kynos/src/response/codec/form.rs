@@ -1,5 +1,7 @@
 //! Writing `application/x-www-form-urlencoded` as a response.
 
+use kynos_openapi::model::body::mime_names;
+
 use crate::{
     error::problem::Problem,
     extract::body::form::Form,
@@ -21,7 +23,7 @@ impl<T: serde::Serialize> IntoResponse for Form<T> {
         let mut response = Response::new(Body::from_bytes(bytes::Bytes::from(encoded)));
         response.headers_mut().insert(
             header::CONTENT_TYPE,
-            HeaderValue::from_static("application/x-www-form-urlencoded"),
+            HeaderValue::from_static(mime_names::APPLICATION_FORM_URLENCODED),
         );
         response
     }
@@ -33,7 +35,7 @@ impl<T: Schema> Responses for Form<T> {
             200,
             kynos_openapi::Response::with_content(
                 "OK",
-                "application/x-www-form-urlencoded",
+                mime_names::APPLICATION_FORM_URLENCODED,
                 kynos_openapi::MediaType::new(registry.resolve::<T>()),
             ),
         )

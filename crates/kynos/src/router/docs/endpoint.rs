@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use kynos_openapi::{Method, PathTemplate};
+use kynos_openapi::{Method, PathTemplate, model::body::mime_names};
 
 use crate::{
     http::{HeaderValue, Request, Response, body::Body, header},
@@ -18,11 +18,11 @@ use crate::{
 /// makes for the same bytes.
 const HTML: &str = "text/html; charset=utf-8";
 
-/// Written here rather than taken from
+/// Taken from the ungated `mime_names` rather than from
 /// [`media::Json`](crate::extract::media::Json), which is behind the `json`
 /// feature. That feature is about *application* payloads, and a reference that
 /// implied it would tie the page a human opens to a codec it never uses.
-const JSON: &str = "application/json";
+const JSON: &str = mime_names::APPLICATION_JSON;
 
 /// The page a human opens.
 #[derive(Debug)]

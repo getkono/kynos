@@ -67,7 +67,8 @@ impl ComponentName {
     /// Rewrites `name` into a legal component name.
     ///
     /// Illegal characters are replaced with `_`, and runs of them collapse.
-    /// This is how a generic Rust type name becomes a component key.
+    /// Leading and trailing `_` are then trimmed, unless nothing else would
+    /// remain. This is how a generic Rust type name becomes a component key.
     ///
     /// # Errors
     ///

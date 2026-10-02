@@ -6,7 +6,11 @@ use crate::{
         media::Pdf,
     },
     http::{HeaderValue, header},
-    response::{IntoResponse, negotiate::Accept},
+    response::{
+        IntoResponse,
+        negotiate::{Accept, representation::Representation},
+    },
+    schema::registry::Registry,
 };
 
 #[test]
@@ -195,5 +199,54 @@ fn a_negotiated_response_varies_on_accept_whichever_arm_wins() {
                 .any(|name| name.trim().eq_ignore_ascii_case("accept")),
             "Accept: {field} selected a response whose Vary `{vary}` omits the Accept field"
         );
+    }
+}
+
+/// Asserts `T` is offered under a media type its own 200 response describes.
+///
+/// The two halves of an offer: what negotiation matches `Accept` against, and
+/// the `content` key the description lists. Disagreeing, a client that asked
+/// for the documented type would be refused with a 406.
+fn offered_under_what_it_describes<T: Representation>() {
+    let described = T::responses(&mut Registry::default());
+    let Some(kynos_openapi::RefOr::Item(ok)) = described.get(200) else {
+        panic!("{} describes no inline 200 response", T::media_type());
+    };
+
+    assert!(
+        ok.content.contains_key(T::media_type()),
+        "offered under `{}` but described under {:?}",
+        T::media_type(),
+        ok.content.keys().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_representation_is_offered_under_the_media_type_it_describes() {
+    offered_under_what_it_describes::<Text>();
+    offered_under_what_it_describes::<Binary<Pdf>>();
+    #[cfg(feature = "json")]
+    offered_under_what_it_describes::<crate::extract::body::json::Json<String>>();
+    #[cfg(feature = "form")]
+    offered_under_what_it_describes::<crate::extract::body::form::Form<String>>();
+    #[cfg(feature = "multipart")]
+    offered_under_what_it_describes::<crate::extract::body::multipart::MultipartForm<Fields>>();
+}
+
+/// A multipart form with no fields, which is all an offer's description needs.
+#[cfg(feature = "multipart")]
+struct Fields;
+
+#[cfg(feature = "multipart")]
+impl crate::schema::Schema for Fields {
+    fn schema(_registry: &mut Registry) -> kynos_openapi::Schema {
+        kynos_openapi::Schema::any()
+    }
+}
+
+#[cfg(feature = "multipart")]
+impl crate::response::codec::multipart::IntoMultipart for Fields {
+    fn into_parts(self) -> Vec<crate::extract::body::multipart::Part> {
+        Vec::new()
     }
 }

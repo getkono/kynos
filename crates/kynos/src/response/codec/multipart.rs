@@ -14,6 +14,7 @@
 //! one.
 
 use bytes::Bytes;
+use kynos_openapi::model::body::mime_names;
 
 use crate::{
     extract::{
@@ -95,7 +96,7 @@ impl IntoPart for Bytes {
         Part {
             name: name.to_owned(),
             file_name: None,
-            content_type: Some("application/octet-stream".to_owned()),
+            content_type: Some(mime_names::APPLICATION_OCTET_STREAM.to_owned()),
             bytes: self,
         }
     }

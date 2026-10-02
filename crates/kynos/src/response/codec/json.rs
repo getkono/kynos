@@ -4,6 +4,8 @@
 //! extracting side, because a codec is one type used in both directions. This
 //! module adds the responding half and declares nothing, so it is private.
 
+use kynos_openapi::model::body::mime_names;
+
 use crate::{
     error::problem::Problem,
     http::{HeaderValue, Response, StatusCode, body::Body, header},
@@ -27,7 +29,7 @@ impl<T: serde::Serialize> IntoResponse for Json<T> {
         let mut response = Response::new(Body::from_bytes(bytes::Bytes::from(bytes)));
         response.headers_mut().insert(
             header::CONTENT_TYPE,
-            HeaderValue::from_static("application/json"),
+            HeaderValue::from_static(mime_names::APPLICATION_JSON),
         );
         response
     }
@@ -39,7 +41,7 @@ impl<T: Schema> Responses for Json<T> {
             200,
             kynos_openapi::Response::with_content(
                 "OK",
-                "application/json",
+                mime_names::APPLICATION_JSON,
                 kynos_openapi::MediaType::new(registry.resolve::<T>()),
             ),
         )

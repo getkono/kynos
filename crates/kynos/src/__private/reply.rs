@@ -4,6 +4,8 @@
 //! depend on it, and Kynos already does. So the two shapes a variant takes are
 //! functions here rather than tokens there.
 
+use kynos_openapi::model::body::mime_names;
+
 use crate::{
     error::problem::Problem,
     http::{HeaderValue, Response, StatusCode, body::Body, header},
@@ -43,7 +45,7 @@ pub fn json<T: serde::Serialize>(status: u16, body: &T) -> Response {
     *response.status_mut() = status_code(status);
     response.headers_mut().insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_static("application/json"),
+        HeaderValue::from_static(mime_names::APPLICATION_JSON),
     );
     response
 }

@@ -1,5 +1,7 @@
 //! Writing `text/plain` as a response.
 
+use kynos_openapi::model::body::mime_names;
+
 use crate::{
     extract::body::text::Text,
     http::{HeaderValue, Response, body::Body, header},
@@ -26,7 +28,7 @@ impl Responses for Text {
             200,
             kynos_openapi::Response::with_content(
                 "OK",
-                "text/plain",
+                mime_names::TEXT_PLAIN,
                 kynos_openapi::MediaType::new(registry.resolve::<String>()),
             ),
         )
