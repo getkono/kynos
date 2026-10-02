@@ -45,13 +45,9 @@ buffer that consumes much of what it came for.
   parallel connection driver inside this crate is out of scope, and io_uring is
   not a design constraint today.
 
-The coupling surface inside `server/` is exactly the five points above, and
-that has not changed. What has is the claim that `server/` is the *only* place
-the runtime is named. It was already false at two sites when it was written, and
-three more have since been added deliberately.
-
-A rule that is false is worth less than a list that is checkable, so the claim
-is now an enumeration:
+The five coupling points all live in `server/`, but `server/` is not the only
+place the runtime is named. A rule that is false is worth less than a list that
+is checkable, so the sites are enumerated:
 
 | Site | Names | Why it is not in `server/` |
 | --- | --- | --- |
@@ -75,10 +71,6 @@ decoded before an extractor sees it, on the same `async-compression` traits and
 at the same distance from a socket. That each required an entry here, argued for
 on its own terms, is the mechanism working rather than the mechanism being
 worked around.
-
-Decompression is also the case that shows why this count had to be wired rather
-than asserted. It was a sixth site while the sentence above said there were
-five, and the row that would have caught it was `planned`.
 
 Moving the SSE timer into `server/` was considered and rejected. `TestClient`
 and `Service::call` drive a built service with no server at all — which is what
@@ -237,17 +229,10 @@ code that reaches it is implemented; it has no owning module to be a skeleton.
 `httparse` and `h2` are the clear cases: no member declares either, and they
 are reached only through `hyper`.
 
-`chosen` currently has no occupants, and the rows that held it are the reason
-the status is worth keeping. The three scalar-format rows were `chosen` while
-the decision was made and the alternatives closed — see
-[below](#what-does-not-move-and-why) — because declaring a dependency the tree
-does not name would break the consumed-by-a-member requirement in
-[`nfr.md`](nfr.md#dependencies) for no gain. Each arrived with the `Schema`
-implementation that names it and became `built` in the same commit, since a leaf
-implementation has no skeleton phase to be `designed` in.
-
-`matchit` was the fourth and left the same way: it arrived with the router
-implementation, which is exactly what a `chosen` row predicts happening to it.
+`chosen` has no occupants today and stays because the state is real: a decision
+made and its alternatives closed before any manifest can record it, since
+declaring a dependency the tree does not name would break the
+consumed-by-a-member requirement in [`nfr.md`](nfr.md#dependencies).
 
 `hyper` has two sites rather than one because the body handover is where its
 `Incoming` type enters, and `http/body.rs` is by design the only place the
@@ -306,12 +291,8 @@ handshake, which costs an asymmetric signature and a key exchange each time.
 Kynos defaults to stateless tickets instead
 ([`SessionResumption::Tickets`](../crates/kynos/src/server/tls/mod.rs)): the
 session travels with the client, so no client count evicts one. Its costs are
-written on the variant: a leaked ticket key exposes recorded TLS 1.2 sessions
-and, while it is accepted, lets its holder mint a ticket resuming as any
-mutual-TLS identity over either version; and a resumed mutual-TLS session is
-not checked against its certificate's expiry again. Mutual TLS keeps the
-default; a deployment that cannot accept the forgery risk chooses `Disabled` or
-`Cache`. The keys are
+written on the variant, and what they mean for a client certificate is
+[`security.md`](security.md#where-mutual-tls-fits)'s. The keys are
 random per process and rotate on the first handshake more than six hours after
 the last rotation, so replicas behind a load
 balancer cannot yet resume each other's sessions; sharing them needs a key
@@ -430,9 +411,7 @@ named by four test targets and by nothing under `src/`:
 erasure, [`kynos/tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs)
 for what a payload codec adds, and
 [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs) for
-what producing a description costs at 10, 100 and 1000 operations. Several
-rather than one shared target because an integration binary cannot be depended
-on, so a second crate that counts cannot reach the first one's harness.
+what producing a description costs at 10, 100 and 1000 operations.
 
 Two properties decide which counter, and both are load-bearing. Its counters
 are **thread-local**, so a region reads what the measuring thread allocated
@@ -470,9 +449,8 @@ a count taken under Callgrind is not one.
 
 The [README](../README.md#feature-flags) says what a flag *adds*, which is what
 someone choosing one needs. This says what it *gates* and which document here
-governs the thing behind it, which is what someone changing one needs. Fourteen
-of these were named nowhere in this directory, and a flag whose module has a
-normative home should be reachable from it.
+governs the thing behind it, which is what someone changing one needs. A flag
+whose module has a normative home should be reachable from it.
 
 A gate belongs on the `pub mod` line rather than on each item inside, so the
 module column is also where the `#[cfg]` lives.
@@ -520,40 +498,6 @@ covers the upgrade handshake and then goes silent. Server-Sent Events are the
 edge that stays in, and they stay in precisely because they do not cross it:
 an event stream is one ordinary response body, so `openapi32` describes it as
 one.
-
-### What the table does not yet claim
-
-Nothing, as of the skeleton landing. Every row is `built`: the API-skeleton
-milestone is over, the `todo!()` bodies are implemented, and each crate the
-table names is reached by code that runs.
-
-That is a change worth recording rather than quietly deleting. `multer`,
-`serde_urlencoded`, `async-compression` and `cookie` were `designed` because the
-manifest ran ahead of the skeleton — declared by `crates/kynos` and named by no
-code in it. `futures-core` and `tower` were `designed` for a subtler reason: the
-crate was named, but only in the bound of a body that was still `todo!()`. All
-six are now consumed at exactly the path this table gives them, which is the
-property the *Named in* column exists to be checkable against.
-
-Each optional row is still gated behind an off-by-default feature, so no default
-build carries a dependency it does not use — which is why `futures-core` is
-optional rather than compiled into every 3.1 build for a module 3.1 cannot
-reach, and why `jsonschema` is reachable only through `test-util`.
-
-`chosen` therefore has no occupants either. It stays in the status table because
-the state it names is real and will recur: a decision made, and the alternatives
-closed, before any manifest records it.
-
-`mime` and `pin-project-lite` were in this list and are gone. Neither was a
-deferred wiring job: media types are carried as `&'static str` on purpose, for
-the reason [`mime_names.rs`](../crates/kynos-openapi/src/model/body/mime_names.rs)
-records — the model must express media type *ranges* and vendor types that a
-parsed `Mime` would normalize away — and the streaming surface pins nothing
-by hand. A row whose module deliberately went the other way is not `designed`,
-it is wrong.
-
-This section exists because a dependency graph that overstates what is wired is
-worse than no graph.
 
 ## Invariants
 
