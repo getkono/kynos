@@ -2121,6 +2121,53 @@ fn a_shared_ticket_is_honoured_for_its_lifetime_only() {
     );
 }
 
+/// What rustls calls stamps and judges a ticket by the wall clock, in seconds
+/// since the Unix epoch: the one clock replicas agree on. A ticketer on any
+/// other clock would agree with itself and with no replica.
+#[cfg(feature = "tls")]
+#[test]
+fn a_shared_ticket_is_stamped_and_judged_by_the_wall_clock() {
+    use tokio_rustls::rustls::server::ProducesTickets;
+
+    let wall_clock = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("the clock is past the epoch")
+            .as_secs()
+    };
+    let ticketer = shared_ticketer(crate::server::tls::ticket::TicketKeys::new(
+        ticket_key(1),
+        [],
+    ));
+
+    let before = wall_clock();
+    let issued = ticketer.encrypt(b"session").expect("a ticket seals");
+    let after = wall_clock();
+    assert_eq!(
+        ticketer.open_at(after, &issued),
+        Some(b"session".to_vec()),
+        "issued no earlier than a lifetime ago"
+    );
+    assert_eq!(
+        ticketer.open_at(after + 3601, &issued),
+        None,
+        "issued no later than now"
+    );
+
+    let fresh = ticketer
+        .seal_at(before, b"session")
+        .expect("a ticket seals");
+    let stale = ticketer
+        .seal_at(before - 3601, b"session")
+        .expect("a ticket seals");
+    assert_eq!(ticketer.decrypt(&fresh), Some(b"session".to_vec()));
+    assert_eq!(
+        ticketer.decrypt(&stale),
+        None,
+        "judged at no earlier than now"
+    );
+}
+
 /// Rotating through a handle reaches a ticketer already built from a clone of
 /// it: the two-step rotation keeps a ticket resuming until its key is dropped,
 /// and issues under the new key from the step that names it.
