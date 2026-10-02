@@ -1940,7 +1940,7 @@ async fn a_resumed_mutual_tls_session_keeps_the_client_identity() {
 
 /// Shared tickets under `secret`, each call deriving its keys afresh as a
 /// separate process would.
-#[cfg(feature = "tls")]
+#[cfg(all(feature = "tls", feature = "http1"))]
 fn shared_tickets(secret: u8) -> crate::server::tls::SessionResumption {
     crate::server::tls::SessionResumption::SharedTickets {
         keys: crate::server::tls::ticket::TicketKeys::new(ticket_key(secret), []),
