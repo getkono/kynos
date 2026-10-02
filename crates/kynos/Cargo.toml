@@ -374,10 +374,9 @@ json = []
 form = ["dep:serde_urlencoded"]
 multipart = ["dep:multer"]
 protobuf = ["dep:prost"]
-# Kynos owns the RFC 6265 this needs. The `cookie` crate was declared here and
-# named by no source line: the derive hand-rolled the jar and the response side
-# did not exist. Using it now would put `cookie::Cookie` in a public signature,
-# which `docs/architecture.md`'s re-export rule forbids.
+# Kynos owns the RFC 6265 this needs: the `cookie` crate would put
+# `cookie::Cookie` in a public signature, which `docs/architecture.md`'s
+# re-export rule forbids.
 cookie = []
 compression = ["dep:async-compression"]
 

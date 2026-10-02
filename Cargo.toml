@@ -20,31 +20,10 @@ publish = true
 kynos-macros = { version = "0.3.0", path = "crates/kynos-macros" }
 kynos-openapi = { version = "0.3.0", path = "crates/kynos-openapi", default-features = false }
 
-# The allocation-count kind in `docs/performance.md` needs a global allocator
-# that reports what a region allocated, and `unsafe_code = "forbid"` below means
-# no crate here can write one: `forbid` is not liftable by an `#[allow]`, so the
-# `unsafe impl GlobalAlloc` a counter requires cannot compile in any crate that
-# inherits these lints, which is every member.
-# `alloc_counter` is the counter with the two properties that measurement needs.
-# Its counters are thread-local, so a region reads what the measuring thread
-# allocated rather than what the process did -- `libtest` always has a second
-# thread alive beside the one running a test, and a process-global counter
-# reports its work as the measured path's. And it installs nothing on its own
-# behalf: each target that wants it declares `#[global_allocator]` itself,
-# which is what keeps the instrument out of every other test binary in the
-# package.
-# `macros` is off because the attribute form is unused; `std` carries
-# `AllocCounterSystem`, and `pin-utils` rides along for an async helper this
-# tree does not call.
-# It is `0.0.4` and was last published in 2019, which is the trade taken
-# knowingly: it is a dev-dependency of four test targets and the surface used
-# is one function.
-# `stats_alloc` was this dependency and counts into process globals, which is
-# the flake it caused. `allocation-counter` counts per thread but declares
-# `#[global_allocator]` inside the library, which would install the instrument
-# in every test binary in the package rather than in the one that asked. `dhat`
-# is a profiler rather than a counter: it captures a backtrace per allocation
-# and carries six crates this tree does not otherwise have.
+# Why this counter, and why one at all, is `docs/architecture.md`'s
+# (Dependencies). `macros` is off because the attribute form is unused; `std`
+# carries `AllocCounterSystem`, and `pin-utils` rides along for an async helper
+# this tree does not call.
 alloc_counter = { version = "0.0.4", default-features = false, features = ["std"] }
 async-compression = "0.4.19"
 bigdecimal = { version = "0.4.10", default-features = false }
@@ -166,11 +145,9 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 # `kynos::error::Error` and friends read better than `kynos::error::KynosError`.
 module_name_repetitions = "allow"
-# `needless_pass_by_value`, `unused_self` and `must_use_candidate` were allowed
-# here while the surface was `todo!()`-bodied and Clippy could not see how
-# arguments and receivers were consumed. The bodies landed, the cleanup was
-# taken, and the three allows are gone: what each site should be is now argued
-# at the site. Where a signature is by value on purpose -- a `map_err`
+# `needless_pass_by_value`, `unused_self` and `must_use_candidate` are not
+# allowed here: what each site should be is argued at the site. Where a
+# signature is by value on purpose -- a `map_err`
 # argument, a builder that reads better owning what it is handed, an iterator
 # the search has to clone -- there is an `#[allow]` with the reason beside it,
 # which is a claim a reviewer can disagree with. A blanket allow was not.
