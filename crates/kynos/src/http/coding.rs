@@ -37,7 +37,7 @@ fn aliases(token: &str) -> &'static [&'static str] {
 /// reads both as 1000. They differ where the field is silent too: `None` here,
 /// 1000 there.
 #[must_use]
-pub fn quality(accept: &str, token: &str) -> Option<u16> {
+pub(crate) fn quality(accept: &str, token: &str) -> Option<u16> {
     // A malformed weight is a refusal rather than a default: a client that
     // wrote something RFC 9110 section 12.4.2 cannot express did not ask for
     // this coding. That includes a value above 1, which read literally would
@@ -107,7 +107,11 @@ fn weight(accept: &str, token: &str) -> Option<Weight> {
 /// codings a tie goes to the earlier entry in `available`, so a caller states
 /// its own preference by ordering that list.
 #[must_use]
-pub fn preferred<'a>(accept: &str, available: &[&'a str]) -> Option<&'a str> {
+#[cfg_attr(
+    not(any(test, feature = "assets")),
+    expect(dead_code, reason = "the asset server is its only caller")
+)]
+pub(crate) fn preferred<'a>(accept: &str, available: &[&'a str]) -> Option<&'a str> {
     let mut best: Option<(&'a str, u16)> = None;
 
     for token in available {
@@ -136,7 +140,7 @@ pub fn preferred<'a>(accept: &str, available: &[&'a str]) -> Option<&'a str> {
 /// default of 1000 — even though the same wildcard refuses every coding it
 /// speaks for.
 #[must_use]
-pub fn identity_quality(accept: &str) -> u16 {
+pub(crate) fn identity_quality(accept: &str) -> u16 {
     match weight(accept, "identity") {
         Some(Weight::Qvalue(thousandths)) => thousandths,
         None | Some(Weight::Malformed) => 1_000,
