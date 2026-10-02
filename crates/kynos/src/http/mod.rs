@@ -45,6 +45,3 @@ pub type Parts = http::request::Parts;
 
 /// An outgoing response.
 pub type Response = http::Response<Body>;
-
-/// The head of an outgoing response.
-pub type ResponseParts = http::response::Parts;
