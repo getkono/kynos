@@ -144,10 +144,8 @@ the description does not. `Scoped<S, R>` is how an application closes that, and
 stays wide for the same reason it always was.
 
 Where a handler's own error type also names 403, the two meet under
-[`errors.md`](errors.md#where-the-union-happens)'s union rule: two narrowed
-sides flatten into a choice over every type either publishes, while a side
-admitting every problem document wins outright. That is why the narrowing has to
-reach the contributor that decides the status —
+[`errors.md`](errors.md#where-the-union-happens)'s union rule, which is why the
+narrowing has to reach the contributor that decides the status —
 `ScopedRejection<R>`, the rejection a `Scoped` argument raises — and not only
 the `Describe` beside it.
 

@@ -47,12 +47,6 @@ each is a target of its own rather than more rows in `alloc.rs` because a
 `#[global_allocator]` measures the whole binary it is installed in, so a body
 constructor's number and a codec's cannot share a file with the routing path's.
 
-`conformance.rs` runs now that the router and `test/` have landed, and both of
-its assertions pass. `every_declared_response_is_exercised` carried an
-`#[ignore]` naming a 413 that `BodyRejection` no longer declares — one of
-[the defects the harness found](#what-the-harness-found-on-its-first-run). The
-attribute outlived its reason and went with it.
-
 | File | Asserts |
 | --- | --- |
 | [`pipeline.rs`](../crates/kynos/tests/pipeline.rs) | an `async fn` is a `Handler`, `routes!` collects it, `Endpoints` accepts it, mounting reaches the context that supplies its dependencies, each route attribute writes its own method, and both ends of the arity list typecheck |
@@ -100,12 +94,9 @@ per-type wire shapes, its own `size.rs`, and its own
 [`alloc.rs`](../crates/kynos-openapi/tests/alloc.rs) — what one `to_json` and
 one `emit` allocate at 10, 100 and 1000 operations, that each decade's growth
 factor is below the quadratic one in allocations and in output bytes alike, and
-that a repeated emission costs what the first one did. It is a target of its
-own for the reason `kynos`'s namesake is: a `#[global_allocator]` is
-process-wide, so a counter installed in the library's unit-test binary would
-reach every unit test in it. Two targets rather than one because an integration
-binary cannot be depended on — each crate that counts installs the counter
-itself. `support/` beside them is not a target — it is the generator module the
+that a repeated emission costs what the first one did. Why it is a target of
+its own, and one per counting crate, is
+[`performance.md`](performance.md#the-taxonomy)'s. `support/` beside them is not a target — it is the generator module the
 property files share, included by `#[path]` for the same reason.
 
 `crates/kynos-profile/` is a fourth member and holds no integration target:
@@ -152,9 +143,7 @@ at the dev profile declared there rather than at cargo's default, which is why
 records, so nothing about the suite's output turns on it; a change to that file
 that did reach the output would show up as every snapshot moving at once.
 
-Both coverage tasks carry it. `coverage:ci` always did; `coverage` did not,
-which mattered because `hooks:pre-push` runs that one — so every push ran the
-suite under exactly the instrumentation this paragraph says perturbs it.
+Both coverage tasks carry it.
 
 ## The allocation
 
@@ -219,14 +208,14 @@ with the wording left to a `.stderr` snapshot, where a reader sees it rendered.
 
 ### Two rules that are not code kinds
 
-**A `todo!()`-bodied item owed its `no_run` doctest and nothing further.**
-Anything more would have asserted that `todo!()` panics. That rule is spent: the
+**A `todo!()`-bodied item owes its `no_run` doctest and nothing further.**
+Anything more would assert that `todo!()` panics. The rule is spent — the
 API-skeleton milestone is over, the bodies landed, and what it deferred has been
-paid — `router/`, `extract/params/`, `response/codec/`, `response/stream/`,
-`middleware/`, `security/` and `src/test/` each left zero executing test
-functions behind. It is recorded rather than deleted because a future skeleton
-milestone would reach for it again, and because the shape of what it deferred is
-the reason those modules were the last to be covered.
+paid — and is kept because a future skeleton milestone would reach for it again.
+The compile-only guard such a skeleton used, `if
+std::hint::black_box(false) { .. }`, is spent with it: a guarded body runs no
+assertion, so a new one is the sign of a surface that should not have been written yet, not a
+testing idiom.
 
 **Conformance has an outward-facing half, and Kynos owns it.** The harness
 checks a running service against its own description and exports nothing, which
@@ -373,12 +362,9 @@ The declared side of each of the three is read off disk, walked rather than
 transcribed, over the directory the trait's implementations actually live in:
 `src/middleware/` for the interceptor and observer sets, and the whole of
 `crates/kynos/src` for the `ShortCircuit` set, because `Infallible` implements
-it in `src/response/mod.rs`. Scoping a walk to less than that is this
-paragraph's own cautionary tale one level up. A transcribed list is a third
-place the set is written down, and it went wrong exactly as that predicts: the
-observer counter opened ten files, `compression.rs` was not among them, and an
-`Observer` implemented there would have been counted by nothing while both
-counters kept passing. Walking the directory removes the list rather than
+it in `src/response/mod.rs`. A transcribed list would be a third place the set
+is written down, and an implementation in a file it omits would be counted by
+nothing while both counters kept passing. Walking the directory removes the list rather than
 maintaining it, and lets the check hold at baseline features too, since source
 text exists on disk whether or not the feature that compiles it is on.
 
@@ -726,30 +712,6 @@ The `Provides` case has a positive control in
 That is weaker than a sibling block: a unit test and a doctest can drift apart,
 and the reader of the compile-fail case does not see the control.
 
-## The compile-only guard, retired
-
-```rust
-if std::hint::black_box(false) { .. }
-```
-
-This asserted that a call *typechecks* without executing it, and existed
-because the pre-v1 API skeleton was `todo!()`-bodied: the types were the
-deliverable, and running them would only have proved that `todo!()` panics.
-`black_box` rather than `if false`, so the compiler could not prove the branch
-dead and skip the analysis that was the entire point.
-
-It is recorded here because it left a mark on the suite rather than because it
-is available. **A guarded body holds no assertions.** Nothing inside one runs,
-so an `assert_eq!` there is a claim the suite appears to make and never checks
-— the one failure mode a reader cannot see, since the test passes and reads as
-though it verified something. `routes_collects_every_operation` and
-`endpoint_collections_compose` each asserted a count that way, and each got its
-count back when the body landed.
-
-Every use of the guard was a marker for an unimplemented body, and the bodies
-have all landed. There are none left, and a new one is not a testing idiom to
-reach for — it is the sign of a surface that should not have been written yet.
-
 ## Hermeticity
 
 Tests are hermetic by construction, not by convention.
@@ -767,15 +729,10 @@ and both assert they saw its initial value, which is only possible when each
 runs in its own process. They pass under `cargo nextest run` and fail under
 `cargo test`. That converts "we use nextest" from a README claim into a test.
 
-[`alloc.rs`](../crates/kynos/tests/alloc.rs) used to rest on it and no longer
-does. `stats_alloc` counted into process globals rather than thread locals, so
-its tests contaminated each other as threads of one binary and, worse, were
-contaminated by the harness thread `libtest` keeps alive beside the one running
-a test — one process per test does not make one thread per process, and that
-residue moved a replayed request's count on roughly one request in ten
-thousand. `alloc_counter` counts per thread, so the file is now correct by
-construction and passes with each of its tests on a concurrent thread of one
-process.
+[`alloc.rs`](../crates/kynos/tests/alloc.rs) does not rest on it: its counter
+counts per thread, for the reason
+[`architecture.md`](architecture.md#dependencies) gives, so the file passes
+with each of its tests on a concurrent thread of one process.
 [`work_on_another_thread_is_not_counted`](../crates/kynos/tests/alloc.rs) is
 the assertion that holds the counter to it, once for both counted targets: the
 property is `alloc_counter`'s rather than any fixture's.

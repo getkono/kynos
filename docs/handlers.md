@@ -60,11 +60,8 @@ one of the two implementations was removed.
 
 ## Where the rejection union happens
 
-`Handler::describe` contributes, in order:
-
-1. each argument's `Describe`;
-2. each argument's `Rejection`, as a `Responses`;
-3. the return type's `Responses`.
+What `Handler::describe` contributes, in what order, and what happens where two
+contributions name one status is [`errors.md`](errors.md#where-the-union-happens)'s.
 
 **The rejection half lives in `Handler::describe`, not in `Describe`.** The
 reason is a scoping fact rather than a preference: `Rejection` is an associated
@@ -77,20 +74,6 @@ That is what makes *emitted ⊇ observable* — the invariant
 [`middleware.md`](middleware.md#soundness-not-exactness) states — mechanical
 rather than a convention every extractor author has to remember. An extractor
 cannot forget to document its own failures, because it was never asked to.
-
-**What "union" means where two of them name one status.** A description files
-one response per status, so the three contributions are not concatenated.
-`OperationCx::add_responses` keeps the entry already declared — the order above
-is the precedence — with one exception: where both entries are
-`application/problem+json` documents narrowed to the type URIs they publish,
-the two become a choice over both, described as both. That is the only conflict
-with a meaning beyond precedence, because two problem documents on one status
-are two branches of one schema and two arbitrary responses are not.
-[`errors.md`](errors.md#what-the-declared-response-narrows-to) carries the rule,
-including what happens when one side narrows nothing.
-
-`Result<T, E>` unions the two sides on the way out, which is where a handler's
-success and failure descriptions come together with no restatement anywhere.
 
 ## Status is a type
 
@@ -196,7 +179,7 @@ Each is a rule with a mechanical enforcement point.
 | # | Rule | Enforced by |
 | --- | --- | --- |
 | 2 | No handler receives the raw request, its body, or its whole header map | `Describe` has no blanket implementation, and Kynos ships none for `Request`, `Body` or `HeaderMap` |
-| 4 | No status is chosen at run time | `IntoResponse` is unimplemented for `StatusCode`, `String`, `&str` and tuples of them; `Responses` is unimplemented for `Problem`, whose status is a field. See [`errors.md`](errors.md#a-problem-is-a-representation-not-a-response) |
+| 4 | No status is chosen at run time | the unimplemented impls [`errors.md`](errors.md#rules) lists; **#4** below says what a handler writes instead |
 | 5 | `Accept`, `Content-Type` and `Authorization` are never header parameters | `#[derive(HeaderParams)]` rejects them by folded name, and names the right tool for each |
 | 6 | No unconstrained body type | `serde_json::Value` and friends have no [`Schema`](../crates/kynos/src/schema/mod.rs) implementation |
 
@@ -248,5 +231,4 @@ The alternative to `impl Describe for Inject<T> {}` is exempting some arguments
 from the trait entirely — which is what a second argument category would be.
 That trade looks like tidiness and is actually a hole: an exemption is invisible
 at the call site, whereas an empty body is a line of code someone had to write
-and a reviewer can see. The same reasoning removed `FromContext`; see
-[`state.md`](state.md#why-fromcontext-was-deleted).
+and a reviewer can see.

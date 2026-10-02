@@ -83,8 +83,7 @@ is left to the format, which is the only honest thing the vocabulary can say.
 `u64` keeps `minimum: 0` because that bound *is* exactly representable.
 
 The unsigned widths are registered, so a `u32` is `uint32` and not a widened
-`int64`. Earlier revisions widened because only the signed OAS formats were
-known; that workaround is gone.
+`int64`.
 
 ## Behind a feature flag
 
@@ -363,12 +362,6 @@ refusing, because it is silent.
 
 So the refusal stands, and it is a claim about what is describable rather than
 an unimplemented case.
-
-**This was reopened and re-answered.** The question was whether a downstream
-consumer needed untagged types; the acceptance contract it came from asks for
-*"enums, tagged unions, `oneOf`"* and never names untagged. Everything on that
-list is already emitted, so nothing was blocked. Reading the contract rather
-than the summary of it is what settled the question.
 
 ### What to write instead
 
