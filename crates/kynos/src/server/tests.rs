@@ -1,7 +1,7 @@
 #[cfg(feature = "http1")]
-use crate::server::protocol::Http1Config;
+use crate::server::protocol::http1::Http1Config;
 #[cfg(feature = "http2")]
-use crate::server::protocol::{Http2Config, Http2FlowControl, Http2KeepAlive};
+use crate::server::protocol::http2::{Http2Config, Http2FlowControl, Http2KeepAlive};
 
 #[cfg(feature = "http1")]
 #[test]
@@ -2297,7 +2297,9 @@ mod protocol_configuration {
     use crate::server::{
         error::ServerError,
         protocol::{
-            Http1Config, Http2Config, Http2FlowControl, Http2KeepAlive, validate_protocol_config,
+            http1::Http1Config,
+            http2::{Http2Config, Http2FlowControl, Http2KeepAlive},
+            validate_protocol_config,
         },
     };
 
@@ -2499,7 +2501,7 @@ fn the_configured_http1_header_cap_is_the_one_the_driver_is_told() {
         let config = Http1Config::default().max_headers(configured);
 
         assert_eq!(
-            crate::server::protocol::forwarded_max_headers(&config),
+            crate::server::protocol::http1::forwarded_max_headers(&config),
             configured,
             "a cap of {configured} must reach the driver"
         );

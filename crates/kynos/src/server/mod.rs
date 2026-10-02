@@ -60,9 +60,9 @@ use crate::{
 };
 
 #[cfg(feature = "http1")]
-use crate::server::protocol::Http1Config;
+use crate::server::protocol::http1::Http1Config;
 #[cfg(feature = "http2")]
-use crate::server::protocol::Http2Config;
+use crate::server::protocol::http2::Http2Config;
 #[cfg(feature = "tls")]
 use crate::server::tls::{TlsConfig, TlsRuntime, document::apply_mutual_tls};
 
