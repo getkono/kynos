@@ -30,7 +30,7 @@
 //! [`architecture.md`](../../../../docs/architecture.md)'s third invariant.
 
 pub mod headers;
-pub mod matching;
+mod matching;
 pub mod offer;
 pub mod tag;
 
@@ -84,8 +84,8 @@ use crate::{
 /// the default can see that rather than having to guess.
 ///
 /// **No 400 either.** A range this field cannot parse is dropped and the rest
-/// of the field still counts, which is the call
-/// [`http::date`](crate::http::date) already makes: a field the server can
+/// of the field still counts, which is the call Kynos already makes for an
+/// `If-Modified-Since` that is not an HTTP-date: a field the server can
 /// partly read is one it should partly honour, and nothing in RFC 9110 obliges
 /// a 400 here.
 ///

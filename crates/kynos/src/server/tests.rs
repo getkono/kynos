@@ -1,7 +1,7 @@
 #[cfg(feature = "http1")]
-use crate::server::protocol::Http1Config;
+use crate::server::protocol::http1::Http1Config;
 #[cfg(feature = "http2")]
-use crate::server::protocol::{Http2Config, Http2FlowControl, Http2KeepAlive};
+use crate::server::protocol::http2::{Http2Config, Http2FlowControl, Http2KeepAlive};
 
 #[cfg(feature = "http1")]
 #[test]
@@ -32,6 +32,102 @@ fn http2_defaults_are_owned_by_kynos() {
             timeout: std::time::Duration::from_secs(20),
         })
     );
+}
+
+/// Every setter writes its own field and no other: each value differs from
+/// its default, and the whole struct is compared.
+#[cfg(feature = "http1")]
+#[test]
+fn http1_setters_write_their_own_fields() {
+    use std::time::Duration;
+
+    let http1 = Http1Config::default()
+        .keep_alive(false)
+        .header_read_timeout(Some(Duration::from_secs(5)))
+        .max_headers(64)
+        .max_buffer_size(65_536);
+    assert_eq!(
+        http1,
+        Http1Config {
+            keep_alive: false,
+            header_read_timeout: Some(Duration::from_secs(5)),
+            max_headers: 64,
+            max_buffer_size: 65_536,
+        }
+    );
+}
+
+/// Every setter writes its own field and no other: each value differs from
+/// its default, and the whole struct is compared.
+#[cfg(feature = "http2")]
+#[test]
+fn http2_setters_write_their_own_fields() {
+    use std::time::Duration;
+
+    let keep_alive = Http2KeepAlive {
+        interval: Duration::from_secs(7),
+        timeout: Duration::from_secs(3),
+    };
+    let http2 = Http2Config::default()
+        .max_concurrent_streams(64)
+        .flow_control(Http2FlowControl::Adaptive)
+        .keep_alive(Some(keep_alive))
+        .max_header_list_size(8 * 1024)
+        .max_send_buffer_size(128 * 1024)
+        .max_pending_accept_reset_streams(5)
+        .max_local_error_reset_streams(256);
+    assert_eq!(
+        http2,
+        Http2Config {
+            max_concurrent_streams: 64,
+            flow_control: Http2FlowControl::Adaptive,
+            keep_alive: Some(keep_alive),
+            max_header_list_size: 8 * 1024,
+            max_send_buffer_size: 128 * 1024,
+            max_pending_accept_reset_streams: 5,
+            max_local_error_reset_streams: 256,
+        }
+    );
+}
+
+/// The whole retry schedule: four doubling waits, then the fifth consecutive
+/// failure ends the listener, and every failure past it does too.
+#[test]
+fn a_failing_accept_backs_off_by_doubling_and_gives_up_at_the_fifth() {
+    use std::time::Duration;
+
+    use crate::server::accept::AcceptBackoff;
+
+    let mut backoff = AcceptBackoff::default();
+    let schedule = (0..6).map(|_| backoff.fail()).collect::<Vec<_>>();
+
+    assert_eq!(
+        schedule,
+        [
+            Some(Duration::from_millis(10)),
+            Some(Duration::from_millis(20)),
+            Some(Duration::from_millis(40)),
+            Some(Duration::from_millis(80)),
+            None,
+            None,
+        ]
+    );
+}
+
+/// A successful accept starts the schedule over, so failures separated by a
+/// success never add up to the limit.
+#[test]
+fn a_successful_accept_restarts_the_backoff() {
+    use std::time::Duration;
+
+    use crate::server::accept::AcceptBackoff;
+
+    let mut backoff = AcceptBackoff::default();
+    backoff.fail();
+    backoff.fail();
+    backoff.succeed();
+
+    assert_eq!(backoff.fail(), Some(Duration::from_millis(10)));
 }
 
 #[test]
@@ -2257,7 +2353,9 @@ mod protocol_configuration {
     use crate::server::{
         error::ServerError,
         protocol::{
-            Http1Config, Http2Config, Http2FlowControl, Http2KeepAlive, validate_protocol_config,
+            http1::Http1Config,
+            http2::{Http2Config, Http2FlowControl, Http2KeepAlive},
+            validate_protocol_config,
         },
     };
 
@@ -2459,7 +2557,7 @@ fn the_configured_http1_header_cap_is_the_one_the_driver_is_told() {
         let config = Http1Config::default().max_headers(configured);
 
         assert_eq!(
-            crate::server::protocol::forwarded_max_headers(&config),
+            crate::server::protocol::http1::forwarded_max_headers(&config),
             configured,
             "a cap of {configured} must reach the driver"
         );

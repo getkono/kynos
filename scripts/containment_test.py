@@ -1875,12 +1875,30 @@ class Main(unittest.TestCase):
         # holds. `http/body.rs` is not `unchecked.rs`, which is the one file
         # this row allows.
         corpus = self.appending(
-            "crates/kynos/src/http/body.rs", "\nuse tower::Service;\n"
+            "crates/kynos/src/http/body.rs", "\nuse tower_layer::Layer;\n"
         )
         status, failures = self.report(corpus=corpus)
         self.assertEqual(status, 1)
         reported = self.naming(
-            failures, "`tower` and `tower-service` are named only in `unchecked.rs`"
+            failures,
+            "`tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs`",
+        )
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/http/body.rs", reported[0])
+
+    def test_tower_itself_stays_confined_to_unchecked(self):
+        # `tower` is no longer a dependency of the `unchecked` feature, but it
+        # is still a dev-dependency, so test-only code under `src` could name
+        # it. Its name in the row's tuple is what keeps that reported; the
+        # case above names `tower_layer` and says nothing about `tower`.
+        corpus = self.appending(
+            "crates/kynos/src/http/body.rs", "\nuse tower::ServiceExt;\n"
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(
+            failures,
+            "`tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs`",
         )
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/http/body.rs", reported[0])

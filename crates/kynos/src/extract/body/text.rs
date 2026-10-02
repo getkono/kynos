@@ -1,5 +1,7 @@
 //! The `text/plain` body codec.
 
+use kynos_openapi::model::body::mime_names;
+
 use crate::{
     error::rejection::BodyRejection,
     extract::{
@@ -16,7 +18,7 @@ use crate::{
 pub struct Text(pub String);
 
 /// One spelling, read by both halves: what is decoded and what is described.
-const MEDIA_TYPE: &str = "text/plain";
+const MEDIA_TYPE: &str = mime_names::TEXT_PLAIN;
 
 impl<C: Sync> FromRequest<C> for Text {
     type Rejection = BodyRejection;

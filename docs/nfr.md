@@ -272,7 +272,7 @@ rewrite.
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | reliability | No extractor panics on any input | `cargo-fuzz` target per extractor, run nightly, corpus committed | `needs-tooling` |
-| security | Header count and header-list size are bounded by default | The driver is configured from [`Http1Config`](../crates/kynos/src/server/protocol.rs) and `Http2Config` on every connection; [`server/tests.rs`](../crates/kynos/src/server/tests.rs) asserts the configured cap is the one forwarded | `enforced` |
+| security | Header count and header-list size are bounded by default | The driver is configured from [`Http1Config`](../crates/kynos/src/server/protocol/http1.rs) and [`Http2Config`](../crates/kynos/src/server/protocol/http2.rs) on every connection; [`server/tests.rs`](../crates/kynos/src/server/tests.rs) asserts the configured cap is the one forwarded | `enforced` |
 | security | A body-size limit is available, and once mounted is enforced *and* declared | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting rejection at limit+1, that a declared length past the limit is refused before the body is read, and that a service mounting none neither refuses nor declares a 413 | `enforced`; no default, deliberately, and `planned` for the allocation bound |
 | security | Per-IP connection caps | none yet — see below | `planned` |
 | correctness | Every Rust type expressible as a handler input has a valid JSON Schema projection | Property test over a macro fixture set, validated against 3.1 and 3.2 validators | `planned` |
@@ -545,7 +545,7 @@ fails the build when a crate is named outside the module that owns it.
 | compatibility | `matchit` may be named only under `router/` | `mise run containment:check` | `enforced` |
 | compatibility | `socket2` is named only in `server/tcp.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `h2` and `httparse` are never named | `mise run containment:check` | `enforced` |
-| compatibility | `tower` and `tower-service` are named only in `unchecked.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs` | `mise run containment:check` | `enforced` |
 | dx | Every crate in `[workspace.dependencies]` is consumed by a member | `cargo-udeps` or an equivalent manifest check | `needs-tooling` |
 
 ## Macros

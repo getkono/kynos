@@ -25,7 +25,7 @@ use crate::server::error::ServerError;
 /// probe while data it sent is unacknowledged, so a peer that vanished
 /// mid-response is released by retransmission timeouts instead — some fifteen
 /// minutes at Linux's defaults. HTTP/2's
-/// [`keep_alive`](crate::server::protocol::Http2Config::keep_alive) bounds that
+/// [`keep_alive`](crate::server::protocol::http2::Http2Config::keep_alive) bounds that
 /// case for an HTTP/2 connection; nothing Kynos sets bounds it for HTTP/1.
 ///
 /// Both durations are whole seconds on the wire, from one to Linux's ceiling of

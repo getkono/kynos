@@ -1,7 +1,8 @@
 //! Serving every listener over TLS.
 
-pub mod certificate;
-pub mod document;
+mod certificate;
+pub(in crate::server) mod document;
+
 pub mod error;
 
 use std::{

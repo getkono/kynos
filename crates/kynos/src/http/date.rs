@@ -51,7 +51,7 @@ const MONTHS: [&str; 12] = [
 /// sender to produce. `None` for a time before the epoch, which no filesystem
 /// this serves reports and which has no representation in the grammar anyway.
 #[must_use]
-pub fn format(time: SystemTime) -> Option<String> {
+pub(crate) fn format(time: SystemTime) -> Option<String> {
     let seconds = time.duration_since(UNIX_EPOCH).ok()?.as_secs();
     let days = i64::try_from(seconds / 86_400).ok()?;
     let rest = seconds % 86_400;
@@ -78,7 +78,7 @@ pub fn format(time: SystemTime) -> Option<String> {
 /// value "is not a valid HTTP-date" must be ignored, and a 400 for one would
 /// refuse a request the specification says to serve.
 #[must_use]
-pub fn parse(value: &str) -> Option<SystemTime> {
+pub(crate) fn parse(value: &str) -> Option<SystemTime> {
     let value = value.trim();
 
     imf_fixdate(value)

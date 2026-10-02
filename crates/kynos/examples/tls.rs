@@ -50,7 +50,7 @@ use kynos::{
     Router,
     server::{
         Server,
-        protocol::{Http1Config, Http2Config},
+        protocol::{http1::Http1Config, http2::Http2Config},
         tls::{ClientCertificateConfig, SessionResumption, TlsConfig, error::TlsError},
     },
 };

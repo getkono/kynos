@@ -15,7 +15,7 @@
 ///
 /// Longest suffix wins, so `.tar.gz` would beat `.gz` if both were listed.
 /// Sorted by extension, because a table a human maintains is one a human reads.
-pub const EXTENSIONS: &[(&str, &str)] = &[
+pub(crate) const EXTENSIONS: &[(&str, &str)] = &[
     (".atom", "application/atom+xml"),
     (".avif", "image/avif"),
     (".bmp", "image/bmp"),
@@ -60,14 +60,14 @@ pub const EXTENSIONS: &[(&str, &str)] = &[
 /// RFC 9110 section 8.3: a sender that does not know the media type sends this
 /// rather than guessing, and a recipient treats it as an opaque stream. Which
 /// is the honest answer, and better than a guess a browser might act on.
-pub const FALLBACK: &str = "application/octet-stream";
+pub(crate) const FALLBACK: &str = kynos_openapi::model::body::mime_names::APPLICATION_OCTET_STREAM;
 
 /// The media type `path`'s extension names, or `None`.
 ///
 /// The longest matching suffix wins, and the comparison is
 /// ASCII-case-insensitive because a file called `LOGO.PNG` is a PNG.
 #[must_use]
-pub fn for_path(path: &str) -> Option<&'static str> {
+pub(crate) fn for_path(path: &str) -> Option<&'static str> {
     let lowered = path.to_ascii_lowercase();
 
     EXTENSIONS

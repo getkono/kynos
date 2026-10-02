@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use bytes::Bytes;
 use http_body_util::BodyExt;
+use kynos_openapi::model::body::mime_names;
 
 use crate::{
     error::rejection::BodyRejection,
@@ -28,7 +29,7 @@ use crate::{
 pub struct MultipartForm<T>(pub T);
 
 /// One spelling, read by both halves: what is decoded and what is described.
-const MEDIA_TYPE: &str = "multipart/form-data";
+const MEDIA_TYPE: &str = mime_names::MULTIPART_FORM_DATA;
 
 /// One uploaded file within a [`MultipartForm`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

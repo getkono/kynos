@@ -5,6 +5,8 @@
 //! rather than shrugging. Declaring a unit struct and implementing
 //! [`MediaType`] is all a vendor type needs.
 
+use kynos_openapi::model::body::mime_names;
+
 /// A media type usable as the `M` parameter of
 /// [`Binary`](crate::extract::body::binary::Binary) or
 /// [`QueryString`](crate::extract::params::query::QueryString).
@@ -21,7 +23,7 @@ pub trait MediaType {
 pub struct OctetStream;
 
 impl MediaType for OctetStream {
-    const MEDIA_TYPE: &'static str = "application/octet-stream";
+    const MEDIA_TYPE: &'static str = mime_names::APPLICATION_OCTET_STREAM;
 }
 
 /// `application/pdf`.
@@ -59,5 +61,5 @@ pub struct Json;
 
 #[cfg(feature = "json")]
 impl MediaType for Json {
-    const MEDIA_TYPE: &'static str = "application/json";
+    const MEDIA_TYPE: &'static str = mime_names::APPLICATION_JSON;
 }

@@ -109,6 +109,7 @@ tokio-rustls = { version = "0.26.4", default-features = false, features = [
   "tls12",
 ] }
 tower = "0.5.2"
+tower-layer = "0.3.3"
 tower-service = "0.3.3"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.20"

@@ -9,7 +9,7 @@
 //! harness counts what Kynos does between a parsed request and a built
 //! response, and the wire plane's numbers are everything else.
 //!
-//! [`CALIBRATION`] is five more, and they are the shapes and stacks
+//! `CALIBRATION` is five more, and they are the shapes and stacks
 //! [`tests/alloc.rs`](../../kynos/tests/alloc.rs) already counts with
 //! `alloc_counter`. They are here so that the two instruments are read over
 //! the same request: DHAT's block count for each is held to the count that
@@ -35,7 +35,7 @@ use crate::app::{
     service,
 };
 
-pub mod app;
+pub(crate) mod app;
 
 #[cfg(test)]
 mod tests;
@@ -68,7 +68,7 @@ pub struct Scenario {
 /// [`kynos-openapi/tests/alloc.rs`](../../kynos-openapi/tests/alloc.rs) counts.
 /// `not-found`, `method-not-allowed` and `rejection` are not in the catalog;
 /// they are the three error paths a request reaches without a handler.
-pub const SCENARIOS: &[Scenario] = &[
+pub(crate) const SCENARIOS: &[Scenario] = &[
     Scenario {
         name: "plaintext",
         service,
@@ -157,7 +157,7 @@ pub const SCENARIOS: &[Scenario] = &[
 /// `scripts/profile_report.py` pairs each with its row by request target or
 /// stack depth, and reads the counts from those tables rather than repeating
 /// them here.
-pub const CALIBRATION: &[Scenario] = &[
+pub(crate) const CALIBRATION: &[Scenario] = &[
     Scenario {
         name: "calibration-static",
         service,
@@ -218,7 +218,7 @@ macro_rules! sweep {
 ///
 /// The `identity` rows are the interceptor declining, one per size, so the
 /// difference to a coded row at the same size is the encode alone.
-pub const COMPRESSION: &[Scenario] = &[
+pub(crate) const COMPRESSION: &[Scenario] = &[
     sweep!("compressed-identity-small", "small", "identity"),
     sweep!("compressed-identity-1k", "1k", "identity"),
     sweep!("compressed-identity-2k", "2k", "identity"),

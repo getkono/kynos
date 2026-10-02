@@ -1584,8 +1584,8 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
         (("matchit",), UNDER, "crates/kynos/src/router/",
          "`matchit` may be named only under `router/`"),
         (("h2", "httparse"), ONLY_IN, set(), "`h2` and `httparse` are never named"),
-        (("tower", "tower_service"), ONLY_IN, {"crates/kynos/src/unchecked.rs"},
-         "`tower` and `tower-service` are named only in `unchecked.rs`"),
+        (("tower", "tower_layer", "tower_service"), ONLY_IN, {"crates/kynos/src/unchecked.rs"},
+         "`tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs`"),
     ]:
         found = corpus.naming(*crates)
         stray = sorted(f for f in found if not f.startswith(where)) if rule == UNDER else sorted(found - where)

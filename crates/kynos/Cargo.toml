@@ -457,7 +457,7 @@ docs = []
 # in `paths` marked opaque, a route with no expressible template is listed at
 # the document root -- and the document is stamped non-authoritative.
 # Documented anti-pattern.
-unchecked = ["dep:tower", "dep:tower-service"]
+unchecked = ["dep:tower-layer", "dep:tower-service"]
 
 full = [
   "assets",
@@ -522,7 +522,7 @@ socket2 = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 tokio-rustls = { workspace = true, optional = true }
-tower = { workspace = true, optional = true }
+tower-layer = { workspace = true, optional = true }
 tower-service = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }

@@ -33,7 +33,7 @@
 /// compare these directly. `Wildcard` is least because `*` says only "anything
 /// will do", which cannot choose between two tags that both satisfy it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum MatchKind {
+pub(super) enum MatchKind {
     /// The range was `*`, which RFC 4647 section 3.3.1 matches to any tag.
     Wildcard,
     /// The tag extends the range: RFC 4647 section 3.3.1 Basic Filtering.
@@ -50,7 +50,7 @@ pub enum MatchKind {
 /// case-insensitive, which section 3.3.1 requires and section 2.1.1 of RFC 5646
 /// explains: case carries no meaning in a tag.
 #[must_use]
-pub fn classify(range: &str, tag: &str) -> Option<(MatchKind, usize)> {
+pub(super) fn classify(range: &str, tag: &str) -> Option<(MatchKind, usize)> {
     if range == "*" {
         return Some((MatchKind::Wildcard, 0));
     }
