@@ -2499,6 +2499,7 @@ async fn a_served_request_carries_the_address_it_arrived_from() {
 /// Reports `absent` rather than panicking, so a failure reads as a comparison
 /// against the address the client actually used instead of as a dropped
 /// connection.
+#[cfg(feature = "http1")]
 fn peer_address_service() -> crate::router::service::Service<()> {
     let document = kynos_openapi::Document::new(
         kynos_openapi::SpecVersion::V3_1,
