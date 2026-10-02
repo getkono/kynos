@@ -37,7 +37,7 @@
 //! their own — `router::assets::range` holds what the two modes share and
 //! where they part.
 
-pub mod media;
+mod media;
 
 use std::borrow::Cow;
 
