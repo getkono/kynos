@@ -25,8 +25,38 @@ use crate::{
 };
 
 const ACCEPT_RETRY_INITIAL: Duration = Duration::from_millis(10);
-const ACCEPT_RETRY_MAX: Duration = Duration::from_secs(1);
 const MAX_CONSECUTIVE_ACCEPT_FAILURES: u32 = 5;
+
+/// The consecutive failed accepts a listener has seen, and the retry schedule
+/// they put it on.
+///
+/// The wait doubles from 10 ms, and the fifth consecutive failure gives up, so
+/// the longest wait is 80 ms and a listener retries for 150 ms in all before
+/// it reports [`ServerError::Accept`]. A transient failure the loop does not
+/// count — an interrupted or aborted connection — never reaches this.
+#[derive(Debug, Default)]
+pub(in crate::server) struct AcceptBackoff {
+    failures: u32,
+}
+
+impl AcceptBackoff {
+    /// Records one more failed accept, and returns how long to wait before
+    /// accepting again, or `None` when this failure ends the listener.
+    pub(in crate::server) fn fail(&mut self) -> Option<Duration> {
+        if self.failures >= MAX_CONSECUTIVE_ACCEPT_FAILURES - 1 {
+            return None;
+        }
+        let delay = ACCEPT_RETRY_INITIAL * (1 << self.failures);
+        self.failures += 1;
+        Some(delay)
+    }
+
+    /// Forgets the failures before a successful accept, so the next failure
+    /// starts the schedule over.
+    pub(in crate::server) fn succeed(&mut self) {
+        self.failures = 0;
+    }
+}
 
 pub(in crate::server) async fn accept_loop<C: 'static>(
     listener: TcpListener,
@@ -38,7 +68,7 @@ pub(in crate::server) async fn accept_loop<C: 'static>(
     mut lifecycle: watch::Receiver<Lifecycle>,
 ) -> std::result::Result<(), ServerError> {
     let mut connections = JoinSet::new();
-    let mut failures = 0_u32;
+    let mut backoff = AcceptBackoff::default();
 
     loop {
         while let Some(result) = connections.try_join_next() {
@@ -68,7 +98,7 @@ pub(in crate::server) async fn accept_loop<C: 'static>(
 
         match accepted {
             Ok((stream, peer_addr)) => {
-                failures = 0;
+                backoff.succeed();
                 socket.apply(&stream, local_addr, peer_addr);
                 let service = Arc::clone(&service);
                 let connection_config = config.clone();
@@ -96,17 +126,12 @@ pub(in crate::server) async fn accept_loop<C: 'static>(
             }
             Err(source) => {
                 drop(permit);
-                failures += 1;
-                if failures >= MAX_CONSECUTIVE_ACCEPT_FAILURES {
+                let Some(delay) = backoff.fail() else {
                     return Err(ServerError::Accept {
                         address: local_addr,
                         source,
                     });
-                }
-                let multiplier = 1_u32 << (failures - 1);
-                let delay = ACCEPT_RETRY_INITIAL
-                    .saturating_mul(multiplier)
-                    .min(ACCEPT_RETRY_MAX);
+                };
                 tracing::warn!(%source, %local_addr, ?delay, "retrying failed accept");
                 tokio::select! {
                     biased;

@@ -2,6 +2,8 @@
 
 use std::collections::BTreeMap;
 
+use kynos_openapi::model::body::mime_names;
+
 use crate::{
     error::rejection::BodyRejection,
     extract::{
@@ -18,7 +20,7 @@ use crate::{
 pub struct Form<T>(pub T);
 
 /// One spelling, read by both halves: what is decoded and what is described.
-const MEDIA_TYPE: &str = "application/x-www-form-urlencoded";
+const MEDIA_TYPE: &str = mime_names::APPLICATION_FORM_URLENCODED;
 
 impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Form<T> {
     type Rejection = BodyRejection;

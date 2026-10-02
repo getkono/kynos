@@ -60,7 +60,7 @@ pub const EXTENSIONS: &[(&str, &str)] = &[
 /// RFC 9110 section 8.3: a sender that does not know the media type sends this
 /// rather than guessing, and a recipient treats it as an opaque stream. Which
 /// is the honest answer, and better than a guess a browser might act on.
-pub const FALLBACK: &str = "application/octet-stream";
+pub const FALLBACK: &str = kynos_openapi::model::body::mime_names::APPLICATION_OCTET_STREAM;
 
 /// The media type `path`'s extension names, or `None`.
 ///
