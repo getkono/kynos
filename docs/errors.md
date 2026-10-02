@@ -397,7 +397,8 @@ filed under it. `OperationCx::add_responses` keeps the entry already declared,
 except where both it and the arriving one are problem documents narrowed to the
 types they publish — the one conflict that means something beyond precedence,
 since two problem responses under a status are two branches of a choice over the
-same component. `Result<T, E>` is not that case and does not get the exception:
+same component, as [what the declared response narrows to](#what-the-declared-response-narrows-to)
+describes, including when one side narrows nothing. `Result<T, E>` is not that case and does not get the exception:
 a success representation and a problem document are branches of nothing, so the
 success side wins as it always has.
 
