@@ -1875,12 +1875,13 @@ class Main(unittest.TestCase):
         # holds. `http/body.rs` is not `unchecked.rs`, which is the one file
         # this row allows.
         corpus = self.appending(
-            "crates/kynos/src/http/body.rs", "\nuse tower::Service;\n"
+            "crates/kynos/src/http/body.rs", "\nuse tower_layer::Layer;\n"
         )
         status, failures = self.report(corpus=corpus)
         self.assertEqual(status, 1)
         reported = self.naming(
-            failures, "`tower` and `tower-service` are named only in `unchecked.rs`"
+            failures,
+            "`tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs`",
         )
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/http/body.rs", reported[0])
