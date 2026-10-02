@@ -1886,6 +1886,23 @@ class Main(unittest.TestCase):
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/http/body.rs", reported[0])
 
+    def test_tower_itself_stays_confined_to_unchecked(self):
+        # `tower` is no longer a dependency of the `unchecked` feature, but it
+        # is still a dev-dependency, so test-only code under `src` could name
+        # it. Its name in the row's tuple is what keeps that reported; the
+        # case above names `tower_layer` and says nothing about `tower`.
+        corpus = self.appending(
+            "crates/kynos/src/http/body.rs", "\nuse tower::ServiceExt;\n"
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(
+            failures,
+            "`tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs`",
+        )
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/http/body.rs", reported[0])
+
     def test_a_renamed_surface_heading_skips_the_declaration_check(self):
         broken = gate.ARCHITECTURE.replace(self.SURFACE, "### The public surface", 1)
         broken = self.rewriting(broken, self.DECLARED_SITE, "crates/kynos/src/lib.rs")
