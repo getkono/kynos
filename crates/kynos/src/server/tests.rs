@@ -1606,6 +1606,24 @@ async fn resumption_server(
     tokio::task::JoinHandle<crate::error::Result<()>>,
 ) {
     let issued = authority();
+    let (address, shutdown_sender, server) = resumption_replica(&issued, resumption, mutual).await;
+
+    (address, issued, shutdown_sender, server)
+}
+
+/// [`resumption_server`] under an identity the caller holds, so that several
+/// listeners can present the same one — which is what makes them replicas to a
+/// client rather than three different servers.
+#[cfg(all(feature = "tls", feature = "http1"))]
+async fn resumption_replica(
+    issued: &Authority,
+    resumption: Option<crate::server::tls::SessionResumption>,
+    mutual: bool,
+) -> (
+    std::net::SocketAddr,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<crate::error::Result<()>>,
+) {
     let mut tls = crate::server::tls::TlsConfig::from_pem(
         issued.server.certificate.as_bytes(),
         issued.server.key.as_bytes(),
@@ -1653,12 +1671,7 @@ async fn resumption_server(
         .expect("TLS listener prepares");
     let address = bound.local_addrs()[0];
 
-    (
-        address,
-        issued,
-        shutdown_sender,
-        tokio::spawn(bound.serve()),
-    )
+    (address, shutdown_sender, tokio::spawn(bound.serve()))
 }
 
 /// A client speaking only `version`, with a session store of its own, and the
@@ -1925,6 +1938,283 @@ async fn a_resumed_mutual_tls_session_keeps_the_client_identity() {
         .expect("server exits cleanly");
 }
 
+/// Shared tickets under `secret`, each call deriving its keys afresh as a
+/// separate process would.
+#[cfg(feature = "tls")]
+fn shared_tickets(secret: u8) -> crate::server::tls::SessionResumption {
+    crate::server::tls::SessionResumption::SharedTickets {
+        keys: crate::server::tls::ticket::TicketKeys::new(ticket_key(secret), []),
+        lifetime: std::time::Duration::from_secs(3600),
+    }
+}
+
+#[cfg(feature = "tls")]
+fn ticket_key(secret: u8) -> crate::server::tls::ticket::TicketKey {
+    crate::server::tls::ticket::TicketKey::from_secret(&[secret; 32])
+        .expect("the named provider seals shared tickets")
+}
+
+/// Replicas given the same ticket secret resume one another's sessions, and a
+/// server given another does not.
+///
+/// Each replica derives its keys separately, so nothing but the secret is
+/// shared between them, and each has a session cache of its own that the other
+/// never wrote to: a `Resumed` on the second replica can only have come from
+/// opening the first one's ticket. Two clients, one per direction, because a
+/// client that resumed on the second replica may then hold a ticket that
+/// replica issued. Under mutual TLS, so the identity the first replica verified
+/// is what the second reports.
+#[cfg(all(feature = "tls", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replicas_sharing_a_ticket_secret_resume_each_others_sessions() {
+    use tokio_rustls::rustls::{HandshakeKind, version};
+
+    let issued = authority();
+    let (first, first_shutdown, first_server) =
+        resumption_replica(&issued, Some(shared_tickets(1)), true).await;
+    let (second, second_shutdown, second_server) =
+        resumption_replica(&issued, Some(shared_tickets(1)), true).await;
+    let (stranger, stranger_shutdown, stranger_server) =
+        resumption_replica(&issued, Some(shared_tickets(2)), true).await;
+
+    for version in [&version::TLS13, &version::TLS12] {
+        for (issuer, resumer) in [(first, second), (second, first)] {
+            let client = resuming_client(&issued, version, true);
+            assert_eq!(
+                connect(&client, issuer).await,
+                (HandshakeKind::Full, "1".to_owned()),
+                "{version:?}"
+            );
+            assert_eq!(
+                connect(&client, resumer).await,
+                (HandshakeKind::Resumed, "1".to_owned()),
+                "{version:?}: a replica opens the ticket its peer sealed"
+            );
+        }
+
+        let client = resuming_client(&issued, version, true);
+        connect(&client, first).await;
+        assert_eq!(
+            connect(&client, stranger).await,
+            (HandshakeKind::Full, "1".to_owned()),
+            "{version:?}: a server under another secret cannot open the ticket"
+        );
+    }
+
+    for (shutdown, server) in [
+        (first_shutdown, first_server),
+        (second_shutdown, second_server),
+        (stranger_shutdown, stranger_server),
+    ] {
+        let _ = shutdown.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+}
+
+/// A shared ticketer over `keys`, honouring tickets for an hour.
+#[cfg(feature = "tls")]
+fn shared_ticketer(
+    keys: crate::server::tls::ticket::TicketKeys,
+) -> crate::server::tls::ticket::SharedTicketer {
+    crate::server::tls::ticket::SharedTicketer::new(
+        keys,
+        std::time::Duration::from_secs(3600),
+        &crate::server::tls::crypto_provider(),
+    )
+    .expect("an hour is a valid ticket lifetime")
+}
+
+/// A ticket opens under its issuing key and under a key that is merely
+/// accepted, from the same secret wherever it was derived, and under no other.
+#[cfg(feature = "tls")]
+#[test]
+fn a_shared_ticket_opens_under_its_secret_and_no_other() {
+    use crate::server::tls::ticket::TicketKeys;
+
+    let issuer = shared_ticketer(TicketKeys::new(ticket_key(1), []));
+    let ticket = issuer.seal_at(100, b"session").expect("a ticket seals");
+    let again = issuer.seal_at(100, b"session").expect("a ticket seals");
+
+    assert_ne!(ticket, again, "no two tickets share a salt");
+    assert!(
+        !ticket.windows(7).any(|window| window == b"session"),
+        "the session is not carried in the clear"
+    );
+    for (keys, opens) in [
+        (TicketKeys::new(ticket_key(1), []), true),
+        (TicketKeys::new(ticket_key(2), [ticket_key(1)]), true),
+        (TicketKeys::new(ticket_key(2), []), false),
+        (TicketKeys::new(ticket_key(2), [ticket_key(3)]), false),
+    ] {
+        assert_eq!(
+            shared_ticketer(keys.clone()).open_at(100, &ticket),
+            opens.then(|| b"session".to_vec()),
+            "{keys:?}"
+        );
+    }
+}
+
+/// No ticket that differs from an issued one opens: every single-byte change
+/// and every truncation is refused, across the key name, the salt, the issue
+/// time, the ciphertext and the tag.
+///
+/// The issue time is the field this matters most for, since it is sent in the
+/// clear and decides whether the ticket is still honoured.
+#[cfg(feature = "tls")]
+#[test]
+fn a_shared_ticket_that_was_altered_does_not_open() {
+    let ticketer = shared_ticketer(crate::server::tls::ticket::TicketKeys::new(
+        ticket_key(1),
+        [],
+    ));
+    let ticket = ticketer.seal_at(100, b"session").expect("a ticket seals");
+
+    for index in 0..ticket.len() {
+        let mut altered = ticket.clone();
+        altered[index] ^= 1;
+        assert_eq!(ticketer.open_at(100, &altered), None, "byte {index}");
+        assert_eq!(
+            ticketer.open_at(100, &ticket[..index]),
+            None,
+            "truncated to {index}"
+        );
+    }
+    let mut extended = ticket.clone();
+    extended.push(0);
+    assert_eq!(ticketer.open_at(100, &extended), None);
+    assert_eq!(ticketer.open_at(100, &ticket), Some(b"session".to_vec()));
+}
+
+/// A ticket is honoured through its lifetime and not a second past it, and one
+/// a replica with a faster clock issued is honoured rather than refused.
+#[cfg(feature = "tls")]
+#[test]
+fn a_shared_ticket_is_honoured_for_its_lifetime_only() {
+    let ticketer = shared_ticketer(crate::server::tls::ticket::TicketKeys::new(
+        ticket_key(1),
+        [],
+    ));
+    let ticket = ticketer
+        .seal_at(10_000, b"session")
+        .expect("a ticket seals");
+
+    for (now, opens) in [
+        (10_000, true),
+        (13_600, true),
+        (13_601, false),
+        (9_000, true),
+        (u64::MAX, false),
+    ] {
+        assert_eq!(
+            ticketer.open_at(now, &ticket),
+            opens.then(|| b"session".to_vec()),
+            "at {now}"
+        );
+    }
+    assert_eq!(
+        tokio_rustls::rustls::server::ProducesTickets::lifetime(&ticketer),
+        3600,
+        "clients are told the lifetime tickets are held to"
+    );
+}
+
+/// Rotating through a handle reaches a ticketer already built from a clone of
+/// it: the two-step rotation keeps a ticket resuming until its key is dropped,
+/// and issues under the new key from the step that names it.
+#[cfg(feature = "tls")]
+#[test]
+fn rotating_shared_ticket_keys_reaches_a_running_ticketer() {
+    use crate::server::tls::ticket::TicketKeys;
+
+    let keys = TicketKeys::new(ticket_key(1), []);
+    let ticketer = shared_ticketer(keys.clone());
+    let only_new = shared_ticketer(TicketKeys::new(ticket_key(2), []));
+    let old = ticketer.seal_at(100, b"old").expect("a ticket seals");
+
+    keys.rotate(ticket_key(1), [ticket_key(2)]);
+    let still_old = ticketer.seal_at(100, b"still").expect("a ticket seals");
+    assert_eq!(
+        only_new.open_at(100, &still_old),
+        None,
+        "accepting a key does not issue under it"
+    );
+
+    keys.rotate(ticket_key(2), [ticket_key(1)]);
+    let new = ticketer.seal_at(100, b"new").expect("a ticket seals");
+    assert_eq!(only_new.open_at(100, &new), Some(b"new".to_vec()));
+    assert_eq!(ticketer.open_at(100, &old), Some(b"old".to_vec()));
+
+    keys.rotate(ticket_key(2), []);
+    assert_eq!(
+        ticketer.open_at(100, &old),
+        None,
+        "a dropped key opens nothing"
+    );
+    assert_eq!(ticketer.open_at(100, &new), Some(b"new".to_vec()));
+}
+
+/// The two ways configuring shared tickets fails, each as its own variant: a
+/// lifetime outside one second to seven days, at both edges, and a provider
+/// with no AES-256-GCM to seal with.
+#[cfg(feature = "tls")]
+#[test]
+fn shared_tickets_reject_an_unusable_lifetime_and_an_unusable_provider() {
+    use std::time::Duration;
+
+    use crate::server::tls::{error::TlsError, ticket::TicketKey};
+
+    const WEEK: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
+    let identity = server_identity();
+    for (lifetime, valid) in [
+        (Duration::ZERO, false),
+        (Duration::from_millis(999), false),
+        (Duration::from_secs(1), true),
+        (WEEK, true),
+        (WEEK + Duration::from_nanos(1), false),
+        (Duration::MAX, false),
+    ] {
+        let built = crate::server::tls::TlsConfig::from_pem(
+            identity.certificate.as_bytes(),
+            identity.key.as_bytes(),
+        )
+        .expect("server identity parses")
+        .session_resumption(crate::server::tls::SessionResumption::SharedTickets {
+            keys: crate::server::tls::ticket::TicketKeys::new(ticket_key(1), []),
+            lifetime,
+        })
+        .build();
+        match built {
+            Ok(_) => assert!(valid, "{lifetime:?} was accepted"),
+            Err(TlsError::TicketLifetime(reported)) => {
+                assert!(!valid, "{lifetime:?} was refused");
+                assert_eq!(reported, lifetime);
+            }
+            Err(other) => panic!("{lifetime:?}: {other}"),
+        }
+    }
+
+    let provider = crate::server::tls::crypto_provider();
+    let without_aes_256 = tokio_rustls::rustls::crypto::CryptoProvider {
+        cipher_suites: provider
+            .cipher_suites
+            .iter()
+            .copied()
+            .filter(|suite| {
+                suite.suite() != tokio_rustls::rustls::CipherSuite::TLS13_AES_256_GCM_SHA384
+            })
+            .collect(),
+        ..(*provider).clone()
+    };
+    assert!(matches!(
+        TicketKey::derive(&without_aes_256, &[1; 32]),
+        Err(TlsError::TicketCipher)
+    ));
+}
+
 #[cfg(feature = "tls")]
 #[test]
 fn tls_rejects_empty_pem_and_zero_handshake_timeouts() {
@@ -2179,6 +2469,8 @@ fn a_caller_installed_crypto_provider_is_the_one_build_runs_on() {
                 | crate::server::tls::error::TlsError::ServerName(_)
                 | crate::server::tls::error::TlsError::ClientVerifier(_)
                 | crate::server::tls::error::TlsError::Ticketer(_)
+                | crate::server::tls::error::TlsError::TicketCipher
+                | crate::server::tls::error::TlsError::TicketLifetime(_)
                 | crate::server::tls::error::TlsError::ZeroHandshakeTimeout
         ),
         "an unusable provider is its own failure, not a certificate one: {error}"
