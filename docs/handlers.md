@@ -248,5 +248,4 @@ The alternative to `impl Describe for Inject<T> {}` is exempting some arguments
 from the trait entirely — which is what a second argument category would be.
 That trade looks like tidiness and is actually a hole: an exemption is invisible
 at the call site, whereas an empty body is a line of code someone had to write
-and a reviewer can see. The same reasoning removed `FromContext`; see
-[`state.md`](state.md#why-fromcontext-was-deleted).
+and a reviewer can see.

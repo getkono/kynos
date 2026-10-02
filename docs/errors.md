@@ -47,21 +47,18 @@ already implements for its own scope set, so a URI has somewhere to hang and a
 marker would be a second type saying what the first could. An interceptor's
 refusal has no such type — a `Concurrency` is Kynos's — so the marker *is* the
 type the application supplies. Both end as a `const` read while the description
-is built, which is the only property either rests on.
-
-That fold was #116's to make rather than a tidying: a rejection and a handler's
-error type meet on a shared status, and two spellings of one shape are two
-things that cannot be unioned.
+is built, which is the only property either rests on. A rejection and a
+handler's error type meet on a shared status, and two spellings of one shape are
+two things that cannot be unioned.
 
 Not every short circuit refuses. `NotModified` answers 304 with an empty body
 and rightly declares no content, and `Infallible` declares nothing at all
 because it is uninhabited. What the sweep in
 [`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) holds each
 implementation it drives to is therefore *agreement* — the declaration and the
-exchange say the same thing — and not naming a media type. Eight of the ten
-once described a response with no content while sending one, which is the
-direction that failed; declaring content and sending none is a failure the same
-assertion catches going the other way.
+exchange say the same thing — and not naming a media type, so it catches a
+response described with no content while sending one and declaring content
+while sending none alike.
 
 It drives nine of the ten with every feature on, and six at the default set:
 `Infallible` has no value to hand it, and `NotAcceptable`, `Undecodable` and
@@ -144,8 +141,7 @@ tried before the reason phrase, on the same argument `detail` rests on: the
 sentence a Rust reader already wrote is the sentence an API consumer should
 receive.
 
-There is no de-camel-casing of variant names anywhere, and this document used to
-say there was.
+There is no de-camel-casing of variant names anywhere.
 
 `detail` comes from `Display`, which is why the derive requires it and why
 `thiserror` is the expected companion: the `#[error("...")]` a Rust reader

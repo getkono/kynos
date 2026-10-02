@@ -180,28 +180,3 @@ the key is a string, so a typo cannot be caught by any tool at all.
 
 The rows describe the mechanism's shape, which is stable, rather than any
 particular version's exact status code.
-
-### Why `FromContext` was deleted
-
-`FromContext` existed to keep request-derived arguments and state-derived
-arguments in separate categories. It was removed because the separation was
-enforced by nothing — a type could implement both traits — and because it is not
-the property that matters.
-
-The property that matters is that **every** argument implements `Describe`,
-with an empty body being a claim of contract-neutrality rather than an
-omission. Once that holds, a second trait sorting arguments into kinds buys
-nothing: an argument that describes nothing has said so, and an argument that
-cannot describe itself has no way into a signature regardless of which category
-it would have claimed.
-
-So `Inject<T>` became an ordinary `FromRequestParts` with
-`Rejection = Infallible`, alongside `MatchedPath` and `ConnectInfo`, which
-already worked that way. One kind of argument, one trait to check, no category
-whose boundary nothing defends.
-
-The same commit removed `ContextBuilder`. Its `build(self) -> C` had no bound
-on `C` and no relation between the values put in and the value that came out,
-so the only way to implement it was a `TypeId`-keyed map of `Box<dyn Any>` —
-the erased state map [anti-pattern #7](../README.md#anti-patterns) rejects,
-reintroduced behind the type that was supposed to replace it.

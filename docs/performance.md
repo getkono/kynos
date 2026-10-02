@@ -316,13 +316,12 @@ that revisiting them is possible on the merits.*
 
 ### Why this is not in `kynos-bench`
 
-The obvious filing puts everything with a number in it beside the harness, and
-[`README.md`](README.md) said so until this document existed. What that misses
-is that most of these questions have no comparison to make. "What does mounting
-`Compression` add to an operation" is answerable against Kynos without another
-framework in the room, and unanswerable with one, because no other library has
-`Compression`. Sending it to a comparative harness would leave it unmeasured in
-both places, which is where it has been.
+The obvious filing puts everything with a number in it beside the harness. What
+that misses is that most of these questions have no comparison to make. "What
+does mounting `Compression` add to an operation" is answerable against Kynos
+without another framework in the room, and unanswerable with one, because no
+other library has `Compression`. Sending it to a comparative harness would leave
+it unmeasured in both places.
 
 The converse holds too, and is why the boundary is worth writing down rather
 than merely observing. Throughput is meaningless here: a figure produced on a
