@@ -70,18 +70,25 @@ impl FromStr for StatusPattern {
     type Err = InvalidStatusPattern;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "1XX" => Ok(Self::Informational),
-            "2XX" => Ok(Self::Success),
-            "3XX" => Ok(Self::Redirection),
-            "4XX" => Ok(Self::ClientError),
-            "5XX" => Ok(Self::ServerError),
-            _ => value
-                .parse::<u16>()
-                .ok()
-                .filter(|code| (100..600).contains(code))
-                .map(Self::Code)
-                .ok_or_else(|| InvalidStatusPattern(value.to_owned())),
+        match value.as_bytes() {
+            b"1XX" => Ok(Self::Informational),
+            b"2XX" => Ok(Self::Success),
+            b"3XX" => Ok(Self::Redirection),
+            b"4XX" => Ok(Self::ClientError),
+            b"5XX" => Ok(Self::ServerError),
+            // Exactly three ASCII digits, the first 1-5: the only spelling
+            // `Display` renders back, unlike `u16::from_str`'s `+404`/`0404`.
+            &[
+                hundreds @ b'1'..=b'5',
+                tens @ b'0'..=b'9',
+                units @ b'0'..=b'9',
+            ] => {
+                let digit = |byte: u8| u16::from(byte - b'0');
+                Ok(Self::Code(
+                    digit(hundreds) * 100 + digit(tens) * 10 + digit(units),
+                ))
+            }
+            _ => Err(InvalidStatusPattern(value.to_owned())),
         }
     }
 }
