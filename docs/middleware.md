@@ -18,12 +18,11 @@ cannot describe.
 | `Reads` | the request headers it consumes | it is handed that group, and nothing else |
 
 **One group, once.** `with_headers` writes its group and then relabels the
-`Continued`, so while it was callable on its own result a second call relabelled
-back to the declared type with the first group's fields already on the response.
-An interceptor declaring `Adds = ()` could therefore write anything at all, and
-`Adds::NAMES` — which is what the conflict check compares — never saw it. It is
-on `Continued<()>` alone now: `Next::run` yields one, `with_headers` consumes
-it, and `Continued<G>` has no second call.
+`Continued`, so a second call could relabel back to the declared type with the
+first group's fields already on the response, where `Adds::NAMES` — which is
+what the conflict check compares — never sees them. It is therefore on
+`Continued<()>` alone: `Next::run` yields one, `with_headers` consumes it, and
+`Continued<G>` has no second call.
 
 An interceptor wanting two groups declares one group naming both fields, the way
 `ContentEncoding` names `content-encoding` beside `content-length`. That is not
@@ -86,8 +85,8 @@ What survives in
 the vocabulary for the subtrees where the types are erased and the check cannot
 run — those taken under `layer_unchecked`.
 
-*Covering one route* is the whole of it, and it was once read as *mounted on one
-scope*, which is narrower. A router's interceptors cover the operations in every
+*Covering one route* is the whole of it, and it is wider than *mounted on one
+scope*. A router's interceptors cover the operations in every
 group, nested router and endpoint beneath it, so a `Router::intercept` is
 checked against the stacks those scopes brought with them as well as against the
 router's own. That is what the fourth type parameter on `Router` and `Group`
@@ -165,10 +164,6 @@ the encoded length whenever it states a coding. Restated rather than removed:
 removing it would leave hyper to derive one from the body's size hint, which is
 right only while the body is buffered, and stating it is right whatever the body
 becomes.
-
-Reaching the defect took a handler that set its own length, because hyper
-derives one when the field is absent and honours it when it is present. That is
-also why it went unnoticed.
 
 **A strongly tagged response is left alone.** RFC 9110 section 8.8.1 says it in
 as many words: "if the origin server sends the same validator for a
@@ -739,8 +734,8 @@ long such a stream may run at all. Both directions are asserted in
 **A timeout answers 408, and neither status is exact.** RFC 9110 §15.6.5 scopes
 504 to a server "acting as a gateway or proxy" awaiting an upstream — which an
 origin wrapping its own chain is not, and which a load balancer in front of the
-service genuinely *is*, so an origin's own 504 was indistinguishable from that
-hop's. §15.5.9's 408 describes the slow-body row above exactly and the
+service genuinely *is*, so an origin's own 504 would be indistinguishable from
+that hop's. §15.5.9's 408 describes the slow-body row above exactly and the
 handler-runtime row only by extension; it is the closest the specification
 defines and the one `tower-http` sends. 503 would read better for handler
 runtime and is unavailable: `Concurrency` declares it, and `statuses_disjoint`
@@ -793,8 +788,8 @@ after the description has been assembled. That ordering is the whole design:
   user's operation wins by construction rather than by a race.
 - **It runs no interceptor.** A browser sends a preflight with no credentials
   and no `Authorization`; an auth interceptor short-circuiting it would break
-  CORS for every operation on the path. `middleware.md` says an interceptor
-  covers the *operations* in its subtree, and a preflight is not one. Observers
+  CORS for every operation on the path. An interceptor covers the
+  *operations* in its subtree, and a preflight is not one. Observers
   still see it, which is right — a preflight is worth logging.
 
 An `OPTIONS` that is *not* a preflight — no `Origin`, or no
@@ -875,13 +870,10 @@ whether its own fields comma-join. `false` — the default — inserts, which is
 right for almost everything: a response carrying two `Content-Encoding` values
 is one no client can decode.
 
-Both ways a group reaches the wire go through one writer,
-`extract::params::header::write`. They did not, and the comment on the second
-claimed they could not disagree while they were two functions that did:
-`Continued::with_headers` inserted and `WithHeaders::into_response` appended, so
-a group naming `Set-Cookie` twice reached the wire whole from a handler and
-truncated from an interceptor. No shipped interceptor named a repeatable field,
-so nothing noticed until one did.
+Both ways a group reaches the wire — `Continued::with_headers` and
+`WithHeaders::into_response` — go through one writer,
+`extract::params::header::write`, so a group naming `Set-Cookie` twice reaches
+the wire whole from a handler and from an interceptor alike.
 
 **OpenAPI cannot say a field repeats.** `Response.headers` is a map keyed by
 field name, so `SetCookies` declares one `Set-Cookie` entry and says the rest in
@@ -939,30 +931,23 @@ the default build.
 Sessions are named in [`architecture.md`](architecture.md#invariants)'s third
 invariant as the example of what a layer above Kynos owns.
 
-CSRF *was* listed here as the exclusion the type system refuses rather than the
-policy, on the grounds that `statuses_disjoint` compares `Short::STATUSES`
-across the interceptors covering a route and `Auth<S>` contributes 403 to every
-authenticated operation. **That was wrong, and the error is worth naming rather
-than quietly deleting.**
-
-`Auth<S>` is not an interceptor. It is an extractor — `FromRequestParts` in
+**CSRF and a credential guard do not exclude each other.** `Auth<S>` is not an
+interceptor. It is an extractor — `FromRequestParts` in
 [`security/auth.rs`](../crates/kynos/src/security/auth.rs) — and its 403 reaches
 the document through `OperationCx::add_responses`, never through a `const`.
 `CompatibleWith` is instantiated only over pairs of `Interceptor::Short`, and no
-shipped interceptor declares 403 at all. A CSRF interceptor declaring one
-compiles beside a credential guard, and always would have.
+shipped interceptor declares 403 at all, so a CSRF interceptor declaring one
+compiles beside a credential guard.
 
-The residual is real but much smaller, and it is about *description* rather than
-compilation: a CSRF 403 and an `Auth` 403 on one operation are one entry, since
-a description files one response per status. `Responses::union_from` now joins
-the two descriptions rather than keeping whichever landed first, so the sentence
-that used to be dropped is not — but neither 403 narrows its `type`, so the
+The overlap is about *description* rather than compilation: a CSRF 403 and an
+`Auth` 403 on one operation are one entry, since a description files one
+response per status. `Responses::union_from` joins the two descriptions rather
+than keeping whichever landed first — but neither 403 narrows its `type`, so the
 schema stays the shared component and a client cannot tell the two refusals
 apart from the declaration alone. Understating a description that way is the
 failure mode this project accepts elsewhere for the same reason.
 
-What made the exclusion look structural was that the crypto objection above is
-real for *token-based* CSRF: a synchroniser token needs randomness, an HMAC and
+The crypto objection above is real for *token-based* CSRF: a synchroniser token needs randomness, an HMAC and
 somewhere to keep the token, which is a session. [`Csrf`](../crates/kynos/src/middleware/csrf.rs)
 avoids all three by not having a token — `Sec-Fetch-Site` is set by the browser
 and script cannot forge it, so an unsafe request that says it came from another
@@ -1033,19 +1018,10 @@ is refused outright, because storing one hands one origin's
 `Access-Control-Allow-Origin` to another and defeats the check entirely.
 
 The other half — a `Cache` *inside* `Compression` — is not refused either, and
-this document used to call it merely suboptimal. It is not. The body is stored
-and tagged over identity octets and then encoded on the way out, so one strong
-validator names two representations, against RFC 9110 §8.8.1. A client can
-validate the encoded body with `If-None-Match`, be answered 304 — which replays
-`ETag` and `Vary` and not `Content-Encoding` — and reuse those octets as the
-identity representation.
-
-The mis-ordering is not what causes it. `Compression` encoding *any* strongly
-tagged response had the same defect, with no cache in the stack at all, because
-the encoder did not look at `ETag`. That is [#29](https://github.com/getkono/kynos/issues/29),
-and it is closed: the encoder now leaves a strongly tagged response alone, so
-the stored-and-then-encoded case has nothing left to go wrong in. A weak
-validator still compresses, and is the right validator for revalidation anyway.
+needs no refusal: the body is stored and tagged over identity octets, and the
+encoder leaves a strongly tagged response alone, so one strong validator never
+names two representations (RFC 9110 §8.8.1). A weak validator still compresses,
+and is the right validator for revalidation anyway.
 
 ### Why a hit is not a new response
 
@@ -1283,35 +1259,17 @@ both leave a router's type exactly as it was. That is not a nicety: without it,
 `router = router.mount(..)` and a conditional mount would stop compiling, which
 are the two idioms `Router::docs` returns `Self` to preserve.
 
-**This was a hole, and it was the shape of the check rather than a slip.**
-`group`, `nest`, `merge` and `mount` used to check the incoming stack and then
-return `Self`, dropping it. At run time nothing was dropped —
-`describe` concatenates the router's chain with each mounted operation's — so
-the check was an ordering accident: `intercept` before `group` was refused, and
-`group` before `intercept` was not, though the chain that runs is the same
-either way. Across `nest` and `merge` it was worse, since a nested router's
-group-scoped interceptors were in no type the outer router could see and
-neither order refused anything. `BodySize` and `Decompression` both answer 413,
-and [the decompression note](#what-bounds-a-request-before-an-interceptor-runs)
-says outright that `statuses_disjoint` refuses the pair; mounted at different
-scopes, it did not. `catch_panics` had the same defect on its own, returning
-`Router<C, Catch>` — which is `Router<C, Catch, ()>` — so the policy parameter
-was quietly doing the interceptor list's job too.
-
-**And it had it twice.** Closing the first half left `Router<C, Catch, I>`,
-which is `Router<C, Catch, I, ()>`: correct for `I` and dropping `S`, so a
-`group` before a `catch_panics` before an `intercept` still compiled. The commit
-that introduced `S` widened `Group::catch_panics` to four parameters and left
-the router's at three, and nothing failed, because a return type naming fewer
-parameters than its type has is well-formed — the rest take their defaults, and
-a defaulted phantom list is an empty one. Both halves are now pinned, and
-`every_builder_preserves_the_type_parameters` in
+**Every builder returns all four parameters.** At run time nothing is dropped —
+`describe` concatenates the router's chain with each mounted operation's — so a
+builder returning `Self` or a type naming fewer parameters would make the check
+an ordering accident: `intercept` before `group` refused and `group` before
+`intercept` not, though the chain that runs is the same. A return type naming
+fewer parameters than its type has is well-formed — the rest take their
+defaults, and a defaulted phantom list is an empty one — so nothing else would
+fail. `every_builder_preserves_the_type_parameters` in
 [`tests/ui.rs`](../crates/kynos/tests/ui.rs) counts the arguments of every
-builder's return type so a third instance is a test failure rather than a
-silent one.
-
-`tests/ui/antipattern/` carries one case per scope that forgot, each with the
-control that fails if the fix over-rejects instead.
+builder's return type, and `tests/ui/antipattern/` carries one case per scope,
+each with the control that fails if the check over-rejects instead.
 
 ### What the compile-time check still cannot see
 
@@ -1367,13 +1325,11 @@ on all of them, and every one would then have to be made to produce it.
 its first run is in
 [`testing.md`](testing.md#what-the-harness-found-on-its-first-run).
 
-A response declaring *no* representation is checked too, which it was not at
-first. Declaring nothing is a claim about the exchange rather than the absence
-of one, so a body or a `Content-Type` arriving under it is reported. Until that
-held, `assert_conformance` read "declares nothing" as "nothing to check", and
-eight short circuits sent a problem document under a description of no content
-without the matrix noticing. That defect was in what an interceptor *declares*
-rather than in what it does, which is a class of error no type check reaches.
+A response declaring *no* representation is checked too. Declaring nothing is a
+claim about the exchange rather than the absence of one, so a body or a
+`Content-Type` arriving under it is reported. A defect there is in what an
+interceptor *declares* rather than in what it does, which is a class of error no
+type check reaches.
 
 This harness is not the only instrument for that class, and is not the cheapest.
 `every_short_circuit_declares_the_content_it_sends` in
