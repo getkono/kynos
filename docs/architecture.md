@@ -215,7 +215,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | Scalar formats, decimals | `rust_decimal`, `bigdecimal` | [`schema/impls/decimal/`](../crates/kynos/src/schema/impls/decimal/) | built |
 | Compression | `async-compression` | [`middleware/compression/`](../crates/kynos/src/middleware/compression/) | built |
 | tower interop, outward | `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
-| tower interop, inward | `tower` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
+| tower interop, inward | `tower-layer` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
 | Document ordering | `indexmap` | [`kynos-openapi`](../crates/kynos-openapi/src/lib.rs) | built |
 | YAML emission | `serde_yaml_ng` | [`kynos-openapi/emit/`](../crates/kynos-openapi/src/emit/), [`error/mod.rs`](../crates/kynos/src/error/mod.rs) | built |
 | Macro parsing | `proc-macro2`, `quote`, `syn` | [`kynos-macros`](../crates/kynos-macros/src/) | built |
@@ -497,7 +497,7 @@ module column is also where the `#[cfg]` lives.
 | `assets` | `assets!` and `router/assets/`: a fixed set, so every path is a literal and nothing is waived | [`routing.md`](routing.md) |
 | `assets-fs` | `router/assets/fs/`. Implies `unchecked`, because a directory's membership is not fixed | [`routing.md`](routing.md) |
 | `docs` | `Router::docs`: the reference page and the description, as two described operations | [`routing.md`](routing.md) |
-| `unchecked` | `unchecked.rs`, the only place `tower` may be named. Documented anti-pattern | [`middleware.md`](middleware.md) |
+| `unchecked` | `unchecked.rs`, the only place `tower`, `tower-layer` and `tower-service` may be named. Documented anti-pattern | [`middleware.md`](middleware.md) |
 | `full` | every flag above except `unchecked` and `assets-fs`. A testing convenience, not a recommended default | — |
 
 ### Scope edges
@@ -530,7 +530,7 @@ table names is reached by code that runs.
 That is a change worth recording rather than quietly deleting. `multer`,
 `serde_urlencoded`, `async-compression` and `cookie` were `designed` because the
 manifest ran ahead of the skeleton — declared by `crates/kynos` and named by no
-code in it. `futures-core` and `tower` were `designed` for a subtler reason: the
+code in it. `futures-core` and `tower` (since narrowed to `tower-layer`) were `designed` for a subtler reason: the
 crate was named, but only in the bound of a body that was still `todo!()`. All
 six are now consumed at exactly the path this table gives them, which is the
 property the *Named in* column exists to be checkable against.
