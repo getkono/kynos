@@ -63,6 +63,20 @@ pub enum TlsError {
     /// other failure constructing them.
     #[error("could not generate TLS session-ticket keys")]
     Ticketer(#[source] Cause),
+    /// The crypto provider cannot seal session tickets under shared keys.
+    ///
+    /// Shared tickets are sealed with AES-256-GCM, which Kynos reaches through
+    /// the provider's `TLS13_AES_256_GCM_SHA384` suite and that suite's QUIC
+    /// packet protection. The provider Kynos supplies has both, so this is
+    /// reachable only through one a caller installed as the process default
+    /// that offers no such suite, or offers it without QUIC support.
+    #[error("the TLS crypto provider offers no AES-256-GCM to seal shared session tickets with")]
+    TicketCipher,
+    /// A shared session-ticket lifetime was under a second or over seven days.
+    ///
+    /// Seven days is the most RFC 8446 §4.6.1 lets a server advertise.
+    #[error("TLS session-ticket lifetime must be between one second and seven days, not {0:?}")]
+    TicketLifetime(std::time::Duration),
     /// A TLS duration was zero.
     #[error("TLS handshake timeout must be non-zero")]
     ZeroHandshakeTimeout,

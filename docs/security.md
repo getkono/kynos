@@ -211,6 +211,26 @@ keys never leave the process, and the default stays tickets under mutual TLS; a
 deployment that cannot accept the risk sets `SessionResumption::Disabled` or
 `SessionResumption::Cache`.
 
+`SessionResumption::SharedTickets` changes the weight of both paragraphs,
+because its keys are the operator's: they are shared by every replica, outlive
+every process, and are rotated by nothing but the application.
+
+- **What a leaked key exposes.** Every recorded TLS 1.2 session whose ticket it
+  sealed, since a TLS 1.2 ticket carries the master secret; and any mutual-TLS
+  identity, on every replica, until the key is dropped. TLS 1.3 sessions stay
+  secret, because resumption there always runs a fresh key exchange.
+- **How often to rotate.** Issue under a key for no longer than the ticket
+  lifetime, accept it for one lifetime more, then erase it everywhere it was
+  stored. Six hours matches the built-in tickets and is the lifetime to choose
+  unless keys cannot be distributed that often; seven days is the most the
+  setting accepts. The lifetime bounds how long a ticket resumes. Only erasure
+  bounds what a leaked key decrypts.
+- **How long an identity outlives its certificate.** Indefinitely for a client
+  that keeps returning within the lifetime, and no longer only for the life of
+  a process.
+- **How to treat the secret.** As the server's private key is treated: random,
+  delivered over a channel as trusted, and never logged.
+
 ### A scheme may be published without being required
 
 `Router::security_scheme::<S>()` registers a scheme that no operation yet

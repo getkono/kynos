@@ -4,6 +4,7 @@ mod certificate;
 pub(in crate::server) mod document;
 
 pub mod error;
+pub mod ticket;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -26,6 +27,7 @@ use crate::server::tls::{
         parse_certificates,
     },
     error::TlsError,
+    ticket::{SharedTicketer, TicketKeys},
 };
 
 /// Mandatory client-certificate verification material.
@@ -94,7 +96,8 @@ pub enum SessionResumption {
     /// hours, for about twelve on a server with steady traffic, and for longer
     /// on one that goes quiet. The keys live only in this process. Replicas behind a load
     /// balancer therefore cannot resume one another's sessions, and neither can
-    /// a restarted process. Tickets use RFC 5077 §4's construction, with
+    /// a restarted process; [`SharedTickets`](Self::SharedTickets) is the
+    /// variant under which they can. Tickets use RFC 5077 §4's construction, with
     /// AES-256 and HMAC-SHA256, sealed by `aws-lc-rs` even when a caller installed
     /// another provider as the process default, because rustls's provider
     /// interface carries no ticketer.
@@ -134,6 +137,31 @@ pub enum SessionResumption {
         /// server is [prepared](crate::server::Server::prepare), not grown as
         /// entries arrive.
         capacity: NonZeroUsize,
+    },
+    /// Stateless tickets under keys the operator supplies, so that every
+    /// replica given the same keys resumes the sessions the others issued, and
+    /// a restarted process resumes its own.
+    ///
+    /// What [`Tickets`](Self::Tickets) says of a ticket key holds here, with
+    /// one difference that changes its weight: the key no longer dies with a
+    /// process, and Kynos rotates nothing. What a key exposes and how to
+    /// rotate one are [`TicketKeys`]'s to state; the construction and the
+    /// provider that performs it are [`TicketKey`](ticket::TicketKey)'s.
+    /// rustls's in-memory cache stays beside the tickets, as under
+    /// [`Tickets`](Self::Tickets).
+    SharedTickets {
+        /// The keys, which the application keeps a clone of to rotate them.
+        keys: TicketKeys,
+        /// How long after it was issued a ticket is honoured, which is also
+        /// the lifetime clients are told.
+        ///
+        /// At least a second and at most seven days, RFC 8446 §4.6.1's limit;
+        /// anything else is [`TlsError::TicketLifetime`] when the server is
+        /// [prepared](crate::server::Server::prepare). A ticket older than
+        /// this is refused even while its key is accepted, and one whose key
+        /// was dropped is refused however new it is. Replicas compare wall
+        /// clocks, so one running slow honours a ticket for that much longer.
+        lifetime: Duration,
     },
     /// No resumption: every connection pays a full handshake.
     Disabled,
@@ -288,6 +316,9 @@ impl TlsConfig {
                 config.ticketer =
                     Ticketer::new().map_err(|error| TlsError::Ticketer(Box::new(error)))?;
             }
+            SessionResumption::SharedTickets { keys, lifetime } => {
+                config.ticketer = Arc::new(SharedTicketer::new(keys, lifetime, &provider)?);
+            }
             SessionResumption::Cache { capacity } => {
                 config.session_storage = ServerSessionMemoryCache::new(capacity.get());
             }
@@ -317,11 +348,13 @@ impl TlsConfig {
 /// the two on the path without a client certificate.
 ///
 /// A caller that installed a default still wins, which is what keeps a FIPS or
-/// hardware-backed provider reachable — for everything but session tickets,
-/// which rustls's provider interface does not carry: under the default
+/// hardware-backed provider reachable — for everything but the default session
+/// tickets, which rustls's provider interface does not carry: under
 /// [`SessionResumption::Tickets`] they are sealed by `aws-lc-rs` whatever is
 /// installed, and a deployment that needs every secret on its own provider
-/// chooses [`SessionResumption::Cache`] or [`SessionResumption::Disabled`]. Otherwise the choice is Kynos's, and
+/// chooses [`SessionResumption::SharedTickets`], whose tickets that provider
+/// seals, or [`SessionResumption::Cache`] or [`SessionResumption::Disabled`].
+/// Otherwise the choice is Kynos's, and
 /// `tokio-rustls` is declared with `default-features = false` and `aws-lc-rs`
 /// named explicitly so the provider chosen here is always compiled in.
 ///

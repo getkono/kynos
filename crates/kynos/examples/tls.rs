@@ -34,6 +34,9 @@
 //!   certificates.** Stateless tickets, the default, let a returning client
 //!   skip the full handshake; they also let a resumed session keep a
 //!   certificate that has since expired, which a partner API may not accept.
+//!   A fleet that does want resumption shares its ticket keys, or each replica
+//!   resumes only what it issued: `SessionResumption::SharedTickets`, whose
+//!   `TicketKeys` carries a runnable rotation.
 //! * **Both protocol configs are set here because ALPN is where the choice is
 //!   made.** Under TLS the client and server negotiate `h2` or `http/1.1`
 //!   during the handshake, so a server offering both needs both configured.
