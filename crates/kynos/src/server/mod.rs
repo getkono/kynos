@@ -17,18 +17,19 @@
 //! # How this module is laid out
 //!
 //! The runtime coupling is five points, and each has a module: [`address`] for
-//! the listener, [`accept`] for the accept loop, [`connection`] for socket read
-//! and write, [`shutdown`] for the signal, and the timers that live with the
-//! work they bound. [`protocol`], [`tcp`] and [`tls`] are configuration;
-//! [`lifecycle`] is the state every part observes.
+//! the listener, the private `accept` module for the accept loop, the private
+//! `connection` module for socket read and write, [`shutdown`] for the signal,
+//! and the timers that live with the work they bound. [`protocol`], [`tcp`] and
+//! [`tls`] are configuration; the private `lifecycle` module is the state every
+//! part observes.
 
+mod accept;
+mod connection;
 mod describe;
+mod lifecycle;
 
-pub mod accept;
 pub mod address;
-pub mod connection;
 pub mod error;
-pub mod lifecycle;
 pub mod protocol;
 pub mod shutdown;
 pub mod tcp;
