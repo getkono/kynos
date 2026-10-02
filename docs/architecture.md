@@ -172,11 +172,12 @@ by naming the row X displaces rather than by arguing that X is good.
   provider is guaranteed present rather than inherited. A caller that installed
   a default first still wins — that is how a FIPS or hardware-backed provider
   stays reachable without a rustls type entering a Kynos signature — except
-  for session tickets, which rustls's provider interface does not carry: under
-  `SessionResumption::Tickets` they are sealed by `aws-lc-rs` whatever was
-  installed, so a deployment that needs every secret on its own provider
-  chooses `Cache` or `Disabled`. A provider that can serve nothing is reported
-  as `TlsError::CryptoProvider` rather than panicked on.
+  for the default session tickets, which rustls's provider interface does not
+  carry: under `SessionResumption::Tickets` they are sealed by `aws-lc-rs`
+  whatever was installed, so a deployment that needs every secret on its own
+  provider chooses `SharedTickets`, whose tickets that provider seals, or
+  `Cache` or `Disabled`. A provider that can serve nothing is reported as
+  `TlsError::CryptoProvider` rather than panicked on.
 
 ### The graph
 
@@ -295,13 +296,50 @@ written on the variant, and what they mean for a client certificate is
 [`security.md`](security.md#where-mutual-tls-fits)'s. The keys are
 random per process and rotate on the first handshake more than six hours after
 the last rotation, so replicas behind a load
-balancer cannot yet resume each other's sessions; sharing them needs a key
-source the operator supplies, which is
-[#269](https://github.com/getkono/kynos/issues/269). A bounded cache and no
-resumption are the two alternatives, each a knob on `TlsConfig`. What a
+balancer do not resume each other's sessions by default. A bounded cache and no
+resumption are two alternatives, each a knob on `TlsConfig`; shared ticket keys
+are the third, below. What a
 resumed handshake saves in CPU is `kynos-bench`'s to measure, by
 [`performance.md`](performance.md#the-boundary)'s boundary; that it resumes at
 all is asserted here, over a real socket.
+
+**Shared ticket keys are pushed, sealed by the provider, and opt-in.**
+[`SessionResumption::SharedTickets`](../crates/kynos/src/server/tls/ticket.rs)
+is what lets replicas resume each other's sessions, and a restarted process its
+own. Four decisions shape it:
+
+- *The key source is a handle, not a trait.* `TicketKeys` holds one issuing key
+  and any number of accepted ones, and the application calls `rotate` on its
+  clone. A callback or a trait would have Kynos decide when to ask — on a
+  timer, on a handshake, blocking or not — for a secret whose schedule and
+  store are the operator's. A fleet rotates in two steps, accept then issue,
+  which a single issuing-and-accepted set expresses and a "current key"
+  callback cannot.
+- *The ticket is an AEAD, not RFC 5077 §4's construction.* AES-256-GCM over
+  the session, with the key name, a 32-byte salt and the issue time as
+  associated data, under a per-ticket key that HKDF-SHA384 derives from the
+  secret and the salt. A random nonce under one shared key is safe for 2³²
+  tickets, which a busy fleet reaches in days; a key per ticket has no such count.
+  The key name is itself derived from the secret, so replicas agree on it
+  without being told, and it is what selects the generation to open with.
+- *The provider seals it.* rustls's provider interface has no ticketer, but it
+  does carry HKDF and, through a TLS 1.3 suite's QUIC packet protection, an
+  AEAD that takes caller-supplied associated data. Shared tickets are built on
+  those, so a caller-installed FIPS or hardware-backed provider performs every
+  operation, no crate is added, and `aws-lc-rs` is not named a second time.
+  RFC 5077's AES-CBC and HMAC are not reachable that way, which is the other
+  reason for the AEAD. A provider without `TLS13_AES_256_GCM_SHA384` or
+  without QUIC support is `TlsError::TicketCipher`.
+- *A ticket carries its issue time.* rustls leaves a ticket's lifetime to key
+  rotation, which here is the operator's, so a key kept too long would honour
+  its tickets for as long. The authenticated issue time bounds that to the
+  configured lifetime; it does not replace erasing the key, which is the only
+  thing that bounds what a leaked key decrypts.
+
+It is not the default: a process-local key needs no distribution and dies with
+the process, and trading that for a fleet's resumption rate is a decision about
+key management that [`security.md`](security.md#where-mutual-tls-fits) states
+the cost of.
 
 **Two date backends and two decimal backends, not one each.** These are the only
 rows where Kynos ships alternatives, and the reason is that the alternatives are
