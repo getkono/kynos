@@ -48,12 +48,14 @@ minimum_test_timeout = 600
 # Excluded from the tests run against each mutant. `mise run test` keeps all of
 # them; these are excluded only where a mutant's verdict would be wrong.
 #
-# - `_diagnostic_has_a_case`, and the five named tests below it, count tokens
-#   inside function bodies of the file they `include_str!`: `syn::Error::new(`,
+# - `_diagnostic_has_a_case`, and the seven named tests below it, count tokens
+#   inside function bodies of the files they `include_str!`: `syn::Error::new(`,
 #   `AuthRejection::unauthenticated`, `return None;`, `BodyRejection::`,
-#   `ServerError::InvalidConfiguration(` and the `=> "` arms of `as_str`. A
-#   mutant that replaces such a body changes the count, so the test fails
-#   whether or not any behaviour changed, and the mutant is reported caught.
+#   `ServerError::InvalidConfiguration(`, the `=> "` arms of `as_str`, and the
+#   `blockers.push(` calls and string literals of `emit/downgrade.rs` and
+#   `emit/downgrade/walk.rs`. A mutant that replaces such a body changes the
+#   count, so the test fails whether or not any behaviour changed, and the
+#   mutant is reported caught.
 #   The other tests that read source count declarations -- variants, fields,
 #   `pub fn` signatures, `impl` headers -- which no mutant changes, so they stay.
 # - `binary(/^alloc/)` holds allocation budgets. A mutant that returns an
@@ -80,7 +82,11 @@ additional_cargo_test_args = [
   """not (\
     binary(/^alloc/) | binary(=determinism) | binary(=ui) \
     | (package(kynos-macros) & test(/_diagnostic_has_a_case$/)) \
-    | (package(kynos-openapi) & test(=annotation::tests::every_reason_carries_the_token_the_record_spells)) \
+    | (package(kynos-openapi) & (\
+        test(=annotation::tests::every_reason_carries_the_token_the_record_spells) \
+      | test(=emit::tests::blockers::every_three_two_field_is_reported) \
+      | test(=emit::tests::blockers::every_construct_has_a_case)\
+    )) \
     | (package(kynos) & (\
         test(=security::carrier::parse::tests::every_refusal_has_a_case) \
       | test(=security::carrier::base64::tests::every_refusal_has_a_case) \
