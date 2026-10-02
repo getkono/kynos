@@ -34,6 +34,34 @@ fn http2_defaults_are_owned_by_kynos() {
     );
 }
 
+/// The whole retry schedule: four doubling waits, then the fifth consecutive
+/// failure ends the listener, and every count past it does too.
+#[test]
+fn a_failing_accept_backs_off_by_doubling_and_gives_up_at_the_fifth() {
+    use std::time::Duration;
+
+    use crate::server::accept::retry_delay;
+
+    let schedule = (0..=5).map(retry_delay).collect::<Vec<_>>();
+
+    assert_eq!(
+        schedule,
+        [
+            Some(Duration::from_millis(10)),
+            Some(Duration::from_millis(20)),
+            Some(Duration::from_millis(40)),
+            Some(Duration::from_millis(80)),
+            None,
+            None,
+        ]
+    );
+    assert_eq!(
+        retry_delay(u32::MAX),
+        None,
+        "a count past the limit gives up rather than overflowing"
+    );
+}
+
 #[test]
 fn tcp_keepalive_defaults_are_owned_by_kynos() {
     use std::time::Duration;
