@@ -1,0 +1,119 @@
+# cargo-mutants configuration, read by every `cargo mutants` run in this
+# workspace. `mise run mutants` and `mise run mutants:diff` are the commands;
+# `docs/testing.md#mutation-testing` is what a survivor means and how to triage
+# one.
+
+# `cargo test` cannot run this suite: `crates/kynos/tests/hermeticity.rs` fails
+# under a shared process by design, so the unmutated baseline would fail and
+# cargo-mutants would refuse to start.
+test_tool = "nextest"
+
+# Some 500 `cfg(feature)` sites gate the three crates. cargo-mutants generates
+# mutants from the source text regardless of which features are on, so a
+# default-feature run mutates `openapi32`, `tls` and codec code it never
+# compiles: every one of those mutants builds, nothing fails, and it is reported
+# missed. With every feature on, each mutant it generates is one that compiles.
+#
+# The opposite arms, `cfg(not(feature = ...))`, are then never compiled, and
+# they generate no mutant of their own: `cargo mutants --list` places none
+# inside one. The function-level mutants over the functions that hold them are
+# generated and tested at all features. What the arms do is tested by
+# `mise run test:baseline`, and is not measured here.
+all_features = true
+
+# The mutated package's own tests, plus `kynos`'s, for every mutant. By default
+# cargo-mutants runs only the mutated package's tests, but much of
+# `kynos-openapi` and `kynos-macros` is witnessed only from `kynos`: a proc
+# macro's expansion is compiled and run only in a crate that uses it, and the
+# document model is driven end to end only by `kynos`'s router and conformance
+# suites. Without `kynos` here those mutants are reported missed when
+# `kynos`'s suite would catch them.
+#
+# `kynos-profile` is not listed: it is a measurement harness, and its tests
+# hold its fixture rather than the framework.
+#
+# `mise run mutants kynos` narrows this to `kynos` alone, since neither other
+# crate depends on it and their suites cannot see a `kynos` mutant.
+test_package = ["kynos-openapi", "kynos-macros", "kynos"]
+
+# A floor under the per-mutant test timeout, in seconds. cargo-mutants sets the
+# timeout from the unmutated baseline, and the baseline runs only the mutated
+# crate's tests rather than `test_package`'s: a `kynos-openapi` baseline took
+# 1.6s and set a 20s timeout on runs that then carry `kynos`'s whole suite. A
+# mutant that hangs one test is not what this bounds -- nextest terminates that
+# test after two minutes, by `.config/nextest.toml` -- so the floor is the
+# suite's wall time on a CI runner with room to spare.
+minimum_test_timeout = 600
+
+# Excluded from the tests run against each mutant. `mise run test` keeps all of
+# them; these are excluded only where a mutant's verdict would be wrong.
+#
+# - `_diagnostic_has_a_case`, and the seven named tests below it, count tokens
+#   inside function bodies of the files they `include_str!`: `syn::Error::new(`,
+#   `AuthRejection::unauthenticated`, `return None;`, `BodyRejection::`,
+#   `ServerError::InvalidConfiguration(`, the `=> "` arms of `as_str`, and the
+#   `blockers.push(` calls and string literals of `emit/downgrade.rs` and
+#   `emit/downgrade/walk.rs`. A mutant that replaces such a body changes the
+#   count, so the test fails whether or not any behaviour changed, and the
+#   mutant is reported caught.
+#   The other tests that read source count declarations -- variants, fields,
+#   `pub fn` signatures, `impl` headers -- which no mutant changes, so they stay.
+# - `binary(/^alloc/)` holds allocation budgets. A mutant that returns an
+#   empty value or skips a step allocates differently, and fails there for its
+#   cost rather than for its behaviour, which hides whether any behavioural
+#   test would have noticed.
+# - `binary(determinism)` compares descriptions emitted by three processes,
+#   each under a fresh hash seed. A mutant that sends emission through an
+#   unordered walk is then caught or missed by the luck of the seeds, so its
+#   verdict does not reproduce from one run to the next.
+# - `binary(ui)` is the compile-fail suite, one test that runs a nested `cargo`
+#   over 183 fixtures: for every mutant it would rebuild `kynos` a second time
+#   and recompile all of them, the most expensive test in the workspace by far.
+#   What it alone can catch -- a mutant that removes a compile-time refusal --
+#   therefore survives here, and is checked against `mise run ui:check` before
+#   it is filed.
+#
+# `--fail-fast` because one failing test is the whole verdict: the default
+# profile runs every test to the end, which is right for a report and wasted on
+# a mutant already caught.
+additional_cargo_test_args = [
+  "--fail-fast",
+  "-E",
+  """not (\
+    binary(/^alloc/) | binary(=determinism) | binary(=ui) \
+    | (package(kynos-macros) & test(/_diagnostic_has_a_case$/)) \
+    | (package(kynos-openapi) & (\
+        test(=annotation::tests::every_reason_carries_the_token_the_record_spells) \
+      | test(=emit::tests::blockers::every_three_two_field_is_reported) \
+      | test(=emit::tests::blockers::every_construct_has_a_case)\
+    )) \
+    | (package(kynos) & (\
+        test(=security::carrier::parse::tests::every_refusal_has_a_case) \
+      | test(=security::carrier::base64::tests::every_refusal_has_a_case) \
+      | test(=server::tests::protocol_configuration::every_refusal_has_a_case) \
+      | test(=extract::body::json_lines::tests::every_streamed_rejection_has_a_case)\
+    ))\
+  )""",
+]
+
+exclude_globs = [
+  # Unpublished measurement harness; nothing depends on it.
+  "crates/kynos-profile/**",
+  # Each arm is `cfg(unix)`, `cfg(windows)` or neither, so on any one platform
+  # two of the three are uncompiled and every mutant in them is reported missed.
+  # The compiled arm only forwards to tokio's signal streams.
+  "crates/kynos/src/server/shutdown/signal.rs",
+  # The proc-macro entry points. Each one only forwards to an `expand` function
+  # elsewhere in the crate, which is mutated, and a mutant here makes every
+  # `kynos` target using the macro fail to compile: unviable, never caught or
+  # missed, and a full build each. An entry point that does more than forward
+  # belongs in the module it forwards to.
+  "crates/kynos-macros/src/lib.rs",
+]
+
+exclude_re = [
+  # Hand-written `Debug` implementations: no contract, and no test reads them.
+  # None redacts anything; one that does should move its redaction into a
+  # function a test can name.
+  '<impl (std::)?fmt::Debug for .*>::fmt ',
+]

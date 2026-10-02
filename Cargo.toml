@@ -85,6 +85,12 @@ matchit = "0.9.2"
 # nothing under `src/`.
 moka = { version = "0.12.10", default-features = false, features = ["future"] }
 multer = "3.1.0"
+# `#[cfg_attr(test, mutants::skip)]`, for a function cargo-mutants should not
+# mutate and whose reason fits no `exclude_re` in `.cargo/mutants.toml`. Only a
+# dev-dependency, and of a member only once that member writes the attribute:
+# under `cfg(test)` the path has to resolve, and outside it the attribute is
+# gone, so nothing it names reaches a published build.
+mutants = "0.0.4"
 percent-encoding = "2.3.2"
 prost = "0.14.4"
 rcgen = "0.14.9"

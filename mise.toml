@@ -811,6 +811,92 @@ run = [
   "cargo llvm-cov report --summary-only | tee coverage-summary.txt",
 ]
 
+[tasks.mutants]
+description = "Mutation-test one crate, or every crate"
+# What the run mutates, which tests it runs and what it leaves out are
+# `.cargo/mutants.toml`'s, and each is argued there. This task adds only what a
+# configuration file cannot say.
+#
+# `kynos` narrows the tests to its own suite: neither other crate depends on it,
+# so their suites cannot see a `kynos` mutant and running them is pure cost.
+# The other two keep the configured set, which adds `kynos`'s suite to theirs.
+#
+# `CARGO_TARGET_DIR` is unset because cargo-mutants builds each mutant in a
+# scratch copy of the tree, and Cargo keys a workspace member without its path:
+# with one shared target directory, a mutant built in one copy is reported
+# fresh in another, and the verdict belongs to whichever mutant built last.
+# Unset, each copy builds into its own `target/`.
+#
+# `PROPTEST_RNG_SEED` fixes the cases `proptest` draws, so a mutant is tested
+# against the same inputs on every run and its verdict reproduces. Any value
+# would do; a fixed one is the point.
+#
+# cargo-mutants is a task-scoped pin for `cost:features`' reason: a `[tools]`
+# entry would download it into every CI job, and only the mutation jobs use it.
+# Upstream publishes x86-64 binaries only, so on an arm64 machine this task has
+# nothing to install; the pin is the CI runner's.
+#
+# Not in `check` and not in `hooks:pre-push`: a full run is hours. The `mutants`
+# workflow runs it nightly in shards, and `mutants:diff` on every pull request.
+tools = { "github:sourcefrog/cargo-mutants" = "27.1.0" }
+env = { PROPTEST_RNG_SEED = "220" }
+usage = '''
+arg "[package]" help="kynos, kynos-openapi or kynos-macros; every crate when omitted"
+flag "--shard <shard>" help="Run one shard, as k/n with k counting from 0"
+'''
+run = '''
+set -eu
+unset CARGO_TARGET_DIR
+
+case "${usage_package:-}" in
+  "") set -- --workspace ;;
+  kynos) set -- --package kynos --test-package kynos ;;
+  kynos-openapi | kynos-macros) set -- --package "$usage_package" ;;
+  *)
+    echo "no mutated crate is called '$usage_package'" >&2
+    exit 2
+    ;;
+esac
+
+if [ -n "${usage_shard:-}" ]; then
+  set -- "$@" --shard "$usage_shard"
+fi
+
+cargo mutants "$@"
+'''
+
+[tasks."mutants:diff"]
+description = "Mutation-test the lines changed since the base branch"
+# The pull-request half of the gate: only the mutants on lines this branch
+# changed, so a change is held to its own tests and not to the backlog the
+# nightly run reports.
+#
+# The diff is taken against the merge base and the working tree, rather than
+# `BASE...HEAD`, because cargo-mutants matches its hunks against the files it
+# copies, which are the working tree's: an uncommitted edit that moved a line
+# would otherwise put every later hunk on the wrong one. `MUTANTS_BASE` is how
+# CI names the pull request's base commit; locally it is `origin/master`.
+#
+# The pins, the environment and `--shard` are `mutants`', for its reasons.
+tools = { "github:sourcefrog/cargo-mutants" = "27.1.0" }
+env = { PROPTEST_RNG_SEED = "220" }
+usage = '''
+flag "--shard <shard>" help="Run one shard, as k/n with k counting from 0"
+'''
+run = '''
+set -eu
+unset CARGO_TARGET_DIR
+
+set -- --workspace --in-diff target/mutants.diff
+if [ -n "${usage_shard:-}" ]; then
+  set -- "$@" --shard "$usage_shard"
+fi
+
+mkdir -p target
+git diff "$(git merge-base "${MUTANTS_BASE:-origin/master}" HEAD)" >target/mutants.diff
+cargo mutants "$@"
+'''
+
 [tasks.check]
 description = "Run formatting, linting, and tests"
 # `features:check` and `features:targets` are here because `AGENTS.md` names
