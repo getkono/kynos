@@ -13,9 +13,9 @@
 //! ```
 //!
 //! Transcribed rather than cited, because one character decides the whole of
-//! [`split`]: `etagc` admits `,` at `%x2C`. A comma *inside* the quotes is part
-//! of the tag and only a comma outside them separates two, so the quotes are
-//! the delimiter and the comma is not. A reader that splits on every comma
+//! reading a list: `etagc` admits `,` at `%x2C`. A comma *inside* the quotes
+//! is part of the tag and only a comma outside them separates two, so the
+//! quotes are the delimiter and the comma is not. A reader that splits on every comma
 //! takes `"a,b"` for two tags and matches neither — a 200 where a 304 was owed,
 //! and the kind of thing a comparator is either right about or silently wrong
 //! about forever.
@@ -31,10 +31,11 @@
 //! beside [`cookie`](super::cookie): the other field whose grammar Kynos reads
 //! rather than looks up.
 //!
-//! Public for the same reason `cookie` is. A handler that mints its own
-//! validator and evaluates its own precondition needs exactly these four
-//! functions, and the alternative to exporting them is every application
-//! writing the comma scan again.
+//! Only [`ETag`] is public. The reading and comparison functions serve
+//! Kynos's own precondition evaluation and are `pub(crate)`: a handler that
+//! attaches an `ETag` has the `Conditional` interceptor or a ranged `Served`
+//! response evaluate the request's preconditions against it, so it never
+//! compares two tags itself.
 
 use kynos_openapi::model::schema::types::SchemaType;
 
@@ -127,7 +128,7 @@ impl EncodeHeaders for ETag {
 }
 
 /// `*`, which matches any current representation the server has.
-pub const ANY: &str = "*";
+pub(crate) const ANY: &str = "*";
 
 /// The members of a `1#entity-tag` field value, trimmed.
 ///
@@ -140,7 +141,7 @@ pub const ANY: &str = "*";
 /// have allocated. Each member borrows the field value, and the scan restarts
 /// at each unquoted comma — which costs nothing, since an element boundary is
 /// by construction a point at which no `opaque-tag` is open.
-pub fn split(text: &str) -> impl Iterator<Item = &str> {
+pub(crate) fn split(text: &str) -> impl Iterator<Item = &str> {
     let mut rest = Some(text);
 
     core::iter::from_fn(move || {
@@ -180,13 +181,13 @@ pub fn split(text: &str) -> impl Iterator<Item = &str> {
 
 /// Whether `tag` carries the weakness marker.
 #[must_use]
-pub fn is_weak(tag: &str) -> bool {
+pub(crate) fn is_weak(tag: &str) -> bool {
     tag.starts_with("W/")
 }
 
 /// A tag's `opaque-tag`, which is itself with any weakness marker removed.
 #[must_use]
-pub fn opaque(tag: &str) -> &str {
+pub(crate) fn opaque(tag: &str) -> &str {
     tag.strip_prefix("W/").unwrap_or(tag)
 }
 
@@ -197,7 +198,7 @@ pub fn opaque(tag: &str) -> &str {
 /// "weak".* This is the one `If-None-Match` takes: a cache validation asks
 /// whether the stored copy is still good enough, not whether it is identical.
 #[must_use]
-pub fn weak_match(left: &str, right: &str) -> bool {
+pub(crate) fn weak_match(left: &str, right: &str) -> bool {
     opaque(left) == opaque(right)
 }
 
@@ -209,7 +210,7 @@ pub fn weak_match(left: &str, right: &str) -> bool {
 /// if the representation is byte-for-byte the one that copy came from. A weak
 /// tag therefore satisfies nothing here, on either side.
 #[must_use]
-pub fn strong_match(left: &str, right: &str) -> bool {
+pub(crate) fn strong_match(left: &str, right: &str) -> bool {
     !is_weak(left) && !is_weak(right) && left == right
 }
 
