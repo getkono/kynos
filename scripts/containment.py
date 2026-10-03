@@ -1142,7 +1142,10 @@ REEXPORT = re.compile(r"^[ \t]*pub\s+use\s+(\w+)", re.MULTILINE)
 # `todo!()` in the tree is inside a doc example, standing in for an application's
 # own code, and `strip()` has already removed doc comments by the time this runs.
 # The word boundary keeps the rule off a macro that merely ends in `todo!`.
-PLACEHOLDER = re.compile(r"\btodo!")
+#
+# `unimplemented!()` is the same placeholder under another name: it panics
+# identically when reached, and the lapsed exception never allowed it.
+PLACEHOLDER = re.compile(r"\b(todo|unimplemented)!")
 
 # --- The dev build profile ---------------------------------------------------
 # `.cargo/config.toml` is what keeps a worktree's `target/` near the 17 GiB
@@ -1960,7 +1963,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
     # --- Placeholder bodies --------------------------------------------------
     if placeholders := sorted(path for path, text in corpus.files if PLACEHOLDER.search(text)):
         failures.append(
-            "a `todo!()` stands in for a body, and the exception that allowed one "
+            "a `todo!()` or `unimplemented!()` stands in for a body, and the exception that allowed one "
             "lapsed when the API-skeleton milestone ended:\n    " + "\n    ".join(placeholders)
         )
 
