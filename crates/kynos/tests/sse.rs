@@ -169,6 +169,15 @@ async fn a_stream_configured_without_keep_alive_sends_no_comment() {
     );
 }
 
+/// A zero interval re-arms the keep-alive timer at the instant it fired, so an
+/// idle stream would write heartbeat records back to back. It is refused where
+/// it is configured rather than discovered on a live connection.
+#[test]
+#[should_panic(expected = "a keep-alive interval must be greater than zero")]
+fn a_zero_keep_alive_interval_is_refused() {
+    let _ = KeepAlive::new().interval(Duration::ZERO);
+}
+
 /// What a departing client leaves behind.
 ///
 /// Two facts rather than one, because they are separate claims: that the
