@@ -5,7 +5,10 @@ use crate::{
     extract::describe::Describe,
     router::operation::OperationCx,
     schema::registry::Registry,
-    security::schemes::{Basic, Bearer, Credentials, MutualTls},
+    security::{
+        carrier::Credentials,
+        schemes::{Basic, Bearer, MutualTls},
+    },
 };
 
 /// A scope set demanded by an operation rather than published by a scheme.

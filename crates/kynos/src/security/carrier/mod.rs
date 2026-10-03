@@ -31,6 +31,7 @@
 
 pub(super) mod base64;
 mod parse;
+mod query;
 
 use crate::{
     error::rejection::AuthRejection,
@@ -94,6 +95,36 @@ impl BearerToken {
     #[must_use]
     pub fn into_inner(self) -> String {
         self.0
+    }
+}
+
+/// The user-id and password HTTP basic authentication carried, per RFC 7617.
+///
+/// A named type rather than a pair, so that a handler signature says which
+/// field is the password.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Credentials {
+    username: String,
+    password: String,
+}
+
+impl Credentials {
+    /// The user-id: everything before the first colon.
+    #[must_use]
+    pub fn username(&self) -> &str {
+        &self.username
+    }
+
+    /// The password: everything after the first colon, which may hold more.
+    #[must_use]
+    pub fn password(&self) -> &str {
+        &self.password
+    }
+
+    /// Takes ownership of the user-id and password, in that order.
+    #[must_use]
+    pub fn into_parts(self) -> (String, String) {
+        (self.username, self.password)
     }
 }
 
@@ -206,7 +237,7 @@ pub fn bearer(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
 /// When an `Authorization` field is present and is not a well-formed basic
 /// credential: a different scheme, base64 that does not decode, bytes that are
 /// not UTF-8, or no colon at all.
-pub fn basic(parts: &Parts) -> Result<Option<super::schemes::Credentials>, AuthRejection> {
+pub fn basic(parts: &Parts) -> Result<Option<Credentials>, AuthRejection> {
     let Some(authorization) = parse::authorization(parts)? else {
         return Ok(None);
     };
@@ -228,7 +259,7 @@ pub fn basic(parts: &Parts) -> Result<Option<super::schemes::Credentials>, AuthR
         .split_once(':')
         .ok_or_else(AuthRejection::unauthenticated)?;
 
-    Ok(Some(super::schemes::Credentials {
+    Ok(Some(Credentials {
         username: username.to_owned(),
         password: password.to_owned(),
     }))
@@ -288,36 +319,12 @@ pub fn api_key(
             Ok(Some(ApiKey(value.to_owned())))
         }
 
-        KeyLocation::Query => Ok(query_value(parts, name)?.map(ApiKey)),
+        KeyLocation::Query => Ok(query::value(parts, name)?.map(ApiKey)),
 
         KeyLocation::Cookie => Ok(crate::http::cookie::value_of(&parts.headers, name)
             .map_err(|_| AuthRejection::unauthenticated())?
             .map(|value| ApiKey(value.to_owned()))),
     }
-}
-
-/// The first value of `name` in the request target's query string.
-///
-/// An API key `in: query` is a query parameter, so it is read exactly as a
-/// derived [`Query`](crate::extract::params::query::Query) parameter of the same
-/// name is: through the same decoder, which applies the form rules OpenAPI
-/// requires of every `in: query` parameter (`+` is a space, `%2B` a plus sign),
-/// and from the first pair that names it. A later pair never stands in for one
-/// that could not be read, since two readers of one request would then pick
-/// different credentials.
-///
-/// # Errors
-///
-/// When that first value's octets are not UTF-8: present and malformed.
-fn query_value(parts: &Parts, name: &str) -> Result<Option<String>, AuthRejection> {
-    let Some((_, value)) = crate::__private::uri::query_pairs(parts.uri.query())
-        .find(|(key, _)| **key == *name.as_bytes())
-    else {
-        return Ok(None);
-    };
-    String::from_utf8(value.into_owned())
-        .map(Some)
-        .map_err(|_| AuthRejection::unauthenticated())
 }
 
 /// The certificate chain the peer presented during the TLS handshake.

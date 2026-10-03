@@ -75,9 +75,10 @@ fn basic_credentials_split_at_the_first_colon() {
     let head = authorized("Basic dXNlcjpwYTpzcw==");
     let credentials = basic(&head).expect("a credential").expect("present");
 
-    assert_eq!(credentials.username, "user");
+    assert_eq!(credentials.username(), "user");
     assert_eq!(
-        credentials.password, "pa:ss",
+        credentials.password(),
+        "pa:ss",
         "a password may hold a colon; a user-id may not"
     );
 }
@@ -89,8 +90,7 @@ fn an_empty_password_is_a_password() {
         .expect("a credential")
         .expect("present");
 
-    assert_eq!(credentials.username, "user");
-    assert_eq!(credentials.password, "");
+    assert_eq!(credentials.into_parts(), ("user".to_owned(), String::new()));
 }
 
 /// One case per way `basic` refuses what is not a basic credential.

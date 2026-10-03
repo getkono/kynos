@@ -27,7 +27,10 @@ use kynos::{
     response::{IntoResponse, Responses},
     router::operation::Tag as TagTrait,
     schema::Schema as SchemaTrait,
-    security::SecurityScheme as SecuritySchemeTrait,
+    security::{
+        SecurityScheme as SecuritySchemeTrait,
+        carrier::{ApiKey, BearerToken, Carries, Credentials, PeerCertificates, SchemeCredentials},
+    },
 };
 
 #[derive(Schema, serde::Serialize)]
@@ -110,6 +113,18 @@ struct BearerAuth;
 #[security(name = "SessionCookie")]
 struct SessionCookie;
 
+#[derive(SecurityScheme)]
+#[security(basic)]
+struct BasicLogin;
+
+#[derive(SecurityScheme)]
+#[security(http(scheme = "Digest"))]
+struct DigestLogin;
+
+#[derive(SecurityScheme)]
+#[security(mutual_tls)]
+struct PartnerCertificate;
+
 /// The whole `#[problem(...)]` grammar, so the expansion is exercised by a
 /// compiled use rather than only by compile-fail cases.
 ///
@@ -173,6 +188,19 @@ fn every_derive_implements_its_trait() {
     implements_security_scheme::<SessionCookie>();
     implements_responses::<StoreError>();
     implements_responses::<CreateReply>();
+}
+
+fn presents<S: Carries<Presented = P>, P>() {}
+
+/// Each scheme kind is read back as its own credential type, so a kind that
+/// fell through to the bearer reader would stop compiling here.
+#[test]
+fn each_scheme_kind_presents_its_own_credential() {
+    presents::<BearerAuth, BearerToken>();
+    presents::<SessionCookie, ApiKey>();
+    presents::<BasicLogin, Credentials>();
+    presents::<DigestLogin, SchemeCredentials>();
+    presents::<PartnerCertificate, PeerCertificates>();
 }
 
 #[test]

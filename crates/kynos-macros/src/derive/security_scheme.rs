@@ -276,7 +276,7 @@ fn carrier_of(
 
     match kind.to_string().as_str() {
         "basic" => (
-            quote!(::kynos::security::schemes::Credentials),
+            quote!(#carrier::Credentials),
             quote!(#carrier::basic(parts)),
         ),
 
