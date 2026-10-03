@@ -94,8 +94,11 @@ impl Encoded {
     /// A coding of a file, stored beside it.
     ///
     /// What [`assets!`](crate::assets) emits. `coding` is the token
-    /// `Content-Encoding` carries; `etag` is quoted and minted from `bytes`
-    /// rather than from the file it encodes.
+    /// `Content-Encoding` carries; `etag` is minted from `bytes` rather than
+    /// from the file it encodes.
+    ///
+    /// `etag` must be a quoted `entity-tag` (RFC 9110 section 8.8.3), as
+    /// `assets!` mints it: it is sent and compared as given, never checked.
     #[must_use]
     pub const fn stored(coding: &'static str, bytes: &'static [u8], etag: &'static str) -> Self {
         Self {
@@ -128,8 +131,17 @@ impl Asset {
     /// A file compiled into the binary.
     ///
     /// What [`assets!`](crate::assets) emits. `path` is relative and
-    /// `/`-separated with no leading slash; `etag` is quoted and ready for the
-    /// field.
+    /// `/`-separated with no leading slash; `etag` must be a quoted
+    /// `entity-tag` (RFC 9110 section 8.8.3), as `assets!` mints it: it is sent
+    /// and compared as given, never checked.
+    ///
+    /// # Panics
+    ///
+    /// Not here: mounting a set that holds this asset panics when `path` is not
+    /// a legal path template, through [`Router::mount`](crate::Router::mount)
+    /// or [`Group::mount`](crate::router::group::Group::mount). `assets!`
+    /// refuses such a name at compile time, so only a hand-built `Asset` can
+    /// reach it.
     #[must_use]
     pub const fn embedded(path: &'static str, bytes: &'static [u8], etag: &'static str) -> Self {
         Self {
@@ -145,7 +157,13 @@ impl Asset {
     /// What [`assets!`](crate::assets) emits where the directory held
     /// `app.js.br` or `app.js.gz` beside `app.js`. `encodings` is in the order
     /// the server prefers, which decides a tie between codings the client
-    /// weighted equally.
+    /// weighted equally. `path` and `etag` are as [`embedded`](Self::embedded)
+    /// requires.
+    ///
+    /// # Panics
+    ///
+    /// Not here: mounting a set that holds this asset panics when `path` is not
+    /// a legal path template, as [`embedded`](Self::embedded) says.
     #[must_use]
     pub const fn embedded_with_codings(
         path: &'static str,

@@ -214,5 +214,26 @@ pub(crate) fn strong_match(left: &str, right: &str) -> bool {
     !is_weak(left) && !is_weak(right) && left == right
 }
 
+/// Whether an `If-None-Match` `field` names `current`, per RFC 9110 section
+/// 13.1.2.
+///
+/// `*` matches anything the server has. Otherwise the field is a
+/// `1#entity-tag` read by [`split`], and the [weak comparison](weak_match)
+/// applies — `W/"x"` and `"x"` are the same representation for a cache
+/// validation, which is the whole point of `If-None-Match`. A field that is not
+/// visible ASCII names nothing.
+#[must_use]
+pub(crate) fn matches(field: &HeaderValue, current: &str) -> bool {
+    let Ok(text) = field.to_str() else {
+        return false;
+    };
+
+    if text.trim() == ANY {
+        return true;
+    }
+
+    split(text).any(|candidate| weak_match(candidate, current))
+}
+
 #[cfg(test)]
 mod tests;

@@ -2333,6 +2333,75 @@ fn tls_rejects_repeated_sni_names() {
     ));
 }
 
+#[cfg(feature = "tls")]
+fn sni_refusal(
+    earlier: &[&str],
+    names: &[&str],
+) -> std::result::Result<crate::server::tls::TlsConfig, crate::server::tls::error::TlsError> {
+    let identity = server_identity();
+    let mut config = crate::server::tls::TlsConfig::from_pem(
+        identity.certificate.as_bytes(),
+        identity.key.as_bytes(),
+    )
+    .expect("server identity parses");
+    if !earlier.is_empty() {
+        config = config
+            .with_server_certificate(
+                earlier.iter().copied(),
+                identity.certificate.as_bytes(),
+                identity.key.as_bytes(),
+            )
+            .expect("the earlier names register");
+    }
+    config.with_server_certificate(
+        names.iter().copied(),
+        identity.certificate.as_bytes(),
+        identity.key.as_bytes(),
+    )
+}
+
+#[cfg(feature = "tls")]
+#[test]
+fn tls_rejects_an_empty_sni_name_list() {
+    assert!(matches!(
+        sni_refusal(&[], &[]),
+        Err(crate::server::tls::error::TlsError::ServerName(name)) if name.is_empty()
+    ));
+}
+
+#[cfg(feature = "tls")]
+#[test]
+fn tls_rejects_an_empty_sni_name() {
+    assert!(matches!(
+        sni_refusal(&[], &["example.com", ""]),
+        Err(crate::server::tls::error::TlsError::ServerName(name)) if name == "example.com"
+    ));
+}
+
+/// Registered names are compared after lowercasing, like the names a call
+/// repeats within itself.
+#[cfg(feature = "tls")]
+#[test]
+fn tls_rejects_an_sni_name_an_earlier_call_registered() {
+    assert!(matches!(
+        sni_refusal(&["example.com"], &["Example.COM"]),
+        Err(crate::server::tls::error::TlsError::ServerName(name)) if name == "example.com"
+    ));
+    assert!(
+        sni_refusal(&["example.com"], &["example.org"]).is_ok(),
+        "a name no earlier call registered is accepted"
+    );
+}
+
+#[cfg(feature = "tls")]
+#[test]
+fn tls_rejects_an_sni_name_that_is_not_a_server_name() {
+    assert!(matches!(
+        sni_refusal(&[], &["example.com", "not a host"]),
+        Err(crate::server::tls::error::TlsError::ServerName(name)) if name == "not a host"
+    ));
+}
+
 /// `TlsConfig::build` with no crypto provider installed anywhere.
 ///
 /// rustls resolves the process-level provider from the `aws-lc-rs` and `ring`

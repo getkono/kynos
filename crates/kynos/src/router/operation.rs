@@ -295,10 +295,6 @@ impl OperationCx<'_> {
     }
 }
 
-/// The description given to a response entry created only to carry a header.
-///
-/// A `Response` must have one, and the reason phrase RFC 9110 registers for the
-/// status is the most any caller has said about it.
 /// Whether `declared` names responses `range` covers.
 ///
 /// An exact code is covered when the range matches it; an identical range is
@@ -327,6 +323,10 @@ fn declare_header(
     }
 }
 
+/// The description given to a response entry created only to carry a header.
+///
+/// A `Response` must have one, and the reason phrase RFC 9110 registers for the
+/// status is the most any caller has said about it.
 fn describe_status(status: StatusPattern) -> String {
     let class = match status {
         StatusPattern::Code(code) => {

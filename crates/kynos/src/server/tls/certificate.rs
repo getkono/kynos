@@ -1,6 +1,9 @@
 //! Parsing certificate material, and resolving it per SNI name.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use tokio_rustls::rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
@@ -31,6 +34,44 @@ pub(in crate::server) fn parse_certificates(
         return Err(TlsError::EmptyPem { kind });
     }
     Ok(certificates)
+}
+
+/// `names`, lowercased, unless one is refused as an SNI name: the list is
+/// empty, or a name is repeated, empty, already in `registered`, or not a
+/// server name.
+pub(in crate::server) fn server_names(
+    names: impl IntoIterator<Item = String>,
+    registered: &[CertificateMaterial],
+) -> std::result::Result<Vec<String>, TlsError> {
+    let names = names
+        .into_iter()
+        .map(|name| name.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let mut unique_names = BTreeSet::new();
+    if let Some(name) = names
+        .iter()
+        .find(|name| !unique_names.insert((*name).clone()))
+    {
+        return Err(TlsError::ServerName(name.clone()));
+    }
+    if names.is_empty()
+        || names.iter().any(String::is_empty)
+        || names.iter().any(|name| {
+            registered
+                .iter()
+                .flat_map(|certificate| &certificate.names)
+                .any(|existing| existing == name)
+        })
+    {
+        return Err(TlsError::ServerName(
+            names.first().cloned().unwrap_or_default(),
+        ));
+    }
+    for name in &names {
+        tokio_rustls::rustls::pki_types::ServerName::try_from(name.clone())
+            .map_err(|_| TlsError::ServerName(name.clone()))?;
+    }
+    Ok(names)
 }
 
 pub(in crate::server) fn parse_certificate_material(

@@ -373,7 +373,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
         // longer being offered, and answering 304 would leave it with octets it
         // just said it cannot decode.
         if let Some(field) = request.headers().get(header::IF_NONE_MATCH) {
-            if matches(field, chosen.etag) {
+            if etag::matches(field, chosen.etag) {
                 let mut response = Response::new(crate::http::body::Body::empty());
                 *response.status_mut() = StatusCode::NOT_MODIFIED;
                 crate::extract::params::header::write(
@@ -419,25 +419,4 @@ struct Representation {
     etag: &'static str,
     /// `None` for the identity octets, which carry no `Content-Encoding`.
     coding: Option<&'static str>,
-}
-
-/// Whether `field` names `current`, per RFC 9110 section 13.1.2.
-///
-/// `*` matches anything the server has. Otherwise the field is a
-/// `1#entity-tag` and the *weak* comparison applies — `W/"x"` and `"x"` are the
-/// same representation for a cache validation, which is the whole point of
-/// `If-None-Match`.
-///
-/// Both halves come from [`http::etag`](crate::http::etag), which is the one
-/// place in the crate that knows a comma can sit inside an `opaque-tag`.
-pub(super) fn matches(field: &HeaderValue, current: &str) -> bool {
-    let Ok(text) = field.to_str() else {
-        return false;
-    };
-
-    if text.trim() == etag::ANY {
-        return true;
-    }
-
-    etag::split(text).any(|candidate| etag::weak_match(candidate, current))
 }

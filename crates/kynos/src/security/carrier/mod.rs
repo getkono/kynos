@@ -98,7 +98,8 @@ impl BearerToken {
     }
 }
 
-/// The user-id and password HTTP basic authentication carried, per RFC 7617.
+/// The username and password HTTP basic authentication carried, per RFC 7617,
+/// which calls the username the `user-id`.
 ///
 /// A named type rather than a pair, so that a handler signature says which
 /// field is the password.
@@ -109,7 +110,7 @@ pub struct Credentials {
 }
 
 impl Credentials {
-    /// The user-id: everything before the first colon.
+    /// The username: everything before the first colon.
     #[must_use]
     pub fn username(&self) -> &str {
         &self.username
@@ -121,7 +122,7 @@ impl Credentials {
         &self.password
     }
 
-    /// Takes ownership of the user-id and password, in that order.
+    /// Takes ownership of the username and password, in that order.
     #[must_use]
     pub fn into_parts(self) -> (String, String) {
         (self.username, self.password)

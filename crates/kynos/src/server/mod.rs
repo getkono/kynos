@@ -176,6 +176,9 @@ impl<C: 'static> Server<C> {
     ///
     /// On by default at [`TcpKeepAlive::default`], which bounds how long a peer
     /// that vanished without closing its connection holds a connection permit.
+    ///
+    /// [`prepare`](Self::prepare) refuses an `idle` or `interval` outside 1 to
+    /// 32767 seconds.
     #[must_use]
     pub fn tcp_keepalive(mut self, keepalive: Option<TcpKeepAlive>) -> Self {
         self.tcp_keepalive = keepalive;
@@ -183,6 +186,23 @@ impl<C: 'static> Server<C> {
     }
 
     /// Resolves and binds every configured listener atomically.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Server`](crate::error::Error::Server), carrying:
+    ///
+    /// - [`ServerError::InvalidConfiguration`] for a protocol setting the
+    ///   `http1` or `http2` configuration's own setters say is refused, or a
+    ///   [`TcpKeepAlive`] duration outside 1 to 32767 seconds. Checked before
+    ///   anything else, so no socket is bound.
+    /// - With TLS: [`ServerError::MutualTlsConflict`] when a client certificate
+    ///   is required and the description already holds a different security
+    ///   scheme named `MutualTls`, and `ServerError::Tls` when the TLS
+    ///   configuration cannot be built.
+    /// - [`ServerError::Listener`], [`ServerError::Resolve`] or
+    ///   [`ServerError::Bind`] when a supplied listener, an address, or a
+    ///   resolved address fails; every listener already bound is dropped.
+    /// - [`ServerError::NoListeners`] when nothing was configured to listen on.
     pub async fn prepare(self) -> Result<BoundServer<C>> {
         validate_protocol_config(
             #[cfg(feature = "http1")]
