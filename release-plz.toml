@@ -127,8 +127,8 @@ git_release_enable = false
 
 [changelog]
 # A skip rule must never be able to hide a breaking change, and here one would:
-# of the 46 breaking commits in this history, 32 are `refactor!:`, a type
-# skipped below. This is the backstop rather than the mechanism -- git-cliff
+# breaking commits in this history are routinely `refactor!:`, a type skipped
+# below. This is the backstop rather than the mechanism -- git-cliff
 # returns on the first parser that matches, so a protected commit caught by a
 # skip rule keeps its group unset and lands under a heading named after its raw
 # type. The breaking arm in `commit_parsers` is what puts these in "Other"
