@@ -23,7 +23,7 @@
 //! Every expansion names `::kynos::…`, which this crate cannot depend on, so a
 //! doctest here would not compile whatever the derive emitted. The compiled
 //! demonstrations live in `crates/kynos/tests/derives.rs` and the framework's
-//! examples; `AGENTS.md` records the carve-out.
+//! examples; `AGENTS.md` records the rule.
 
 #[cfg(feature = "assets")]
 mod assets;
