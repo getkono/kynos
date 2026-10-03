@@ -167,3 +167,6 @@ fn encode<T: serde::Serialize>(
 
     Ok(bytes::Bytes::from(record))
 }
+
+#[cfg(test)]
+mod tests;

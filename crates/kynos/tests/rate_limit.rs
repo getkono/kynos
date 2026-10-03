@@ -82,6 +82,23 @@ impl RateLimitStore for Broken {
     }
 }
 
+/// A store reading one count under every key, current window and previous
+/// alike, so no answer depends on which window the clock has reached.
+#[derive(Clone, Copy, Debug)]
+struct Spent(u64);
+
+impl RateLimitStore for Spent {
+    type Error = Unavailable;
+
+    async fn read(&self, _: &str) -> Result<u64, Self::Error> {
+        Ok(self.0)
+    }
+
+    async fn increment(&self, _: &str, by: u64, _: Duration) -> Result<u64, Self::Error> {
+        Ok(self.0 + by)
+    }
+}
+
 // --- The fixture ----------------------------------------------------------
 
 #[kynos::get("/counted")]
@@ -196,6 +213,29 @@ async fn a_burst_allowance_is_both_honoured_and_advertised() {
         get(&service, "/counted").call().await.status,
         StatusCode::TOO_MANY_REQUESTS
     );
+}
+
+/// The shipped limiter's `Retry-After` is when its quota recovers: the rest of
+/// the current window, plus however long the carried count takes to decay.
+///
+/// Exact whatever the wall clock reads, which the limiter takes from
+/// `SystemTime` with no seam to fix it. With a one-second window the remainder
+/// is between a millisecond and one second; with a quota of one, the carried
+/// count has to decay all the way, which takes exactly one window. The sum lies
+/// in (1 s, 2 s] and rounds up to two at every instant. Reporting the window
+/// alone, the remainder alone or the decay alone would each read "1".
+#[tokio::test]
+async fn the_shipped_limiter_reports_when_its_quota_recovers_as_retry_after() {
+    let service = limited(Quotas::new(shared(), Spent(1)).quota(Quota::new(
+        "second",
+        1,
+        Duration::from_secs(1),
+    )));
+
+    let refused = get(&service, "/counted").call().await;
+
+    assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(refused.field("retry-after").as_deref(), Some("2"));
 }
 
 // --- Several quotas -------------------------------------------------------
