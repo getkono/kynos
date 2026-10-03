@@ -6,6 +6,9 @@
 //! as readably: two failures publishing one type, two sharing one summary, a
 //! status whose failures gave no summary at all, and a status with no failure
 //! answering it -- which no caller can emit and this refuses.
+//!
+//! One case is about the wire rather than a declaration: an extension keyed
+//! like a registered member, which the hand-written `Serialize` drops.
 
 use serde_json::Value;
 
@@ -102,6 +105,35 @@ fn one_summary_two_failures_share_is_written_once() {
 #[should_panic(expected = "no caller passes an empty branch list")]
 fn a_status_no_failure_answers_is_refused() {
     let _ = declared(404, &[]);
+}
+
+/// An extension keyed like one of RFC 9457's five registered members is dropped
+/// on the wire, whether or not the member it shadows is present: one name
+/// cannot hold two values, and an absent `instance` must not be filled in by
+/// one. An extension with a name of its own still travels.
+#[test]
+fn an_extension_named_like_a_registered_member_never_reaches_the_wire() {
+    use crate::{error::problem::Problem, http::StatusCode};
+
+    let problem = Problem::new(StatusCode::CONFLICT)
+        .with_detail("that email is already registered")
+        .with_extension("type", "https://errors.example.com/shadowed")
+        .with_extension("title", "Shadowed")
+        .with_extension("status", 500)
+        .with_extension("detail", "shadowed")
+        .with_extension("instance", "/shadowed")
+        .with_extension("retry", false);
+
+    assert_eq!(
+        serde_json::to_value(problem).expect("a problem serializes"),
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Conflict",
+            "status": 409,
+            "detail": "that email is already registered",
+            "retry": false,
+        })
+    );
 }
 
 /// The `oneOf` is sound only because `Problem` requires `type`.

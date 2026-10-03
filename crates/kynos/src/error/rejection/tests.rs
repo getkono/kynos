@@ -81,6 +81,73 @@ fn each_body_failure_has_its_own_status() {
     declares(&statuses, BodyRejection::statuses());
 }
 
+/// A schema failure is a set, so it travels as RFC 9457's `errors` extension:
+/// one `{pointer, detail}` entry per failing pointer, in pointer order, with
+/// the variant's sentence alone as `detail`.
+///
+/// The failures are inserted out of order, so the array's order is the map's
+/// rather than the caller's.
+#[test]
+fn a_schema_failure_travels_as_one_errors_entry_per_pointer() {
+    let problem = BodyRejection::Schema {
+        failures: [
+            ("/name".to_owned(), "expected a string".to_owned()),
+            ("/age".to_owned(), "expected an integer".to_owned()),
+        ]
+        .into_iter()
+        .collect(),
+    }
+    .into_problem();
+
+    assert_eq!(
+        serde_json::to_value(problem).expect("a problem serializes"),
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Unprocessable Entity",
+            "status": 422,
+            "detail": "the request body does not satisfy its schema",
+            "errors": [
+                { "pointer": "/age", "detail": "expected an integer" },
+                { "pointer": "/name", "detail": "expected a string" },
+            ],
+        })
+    );
+}
+
+/// A 415 names the media type the client sent, or says it sent none, so a
+/// client can tell a wrong `Content-Type` from a missing one.
+#[test]
+fn an_unsupported_media_type_names_what_was_received_or_its_absence() {
+    let document = |received: Option<&str>| {
+        serde_json::to_value(
+            BodyRejection::UnsupportedMediaType {
+                received: received.map(ToOwned::to_owned),
+            }
+            .into_problem(),
+        )
+        .expect("a problem serializes")
+    };
+
+    assert_eq!(
+        document(Some("text/csv")),
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Unsupported Media Type",
+            "status": 415,
+            "detail": "unsupported media type: `text/csv`",
+        })
+    );
+    assert_eq!(
+        document(None),
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Unsupported Media Type",
+            "status": 415,
+            "detail": "unsupported media type: the request declared no `Content-Type`",
+        })
+    );
+}
+
 #[test]
 fn negotiation_separates_a_bad_header_from_an_unmatchable_one() {
     let observed = [
