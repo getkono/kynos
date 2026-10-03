@@ -7,11 +7,14 @@
 //! a user type at all.
 //!
 //! A derive is a type-level surface, so what a derived decoder does is not
-//! checked here, with two recorded exceptions, which no other target
-//! exercises: the query decoder's refusal of a declared value that is not
-//! UTF-8, and its decoding of `+` as a space and of an escaped `+` as a `+`;
-//! and the cookie decoder's refusal of a declared cookie that is not ASCII.
-//! Their tests call the derived decoder directly, with no server. What *is* checked
+//! checked here, with recorded exceptions, which no other target exercises:
+//! the query decoder's refusal of a declared value that is not UTF-8, and its
+//! decoding of `+` as a space and of an escaped `+` as a `+`; the cookie
+//! decoder's refusal of a declared cookie that is not ASCII; the header
+//! decoder's refusal of a missing required header or a value that is not
+//! ASCII, and its reading of an absent optional header as `None`; and the
+//! response a derived `Reply` or `ApiError` writes. Their tests call the
+//! derived code directly, with no server. What *is* checked
 //! beyond compiling is the description a derive emits, and what the default
 //! `QueryParams::parameters` makes of a derived schema.
 
@@ -1359,6 +1362,100 @@ fn a_cookie_value_that_is_not_ascii_is_refused_naming_its_cookie() {
     let decoded = Session::decode(&jar(&[b"other=\xff; session_id=s-42"]))
         .expect("an unreadable undeclared cookie is ignored");
     assert_eq!(decoded.session, "s-42");
+}
+
+// --- The derived header decoder reads only a header that is text -----------
+//
+// The third runtime property checked here, for the reason the query one is: no
+// other target exercises these refusals, and the macro crate cannot run an
+// expansion.
+
+/// One required header and one optional, so each read is checked where its
+/// absence means something different.
+#[derive(HeaderParams)]
+struct Traced {
+    #[header(rename = "X-Request-Id")]
+    request_id: String,
+    #[header(rename = "X-Trace-Parent")]
+    parent: Option<String>,
+}
+
+/// The headers `fields` names, each value taken as raw octets.
+fn header_map(fields: &[(&str, &[u8])]) -> kynos::http::HeaderMap {
+    use kynos::http::{HeaderMap, HeaderName, HeaderValue};
+
+    let mut headers = HeaderMap::new();
+    for (name, value) in fields {
+        headers.append(
+            HeaderName::from_bytes(name.as_bytes()).expect("a legal field name"),
+            HeaderValue::from_bytes(value).expect("a legal field value"),
+        );
+    }
+    headers
+}
+
+/// A required header nothing carried is refused under the name the group
+/// declared, not the field's Rust name.
+#[test]
+fn the_derived_header_decoder_refuses_a_missing_required_header_naming_it() {
+    use kynos::{error::rejection::HeaderRejection, extract::params::header::DecodeHeaders};
+
+    for fields in [&[][..], &[("x-trace-parent", b"p-1".as_slice())]] {
+        match Traced::decode(&header_map(fields)) {
+            Err(HeaderRejection::Invalid { name, detail }) => {
+                assert_eq!(name, "X-Request-Id", "{fields:?}");
+                assert_eq!(detail, "the header is required", "{fields:?}");
+            }
+            Err(other) => panic!("{fields:?}: refused for another reason: {other}"),
+            Ok(decoded) => panic!("{fields:?}: accepted as {:?}", decoded.request_id),
+        }
+    }
+}
+
+/// A declared header whose value is not printable ASCII is refused, naming it,
+/// whether the field is required or optional: an optional header that is
+/// present and unreadable is not the absent one `None` means.
+#[test]
+fn the_derived_header_decoder_refuses_a_non_ascii_value_naming_it() {
+    use kynos::{error::rejection::HeaderRejection, extract::params::header::DecodeHeaders};
+
+    for (fields, header) in [
+        (
+            &[("x-request-id", b"r-\xff".as_slice())][..],
+            "X-Request-Id",
+        ),
+        (
+            &[("x-request-id", b"r-1"), ("x-trace-parent", b"p-\xe9")],
+            "X-Trace-Parent",
+        ),
+    ] {
+        match Traced::decode(&header_map(fields)) {
+            Err(HeaderRejection::Invalid { name, detail }) => {
+                assert_eq!(name, header, "{fields:?}");
+                assert!(detail.contains("ASCII"), "{fields:?}: {detail}");
+            }
+            Err(other) => panic!("{fields:?}: refused for another reason: {other}"),
+            Ok(decoded) => panic!("{fields:?}: accepted as {:?}", decoded.parent),
+        }
+    }
+}
+
+/// An optional header nothing carried is `None`, and the group still decodes.
+#[test]
+fn the_derived_header_decoder_reads_an_absent_optional_header_as_none() {
+    use kynos::extract::params::header::DecodeHeaders;
+
+    let decoded = Traced::decode(&header_map(&[("x-request-id", b"r-1")]))
+        .expect("an absent optional header is not a refusal");
+    assert_eq!(decoded.request_id, "r-1");
+    assert_eq!(decoded.parent, None);
+
+    let decoded = Traced::decode(&header_map(&[
+        ("x-request-id", b"r-1"),
+        ("x-trace-parent", b"p-1"),
+    ]))
+    .expect("both headers are readable");
+    assert_eq!(decoded.parent.as_deref(), Some("p-1"));
 }
 
 // --- A variant serde reads under an alias is described under each name ------
@@ -2734,6 +2831,185 @@ fn untyped_variants_sharing_a_status_are_each_named() {
         responses["404"]["description"],
         serde_json::json!("File not found; Source file missing"),
         "{responses}"
+    );
+}
+
+// --- A derived reply and a derived problem answer as they declare ----------
+//
+// The runtime half of `Reply` and `ApiError`: the response each variant writes.
+// Recorded exceptions to a derive being a type-level surface, for the reason
+// the query decoder's is: a status arm or a problem member the expansion
+// drops is invisible to every description and compile-time check, and the
+// macro crate cannot run an expansion.
+
+/// What a response says: its status, its fields and its whole body, collected.
+struct Answered {
+    status: kynos::http::StatusCode,
+    headers: kynos::http::HeaderMap,
+    body: bytes::Bytes,
+}
+
+async fn answered(response: kynos::http::Response) -> Answered {
+    use http_body_util::BodyExt;
+
+    let (parts, body) = response.into_parts();
+    Answered {
+        status: parts.status,
+        headers: parts.headers,
+        body: body.collect().await.expect("a readable body").to_bytes(),
+    }
+}
+
+/// A bodied variant writes its declared status and its payload as the JSON the
+/// description promised.
+#[tokio::test]
+async fn a_reply_variant_answers_with_its_declared_status_and_json_body() {
+    let reply = CreateReply::Created(User {
+        id: 7,
+        name: "Ada".to_owned(),
+    });
+    let Answered {
+        status,
+        headers,
+        body,
+    } = answered(reply.into_response()).await;
+
+    assert_eq!(status, 201);
+    assert_eq!(
+        headers[kynos::http::header::CONTENT_TYPE],
+        "application/json"
+    );
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
+    assert_eq!(body, serde_json::json!({ "id": 7, "name": "Ada" }));
+}
+
+/// A unit variant writes its declared status and no content: no body and no
+/// `Content-Type` describing one.
+#[tokio::test]
+async fn a_unit_reply_variant_sends_its_status_and_no_content() {
+    let Answered {
+        status,
+        headers,
+        body,
+    } = answered(CreateReply::Conflict.into_response()).await;
+
+    assert_eq!(status, 409);
+    assert_eq!(headers.get(kynos::http::header::CONTENT_TYPE), None);
+    assert!(body.is_empty(), "{body:?}");
+}
+
+/// One variant per rung of the description's fallback: an explicit
+/// `description` over a doc comment, a doc comment, the status's reason phrase,
+/// and a fixed sentence for a status that has none.
+#[derive(Reply)]
+enum DescribedReply {
+    /// Shadowed by the attribute.
+    #[reply(status = 200, description = "from the attribute")]
+    Attribute,
+    /// From the doc comment.
+    #[reply(status = 202)]
+    Doc,
+    #[reply(status = 204)]
+    Reason,
+    #[reply(status = 299)]
+    Unnamed,
+}
+
+/// A reply's description is its `description`, else its doc comment, else its
+/// status's reason phrase.
+#[test]
+fn a_reply_description_falls_back_from_attribute_to_doc_to_reason_phrase() {
+    let responses = emitted_responses::<DescribedReply>();
+
+    for (status, description) in [
+        ("200", "from the attribute"),
+        ("202", "From the doc comment."),
+        ("204", "No Content"),
+        ("299", "the request succeeded"),
+    ] {
+        assert_eq!(
+            responses[status]["description"],
+            serde_json::json!(description),
+            "{status}: {responses}"
+        );
+    }
+}
+
+/// A problem publishes the members its variant marked `extension` beside the
+/// registered ones, and nothing else the variant holds: `trace` stays a Rust
+/// field.
+#[tokio::test]
+async fn a_derived_problem_carries_its_extension_members_and_no_other_field() {
+    let error = StoreError::NotFound {
+        id: 42,
+        trace: "internal".to_owned(),
+    };
+    let Answered {
+        status,
+        headers,
+        body,
+    } = answered(error.into_response()).await;
+
+    assert_eq!(status, 404);
+    assert_eq!(
+        headers[kynos::http::header::CONTENT_TYPE],
+        "application/problem+json"
+    );
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "type": "https://errors.example.com/not-found",
+            "title": "User not found",
+            "status": 404,
+            "detail": "no user with id 42",
+            "id": 42,
+        })
+    );
+}
+
+/// A variant naming no `type` publishes its kebab-cased name under the type's
+/// `base`; one naming its own `type` publishes that instead.
+#[test]
+fn a_variant_without_a_type_sends_its_slug_under_base() {
+    use kynos::error::problem::IntoProblem;
+
+    let untyped = StoreError::NotFound {
+        id: 1,
+        trace: String::new(),
+    }
+    .into_problem();
+    assert_eq!(untyped.type_uri, "https://errors.example.com/not-found");
+
+    let typed = StoreError::Conflict.into_problem();
+    assert_eq!(typed.type_uri, "https://errors.example.com/email-taken");
+
+    let shared = LookupError::TenantUnknown.into_problem();
+    assert_eq!(shared.type_uri, "https://errors.example.com/tenant-unknown");
+}
+
+/// A problem's `detail` is the error's `Display` sentence for that occurrence,
+/// fields interpolated.
+#[test]
+fn a_derived_problems_detail_is_its_display_sentence() {
+    use kynos::error::problem::IntoProblem;
+
+    for (error, detail) in [
+        (
+            StoreError::NotFound {
+                id: 7,
+                trace: String::new(),
+            },
+            "no user with id 7",
+        ),
+        (StoreError::Conflict, "that email is already registered"),
+    ] {
+        assert_eq!(error.into_problem().detail.as_deref(), Some(detail));
+    }
+
+    assert_eq!(
+        StoreUnavailable.into_problem().detail.as_deref(),
+        Some("the store is unavailable")
     );
 }
 
