@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/getkono/kynos/compare/kynos-v0.3.0...kynos-v0.4.0) - 2026-10-03
+
+### Added
+
+- *(tls)* share session-ticket keys across replicas ([#315](https://github.com/getkono/kynos/pull/315))
+- *(http)* borrow the resolved Forwarded from a request
+- *(extract)* extract Forwarded from a request
+
+### Documentation
+
+- cut history narration to the intent it carries
+- *(features)* drop the manifests' copies of the openapi32 rationale
+- *(testing)* name the fixed-sentence rung of the Reply description fallback
+- *(examples)* cap each payload body at its own operation ([#273](https://github.com/getkono/kynos/pull/273))
+- correct documentation claims the code contradicts ([#290](https://github.com/getkono/kynos/pull/290))
+- *(tls)* scope the shared session store to one server's listeners
+- *(http)* drop the HSTS reader Forwarded never had
+- *(router)* say an inserted MatchedPath or Forwarded is now ignored
+- *(test)* quote the five allocations a static match now records
+- *(test)* cite the test that drives a HEAD through assert_conformance
+
+### Fixed
+
+- *(server)* [**breaking**] refuse HTTP/2 windows above 2^31-1
+- *(sse)* [**breaking**] refuse a zero keep-alive interval
+- *(server)* gate peer_address_service on http1 like its only caller
+- *(cache)* hand on a body it declines to store instead of emptying it
+
+### Other
+
+- *(limits)* [**breaking**] read BodyTimedOut's limit through an accessor
+- *(sse)* [**breaking**] remove the KeepAlive::text alias
+- *(server)* [**breaking**] gate HTTP/1 and HTTP/2 tuning on their module lines
+- *(http)* [**breaking**] make the coding and date modules private
+- *(http)* [**breaking**] narrow the entity-tag helpers to the crate
+- *(http)* [**breaking**] remove the unused ResponseParts alias
+
+### Performance
+
+- *(router)* [**breaking**] carry the route in one request extension
+- *(router)* await an uninterposed handler in place
+
 ## [0.3.0](https://github.com/getkono/kynos/compare/kynos-v0.2.0...kynos-v0.3.0) - 2026-09-27
 
 ### Documentation

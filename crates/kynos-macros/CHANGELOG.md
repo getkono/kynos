@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/getkono/kynos/compare/kynos-macros-v0.3.0...kynos-macros-v0.4.0) - 2026-10-03
+
+### Documentation
+
+- *(agents)* state the runtime and placeholder rules the gates enforce
+- *(schema)* state how a member is named, and the split rename refusal
+
+### Fixed
+
+- *(macros)* accept a split rename whose written side serde also reads
+- *(macros)* [**breaking**] refuse a split rename whose sides differ in MultipartForm
+- *(macros)* [**breaking**] name a raw identifier and a split rename as serde does, and refuse a rename no schema is true of
+
+### Other
+
+- *(security)* [**breaking**] move basic-auth Credentials into security::carrier
+
 ## [0.3.0](https://github.com/getkono/kynos/compare/kynos-macros-v0.2.0...kynos-macros-v0.3.0) - 2026-09-27
 
 ### Documentation
