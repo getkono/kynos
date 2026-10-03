@@ -118,12 +118,6 @@ impl KeepAlive {
         self.comment = comment.into();
         self
     }
-
-    /// Alias for [`comment`](Self::comment), matching axum's builder name.
-    #[must_use]
-    pub fn text(self, text: impl Into<String>) -> Self {
-        self.comment(text)
-    }
 }
 
 impl Default for KeepAlive {
