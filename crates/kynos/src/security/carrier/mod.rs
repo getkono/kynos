@@ -31,6 +31,7 @@
 
 pub(super) mod base64;
 mod parse;
+mod query;
 
 use crate::{
     error::rejection::AuthRejection,
@@ -288,36 +289,12 @@ pub fn api_key(
             Ok(Some(ApiKey(value.to_owned())))
         }
 
-        KeyLocation::Query => Ok(query_value(parts, name)?.map(ApiKey)),
+        KeyLocation::Query => Ok(query::value(parts, name)?.map(ApiKey)),
 
         KeyLocation::Cookie => Ok(crate::http::cookie::value_of(&parts.headers, name)
             .map_err(|_| AuthRejection::unauthenticated())?
             .map(|value| ApiKey(value.to_owned()))),
     }
-}
-
-/// The first value of `name` in the request target's query string.
-///
-/// An API key `in: query` is a query parameter, so it is read exactly as a
-/// derived [`Query`](crate::extract::params::query::Query) parameter of the same
-/// name is: through the same decoder, which applies the form rules OpenAPI
-/// requires of every `in: query` parameter (`+` is a space, `%2B` a plus sign),
-/// and from the first pair that names it. A later pair never stands in for one
-/// that could not be read, since two readers of one request would then pick
-/// different credentials.
-///
-/// # Errors
-///
-/// When that first value's octets are not UTF-8: present and malformed.
-fn query_value(parts: &Parts, name: &str) -> Result<Option<String>, AuthRejection> {
-    let Some((_, value)) = crate::__private::uri::query_pairs(parts.uri.query())
-        .find(|(key, _)| **key == *name.as_bytes())
-    else {
-        return Ok(None);
-    };
-    String::from_utf8(value.into_owned())
-        .map(Some)
-        .map_err(|_| AuthRejection::unauthenticated())
 }
 
 /// The certificate chain the peer presented during the TLS handshake.
