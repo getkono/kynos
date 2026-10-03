@@ -276,9 +276,12 @@ impl<C> TestRequest<'_, C> {
     ///
     /// # Panics
     ///
-    /// Panics when `body` cannot be serialized to JSON, which a test writing
-    /// plain data cannot cause: `serde_json` refuses only a map with a key that
-    /// is not a string, or a `Serialize` implementation that fails itself.
+    /// Panics when `body` cannot be serialized to JSON: a `Serialize`
+    /// implementation that fails itself, or a map with a key JSON cannot
+    /// spell as a string. `serde_json` writes string, integer, `bool`, `char`
+    /// and finite float keys, and refuses others, such as a tuple, `Option` or
+    /// unit key, or a NaN or infinite float, so plain data such as a
+    /// `HashMap<(u8, u8), _>` panics here.
     #[cfg(feature = "json")]
     #[must_use]
     pub fn json<T: serde::Serialize>(mut self, body: &T) -> Self {
