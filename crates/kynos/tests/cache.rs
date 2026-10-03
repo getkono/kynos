@@ -467,7 +467,7 @@ mod failing {
         Router,
         extract::media::OctetStream,
         http::{Request, StatusCode, body::Body, header},
-        middleware::{cache::Cache, limits::BodyTimeout},
+        middleware::{cache::Cache, limits::body_timeout::BodyTimeout},
         response::range::{
             served::{Conditions, Delivery, Served},
             source::{ByteSource, SPAN},

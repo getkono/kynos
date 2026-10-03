@@ -553,7 +553,7 @@ impl Compression<()> {
     ///
     /// Available only on a `Compression` that has not named one, so a chain
     /// states the type at most once. See
-    /// [`BodySize::problem_type`](crate::middleware::limits::BodySize::problem_type)
+    /// [`BodySize::problem_type`](crate::middleware::limits::body_size::BodySize::problem_type)
     /// for the rule and its pass control.
     ///
     /// ```

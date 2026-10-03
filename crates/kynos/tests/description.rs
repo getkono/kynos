@@ -48,7 +48,7 @@ use kynos::{
     ApiError, PathParams, Router, Schema,
     error::rejection::RangeRejection,
     extract::{body::binary::Binary, media::OctetStream, params::path::Path},
-    middleware::limits::{BodySize, Timeout},
+    middleware::limits::{body_size::BodySize, timeout::Timeout},
     openapi::Document,
     response::{
         range::{Range, Ranged},

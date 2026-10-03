@@ -16,7 +16,7 @@ use bytes::Bytes;
 use http_body::Frame;
 use http_body_util::BodyExt;
 
-use super::BodySize;
+use super::body_size::BodySize;
 use crate::{
     Router,
     extract::{

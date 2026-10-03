@@ -49,7 +49,7 @@ pub enum StoreFailure {
     /// Refuse, with the 429 the limiter already declares.
     ///
     /// Not a 503. A second status here would collide with
-    /// [`Concurrency`](crate::middleware::limits::Concurrency) on any route
+    /// [`Concurrency`](crate::middleware::limits::concurrency::Concurrency) on any route
     /// carrying both, and `statuses_disjoint` would refuse to compile it — so
     /// the honest choice is the status this interceptor already promises.
     Deny,

@@ -894,7 +894,7 @@ justify on principle and cheap to justify on evidence.
 
 **A 413 no operation could produce.** `BodyRejection` declared `413` on every
 operation that reads a body, and the only thing that ever produced one was
-`middleware::limits::BodySize`. A service without that limit therefore promised
+`middleware::limits::body_size::BodySize`. A service without that limit therefore promised
 a response it could not send. Line coverage cannot see this: every line of the
 declaration runs, and the gap is between the document and the service rather
 than inside either. The fix was to remove the variant — recorded at

@@ -106,7 +106,7 @@ enum State {
 ///
 /// # What a chunked body costs
 ///
-/// [`BodySize`](crate::middleware::limits::BodySize) and streaming do not
+/// [`BodySize`](crate::middleware::limits::body_size::BodySize) and streaming do not
 /// compose all the way. A request declaring a `Content-Length` passes the limit
 /// untouched and streams. A chunked request declares no length, so a running
 /// count is the only bound there is — and the limit materialises the whole body

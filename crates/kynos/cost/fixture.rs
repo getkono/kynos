@@ -20,7 +20,7 @@
 
 use kynos::{
     Router,
-    middleware::limits::BodySize,
+    middleware::limits::body_size::BodySize,
     openapi::{Info, Method, PathTemplate},
     response::status::NoContent,
     router::endpoint::builder::EndpointBuilder,

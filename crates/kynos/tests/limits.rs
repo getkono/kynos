@@ -18,7 +18,7 @@ use kynos::{
     Router,
     error::problem::ProblemType,
     http::{Method, StatusCode, header},
-    middleware::limits::{BodySize, Concurrency, Timeout},
+    middleware::limits::{body_size::BodySize, concurrency::Concurrency, timeout::Timeout},
     response::status::NoContent,
 };
 
@@ -637,7 +637,7 @@ async fn stalled()
 async fn an_idle_body_timeout_ends_a_stalled_stream() {
     let service = Router::<()>::new()
         .mount(kynos::routes![stalled])
-        .intercept(kynos::middleware::limits::BodyTimeout::idle(
+        .intercept(kynos::middleware::limits::body_timeout::BodyTimeout::idle(
             Duration::from_millis(100),
         ))
         .build(())
@@ -650,7 +650,7 @@ async fn an_idle_body_timeout_ends_a_stalled_stream() {
     // The failure is typed, so a caller can tell it from any other body error
     // and read back the limit it passed.
     let timed_out = failure
-        .downcast_ref::<kynos::middleware::limits::BodyTimedOut>()
+        .downcast_ref::<kynos::middleware::limits::body_timeout::BodyTimedOut>()
         .expect("the failure is the body timeout's own error");
     assert_eq!(timed_out.after(), Duration::from_millis(100));
     assert!(failure.to_string().contains("did not finish"), "{failure}");
@@ -663,7 +663,7 @@ async fn an_idle_body_timeout_ends_a_stalled_stream() {
 async fn an_idle_body_timeout_leaves_a_steady_stream_alone() {
     let service = Router::<()>::new()
         .mount(kynos::routes![steady])
-        .intercept(kynos::middleware::limits::BodyTimeout::idle(
+        .intercept(kynos::middleware::limits::body_timeout::BodyTimeout::idle(
             Duration::from_millis(100),
         ))
         .build(())
@@ -685,9 +685,11 @@ async fn an_idle_body_timeout_leaves_a_steady_stream_alone() {
 async fn a_deadline_ends_a_stream_that_is_still_producing() {
     let service = Router::<()>::new()
         .mount(kynos::routes![steady])
-        .intercept(kynos::middleware::limits::BodyTimeout::deadline(
-            Duration::from_millis(20),
-        ))
+        .intercept(
+            kynos::middleware::limits::body_timeout::BodyTimeout::deadline(Duration::from_millis(
+                20,
+            )),
+        )
         .build(())
         .expect("a describable router");
 
@@ -705,7 +707,7 @@ async fn a_deadline_ends_a_stream_that_is_still_producing() {
 async fn a_body_timeout_declares_no_status() {
     let bounded = Router::<()>::new()
         .mount(kynos::routes![steady])
-        .intercept(kynos::middleware::limits::BodyTimeout::idle(
+        .intercept(kynos::middleware::limits::body_timeout::BodyTimeout::idle(
             Duration::from_millis(100),
         ))
         .build(())
@@ -775,7 +777,7 @@ async fn heartbeat() -> kynos::response::stream::sse::Sse<Silent> {
 async fn a_keep_alive_frame_resets_an_idle_body_timeout() {
     let service = Router::<()>::new()
         .mount(kynos::routes![heartbeat])
-        .intercept(kynos::middleware::limits::BodyTimeout::idle(
+        .intercept(kynos::middleware::limits::body_timeout::BodyTimeout::idle(
             Duration::from_millis(100),
         ))
         .build(())
@@ -851,7 +853,7 @@ async fn a_body_the_timer_ended_is_reported_as_interrupted() {
     let service = Router::<()>::new()
         .mount(kynos::routes![stalled])
         .observe(CountingEnds(std::sync::Arc::clone(&counts)))
-        .intercept(kynos::middleware::limits::BodyTimeout::idle(
+        .intercept(kynos::middleware::limits::body_timeout::BodyTimeout::idle(
             Duration::from_millis(100),
         ))
         .build(())
@@ -886,7 +888,7 @@ async fn a_body_that_finished_is_not_reported_as_interrupted() {
     let service = Router::<()>::new()
         .mount(kynos::routes![steady])
         .observe(CountingEnds(std::sync::Arc::clone(&counts)))
-        .intercept(kynos::middleware::limits::BodyTimeout::idle(
+        .intercept(kynos::middleware::limits::body_timeout::BodyTimeout::idle(
             Duration::from_millis(200),
         ))
         .build(())
@@ -924,7 +926,7 @@ mod beneath_compression {
     use kynos::{
         Router,
         http::{Request, body::Body, header},
-        middleware::{compression::Compression, limits::BodyTimeout},
+        middleware::{compression::Compression, limits::body_timeout::BodyTimeout},
         router::service::Service,
     };
 

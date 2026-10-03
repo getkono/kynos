@@ -9,7 +9,7 @@
 //! else; without this control it could reject both and still pass.
 
 use kynos::{
-    middleware::{limits::BodySize, request_id::RequestId},
+    middleware::{limits::body_size::BodySize, request_id::RequestId},
     prelude::*,
 };
 

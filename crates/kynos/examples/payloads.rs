@@ -45,7 +45,7 @@ use kynos::{
         body::{OneOf, binary::Binary, form::Form, multipart::MultipartForm, text::Text},
         media::{MediaType, Png},
     },
-    middleware::limits::BodySize,
+    middleware::limits::body_size::BodySize,
     openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType},
     prelude::*,
     schema::registry::Registry,
