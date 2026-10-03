@@ -182,10 +182,11 @@ Why the encoder does not simply re-tag per coding — `"rev-42-gzip"` beside
 `"rev-42"` — which would be sound and would keep strong validators: the only
 sanctioned way to write a response header is the `Adds` group, and declaring
 `etag` there would make `Compression` and `Cache::deriving_etags` a compile
-error on a stack that is otherwise correct. Re-tagging is what
-[#30](https://github.com/getkono/kynos/issues/30) needs before a ranged
-representation can be encoded at all, and it wants the validator minted where
-the range and the coding are both known rather than bolted on at the encoder.
+error on a stack that is otherwise correct. A ranged, content-coded
+representation ([#30](https://github.com/getkono/kynos/issues/30)) was resolved
+where the range and the coding are both known instead: an asset set stores each
+coding and mints a strong validator per stored coding, rather than one being
+bolted on at the encoder.
 
 **Compression levels are per algorithm, and one of the defaults departs.**
 gzip 6, brotli 4 and zstd 3. The three formats number their levels differently
@@ -898,14 +899,11 @@ implies both `Secure` and `Path=/`.
 precedence wherever both appear, so a cookie carrying both is one attribute
 stating the lifetime and one being ignored. `Max-Age` is also a duration, which
 is what a server actually knows; `Expires` is an absolute HTTP-date, so
-emitting one means trusting the client's clock against the server's and
-serializing a date format that `architecture.md`'s dependency table has no row
-for — an HTTP-date crate is one of the three dependencies it names as refused.
+emitting one means trusting the client's clock against the server's.
 `Max-Age=0` is the removal, so nothing needs a date in the past either.
 
-That is the whole of what an acceptance contract asking for "Path, HttpOnly,
-Secure, SameSite, Max-Age, and expiry attributes" needs: the expiry is
-`Max-Age`, stated as a duration.
+So a cookie's expiry is still expressible, and expressed once: it is `Max-Age`,
+stated as a duration.
 
 The set being closed is asserted rather than intended.
 [`response/cookie/tests.rs`](../crates/kynos/src/response/cookie/tests.rs)

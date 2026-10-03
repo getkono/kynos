@@ -38,7 +38,7 @@ Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
 `gungraun` over Valgrind, rustdoc with
 `missing_docs = "deny"`, and `cargo-semver-checks` — the last through both
 release-plz, at default features and fail-open, and `mise run semver:check`, at
-every feature. Not yet present: `cargo-public-api`, `cargo-fuzz`. `criterion` is
+every feature. Not yet present: `cargo-public-api`, `cargo-fuzz`, `cargo-udeps`. `criterion` is
 not on this list and will not be: benchmarks live in `kynos-bench`.
 
 ## Thresholds
@@ -675,13 +675,14 @@ can write.
 
 ## Tooling gaps
 
-Two crates stand between this document and its enforcement. In order of what
+Three crates stand between this document and its enforcement. In order of what
 they unblock:
 
 | Tool | Unblocks | Notes |
 | --- | --- | --- |
-| `cargo-public-api` | Four `compatibility`/`dx` rows across the document model and runtime | The single highest-leverage addition: it enforces the architecture policy mechanically rather than by review |
+| `cargo-public-api` | Four `compatibility`/`dx` rows across the document model, runtime and workspace | The single highest-leverage addition: it enforces the architecture policy mechanically rather than by review |
 | `cargo-fuzz` | Extractor panic-freedom | Needs a committed corpus and a nightly job |
+| `cargo-udeps` | The unused-`[workspace.dependencies]` row under dependencies | An equivalent manifest check would do as well |
 
 `criterion` is intentionally absent from this list, and stays absent now that
 three performance rows have come home. Timed measurement lives in
