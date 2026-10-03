@@ -83,8 +83,6 @@ half and the timed half are separate rows, and only the timed one carries the
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | compatibility | Public API surface is diffed on every change; an addition requires explicit budget approval, a removal fails the build | `cargo-public-api` | `needs-tooling` |
-| compatibility | Every release reports whether the version bump matches the API change | `cargo-semver-checks`, run by release-plz for every crate | `partial`; the workspace-wide row in [Workspace](#workspace) records what it does and does not buy |
-| compatibility | Every pull request reports whether the public API broke, over every feature | `mise run semver:check` (`cargo semver-checks check-release --workspace --all-features`), dedicated CI job | `partial`: it reports rather than blocks. The row in [Workspace](#workspace) records why |
 | correctness | The IR round-trips through serialization losslessly | `proptest` over generated IR values | `enforced`, with one exclusion below, characterized |
 | correctness | Every model type emits the field names and nesting the specification gives it | One exact-JSON case per type in `tests/wire.rs`, counted against the type list | `enforced` |
 | correctness | The corpus a downstream generator is built against is the one this build emits | [`tests/conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs), comparing every committed document against a freshly emitted one | `enforced` |
