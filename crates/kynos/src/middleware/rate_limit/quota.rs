@@ -132,8 +132,8 @@ pub(super) fn estimate(previous: u64, current: u64, elapsed: Duration, window: D
 ///
 /// A number the service can honour, which is the whole point. The obvious
 /// alternative — reporting the window's length — is a delay the service does not
-/// actually require, and `limits.rs` raises the same objection against inventing
-/// a `Retry-After` for a concurrency cap.
+/// actually require, and `limits::concurrency` raises the same objection against
+/// inventing a `Retry-After` for a concurrency cap.
 pub(super) fn recovers_in(
     current: u64,
     headroom: u64,
