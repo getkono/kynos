@@ -229,9 +229,9 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Send, M: MediaType + Send> FromRe
             )));
         }
 
-        // An absent query string is the empty one, so a `T` with no required
-        // field still decodes; `serde_json` rejects the empty document itself
-        // for every other `T`.
+        // An absent query string is the empty one. That is not a JSON
+        // document, so `serde_json` refuses it for every `T` — one whose
+        // fields are all optional, and an `Option`, included.
         let raw = parts.uri.query().unwrap_or_default();
         let decoded = crate::__private::uri::decode_path_value(raw).map_err(|error| {
             invalid(format!(
