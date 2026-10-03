@@ -138,7 +138,7 @@ run = "cargo nextest run --workspace --all-targets --all-features"
 [tasks."test:baseline"]
 description = "Test all workspace targets at baseline features"
 # Every other test task passes `--all-features`, and `features:check` passes
-# `--no-dev-deps`, so before this task no test target was ever *built* with an
+# `--no-dev-deps`, so this is the only task that *builds* a test target with an
 # optional feature off -- against every `#[cfg]` site in the workspace. A gate
 # no test build exercises is a gate whose off-state is unknown.
 #
@@ -222,15 +222,12 @@ description = "Lint every reachable feature combination"
 # directory of its own, and no *other* invocation in the same run ever names
 # it again. Across runs it is reused: a rerun of this task after an edit names
 # the same combinations, so what this trades away is that rerun's incremental
-# replay, and what it buys is the bytes below. Nothing reclaims them: rustc's
-# garbage collection prunes stale entries *within* a session, not sessions no
-# build will name again. A worktree that had run the matrix a few times held
-# 1280 of them, totalling 14 GiB, and a twelve-combination sweep left 0.21 GiB
-# with this set against 0.57 GiB without.
-# Where a `RUSTC_WRAPPER` is configured it is faster too -- 25s against 38s on
-# that sweep, both runs warm -- because such a cache cannot store an
-# incremental compilation, so incremental was forfeiting a cache that hits to
-# buy one that never does.
+# replay, and what it buys is disk: rustc's garbage collection prunes stale
+# entries *within* a session, not sessions no build will name again, so
+# nothing else reclaims them.
+# Where a `RUSTC_WRAPPER` is configured it is faster too, because such a cache
+# cannot store an incremental compilation: incremental would forfeit a cache
+# that hits to buy one that never does.
 env = { CARGO_INCREMENTAL = "0" }
 run = '''
 cargo hack clippy --workspace --feature-powerset --depth 2 --no-dev-deps \
@@ -605,9 +602,7 @@ done <"$quoted"
 description = "Verify every crate is named only where its owner allows"
 # `architecture.md` says twice that the count is the check -- once for the
 # runtime allowance table, once for the hand-rolled `Stream` implementations --
-# and until this task existed neither count was held by anything. Both rows read
-# `planned` in `nfr.md` while the allowance table was a row short and still
-# named a path that had become a directory.
+# and this task is what holds both counts.
 #
 # The script reads those tables rather than restating them, so each rule is
 # stated once and it is the statement a reader consults. Adding a site means
@@ -692,8 +687,8 @@ cargo +1.85 check --workspace --all-features --exclude kynos-profile
 
 [tasks."publish:check"]
 description = "Package every crate exactly as crates.io will receive it"
-# The gate that was missing. Every other task here builds the working tree, so a
-# file the code needs but the archive omits is invisible to all of them.
+# Every other task here builds the working tree, so a file the code needs but
+# the archive omits is invisible to all of them.
 # `cargo package` writes each member's `.crate` and then rebuilds it from the
 # extracted tarball, which is the only thing that can notice.
 #
@@ -748,19 +743,15 @@ cargo package --workspace --all-features --exclude kynos-profile
 
 [tasks."semver:check"]
 description = "Compare the public API against the last published release"
-# The gate that was missing, and the one a pre-v1 framework needs most: the
-# whole point of not being 0.y.z is that a break is a decision rather than an
-# accident, and until now nothing on `master` could tell the two apart.
+# A pre-v1 framework may still break its API, but each break should be a
+# decision rather than an accident, and this is what tells the two apart on
+# `master` rather than at release.
 #
-# `cargo-semver-checks` did run -- but only at release, and only through
-# release-plz, whose two limits `release-plz.toml` records: it is invoked with
-# no feature flags, so only the default set is compared, and it reports
-# "compatible" for any failure whose output does not demand a major version.
-# The result is that a break lands, sits on `master`, and surfaces in a release
-# pull request days later beside the changelog, which is the worst place to
-# learn it. Both breaks in the 0.2.0 release pull request are that shape:
-# `Router::group`/`nest`/`merge` each took a third generic parameter, and
-# `Timeout` gained a private field.
+# release-plz also runs `cargo-semver-checks`, with two limits
+# `release-plz.toml` records: it is invoked with no feature flags, so only the
+# default set is compared, and it reports "compatible" for any failure whose
+# output does not demand a major version. Left to it alone, a break would land
+# on `master` and surface only in a release pull request beside the changelog.
 #
 # `--all-features` for the reason `lint`, `test` and `publish:check` have it.
 # Roughly thirty flags gate this crate, so a default-features comparison reads
