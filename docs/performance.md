@@ -114,8 +114,8 @@ point, and its baseline row is that floor alone. Holding the program fixed is
 what makes `fixture.rs` attribute a delta to a feature; here the program is
 *meant* to differ, because "the operation that mounts the codec" is the thing
 being weighed and it cannot exist in a build with the flag off. The two fixtures
-therefore answer opposite questions and neither subsumes the other:
-`binary.tsv`'s `compression` row is +160 bytes and `codec.tsv`'s is +951556.
+therefore answer opposite questions and neither subsumes the other, which the
+two files' `compression` rows show side by side.
 `mise run cost:codecs` runs this half alone; `mise run cost:record` writes its
 baseline with the other two.
 
@@ -219,20 +219,19 @@ against an operation with no body would report zero and mean nothing. The
 question the shape exists to answer is what the codec costs the operation that
 asked for it, against the same operation without it.
 
-Both halves of that bill now run.
+Both halves of that bill run.
 [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) counts each
 codec on an operation that names it, and
 [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv) records the `.text` delta of
-the fixture that mounts it: `protobuf` at +44112 bytes, `form` at +46256, `json`
-at +63936, `multipart` at +109568 and `compression` at +951556, over an 883900
-byte floor.
+the fixture that mounts it, one row per codec over the transport floor's
+baseline row.
 
 **What those figures include is more than Kynos, and saying so is part of the
 measurement.** Mounting a codec pulls in the crate that implements it —
 `serde_json`, `serde_urlencoded`, `multer`, `prost`, `async-compression` — and
 the operation declares a payload type carrying two derives. `compression` is
-where the distinction stops being a caveat: nearly all of its ~950 KiB is the
-gzip, brotli and zstd backends, so the row prices the encoders rather than the
+where the distinction stops being a caveat: nearly all of its row is the gzip,
+brotli and zstd backends, so the row prices the encoders rather than the
 interceptor over them. A figure that attributed that to the framework would be
 a wrong number rather than an imprecise one.
 
