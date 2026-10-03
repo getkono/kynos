@@ -643,11 +643,17 @@ async fn an_idle_body_timeout_ends_a_stalled_stream() {
         .build(())
         .expect("a describable router");
 
-    let failure = read_to_end(body_of(&service, "/stalled").await)
+    let failure = http_body_util::BodyExt::collect(body_of(&service, "/stalled").await)
         .await
         .expect_err("a stalled body outlived its idle limit");
 
-    assert!(failure.contains("did not finish"), "{failure}");
+    // The failure is typed, so a caller can tell it from any other body error
+    // and read back the limit it passed.
+    let timed_out = failure
+        .downcast_ref::<kynos::middleware::limits::BodyTimedOut>()
+        .expect("the failure is the body timeout's own error");
+    assert_eq!(timed_out.after(), Duration::from_millis(100));
+    assert!(failure.to_string().contains("did not finish"), "{failure}");
 }
 
 /// The pass control: the same limit over a stream that keeps producing, which

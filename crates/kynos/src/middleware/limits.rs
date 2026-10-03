@@ -963,10 +963,20 @@ impl<T> fmt::Debug for Concurrency<T> {
 /// the stream instead of framing the truncation as a complete body — a
 /// consumer that reads a length or a terminating chunk has to be able to tell
 /// the two apart.
+///
+/// A caller reads it back out of [`Body::Error`](http_body::Body::Error) by
+/// downcasting the boxed error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BodyTimedOut {
+    after: Duration,
+}
+
+impl BodyTimedOut {
     /// The limit the body passed.
-    pub after: Duration,
+    #[must_use]
+    pub const fn after(&self) -> Duration {
+        self.after
+    }
 }
 
 impl std::fmt::Display for BodyTimedOut {
