@@ -7,10 +7,15 @@ use std::time::Duration;
 #[non_exhaustive]
 pub enum Http2FlowControl {
     /// Uses fixed initial stream and connection windows.
+    ///
+    /// Each window must lie in `1..=2^31-1`, the range RFC 9113 §6.9.1 allows
+    /// a flow-control window; [`Server::prepare`](crate::server::Server::prepare)
+    /// refuses any other with
+    /// [`ServerError::InvalidConfiguration`](crate::server::error::ServerError::InvalidConfiguration).
     Fixed {
-        /// Initial per-stream flow-control window.
+        /// Initial per-stream flow-control window, in `1..=2^31-1`.
         initial_stream_window_size: u32,
-        /// Initial connection flow-control window.
+        /// Initial connection flow-control window, in `1..=2^31-1`.
         initial_connection_window_size: u32,
     },
     /// Dynamically adjusts windows using measured bandwidth and latency.

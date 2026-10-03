@@ -2677,7 +2677,7 @@ fn request_http1(address: std::net::SocketAddr) -> String {
 
 /// Every configuration `validate_protocol_config` refuses.
 ///
-/// Six branches, none of them reached before. A limit that stops being checked
+/// Seven branches, none of them reached before. A limit that stops being checked
 /// is one hyper is handed instead -- where a zero window stalls a connection
 /// and an oversized send buffer does not fit the protocol field it is written
 /// to. The branch is the whole value of the function, so each gets a case.
@@ -2743,6 +2743,15 @@ mod protocol_configuration {
                 "HTTP/2 fixed flow-control windows must be non-zero",
             ),
             (
+                "a fixed flow-control window past the protocol ceiling",
+                Http1Config::default(),
+                Http2Config::default().flow_control(Http2FlowControl::Fixed {
+                    initial_stream_window_size: 1 << 31,
+                    initial_connection_window_size: 1024,
+                }),
+                "HTTP/2 fixed flow-control windows must not exceed 2147483647",
+            ),
+            (
                 "a keep-alive that never waits",
                 Http1Config::default(),
                 Http2Config::default().keep_alive(Some(Http2KeepAlive {
@@ -2765,6 +2774,29 @@ mod protocol_configuration {
     fn the_defaults_are_accepted() {
         validate_protocol_config(Http1Config::default(), Http2Config::default())
             .expect("the defaults Kynos ships must be a configuration it accepts");
+    }
+
+    /// RFC 9113 §6.9.1 caps a flow-control window at 2^31-1, and `h2` asserts
+    /// it during the handshake, so a larger window panicked every HTTP/2
+    /// connection instead of failing `prepare`. The case table reaches the
+    /// stream window; this holds the connection window to the same ceiling and
+    /// the ceiling itself to acceptance.
+    #[test]
+    fn fixed_windows_are_held_to_the_protocol_ceiling_on_either_side() {
+        const CEILING: u32 = (1 << 31) - 1;
+        let fixed = |stream, connection| {
+            Http2Config::default().flow_control(Http2FlowControl::Fixed {
+                initial_stream_window_size: stream,
+                initial_connection_window_size: connection,
+            })
+        };
+
+        validate_protocol_config(Http1Config::default(), fixed(CEILING, CEILING))
+            .expect("a window of exactly 2^31-1 is one the protocol carries");
+        assert_eq!(
+            refused(Http1Config::default(), fixed(CEILING, u32::MAX)),
+            "HTTP/2 fixed flow-control windows must not exceed 2147483647",
+        );
     }
 
     /// A count, so a limit added without a case fails the build.
