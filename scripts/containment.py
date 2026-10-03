@@ -400,6 +400,7 @@ def listed(path, sites):
     """
     return any(path == site or (site.endswith("/") and path.startswith(site)) for site in sites)
 
+
 # --- The off-path elements ---------------------------------------------------
 # `performance.md` grades the document model, the emitters, the validators and
 # `describe` as off-path elements, and an off-path element owes a proof that a
