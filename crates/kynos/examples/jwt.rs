@@ -62,9 +62,9 @@ use kynos::{
     security::{
         Authenticates, Authenticator,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
-        carrier::BearerToken,
+        carrier::{BearerToken, Credentials},
         constant_time_eq,
-        schemes::{Basic, Credentials},
+        schemes::Basic,
     },
     server::Server,
 };
@@ -309,8 +309,8 @@ impl<C: Sync> Authenticator<Basic<Credentials>, C> for Passwords {
         // What it does ship is the comparison: `==` on a shared secret returns
         // at the first byte that differs, so how long it took says how much of
         // the guess was right.
-        let known = presented.username == "reporter" || presented.username == "reader";
-        let correct = constant_time_eq(presented.password.as_bytes(), b"correct-horse");
+        let known = matches!(presented.username(), "reporter" | "reader");
+        let correct = constant_time_eq(presented.password().as_bytes(), b"correct-horse");
 
         // Both checks always run, so an unknown user and a wrong password take
         // the same path and the same time.
@@ -381,14 +381,14 @@ async fn sign_in(
     Inject(keys): Inject<std::sync::Arc<Keys>>,
 ) -> Json<Token> {
     // The scopes a caller gets are the service's decision, not the caller's.
-    let scopes = if credentials.username == "reporter" {
+    let scopes = if credentials.username() == "reporter" {
         "reports:read"
     } else {
         ""
     };
 
     Json(Token {
-        access_token: keys.issue(&credentials.username, scopes),
+        access_token: keys.issue(credentials.username(), scopes),
         token_type: "Bearer".to_owned(),
         expires_in: TOKEN_LIFETIME,
     })

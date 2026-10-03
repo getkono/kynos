@@ -66,8 +66,8 @@ use kynos::{
     security::{
         Authenticates, Authenticator,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
-        carrier::{BearerToken, Carries},
-        schemes::{Basic, Credentials, MutualTls},
+        carrier::{BearerToken, Carries, Credentials},
+        schemes::{Basic, MutualTls},
     },
     server::Server,
 };

@@ -98,6 +98,36 @@ impl BearerToken {
     }
 }
 
+/// The user-id and password HTTP basic authentication carried, per RFC 7617.
+///
+/// A named type rather than a pair, so that a handler signature says which
+/// field is the password.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Credentials {
+    username: String,
+    password: String,
+}
+
+impl Credentials {
+    /// The user-id: everything before the first colon.
+    #[must_use]
+    pub fn username(&self) -> &str {
+        &self.username
+    }
+
+    /// The password: everything after the first colon, which may hold more.
+    #[must_use]
+    pub fn password(&self) -> &str {
+        &self.password
+    }
+
+    /// Takes ownership of the user-id and password, in that order.
+    #[must_use]
+    pub fn into_parts(self) -> (String, String) {
+        (self.username, self.password)
+    }
+}
+
 /// The credentials an arbitrary RFC 9110 authentication scheme carried.
 ///
 /// What `http(scheme = "...")` yields, for a scheme with no wire form Kynos
@@ -207,7 +237,7 @@ pub fn bearer(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
 /// When an `Authorization` field is present and is not a well-formed basic
 /// credential: a different scheme, base64 that does not decode, bytes that are
 /// not UTF-8, or no colon at all.
-pub fn basic(parts: &Parts) -> Result<Option<super::schemes::Credentials>, AuthRejection> {
+pub fn basic(parts: &Parts) -> Result<Option<Credentials>, AuthRejection> {
     let Some(authorization) = parse::authorization(parts)? else {
         return Ok(None);
     };
@@ -229,7 +259,7 @@ pub fn basic(parts: &Parts) -> Result<Option<super::schemes::Credentials>, AuthR
         .split_once(':')
         .ok_or_else(AuthRejection::unauthenticated)?;
 
-    Ok(Some(super::schemes::Credentials {
+    Ok(Some(Credentials {
         username: username.to_owned(),
         password: password.to_owned(),
     }))

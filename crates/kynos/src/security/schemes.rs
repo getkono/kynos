@@ -21,7 +21,7 @@ use crate::{
     http::Parts,
     security::{
         SecurityScheme,
-        carrier::{self, BearerToken, Carries, PeerCertificates},
+        carrier::{self, BearerToken, Carries, Credentials, PeerCertificates},
     },
 };
 
@@ -36,18 +36,6 @@ pub struct Bearer<T = String>(PhantomData<fn() -> T>);
 /// HTTP basic authentication, per RFC 7617.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Basic<T = Credentials>(PhantomData<fn() -> T>);
-
-/// The user-id and password carried by HTTP basic authentication.
-///
-/// A named type rather than a pair, so that a handler signature says which
-/// field is the password.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Credentials {
-    /// The user-id.
-    pub username: String,
-    /// The password.
-    pub password: String,
-}
 
 /// Mutual TLS client certificate authentication.
 ///

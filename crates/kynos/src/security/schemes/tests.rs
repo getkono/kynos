@@ -1,7 +1,7 @@
 use kynos_openapi::SecurityScheme as Described;
 
-use super::{Basic, Bearer, Credentials, MutualTls};
-use crate::security::SecurityScheme;
+use super::{Basic, Bearer, MutualTls};
+use crate::security::{SecurityScheme, carrier::Credentials};
 
 /// One row per scheme, over the whole set.
 ///
