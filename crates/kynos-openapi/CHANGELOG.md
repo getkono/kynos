@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/getkono/kynos/compare/kynos-openapi-v0.3.0...kynos-openapi-v0.4.0) - 2026-10-03
+
+### Documentation
+
+- *(features)* drop the manifests' copies of the openapi32 rationale
+- *(openapi)* document the edge-underscore trim in ComponentName::sanitized
+- *(openapi)* state what the facade and Paths::is_empty actually cover
+
+### Fixed
+
+- *(openapi)* [**breaking**] refuse non-canonical response status keys
+
+### Other
+
+- *(openapi)* [**breaking**] gate the http conversions on one module line
+
 ## [0.2.0](https://github.com/getkono/kynos/compare/kynos-openapi-v0.1.0...kynos-openapi-v0.2.0) - 2026-09-24
 
 ### Added
