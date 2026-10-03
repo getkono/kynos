@@ -6,7 +6,7 @@
 //! cargo run -p kynos --example payloads --features form,multipart
 //! ```
 //!
-//! Four things are worth noticing:
+//! Five things are worth noticing:
 //!
 //! * **One codec is one type.** `Json<T>`, `Form<T>`, `MultipartForm<T>`,
 //!   `Text` and `Binary<M>` each name their media type, so the operation's
@@ -25,6 +25,13 @@
 //! * **A media type is a marker type.** `MediaType` has no `dyn` form and no
 //!   registry, so a vendor type is a unit struct and one associated constant —
 //!   see `Manifest` below.
+//! * **Each operation caps its own body.** A note and a batch of images are
+//!   not the same size, so `BodySize` is mounted per operation, sized from
+//!   what that body can legitimately hold. There is no router-wide default
+//!   with an override: both limits would answer 413, and `statuses_disjoint`
+//!   refuses the pair at compile time, because a client could not tell which
+//!   of them replied. Nothing is capped unless something says so, since a
+//!   default limit would add a 413 the service never promised.
 //!
 //! Kynos ships no base64 wrapper, because binary in a *text* format is a
 //! property of the field rather than of the body. `Thumbnail` shows the
@@ -38,6 +45,7 @@ use kynos::{
         body::{OneOf, binary::Binary, form::Form, multipart::MultipartForm, text::Text},
         media::{MediaType, Png},
     },
+    middleware::limits::BodySize,
     openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType},
     prelude::*,
     schema::registry::Registry,
@@ -193,15 +201,38 @@ struct ProductPath {
     id: u64,
 }
 
+const KIB: u64 = 1_024;
+const MIB: u64 = 1_024 * KIB;
+
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
-    let router = Router::<()>::new().mount(kynos::routes![
-        create_product,
-        create_note,
-        upload_images,
-        replace_image,
-        upload_manifest,
-    ]);
+    // One limit per operation, each mounted on the endpoint itself. `.0` is
+    // the one operation a single-name `routes!` produces, and its own
+    // interceptors are the innermost of any a group or router adds.
+    let router = Router::<()>::new().mount((
+        // The thumbnail's `maxLength` alone is 1.4 MB of base64, so a cap below
+        // that would refuse bodies the schema accepts.
+        kynos::routes![create_product]
+            .0
+            .intercept(BodySize::new(2 * MIB)),
+        kynos::routes![create_note]
+            .0
+            .intercept(BodySize::new(16 * KIB)),
+        // A budget rather than a derivation: `Upload` bounds how many images
+        // arrive, not how large each is, so this allows `max_items = 8` of the
+        // megabyte `replace_image` takes, plus room for each part's headers.
+        kynos::routes![upload_images]
+            .0
+            .intercept(BodySize::new(8 * MIB + 64 * KIB)),
+        // A megabyte, which is what the thumbnail's `maxLength` decodes to: one
+        // image size across all three binary shapes.
+        kynos::routes![replace_image]
+            .0
+            .intercept(BodySize::new(MIB)),
+        kynos::routes![upload_manifest]
+            .0
+            .intercept(BodySize::new(64 * KIB)),
+    ));
 
     let document = router.openapi()?;
     println!("{}", document.to_json()?);
