@@ -83,8 +83,6 @@ half and the timed half are separate rows, and only the timed one carries the
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | compatibility | Public API surface is diffed on every change; an addition requires explicit budget approval, a removal fails the build | `cargo-public-api` | `needs-tooling` |
-| compatibility | Every release reports whether the version bump matches the API change | `cargo-semver-checks`, run by release-plz for every crate | `partial`; the workspace-wide row in [Workspace](#workspace) records what it does and does not buy |
-| compatibility | Every pull request reports whether the public API broke, over every feature | `mise run semver:check` (`cargo semver-checks check-release --workspace --all-features`), dedicated CI job | `partial`: it reports rather than blocks. The row in [Workspace](#workspace) records why |
 | correctness | The IR round-trips through serialization losslessly | `proptest` over generated IR values | `enforced`, with one exclusion below, characterized |
 | correctness | Every model type emits the field names and nesting the specification gives it | One exact-JSON case per type in `tests/wire.rs`, counted against the type list | `enforced` |
 | correctness | The corpus a downstream generator is built against is the one this build emits | [`tests/conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs), comparing every committed document against a freshly emitted one | `enforced` |
@@ -280,12 +278,11 @@ rewrite.
 | security | A credential is read from the field its scheme declared, and from no other | `Carries` is emitted by the same derive as `describe`, so the two are one text; [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) drives a derived API-key carrier to 200, 401 and 403 over a live service | `enforced` |
 | security | An authenticator cannot read a request field the scheme did not declare | Structural: `Authenticator::authenticate` receives `S::Presented` and is never given the request | `enforced` |
 | performance | An opt-in body codec's added allocations on an operation that mounts it are at most a recorded number, in both directions | [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs), taking each codec against the same service's bodyless floor, its `Binary<OctetStream>` transport floor and its bodyless responding floor | `enforced` |
-| performance | What mounting an opt-in payload codec costs a linked artifact is recorded and compared | `mise run cost:codecs` over [`cost/codec.rs`](../crates/kynos/cost/codec.rs), which mounts one operation each way per codec above a transport floor, with `.text` deltas against the committed [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv) | `partial`: a release is refused only for numbers nobody recorded, never a pull request for a cost, and **no ceiling is set** — the figures in [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv), quoted in [`performance.md`](performance.md#the-allocation), are a first recorded measurement in the sense [Thresholds](#thresholds) requires, and none of them yet supports one |
+| performance | What mounting an opt-in payload codec costs a linked artifact is recorded and compared | `mise run cost:codecs` over [`cost/codec.rs`](../crates/kynos/cost/codec.rs), which mounts one operation each way per codec above a transport floor, with `.text` deltas against the committed [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv) | `partial`: a release is refused only for numbers nobody recorded, never a pull request for a cost, and **no ceiling is set** — the figures in [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv) are a first recorded measurement in the sense [Thresholds](#thresholds) requires, and none of them yet supports one |
 
 **The codec row records numbers and sets no ceiling, and that is the threshold
 decision rather than a deferral.** The figures are
-[`cost/codec.tsv`](../crates/kynos/cost/codec.tsv)'s, quoted in
-[`performance.md`](performance.md). [Thresholds](#thresholds) permits a
+[`cost/codec.tsv`](../crates/kynos/cost/codec.tsv)'s. [Thresholds](#thresholds) permits a
 ceiling at a measured value, but a ceiling is only worth setting where the
 quantity it guards is one this repository controls, and this one is mostly not:
 each delta is the codec's code *and* its dependency's — `serde_json`,
@@ -297,12 +294,12 @@ refuses. What the committed table buys instead is a drift column: the same
 figure re-measured by the same toolchain, so a change in Kynos's half shows up
 as movement rather than as a verdict nobody can attribute.
 
-**`compression` is the row where that reservation is the finding.** Its
-+951556 is an order of magnitude above every other and is three whole
-compression libraries — the gzip, brotli and zstd backends `async-compression`
-pulls — rather than the interceptor over them. Read beside
-[`cost/binary.tsv`](../crates/kynos/cost/binary.tsv)'s `compression` row of
-+160, which is what the flag costs a program that never mounts it, the pair
+**`compression` is the row where that reservation is the finding.** Its delta
+is an order of magnitude above every other and is three whole compression
+libraries — the gzip, brotli and zstd backends `async-compression` pulls —
+rather than the interceptor over them. Read beside
+[`cost/binary.tsv`](../crates/kynos/cost/binary.tsv)'s `compression` row, which
+is what the flag costs a program that never mounts it, the pair
 says what neither says alone.
 
 **There is deliberately no default body cap**, and the row above says so rather

@@ -111,7 +111,8 @@ jobs:
           cargo-cache-key: test
       # The instrumented run is the test of record. It selects the same tests
       # as `mise run test`, so running both would execute the suite twice --
-      # except the compile-fail suite, which cannot run instrumented.
+      # except the compile-fail suite, which `ui:check` in `mise.toml` says
+      # cannot run instrumented.
       - name: Run tests under coverage
         run: mise run coverage:ci
       - name: Run the compile-fail suite

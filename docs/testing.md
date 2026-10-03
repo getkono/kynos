@@ -123,12 +123,10 @@ one, because [`mise run panic:check`](../mise.toml) asserts that *building* it
 fails and greps the compiler's message. A passing build is the failure
 condition.
 
-The UI suite does not run under coverage instrumentation: `trybuild` spawns its
-own `cargo`, and `llvm-cov`'s flags reach the child and perturb the exact stderr
-a snapshot records. [`mise run ui:check`](../mise.toml) is its own task and its
-own CI step for that reason — and the exclusion belongs on the coverage command
-rather than on the nextest profile, because a profile-wide filter would remove
-the suite from every job that sets `NEXTEST_PROFILE`.
+The UI suite does not run under coverage instrumentation, for the reason
+[`mise run ui:check`](../mise.toml) gives. The exclusion belongs on the coverage
+command rather than on the nextest profile, because a profile-wide filter would
+remove the suite from every job that sets `NEXTEST_PROFILE`.
 
 That child `cargo` is not free of this repository's configuration, which is the
 half a snapshot's author has no reason to expect. `trybuild` generates a
@@ -285,50 +283,30 @@ Three obligations hold whatever the kind.
 
 **Every test target compiles and runs at baseline, not only under
 `--all-features`.** [`mise run test`](../mise.toml) passes `--all-features` and
-`features:check` passes `--no-dev-deps`, so until
-[`mise run test:baseline`](../mise.toml) landed, no test target had ever been
-built under `openapi31` alone — against every `openapi32` `#[cfg]`
-site in `kynos-openapi/src`. A feature gate no test build exercises is a gate
-whose off-state is unknown, and the suite passing on the first baseline run does
-not retire the obligation: it held by luck rather than by check.
+`features:check` passes `--no-dev-deps`, so
+[`mise run test:baseline`](../mise.toml) is the only task that builds a test
+target under `openapi31` alone — against every `openapi32` `#[cfg]` site in
+`kynos-openapi/src`. A feature gate no test build exercises is a gate whose
+off-state is unknown, and a suite that merely happens to pass at baseline holds
+by luck rather than by check.
 
 That leaves three shapes a test target is built at — every feature on, the
 default set, and `openapi31` alone — and a target gated on one optional feature
 apiece is at none of them.
 [`alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) is that target: five
-modules, one codec each, over a shared harness gated on their disjunction. The
-sets it is interesting at are `openapi31 + macros + F`, and no task built one —
-`features:targets` builds one feature at a time against `openapi31`, so `macros`
-and a codec are never in the same build, and `features:check` passes
-`--no-dev-deps`. [`mise run lint:codecs`](../mise.toml) is the six missing sets.
-It is a Clippy run rather than a test run because what those sets alone can see
-is a compile-time consequence — an item dead once one codec is off, an import
-with no user — rather than an assertion that fails; a misspelled feature *name*
-was never the exposure, since `unexpected_cfgs` validates one against the whole
-feature list wherever the file compiles at all. `202cfa5` is the class, and it
-was found by hand-linting the six sets before there was a task that did.
-
-A second target now sits at exactly those six sets and arrived after the task
-that lints them:
+modules, one codec each, over a shared harness gated on their disjunction, and
 [`cost/codec.rs`](../crates/kynos/cost/codec.rs), the fixture
-[`performance.md`](performance.md#the-taxonomy)'s codec sweep weighs. It is an
-example rather than a test, so `--all-targets` is what reaches it, and the sets
-it is *measured* at are the sets it is already linted at — which is why it
-needed no entry of its own.
+[`performance.md`](performance.md#the-taxonomy)'s codec sweep weighs, is
+measured at the same sets. [`mise run lint:codecs`](../mise.toml) lints the six
+`openapi31 + macros + F` sets; why those sets, and why Clippy rather than a
+test run, is argued in its comment there.
 
 A fourth shape is a *dependency's* feature forced on: one no manifest in the
 workspace asks for, and that Cargo unifies in anyway from whatever graph a
 downstream program builds. [`mise run test:arbitrary-precision`](../mise.toml)
-runs `kynos-openapi`'s suite with `serde_json/arbitrary_precision` on, under
-which a `serde_json::Number` serializes as a one-field struct only serde_json's
-own serializer reads back as a number, and reaches an untagged enum such as
-`RefOr` as a map — so how `to_yaml` writes one and how the model reads one are
-observable there and nowhere else. Two tests are excluded by exact name, the
-oracles holding `to_yaml` to what `serde_yaml_ng` writes for the model, because
-under that graph the two sides differ by design; `--no-tests=fail` keeps a
-filter matching nothing from passing. A dev-dependency asking for
-the feature is the shorter spelling and the wrong one here, since it unifies into
-every `--all-targets` build and leaves the default number path untested.
+runs `kynos-openapi`'s suite with `serde_json/arbitrary_precision` on; its
+comment there says what the switch changes, which two oracles it excludes and
+why the feature is forced per invocation rather than by a dev-dependency.
 
 **A gap [`nfr.md`](nfr.md) documents is characterized.** Excluding a known-lossy
 shape from a generator keeps the property honest, but on its own it leaves the
@@ -376,7 +354,12 @@ because neither set contains the other.
 The sweep drives a value of every short circuit this build compiled and can
 construct — nine of the ten with every feature on, six at the default set — and
 compares what `into_response` wrote against what `Responses` declared, with no
-document, no client and no route in between. That reaches the 406 in
+document, no client and no route in between. `Infallible` has no value to hand
+it, and `NotAcceptable`, `Undecodable` and `NotModified` are not compiled
+without `compression` and `cache`; all ten are held by name in
+`every_short_circuit_kynos_ships_is_accounted_for`, which asserts the set rather
+than the agreement, so an implementation added without a case fails there
+whatever the build compiled. The sweep reaches the 406 in
 `compression` and the 400, 413 and 415 in `decompression`, none of which any
 fixture app in the suite provokes. The matrix is the other direction: it holds
 whatever actually happened on a live exchange, which includes an application's
