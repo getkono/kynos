@@ -6,7 +6,7 @@
 //! recorded, so nothing here consults the parser to decide what the parser
 //! should have said.
 
-use kynos_openapi::PathTemplate;
+use kynos_openapi::{PathTemplate, model::paths::template::InvalidPathTemplate};
 use proptest::prelude::*;
 
 #[path = "support/mod.rs"]
@@ -84,17 +84,41 @@ proptest! {
         prop_assert!(PathTemplate::parse(raw.clone()).is_err(), "`{}` parsed", raw);
     }
 
-    /// A prefix concatenates, or fails for a reason the grammar states.
+    /// A prefix concatenates exactly, and fails exactly when it repeats one of
+    /// the template's variables.
+    ///
+    /// Both cases draw variable names from the same stems and indices, so the
+    /// two sets intersect often enough for both arms to run.
     #[test]
     fn prefixing_produces_a_template_or_an_error(
         case in arb_template_case(),
-        prefix in arb_template(),
+        prefix in arb_template_case(),
     ) {
-        let template = PathTemplate::parse(case.raw).expect("well formed");
-        if let Ok(prefixed) = template.with_prefix(&prefix) {
-            prop_assert!(prefixed.as_str().ends_with(template.as_str()));
-            // A prefix contributes its own variables, ahead of these.
-            prop_assert!(prefixed.variables().ends_with(template.variables()));
+        let template = PathTemplate::parse(case.raw.clone()).expect("well formed");
+        // Trimming leaves either nothing or a template with no trailing `/`, so
+        // joining it to a template that begins with `/` adds no empty segment:
+        // a repeated variable is the only way the result can be malformed.
+        let joined = format!("{}{}", prefix.raw.trim_end_matches('/'), case.raw);
+        let shared: Vec<&String> = prefix
+            .variables
+            .iter()
+            .filter(|name| case.variables.contains(name))
+            .collect();
+
+        match template.with_prefix(&prefix.raw) {
+            Ok(prefixed) => {
+                prop_assert!(shared.is_empty(), "`{}` accepted shared {:?}", joined, shared);
+                prop_assert_eq!(prefixed.as_str(), joined.as_str());
+                // A prefix contributes its own variables, ahead of these.
+                let variables: Vec<String> =
+                    prefix.variables.iter().chain(&case.variables).cloned().collect();
+                prop_assert_eq!(prefixed.variables(), variables.as_slice());
+            }
+            Err(InvalidPathTemplate::DuplicateVariable { template: offending, name }) => {
+                prop_assert_eq!(offending, joined);
+                prop_assert!(shared.contains(&&name), "`{}` is not shared: {:?}", name, shared);
+            }
+            Err(other) => prop_assert!(false, "`{}` refused for {:?}", joined, other),
         }
     }
 }
