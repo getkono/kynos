@@ -6,7 +6,7 @@
 //! group's `RequestId` neither on a header nor on a status.
 
 use kynos::{
-    middleware::{limits::BodySize, request_id::RequestId},
+    middleware::{limits::body_size::BodySize, request_id::RequestId},
     prelude::*,
 };
 

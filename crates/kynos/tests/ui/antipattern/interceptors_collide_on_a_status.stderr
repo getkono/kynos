@@ -2,7 +2,7 @@ error[E0080]: evaluation panicked: two interceptors covering this route answer w
  --> $RUST/core/src/panic.rs
   |
   |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
-  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<kynos::middleware::stack::Cons<kynos::middleware::limits::BodySize, ()> as kynos::middleware::stack::CompatibleWith<AlsoCaps, ()>>::CHECK` failed here
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `<kynos::middleware::stack::Cons<kynos::middleware::limits::body_size::BodySize, ()> as kynos::middleware::stack::CompatibleWith<AlsoCaps, ()>>::CHECK` failed here
   |
  ::: src/middleware/stack.rs
   |

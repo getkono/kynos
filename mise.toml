@@ -68,21 +68,21 @@ description = "Lint every kynos target at each codec's own feature set"
 # four are read against -- `macros` alone and `macros + json` -- are compiled in
 # that shape by nothing either.
 #
-# `crates/kynos/tests/alloc_codecs.rs` is the target that made it matter: five
+# `crates/kynos/tests/alloc_codecs.rs` is the target these sets decide: five
 # `#[cfg]`-gated modules, one codec apiece, over a shared `harness` gated on
-# their disjunction, plus three narrower gates inside it. Every one of those
-# expressions has a set it is the only thing deciding, and until this task each
-# of those sets was a set no build named.
+# their disjunction, plus narrower gates inside it. Every one of those
+# expressions has a set it is the only thing deciding.
+# `crates/kynos/cost/codec.rs`, the codec cost fixture, is an example measured
+# at these same six sets, so `--all-targets` reaches it here too.
 #
-# What was unguarded is narrower than "a misspelled feature". A name absent from
-# the manifest is already caught wherever the file compiles at all, because
+# What these sets guard is narrower than "a misspelled feature". A name absent
+# from the manifest is already caught wherever the file compiles at all, because
 # `unexpected_cfgs` validates it against the whole feature list rather than
 # against which features happen to be on. What only these sets can see is a gate
 # expression's *consequences*: an item dead once one codec is off, an import
-# with no user, a helper that needs two flags to coincide. `202cfa5` fixed
-# exactly that on `harness::Measured` -- an item hoisted into a wider gate than
-# its users have -- and found it by hand-linting these six sets, because no gate
-# could.
+# with no user, an item hoisted into a wider gate than its users have. Those are
+# compile-time findings rather than failing assertions, which is why this is a
+# Clippy run rather than a test run.
 #
 # A task of its own rather than more invocations inside `features:targets`. That
 # task is one `cargo hack` command whose whole shape is "one feature at a time
@@ -138,7 +138,7 @@ run = "cargo nextest run --workspace --all-targets --all-features"
 [tasks."test:baseline"]
 description = "Test all workspace targets at baseline features"
 # Every other test task passes `--all-features`, and `features:check` passes
-# `--no-dev-deps`, so before this task no test target was ever *built* with an
+# `--no-dev-deps`, so this is the only task that *builds* a test target with an
 # optional feature off -- against every `#[cfg]` site in the workspace. A gate
 # no test build exercises is a gate whose off-state is unknown.
 #
@@ -222,15 +222,12 @@ description = "Lint every reachable feature combination"
 # directory of its own, and no *other* invocation in the same run ever names
 # it again. Across runs it is reused: a rerun of this task after an edit names
 # the same combinations, so what this trades away is that rerun's incremental
-# replay, and what it buys is the bytes below. Nothing reclaims them: rustc's
-# garbage collection prunes stale entries *within* a session, not sessions no
-# build will name again. A worktree that had run the matrix a few times held
-# 1280 of them, totalling 14 GiB, and a twelve-combination sweep left 0.21 GiB
-# with this set against 0.57 GiB without.
-# Where a `RUSTC_WRAPPER` is configured it is faster too -- 25s against 38s on
-# that sweep, both runs warm -- because such a cache cannot store an
-# incremental compilation, so incremental was forfeiting a cache that hits to
-# buy one that never does.
+# replay, and what it buys is disk: rustc's garbage collection prunes stale
+# entries *within* a session, not sessions no build will name again, so
+# nothing else reclaims them.
+# Where a `RUSTC_WRAPPER` is configured it is faster too, because such a cache
+# cannot store an incremental compilation: incremental would forfeit a cache
+# that hits to buy one that never does.
 env = { CARGO_INCREMENTAL = "0" }
 run = '''
 cargo hack clippy --workspace --feature-powerset --depth 2 --no-dev-deps \
@@ -605,9 +602,7 @@ done <"$quoted"
 description = "Verify every crate is named only where its owner allows"
 # `architecture.md` says twice that the count is the check -- once for the
 # runtime allowance table, once for the hand-rolled `Stream` implementations --
-# and until this task existed neither count was held by anything. Both rows read
-# `planned` in `nfr.md` while the allowance table was a row short and still
-# named a path that had become a directory.
+# and this task is what holds both counts.
 #
 # The script reads those tables rather than restating them, so each rule is
 # stated once and it is the statement a reader consults. Adding a site means
@@ -692,8 +687,8 @@ cargo +1.85 check --workspace --all-features --exclude kynos-profile
 
 [tasks."publish:check"]
 description = "Package every crate exactly as crates.io will receive it"
-# The gate that was missing. Every other task here builds the working tree, so a
-# file the code needs but the archive omits is invisible to all of them.
+# Every other task here builds the working tree, so a file the code needs but
+# the archive omits is invisible to all of them.
 # `cargo package` writes each member's `.crate` and then rebuilds it from the
 # extracted tarball, which is the only thing that can notice.
 #
@@ -748,19 +743,15 @@ cargo package --workspace --all-features --exclude kynos-profile
 
 [tasks."semver:check"]
 description = "Compare the public API against the last published release"
-# The gate that was missing, and the one a pre-v1 framework needs most: the
-# whole point of not being 0.y.z is that a break is a decision rather than an
-# accident, and until now nothing on `master` could tell the two apart.
+# A pre-v1 framework may still break its API, but each break should be a
+# decision rather than an accident, and this is what tells the two apart on
+# `master` rather than at release.
 #
-# `cargo-semver-checks` did run -- but only at release, and only through
-# release-plz, whose two limits `release-plz.toml` records: it is invoked with
-# no feature flags, so only the default set is compared, and it reports
-# "compatible" for any failure whose output does not demand a major version.
-# The result is that a break lands, sits on `master`, and surfaces in a release
-# pull request days later beside the changelog, which is the worst place to
-# learn it. Both breaks in the 0.2.0 release pull request are that shape:
-# `Router::group`/`nest`/`merge` each took a third generic parameter, and
-# `Timeout` gained a private field.
+# release-plz also runs `cargo-semver-checks`, with two limits
+# `release-plz.toml` records: it is invoked with no feature flags, so only the
+# default set is compared, and it reports "compatible" for any failure whose
+# output does not demand a major version. Left to it alone, a break would land
+# on `master` and surface only in a release pull request beside the changelog.
 #
 # `--all-features` for the reason `lint`, `test` and `publish:check` have it.
 # Roughly thirty flags gate this crate, so a default-features comparison reads
@@ -785,13 +776,10 @@ run = "cargo semver-checks check-release --workspace --all-features"
 
 [tasks.coverage]
 description = "Run tests with LLVM coverage"
-# `-E 'not binary(ui)'` for the reason `ui:check` gives at length: trybuild
-# spawns its own `cargo`, and the instrumentation flags reach that child and
-# perturb the exact stderr its snapshots record. `coverage:ci` had the exclusion
-# and this task did not, so `hooks:pre-push` -- which runs *this* one -- put the
-# suite under llvm-cov on every push, where it could only fail spuriously or
-# pass for reasons that comment says are not reliable. The compile-fail suite is
-# covered by `ui:check`, which is in `check`.
+# `-E 'not binary(ui)'` for the reason `ui:check` gives, here as in
+# `coverage:ci`: `hooks:pre-push` runs this task, so without the exclusion every
+# push would put the suite under llvm-cov. The compile-fail suite is covered by
+# `ui:check`, which is in `check`.
 run = "cargo llvm-cov nextest --workspace --all-targets --all-features -E 'not binary(ui)'"
 
 [tasks."ui:check"]

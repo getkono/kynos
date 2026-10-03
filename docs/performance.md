@@ -10,20 +10,13 @@ for part of what they cover, and the [taxonomy](#the-taxonomy)'s last column is
 where that is admitted rather than implied.
 
 [`containment:check`](../scripts/containment.py) holds the first of those two
-numbers and not the second. How many kinds run is the Status column: a cell
-either opens `in use` or it does not, and the rule counts the rows and compares
-them to the sentence above. How many cover only part of what they name is a
-concession the rest of each cell makes in prose, and no token separates the four
-that make one from the one that does not — a rule for it would be fitted to
-today's cells and would fail the first honest rewording. So that number is
-recounted by hand when the taxonomy moves, and the sentence is held as written:
-rewording it means editing the rule in the same commit.
+numbers against the Status column's `in use` cells, so rewording the sentence
+means editing the rule in the same commit. The second is a concession each cell
+makes in prose, with no token a rule could count, so it is recounted by hand
+when the taxonomy moves.
 
-The allocation count has already earned the document: the routing path was
-required to allocate nothing, had never been measured, and allocated seven
-times for a static match — five since the count was attributed.
-[`nfr.md`](nfr.md#routing) carries the numbers and what they do and do not
-establish.
+[`nfr.md`](nfr.md#routing) carries what the allocation count measures on the
+routing path and what it does and does not establish.
 
 ## The boundary
 
@@ -114,8 +107,8 @@ point, and its baseline row is that floor alone. Holding the program fixed is
 what makes `fixture.rs` attribute a delta to a feature; here the program is
 *meant* to differ, because "the operation that mounts the codec" is the thing
 being weighed and it cannot exist in a build with the flag off. The two fixtures
-therefore answer opposite questions and neither subsumes the other:
-`binary.tsv`'s `compression` row is +160 bytes and `codec.tsv`'s is +951556.
+therefore answer opposite questions and neither subsumes the other, which the
+two files' `compression` rows show side by side.
 `mise run cost:codecs` runs this half alone; `mise run cost:record` writes its
 baseline with the other two.
 
@@ -219,20 +212,19 @@ against an operation with no body would report zero and mean nothing. The
 question the shape exists to answer is what the codec costs the operation that
 asked for it, against the same operation without it.
 
-Both halves of that bill now run.
+Both halves of that bill run.
 [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) counts each
 codec on an operation that names it, and
 [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv) records the `.text` delta of
-the fixture that mounts it: `protobuf` at +44112 bytes, `form` at +46256, `json`
-at +63936, `multipart` at +109568 and `compression` at +951556, over an 883900
-byte floor.
+the fixture that mounts it, one row per codec over the transport floor's
+baseline row.
 
 **What those figures include is more than Kynos, and saying so is part of the
 measurement.** Mounting a codec pulls in the crate that implements it —
 `serde_json`, `serde_urlencoded`, `multer`, `prost`, `async-compression` — and
 the operation declares a payload type carrying two derives. `compression` is
-where the distinction stops being a caveat: nearly all of its ~950 KiB is the
-gzip, brotli and zstd backends, so the row prices the encoders rather than the
+where the distinction stops being a caveat: nearly all of its row is the gzip,
+brotli and zstd backends, so the row prices the encoders rather than the
 interceptor over them. A figure that attributed that to the framework would be
 a wrong number rather than an imprecise one.
 

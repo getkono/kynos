@@ -83,8 +83,6 @@ half and the timed half are separate rows, and only the timed one carries the
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | compatibility | Public API surface is diffed on every change; an addition requires explicit budget approval, a removal fails the build | `cargo-public-api` | `needs-tooling` |
-| compatibility | Every release reports whether the version bump matches the API change | `cargo-semver-checks`, run by release-plz for every crate | `partial`; the workspace-wide row in [Workspace](#workspace) records what it does and does not buy |
-| compatibility | Every pull request reports whether the public API broke, over every feature | `mise run semver:check` (`cargo semver-checks check-release --workspace --all-features`), dedicated CI job | `partial`: it reports rather than blocks. The row in [Workspace](#workspace) records why |
 | correctness | The IR round-trips through serialization losslessly | `proptest` over generated IR values | `enforced`, with one exclusion below, characterized |
 | correctness | Every model type emits the field names and nesting the specification gives it | One exact-JSON case per type in `tests/wire.rs`, counted against the type list | `enforced` |
 | correctness | The corpus a downstream generator is built against is the one this build emits | [`tests/conformance_corpus.rs`](../crates/kynos/tests/conformance_corpus.rs), comparing every committed document against a freshly emitted one | `enforced` |
@@ -280,12 +278,11 @@ rewrite.
 | security | A credential is read from the field its scheme declared, and from no other | `Carries` is emitted by the same derive as `describe`, so the two are one text; [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) drives a derived API-key carrier to 200, 401 and 403 over a live service | `enforced` |
 | security | An authenticator cannot read a request field the scheme did not declare | Structural: `Authenticator::authenticate` receives `S::Presented` and is never given the request | `enforced` |
 | performance | An opt-in body codec's added allocations on an operation that mounts it are at most a recorded number, in both directions | [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs), taking each codec against the same service's bodyless floor, its `Binary<OctetStream>` transport floor and its bodyless responding floor | `enforced` |
-| performance | What mounting an opt-in payload codec costs a linked artifact is recorded and compared | `mise run cost:codecs` over [`cost/codec.rs`](../crates/kynos/cost/codec.rs), which mounts one operation each way per codec above a transport floor, with `.text` deltas against the committed [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv) | `partial`: a release is refused only for numbers nobody recorded, never a pull request for a cost, and **no ceiling is set** — the figures in [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv), quoted in [`performance.md`](performance.md#the-allocation), are a first recorded measurement in the sense [Thresholds](#thresholds) requires, and none of them yet supports one |
+| performance | What mounting an opt-in payload codec costs a linked artifact is recorded and compared | `mise run cost:codecs` over [`cost/codec.rs`](../crates/kynos/cost/codec.rs), which mounts one operation each way per codec above a transport floor, with `.text` deltas against the committed [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv) | `partial`: a release is refused only for numbers nobody recorded, never a pull request for a cost, and **no ceiling is set** — the figures in [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv) are a first recorded measurement in the sense [Thresholds](#thresholds) requires, and none of them yet supports one |
 
 **The codec row records numbers and sets no ceiling, and that is the threshold
 decision rather than a deferral.** The figures are
-[`cost/codec.tsv`](../crates/kynos/cost/codec.tsv)'s, quoted in
-[`performance.md`](performance.md). [Thresholds](#thresholds) permits a
+[`cost/codec.tsv`](../crates/kynos/cost/codec.tsv)'s. [Thresholds](#thresholds) permits a
 ceiling at a measured value, but a ceiling is only worth setting where the
 quantity it guards is one this repository controls, and this one is mostly not:
 each delta is the codec's code *and* its dependency's — `serde_json`,
@@ -297,12 +294,12 @@ refuses. What the committed table buys instead is a drift column: the same
 figure re-measured by the same toolchain, so a change in Kynos's half shows up
 as movement rather than as a verdict nobody can attribute.
 
-**`compression` is the row where that reservation is the finding.** Its
-+951556 is an order of magnitude above every other and is three whole
-compression libraries — the gzip, brotli and zstd backends `async-compression`
-pulls — rather than the interceptor over them. Read beside
-[`cost/binary.tsv`](../crates/kynos/cost/binary.tsv)'s `compression` row of
-+160, which is what the flag costs a program that never mounts it, the pair
+**`compression` is the row where that reservation is the finding.** Its delta
+is an order of magnitude above every other and is three whole compression
+libraries — the gzip, brotli and zstd backends `async-compression` pulls —
+rather than the interceptor over them. Read beside
+[`cost/binary.tsv`](../crates/kynos/cost/binary.tsv)'s `compression` row, which
+is what the flag costs a program that never mounts it, the pair
 says what neither says alone.
 
 **There is deliberately no default body cap**, and the row above says so rather
@@ -373,9 +370,10 @@ makes the representation *the coded form*, so undoing the coding invalidates
 every other statement about it — and a `Content-Length` that survived the decode
 is both a lie and, since it is the number a naive cap would read, the mechanism
 by which the first row would fail. That is also why
-[`BodySize`](../crates/kynos/src/middleware/limits.rs) cannot be the guard here:
-it measures the size an attacker sets freely. `Decompression` declares 413 for
-that reason, which makes mounting the two together a compile error.
+[`BodySize`](../crates/kynos/src/middleware/limits/body_size.rs) cannot be the
+guard here: it measures the size an attacker sets freely. `Decompression`
+declares 413 for that reason, which makes mounting the two together a compile
+error.
 
 **The `Accept-Ranges` row is a known limit as much as a guarantee, and the limit
 is now smaller than it was.** It says a static asset under `Compression` ships
@@ -453,7 +451,7 @@ taken today.
 The streaming row above it is the same family of fact one layer up, and it is
 split because half of it holds. A request declaring a `Content-Length` is
 decided from the head and its body passes
-[`BodySize`](../crates/kynos/src/middleware/limits.rs) untouched, so
+[`BodySize`](../crates/kynos/src/middleware/limits/body_size.rs) untouched, so
 `Records<T>` receives it a frame at a time. A chunked request declares no
 length, so a running count is the only bound there is and the interceptor
 materialises the whole body before the handler is entered — records still
@@ -474,8 +472,8 @@ where someone mounting a cap will meet it.
 
 AGENTS.md: *"A module becomes a directory once it holds two
 independently-changing concerns … Passing ~400 lines excluding tests is when to
-ask that question, not an answer to it."* Thirty-one files under `crates/*/src`
-are past that line and asked it, and `containment:check` holds that number so it can
+ask that question, not an answer to it."* Twenty-nine files under `crates/*/src` are
+past that line and asked it, and `containment:check` holds that number so it can
 only move on purpose.
 
 The line count is a prompt rather than a trigger because the rule interacts with
@@ -485,7 +483,7 @@ public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: it is one of
 them, it declares every rejection type, and splitting it would turn
 `error::rejection::PathRejection` into
-`error::rejection::path::PathRejection`. Seventeen of the thirty-one are that
+`error::rejection::path::PathRejection`. Seventeen of the twenty-nine are that
 shape, worth roughly a hundred public paths between them — and each is one
 cohesive family, which is precisely what the concern test says may stay a file.
 So they stay: a longer path is a worse name, and the rule's first clause already
@@ -496,6 +494,11 @@ Splitting a module that declares *one* type and a pile of `impl` blocks costs
 nothing, because the type stays declared where it was and an inherent `impl` may
 sit in any module of the crate. That is why `router/`, `emit/downgrade/` and
 `derive/schema/` were split and the rest were not.
+
+`middleware/limits/` was split at the path cost, because it was never one
+family: four interceptors sharing no type, each with its own response and its
+own reason to change. The concern test answers yes there, so
+`limits::Timeout` became `limits::timeout::Timeout` and likewise for the rest.
 
 The budget is the honest record of what stayed. It falls when a module is split,
 and raising it means saying in the same commit why a new module needs the room.
@@ -531,16 +534,6 @@ attribute list — its names, whether it is described, required or open, and its
 constraints — each a question the shape code asks of the same list. What pushed
 it over was reading both sides of a split `rename`, so a member now has the name
 serde writes and the one it reads. One concern, so one file.
-
-`derive/schema/refusals.rs` is the thirty-first, and it is the split this
-section asks for rather than a file that grew. `derive/schema.rs` held two
-concerns past the line: the expansion, and the rules refusing every serde form
-whose declaration predicts no schema true in both directions. Those change
-independently — a new refusal touches no emitted token — so they became two
-files, and each is still past the line holding one concern: the refusals share
-one diagnostic style and an order the later rules rely on, and the expansion
-is the shape code's caller. Nothing in `kynos-macros` is public but the
-derives, so the split cost no path.
 
 ## Dependencies
 
@@ -629,7 +622,7 @@ open against a `kynos-otel` that may never be written.
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
 | reliability | Every test target is built at the feature sets its own `#[cfg]` gates decide, not only at all-on, default and baseline | `mise run lint:codecs`, six `-p kynos --all-targets` Clippy runs over `openapi31 + macros` and each optional codec in turn | `enforced` for the codec flags, which is where a per-feature-gated target lives today; a target gated on some other flag would need its set added to that list |
 | reliability | Tests are hermetic; no shared state, no ordering dependence, no retries | `cargo-nextest` process isolation, `retries = 0`, guarded by `crates/kynos/tests/hermeticity.rs` | `enforced` |
-| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 31 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
+| dx | No module grows past the size the layout rule allows without that being recorded | `mise run containment:check`, against a module-size budget of 29 files stated below | `enforced` as a ratchet: the count cannot rise silently, and lowering it is what splitting a module looks like |
 | dx | A worktree's `target/` stays near the 17 GiB [PR #126](https://github.com/getkono/kynos/pull/126) measured, against the 44 GiB before it | `mise run containment:check`, holding [`.cargo/config.toml`](../.cargo/config.toml) to declaring `profile.dev.debug` and `profile.dev.package."*".debug`, and to carrying no top-level table but `profile` | `partial`: it holds the cause and not the size. No job takes a `du -sh target` reading, so a build that grows for some other reason passes; the two keys' *values* are unchecked, and so are the two `CARGO_INCREMENTAL = "0"` task envs #126 added beside them. What it closes is the half nobody can review — below |
 | reliability | Panic recovery refuses to compile under `panic = "abort"` | `mise run panic:check` | `enforced` |
 | reliability | Commits follow Conventional Commits, merge commits exempt | `convco`, twice over: the `conventional-commit` `commit-msg` step runs `mise run commits:message` over the one message being written, exempting a merge on the presence of the `MERGE_HEAD` *file*; `mise run commits:check` and the `commits` CI job run `convco check` over a range, where the exemption is convco's own parent-count filter. `mise run commits:test` runs *both* halves over the same commits, since a divergence between them fails neither | `enforced`, with one case out of reach: amending an *existing* merge commit runs the hook with `MERGE_HEAD` already gone over a commit that still has two parents, so the hook rejects what the range form exempts, and `--no-verify` is the escape. `commits:test` pins that residual in both directions, so closing or widening it fails this row |

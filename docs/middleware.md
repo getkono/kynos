@@ -445,7 +445,8 @@ Three properties of that algorithm are decisions rather than details:
   seconds, because truncating a sub-second wait to zero tells a client to retry
   straight into the refusal it just received. Reporting the window's *length*
   instead would be a delay the service does not require, which is the same
-  objection `limits.rs` raises against inventing one for a concurrency cap.
+  objection `limits::concurrency` raises against inventing one for a
+  concurrency cap.
 
 A store that cannot answer **allows** by default. A limiter exists to shed load,
 and one that sheds everything when its cache blinks has turned a degradation
@@ -1334,17 +1335,12 @@ This harness is not the only instrument for that class, and is not the cheapest.
 [`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) asserts the
 same agreement directly, with no document, no client and no route: it drives
 each short circuit's value and compares what reaches the wire against what
-`Responses` declared. It is also the more exhaustive of the two here — the
-matrix reached five of the eight defective implementations and the sweep reached
-all eight. What the sweep covers is every implementation this build compiled a
-value for: nine of the ten with every feature on, six at the default set, with
-`Infallible` excluded because it is uninhabited. The tenth is held by name in
-`every_short_circuit_kynos_ships_is_accounted_for`, which asserts the set rather
-than the agreement. What the matrix buys instead is reach: it holds anything on
-a live exchange, an application's own short circuit and a handler included,
-where the sweep is total only over the set Kynos ships. Prefer the direct assertion
-for a claim about a type, and reach for the matrix when the claim is about an
-exchange.
+`Responses` declared. What the matrix buys instead is reach: it holds anything
+on a live exchange, an application's own short circuit and a handler included,
+where the sweep is total only over the set Kynos ships.
+[`testing.md`](testing.md#the-sweep-and-the-matrix-assert-one-property-over-two-sets)
+records what each one covers. Prefer the direct assertion for a claim about a
+type, and reach for the matrix when the claim is about an exchange.
 
 What it is not is a property test. The matrix is enumerated, so it covers the
 layers Kynos owns in the arrangements that file names — not every stack a

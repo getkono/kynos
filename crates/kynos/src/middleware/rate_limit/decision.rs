@@ -8,7 +8,7 @@ use crate::{http, router::operation::Route};
 ///
 /// The `qu` parameter of `draft-ietf-httpapi-ratelimit-headers`.
 /// `concurrent-requests` is deliberately absent: that is
-/// [`Concurrency`](crate::middleware::limits::Concurrency)'s job, and it
+/// [`Concurrency`](crate::middleware::limits::concurrency::Concurrency)'s job, and it
 /// consumes no rate window.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]

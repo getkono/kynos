@@ -51,7 +51,10 @@ use kynos::{
         Continued, Interceptor, Next,
         compression::{Compression, levels::GzipLevel},
         cors::Cors,
-        limits::{BodySize, BodyTimeout, Concurrency, Timeout},
+        limits::{
+            body_size::BodySize, body_timeout::BodyTimeout, concurrency::Concurrency,
+            timeout::Timeout,
+        },
         rate_limit::{
             RateLimit,
             decision::{Decision, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},

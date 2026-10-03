@@ -533,8 +533,8 @@ fn every_short_circuit_kynos_ships_is_accounted_for() {
 ///
 /// Line-oriented rather than the `> Marker for ` substring `implementors_of`
 /// uses, for two reasons that marker cannot cover: `ShortCircuit` takes no
-/// generic argument to close the match on, and `middleware/limits.rs` writes
-/// `impl ShortCircuit for TookTooLong` inside a doc example, which a bare
+/// generic argument to close the match on, and `middleware/limits/timeout.rs`
+/// writes `impl ShortCircuit for TookTooLong` inside a doc example, which a bare
 /// substring would count as a shipped implementation. Two conditions rather
 /// than one: the line's code *begins* with `impl`, which excludes the `/// # `
 /// that doc example carries, and the trait name begins a path segment, which
@@ -628,7 +628,7 @@ fn names_implementing(trait_name: &str, sources: &[String]) -> BTreeSet<String> 
 /// spelling `middleware/compression/mod.rs` uses; `MyShortCircuit` is a name
 /// ending in the trait's that implements something else; and the doc-example
 /// line
-/// is the one `middleware/limits.rs` really carries.
+/// is the one `middleware/limits/timeout.rs` really carries.
 #[test]
 fn the_scan_reads_a_generic_head_and_anchors_the_trait_name() {
     let sources = [
@@ -719,7 +719,7 @@ async fn every_case() -> Vec<Case> {
 
     use kynos::middleware::{
         csrf::CrossSite,
-        limits::{AtCapacity, BodySizeExceeded, TimedOut},
+        limits::{body_size::BodySizeExceeded, concurrency::AtCapacity, timeout::TimedOut},
         rate_limit::refusal::{RateLimited, RateLimitedFields},
     };
 
@@ -912,7 +912,7 @@ fn assert_clone_and_debug<T: Clone + std::fmt::Debug>() {}
 fn a_refusal_is_send_and_sync_whatever_marker_names_it() {
     use kynos::middleware::{
         csrf::CrossSite,
-        limits::{AtCapacity, BodySizeExceeded, TimedOut},
+        limits::{body_size::BodySizeExceeded, concurrency::AtCapacity, timeout::TimedOut},
     };
 
     assert_send_sync::<BodySizeExceeded<Unsendable>>();
@@ -938,7 +938,11 @@ fn a_refusal_is_send_and_sync_whatever_marker_names_it() {
 fn naming_a_problem_type_costs_the_marker_no_derives() {
     use kynos::middleware::{
         csrf::{CrossSite, Csrf},
-        limits::{AtCapacity, BodySize, BodySizeExceeded, Concurrency, TimedOut},
+        limits::{
+            body_size::{BodySize, BodySizeExceeded},
+            concurrency::{AtCapacity, Concurrency},
+            timeout::TimedOut,
+        },
     };
 
     assert_refusal_traits::<BodySizeExceeded<Bare>>();

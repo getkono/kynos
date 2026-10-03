@@ -18,7 +18,12 @@ use kynos::{
     Router,
     error::problem::ProblemType,
     http::{Method, StatusCode, header},
-    middleware::limits::{BodySize, Concurrency, Timeout},
+    middleware::limits::{
+        body_size::{BodySize, BodySizeExceeded},
+        body_timeout::BodyTimeout,
+        concurrency::{AtCapacity, Concurrency},
+        timeout::{TimedOut, Timeout},
+    },
     response::status::NoContent,
 };
 
@@ -97,6 +102,39 @@ async fn a_declared_length_past_the_limit_is_refused_without_reading_the_body() 
         .await;
 
     assert_eq!(reply.status, StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+/// A body exactly as long as the limit is within it, on both branches: the
+/// limit is the largest body accepted, not the smallest one refused.
+#[tokio::test]
+async fn a_body_exactly_at_the_limit_reaches_its_operation() {
+    let user = |id| User {
+        id,
+        name: "fresh".to_owned(),
+    };
+    let declared_body = serde_json::to_vec(&user(1)).expect("a serializable body");
+    let limit = u64::try_from(declared_body.len()).expect("a short body");
+
+    let service = support::router()
+        .intercept(BodySize::new(limit))
+        .build(App::new())
+        .expect("a describable router");
+
+    let declared = support::post(&service, "/users")
+        .header("content-type", "application/json")
+        .header("content-length", &declared_body.len().to_string())
+        .body(declared_body)
+        .call()
+        .await;
+    assert_eq!(declared.status, StatusCode::CREATED, "{}", declared.text());
+
+    // The same length with none declared, so the count decides. A second id
+    // because the first user now exists; one digit, so the length is the same.
+    let counted = support::post(&service, "/users")
+        .json(&user(2))
+        .call()
+        .await;
+    assert_eq!(counted.status, StatusCode::CREATED, "{}", counted.text());
 }
 
 /// Every covered operation declares the 413, because configuring a limit and
@@ -637,7 +675,7 @@ async fn stalled()
 async fn an_idle_body_timeout_ends_a_stalled_stream() {
     let service = Router::<()>::new()
         .mount(kynos::routes![stalled])
-        .intercept(kynos::middleware::limits::BodyTimeout::idle(
+        .intercept(kynos::middleware::limits::body_timeout::BodyTimeout::idle(
             Duration::from_millis(100),
         ))
         .build(())
@@ -650,7 +688,7 @@ async fn an_idle_body_timeout_ends_a_stalled_stream() {
     // The failure is typed, so a caller can tell it from any other body error
     // and read back the limit it passed.
     let timed_out = failure
-        .downcast_ref::<kynos::middleware::limits::BodyTimedOut>()
+        .downcast_ref::<kynos::middleware::limits::body_timeout::BodyTimedOut>()
         .expect("the failure is the body timeout's own error");
     assert_eq!(timed_out.after(), Duration::from_millis(100));
     assert!(failure.to_string().contains("did not finish"), "{failure}");
@@ -663,7 +701,7 @@ async fn an_idle_body_timeout_ends_a_stalled_stream() {
 async fn an_idle_body_timeout_leaves_a_steady_stream_alone() {
     let service = Router::<()>::new()
         .mount(kynos::routes![steady])
-        .intercept(kynos::middleware::limits::BodyTimeout::idle(
+        .intercept(kynos::middleware::limits::body_timeout::BodyTimeout::idle(
             Duration::from_millis(100),
         ))
         .build(())
@@ -685,9 +723,11 @@ async fn an_idle_body_timeout_leaves_a_steady_stream_alone() {
 async fn a_deadline_ends_a_stream_that_is_still_producing() {
     let service = Router::<()>::new()
         .mount(kynos::routes![steady])
-        .intercept(kynos::middleware::limits::BodyTimeout::deadline(
-            Duration::from_millis(20),
-        ))
+        .intercept(
+            kynos::middleware::limits::body_timeout::BodyTimeout::deadline(Duration::from_millis(
+                20,
+            )),
+        )
         .build(())
         .expect("a describable router");
 
@@ -705,7 +745,7 @@ async fn a_deadline_ends_a_stream_that_is_still_producing() {
 async fn a_body_timeout_declares_no_status() {
     let bounded = Router::<()>::new()
         .mount(kynos::routes![steady])
-        .intercept(kynos::middleware::limits::BodyTimeout::idle(
+        .intercept(kynos::middleware::limits::body_timeout::BodyTimeout::idle(
             Duration::from_millis(100),
         ))
         .build(())
@@ -731,6 +771,39 @@ async fn a_body_timeout_declares_no_status() {
     };
 
     assert_eq!(described(&bounded), described(&plain));
+}
+
+/// A body of a length known before it is sent.
+#[kynos::get("/fixed")]
+async fn fixed() -> kynos::extract::body::text::Text {
+    kynos::extract::body::text::Text("eleven octs".to_owned())
+}
+
+/// The bound changes when a body may end and nothing else about it. The length
+/// a body declares passes through, because a driver frames the response by it;
+/// so does whether it has already ended, because that is how a delivery is told
+/// from an interruption once the body is dropped.
+#[tokio::test]
+async fn a_body_timeout_keeps_the_length_and_the_end_its_body_declares() {
+    use hyper::body::Body as _;
+
+    let service = Router::<()>::new()
+        .mount(kynos::routes![fixed, prompt])
+        .intercept(BodyTimeout::deadline(Duration::from_secs(30)))
+        .build(())
+        .expect("a describable router");
+    let body = |target: &'static str| {
+        let mut request = kynos::http::Request::new(kynos::http::body::Body::empty());
+        *request.uri_mut() = target.parse().expect("a usable request target");
+        let response = service.call(request);
+        async { response.await.into_body() }
+    };
+
+    let fixed = body("/fixed").await;
+    assert_eq!(fixed.size_hint().exact(), Some(11));
+    assert!(!fixed.is_end_stream());
+
+    assert!(body("/prompt").await.is_end_stream());
 }
 
 /// A keep-alive is a real frame, so it restarts an idle clock exactly as an
@@ -775,7 +848,7 @@ async fn heartbeat() -> kynos::response::stream::sse::Sse<Silent> {
 async fn a_keep_alive_frame_resets_an_idle_body_timeout() {
     let service = Router::<()>::new()
         .mount(kynos::routes![heartbeat])
-        .intercept(kynos::middleware::limits::BodyTimeout::idle(
+        .intercept(kynos::middleware::limits::body_timeout::BodyTimeout::idle(
             Duration::from_millis(100),
         ))
         .build(())
@@ -851,7 +924,7 @@ async fn a_body_the_timer_ended_is_reported_as_interrupted() {
     let service = Router::<()>::new()
         .mount(kynos::routes![stalled])
         .observe(CountingEnds(std::sync::Arc::clone(&counts)))
-        .intercept(kynos::middleware::limits::BodyTimeout::idle(
+        .intercept(kynos::middleware::limits::body_timeout::BodyTimeout::idle(
             Duration::from_millis(100),
         ))
         .build(())
@@ -886,7 +959,7 @@ async fn a_body_that_finished_is_not_reported_as_interrupted() {
     let service = Router::<()>::new()
         .mount(kynos::routes![steady])
         .observe(CountingEnds(std::sync::Arc::clone(&counts)))
-        .intercept(kynos::middleware::limits::BodyTimeout::idle(
+        .intercept(kynos::middleware::limits::body_timeout::BodyTimeout::idle(
             Duration::from_millis(200),
         ))
         .build(())
@@ -924,7 +997,7 @@ mod beneath_compression {
     use kynos::{
         Router,
         http::{Request, body::Body, header},
-        middleware::{compression::Compression, limits::BodyTimeout},
+        middleware::{compression::Compression, limits::body_timeout::BodyTimeout},
         router::service::Service,
     };
 
@@ -1081,6 +1154,29 @@ async fn an_unnamed_body_limit_publishes_about_blank_on_both_halves() {
         narrowed_type(&declared, "/users", "post", 413),
         "about:blank"
     );
+}
+
+/// A refusal compares by what it reports and never by the problem type it
+/// names, so a marker that implements nothing beyond `ProblemType`, as
+/// `TooLarge` does, still yields a refusal a caller can compare.
+#[test]
+fn a_refusal_compares_by_what_it_reports() {
+    assert_eq!(
+        BodySizeExceeded::<TooLarge>::new(16),
+        BodySizeExceeded::new(16)
+    );
+    assert_ne!(
+        BodySizeExceeded::<TooLarge>::new(16),
+        BodySizeExceeded::new(17)
+    );
+
+    let after = Duration::from_millis(20);
+    assert_eq!(TimedOut::<TooLarge>::new(after), TimedOut::new(after));
+    assert_ne!(TimedOut::<TooLarge>::new(after), TimedOut::new(after * 2));
+
+    let retry = Some(Duration::from_secs(1));
+    assert_eq!(AtCapacity::<TooLarge>::new(retry), AtCapacity::new(retry));
+    assert_ne!(AtCapacity::<TooLarge>::new(retry), AtCapacity::new(None));
 }
 
 /// The one URI an operation's declared problem response narrows `type` to.

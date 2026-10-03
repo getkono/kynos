@@ -7,7 +7,7 @@
 
 use kynos::{
     middleware::{
-        limits::{BodySize, Concurrency, Timeout},
+        limits::{body_size::BodySize, concurrency::Concurrency, timeout::Timeout},
         request_id::RequestId,
     },
     prelude::*,
