@@ -61,6 +61,9 @@ impl Http1Config {
     ///
     /// `None` waits indefinitely, which is a decision rather than a default: a
     /// client that never finishes a request head holds the connection open.
+    ///
+    /// [`Server::prepare`](crate::server::Server::prepare) refuses
+    /// `Some(Duration::ZERO)`.
     #[must_use]
     pub fn header_read_timeout(mut self, timeout: Option<Duration>) -> Self {
         self.header_read_timeout = timeout;
@@ -68,6 +71,8 @@ impl Http1Config {
     }
 
     /// Sets the maximum number of request headers.
+    ///
+    /// [`Server::prepare`](crate::server::Server::prepare) refuses zero.
     #[must_use]
     pub fn max_headers(mut self, max_headers: usize) -> Self {
         self.max_headers = max_headers;
@@ -75,6 +80,9 @@ impl Http1Config {
     }
 
     /// Sets the maximum per-connection read/write buffer size.
+    ///
+    /// [`Server::prepare`](crate::server::Server::prepare) refuses anything
+    /// below 8192 bytes.
     #[must_use]
     pub fn max_buffer_size(mut self, max_buffer_size: usize) -> Self {
         self.max_buffer_size = max_buffer_size;

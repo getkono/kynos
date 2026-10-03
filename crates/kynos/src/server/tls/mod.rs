@@ -33,6 +33,11 @@ pub struct ClientCertificateConfig {
 
 impl ClientCertificateConfig {
     /// Parses PEM trust anchors used to verify client certificates.
+    ///
+    /// # Errors
+    ///
+    /// [`TlsError::Pem`] when `roots` is not well-formed PEM, and
+    /// [`TlsError::EmptyPem`] when it holds no certificate.
     pub fn from_pem_roots(roots: &[u8]) -> std::result::Result<Self, TlsError> {
         Ok(Self {
             roots: parse_certificates(roots, "client root certificate")?,
@@ -41,6 +46,11 @@ impl ClientCertificateConfig {
     }
 
     /// Adds PEM certificate-revocation lists.
+    ///
+    /// # Errors
+    ///
+    /// [`TlsError::Pem`] when `crls` is not well-formed PEM, and
+    /// [`TlsError::EmptyPem`] when it holds no certificate-revocation list.
     pub fn with_pem_crls(mut self, crls: &[u8]) -> std::result::Result<Self, TlsError> {
         let parsed = CertificateRevocationListDer::pem_slice_iter(crls)
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -173,6 +183,11 @@ pub struct TlsConfig {
 
 impl TlsConfig {
     /// Parses a default PEM certificate chain and private key.
+    ///
+    /// # Errors
+    ///
+    /// [`TlsError::Pem`] or [`TlsError::EmptyPem`] when `certificate_chain` or
+    /// `private_key` is not PEM holding that material.
     pub fn from_pem(
         certificate_chain: &[u8],
         private_key: &[u8],
@@ -191,6 +206,17 @@ impl TlsConfig {
     }
 
     /// Adds a certificate selected for any of `server_names` through SNI.
+    ///
+    /// Each name is lowercased before it is compared or stored, so `Example.COM`
+    /// and `example.com` are the same name.
+    ///
+    /// # Errors
+    ///
+    /// [`TlsError::ServerName`] when `server_names` is empty, or a name is
+    /// empty, repeated within `server_names`, already registered by an earlier
+    /// call, or not a valid DNS name or IP address. [`TlsError::Pem`] or
+    /// [`TlsError::EmptyPem`] when `certificate_chain` or `private_key` is not
+    /// PEM holding that material.
     pub fn with_server_certificate(
         mut self,
         server_names: impl IntoIterator<Item = impl Into<String>>,
@@ -217,6 +243,10 @@ impl TlsConfig {
     }
 
     /// Sets the TLS handshake deadline.
+    ///
+    /// # Errors
+    ///
+    /// [`TlsError::ZeroHandshakeTimeout`] when `timeout` is zero.
     pub fn handshake_timeout(mut self, timeout: Duration) -> std::result::Result<Self, TlsError> {
         if timeout.is_zero() {
             return Err(TlsError::ZeroHandshakeTimeout);
