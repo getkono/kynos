@@ -445,7 +445,8 @@ Three properties of that algorithm are decisions rather than details:
   seconds, because truncating a sub-second wait to zero tells a client to retry
   straight into the refusal it just received. Reporting the window's *length*
   instead would be a delay the service does not require, which is the same
-  objection `limits.rs` raises against inventing one for a concurrency cap.
+  objection `limits::concurrency` raises against inventing one for a
+  concurrency cap.
 
 A store that cannot answer **allows** by default. A limiter exists to shed load,
 and one that sheds everything when its cache blinks has turned a degradation

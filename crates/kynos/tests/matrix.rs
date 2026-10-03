@@ -38,7 +38,7 @@ use kynos::{
     http::StatusCode,
     middleware::{
         cors::Cors,
-        limits::{BodySize, Concurrency, Timeout},
+        limits::{body_size::BodySize, concurrency::Concurrency, timeout::Timeout},
         rate_limit::{
             RateLimit,
             decision::{Decision, QuotaPolicy, RateLimitPolicy, ServiceLimit},

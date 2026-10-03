@@ -185,7 +185,7 @@ async fn a_plain_options_request_answers_exactly_as_it_did_before_cors_was_mount
 /// preflight is not an operation, and the chain covers operations.
 #[tokio::test]
 async fn a_preflight_reaches_no_interceptor_that_could_refuse_it() {
-    use kynos::middleware::limits::BodySize;
+    use kynos::middleware::limits::body_size::BodySize;
 
     // `BodySize` short-circuits with a 413 on a declared length over its limit.
     // A preflight that ran the chain would meet it.

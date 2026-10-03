@@ -327,8 +327,8 @@ handler argument is built.
 
 **Interceptor statuses.** 429, 503 and 408 belong to
 [`RateLimit`](../crates/kynos/src/middleware/rate_limit/mod.rs),
-[`Concurrency` and `Timeout`](../crates/kynos/src/middleware/limits.rs),
-which return a response directly and declare it through
+[`Concurrency`](../crates/kynos/src/middleware/limits/concurrency.rs) and
+[`Timeout`](../crates/kynos/src/middleware/limits/timeout.rs), which return a response directly and declare it through
 an interceptor's `Short`. They are not extractor rejections and have no rejection
 variant; an interceptor builds a `Problem` itself, through the same
 `refusal_problem` that the type it names is read from. See

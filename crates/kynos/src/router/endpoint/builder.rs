@@ -40,7 +40,7 @@ use crate::{
 ///     openapi::PathTemplate::parse("/health").expect("valid path"),
 ///     health,
 /// )
-/// .intercept(kynos::middleware::limits::BodySize::new(1_024));
+/// .intercept(kynos::middleware::limits::body_size::BodySize::new(1_024));
 /// let router = kynos::Router::<()>::new().mount(endpoint);
 /// # let _ = router;
 /// ```
