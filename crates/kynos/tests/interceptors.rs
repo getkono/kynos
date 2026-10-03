@@ -15,11 +15,15 @@
 use std::collections::BTreeSet;
 
 use kynos::{
-    extract::params::header::HeaderParams,
-    http::StatusCode,
+    Router,
+    extract::{
+        body::text::Text,
+        params::header::{EncodeHeaders, HeaderParams, Headers},
+    },
+    http::{HeaderName, HeaderValue, StatusCode},
     middleware::{
         cors::Cors,
-        request_id::{RequestId, XRequestId},
+        request_id::{CorrelationHeaders, RequestId, RequestIdSource, XRequestId},
     },
 };
 
@@ -124,6 +128,129 @@ async fn a_client_supplied_id_is_used_only_when_it_was_trusted() {
         Some("from-the-client"),
         "an untrusted client id was echoed back"
     );
+}
+
+/// Answers with the identifier the handler was given.
+#[kynos::get("/correlated")]
+async fn correlated(Headers(XRequestId(id)): Headers<XRequestId>) -> Text {
+    Text(id.to_str().expect("a printable identifier").to_owned())
+}
+
+/// The identifier is set on the request as well as the response, so a
+/// handler logs the value the client is told.
+#[tokio::test]
+async fn a_handler_sees_the_request_id_the_response_carries() {
+    let service = Router::<App>::new()
+        .mount(kynos::routes![correlated])
+        .intercept(RequestId::new())
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = get(&service, "/correlated").call().await;
+    assert_eq!(reply.status, StatusCode::OK);
+
+    let carried = reply
+        .field("x-request-id")
+        .expect("the response carries an identifier");
+    assert_eq!(reply.text(), carried);
+}
+
+/// The default source never hands one identifier to two requests, which is
+/// the whole of what correlating by it needs.
+#[tokio::test]
+async fn two_requests_are_given_two_identifiers() {
+    let service = support::router()
+        .intercept(RequestId::new())
+        .build(App::new())
+        .expect("a describable router");
+
+    let first = get(&service, "/users/1").call().await.field("x-request-id");
+    let second = get(&service, "/users/1").call().await.field("x-request-id");
+
+    assert!(
+        first.is_some() && second.is_some(),
+        "an identifier was not set"
+    );
+    assert_ne!(first, second);
+}
+
+/// A source that always answers with one identifier.
+struct Fixed;
+
+impl RequestIdSource for Fixed {
+    fn next_id(&self) -> HeaderValue {
+        HeaderValue::from_static("from-the-source")
+    }
+}
+
+/// A replaced source decides the identifier both ends see, rather than
+/// sitting beside the default one.
+#[tokio::test]
+async fn a_replaced_source_supplies_the_identifier() {
+    let service = Router::<App>::new()
+        .mount(kynos::routes![correlated])
+        .intercept(RequestId::new().source(Fixed))
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = get(&service, "/correlated").call().await;
+
+    assert_eq!(
+        reply.field("x-request-id").as_deref(),
+        Some("from-the-source")
+    );
+    assert_eq!(reply.text(), "from-the-source");
+}
+
+/// A group carrying one identifier under two names.
+struct Correlation(HeaderValue);
+
+impl HeaderParams for Correlation {
+    const NAMES: &'static [&'static str] = &["x-request-id", "x-correlation-id"];
+}
+
+impl EncodeHeaders for Correlation {
+    fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
+        vec![
+            (HeaderName::from_static("x-request-id"), self.0.clone()),
+            (HeaderName::from_static("x-correlation-id"), self.0.clone()),
+        ]
+    }
+}
+
+impl CorrelationHeaders for Correlation {
+    fn from_id(id: HeaderValue) -> Self {
+        Self(id)
+    }
+}
+
+/// Every name the group declares carries one identifier, once — whether it was
+/// generated or read from a trusting client, where the first declared name the
+/// client sent is the one used.
+#[tokio::test]
+async fn a_group_naming_two_headers_sets_both_to_one_identifier() {
+    let generating = support::router()
+        .intercept(RequestId::new().header::<Correlation>())
+        .build(App::new())
+        .expect("a describable router");
+
+    let generated = get(&generating, "/users/1").call().await;
+    let id = generated.fields("x-request-id");
+    assert_eq!(id.len(), 1, "one identifier under the first name: {id:?}");
+    assert_eq!(generated.fields("x-correlation-id"), id);
+
+    let trusting = support::router()
+        .intercept(RequestId::new().header::<Correlation>().trust_client(true))
+        .build(App::new())
+        .expect("a describable router");
+
+    let trusted = get(&trusting, "/users/1")
+        .header("x-correlation-id", "second-name")
+        .header("x-request-id", "first-name")
+        .call()
+        .await;
+    assert_eq!(trusted.fields("x-request-id"), ["first-name"]);
+    assert_eq!(trusted.fields("x-correlation-id"), ["first-name"]);
 }
 
 /// `Cors` adds its own names to a permitted cross-origin response and nothing
