@@ -106,8 +106,18 @@ impl KeepAlive {
     }
 
     /// Sets the interval between keep-alive messages.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `interval` is zero. A zero interval would re-arm the timer at
+    /// the instant it fired, writing keep-alive messages back to back for as
+    /// long as the stream stays idle.
     #[must_use]
     pub fn interval(mut self, interval: std::time::Duration) -> Self {
+        assert!(
+            !interval.is_zero(),
+            "a keep-alive interval must be greater than zero"
+        );
         self.interval = interval;
         self
     }
