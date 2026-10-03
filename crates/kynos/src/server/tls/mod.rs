@@ -6,13 +6,7 @@ pub(in crate::server) mod document;
 pub mod error;
 pub mod ticket;
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt,
-    num::NonZeroUsize,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::BTreeMap, fmt, num::NonZeroUsize, sync::Arc, time::Duration};
 
 use tokio_rustls::rustls::{
     RootCertStore, ServerConfig as RustlsServerConfig,
@@ -203,35 +197,10 @@ impl TlsConfig {
         certificate_chain: &[u8],
         private_key: &[u8],
     ) -> std::result::Result<Self, TlsError> {
-        let names = server_names
-            .into_iter()
-            .map(Into::into)
-            .map(|name: String| name.to_ascii_lowercase())
-            .collect::<Vec<_>>();
-        let mut unique_names = BTreeSet::new();
-        if let Some(name) = names
-            .iter()
-            .find(|name| !unique_names.insert((*name).clone()))
-        {
-            return Err(TlsError::ServerName(name.clone()));
-        }
-        if names.is_empty()
-            || names.iter().any(String::is_empty)
-            || names.iter().any(|name| {
-                self.sni_certificates
-                    .iter()
-                    .flat_map(|certificate| &certificate.names)
-                    .any(|existing| existing == name)
-            })
-        {
-            return Err(TlsError::ServerName(
-                names.first().cloned().unwrap_or_default(),
-            ));
-        }
-        for name in &names {
-            tokio_rustls::rustls::pki_types::ServerName::try_from(name.clone())
-                .map_err(|_| TlsError::ServerName(name.clone()))?;
-        }
+        let names = certificate::server_names(
+            server_names.into_iter().map(Into::into),
+            &self.sni_certificates,
+        )?;
         self.sni_certificates.push(parse_certificate_material(
             names,
             certificate_chain,
