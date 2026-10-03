@@ -70,52 +70,11 @@ fn a_wildcard_vary_absorbs_every_name_added_to_it() {
     assert_eq!(vary, "*");
 }
 
-/// A repeatable field reaches the wire once per value.
-///
-/// `WithHeaders::into_response` appends for exactly this reason and says so:
-/// "a group naming `Set-Cookie` twice sends it twice instead of comma-joining
-/// two values that may not be joined". `Continued::with_headers` inserts,
-/// so the same group loses every value but the last — and
-/// `response/headers.rs` claims the two paths "cannot disagree".
-#[test]
-fn a_repeatable_group_reaches_the_wire_once_per_value() {
-    struct TwoCookies;
-
-    impl HeaderParams for TwoCookies {
-        const NAMES: &'static [&'static str] = &["set-cookie"];
-        const REPEATABLE: bool = true;
-    }
-
-    impl EncodeHeaders for TwoCookies {
-        fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-            vec![
-                (
-                    header::SET_COOKIE,
-                    HeaderValue::from_static("first=1; Path=/"),
-                ),
-                (
-                    header::SET_COOKIE,
-                    HeaderValue::from_static("second=2; Path=/"),
-                ),
-            ]
-        }
-    }
-
-    let sent: Vec<_> = Continued::new(Response::new(crate::http::body::Body::empty()))
-        .with_headers(TwoCookies)
-        .into_response()
-        .headers()
-        .get_all(header::SET_COOKIE)
-        .iter()
-        .map(|value| value.to_str().expect("a printable field").to_owned())
-        .collect();
-
-    assert_eq!(sent, ["first=1; Path=/", "second=2; Path=/"]);
-}
-
 /// A group that is not repeatable replaces whatever was there.
 ///
-/// The control. Without it "repeatable appends" would read as "everything
+/// The control for the repeatable case, which
+/// `response::headers::tests::a_group_writes_the_same_fields_whichever_path_it_reaches_the_wire_by`
+/// pins on this path and the handler's alike. Without it "repeatable appends" would read as "everything
 /// appends", and a second `Content-Encoding` beside a first is a response
 /// no client can decode.
 #[test]
