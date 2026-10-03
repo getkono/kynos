@@ -2916,7 +2916,7 @@ enum DescribedReply {
 }
 
 /// A reply's description is its `description`, else its doc comment, else its
-/// status's reason phrase.
+/// status's reason phrase, else the fixed sentence `the request succeeded`.
 #[test]
 fn a_reply_description_falls_back_from_attribute_to_doc_to_reason_phrase() {
     let responses = emitted_responses::<DescribedReply>();
