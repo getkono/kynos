@@ -273,6 +273,12 @@ impl<C> TestRequest<'_, C> {
     }
 
     /// Sets a JSON body.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `body` cannot be serialized to JSON, which a test writing
+    /// plain data cannot cause: `serde_json` refuses only a map with a key that
+    /// is not a string, or a `Serialize` implementation that fails itself.
     #[cfg(feature = "json")]
     #[must_use]
     pub fn json<T: serde::Serialize>(mut self, body: &T) -> Self {
@@ -332,6 +338,12 @@ impl<C> TestRequest<'_, C> {
     }
 
     /// Sets a raw body, and the media type it is in.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `media_type` is not a header value. A test writes it as a
+    /// literal, so a malformed one is a mistake in the test rather than a
+    /// condition to handle.
     #[must_use]
     pub fn body(mut self, media_type: &str, bytes: impl Into<Bytes>) -> Self {
         self.body = bytes.into();

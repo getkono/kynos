@@ -396,6 +396,12 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// [`Flatten`] erases an empty stack — which is what keeps re-assignment
     /// and a conditional mount compiling.
     ///
+    /// # Panics
+    ///
+    /// Panics when `endpoints` is an `assets` feature `AssetSet` holding an
+    /// asset whose path is not a legal path template, which only a hand-built
+    /// `Asset` can carry.
+    ///
     /// [`intercept`]: Router::intercept
     #[must_use]
     pub fn mount<E: IntoEndpoints<C>>(
