@@ -354,7 +354,12 @@ because neither set contains the other.
 The sweep drives a value of every short circuit this build compiled and can
 construct — nine of the ten with every feature on, six at the default set — and
 compares what `into_response` wrote against what `Responses` declared, with no
-document, no client and no route in between. That reaches the 406 in
+document, no client and no route in between. `Infallible` has no value to hand
+it, and `NotAcceptable`, `Undecodable` and `NotModified` are not compiled
+without `compression` and `cache`; all ten are held by name in
+`every_short_circuit_kynos_ships_is_accounted_for`, which asserts the set rather
+than the agreement, so an implementation added without a case fails there
+whatever the build compiled. The sweep reaches the 406 in
 `compression` and the 400, 413 and 415 in `decompression`, none of which any
 fixture app in the suite provokes. The matrix is the other direction: it holds
 whatever actually happened on a live exchange, which includes an application's

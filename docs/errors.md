@@ -60,12 +60,9 @@ exchange say the same thing — and not naming a media type, so it catches a
 response described with no content while sending one and declaring content
 while sending none alike.
 
-It drives nine of the ten with every feature on, and six at the default set:
-`Infallible` has no value to hand it, and `NotAcceptable`, `Undecodable` and
-`NotModified` are not compiled without `compression` and `cache`. All ten are
-reached by `every_short_circuit_kynos_ships_is_accounted_for` in the same file,
-which asserts the *set of names* rather than the agreement — so an
-implementation added without a case fails there whatever the build compiled.
+Which implementations it drives at each feature set, and the test that holds the
+rest by name, is in
+[`testing.md`](testing.md#the-sweep-and-the-matrix-assert-one-property-over-two-sets).
 
 [RFC 9457]: ../references/rfc9457.txt
 
