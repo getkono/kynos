@@ -6,9 +6,9 @@
 [![MSRV](https://img.shields.io/badge/MSRV-1.85-blue)](#msrv)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> The API is pre-1.0 and most of it freezes with this release — see [what this
-> release freezes](#what-this-release-freezes) for which parts, and which are
-> still expected to move. Contributions with human oversight are welcome; we
+> The API is pre-1.0 — see [what v1 freezes](#what-v1-freezes) for which parts
+> are settled, which are still expected to move, and what a 0.x release may
+> still break. Contributions with human oversight are welcome; we
 > have had enough AI-generated pull requests in various repositories.
 
 Kynos is an idiomatic, performance-focused Rust framework for building REST APIs with first-class OpenAPI 3.1 and 3.2 support.
@@ -180,11 +180,11 @@ arrive additively, over `h3` and `quinn`, alongside the existing driver. See
 [`docs/architecture.md`](docs/architecture.md#why-http3-is-deferred) for what
 would reopen it.
 
-## What this release freezes
+## What v1 freezes
 
-The core is what every operation passes through, so it freezes with the release: a change there is a breaking change. Everything else is additive — it composes onto the core, and the core names none of it. That is what makes each row separable, and it is why the rows furthest out settle last: a part that only ever sits at the edge of a stack is the one you will have exercised least, so it gets the most time to be argued with before it is fixed.
+The core is what every operation passes through, so it freezes at 1.0: a change there is a breaking change. Everything else is additive — it composes onto the core, and the core names none of it. That is what makes each row separable, and it is why the rows furthest out settle last: a part that only ever sits at the edge of a stack is the one you will have exercised least, so it gets the most time to be argued with before it is fixed.
 
-`frozen` commits to the surface. `settling` means the shape is right and the details may still move. `open` means expect the surface to move — use it, and say where it is wrong.
+`frozen` commits to the surface at 1.0. Before 1.0 a `frozen` row may still break in a 0.x minor release, only through a `!` commit, which the changelog lists. `settling` means the shape is right and the details may still move. `open` means expect the surface to move — use it, and say where it is wrong.
 
 | Part | Flag | Freezes |
 | --- | --- | --- |

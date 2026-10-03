@@ -12,7 +12,9 @@
 //!
 //! The request and response aliases live here; [`body`] holds the one type
 //! Kynos does define, and the erasure behind it, and [`cookie`] and [`etag`]
-//! the two fields whose grammar needs reading rather than looking up. The
+//! the two fields whose grammar needs reading rather than looking up.
+//! [`forwarded`] resolves which client sent a request through the proxies the
+//! application trusts. The
 //! qvalue grammar every `Accept*` field shares, the `Accept-Encoding` reader
 //! and the HTTP-date grammar are private beside them.
 

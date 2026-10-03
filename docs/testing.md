@@ -11,8 +11,8 @@ these are asked to enforce; this document is about the mechanics.
 | Unit | a sibling `tests.rs`, or an inline `mod tests` while the module is one file | `cargo nextest` | internal logic, including private items | in use |
 | Doctest | the item's own documentation | `mise run test:doc` | that documented code compiles, and that undocumentable code does not | in use |
 | Integration | [`crates/kynos/tests/`](../crates/kynos/tests/) | `cargo nextest` | that the public surface composes as a user would compose it | in use |
-| UI snapshot | `crates/kynos/tests/ui/` | `trybuild` | the exact text of a diagnostic | built |
-| Property | `crates/kynos-openapi/tests/`, over `support/`'s generators | `proptest` | round-tripping, determinism and totality over generated documents | built |
+| UI snapshot | `crates/kynos/tests/ui/` | `trybuild` | the exact text of a diagnostic | in use |
+| Property | `crates/kynos-openapi/tests/`, over `support/`'s generators | `proptest` | round-tripping, determinism and totality over generated documents | in use |
 | Conformance | a harness over a fixture app | `TestClient` over live responses | *emitted ⊇ observable* against a running service | in use |
 
 Tests move to a sibling `tests.rs` once a module passes ~400 lines, whether or
@@ -28,8 +28,7 @@ beside another, rather than inline.
 The sibling file is the settled shape here even below that line — `di/`,
 `schema/` and `response/negotiate/` all keep one while sitting well under 400 —
 so what the rule really fixes is the point past which staying inline stops being
-a choice. Only one module in the workspace still holds an inline `mod tests`,
-and it is well under that line.
+a choice. No library module in the workspace holds an inline `mod tests`.
 
 Each integration file exists for one reason. `hermeticity.rs` and `ui.rs` are
 different kinds of thing and are covered below.
@@ -67,7 +66,7 @@ constructor's number and a codec's cannot share a file with the routing path's.
 | [`limits.rs`](../crates/kynos/tests/limits.rs), [`interceptors.rs`](../crates/kynos/tests/interceptors.rs), [`middleware.rs`](../crates/kynos/tests/middleware.rs), [`cors.rs`](../crates/kynos/tests/cors.rs), [`description.rs`](../crates/kynos/tests/description.rs), [`sse.rs`](../crates/kynos/tests/sse.rs) | each interceptor doing what it declares, setting only what it declared, and declaring it on exactly the operations it covers. `middleware.rs` also holds `partial` and `ranged_assets`, which assert that compression leaves anything a byte range is calculated against alone — a range is calculated over the encoded octets, so re-encoding a 206 puts a `Content-Range` on a body it is wrong about, and encoding a 200 that advertises `Accept-Ranges` puts one strong `ETag` over two representations. `ranged_assets` is the second half end to end: it resumes an asset download against the tag it was served with and splices the two halves back into the file. `description.rs` carries the same scope question one level down in its second section: which *statuses* within an operation a response field's declaration reaches, which is where `Accept-Ranges`, `Content-Range` and the 416 are each pinned to the statuses that give them a meaning — and where a response header nothing in the handler writes is pinned too, since a header group's and an interceptor's alike are filed under a wildcard and have to reach the exact key a consumer resolves to. Its third section is that question on the tag axis: which of the four tag scopes reaches the operation's `tags`, in what order, and whether each scope that names a tag also registers its metadata in the document's `tags` — a name arriving without its metadata is an `UndocumentedTag` warning on every operation carrying one, so both halves are asserted for every scope |
 | [`rate_limit.rs`](../crates/kynos/tests/rate_limit.rs) | the shipped limiter over a store: one quota and several, burst, keying, exemption, and both failure policies — and, since an application may replace the algorithm outright, that a `RateLimitPolicy` Kynos does not ship reaches the wire with its own `Retry-After` — behaviour that is a property of a *sequence* of requests rather than of any one |
 | [`client.rs`](../crates/kynos/tests/client.rs) | the `TestClient`'s own surface rather than the harness's: every method the router accepts, a query string, a cookie jar, a peer address, the three body setters, and the two assertions a suite would otherwise hand-roll — a 206 checked as a `Content-Range` *and* a body that fills it, and a finite event stream read as its events |
-| [`cookies.rs`](../crates/kynos/tests/cookies.rs) | that two `Set-Cookie` fields reach the wire as two, which no unit test of either end can see |
+| [`cookies.rs`](../crates/kynos/tests/cookies.rs) | `SetCookies` wired through the router: that two `Set-Cookie` fields reach the wire as two, that a cookie may depend on the request that asked for it, and that one that cannot be a field is dropped without taking the others |
 | [`localization.rs`](../crates/kynos/tests/localization.rs) | that a negotiated language reaches the wire and that `Vary` accumulates rather than replaces when a second interceptor also varies — the two properties neither end can see. Two `Accept-Language` field lines are read as one list, which no test of the parser can reach because only a request carries two; and a localized response paired with `Compression` carries both `accept-encoding` and `accept-language`, where either interceptor alone would see only its own contribution |
 | [`unchecked.rs`](../crates/kynos/tests/unchecked.rs) | that the escape hatches serve, that the router's own machinery still covers them, and what the waiver leaves on the document |
 | [`assets.rs`](../crates/kynos/tests/assets.rs) | both asset modes, and the stored-coding surface — that two representations get two strong tags, that a resume across them is refused, that a 304 answers per representation, and that `Vary` is sent only by the files that negotiate: what an embedded set describes, what a served directory records instead, that traversal is refused end to end, and the whole range surface a file answers with — the 206 carrying exactly the octets its `Content-Range` names, the 416 stating the complete length, an unusable field ignored, and `If-Range` and `If-None-Match` deciding which of the two a client gets |
@@ -225,10 +224,10 @@ from its own side, so the checkable thing between them is a committed corpus:
 [`tests/fixtures/conformance/`](../crates/kynos/tests/fixtures/conformance/),
 regenerated with `mise run fixtures:generate` and compared on every run.
 
-Ownership was worth settling rather than assuming. The acceptance contract this
-came from says a downstream generator must "pass fixtures generated by Kynos"
-and "the same Kynos-generated conformance fixtures" — Kynos emits the contract,
-the generator consumes it, and the fixtures are the contract written down. The
+Ownership was worth settling rather than assuming. Kynos emits the contract and
+a generator consumes it, so the fixtures belong on the emitting side: they are
+the contract written down, and only the side that writes it can say when it
+changed. The
 corpus carries the constructs a 3.2 generator is forked to understand and a 3.1
 one cannot express: `itemSchema`, `contentMediaType`, `contentSchema` and the
 SSE envelope.

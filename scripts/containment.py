@@ -1130,10 +1130,10 @@ DECLARED_MODULE = re.compile(r"\bmod\s+(\w+)\s*[;{]")
 REEXPORT = re.compile(r"^[ \t]*pub\s+use\s+(\w+)", re.MULTILINE)
 
 # --- Placeholder bodies -----------------------------------------------------
-# AGENTS.md permits a `todo!()` body only during the pre-v1 API-skeleton
-# milestone, where the surface is designed ahead of its implementation so it can
-# be reviewed and frozen as a whole, and says the exception lapses once the
-# skeleton is frozen. `docs/testing.md` records that it has -- "the API-skeleton
+# AGENTS.md permitted a `todo!()` body only during the pre-v1 API-skeleton
+# milestone, where the surface was designed ahead of its implementation so it
+# could be reviewed and frozen as a whole, and now records that the exception
+# has lapsed. `docs/testing.md` records why -- "the API-skeleton
 # milestone is over, the bodies landed, and what it deferred has been paid" --
 # and until now nothing held the lapse. That is the failure a spent exception
 # has: it stops being argued for and quietly stays available.

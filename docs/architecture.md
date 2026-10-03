@@ -51,7 +51,7 @@ is checkable, so the sites are enumerated:
 
 | Site | Names | Why it is not in `server/` |
 | --- | --- | --- |
-| `server/{accept,connection,mod}.rs`, `server/tls/` | the five coupling points | — |
+| `server/` | the five coupling points, and the listener, shutdown and lifecycle plumbing around them | — |
 | `middleware/limits.rs` | `tokio::{time::timeout, time::Instant, time::Sleep, time::sleep, sync::Semaphore}` | the timer wraps the chain's future, which does not exist until after routing; the permit bounds requests already in it; the body timer outlives both, because a streamed body is still being produced after the chain has returned |
 | `middleware/compression/` | `tokio::io::{AsyncRead, AsyncWrite, ReadBuf}` | `async-compression`'s encoders are written against tokio's I/O traits; no byte here crosses a socket |
 | `middleware/decompression/` | `tokio::io::{AsyncRead, ReadBuf}` | the same traits for the same reason, in the other direction: a client-compressed request body is decoded before an extractor sees it, which is as far from a socket as the encoders are |
@@ -91,9 +91,10 @@ the graph.
   implementations. The rule is scoped to the checked surface: `unchecked`
   hands the service to `tower`, whose `Service::Future` is an associated type
   Kynos does not choose, so
-  [`UncheckedService`](../crates/kynos/src/unchecked.rs) names a boxed future.
-  That is the shape of the escape hatch rather than an exception to the rule,
-  and it is the only one.
+  [`UncheckedService`](../crates/kynos/src/unchecked.rs) names a boxed future,
+  and so does [`UncheckedInner`](../crates/kynos/src/unchecked.rs), the service
+  an unchecked `tower` layer wraps. That is the shape of the escape hatch rather
+  than an exception to the rule, and those two are the only ones.
 
   The clause is about the surface, so a hand-rolled `Stream` on a type nobody
   can name is not an exception to it. Two exist and both are the same shape:
@@ -117,8 +118,9 @@ the graph.
   never as a bound on a handler.
 - No lifetimes in handler signatures. Generics that exist for performance stay
   private.
-- Every public type is either a re-export from `http`, `bytes` or `serde`, or
-  something Kynos is prepared to own indefinitely.
+- Every public type is either a re-export from `http`, `bytes`, `serde` or
+  `indexmap` (2.x, through the `kynos_openapi::Map` alias), or something Kynos
+  is prepared to own indefinitely.
 - Fields the specification makes mutually exclusive are one enum, not several
   `Option`s, and a field whose legal values are a subset of some wider type is
   that subset. No validator rule restates either. See
@@ -215,18 +217,17 @@ by naming the row X displaces rather than by arguing that X is good.
 | HTTP/3, QUIC | — | — | deferred |
 | WebSockets, WebTransport | — | — | out of scope |
 
-Five statuses, and the distinction is what keeps the table checkable:
+Four statuses, and the distinction is what keeps the table checkable:
 
 | Status | Meaning |
 | --- | --- |
 | `built` | Reached by code that is implemented |
-| `designed` | Declared by a member crate; the module that owns it is still skeleton |
 | `chosen` | Settled as the answer, declared by nobody. It appears in no manifest and no lockfile |
 | `deferred` | Not implemented, and no dependency chosen. The ground is cost rather than principle, so demonstrated demand reopens it |
 | `out of scope` | Refused on a stated ground, so no dependency will be chosen. Demand does not reopen it; a different argument would have to |
 
 A row whose *Named in* column says `never` or `ambient` is `built` when the
-code that reaches it is implemented; it has no owning module to be a skeleton.
+code that reaches it is implemented, even though no manifest of ours names it.
 `httparse` and `h2` are the clear cases: no member declares either, and they
 are reached only through `hyper`.
 
