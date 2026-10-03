@@ -24,9 +24,8 @@ required-features = ["openapi32", "yaml"]
 default = ["openapi31"]
 # The 3.1 object model. Baseline: every other feature builds on it.
 openapi31 = []
-# The 3.2 object model, a strict superset of 3.1. Fields introduced by 3.2 are
-# `#[cfg]`-gated rather than runtime-optional, so a 3.1-only build cannot
-# construct a document it is unable to describe.
+# The 3.2 object model, a strict superset of 3.1; the README says what enabling
+# it does to a downstream build.
 openapi32 = ["openapi31"]
 yaml = ["dep:serde_yaml_ng"]
 # Conversions between `Method` and `http::Method`. Optional because this crate
