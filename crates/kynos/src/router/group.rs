@@ -230,9 +230,9 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     ///
     /// # Panics
     ///
-    /// Panics when `endpoints` is an `assets` feature `AssetSet` holding an
-    /// asset whose path is not a legal path template, which only a hand-built
-    /// `Asset` can carry.
+    /// Panics when `endpoints` contains, directly or inside a tuple, array or
+    /// `Vec`, an `assets` feature `AssetSet` holding an asset whose path is not
+    /// a legal path template, which only a hand-built `Asset` can carry.
     ///
     /// [`intercept`]: Group::intercept
     #[must_use]
