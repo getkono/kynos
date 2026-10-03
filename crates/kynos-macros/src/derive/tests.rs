@@ -425,13 +425,18 @@ mod schema {
 
     #[test]
     fn every_schema_diagnostic_has_a_case() {
-        // The derive raises its diagnostics from two files: the union refusal
-        // in `schema.rs`, and every other rule in `schema/refusals.rs`.
+        // The derive raises the union refusal in `schema.rs` and every other
+        // rule in a module under `schema/refusals/`.
         every_diagnostic_has_a_case(
-            "schema.rs` and `schema/refusals.rs",
+            "schema.rs` and `schema/refusals/",
             &[
                 include_str!("schema.rs"),
                 include_str!("schema/refusals.rs"),
+                include_str!("schema/refusals/grammar.rs"),
+                include_str!("schema/refusals/naming.rs"),
+                include_str!("schema/refusals/object_keys.rs"),
+                include_str!("schema/refusals/skips.rs"),
+                include_str!("schema/refusals/wire_form.rs"),
             ]
             .concat(),
             ledger().len()

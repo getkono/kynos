@@ -304,10 +304,10 @@ fn flatten_witnesses(
 /// invisible here, so [`flatten_witnesses`] bounds it by
 /// `kynos::schema::flatten::AdmitsAny` rather than by `OpenMap`, which it
 /// implies. Read over the objects
-/// `refusals::reject_unread_field_in_closed_object` reads: a
+/// `refusals::object_keys::reject_unread_field_in_closed_object` reads: a
 /// `#[serde(transparent)]` struct is its one field's value, with no object to
 /// bound, and an object `#[serde(deny_unknown_fields)]` closes never reaches
-/// here holding an open field, which `refusals::reject_contradicted_closure`
+/// here holding an open field, which `refusals::object_keys::reject_contradicted_closure`
 /// refuses.
 fn open_fields_beside_unread_fields<'a>(
     input: &'a DeriveInput,
@@ -467,7 +467,7 @@ fn field_groups(input: &DeriveInput) -> Vec<&Fields> {
 ///
 /// serde neither writes nor reads such a variant, so no branch is emitted for it
 /// and its fields reach neither a flatten witness nor the `Flatten` decision.
-/// [`refusals`]' `check_constraints` still reads [`field_groups`], because a
+/// [`refusals`]' `grammar::check_constraints` still reads [`field_groups`], because a
 /// malformed attribute is an error wherever it is written.
 fn described_groups(input: &DeriveInput) -> Vec<&Fields> {
     match &input.data {
@@ -484,7 +484,7 @@ fn described_groups(input: &DeriveInput) -> Vec<&Fields> {
 ///
 /// A variant serde reads and never writes is among them, since a request
 /// carrying it is one serde accepts. One serde writes and never reads is
-/// refused by `refusals::reject_unread_variant` before any of these is read.
+/// refused by `refusals::skips::reject_unread_variant` before any of these is read.
 fn described_variants(data: &DataEnum) -> Vec<&Variant> {
     data.variants
         .iter()
@@ -528,7 +528,7 @@ fn one_way_skip_span(field: &Field, keys: &[&str]) -> Option<(String, Span)> {
 ///
 /// Read off skip attributes rather than [`is_described`], which would drop a
 /// member carrying `skip_deserializing` alone: serde still writes that member
-/// into its position, and `refusals::reject_one_way_member_skip` has to see it
+/// into its position, and `refusals::skips::reject_one_way_member_skip` has to see it
 /// to refuse it.
 fn positional_members(fields: &Punctuated<Field, Comma>) -> Vec<&Field> {
     fields
@@ -543,7 +543,7 @@ fn positional_members(fields: &Punctuated<Field, Comma>) -> Vec<&Field> {
 /// defaulted member when the array ends before it, but a default ahead of a
 /// member without one fills nothing, since the array cannot end there. That
 /// covers the last position carrying `skip_serializing_if`, which
-/// `refusals::reject_one_way_member_skip` accepts only beside a default
+/// `refusals::skips::reject_one_way_member_skip` accepts only beside a default
 /// wherever serde writes the tuple; in a variant serde never writes, such a
 /// member without a default still counts, since serde reads every position it
 /// does not fill.
@@ -648,7 +648,7 @@ impl Container {
     ///
     /// The side is the one serde uses the variant's fields on: the serialize
     /// side for a variant serde writes, and the deserialize side for one it
-    /// only reads. `refusals::reject_split_rename_all` refuses a struct
+    /// only reads. `refusals::naming::reject_split_rename_all` refuses a struct
     /// variant's rule whose sides differ where serde uses both, and a split
     /// `rename_all_fields`
     /// reaching any struct variant, so the serialize side read into
