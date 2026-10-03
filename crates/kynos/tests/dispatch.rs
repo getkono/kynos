@@ -637,6 +637,107 @@ async fn the_matched_path_is_the_template_and_not_the_request_target() {
     );
 }
 
+// --- A literal beside a variable sibling ----------------------------------
+
+/// What `/members/{name}` captures: text, so any segment a literal does not
+/// claim is one the variable can take.
+#[derive(kynos::Schema, kynos::PathParams)]
+struct MemberPath {
+    name: String,
+}
+
+/// The literal sibling.
+#[kynos::get("/members/me")]
+async fn member_me() -> Text {
+    Text("literal".to_owned())
+}
+
+/// The variable sibling, echoing what it captured.
+#[kynos::get("/members/{name}")]
+async fn member_named(Path(path): Path<MemberPath>) -> Text {
+    Text(format!("variable {}", path.name))
+}
+
+/// A literal one segment deeper, under the literal `me`.
+#[kynos::get("/members/me/posts")]
+async fn member_me_posts() -> Text {
+    Text("literal posts".to_owned())
+}
+
+/// A deeper path the literal `me` has no sibling for.
+#[kynos::get("/members/{name}/friends")]
+async fn member_friends(Path(path): Path<MemberPath>) -> Text {
+    Text(format!("variable {} friends", path.name))
+}
+
+/// The four sibling operations, built.
+fn members() -> kynos::router::service::Service<()> {
+    Router::<()>::new()
+        .mount(kynos::routes![
+            member_me,
+            member_named,
+            member_me_posts,
+            member_friends
+        ])
+        .build(())
+        .expect("a describable router")
+}
+
+/// `docs/routing.md`'s `matchit` contract: a literal segment and a variable
+/// may be siblings, and the literal wins the segment it spells. Mount order is
+/// not what decides it -- `members` mounts the literal first, and the second
+/// router mounts the variable first.
+#[tokio::test]
+async fn a_literal_segment_wins_over_a_variable_sibling() {
+    let service = members();
+
+    assert_eq!(get(&service, "/members/me").call().await.text(), "literal");
+    assert_eq!(
+        get(&service, "/members/ada").call().await.text(),
+        "variable ada"
+    );
+
+    let reversed = Router::<()>::new()
+        .mount(kynos::routes![member_named, member_me])
+        .build(())
+        .expect("a describable router");
+    assert_eq!(get(&reversed, "/members/me").call().await.text(), "literal");
+}
+
+/// A request entering the literal `me` and finding no continuation there falls
+/// back to the variable sibling, which captures `me` -- the backtracking the
+/// allocation caveat in `docs/routing.md` is written about.
+#[tokio::test]
+async fn a_request_backtracks_from_a_literal_into_a_variable_sibling() {
+    let service = members();
+
+    assert_eq!(
+        get(&service, "/members/me/posts").call().await.text(),
+        "literal posts"
+    );
+    assert_eq!(
+        get(&service, "/members/me/friends").call().await.text(),
+        "variable me friends"
+    );
+}
+
+/// A `{param}` matches exactly one segment: two segments are no match for one
+/// variable, and an encoded slash inside a segment is part of that segment,
+/// handed to the handler decoded.
+#[tokio::test]
+async fn a_variable_never_spans_a_slash() {
+    let service = members();
+
+    assert_eq!(
+        get(&service, "/members/1/2").call().await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        get(&service, "/members/a%2Fb").call().await.text(),
+        "variable a/b"
+    );
+}
+
 // --- `Forwarded` as an argument -------------------------------------------
 
 /// The client the router resolved, or `none` when it resolved none.

@@ -32,6 +32,13 @@
 //! registered as a component, so an `Unchecked` field sits two levels below
 //! the media type that names it -- and a setting that only read the media
 //! type's own schema would pass a router it promises to refuse.
+//!
+//! The sixth is which version the document claims. It follows from what the
+//! API uses and never from the `openapi32` feature, so a router that bumped it
+//! on the feature would still produce a document that validates.
+//!
+//! The seventh is what a router declares about itself rather than its
+//! operations: its servers, and which router's `info` a nest publishes.
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
@@ -1538,5 +1545,181 @@ fn deny_unchecked_schemas_refuses_an_unchecked_field_of_a_registered_body() {
             "#/components/schemas/Feed/properties/payload",
             Severity::Error
         )]
+    );
+}
+
+// --- Which version the description claims ---------------------------------
+
+/// The `openapi` field an assembled router's description carries.
+fn claimed_version<C: 'static>(router: &Router<C>) -> String {
+    router.openapi().expect("a describable router").openapi
+}
+
+/// `Router::openapi` picks the lowest version that expresses the API, and
+/// never the cargo feature: under `openapi32` this router still says 3.1.
+#[test]
+fn a_router_using_no_3_2_construct_is_described_as_3_1() {
+    let router = Router::<()>::new().mount(kynos::routes![alpha, beta]);
+
+    assert_eq!(claimed_version(&router), "3.1.2");
+}
+
+/// A stream that ends at once: describing one is all that is asked of it.
+#[cfg(feature = "openapi32")]
+struct NoEvents;
+
+#[cfg(feature = "openapi32")]
+impl futures_core::Stream for NoEvents {
+    type Item = Result<kynos::response::stream::sse::Event<u8>, std::convert::Infallible>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        std::task::Poll::Ready(None)
+    }
+}
+
+/// A `text/event-stream` response, whose `itemSchema` 3.1 has no field for.
+#[cfg(feature = "openapi32")]
+#[kynos::get("/events")]
+async fn events() -> kynos::response::stream::sse::Sse<NoEvents> {
+    kynos::response::stream::sse::Sse::new(NoEvents)
+}
+
+/// The `QUERY` method, which 3.1's Path Item has no field for.
+#[cfg(feature = "openapi32")]
+#[kynos::query("/search")]
+async fn search() -> NoContent {
+    NoContent
+}
+
+/// An `in: querystring` parameter, a location 3.1 does not have.
+#[cfg(feature = "openapi32")]
+#[kynos::get("/filtered")]
+async fn filtered(
+    _: kynos::extract::params::query::QueryString<String, kynos::extract::media::Json>,
+) -> NoContent {
+    NoContent
+}
+
+/// Each 3.2-only construct raises the description on its own: the router
+/// beside it uses none, and says 3.1.
+#[cfg(feature = "openapi32")]
+#[test]
+fn an_sse_operation_raises_the_description_to_3_2() {
+    let router = Router::<()>::new().mount(kynos::routes![alpha, events]);
+
+    assert_eq!(claimed_version(&router), "3.2.0");
+}
+
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_query_operation_raises_the_description_to_3_2() {
+    let router = Router::<()>::new().mount(kynos::routes![alpha, search]);
+
+    assert_eq!(claimed_version(&router), "3.2.0");
+}
+
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_querystring_parameter_raises_the_description_to_3_2() {
+    let router = Router::<()>::new().mount(kynos::routes![alpha, filtered]);
+
+    assert_eq!(claimed_version(&router), "3.2.0");
+}
+
+/// `openapi_as` targets and never downgrades: 3.1 asked of an API using
+/// 3.2-only constructs is one refusal naming where each is, not a document
+/// with the operations missing.
+#[cfg(feature = "openapi32")]
+#[test]
+fn openapi_as_3_1_refuses_a_3_2_construct_and_names_it() {
+    use kynos::openapi::{SpecError, SpecVersion};
+
+    let router = Router::<()>::new().mount(kynos::routes![alpha, events, search, filtered]);
+
+    let Err(kynos::Error::Invalid { violations }) = router.openapi_as(SpecVersion::V3_1) else {
+        panic!("a 3.2-only construct was emitted as 3.1");
+    };
+    let [violation] = violations.as_slice() else {
+        panic!("one violation: {violations:#?}");
+    };
+    assert_eq!(
+        violation.error,
+        SpecError::RequiresV3_2 {
+            blockers: vec![
+                "#/paths/~1events/get/responses/200/content/text~1event-stream/itemSchema"
+                    .to_owned(),
+                "#/paths/~1search/query".to_owned(),
+                "#/paths/~1filtered/get/parameters/querystring".to_owned(),
+            ],
+        }
+    );
+    assert_eq!(
+        violation.to_string(),
+        "error at #: cannot emit as OpenAPI 3.1: 3 3.2-only construct(s) in use: \
+         #/paths/~1events/get/responses/200/content/text~1event-stream/itemSchema, \
+         #/paths/~1search/query, #/paths/~1filtered/get/parameters/querystring"
+    );
+}
+
+// --- What `server` and a nested router's `info` reach ---------------------
+
+/// A declared server is published as declared, and a nested router's servers
+/// follow the outer router's own.
+#[test]
+fn a_declared_server_reaches_the_documents_servers() {
+    use kynos::openapi::Server;
+
+    let document = Router::<()>::new()
+        .server(Server::new("https://api.example.com"))
+        .mount(kynos::routes![alpha])
+        .nest(
+            "/v2",
+            Router::<()>::new()
+                .server(Server::new("https://v2.example.com"))
+                .mount(kynos::routes![beta]),
+        )
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(
+        document.servers,
+        [
+            Server::new("https://api.example.com"),
+            Server::new("https://v2.example.com"),
+        ]
+    );
+}
+
+/// `info` is the outer router's when it declares one, the nested router's
+/// when only that one does, and the placeholder when neither does.
+#[test]
+fn a_nested_routers_info_is_used_only_when_the_outer_declares_none() {
+    use kynos::openapi::Info;
+
+    let inner = || {
+        Router::<()>::new()
+            .info(Info::new("Inner", "2.0.0"))
+            .mount(kynos::routes![beta])
+    };
+    let info = |router: Router<()>| router.openapi().expect("a describable router").info;
+
+    assert_eq!(
+        info(
+            Router::<()>::new()
+                .info(Info::new("Outer", "1.0.0"))
+                .nest("/v2", inner())
+        ),
+        Info::new("Outer", "1.0.0")
+    );
+    assert_eq!(
+        info(Router::<()>::new().nest("/v2", inner())),
+        Info::new("Inner", "2.0.0")
+    );
+    assert_eq!(
+        info(Router::<()>::new().mount(kynos::routes![alpha])),
+        Info::new("API", "0.0.0")
     );
 }
