@@ -1903,6 +1903,46 @@ class Main(unittest.TestCase):
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/http/body.rs", reported[0])
 
+    def test_the_body_crates_stay_at_their_listed_sites(self):
+        # The `http-body` row lists files and trees together, so a tree entry
+        # read as a file would report every file under it, and the intact-tree
+        # case holds that; this holds the other direction. `unchecked.rs` is
+        # neither one of the files nor under one of the trees.
+        corpus = self.appending(
+            "crates/kynos/src/unchecked.rs", "\nuse http_body_util::BodyExt;\n"
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "`http-body` and `http-body-util` are named only")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/unchecked.rs", reported[0])
+
+    def test_async_compression_stays_in_the_two_codec_middlewares(self):
+        # `extract/body/form.rs` decodes a body and is the nearest plausible
+        # stray: a decoder that is not one of the two middlewares the row allows.
+        corpus = self.appending(
+            "crates/kynos/src/extract/body/form.rs",
+            "\nuse async_compression::tokio::bufread::GzipDecoder;\n",
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "`async-compression` is named only")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/extract/body/form.rs", reported[0])
+
+    def test_serde_urlencoded_stays_at_the_form_codec_sites(self):
+        # `extract/params/query.rs` parses a query string, which is exactly the
+        # job a second `serde_urlencoded` site would be added for.
+        corpus = self.appending(
+            "crates/kynos/src/extract/params/query.rs",
+            "\nuse serde_urlencoded::from_str;\n",
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "`serde_urlencoded` is named only")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/extract/params/query.rs", reported[0])
+
     def test_a_renamed_surface_heading_skips_the_declaration_check(self):
         broken = gate.ARCHITECTURE.replace(self.SURFACE, "### The public surface", 1)
         broken = self.rewriting(broken, self.DECLARED_SITE, "crates/kynos/src/lib.rs")
@@ -2481,6 +2521,20 @@ class Main(unittest.TestCase):
         corpus = self.appending(
             "crates/kynos/src/unchecked.rs",
             "\npub fn probe() -> u8 {\n    todo!()\n}\n",
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "stands in for a body")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/unchecked.rs", reported[0])
+
+    def test_an_unimplemented_body_is_reported(self):
+        # The same placeholder written with the other macro. AGENTS.md's lapsed
+        # exception only ever allowed `todo!()`, so `unimplemented!()` is no
+        # more permitted, and it panics identically when reached.
+        corpus = self.appending(
+            "crates/kynos/src/unchecked.rs",
+            "\npub fn probe() -> u8 {\n    unimplemented!()\n}\n",
         )
         status, failures = self.report(corpus=corpus)
         self.assertEqual(status, 1)
