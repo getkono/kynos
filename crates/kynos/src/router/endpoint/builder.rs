@@ -312,7 +312,7 @@ where
         operation.set_deprecated(self.deprecated);
 
         if recovers::<P>() {
-            let responses = dispatch::panic_responses(operation.registry());
+            let responses = dispatch::recovery::panic_responses(operation.registry());
             operation.add_responses(&responses);
         }
     }
@@ -346,9 +346,9 @@ where
         };
 
         if recovers::<P>() {
-            match dispatch::recover(served).await {
+            match dispatch::recovery::recover(served).await {
                 Ok(response) => response,
-                Err(payload) => dispatch::recovered_response(payload),
+                Err(payload) => dispatch::recovery::recovered_response(payload),
             }
         } else {
             served.await

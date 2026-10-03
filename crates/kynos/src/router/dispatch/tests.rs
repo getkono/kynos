@@ -108,7 +108,7 @@ fn served_fields(served: &Served<()>) {
 /// An endpoint's recovered 500 leaves the table without the payload it carried
 /// in, with no observer to report it to.
 ///
-/// Nothing outside the crate can name [`Recovered`](super::Recovered), so this
+/// Nothing outside the crate can name [`Recovered`](super::recovery::Recovered), so this
 /// is the one place its absence can be asserted, and a router that observes
 /// nothing is where taking it would look optional.
 #[tokio::test]
@@ -142,7 +142,10 @@ async fn an_endpoint_recovered_500_leaves_without_its_payload() {
 
     assert_eq!(response.status(), ::http::StatusCode::INTERNAL_SERVER_ERROR);
     assert!(
-        response.extensions().get::<super::Recovered>().is_none(),
+        response
+            .extensions()
+            .get::<super::recovery::Recovered>()
+            .is_none(),
         "the recovered payload left the dispatcher on the response"
     );
 }

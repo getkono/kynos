@@ -9,20 +9,14 @@
 //! `matchit` is named here and in [`super`], which is the allowance
 //! `docs/architecture.md` gives it.
 
-use std::{
-    any::Any,
-    future::Future,
-    panic::AssertUnwindSafe,
-    pin::Pin,
-    sync::{Arc, Mutex, PoisonError},
-    task::Poll,
-    time::Instant,
-};
+pub(crate) mod recovery;
+
+use std::{any::Any, future::Future, pin::Pin, sync::Arc, time::Instant};
 
 use kynos_openapi::Method;
 
 use crate::{
-    error::problem::{Problem, problem_response},
+    error::problem::Problem,
     extract::params::path::PathCaptures,
     http::{
         HeaderValue, Request, Response, StatusCode,
@@ -35,83 +29,12 @@ use crate::{
     },
     response::IntoResponse,
     router::{
+        dispatch::recovery::{panic_response, recover, take_recovered},
         endpoint::DynEndpoint,
         operation::Route,
         policy::{FallbackPolicy, TrailingSlashPolicy},
     },
-    schema::registry::Registry,
 };
-
-/// Runs `future` with a panic recovery branch installed.
-///
-/// No `unsafe`, and no runtime is named: the future is pinned on the heap so
-/// that `Pin::as_mut` supplies the projection, and each poll is wrapped in
-/// [`catch_unwind`](std::panic::catch_unwind). A future that unwound is
-/// reported once and then dropped, never polled again.
-pub(crate) async fn recover<F>(future: F) -> Result<Response, Box<dyn Any + Send>>
-where
-    F: Future<Output = Response>,
-{
-    let mut future = Box::pin(future);
-
-    std::future::poll_fn(move |context| {
-        match std::panic::catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(context))) {
-            Ok(Poll::Pending) => Poll::Pending,
-            Ok(Poll::Ready(response)) => Poll::Ready(Ok(response)),
-            Err(payload) => Poll::Ready(Err(payload)),
-        }
-    })
-    .await
-}
-
-/// The response a recovered panic becomes.
-///
-/// Deliberately says nothing about what panicked: the payload is a message the
-/// service's author wrote for themselves, and a client is not its audience.
-pub(crate) fn panic_response() -> Response {
-    Problem::new(StatusCode::INTERNAL_SERVER_ERROR).into_response()
-}
-
-/// The payload of a panic an endpoint recovered, on its way to the dispatcher.
-///
-/// Carried on the 500's extensions because `Endpoint::call` has no other way
-/// out, and reported where the route and the observers already are. Behind a
-/// lock because an extension must be `Clone + Sync` and a payload is only
-/// `Send`. Private, so nothing between the endpoint and the dispatcher can
-/// name it.
-#[derive(Clone)]
-struct Recovered(Arc<Mutex<Option<Box<dyn Any + Send>>>>);
-
-/// [`panic_response`], carrying the payload it was recovered from.
-pub(crate) fn recovered_response(payload: Box<dyn Any + Send>) -> Response {
-    let mut response = panic_response();
-    response
-        .extensions_mut()
-        .insert(Recovered(Arc::new(Mutex::new(Some(payload)))));
-    response
-}
-
-/// Removes the payload [`recovered_response`] attached, if this is one.
-fn take_recovered(response: &mut Response) -> Option<Box<dyn Any + Send>> {
-    response
-        .extensions_mut()
-        .remove::<Recovered>()?
-        .0
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .take()
-}
-
-/// The 500 a recovery branch contributes to every operation it covers.
-pub(crate) fn panic_responses(registry: &mut Registry) -> kynos_openapi::Responses {
-    kynos_openapi::Responses::new().with(
-        500,
-        problem_response(
-            registry,
-            "the operation failed unexpectedly and was recovered",
-        ),
-    )
-}
 
 /// An endpoint, as the end of an interceptor chain.
 pub(crate) struct EndpointTerminal<C> {
