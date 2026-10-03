@@ -1,4 +1,5 @@
-use super::{ANY, split, strong_match, weak_match};
+use super::{ANY, matches, split, strong_match, weak_match};
+use crate::http::HeaderValue;
 
 /// A list assembled from members, and the members it was assembled from.
 ///
@@ -103,4 +104,40 @@ fn the_wildcard_is_not_an_entity_tag() {
     assert_eq!(ANY, "*");
     assert!(!weak_match(ANY, r#""1""#));
     assert!(!strong_match(ANY, r#""1""#));
+}
+
+/// A comma inside a quoted tag is part of the tag, not a separator.
+///
+/// RFC 9110 section 8.8.3: `etagc` is `%x21 / %x23-7E / obs-text`, which
+/// includes `,` at `%x2C`. The quotes delimit an entity tag; the comma does
+/// not. A field split on every comma reads `"a,b"` as two tags and matches
+/// neither, which is a 200 where a 304 was owed.
+#[test]
+fn a_comma_inside_a_quoted_tag_does_not_separate_two_tags() {
+    for (field, etag) in [
+        (r#""a,b""#, r#""a,b""#),
+        // The same tag among others, so the scan has to survive both.
+        (r#""x", "a,b", "y""#, r#""a,b""#),
+        (r#"W/"a,b""#, r#""a,b""#),
+    ] {
+        assert!(
+            matches(&HeaderValue::from_static(field), etag),
+            "`{field}` does not name `{etag}`"
+        );
+    }
+}
+
+/// The control: a comma *between* two quoted tags does separate them.
+///
+/// Differs from the case above in exactly the property under test — where the
+/// comma sits — so "a comma does not split" cannot pass by refusing to split
+/// at all.
+#[test]
+fn a_comma_between_two_quoted_tags_separates_them() {
+    let field = HeaderValue::from_static(r#""a", "b""#);
+
+    assert!(matches(&field, r#""a""#));
+    assert!(matches(&field, r#""b""#));
+    assert!(!matches(&field, r#""a,b""#));
+    assert!(!matches(&field, r#""c""#));
 }
