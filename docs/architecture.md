@@ -188,7 +188,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | Runtime, sockets, timers, signals | `tokio` | `server/` | built |
 | Request and response types | `http` | ambient | built |
 | Byte buffers | `bytes` | ambient | built |
-| Body trait and erasure | `http-body`, `http-body-util` | [`http/body.rs`](../crates/kynos/src/http/body.rs), [`extract/body/`](../crates/kynos/src/extract/body/), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
+| Body trait and erasure | `http-body`, `http-body-util` | [`http/body.rs`](../crates/kynos/src/http/body.rs), [`extract/body/`](../crates/kynos/src/extract/body/), [`middleware/cache/mod.rs`](../crates/kynos/src/middleware/cache/mod.rs), [`middleware/compression/`](../crates/kynos/src/middleware/compression/), [`middleware/decompression/`](../crates/kynos/src/middleware/decompression/), [`middleware/limits/`](../crates/kynos/src/middleware/limits/), [`response/range/source.rs`](../crates/kynos/src/response/range/source.rs), [`router/dispatch.rs`](../crates/kynos/src/router/dispatch.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
 | Protocol driver, HTTP/1 and HTTP/2 | `hyper` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs), [`http/body.rs`](../crates/kynos/src/http/body.rs) | built |
 | tokio adapters for the driver | `hyper-util` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs) | built |
 | Accepted-socket options tokio does not expose | `socket2` | [`server/tcp.rs`](../crates/kynos/src/server/tcp.rs) | built |
@@ -202,13 +202,13 @@ by naming the row X displaces rather than by arguing that X is good.
 | Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | built |
 | Streaming bodies | `futures-core` | [`response/stream/`](../crates/kynos/src/response/stream/), [`extract/body/json_lines/`](../crates/kynos/src/extract/body/json_lines/), [`http/body.rs`](../crates/kynos/src/http/body.rs), gated on `openapi32` | built |
 | JSON | `serde_json` | ambient with `serde` | built |
-| Form codec | `serde_urlencoded` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs) | built |
+| Form codec | `serde_urlencoded` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
 | Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | built |
 | Protobuf codec | `prost` | [`extract/body/protobuf.rs`](../crates/kynos/src/extract/body/protobuf.rs), [`response/codec/protobuf.rs`](../crates/kynos/src/response/codec/protobuf.rs) | built |
 | Scalar formats, identifiers | `uuid` | [`schema/impls/identifier.rs`](../crates/kynos/src/schema/impls/identifier.rs) | built |
 | Scalar formats, dates and times | `chrono`, `jiff` | [`schema/impls/temporal/`](../crates/kynos/src/schema/impls/temporal/) | built |
 | Scalar formats, decimals | `rust_decimal`, `bigdecimal` | [`schema/impls/decimal/`](../crates/kynos/src/schema/impls/decimal/) | built |
-| Compression | `async-compression` | [`middleware/compression/`](../crates/kynos/src/middleware/compression/) | built |
+| Compression | `async-compression` | [`middleware/compression/`](../crates/kynos/src/middleware/compression/), [`middleware/decompression/`](../crates/kynos/src/middleware/decompression/) | built |
 | tower interop, outward | `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
 | tower interop, inward | `tower-layer` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
 | Document ordering | `indexmap` | [`kynos-openapi`](../crates/kynos-openapi/src/lib.rs) | built |

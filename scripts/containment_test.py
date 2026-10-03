@@ -1787,7 +1787,7 @@ class Main(unittest.TestCase):
 
     def test_a_crate_named_outside_the_tree_its_row_allows_is_reported(self):
         # The dependency-graph stray scan, which reads the corpus and no
-        # document: the five rules in that loop are written in this file rather
+        # document: the rules in that loop are written in this file rather
         # than read out of `architecture.md`, so a corpus is the only thing a
         # case can hand it. `matchit` is the router's, and `unchecked.rs` is not
         # under `router/`.
@@ -1852,8 +1852,8 @@ class Main(unittest.TestCase):
 
     def test_a_crate_confined_to_two_files_is_reported_outside_them(self):
         # The other branch of the same loop, and the one no case reached. The
-        # row above is `UNDER` a tree; `sorted(found - where)` is what an
-        # `ONLY_IN` row runs, and it ran over an empty difference every time.
+        # row above is `UNDER` a tree; `listed` is what an `ONLY_IN` row runs,
+        # and it ran over files it listed every time.
         # So the `hyper` row could be widened to "anywhere" -- rewritten
         # `UNDER, ""`, which every path starts with -- and the suite stayed
         # green while the confinement held nothing. `unchecked.rs` is neither
@@ -1871,7 +1871,7 @@ class Main(unittest.TestCase):
         # Each row of that loop is a separate claim and widening one says
         # nothing about the others, so the branch being reached is not enough:
         # with `tower` rewritten `UNDER, ""` its row holds nothing at all while
-        # the four beside it go on holding, and the run reports every rule
+        # the rows beside it go on holding, and the run reports every rule
         # holds. `http/body.rs` is not `unchecked.rs`, which is the one file
         # this row allows.
         corpus = self.appending(
