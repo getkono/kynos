@@ -170,9 +170,8 @@ fn refusal(result: Result<(), Error>) -> Vec<Violation> {
 /// no `paths` slot of its own, so the build refuses rather than serving one of
 /// the two.
 ///
-/// The message is pinned as it reads today, which borrows
-/// `DuplicatePathTemplate`'s wording about variable names for a case that has
-/// none.
+/// It is reported as the duplicate operation it is, not as two templates
+/// differing in variable names: there is one template here, with one variable.
 #[test]
 fn mounting_one_method_on_one_path_twice_fails_the_build() {
     let violations = refusal(
@@ -186,17 +185,14 @@ fn mounting_one_method_on_one_path_twice_fails_the_build() {
     let [violation] = violations.as_slice() else {
         panic!("one violation: {violations:#?}");
     };
-    assert_eq!(
-        violation.error,
-        SpecError::DuplicatePathTemplate {
-            template: "GET /files/{path}".to_owned(),
-            existing: "/files/{path}".to_owned(),
-        }
+    assert!(
+        !matches!(violation.error, SpecError::DuplicatePathTemplate { .. }),
+        "{violation}"
     );
     assert_eq!(
         violation.to_string(),
-        "error at #/paths/~1files~1{path}/get: path `GET /files/{path}` is the same path as \
-         `/files/{path}`; templates that differ only in variable name are identical"
+        "error at #/paths/~1files~1{path}/get: operation `GET /files/{path}` is described \
+         more than once; a path item holds one operation per method"
     );
 
     // The control: the same path under a second method is a second operation.
