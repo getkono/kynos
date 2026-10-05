@@ -2,10 +2,13 @@ use http_body_util::BodyExt;
 
 use std::{
     io,
+    panic::{self, AssertUnwindSafe},
+    pin::Pin,
     sync::{Arc, Mutex},
+    task::{Context, Poll},
 };
 
-use super::{Body, Bytes, Delivery, HttpBody};
+use super::{Body, Bytes, Delivery, Frame, HttpBody};
 
 /// A recorder for the one report a watched body makes.
 ///
@@ -133,6 +136,81 @@ async fn a_watched_body_reports_once_across_both_of_its_ends() {
         vec![Delivery::Complete],
         "the drop reported a second time over the read that had already reported"
     );
+}
+
+/// A body that logs its own release, so the report can be ordered against it.
+struct Releasing(Arc<Mutex<Vec<&'static str>>>);
+
+impl HttpBody for Releasing {
+    type Data = Bytes;
+    type Error = super::BoxError;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
+        Poll::Pending
+    }
+}
+
+impl Drop for Releasing {
+    fn drop(&mut self) {
+        self.0.lock().expect("an unpoisoned log").push("released");
+    }
+}
+
+/// An observer told of a departure may already count the handler's stream as
+/// gone: reporting first leaves a window in which another thread sees the
+/// report while the stream it reports on is still alive.
+#[test]
+fn a_dropped_watched_body_releases_what_it_wraps_before_reporting() {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let reported = Arc::clone(&log);
+    let body = Body::from_body(Releasing(Arc::clone(&log))).watching(move |delivery| {
+        assert_eq!(delivery, Delivery::Interrupted);
+        reported.lock().expect("an unpoisoned log").push("reported");
+    });
+
+    drop(body);
+
+    assert_eq!(
+        *log.lock().expect("an unpoisoned log"),
+        vec!["released", "reported"]
+    );
+}
+
+/// A body whose release panics.
+struct PanickingOnRelease;
+
+impl HttpBody for PanickingOnRelease {
+    type Data = Bytes;
+    type Error = super::BoxError;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
+        Poll::Pending
+    }
+}
+
+impl Drop for PanickingOnRelease {
+    fn drop(&mut self) {
+        panic!("the wrapped body's release panicked");
+    }
+}
+
+/// Releasing first must not cost the report its "never zero times": a wrapped
+/// body whose `Drop` panics still leaves the departure reported, once.
+#[test]
+fn a_watched_body_whose_release_panics_still_reports_once() {
+    let reports = Reports::default();
+    let body = reports.watching(Body::from_body(PanickingOnRelease));
+
+    let released = panic::catch_unwind(AssertUnwindSafe(|| drop(body)));
+
+    assert!(released.is_err(), "the wrapped body's panic propagates");
+    assert_eq!(reports.taken(), vec![Delivery::Interrupted]);
 }
 
 /// A body handed on because its read failed was not delivered, and must not
