@@ -206,6 +206,9 @@ impl Forwarded {
     ///
     /// `peer` is the socket the request actually arrived on, and it is the
     /// answer whenever the fields cannot be believed.
+    ///
+    /// An element naming no address (`for=unknown`, say) is still a hop, and
+    /// trust ending on one resolves the client to `None`, not a guess.
     #[must_use]
     pub fn resolve(
         headers: &HeaderMap,
@@ -242,7 +245,8 @@ impl Forwarded {
         let mut sender = peer_ip;
 
         // `believed` counts the elements already taken, so it is the index the
-        // walk is at -- and it is what `hops` is spent against.
+        // walk is at -- and it is what `hops` is spent against. One naming no
+        // address spends its hop too, or the client's own would slide into it.
         for (believed, address) in addresses.iter().rev().enumerate() {
             let trusted_sender =
                 sender.is_some_and(|sender| trusted.names(sender)) || (believed < trusted.hops);
@@ -250,8 +254,8 @@ impl Forwarded {
                 break;
             }
 
-            client = Some(*address);
-            sender = Some(*address);
+            client = *address;
+            sender = *address;
         }
 
         Self {
@@ -262,8 +266,8 @@ impl Forwarded {
 
     /// The client address, as far as the trust policy could resolve it.
     ///
-    /// `None` only where the request arrived on no socket and no trusted hop
-    /// named one — a `TestClient`, or a directly driven `Service::call`.
+    /// `None` where no socket and no trusted hop named one — a `TestClient`, a
+    /// driven `Service::call` — or where trust ends on a proxy's `for=unknown`.
     #[must_use]
     pub fn client(&self) -> Option<IpAddr> {
         self.client
@@ -288,14 +292,15 @@ impl Forwarded {
     }
 }
 
-/// Every `for=` address a request claims, left to right, and the scheme.
+/// Every non-empty element's `for=` address, left to right, and the scheme. An
+/// element naming none (`unknown`, an `obfnode`, no `for=`) is a `None` hop.
 ///
 /// `Forwarded` wins where present, because it is the specified field and
 /// carries the scheme in the same element as the address it belongs to. The
 /// `X-Forwarded-*` pair is read only in its absence: those names appear in no
 /// specification -- RFC 7239 section 7.1 describes them and defines nothing --
 /// and reading both risks pairing one hop's address with another's scheme.
-fn elements(headers: &HeaderMap) -> (Vec<IpAddr>, Option<String>) {
+fn elements(headers: &HeaderMap) -> (Vec<Option<IpAddr>>, Option<String>) {
     let mut addresses = Vec::new();
     let mut proto = None;
 
@@ -304,7 +309,10 @@ fn elements(headers: &HeaderMap) -> (Vec<IpAddr>, Option<String>) {
         let Ok(value) = value.to_str() else { continue };
         saw_forwarded = true;
 
-        for element in value.split(',') {
+        for element in value
+            .split(',')
+            .filter(|element| !element.trim().is_empty())
+        {
             let mut element_address = None;
             for pair in element.split(';') {
                 let Some((name, raw)) = pair.split_once('=') else {
@@ -319,9 +327,7 @@ fn elements(headers: &HeaderMap) -> (Vec<IpAddr>, Option<String>) {
                 }
             }
 
-            if let Some(address) = element_address {
-                addresses.push(address);
-            }
+            addresses.push(element_address);
         }
     }
 
@@ -331,10 +337,12 @@ fn elements(headers: &HeaderMap) -> (Vec<IpAddr>, Option<String>) {
 
     for value in headers.get_all(X_FORWARDED_FOR) {
         let Ok(value) = value.to_str() else { continue };
-        for hop in value.split(',') {
-            if let Some(address) = node_address(hop.trim()) {
-                addresses.push(address);
-            }
+        for hop in value
+            .split(',')
+            .map(str::trim)
+            .filter(|hop| !hop.is_empty())
+        {
+            addresses.push(node_address(hop));
         }
     }
 
