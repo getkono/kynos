@@ -5,7 +5,7 @@ use crate::{
     extract::{FromRequestParts, describe::Describe},
     http::{Parts, media::MediaType},
     router::operation::OperationCx,
-    schema::Schema,
+    schema::{Schema, type_admits_null},
 };
 
 /// The whole query string, described by media type.
@@ -76,6 +76,15 @@ fn is_json(media_type: &str) -> bool {
 /// field-by-field walk a
 /// [`QueryParams`](crate::extract::params::query::QueryParams) group gets.
 ///
+/// # Absence
+///
+/// A request with no `?` at all decodes as the JSON document `null`, so an
+/// `Option<T>` reads it as `None` and the parameter is described as optional.
+/// A `T` whose schema does not admit `null` refuses it with 400, and its
+/// parameter is described as `required`. A bare `?` is a query string that is
+/// present and empty, which is not a JSON document, and is refused for every
+/// `T`.
+///
 /// # Rejections
 ///
 /// A media type Kynos has no decoder for is rejected rather than guessed at.
@@ -101,10 +110,10 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Send, M: MediaType + Send> FromRe
             )));
         }
 
-        // An absent query string is the empty one. That is not a JSON
-        // document, so `serde_json` refuses it for every `T` — one whose
-        // fields are all optional, and an `Option`, included.
-        let raw = parts.uri.query().unwrap_or_default();
+        // No `?` at all is JSON's `null`, which is how `describe` decides
+        // whether to call the parameter required. A bare `?` is a present,
+        // empty query string, and is no document.
+        let raw = parts.uri.query().unwrap_or(ABSENT);
         let decoded = crate::__private::uri::decode_path_value(raw).map_err(|error| {
             invalid(format!(
                 "the percent-decoded query string is not valid UTF-8: {error}"
@@ -120,13 +129,53 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Send, M: MediaType + Send> FromRe
 impl<T: Schema, M: MediaType> Describe for QueryString<T, M> {
     fn describe(operation: &mut OperationCx<'_>) {
         let schema = operation.registry().resolve::<T>();
-        operation.add_parameter(kynos_openapi::Parameter::with_content(
+        let required = !admits_null(&schema);
+        let parameter = kynos_openapi::Parameter::with_content(
             QUERYSTRING_NAME,
             kynos_openapi::ParameterIn::Querystring,
             M::MEDIA_TYPE,
             kynos_openapi::MediaType::new(schema),
-        ));
+        );
+        // `false` is the default, so it is left unstated, as `Query` does.
+        operation.add_parameter(if required {
+            parameter.required(true)
+        } else {
+            parameter
+        });
     }
+}
+
+/// The document an absent query string decodes as.
+const ABSENT: &str = "null";
+
+/// Whether `schema` visibly admits the `null` an absent query string reads as.
+///
+/// True for the `true` schema, a `type` naming `null`, and an `anyOf` or
+/// `oneOf` with such a member, which covers every shape `Option<T>` describes
+/// itself as. A `$ref` is not followed, and a schema carrying a keyword that
+/// can exclude `null` whatever its `type` says — `const`, `enum`, `allOf` or
+/// `not` — is not evaluated. Anything not recognised answers false, which errs
+/// towards `required`: a client told to send a query string the server could
+/// have done without is merely over-cautious, while one told it may omit a
+/// query string the server refuses fails every time.
+fn admits_null(schema: &kynos_openapi::Schema) -> bool {
+    let Some(object) = schema.as_object() else {
+        return matches!(schema, kynos_openapi::Schema::Bool(true));
+    };
+    if object.reference.is_some()
+        || object.const_value.is_some()
+        || object.enumeration.is_some()
+        || object.all_of.is_some()
+        || object.not.is_some()
+    {
+        return false;
+    }
+
+    type_admits_null(schema)
+        || [&object.any_of, &object.one_of]
+            .into_iter()
+            .flatten()
+            .any(|members| members.iter().any(admits_null))
 }
 
 #[cfg(test)]

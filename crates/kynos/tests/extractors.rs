@@ -429,6 +429,11 @@ mod query_string {
         NoContent
     }
 
+    #[kynos::post("/maybe")]
+    async fn maybe_search(_query: QueryString<Option<Payload>, media::Json>) -> NoContent {
+        NoContent
+    }
+
     /// The head of a request for `uri`.
     fn parts(uri: &'static str) -> Parts {
         let mut request = Request::new(Body::empty());
@@ -469,29 +474,19 @@ mod query_string {
         assert_eq!(query.into_inner(), Payload { limit: 3 });
     }
 
-    /// No `?` at all reads exactly as a bare `?` does: as the empty
-    /// document, which is not JSON — so even a type every field of which is
-    /// optional, and an `Option` of one, is refused.
+    /// No `?` at all reads as the JSON `null`: an `Option` is `None`, and a
+    /// type that does not admit `null` is refused — even one every field of
+    /// which is optional, since `null` is not the empty object.
     #[tokio::test]
-    async fn an_absent_query_string_is_the_empty_document() {
-        for (absent, empty) in [
-            (
-                format!("{:?}", read::<Filter, media::Json>("/search").await),
-                format!("{:?}", read::<Filter, media::Json>("/search?").await),
-            ),
-            (
-                format!("{:?}", read::<Option<Filter>, media::Json>("/search").await),
-                format!(
-                    "{:?}",
-                    read::<Option<Filter>, media::Json>("/search?").await
-                ),
-            ),
-        ] {
-            assert_eq!(absent, empty, "absence is the empty query string");
-        }
-
+    async fn an_absent_query_string_is_null() {
+        assert_eq!(
+            read::<Option<Filter>, media::Json>("/search")
+                .await
+                .expect("absence is `None`")
+                .into_inner(),
+            None
+        );
         assert_refused(read::<Filter, media::Json>("/search").await);
-        assert_refused(read::<Option<Filter>, media::Json>("/search").await);
 
         // The control: the empty object is the document those fields allow.
         assert_eq!(
@@ -501,6 +496,14 @@ mod query_string {
                 .into_inner(),
             Filter { limit: None }
         );
+    }
+
+    /// A bare `?` is a query string that is present and empty, which is no
+    /// JSON document, so it is refused even where absence would be `None`.
+    #[tokio::test]
+    async fn an_empty_query_string_is_refused_even_for_an_option() {
+        assert_refused(read::<Filter, media::Json>("/search?").await);
+        assert_refused(read::<Option<Filter>, media::Json>("/search?").await);
     }
 
     /// A marker naming a media type that is not JSON has no decoder, and is
@@ -523,7 +526,9 @@ mod query_string {
     }
 
     /// One `in: querystring` parameter, carrying its schema under the media
-    /// type its marker names — and nothing else on the operation.
+    /// type its marker names — and nothing else on the operation. `Payload`
+    /// does not admit `null`, which is what an absent query string reads as,
+    /// so the parameter is required.
     #[test]
     fn a_query_string_is_described_as_one_querystring_parameter_with_its_media_type() {
         let operation = operation(
@@ -536,9 +541,38 @@ mod query_string {
             json!([{
                 "name": "querystring",
                 "in": "querystring",
+                "required": true,
                 "content": {
                     "application/json": {
                         "schema": { "$ref": "#/components/schemas/Payload" }
+                    }
+                }
+            }])
+        );
+    }
+
+    /// An `Option` admits the `null` an absent query string reads as, so its
+    /// parameter is optional: `required` is left at its `false` default.
+    #[test]
+    fn an_optional_query_string_is_described_as_not_required() {
+        let operation = operation(
+            &Router::<()>::new().mount(kynos::routes![maybe_search]),
+            "/maybe",
+        );
+
+        assert_eq!(
+            serde_json::to_value(&operation.parameters).expect("parameters serialize"),
+            json!([{
+                "name": "querystring",
+                "in": "querystring",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "anyOf": [
+                                { "$ref": "#/components/schemas/Payload" },
+                                { "type": "null" }
+                            ]
+                        }
                     }
                 }
             }])

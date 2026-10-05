@@ -12,6 +12,7 @@ use crate::schema::{
     flatten::{AdmitsAny, ClosedFlatten, Flatten, OpenMap},
     impls::with_object,
     registry::Registry,
+    type_admits_null,
 };
 
 /// Widens `schema` to admit `null`.
@@ -25,7 +26,7 @@ pub(crate) fn nullable(schema: OpenApiSchema) -> OpenApiSchema {
     // A schema that already admits `null` is as nullable as it can be, and a
     // type union's members must be unique — so `Option<()>` and
     // `Option<Option<T>>` widen to themselves rather than to a repeat.
-    if admits_null(&schema) {
+    if type_admits_null(&schema) {
         return schema;
     }
 
@@ -44,17 +45,6 @@ pub(crate) fn nullable(schema: OpenApiSchema) -> OpenApiSchema {
     with_object(OpenApiSchema::default(), |object| {
         object.any_of = Some(vec![schema, OpenApiSchema::of_type(SchemaType::Null)]);
     })
-}
-
-/// Whether `schema` already accepts the `null` instance by way of its `type`.
-fn admits_null(schema: &OpenApiSchema) -> bool {
-    schema
-        .as_object()
-        .and_then(|object| object.ty.as_ref())
-        .is_some_and(|ty| match ty {
-            TypeSet::One(one) => *one == SchemaType::Null,
-            TypeSet::Many(many) => many.contains(&SchemaType::Null),
-        })
 }
 
 /// A value that may be absent, described as one that may be `null`.

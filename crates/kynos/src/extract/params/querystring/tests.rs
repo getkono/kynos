@@ -1,4 +1,50 @@
-use super::is_json;
+use serde_json::json;
+
+use super::{admits_null, is_json};
+
+/// Whether `schema`, written as JSON, admits `null`.
+fn admits(schema: serde_json::Value) -> bool {
+    admits_null(&serde_json::from_value(schema).expect("a schema"))
+}
+
+/// Every shape `Option<T>` describes itself as admits `null`; anything not
+/// recognised does not, so the parameter errs towards `required`.
+#[test]
+fn null_is_admitted_only_where_the_schema_visibly_says_so() {
+    assert!(admits(json!(true)));
+    assert!(admits(json!({ "type": "null" })));
+    assert!(admits(json!({ "type": ["string", "null"] })));
+    assert!(admits(json!({
+        "anyOf": [{ "$ref": "#/components/schemas/Filter" }, { "type": "null" }]
+    })));
+    assert!(admits(
+        json!({ "oneOf": [{ "type": "integer" }, { "type": "null" }] })
+    ));
+
+    assert!(!admits(json!(false)));
+    assert!(!admits(json!({ "type": "string" })));
+    assert!(!admits(json!({ "$ref": "#/components/schemas/Filter" })));
+    assert!(!admits(
+        json!({ "anyOf": [{ "type": "integer" }, { "type": "string" }] })
+    ));
+    // A `const` pins one value, whatever `type` would otherwise allow.
+    assert!(!admits(json!({ "type": ["string", "null"], "const": "x" })));
+    // So may `enum`, `allOf` and `not`, which only ever narrow `type`: none is
+    // evaluated, so each is unrecognised.
+    assert!(!admits(
+        json!({ "type": ["string", "null"], "enum": ["a"] })
+    ));
+    assert!(!admits(json!({
+        "type": ["string", "null"],
+        "allOf": [{ "type": "string" }]
+    })));
+    assert!(!admits(json!({
+        "type": ["string", "null"],
+        "not": { "type": "null" }
+    })));
+    // Unrecognised rather than refused: an unconstrained object schema.
+    assert!(!admits(json!({})));
+}
 
 /// A structured syntax suffix is JSON, which is what lets a vendor media
 /// type be decoded as the JSON it is.
