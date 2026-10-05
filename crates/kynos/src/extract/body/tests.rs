@@ -1,11 +1,8 @@
 use kynos_openapi::Schema as OpenApiSchema;
 
 use crate::{
-    extract::{
-        body::binary::Binary,
-        describe::RequestContent,
-        media::{OctetStream, Png},
-    },
+    extract::{body::binary::Binary, describe::RequestContent},
+    http::media::{OctetStream, Png},
     schema::registry::Registry,
 };
 

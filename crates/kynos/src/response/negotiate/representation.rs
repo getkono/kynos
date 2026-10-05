@@ -15,11 +15,8 @@
 use kynos_openapi::model::body::mime_names;
 
 use crate::{
-    extract::{
-        body::{binary::Binary, text::Text},
-        media::MediaType,
-    },
-    http::Response,
+    extract::body::{binary::Binary, text::Text},
+    http::{Response, media::MediaType},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
 };

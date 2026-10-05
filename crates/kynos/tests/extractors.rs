@@ -412,8 +412,8 @@ mod optional {
 mod query_string {
     use kynos::{
         error::rejection::QueryRejection,
-        extract::{FromRequestParts, media, params::querystring::QueryString},
-        http::{Parts, Uri},
+        extract::{FromRequestParts, params::querystring::QueryString},
+        http::{Parts, Uri, media},
     };
 
     use super::{Body, NoContent, Payload, Request, Router, Schema, StatusCode, json, operation};

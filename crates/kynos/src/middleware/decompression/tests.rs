@@ -14,13 +14,11 @@ use http_body_util::BodyExt;
 use super::{Coding, Decompression, MAX_CODINGS, declared};
 use crate::{
     Router,
-    extract::{
-        body::{binary::Binary, text::Text},
-        media::OctetStream,
-    },
+    extract::body::{binary::Binary, text::Text},
     http::{
         self, Request, Response, StatusCode,
         body::{Body, BoxError},
+        media::OctetStream,
     },
     openapi::{Method, PathTemplate},
     router::{endpoint::builder::EndpointBuilder, service::Service},

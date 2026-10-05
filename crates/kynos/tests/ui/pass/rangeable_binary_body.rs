@@ -2,7 +2,8 @@
 //! rangeable. Only the body type differs.
 
 use kynos::{
-    extract::{body::binary::Binary, media::OctetStream},
+    extract::body::binary::Binary,
+    http::media::OctetStream,
     response::range::rangeable::Rangeable,
 };
 

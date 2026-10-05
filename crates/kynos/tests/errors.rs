@@ -34,9 +34,9 @@ use kynos::{
         FromRequest, FromRequestParts,
         body::{binary::Binary, text::Text},
         connection::{ConnectInfo, MatchedPath},
-        media::OctetStream,
         params::{header::Headers as HeaderExtractor, path::Path, query::Query},
     },
+    http::media::OctetStream,
     response::{negotiate::Accept, range::Range},
     security::{
         Authenticates, Authenticator,
@@ -82,7 +82,7 @@ fn a_parameter_extractor_rejects_with_its_own_type() {
 #[cfg(all(feature = "openapi32", feature = "json"))]
 #[test]
 fn a_whole_query_string_rejects_with_the_query_type() {
-    use kynos::extract::{media::Json, params::querystring::QueryString};
+    use kynos::{extract::params::querystring::QueryString, http::media::Json};
 
     #[derive(serde::Deserialize)]
     struct Filter {

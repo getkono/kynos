@@ -1,8 +1,8 @@
 //! Writing raw bytes with a declared media type as a response.
 
 use crate::{
-    extract::{body::binary::Binary, media::MediaType},
-    http::{HeaderValue, Response, body::Body, header},
+    extract::body::binary::Binary,
+    http::{HeaderValue, Response, body::Body, header, media::MediaType},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
 };

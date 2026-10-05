@@ -14,7 +14,8 @@
 //! Kynos does define, and the erasure behind it, and [`cookie`] and [`etag`]
 //! the two fields whose grammar needs reading rather than looking up.
 //! [`forwarded`] resolves which client sent a request through the proxies the
-//! application trusts. The
+//! application trusts. [`media`] names media types in the type system, for
+//! request and response bodies alike. The
 //! qvalue grammar every `Accept*` field shares, the `Accept-Encoding` reader
 //! and the HTTP-date grammar are private beside them.
 
@@ -22,6 +23,7 @@ pub mod body;
 pub mod cookie;
 pub mod etag;
 pub mod forwarded;
+pub mod media;
 
 // Not `pub`, like `quality`: a content coding reaches a handler already chosen.
 // Behind the two features that negotiate one, which are its only callers.

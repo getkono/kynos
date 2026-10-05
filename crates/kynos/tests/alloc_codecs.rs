@@ -372,8 +372,8 @@ mod harness {
 #[cfg(feature = "json")]
 mod json {
     use kynos::{
-        extract::{body::binary::Binary, media::OctetStream},
-        http::{Method, Request, StatusCode},
+        extract::body::binary::Binary,
+        http::{Method, Request, StatusCode, media::OctetStream},
         prelude::*,
         router::service::Service,
     };
@@ -543,11 +543,8 @@ mod json {
 #[cfg(feature = "form")]
 mod form {
     use kynos::{
-        extract::{
-            body::{binary::Binary, form::Form},
-            media::OctetStream,
-        },
-        http::{Method, Request, StatusCode},
+        extract::body::{binary::Binary, form::Form},
+        http::{Method, Request, StatusCode, media::OctetStream},
         prelude::*,
         router::service::Service,
     };
@@ -713,11 +710,8 @@ mod form {
 #[cfg(feature = "multipart")]
 mod multipart {
     use kynos::{
-        extract::{
-            body::{binary::Binary, multipart::MultipartForm},
-            media::OctetStream,
-        },
-        http::{Method, Request, StatusCode},
+        extract::body::{binary::Binary, multipart::MultipartForm},
+        http::{Method, Request, StatusCode, media::OctetStream},
         prelude::*,
         router::service::Service,
     };
@@ -915,11 +909,8 @@ mod multipart {
 #[cfg(feature = "protobuf")]
 mod protobuf {
     use kynos::{
-        extract::{
-            body::{binary::Binary, protobuf::Protobuf},
-            media::OctetStream,
-        },
-        http::{Method, Request, StatusCode},
+        extract::body::{binary::Binary, protobuf::Protobuf},
+        http::{Method, Request, StatusCode, media::OctetStream},
         prelude::*,
         router::service::Service,
     };
@@ -1097,8 +1088,8 @@ mod compression {
     use std::sync::LazyLock;
 
     use kynos::{
-        extract::{body::binary::Binary, media::OctetStream},
-        http::{HeaderValue, Method, Request, StatusCode, header},
+        extract::body::binary::Binary,
+        http::{HeaderValue, Method, Request, StatusCode, header, media::OctetStream},
         middleware::compression::Compression,
         prelude::*,
         router::service::Service,

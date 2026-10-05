@@ -44,7 +44,8 @@ use std::{net::Ipv4Addr, sync::Arc};
 
 use kynos::{
     di::inject::Inject,
-    extract::{body::binary::Binary, media},
+    extract::body::binary::Binary,
+    http::media,
     openapi::{Contact, Info, License, Server as ApiServer, ServerVariable, SpecVersion},
     prelude::*,
     server::Server,
