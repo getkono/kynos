@@ -549,6 +549,21 @@ fails the build when a crate is named outside the module that owns it.
 | compatibility | `socket2` is named only in `server/tcp.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `h2` and `httparse` are never named | `mise run containment:check` | `enforced` |
 | compatibility | `tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `http-body` and `http-body-util` are named only at the body sites architecture.md lists | `mise run containment:check` | `enforced` |
+| compatibility | `async-compression` is named only under `middleware/compression/` and `middleware/decompression/` | `mise run containment:check` | `enforced` |
+| compatibility | `serde_urlencoded` is named only in `extract/body/form.rs`, `response/codec/form.rs` and `test/mod.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `tracing` is named only under `server/` and in `middleware/trace.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `futures-core` is named only under `response/stream/` and `extract/body/json_lines/` and in `http/body.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `multer` is named only in `extract/body/multipart.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `prost` is named only in `extract/body/protobuf.rs` and `response/codec/protobuf.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `uuid` is named only in `schema/impls/identifier.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `chrono` and `jiff` are named only under `schema/impls/temporal/` | `mise run containment:check` | `enforced` |
+| compatibility | `rust_decimal` and `bigdecimal` are named only under `schema/impls/decimal/` | `mise run containment:check` | `enforced` |
+| compatibility | `percent-encoding` is named only in `__private/uri.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `jsonschema` is named only in `test/conformance.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `serde_yaml_ng` is named only under `kynos-openapi/emit/` and in `error/mod.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `indexmap` is named only in `kynos-openapi` | `mise run containment:check` | `enforced` |
+| compatibility | `proc-macro2`, `quote` and `syn` are named only in `kynos-macros` | `mise run containment:check` | `enforced` |
 | dx | Every crate in `[workspace.dependencies]` is consumed by a member | `cargo-udeps` or an equivalent manifest check | `needs-tooling` |
 
 ## Macros

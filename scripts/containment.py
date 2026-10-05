@@ -391,6 +391,16 @@ def permitted(path, allowed):
 UNDER = "under"
 ONLY_IN = "only in"
 
+
+def listed(path, sites):
+    """Whether `path` is one of an `ONLY_IN` row's `sites`.
+
+    A site ending in `/` is a tree and holds every file under it; any other
+    site is one file, matched exactly.
+    """
+    return any(path == site or (site.endswith("/") and path.startswith(site)) for site in sites)
+
+
 # --- The off-path elements ---------------------------------------------------
 # `performance.md` grades the document model, the emitters, the validators and
 # `describe` as off-path elements, and an off-path element owes a proof that a
@@ -1142,7 +1152,10 @@ REEXPORT = re.compile(r"^[ \t]*pub\s+use\s+(\w+)", re.MULTILINE)
 # `todo!()` in the tree is inside a doc example, standing in for an application's
 # own code, and `strip()` has already removed doc comments by the time this runs.
 # The word boundary keeps the rule off a macro that merely ends in `todo!`.
-PLACEHOLDER = re.compile(r"\btodo!")
+#
+# `unimplemented!()` is the same placeholder under another name: it panics
+# identically when reached, and the lapsed exception never allowed it.
+PLACEHOLDER = re.compile(r"\b(todo|unimplemented)!")
 
 # --- The dev build profile ---------------------------------------------------
 # `.cargo/config.toml` is what keeps a worktree's `target/` near the 17 GiB
@@ -1586,9 +1599,55 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
         (("h2", "httparse"), ONLY_IN, set(), "`h2` and `httparse` are never named"),
         (("tower", "tower_layer", "tower_service"), ONLY_IN, {"crates/kynos/src/unchecked.rs"},
          "`tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs`"),
+        (("http_body", "http_body_util"), ONLY_IN,
+         {"crates/kynos/src/http/body.rs", "crates/kynos/src/extract/body/",
+          "crates/kynos/src/middleware/cache/mod.rs", "crates/kynos/src/middleware/compression/",
+          "crates/kynos/src/middleware/decompression/", "crates/kynos/src/middleware/limits/",
+          "crates/kynos/src/response/range/source.rs", "crates/kynos/src/router/dispatch.rs",
+          "crates/kynos/src/test/mod.rs"},
+         "`http-body` and `http-body-util` are named only at the body sites architecture.md lists"),
+        (("async_compression",), ONLY_IN,
+         {"crates/kynos/src/middleware/compression/", "crates/kynos/src/middleware/decompression/"},
+         "`async-compression` is named only under `middleware/compression/` and "
+         "`middleware/decompression/`"),
+        (("serde_urlencoded",), ONLY_IN,
+         {"crates/kynos/src/extract/body/form.rs", "crates/kynos/src/response/codec/form.rs",
+          "crates/kynos/src/test/mod.rs"},
+         "`serde_urlencoded` is named only in `extract/body/form.rs`, `response/codec/form.rs` "
+         "and `test/mod.rs`"),
+        (("tracing",), ONLY_IN,
+         {"crates/kynos/src/server/", "crates/kynos/src/middleware/trace.rs"},
+         "`tracing` is named only under `server/` and in `middleware/trace.rs`"),
+        (("futures_core",), ONLY_IN,
+         {"crates/kynos/src/response/stream/", "crates/kynos/src/extract/body/json_lines/",
+          "crates/kynos/src/http/body.rs"},
+         "`futures-core` is named only under `response/stream/` and `extract/body/json_lines/` "
+         "and in `http/body.rs`"),
+        (("multer",), ONLY_IN, {"crates/kynos/src/extract/body/multipart.rs"},
+         "`multer` is named only in `extract/body/multipart.rs`"),
+        (("prost",), ONLY_IN,
+         {"crates/kynos/src/extract/body/protobuf.rs", "crates/kynos/src/response/codec/protobuf.rs"},
+         "`prost` is named only in `extract/body/protobuf.rs` and `response/codec/protobuf.rs`"),
+        (("uuid",), ONLY_IN, {"crates/kynos/src/schema/impls/identifier.rs"},
+         "`uuid` is named only in `schema/impls/identifier.rs`"),
+        (("chrono", "jiff"), UNDER, "crates/kynos/src/schema/impls/temporal/",
+         "`chrono` and `jiff` are named only under `schema/impls/temporal/`"),
+        (("rust_decimal", "bigdecimal"), UNDER, "crates/kynos/src/schema/impls/decimal/",
+         "`rust_decimal` and `bigdecimal` are named only under `schema/impls/decimal/`"),
+        (("percent_encoding",), ONLY_IN, {"crates/kynos/src/__private/uri.rs"},
+         "`percent-encoding` is named only in `__private/uri.rs`"),
+        (("jsonschema",), ONLY_IN, {"crates/kynos/src/test/conformance.rs"},
+         "`jsonschema` is named only in `test/conformance.rs`"),
+        (("serde_yaml_ng",), ONLY_IN,
+         {"crates/kynos-openapi/src/emit/", "crates/kynos/src/error/mod.rs"},
+         "`serde_yaml_ng` is named only under `kynos-openapi/emit/` and in `error/mod.rs`"),
+        (("indexmap",), UNDER, "crates/kynos-openapi/src/",
+         "`indexmap` is named only in `kynos-openapi`"),
+        (("proc_macro2", "quote", "syn"), UNDER, "crates/kynos-macros/src/",
+         "`proc-macro2`, `quote` and `syn` are named only in `kynos-macros`"),
     ]:
         found = corpus.naming(*crates)
-        stray = sorted(f for f in found if not f.startswith(where)) if rule == UNDER else sorted(found - where)
+        stray = sorted(f for f in found if not f.startswith(where)) if rule == UNDER else sorted(f for f in found if not listed(f, where))
         if stray:
             failures.append(f"{description}, but it is also named in:\n    " + "\n    ".join(stray))
 
@@ -1960,7 +2019,7 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
     # --- Placeholder bodies --------------------------------------------------
     if placeholders := sorted(path for path, text in corpus.files if PLACEHOLDER.search(text)):
         failures.append(
-            "a `todo!()` stands in for a body, and the exception that allowed one "
+            "a `todo!()` or `unimplemented!()` stands in for a body, and the exception that allowed one "
             "lapsed when the API-skeleton milestone ended:\n    " + "\n    ".join(placeholders)
         )
 
