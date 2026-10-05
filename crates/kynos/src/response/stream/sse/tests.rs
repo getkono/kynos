@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use super::{Event, encode, heartbeat_record};
 
 /// Re-parses a record into its `(field, value)` pairs, using a reader
@@ -86,7 +88,7 @@ fn an_event_writes_every_field_it_carries_in_dispatch_order() {
         .comment("about to happen")
         .event("created")
         .id("42")
-        .retry(3_000);
+        .retry(Duration::from_secs(3));
 
     assert_eq!(
         reparse(&encode(&event).expect("an encodable event")),
@@ -98,6 +100,17 @@ fn an_event_writes_every_field_it_carries_in_dispatch_order() {
             ("data".to_owned(), "[1,2]".to_owned()),
         ]
     );
+}
+
+/// The format carries `retry` as an integer of milliseconds, so a finer
+/// `Duration` is truncated to the whole milliseconds it holds rather than
+/// rounded or written as a fraction a client would refuse.
+#[test]
+fn a_retry_is_written_in_whole_milliseconds_truncating_the_remainder() {
+    let event = Event::new(0_u8).retry(Duration::from_micros(1_999));
+    let fields = reparse(&encode(&event).expect("an encodable event"));
+
+    assert_eq!(fields[0], ("retry".to_owned(), "1".to_owned()));
 }
 
 /// An omitted field is absent rather than empty: a client reads `id:` with
