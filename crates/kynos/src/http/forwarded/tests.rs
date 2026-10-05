@@ -222,6 +222,31 @@ fn an_empty_list_element_is_not_a_hop() {
     }
 }
 
+/// A delimiter inside a `quoted-string` value splits nothing.
+///
+/// RFC 7239 section 4 lets a `value` be a `quoted-string`, which may hold `,`
+/// and `;`, and a `quoted-pair` may escape a `"` inside it. Splitting there
+/// would invent a hop with no address, or a `for=` the proxy never wrote.
+#[test]
+fn a_delimiter_inside_a_quoted_value_splits_nothing() {
+    for element in [
+        r#"for=203.0.113.9;ext="a,b""#,
+        r#"for=203.0.113.9;ext="a;for=198.51.100.66""#,
+        r#"for=203.0.113.9;ext="a\",b""#,
+    ] {
+        let headers = map(&[("forwarded", element)]);
+
+        let resolved =
+            Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+
+        assert_eq!(
+            resolved.client(),
+            Some(ip("203.0.113.9")),
+            "`{element}` was split inside its quoted value"
+        );
+    }
+}
+
 /// Every `nodename` form section 6 defines, and what each yields.
 ///
 /// The table is the grammar. `unknown` and an `obfnode` are identifiers rather
