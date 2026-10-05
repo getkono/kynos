@@ -23,12 +23,12 @@ use support::{App, get, send};
 
 /// The one policy both fixtures advertise.
 fn advertised() -> Vec<QuotaPolicy> {
-    vec![QuotaPolicy {
-        name: "default".into(),
-        quota: 100,
-        window: Some(std::time::Duration::from_secs(60)),
-        unit: QuotaUnit::Requests,
-    }]
+    vec![QuotaPolicy::new(
+        "default",
+        100,
+        Some(std::time::Duration::from_secs(60)),
+        QuotaUnit::Requests,
+    )]
 }
 
 /// A policy that always allows, reporting a fixed remaining count and reset.
@@ -47,12 +47,12 @@ impl RateLimitPolicy<App> for AlwaysAllows {
     }
 
     async fn check(&self, _: &Request, _: Route<'_>, _: &App) -> Decision {
-        Decision::allow(ServiceLimit {
-            name: "default".into(),
-            quota: 100,
-            remaining: 97,
-            reset: std::time::Duration::from_secs(42),
-        })
+        Decision::allow(ServiceLimit::new(
+            "default",
+            100,
+            97,
+            std::time::Duration::from_secs(42),
+        ))
     }
 }
 
@@ -74,12 +74,7 @@ impl RateLimitPolicy<App> for AlwaysDenies {
     async fn check(&self, _: &Request, _: Route<'_>, _: &App) -> Decision {
         Decision::deny(
             std::time::Duration::from_secs(30),
-            ServiceLimit {
-                name: "default".into(),
-                quota: 100,
-                remaining: 0,
-                reset: std::time::Duration::from_secs(30),
-            },
+            ServiceLimit::new("default", 100, 0, std::time::Duration::from_secs(30)),
         )
     }
 }
