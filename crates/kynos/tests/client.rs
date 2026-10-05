@@ -393,7 +393,7 @@ async fn a_finite_feed_is_read_as_its_events() {
     let events = reply.events();
 
     assert_eq!(events.len(), 3);
-    assert_eq!(events[0].name.as_deref(), Some("reading"));
+    assert_eq!(events[0].event.as_deref(), Some("reading"));
     assert_eq!(events[0].id.as_deref(), Some("e0"));
     assert_eq!(events[0].json::<Reading>().celsius, 20);
     assert_eq!(events[2].id.as_deref(), Some("e2"));
