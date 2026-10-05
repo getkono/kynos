@@ -2,8 +2,10 @@
 //! Parameter Object.
 //!
 //! One module per parameter location, so a location that gains a rule gains it
-//! in one place. Each pairs a wrapper type — what the handler receives — with
-//! the derived trait describing the group it wraps.
+//! in one place. Each holds a wrapper type — what the handler receives — and,
+//! where the location carries named parameters, the derived trait describing
+//! the group it wraps; `querystring` takes the whole query string as one value,
+//! so it has no such trait.
 
 pub mod header;
 pub mod path;
