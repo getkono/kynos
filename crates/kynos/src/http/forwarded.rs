@@ -306,25 +306,25 @@ fn elements(headers: &HeaderMap) -> (Vec<Option<IpAddr>>, Option<String>) {
         let Ok(value) = value.to_str() else { continue };
         saw_forwarded = true;
 
-        for element in unquoted_split(value, b',') {
+        let (start, mut line_proto) = (addresses.len(), None);
+        for element in unquoted_rsplit(value, b',') {
             let mut element_address = None;
-            let pairs = unquoted_split(element, b';').filter_map(|pair| pair.split_once('='));
-            for (name, raw) in pairs {
-                let raw = unquote(raw.trim());
-
+            let pairs = unquoted_rsplit(element, b';').filter_map(|pair| pair.split_once('='));
+            for (name, raw) in pairs.map(|(name, raw)| (name, unquote(raw.trim()))) {
                 if name.trim().eq_ignore_ascii_case("for") {
-                    element_address = node_address(raw);
+                    element_address = element_address.or(Some(node_address(raw)));
                 } else if name.trim().eq_ignore_ascii_case("proto") {
-                    proto = Some(raw.to_ascii_lowercase());
+                    line_proto = line_proto.or(Some(raw));
                 }
             }
-
-            addresses.push(element_address);
+            addresses.push(element_address.flatten());
         }
+        addresses[start..].reverse();
+        proto = line_proto.or(proto);
     }
 
     if saw_forwarded {
-        return (addresses, proto);
+        return (addresses, proto.map(str::to_ascii_lowercase));
     }
 
     for value in headers.get_all(X_FORWARDED_FOR) {
@@ -342,22 +342,22 @@ fn elements(headers: &HeaderMap) -> (Vec<Option<IpAddr>>, Option<String>) {
     (addresses, proto)
 }
 
-/// `text`'s non-blank pieces between `delimiter`s outside any `quoted-string`,
-/// read from the right so a client's unclosed quote cannot swallow a hop's.
-fn unquoted_split(text: &str, delimiter: u8) -> impl Iterator<Item = &str> {
-    let (bytes, mut pieces, mut end, mut quoted) = (text.as_bytes(), vec![], text.len(), false);
-    for at in (0..bytes.len()).rev() {
-        if bytes[at] == b'"' {
-            // Inside a quoted-string, an odd run of `\` before a `"` escapes it.
-            let escapes = bytes[..at].iter().rev().take_while(|&&b| b == b'\\');
-            quoted ^= !quoted || escapes.count() % 2 == 0;
-        } else if !quoted && bytes[at] == delimiter {
-            pieces.push(&text[at + 1..end]);
-            end = at;
-        }
-    }
-    pieces.push(&text[..end]);
-    let pieces = pieces.into_iter().rev();
+/// `text`'s non-blank pieces between `delimiter`s outside any `quoted-string`
+/// (an odd run of `\` escapes its `"`), last first, so a client's unclosed
+/// quote cannot swallow a hop's. Allocation-free: it runs behind every proxy.
+fn unquoted_rsplit(text: &str, delimiter: u8) -> impl Iterator<Item = &str> {
+    let (bytes, mut end) = (text.as_bytes(), Some(text.len()));
+    let pieces = std::iter::from_fn(move || {
+        let (stop, mut quoted) = (end?, false);
+        end = (0..stop).rev().find(|&at| {
+            if bytes[at] == b'"' {
+                let escapes = bytes[..at].iter().rev().take_while(|&&b| b == b'\\');
+                quoted ^= !quoted || escapes.count() % 2 == 0;
+            }
+            !quoted && bytes[at] == delimiter
+        });
+        Some(&text[end.map_or(0, |at| at + 1)..stop])
+    });
     pieces.filter(|piece| !piece.trim().is_empty())
 }
 
