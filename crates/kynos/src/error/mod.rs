@@ -89,9 +89,13 @@ pub enum Error {
     Json(#[from] serde_json::Error),
 
     /// The description could not be emitted as YAML.
+    ///
+    /// Transparent, unlike [`Json`](Error::Json): the YAML emitter's failure
+    /// already says which encoding failed, so the conversion has nothing to
+    /// add.
     #[cfg(feature = "yaml")]
-    #[error("the description could not be emitted as YAML")]
-    Yaml(#[from] serde_yaml_ng::Error),
+    #[error(transparent)]
+    Yaml(#[from] kynos_openapi::emit::YamlError),
 
     /// The server configuration or transport failed.
     #[cfg(feature = "server")]

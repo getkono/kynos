@@ -364,9 +364,10 @@ story.** `TlsError` earns one because every variant names both what was being
 configured and what was wrong with it. A bare `std::io::Error` does not, because
 it cannot say what was being opened — which is why `Error::Io` was removed and
 why the io failures the framework actually raises go through `ServerError::Bind`
-and friends, each naming its address. `serde_json::Error` and
-`serde_yaml_ng::Error` convert into separate variants rather than one, so the
-conversion is what records which emitter failed.
+and friends, each naming its address. `serde_json::Error` converts into a
+variant of its own, so the conversion is what records that the JSON emitter
+failed. `Error::Yaml` is transparent instead, because `YamlError` already says
+which encoding failed.
 
 **Policy: a cause is kept as a `source()`, not formatted into a `String`.** Two
 exceptions, and both are stated where they apply. A value rendered in a *list*
@@ -380,7 +381,10 @@ holding it would cost the derives the property tests rely on.
 Where a cause is kept but its type should not escape, it is boxed:
 `TlsError` holds `Box<dyn Error + Send + Sync>` so a rustls failure stays
 walkable without rustls's semantic version becoming Kynos's, or its name
-appearing outside `server/tls/`.
+appearing outside `server/tls/`. `kynos_openapi::emit::YamlError` holds the
+YAML library's error privately for the same reason: that library is pre-1.0,
+and naming its error in `to_yaml` or `Error::Yaml` would make each of its
+releases a breaking release of both crates.
 
 ## Where the union happens
 

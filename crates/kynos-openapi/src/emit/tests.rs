@@ -224,6 +224,30 @@ mod yaml {
             "a number serde_json holds as `1e+400` cannot be emitted as a YAML number"
         );
     }
+
+    /// `YamlError` says which encoding failed and keeps what the YAML library
+    /// said as its source, whichever way it was made.
+    #[test]
+    fn a_yaml_error_names_the_encoding_and_keeps_its_cause() {
+        use std::error::Error as _;
+
+        use crate::emit::{YamlError, yaml_numbers::number_from_digits};
+
+        let refusal = "a number serde_json holds as `abc` cannot be emitted as a YAML number";
+        for error in [
+            YamlError(number_from_digits("abc").expect_err("no float holds it")),
+            <YamlError as serde::ser::Error>::custom(refusal),
+        ] {
+            assert_eq!(
+                error.to_string(),
+                "the description could not be emitted as YAML"
+            );
+            assert_eq!(
+                error.source().map(ToString::to_string).as_deref(),
+                Some(refusal)
+            );
+        }
+    }
 }
 
 /// One case per 3.2-only construct, and the exact location it is reported at.
