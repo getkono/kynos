@@ -28,7 +28,7 @@
 //! * **Each operation caps its own body.** A note and a batch of images are
 //!   not the same size, so `BodySize` is mounted per operation, sized from
 //!   what that body can legitimately hold. There is no router-wide default
-//!   with an override: both limits would answer 413, and `statuses_disjoint`
+//!   with an override: both limits would answer 413, and `CompatibleWith`
 //!   refuses the pair at compile time, because a client could not tell which
 //!   of them replied. Nothing is capped unless something says so, since a
 //!   default limit would add a 413 the service never promised.

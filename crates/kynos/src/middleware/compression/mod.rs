@@ -449,7 +449,7 @@ pub struct Levels {
 /// covers that group, one on an endpoint covers that endpoint. What is *not*
 /// available is a global one plus a per-endpoint override — both would add
 /// `Content-Encoding` to the same operation, which
-/// [`header_names_disjoint`](crate::middleware::stack) refuses at the mount
+/// [`CompatibleWith`](crate::middleware::stack::CompatibleWith) refuses at the mount
 /// site. Mount the one that varies and leave the rest uncovered.
 ///
 /// A response whose length is already known is collected and encoded in one
