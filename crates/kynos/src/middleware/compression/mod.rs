@@ -370,13 +370,13 @@ fn as_level(level: u32) -> i32 {
 /// wrong encoder: the types already make that impossible, and this keeps the
 /// call sites from having to say so.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Levels {
+pub(crate) struct Levels {
     /// What gzip is asked for.
-    pub gzip: GzipLevel,
+    pub(crate) gzip: GzipLevel,
     /// What brotli is asked for.
-    pub brotli: BrotliLevel,
+    pub(crate) brotli: BrotliLevel,
     /// What zstd is asked for.
-    pub zstd: ZstdLevel,
+    pub(crate) zstd: ZstdLevel,
 }
 
 /// Compresses responses when the client accepts it.
@@ -614,13 +614,6 @@ impl<T> Compression<T> {
     #[must_use]
     pub fn zstd_level(mut self, level: ZstdLevel) -> Self {
         self.levels.zstd = level;
-        self
-    }
-
-    /// Sets all three at once.
-    #[must_use]
-    pub fn levels(mut self, levels: Levels) -> Self {
-        self.levels = levels;
         self
     }
 
