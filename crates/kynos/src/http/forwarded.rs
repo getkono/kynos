@@ -205,10 +205,8 @@ impl Forwarded {
     /// Resolves what `headers` claim, as far as `trusted` permits.
     ///
     /// `peer` is the socket the request actually arrived on, and it is the
-    /// answer whenever the fields cannot be believed.
-    ///
-    /// An element naming no address (`for=unknown`, say) is still a hop, and
-    /// trust ending on one resolves the client to `None`, not a guess.
+    /// answer whenever the fields cannot be believed. An element naming no
+    /// address is still a hop: see [`client`](Self::client).
     #[must_use]
     pub fn resolve(
         headers: &HeaderMap,
@@ -267,7 +265,9 @@ impl Forwarded {
     /// The client address, as far as the trust policy could resolve it.
     ///
     /// `None` where no socket and no trusted hop named one — a `TestClient`, a
-    /// driven `Service::call` — or where trust ends on a proxy's `for=unknown`.
+    /// driven `Service::call` — or where trust ends on an element naming no
+    /// address: `for=unknown`, an obfuscated or unparseable `for=`, or no
+    /// `for=` at all, as in a proxy sending only `Forwarded: proto=https`.
     #[must_use]
     pub fn client(&self) -> Option<IpAddr> {
         self.client
