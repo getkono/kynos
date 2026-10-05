@@ -458,7 +458,7 @@ async fn a_store_that_cannot_answer_allows_by_default() {
 /// limiter already declares.
 ///
 /// Not a 503: a second status here would collide with `Concurrency` on any
-/// route carrying both, and `statuses_disjoint` would refuse to compile it.
+/// route carrying both, and `CompatibleWith` would refuse to compile it.
 #[tokio::test]
 async fn a_store_that_cannot_answer_refuses_where_that_was_selected() {
     let service = limited(

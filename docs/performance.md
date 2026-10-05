@@ -174,7 +174,7 @@ Six shapes account for the routing stack.
 
 **A type-level surface owes a codegen delta and nothing else, for the same
 reason [`testing.md`](testing.md#the-allocation) says it does not owe running.**
-`CompatibleWith`, `statuses_disjoint` and the `Cons`/`Both` stacks are compared
+`CompatibleWith` and the `Cons`/`Both` stacks are compared
 during type checking and are absent from the binary, so a request never reaches
 them. What they can cost is compile time and monomorphized IR, and a framework
 whose declarations are types is exactly where that bill arrives.

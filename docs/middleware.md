@@ -203,7 +203,7 @@ that has not cached anything.
 
 Levels are set per mount, so scope is how they vary. There is no global setting
 with a per-endpoint override: two `Compression`s covering one operation both add
-`Content-Encoding`, and `header_names_disjoint` refuses that pair where it is
+`Content-Encoding`, and `CompatibleWith` refuses that pair where it is
 mounted.
 
 **`min_size` defaults to 2 KiB, read off a measurement
@@ -452,7 +452,7 @@ A store that cannot answer **allows** by default. A limiter exists to shed load,
 and one that sheds everything when its cache blinks has turned a degradation
 into an incident. `StoreFailure::Deny` is the other choice, and it answers with
 the 429 the limiter already declares rather than a 503 — a second status would
-collide with `Concurrency` on any route carrying both, and `statuses_disjoint`
+collide with `Concurrency` on any route carrying both, and `CompatibleWith`
 would refuse to compile it.
 
 One thing worth knowing about the two halves. The 429's headers ride on
@@ -663,7 +663,7 @@ is a promise.
 of zeroes are a gigabyte of gzip output, so a cap measured before decoding
 measures the one number an attacker chooses freely. `Decompression` takes the
 limit instead and applies it to what the handler will actually see. The two
-cannot be mounted together — both answer 413, and `statuses_disjoint` refuses
+cannot be mounted together — both answer 413, and `CompatibleWith` refuses
 the pair — which is right rather than awkward: on a route that accepts content
 codings, `BodySize` alone is not a weaker guard but a misleading one.
 
@@ -740,7 +740,7 @@ service genuinely *is*, so an origin's own 504 would be indistinguishable from
 that hop's. §15.5.9's 408 describes the slow-body row above exactly and the
 handler-runtime row only by extension; it is the closest the specification
 defines and the one `tower-http` sends. 503 would read better for handler
-runtime and is unavailable: `Concurrency` declares it, and `statuses_disjoint`
+runtime and is unavailable: `Concurrency` declares it, and `CompatibleWith`
 would then refuse a router bounding handler time *and* capping concurrency,
 which is an ordinary pairing.
 

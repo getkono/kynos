@@ -84,7 +84,7 @@ impl<T: ProblemType> Responses for TimedOut<T> {
 ///
 /// 503 would have read better for handler runtime — "temporary overload" — and
 /// is not available: [`Concurrency`](super::concurrency::Concurrency) declares
-/// it, so `statuses_disjoint` would refuse a router carrying both. Bounding
+/// it, so `CompatibleWith` would refuse a router carrying both. Bounding
 /// handler time *and* capping concurrency is an ordinary pairing, and a status
 /// choice that made it uncompilable would be a worse answer than an inexact
 /// one.
@@ -112,7 +112,7 @@ impl<T: ProblemType> Responses for TimedOut<T> {
 /// The substitute is a [`ShortCircuit`], so it still declares the statuses it
 /// can produce and still contributes them to every operation the interceptor
 /// covers. A custom response cannot make the document wrong: whatever it
-/// answers with, `statuses_disjoint` sees the same `STATUSES` the compiler
+/// answers with, `CompatibleWith` sees the same `STATUSES` the compiler
 /// checks against every other interceptor in the stack.
 ///
 /// ```no_run

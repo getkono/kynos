@@ -38,7 +38,7 @@
 //!   nothing, because by the time a response body is streaming the status and
 //!   the headers have already gone. Saying so in the type is what lets it
 //!   compose with every limit below it — there is no status for
-//!   `statuses_disjoint` to refuse. Where a limit *does* answer, the response
+//!   `CompatibleWith` to refuse. Where a limit *does* answer, the response
 //!   is a parameter: `Timeout::answer_with` substitutes a type of your own, and
 //!   because that type is a `ShortCircuit` the document still describes exactly
 //!   what the service can send.

@@ -308,7 +308,7 @@ cap is an interceptor `Router::build` does not mount. Making one default was
 rejected for three reasons, any one
 sufficient: it would add 413 to every operation of every application that never
 asked for one, it would make a user's own `BodySize` a `const` compile error
-against `statuses_disjoint`, and it would buffer a length-less body — which is
+against `CompatibleWith`, and it would buffer a length-less body — which is
 the streaming upload the limit exists to leave alone. The framework's rule that
 configuring a limit and documenting it are one action has a converse, and this
 is it.

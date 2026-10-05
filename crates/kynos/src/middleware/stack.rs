@@ -51,7 +51,7 @@ pub struct Both<L, R>(PhantomData<fn() -> (L, R)>);
 /// Header names are case-insensitive per RFC 9110, so `X-Request-Id` and
 /// `x-request-id` are one name and must collide.
 #[must_use]
-pub const fn header_name_eq(left: &str, right: &str) -> bool {
+pub(crate) const fn header_name_eq(left: &str, right: &str) -> bool {
     let (left, right) = (left.as_bytes(), right.as_bytes());
 
     if left.len() != right.len() {
@@ -71,7 +71,7 @@ pub const fn header_name_eq(left: &str, right: &str) -> bool {
 
 /// Whether two header-name lists share nothing.
 #[must_use]
-pub const fn header_names_disjoint(left: &[&str], right: &[&str]) -> bool {
+pub(crate) const fn header_names_disjoint(left: &[&str], right: &[&str]) -> bool {
     let mut outer = 0;
     while outer < left.len() {
         let mut inner = 0;
@@ -89,7 +89,7 @@ pub const fn header_names_disjoint(left: &[&str], right: &[&str]) -> bool {
 
 /// Whether two status lists share nothing.
 #[must_use]
-pub const fn statuses_disjoint(left: &[u16], right: &[u16]) -> bool {
+pub(crate) const fn statuses_disjoint(left: &[u16], right: &[u16]) -> bool {
     let mut outer = 0;
     while outer < left.len() {
         let mut inner = 0;

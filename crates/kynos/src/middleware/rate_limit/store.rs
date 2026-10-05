@@ -50,7 +50,7 @@ pub enum StoreFailure {
     ///
     /// Not a 503. A second status here would collide with
     /// [`Concurrency`](crate::middleware::limits::concurrency::Concurrency) on any route
-    /// carrying both, and `statuses_disjoint` would refuse to compile it — so
+    /// carrying both, and `CompatibleWith` would refuse to compile it — so
     /// the honest choice is the status this interceptor already promises.
     Deny,
 }

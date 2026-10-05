@@ -265,7 +265,7 @@ async fn a_limit_does_not_answer_for_a_route_that_does_not_exist() {
 /// Making one default was considered and rejected, and any one of three reasons
 /// is sufficient. It would add 413 to every operation of every application that
 /// never asked for one. It would make a user's own `BodySize` a `const` compile
-/// error, since `statuses_disjoint` is what stops two interceptors claiming a
+/// error, since `CompatibleWith` is what stops two interceptors claiming a
 /// status. And it would buffer a body that declares no length, which is exactly
 /// the streaming upload the limit is supposed to leave alone.
 ///
