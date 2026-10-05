@@ -2814,6 +2814,41 @@ mod protocol_configuration {
     }
 }
 
+/// An accept loop that ended without returning is its own failure, not an
+/// invalid setting, and the error says which way it ended.
+#[tokio::test]
+async fn a_failed_accept_loop_is_reported_as_one() {
+    use crate::server::{accept_loop_failure, error::ServerError};
+
+    let mut loops = tokio::task::JoinSet::new();
+    loops.spawn(async { panic!("an accept loop panicking on purpose") });
+    let panicked = loops
+        .join_next()
+        .await
+        .expect("one loop was spawned")
+        .expect_err("the loop panicked");
+
+    loops.spawn(std::future::pending::<()>());
+    loops.abort_all();
+    let cancelled = loops
+        .join_next()
+        .await
+        .expect("one loop was spawned")
+        .expect_err("the loop was cancelled");
+
+    for (error, expected_panicked, message) in [
+        (panicked, true, "an accept loop panicked"),
+        (cancelled, false, "an accept loop was cancelled"),
+    ] {
+        let failure = accept_loop_failure(&error);
+        assert_eq!(failure.to_string(), message);
+        assert!(
+            matches!(failure, ServerError::AcceptLoop { panicked } if panicked == expected_panicked),
+            "{failure:?}"
+        );
+    }
+}
+
 /// A served request carries the address it arrived from.
 ///
 /// [`ConnectInfo`](crate::extract::connection::ConnectInfo) documents that the
