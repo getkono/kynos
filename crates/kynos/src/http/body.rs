@@ -234,6 +234,13 @@ impl Drop for Watched {
             Delivery::Interrupted
         };
 
+        // Released before the report rather than after it, as field drops
+        // would: an observer told of a departure may already count what the
+        // body held as gone.
+        drop(std::mem::replace(
+            &mut self.inner,
+            Empty::new().map_err(|never| match never {}).boxed_unsync(),
+        ));
         self.report(delivery);
     }
 }
