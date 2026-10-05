@@ -425,9 +425,20 @@ mod schema {
 
     #[test]
     fn every_schema_diagnostic_has_a_case() {
+        // The derive raises the union refusal in `schema.rs` and every other
+        // rule in a module under `schema/refusals/`.
         every_diagnostic_has_a_case(
-            "schema.rs",
-            include_str!("schema.rs"),
+            "schema.rs` and `schema/refusals/",
+            &[
+                include_str!("schema.rs"),
+                include_str!("schema/refusals.rs"),
+                include_str!("schema/refusals/grammar.rs"),
+                include_str!("schema/refusals/naming.rs"),
+                include_str!("schema/refusals/object_keys.rs"),
+                include_str!("schema/refusals/skips.rs"),
+                include_str!("schema/refusals/wire_form.rs"),
+            ]
+            .concat(),
             ledger().len()
                 + serde_ledger().len()
                 + variant_ledger().len()
@@ -1408,6 +1419,31 @@ mod schema {
                         struct Handle(
                             #[serde(deserialize_with = "from_string")] u64,
                             #[serde(default)] u64,
+                        );
+                    ),
+                    "`deserialize_with` reads or writes this field",
+                ),
+                case(
+                    "`deserialize_with` on the read pick of a struct split across two members",
+                    quote::quote!(
+                        #[serde(transparent)]
+                        struct Handle(
+                            #[serde(skip_deserializing)] u64,
+                            #[serde(skip_serializing, deserialize_with = "from_string")] u64,
+                        );
+                    ),
+                    "`deserialize_with` reads or writes this field",
+                ),
+                case(
+                    "`deserialize_with` before `serialize_with` on the member picked both ways",
+                    quote::quote!(
+                        #[serde(transparent)]
+                        struct Handle(
+                            #[serde(
+                                deserialize_with = "from_string",
+                                serialize_with = "as_string"
+                            )]
+                            u64,
                         );
                     ),
                     "`deserialize_with` reads or writes this field",
