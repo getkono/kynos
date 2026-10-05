@@ -228,6 +228,12 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     /// Mounting operations that carry no interceptor leaves this type
     /// unchanged, because [`Flatten`] erases an empty stack.
     ///
+    /// # Panics
+    ///
+    /// Panics when `endpoints` contains, directly or inside a tuple, array or
+    /// `Vec`, an `assets` feature `AssetSet` holding an asset whose path is not
+    /// a legal path template, which only a hand-built `Asset` can carry.
+    ///
     /// [`intercept`]: Group::intercept
     #[must_use]
     pub fn mount<E: IntoEndpoints<C>>(

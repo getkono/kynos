@@ -113,6 +113,8 @@ impl Default for Http2Config {
 
 impl Http2Config {
     /// Sets the maximum concurrent streams on one connection.
+    ///
+    /// [`Server::prepare`](crate::server::Server::prepare) refuses zero.
     #[must_use]
     pub fn max_concurrent_streams(mut self, streams: u32) -> Self {
         self.max_concurrent_streams = streams;
@@ -120,6 +122,10 @@ impl Http2Config {
     }
 
     /// Sets the flow-control policy.
+    ///
+    /// [`Server::prepare`](crate::server::Server::prepare) refuses a
+    /// [`Fixed`](Http2FlowControl::Fixed) policy with either window zero or
+    /// above 2<sup>31</sup>-1 octets, the largest window RFC 9113 §6.5.2 allows.
     #[must_use]
     pub fn flow_control(mut self, flow_control: Http2FlowControl) -> Self {
         self.flow_control = flow_control;
@@ -128,6 +134,9 @@ impl Http2Config {
 
     /// Sets the keep-alive policy, or `None` to send no keep-alive pings, which
     /// leaves an idle connection open for as long as its peer's socket does.
+    ///
+    /// [`Server::prepare`](crate::server::Server::prepare) refuses a policy
+    /// whose `interval` or `timeout` is zero.
     #[must_use]
     pub fn keep_alive(mut self, keep_alive: Option<Http2KeepAlive>) -> Self {
         self.keep_alive = keep_alive;
@@ -135,6 +144,8 @@ impl Http2Config {
     }
 
     /// Sets the maximum decoded request header-list size.
+    ///
+    /// [`Server::prepare`](crate::server::Server::prepare) refuses zero.
     #[must_use]
     pub fn max_header_list_size(mut self, size: u32) -> Self {
         self.max_header_list_size = size;
@@ -142,6 +153,9 @@ impl Http2Config {
     }
 
     /// Sets the maximum buffered response bytes per stream.
+    ///
+    /// [`Server::prepare`](crate::server::Server::prepare) refuses zero, and
+    /// anything above `u32::MAX`.
     #[must_use]
     pub fn max_send_buffer_size(mut self, size: usize) -> Self {
         self.max_send_buffer_size = size;
@@ -149,6 +163,8 @@ impl Http2Config {
     }
 
     /// Sets the maximum peer-created reset streams awaiting acceptance.
+    ///
+    /// [`Server::prepare`](crate::server::Server::prepare) refuses zero.
     #[must_use]
     pub fn max_pending_accept_reset_streams(mut self, streams: usize) -> Self {
         self.max_pending_accept_reset_streams = streams;
@@ -156,6 +172,8 @@ impl Http2Config {
     }
 
     /// Sets the maximum locally reset streams retained before sending GOAWAY.
+    ///
+    /// [`Server::prepare`](crate::server::Server::prepare) refuses zero.
     #[must_use]
     pub fn max_local_error_reset_streams(mut self, streams: usize) -> Self {
         self.max_local_error_reset_streams = streams;

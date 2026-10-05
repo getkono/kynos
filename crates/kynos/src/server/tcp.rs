@@ -65,6 +65,9 @@ impl Default for TcpKeepAlive {
 
 impl TcpKeepAlive {
     /// Sets how long a connection may carry nothing before the first probe.
+    ///
+    /// [`Server::prepare`](crate::server::Server::prepare) refuses anything
+    /// outside 1 to 32767 seconds, counting whole seconds.
     #[must_use]
     pub fn idle(mut self, idle: Duration) -> Self {
         self.idle = idle;
@@ -72,6 +75,9 @@ impl TcpKeepAlive {
     }
 
     /// Sets the time between unanswered probes.
+    ///
+    /// [`Server::prepare`](crate::server::Server::prepare) refuses anything
+    /// outside 1 to 32767 seconds, counting whole seconds.
     #[must_use]
     pub fn interval(mut self, interval: Duration) -> Self {
         self.interval = interval;

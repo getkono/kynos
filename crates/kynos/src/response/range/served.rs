@@ -284,7 +284,9 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
         // request contains an If-None-Match header field", so the tag is
         // consulted first and the date only in its absence.
         if let Some(field) = conditions.fields.get(header::IF_NONE_MATCH) {
-            return self.tag().is_some_and(|current| matches(field, &current));
+            return self
+                .tag()
+                .is_some_and(|current| crate::http::etag::matches(field, &current));
         }
 
         // Section 13.1.3 again: the date condition applies to GET and HEAD
@@ -316,23 +318,6 @@ fn seconds(time: SystemTime) -> u64 {
     time.duration_since(SystemTime::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs())
         .unwrap_or_default()
-}
-
-/// Whether `field` names `current`, per RFC 9110 section 13.1.2.
-///
-/// The *weak* comparison, which is what `If-None-Match` takes: `W/"x"` and
-/// `"x"` are the same representation for a cache validation.
-fn matches(field: &HeaderValue, current: &str) -> bool {
-    let Ok(text) = field.to_str() else {
-        return false;
-    };
-
-    if text.trim() == crate::http::etag::ANY {
-        return true;
-    }
-
-    crate::http::etag::split(text)
-        .any(|candidate| crate::http::etag::weak_match(candidate, current))
 }
 
 /// A delivery, ready to be sent.

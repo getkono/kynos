@@ -234,7 +234,7 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
         headers.etag.as_deref(),
         request.headers().get(header::IF_NONE_MATCH),
     ) {
-        if super::endpoint::matches(field, tag) {
+        if crate::http::etag::matches(field, tag) {
             let mut response = Response::new(crate::http::body::Body::empty());
             *response.status_mut() = StatusCode::NOT_MODIFIED;
             crate::extract::params::header::write(response.headers_mut(), &headers);
