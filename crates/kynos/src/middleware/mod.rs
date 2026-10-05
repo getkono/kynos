@@ -518,6 +518,10 @@ pub trait Observer<C>: Send + Sync + 'static {
     /// reported: what is watched here is the delivery, and there is nothing to
     /// deliver until the handler has produced something.
     ///
+    /// Called only once the body has been released: whatever it owned, such as
+    /// a handler's event stream, has already been dropped, so an observer may
+    /// treat it as gone. A body whose own drop panics is still reported, once.
+    ///
     /// Called from the drop, which is whatever task last held the body. Do the
     /// same little work here that belongs in any destructor: record it and
     /// return, never block and never await.

@@ -54,7 +54,8 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 /// cleanup in `S`'s [`Drop`] and it runs when the reader leaves. An
 /// [`Observer`](crate::middleware::Observer) hears the same event as
 /// [`on_disconnect`](crate::middleware::Observer::on_disconnect), which is where
-/// a metric for abandoned streams belongs.
+/// a metric for abandoned streams belongs. It is called after `S` is dropped,
+/// so by the time an observer hears of the departure, `S`'s cleanup has run.
 ///
 /// Backpressure is the absence of a poll. Events are pulled from `S` as the
 /// connection takes them, one at a time and never ahead, so a slow reader
