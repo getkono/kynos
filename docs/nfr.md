@@ -483,7 +483,7 @@ public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: it is one of
 them, it declares every rejection type, and splitting it would turn
 `error::rejection::PathRejection` into
-`error::rejection::path::PathRejection`. Seventeen of the twenty-nine are that
+`error::rejection::path::PathRejection`. Sixteen of the twenty-nine are that
 shape, worth roughly a hundred public paths between them — and each is one
 cohesive family, which is precisely what the concern test says may stay a file.
 So they stay: a longer path is a worse name, and the rule's first clause already
@@ -503,10 +503,10 @@ own reason to change. The concern test answers yes there, so
 The budget is the honest record of what stayed. It falls when a module is split,
 and raising it means saying in the same commit why a new module needs the room.
 
-`response/status.rs` is the twenty-eighth, and it is the shape above rather than
-a new argument. It declares six public types — `Location`, `NoContent`,
-`Created`, `Accepted`, `Redirect` and `ValidRedirectCode` — so splitting it
-would turn `response::status::Created` into
+Three of them crossed the line after v0.1.0, and each was argued for as it did.
+`response/status.rs` is the shape above rather than a new argument. It declares
+six public types — `Location`, `NoContent`, `Created`, `Accepted`, `Redirect`
+and `ValidRedirectCode` — so splitting it would turn `response::status::Created` into
 `response::status::created::Created` and do the same to the other five. What
 pushed it over was the third case in the rule that decides a wrapper's declared
 response: a body may describe no 200, or one, or the wrapper's own status, and
@@ -515,9 +515,8 @@ representation the body had already declared. The case is four lines; the
 account of why the body's half wins is the rest, and it is the half a later
 reader needs.
 
-`error/problem.rs` is the twenty-ninth, and it is a different argument:
-splitting it would cost no public path at all. It holds the wire representation of an
-error — `Problem`, `IntoProblem`, the two writers every description of an error
+`error/problem.rs` is a different argument: splitting it would cost no public
+path at all. It holds the wire representation of an error — `Problem`, `IntoProblem`, the two writers every description of an error
 response goes through — and the narrowing that states which type URIs a status
 publishes, which arrived from `__private/` when framework code came to need it
 as well as the derive. The narrowing could sit in a private submodule for free,
@@ -527,9 +526,8 @@ separated the spelling from the only thing holding it to one place would put the
 next reader one file away from the argument. One concern, so one file — the
 first clause of the rule, reached by the second's not applying.
 
-`derive/schema/attributes.rs` is the thirtieth, and it is `problem.rs`'s
-argument: nothing in `kynos-macros` is public but the derives, so a split would
-cost no path. It holds what the `Schema` derive reads off one member's
+`derive/schema/attributes.rs` takes `problem.rs`'s argument: nothing in
+`kynos-macros` is public but the derives, so a split would cost no path. It holds what the `Schema` derive reads off one member's
 attribute list — its names, whether it is described, required or open, and its
 constraints — each a question the shape code asks of the same list. What pushed
 it over was reading both sides of a split `rename`, so a member now has the name
@@ -643,7 +641,7 @@ open against a `kynos-otel` that may never be written.
 | reliability | Commits follow Conventional Commits, merge commits exempt | `convco`, twice over: the `conventional-commit` `commit-msg` step runs `mise run commits:message` over the one message being written, exempting a merge on the presence of the `MERGE_HEAD` *file*; `mise run commits:check` and the `commits` CI job run `convco check` over a range, where the exemption is convco's own parent-count filter. `mise run commits:test` runs *both* halves over the same commits, since a divergence between them fails neither | `enforced`, with one case out of reach: amending an *existing* merge commit runs the hook with `MERGE_HEAD` already gone over a commit that still has two parents, so the hook rejects what the range form exempts, and `--no-verify` is the escape. `commits:test` pins that residual in both directions, so closing or widening it fails this row |
 | compatibility | Every hand-rolled `Stream` implementation is private, except the one row in [`architecture.md`](architecture.md#public-api-surface), and there are exactly three of them | `mise run containment:check`, counting `Stream for` against the table and the two private sites its prose names | `enforced` |
 | compatibility | No parent re-exports a submodule, so every public item has exactly one path | `mise run containment:check`, refusing a `pub use` that names `crate`, `self`, `super` or a module the same file declares, outside the `lib.rs` that carries the crate root and the prelude | `enforced` |
-| dx | No item stands in for its implementation with a `todo!()` body | `mise run containment:check`, which sees code only after doc comments are stripped, so the `todo!()` elisions inside doc examples are not candidates | `enforced`, now that the API-skeleton exception has lapsed |
+| dx | No item stands in for its implementation with a `todo!()` or `unimplemented!()` body | `mise run containment:check`, which sees code only after doc comments are stripped, so the `todo!()` elisions inside doc examples are not candidates | `enforced`, now that the API-skeleton exception has lapsed |
 | dx | Every flag `crates/kynos` declares is graded in exactly one row of [`performance.md`](performance.md#the-feature-grading), and every graded flag is declared | `mise run containment:check`, holding the table's set against `[features]` rather than against a stated count, so the failure names the flag that is unaccounted for | `enforced` |
 | dx | Every public item is documented | `missing_docs = "deny"` plus `mise run docs:check` | `enforced` |
 | dx | Every public item has a compiling doc example | Doctests already run via `mise run test:doc`; *presence* of an example per item is unenforced | `planned` |

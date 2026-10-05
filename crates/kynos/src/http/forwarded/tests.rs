@@ -299,7 +299,8 @@ fn repeated_forwarded_lines_are_one_chain_in_written_order() {
 }
 
 /// Where several elements state a scheme, the last one written wins, across
-/// elements and across repeated lines, and is lowercased.
+/// elements and across repeated lines, and is lowercased. A later line stating
+/// no scheme leaves the earlier one standing rather than clearing it.
 #[test]
 fn the_last_written_scheme_wins_across_elements_and_lines() {
     let headers = map(&[
@@ -311,6 +312,7 @@ fn the_last_written_scheme_wins_across_elements_and_lines() {
             "forwarded",
             "for=192.0.2.7;proto=http, for=10.0.0.2;proto=HTTPS",
         ),
+        ("forwarded", "for=10.0.0.3"),
     ]);
 
     let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));

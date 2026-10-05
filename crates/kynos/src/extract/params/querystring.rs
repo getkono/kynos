@@ -151,13 +151,20 @@ const ABSENT: &str = "null";
 /// Whether `schema` visibly admits the `null` an absent query string reads as.
 ///
 /// True for the `true` schema, a `type` naming `null`, and an `anyOf` or
-/// `oneOf` with such a member, which covers every shape `Option<T>` describes
-/// itself as. A `$ref` is not followed, and a schema carrying a keyword that
-/// can exclude `null` whatever its `type` says — `const`, `enum`, `allOf` or
-/// `not` — is not evaluated. Anything not recognised answers false, which errs
-/// towards `required`: a client told to send a query string the server could
-/// have done without is merely over-cautious, while one told it may omit a
-/// query string the server refuses fails every time.
+/// `oneOf` with such a member: the shapes `Option<T>` widens a schema to. A
+/// `$ref` is not followed, and a schema carrying a keyword that can exclude
+/// `null` whatever its `type` says — `const`, `enum`, `allOf` or `not` — is not
+/// evaluated. Anything not recognised answers false, which errs towards
+/// `required`: a client told to send a query string the server could have done
+/// without is merely over-cautious, while one told it may omit a query string
+/// the server refuses fails every time.
+///
+/// Some `Option<T>` is over-required this way: any `T` described inline as
+/// `type: object` beside an `allOf`, which `Option` widens to
+/// `type: [object, null]` keeping the `allOf`. That is refused on the `allOf`,
+/// so the parameter is `required` although an absent query string decodes as
+/// `None`. A generic derived struct is described inline, and gains an `allOf`
+/// from a `#[serde(flatten)]` field or a field with a `#[serde(alias)]`.
 fn admits_null(schema: &kynos_openapi::Schema) -> bool {
     let Some(object) = schema.as_object() else {
         return matches!(schema, kynos_openapi::Schema::Bool(true));
