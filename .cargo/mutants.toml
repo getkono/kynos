@@ -112,8 +112,9 @@ exclude_globs = [
 ]
 
 exclude_re = [
-  # Hand-written `Debug` implementations: no contract, and no test reads them.
-  # None redacts anything; one that does should move its redaction into a
-  # function a test can name.
+  # Hand-written `Debug` implementations: no contract a mutant can break. The
+  # credentials in `security::carrier` redact their secrets, and their tests
+  # read the output, but a mutant only ever writes less: replacing `fmt` with
+  # `Ok(())` prints nothing, which leaks no secret either.
   '<impl (std::)?fmt::Debug for .*>::fmt ',
 ]

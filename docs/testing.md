@@ -760,7 +760,8 @@ mutated, each for its own reason:
   neither, so on any one platform two are uncompiled and their mutants missed.
 - The proc-macro entry points in `kynos-macros/src/lib.rs`, which only forward
   to a mutated `expand` function, so a mutant there is unviable.
-- Hand-written `Debug` impls, which hold no contract a test reads.
+- Hand-written `Debug` impls, which hold no contract a mutant can break: a
+  redacting one is tested, but a mutant only prints less.
 
 **What it does not see:**
 

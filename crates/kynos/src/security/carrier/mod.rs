@@ -32,6 +32,7 @@
 pub(super) mod base64;
 mod parse;
 mod query;
+mod redact;
 
 use crate::{
     error::rejection::AuthRejection,
@@ -81,7 +82,7 @@ pub trait Carries: SecurityScheme {
 ///
 /// Opaque by definition: the token's meaning is the issuer's business, and a
 /// type that claimed to know it would be claiming more than it can check.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct BearerToken(String);
 
 impl BearerToken {
@@ -102,7 +103,7 @@ impl BearerToken {
 ///
 /// A named type rather than a pair, so that a handler signature says which
 /// field is the password.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Credentials {
     username: String,
     password: String,
@@ -134,7 +135,7 @@ impl Credentials {
 /// models — `Negotiate`, `HOBA`, or one an application invented. The scheme
 /// token is here as well as the credentials, since a scheme that admits more
 /// than one spelling may need to know which arrived.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SchemeCredentials {
     scheme: String,
     credentials: String,
@@ -176,7 +177,7 @@ pub enum KeyLocation {
 }
 
 /// An API key, read from the field its scheme declared.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ApiKey(String);
 
 impl ApiKey {
