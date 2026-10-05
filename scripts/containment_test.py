@@ -1971,6 +1971,8 @@ class Main(unittest.TestCase):
              "`serde_yaml_ng` is named only"),
             ("crates/kynos/src/unchecked.rs", "use indexmap::IndexMap;",
              "`indexmap` is named only"),
+            ("crates/kynos/src/__private/mod.rs", "use quote::ToTokens;",
+             "`proc-macro2`, `quote` and `syn` are named only"),
         ]:
             with self.subTest(addition=addition):
                 status, failures = self.report(corpus=self.appending(stray, f"\n{addition}\n"))
