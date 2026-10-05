@@ -159,11 +159,12 @@ const ABSENT: &str = "null";
 /// without is merely over-cautious, while one told it may omit a query string
 /// the server refuses fails every time.
 ///
-/// One `Option<T>` is over-required this way. A generic derived struct with a
-/// `#[serde(flatten)]` field is described inline as `type: object` beside an
-/// `allOf`, which `Option` widens to `type: [object, null]` and keeps the
-/// `allOf`; that is refused on the `allOf`, so the parameter is `required`
-/// although an absent query string decodes as `None`.
+/// Some `Option<T>` is over-required this way: any `T` described inline as
+/// `type: object` beside an `allOf`, which `Option` widens to
+/// `type: [object, null]` keeping the `allOf`. That is refused on the `allOf`,
+/// so the parameter is `required` although an absent query string decodes as
+/// `None`. A generic derived struct is described inline, and gains an `allOf`
+/// from a `#[serde(flatten)]` field or a field with a `#[serde(alias)]`.
 fn admits_null(schema: &kynos_openapi::Schema) -> bool {
     let Some(object) = schema.as_object() else {
         return matches!(schema, kynos_openapi::Schema::Bool(true));
