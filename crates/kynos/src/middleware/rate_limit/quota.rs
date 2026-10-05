@@ -89,12 +89,12 @@ impl Quota {
     /// This quota as the policy a response advertises.
     #[must_use]
     pub fn policy(&self) -> QuotaPolicy {
-        QuotaPolicy {
-            name: self.name.clone(),
-            quota: self.ceiling(),
-            window: Some(self.window),
-            unit: self.unit,
-        }
+        QuotaPolicy::new(
+            self.name.clone(),
+            self.ceiling(),
+            Some(self.window),
+            self.unit,
+        )
     }
 }
 
@@ -240,18 +240,19 @@ where
         let Some(partition) = self.key.partition(request, route, context) else {
             // Exempt: no counter read, none written, and the response reports
             // the full quota rather than a number that would imply a bucket.
-            return Decision::Allow(Allowance {
-                limits: self
-                    .enforced
+            return Decision::Allow(Allowance::new(
+                self.enforced
                     .iter()
-                    .map(|quota| ServiceLimit {
-                        name: quota.name.clone(),
-                        quota: quota.ceiling(),
-                        remaining: quota.ceiling(),
-                        reset: quota.window,
+                    .map(|quota| {
+                        ServiceLimit::new(
+                            quota.name.clone(),
+                            quota.ceiling(),
+                            quota.ceiling(),
+                            quota.window,
+                        )
                     })
                     .collect(),
-            });
+            ));
         };
 
         let now = std::time::SystemTime::now()
@@ -281,22 +282,22 @@ where
                 (Ok(current), Ok(previous)) => estimate(previous, current, elapsed, quota.window),
                 _ => match self.on_store_failure {
                     StoreFailure::Allow => {
-                        limits.push(ServiceLimit {
-                            name: quota.name.clone(),
-                            quota: quota.ceiling(),
-                            remaining: quota.ceiling(),
-                            reset: quota.window.saturating_sub(elapsed),
-                        });
+                        limits.push(ServiceLimit::new(
+                            quota.name.clone(),
+                            quota.ceiling(),
+                            quota.ceiling(),
+                            quota.window.saturating_sub(elapsed),
+                        ));
                         continue;
                     }
                     StoreFailure::Deny => {
                         denial.get_or_insert(quota.window.saturating_sub(elapsed));
-                        limits.push(ServiceLimit {
-                            name: quota.name.clone(),
-                            quota: quota.ceiling(),
-                            remaining: 0,
-                            reset: quota.window.saturating_sub(elapsed),
-                        });
+                        limits.push(ServiceLimit::new(
+                            quota.name.clone(),
+                            quota.ceiling(),
+                            0,
+                            quota.window.saturating_sub(elapsed),
+                        ));
                         continue;
                     }
                 },
@@ -308,12 +309,7 @@ where
                 let wait = denial.map_or(wait, |existing| existing.max(wait));
                 denial = Some(wait);
 
-                limits.push(ServiceLimit {
-                    name: quota.name.clone(),
-                    quota: ceiling,
-                    remaining: 0,
-                    reset: wait,
-                });
+                limits.push(ServiceLimit::new(quota.name.clone(), ceiling, 0, wait));
                 continue;
             }
 
@@ -328,20 +324,17 @@ where
             };
             let _ = spent;
 
-            limits.push(ServiceLimit {
-                name: quota.name.clone(),
-                quota: ceiling,
-                remaining: ceiling.saturating_sub(counted).saturating_sub(1),
-                reset: quota.window.saturating_sub(elapsed),
-            });
+            limits.push(ServiceLimit::new(
+                quota.name.clone(),
+                ceiling,
+                ceiling.saturating_sub(counted).saturating_sub(1),
+                quota.window.saturating_sub(elapsed),
+            ));
         }
 
         match denial {
-            Some(retry_after) => Decision::Deny(Denial {
-                retry_after,
-                limits,
-            }),
-            None => Decision::Allow(Allowance { limits }),
+            Some(retry_after) => Decision::Deny(Denial::new(retry_after, limits)),
+            None => Decision::Allow(Allowance::new(limits)),
         }
     }
 }
