@@ -279,8 +279,10 @@ impl<C> TestRequest<'_, C> {
     /// Panics when `body` cannot be serialized to JSON: a `Serialize`
     /// implementation that fails itself, or a map with a key JSON cannot
     /// spell as a string. `serde_json` writes string, integer, `bool`, `char`
-    /// and finite float keys, and refuses others, such as a tuple, `Option` or
-    /// unit key, or a NaN or infinite float, so plain data such as a
+    /// and finite float keys, a unit enum variant as its name, and a newtype
+    /// struct or `Some` key as the key it wraps, so a `HashMap<MyEnum, _>`
+    /// serializes. It refuses the rest, such as a tuple, struct, `None` or unit
+    /// key, or a NaN or infinite float, so plain data such as a
     /// `HashMap<(u8, u8), _>` panics here.
     #[cfg(feature = "json")]
     #[must_use]
