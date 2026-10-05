@@ -1643,6 +1643,8 @@ def main(architecture=None, testing=None, performance=None, nfr=None, corpus=Non
          "`serde_yaml_ng` is named only under `kynos-openapi/emit/` and in `error/mod.rs`"),
         (("indexmap",), UNDER, "crates/kynos-openapi/src/",
          "`indexmap` is named only in `kynos-openapi`"),
+        (("proc_macro2", "quote", "syn"), UNDER, "crates/kynos-macros/src/",
+         "`proc-macro2`, `quote` and `syn` are named only in `kynos-macros`"),
     ]:
         found = corpus.naming(*crates)
         stray = sorted(f for f in found if not f.startswith(where)) if rule == UNDER else sorted(f for f in found if not listed(f, where))
