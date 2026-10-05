@@ -693,7 +693,7 @@ impl TestResponse {
                             carried = true;
                         }
                         "event" => {
-                            event.name = Some(value.to_owned());
+                            event.event = Some(value.to_owned());
                             carried = true;
                         }
                         "retry" => {
@@ -748,7 +748,7 @@ pub struct TestEvent {
     /// The `data` value, with a multi-line one rejoined.
     pub data: String,
     /// The `event` name, which a client's listener matches on.
-    pub name: Option<String>,
+    pub event: Option<String>,
     /// The `id`, which a client returns as `Last-Event-ID` on reconnect.
     pub id: Option<String>,
     /// The `retry` advice, in milliseconds.
