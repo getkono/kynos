@@ -191,14 +191,11 @@ impl<C: 'static> Server<C> {
     ///
     /// [`Error::Server`](crate::error::Error::Server), carrying:
     ///
-    /// - [`ServerError::InvalidConfiguration`] for a protocol setting the
-    ///   `http1` or `http2` configuration's own setters say is refused, or a
-    ///   [`TcpKeepAlive`] duration outside 1 to 32767 seconds. Checked before
-    ///   anything else, so no socket is bound.
-    /// - With TLS: [`ServerError::MutualTlsConflict`] when a client certificate
-    ///   is required and the description already holds a different security
-    ///   scheme named `MutualTls`, and `ServerError::Tls` when the TLS
-    ///   configuration cannot be built.
+    /// - [`ServerError::InvalidConfiguration`] for a value its setter says is
+    ///   refused, checked before anything else so no socket is bound.
+    /// - With TLS: [`ServerError::MutualTlsConflict`] when a required client
+    ///   certificate meets a different `MutualTls` scheme in the description,
+    ///   and `ServerError::Tls` when the TLS configuration cannot be built.
     /// - [`ServerError::Listener`], [`ServerError::Resolve`] or
     ///   [`ServerError::Bind`] when a supplied listener, an address, or a
     ///   resolved address fails; every listener already bound is dropped.
