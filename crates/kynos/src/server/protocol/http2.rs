@@ -124,7 +124,8 @@ impl Http2Config {
     /// Sets the flow-control policy.
     ///
     /// [`Server::prepare`](crate::server::Server::prepare) refuses a
-    /// [`Fixed`](Http2FlowControl::Fixed) policy with either window zero.
+    /// [`Fixed`](Http2FlowControl::Fixed) policy with either window zero or
+    /// above 2<sup>31</sup>-1 octets, the largest window RFC 9113 §6.5.2 allows.
     #[must_use]
     pub fn flow_control(mut self, flow_control: Http2FlowControl) -> Self {
         self.flow_control = flow_control;
