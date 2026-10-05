@@ -301,23 +301,15 @@ impl Forwarded {
 /// specification -- RFC 7239 section 7.1 describes them and defines nothing --
 /// and reading both risks pairing one hop's address with another's scheme.
 fn elements(headers: &HeaderMap) -> (Vec<Option<IpAddr>>, Option<String>) {
-    let mut addresses = Vec::new();
-    let mut proto = None;
-
-    let mut saw_forwarded = false;
+    let (mut addresses, mut proto, mut saw_forwarded) = (Vec::new(), None, false);
     for value in headers.get_all(FORWARDED) {
         let Ok(value) = value.to_str() else { continue };
         saw_forwarded = true;
 
-        for element in value
-            .split(',')
-            .filter(|element| !element.trim().is_empty())
-        {
+        for element in unquoted_split(value, b',') {
             let mut element_address = None;
-            for pair in element.split(';') {
-                let Some((name, raw)) = pair.split_once('=') else {
-                    continue;
-                };
+            let pairs = unquoted_split(element, b';').filter_map(|pair| pair.split_once('='));
+            for (name, raw) in pairs {
                 let raw = unquote(raw.trim());
 
                 if name.trim().eq_ignore_ascii_case("for") {
@@ -337,28 +329,36 @@ fn elements(headers: &HeaderMap) -> (Vec<Option<IpAddr>>, Option<String>) {
 
     for value in headers.get_all(X_FORWARDED_FOR) {
         let Ok(value) = value.to_str() else { continue };
-        for hop in value
-            .split(',')
-            .map(str::trim)
-            .filter(|hop| !hop.is_empty())
-        {
-            addresses.push(node_address(hop));
-        }
+        let hops = value.split(',').map(str::trim);
+        addresses.extend(hops.filter(|hop| !hop.is_empty()).map(node_address));
     }
 
     let proto = headers
         .get(X_FORWARDED_PROTO)
         .and_then(|value| value.to_str().ok())
-        .map(|value| {
-            value
-                .split(',')
-                .next()
-                .unwrap_or(value)
-                .trim()
-                .to_ascii_lowercase()
-        });
+        .and_then(|value| value.split(',').next())
+        .map(|first| first.trim().to_ascii_lowercase());
 
     (addresses, proto)
+}
+
+/// `text`'s non-blank pieces between `delimiter`s outside any `quoted-string`,
+/// read from the right so a client's unclosed quote cannot swallow a hop's.
+fn unquoted_split(text: &str, delimiter: u8) -> impl Iterator<Item = &str> {
+    let (bytes, mut pieces, mut end, mut quoted) = (text.as_bytes(), vec![], text.len(), false);
+    for at in (0..bytes.len()).rev() {
+        if bytes[at] == b'"' {
+            // Inside a quoted-string, an odd run of `\` before a `"` escapes it.
+            let escapes = bytes[..at].iter().rev().take_while(|&&b| b == b'\\');
+            quoted ^= !quoted || escapes.count() % 2 == 0;
+        } else if !quoted && bytes[at] == delimiter {
+            pieces.push(&text[at + 1..end]);
+            end = at;
+        }
+    }
+    pieces.push(&text[..end]);
+    let pieces = pieces.into_iter().rev();
+    pieces.filter(|piece| !piece.trim().is_empty())
 }
 
 /// Strips one layer of `quoted-string` quoting.

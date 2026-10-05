@@ -247,6 +247,30 @@ fn a_delimiter_inside_a_quoted_value_splits_nothing() {
     }
 }
 
+/// A quote the client leaves open cannot absorb the elements trusted hops
+/// appended after it, so the client cannot choose the element trust lands on.
+#[test]
+fn a_quote_the_client_leaves_open_swallows_no_trusted_hop() {
+    for (field, client) in [
+        (r#"for=198.51.100.66;ext=", for=203.0.113.9"#, "203.0.113.9"),
+        (
+            r#"for=198.51.100.66;ext=", for="[2001:db8::9]""#,
+            "2001:db8::9",
+        ),
+        (
+            r#"ext="a\", for=198.51.100.66, for=203.0.113.9"#,
+            "203.0.113.9",
+        ),
+    ] {
+        let headers = map(&[("forwarded", field)]);
+
+        let resolved =
+            Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+
+        assert_eq!(resolved.client(), Some(ip(client)), "`{field}`");
+    }
+}
+
 /// Every `nodename` form section 6 defines, and what each yields.
 ///
 /// The table is the grammar. `unknown` and an `obfnode` are identifiers rather
