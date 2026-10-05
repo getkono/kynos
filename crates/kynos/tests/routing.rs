@@ -185,9 +185,12 @@ fn mounting_one_method_on_one_path_twice_fails_the_build() {
     let [violation] = violations.as_slice() else {
         panic!("one violation: {violations:#?}");
     };
-    assert!(
-        !matches!(violation.error, SpecError::DuplicatePathTemplate { .. }),
-        "{violation}"
+    assert_eq!(
+        violation.error,
+        SpecError::DuplicateOperation {
+            method: OpenApiMethod::Get,
+            path: "/files/{path}".to_owned(),
+        }
     );
     assert_eq!(
         violation.to_string(),

@@ -94,6 +94,21 @@ pub enum SpecError {
         existing: String,
     },
 
+    /// One method on one path was described more than once.
+    ///
+    /// Reachable only while a description is being assembled: a Path Item
+    /// holds one Operation per method, so no document can carry the second.
+    #[error(
+        "operation `{method} {path}` is described more than once; a path item holds one \
+         operation per method"
+    )]
+    DuplicateOperation {
+        /// The method described twice.
+        method: crate::model::paths::method::Method,
+        /// The `paths` key it was described under.
+        path: String,
+    },
+
     /// A `paths` key is not a legal path template.
     ///
     /// Reachable only for a description read from somewhere else: a template

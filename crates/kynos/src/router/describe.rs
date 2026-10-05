@@ -357,10 +357,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             if item.set_operation(method, operation).is_some() {
                 violations.push(error_at(
                     format!("{location}/{}", method.as_wire_str().to_lowercase()),
-                    SpecError::DuplicatePathTemplate {
-                        template: format!("{method} {key}"),
-                        existing: key,
-                    },
+                    SpecError::DuplicateOperation { method, path: key },
                 ));
             }
         }
