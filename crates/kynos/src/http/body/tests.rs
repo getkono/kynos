@@ -135,6 +135,47 @@ async fn a_watched_body_reports_once_across_both_of_its_ends() {
     );
 }
 
+/// A body that logs its own release, so the report can be ordered against it.
+struct Releasing(Arc<Mutex<Vec<&'static str>>>);
+
+impl HttpBody for Releasing {
+    type Data = Bytes;
+    type Error = super::BoxError;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Bytes>, Self::Error>>> {
+        std::task::Poll::Pending
+    }
+}
+
+impl Drop for Releasing {
+    fn drop(&mut self) {
+        self.0.lock().expect("an unpoisoned log").push("released");
+    }
+}
+
+/// An observer told of a departure may already count the handler's stream as
+/// gone: reporting first leaves a window in which another thread sees the
+/// report while the stream it reports on is still alive.
+#[test]
+fn a_dropped_watched_body_releases_what_it_wraps_before_reporting() {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let reported = Arc::clone(&log);
+    let body = Body::from_body(Releasing(Arc::clone(&log))).watching(move |delivery| {
+        assert_eq!(delivery, Delivery::Interrupted);
+        reported.lock().expect("an unpoisoned log").push("reported");
+    });
+
+    drop(body);
+
+    assert_eq!(
+        *log.lock().expect("an unpoisoned log"),
+        vec!["released", "reported"]
+    );
+}
+
 /// A body handed on because its read failed was not delivered, and must not
 /// say it was: `Failed` never states its end, even once its error is out.
 #[cfg(any(feature = "cache", feature = "compression"))]
