@@ -82,7 +82,7 @@ fn a_parameter_extractor_rejects_with_its_own_type() {
 #[cfg(all(feature = "openapi32", feature = "json"))]
 #[test]
 fn a_whole_query_string_rejects_with_the_query_type() {
-    use kynos::extract::{media::Json, params::query::QueryString};
+    use kynos::extract::{media::Json, params::querystring::QueryString};
 
     #[derive(serde::Deserialize)]
     struct Filter {

@@ -412,7 +412,7 @@ mod optional {
 mod query_string {
     use kynos::{
         error::rejection::QueryRejection,
-        extract::{FromRequestParts, media, params::query::QueryString},
+        extract::{FromRequestParts, media, params::querystring::QueryString},
         http::{Parts, Uri},
     };
 

@@ -9,7 +9,7 @@ use kynos_openapi::model::body::mime_names;
 
 /// A media type usable as the `M` parameter of
 /// [`Binary`](crate::extract::body::binary::Binary) or
-/// [`QueryString`](crate::extract::params::query::QueryString).
+/// [`QueryString`](crate::extract::params::querystring::QueryString).
 ///
 /// Implemented by the marker types in this module, and by any unit struct you
 /// declare for a vendor type.

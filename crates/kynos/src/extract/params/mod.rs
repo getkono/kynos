@@ -9,5 +9,8 @@ pub mod header;
 pub mod path;
 pub mod query;
 
+#[cfg(feature = "openapi32")]
+pub mod querystring;
+
 #[cfg(feature = "cookie")]
 pub mod cookie;

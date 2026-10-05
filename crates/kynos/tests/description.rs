@@ -1598,7 +1598,7 @@ async fn search() -> NoContent {
 #[cfg(feature = "openapi32")]
 #[kynos::get("/filtered")]
 async fn filtered(
-    _: kynos::extract::params::query::QueryString<String, kynos::extract::media::Json>,
+    _: kynos::extract::params::querystring::QueryString<String, kynos::extract::media::Json>,
 ) -> NoContent {
     NoContent
 }

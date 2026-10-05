@@ -535,7 +535,8 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// `kynos::schema::ParamValue`: a field whose schema is an object is refused,
 /// since the default `form` style with `explode` would describe it as `x=1&y=2`
 /// while the decoder reads one `name=` pair. For a structured query,
-/// `QueryString<T, M>` describes the whole query string under `openapi32`.
+/// `kynos::extract::params::querystring::QueryString<T, M>` describes the whole
+/// query string under `openapi32`.
 ///
 /// A field's wire name is its `#[param(rename)]`, else serde's `rename`, else
 /// its identifier under the struct's `rename_all`, cased as the
