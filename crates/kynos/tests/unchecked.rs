@@ -231,3 +231,63 @@ fn one_reason_is_reported_once_however_many_routes_took_it() {
         [kynos::openapi::OpaqueReason::UntypedRoute]
     );
 }
+
+// --- What the match table refuses ------------------------------------------
+
+/// The error-level lines `validate` reports, and the ones `build` refuses
+/// with, which have to be the same.
+fn refusals(router: impl Fn() -> Router<()>) -> Vec<String> {
+    let reported: Vec<String> = router()
+        .validate()
+        .expect("a describable router")
+        .iter()
+        .filter(|violation| violation.severity == kynos::openapi::Severity::Error)
+        .map(ToString::to_string)
+        .collect();
+
+    let refused = match router().build(()) {
+        Err(kynos::Error::Invalid { violations }) => violations
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        Err(other) => panic!("refused for another reason: {other}"),
+        Ok(_) => panic!("built"),
+    };
+
+    assert_eq!(reported, refused);
+    reported
+}
+
+/// A catch-all and a bare variable in the same position leave the match table
+/// no rule for which one `/static/app.css` reaches.
+#[test]
+fn an_unchecked_route_the_matcher_cannot_order_fails_every_entry_point() {
+    assert_eq!(
+        refusals(|| with_catch_all().route_unchecked([Method::GET], "/static/{name}", echo_path)),
+        [
+            "error at #: `/static/{name}` conflicts with `/static/{*path}` in the router's match \
+          table"
+        ]
+    );
+
+    // The control: the same two shapes under different literals.
+    assert!(
+        with_catch_all()
+            .route_unchecked([Method::GET], "/media/{name}", echo_path)
+            .build(())
+            .is_ok()
+    );
+}
+
+/// A catch-all anywhere but the end is not a pattern the matcher reads.
+#[test]
+fn an_unchecked_pattern_the_matcher_cannot_read_fails_every_entry_point() {
+    assert_eq!(
+        refusals(|| Router::<()>::new().route_unchecked(
+            [Method::GET],
+            "/static/{*path}/raw",
+            echo_path
+        )),
+        ["error at #: `/static/{*path}/raw` is not a pattern the router's match table accepts"]
+    );
+}

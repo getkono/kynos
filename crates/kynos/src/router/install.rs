@@ -12,6 +12,10 @@ use super::{
     Result, Severity, SpecError, SpecVersion, Violation, dispatch,
 };
 
+// Named only by `install_unchecked`.
+#[cfg(feature = "unchecked")]
+use super::{HashMap, describe::match_table_refusal};
+
 /// Adds the routes no path template expresses to the match table.
 ///
 /// They reach the same table as every described route — they have to, or they
@@ -21,12 +25,8 @@ use super::{
 ///
 /// # Errors
 ///
-/// Returns [`Error::Invalid`] when a pattern collides with one already in the
-// Named only by `install_unchecked`.
-#[cfg(feature = "unchecked")]
-use super::HashMap;
-
-/// table under a different key.
+/// Returns [`Error::Invalid`] when the table refuses a pattern, which
+/// `describe` has already reported by then.
 #[cfg(feature = "unchecked")]
 pub(super) fn install_unchecked<C>(
     unchecked: &crate::unchecked::Unchecked<C>,
@@ -42,12 +42,9 @@ pub(super) fn install_unchecked<C>(
             *index
         } else {
             let index = paths.len();
-            matcher.insert(key.clone(), index).map_err(|_| {
-                invalid(SpecError::DuplicatePathTemplate {
-                    template: key.clone(),
-                    existing: key.clone(),
-                })
-            })?;
+            matcher
+                .insert(key.clone(), index)
+                .map_err(|error| invalid(match_table_refusal(&key, error)))?;
             paths.push(PathEntry {
                 template: key.clone(),
                 matched: crate::extract::connection::MatchedPath(dispatch::intern(&key)),

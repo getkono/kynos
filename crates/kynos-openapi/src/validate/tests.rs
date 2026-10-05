@@ -992,6 +992,7 @@ fn variant_name(error: &SpecError) -> &'static str {
     match error {
         SpecError::DuplicateOperationId { .. } => "DuplicateOperationId",
         SpecError::DuplicatePathTemplate { .. } => "DuplicatePathTemplate",
+        SpecError::DuplicateOperation { .. } => "DuplicateOperation",
         SpecError::InvalidPathTemplate { .. } => "InvalidPathTemplate",
         SpecError::UndeclaredPathVariable { .. } => "UndeclaredPathVariable",
         SpecError::UnusedPathParameter { .. } => "UnusedPathParameter",
@@ -1018,6 +1019,8 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::NotAuthoritative => "NotAuthoritative",
         SpecError::OpaqueOperation { .. } => "OpaqueOperation",
         SpecError::OpaqueRoute { .. } => "OpaqueRoute",
+        SpecError::RouteConflict { .. } => "RouteConflict",
+        SpecError::InvalidRoutePattern { .. } => "InvalidRoutePattern",
         SpecError::AuthorityNotStamped => "AuthorityNotStamped",
         SpecError::MalformedAnnotation { .. } => "MalformedAnnotation",
         SpecError::EmptyDocument => "EmptyDocument",
@@ -1038,6 +1041,16 @@ const RAISED_ELSEWHERE: &[&str] = &[
     // failure, and because `paths` being absent and `paths` being present but
     // empty are the same value here -- only the wire tells them apart.
     "EmptyDocument",
+    // Prevented by the model rather than reported: a `PathItem` has one slot
+    // per method, so no document holds a second operation for one. `kynos`'s
+    // `Router::describe` raises it when two mounts claim the same slot, and
+    // `crates/kynos/tests/routing.rs` covers it there.
+    "DuplicateOperation",
+    // About the router's match table, which no document has: `kynos`'s
+    // `TrialTable` raises both, and `crates/kynos/tests/routing.rs` and
+    // `crates/kynos/tests/unchecked.rs` cover them there.
+    "RouteConflict",
+    "InvalidRoutePattern",
     // A 3.1-only build has no 3.2 construct to raise this with. A 3.2-capable
     // one does, and carries a ledger case below.
     #[cfg(not(feature = "openapi32"))]
