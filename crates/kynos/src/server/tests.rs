@@ -64,10 +64,7 @@ fn http1_setters_write_their_own_fields() {
 fn http2_setters_write_their_own_fields() {
     use std::time::Duration;
 
-    let keep_alive = Http2KeepAlive {
-        interval: Duration::from_secs(7),
-        timeout: Duration::from_secs(3),
-    };
+    let keep_alive = Http2KeepAlive::new(Duration::from_secs(7), Duration::from_secs(3));
     let http2 = Http2Config::default()
         .max_concurrent_streams(64)
         .flow_control(Http2FlowControl::Adaptive)
@@ -852,10 +849,10 @@ async fn an_http2_peer_that_never_acknowledges_a_ping_is_disconnected() {
 
     let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
     let bound = crate::server::Server::new(test_service())
-        .http2(Http2Config::default().keep_alive(Some(Http2KeepAlive {
-            interval: Duration::from_millis(100),
-            timeout: Duration::from_millis(100),
-        })))
+        .http2(Http2Config::default().keep_alive(Some(Http2KeepAlive::new(
+            Duration::from_millis(100),
+            Duration::from_millis(100),
+        ))))
         .bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
             let _ = shutdown_receiver.await;
@@ -2754,10 +2751,10 @@ mod protocol_configuration {
             (
                 "a keep-alive that never waits",
                 Http1Config::default(),
-                Http2Config::default().keep_alive(Some(Http2KeepAlive {
-                    interval: Duration::ZERO,
-                    timeout: Duration::from_secs(5),
-                })),
+                Http2Config::default().keep_alive(Some(Http2KeepAlive::new(
+                    Duration::ZERO,
+                    Duration::from_secs(5),
+                ))),
                 "HTTP/2 keep-alive durations must be non-zero",
             ),
         ]
