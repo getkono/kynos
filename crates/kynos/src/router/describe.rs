@@ -8,6 +8,8 @@
 //! Private, and the split moves no path -- `Router` is still declared in
 //! `mod.rs`, and an inherent `impl` may sit in any module of the crate.
 
+use std::collections::HashSet;
+
 use super::install::{
     catches, cors_conflict, error_at, highest_version, install_preflight, invalid,
     lowest_expressing, placeholder_info, pointer_token, unique_tags,
@@ -124,12 +126,11 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 *index
             } else {
                 let index = paths.len();
-                matcher.insert(key.clone(), index).map_err(|_| {
-                    invalid(SpecError::DuplicatePathTemplate {
-                        template: key.clone(),
-                        existing: key.clone(),
-                    })
-                })?;
+                // `describe` tried the same inserts in a `TrialTable`, so a
+                // pattern refused here already failed the build above.
+                matcher
+                    .insert(key.clone(), index)
+                    .map_err(|error| invalid(match_table_refusal(&key, error)))?;
                 paths.push(PathEntry {
                     template: key.clone(),
                     matched: crate::extract::connection::MatchedPath(dispatch::intern(&key)),
@@ -241,6 +242,30 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                         name: (*name).to_owned(),
                     },
                 )),
+            }
+        }
+    }
+
+    /// Reports every pattern the match table would refuse.
+    ///
+    /// Called from `describe` rather than left to `build`'s inserts, so that
+    /// `validate` reports what `build` would be refused.
+    fn try_match_table(&self, violations: &mut Vec<Violation>) {
+        let mut table = TrialTable::default();
+        for mounted in &self.mounted {
+            if let Some(error) = table.insert_template(&mounted.path) {
+                violations.push(error_at(
+                    format!("#/paths/{}", pointer_token(mounted.path.as_str())),
+                    error,
+                ));
+            }
+        }
+
+        // An unchecked pattern has no `paths` key to be located at.
+        #[cfg(feature = "unchecked")]
+        for route in &self.unchecked.routes {
+            if let Some(error) = table.insert(&route.pattern) {
+                violations.push(error_at("#", error));
             }
         }
     }
@@ -361,6 +386,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 ));
             }
         }
+
+        self.try_match_table(&mut violations);
 
         for check in &self.short_circuit_checks {
             if let Some(error) = check(&mut registry) {
@@ -484,5 +511,58 @@ fn register_flipped_spellings<C>(matcher: &mut matchit::Router<usize>, paths: &[
         // A collision means the application declared that spelling itself, and
         // what it declared stands.
         let _ = matcher.insert(spelling, index);
+    }
+}
+
+/// A dry run of the match table `build` fills, so that `describe` — and with
+/// it `validate` — reports every pattern `build` would be refused.
+///
+/// Patterns go in in `build`'s order: every described key in mount order, then
+/// every unchecked pattern. That order decides which of two conflicting routes
+/// is reported, so it has to be the same.
+#[derive(Default)]
+struct TrialTable {
+    table: matchit::Router<()>,
+    held: HashSet<String>,
+    shapes: HashSet<String>,
+}
+
+impl TrialTable {
+    /// Tries a described key.
+    ///
+    /// A key whose shape an earlier key already holds under other variable
+    /// names is skipped: the validator reports it as `DuplicatePathTemplate`.
+    fn insert_template(&mut self, template: &kynos_openapi::PathTemplate) -> Option<SpecError> {
+        if self.held.contains(template.as_str()) || !self.shapes.insert(template.normalized()) {
+            return None;
+        }
+        self.insert(template.as_str())
+    }
+
+    /// Tries a matching pattern, as `build` inserts it.
+    ///
+    /// A pattern already held is one entry serving another method, as it is in
+    /// `build`, and is not tried again — refused or not.
+    fn insert(&mut self, pattern: &str) -> Option<SpecError> {
+        if !self.held.insert(pattern.to_owned()) {
+            return None;
+        }
+        self.table
+            .insert(pattern, ())
+            .err()
+            .map(|error| match_table_refusal(pattern, error))
+    }
+}
+
+/// What the match table refusing `pattern` means.
+pub(super) fn match_table_refusal(pattern: &str, error: matchit::InsertError) -> SpecError {
+    match error {
+        matchit::InsertError::Conflict { with } => SpecError::RouteConflict {
+            pattern: pattern.to_owned(),
+            existing: with,
+        },
+        _ => SpecError::InvalidRoutePattern {
+            pattern: pattern.to_owned(),
+        },
     }
 }

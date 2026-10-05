@@ -225,6 +225,13 @@ fn two_templates_the_matcher_cannot_order_fail_every_entry_point() {
     let [violation] = reported.as_slice() else {
         panic!("one violation: {reported:#?}");
     };
+    assert_eq!(
+        violation.error,
+        SpecError::RouteConflict {
+            pattern: "/files/v{name}".to_owned(),
+            existing: "/files/{path}.txt".to_owned(),
+        }
+    );
     assert_eq!(violation.to_string(), expected);
 
     let violations = refusal(router().build(()).map(|_| ()));

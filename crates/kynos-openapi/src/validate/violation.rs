@@ -337,6 +337,29 @@ pub enum SpecError {
         pattern: String,
     },
 
+    /// Two routes cannot share the router's match table, which has no rule for
+    /// which of them a request reaches — `/{x}.txt` beside `/v{x}`, say.
+    ///
+    /// Raised by a router rather than by validation: a document may hold both.
+    #[error("`{pattern}` conflicts with `{existing}` in the router's match table")]
+    RouteConflict {
+        /// The pattern being added.
+        pattern: String,
+        /// The pattern already in the table.
+        existing: String,
+    },
+
+    /// A matching pattern is not one the router's match table can read.
+    ///
+    /// Reachable only for a pattern given verbatim, such as an unchecked
+    /// route's — a catch-all before the end, say. A path template is checked
+    /// when it is parsed.
+    #[error("`{pattern}` is not a pattern the router's match table accepts")]
+    InvalidRoutePattern {
+        /// The router's matching pattern, verbatim.
+        pattern: String,
+    },
+
     /// The description is opaque somewhere but does not say so at the root.
     ///
     /// The document-level stamp is the one-glance signal a consumer reads

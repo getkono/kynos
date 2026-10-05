@@ -1019,6 +1019,8 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::NotAuthoritative => "NotAuthoritative",
         SpecError::OpaqueOperation { .. } => "OpaqueOperation",
         SpecError::OpaqueRoute { .. } => "OpaqueRoute",
+        SpecError::RouteConflict { .. } => "RouteConflict",
+        SpecError::InvalidRoutePattern { .. } => "InvalidRoutePattern",
         SpecError::AuthorityNotStamped => "AuthorityNotStamped",
         SpecError::MalformedAnnotation { .. } => "MalformedAnnotation",
         SpecError::EmptyDocument => "EmptyDocument",
@@ -1044,6 +1046,11 @@ const RAISED_ELSEWHERE: &[&str] = &[
     // `Router::describe` raises it when two mounts claim the same slot, and
     // `crates/kynos/tests/routing.rs` covers it there.
     "DuplicateOperation",
+    // About the router's match table, which no document has: `kynos`'s
+    // `TrialTable` raises both, and `crates/kynos/tests/routing.rs` and
+    // `crates/kynos/tests/unchecked.rs` cover them there.
+    "RouteConflict",
+    "InvalidRoutePattern",
     // A 3.1-only build has no 3.2 construct to raise this with. A 3.2-capable
     // one does, and carries a ledger case below.
     #[cfg(not(feature = "openapi32"))]
