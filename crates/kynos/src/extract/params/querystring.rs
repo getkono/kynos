@@ -154,15 +154,22 @@ const ABSENT: &str = "null";
 ///
 /// True for the `true` schema, a `type` naming `null`, and an `anyOf` or
 /// `oneOf` with such a member, which covers every shape `Option<T>` describes
-/// itself as. A `$ref` is not followed. Anything not recognised answers false,
-/// which errs towards `required`: a client told to send a query string the
-/// server could have done without is merely over-cautious, while one told it
-/// may omit a query string the server refuses fails every time.
+/// itself as. A `$ref` is not followed, and a schema carrying a keyword that
+/// can exclude `null` whatever its `type` says — `const`, `enum`, `allOf` or
+/// `not` — is not evaluated. Anything not recognised answers false, which errs
+/// towards `required`: a client told to send a query string the server could
+/// have done without is merely over-cautious, while one told it may omit a
+/// query string the server refuses fails every time.
 fn admits_null(schema: &kynos_openapi::Schema) -> bool {
     let Some(object) = schema.as_object() else {
         return matches!(schema, kynos_openapi::Schema::Bool(true));
     };
-    if object.reference.is_some() || object.const_value.is_some() {
+    if object.reference.is_some()
+        || object.const_value.is_some()
+        || object.enumeration.is_some()
+        || object.all_of.is_some()
+        || object.not.is_some()
+    {
         return false;
     }
 
