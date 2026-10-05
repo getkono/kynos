@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use super::{Event, encode, heartbeat_record};
 
 /// Re-parses a record into its `(field, value)` pairs, using a reader
@@ -86,7 +88,7 @@ fn an_event_writes_every_field_it_carries_in_dispatch_order() {
         .comment("about to happen")
         .event("created")
         .id("42")
-        .retry(3_000);
+        .retry(Duration::from_secs(3));
 
     assert_eq!(
         reparse(&encode(&event).expect("an encodable event")),
@@ -98,6 +100,36 @@ fn an_event_writes_every_field_it_carries_in_dispatch_order() {
             ("data".to_owned(), "[1,2]".to_owned()),
         ]
     );
+}
+
+/// The format carries `retry` as an integer of milliseconds, so a finer
+/// `Duration` is rounded up to whole milliseconds rather than truncated or
+/// written as a fraction a client would refuse.
+#[test]
+fn a_retry_is_written_in_whole_milliseconds_rounding_the_remainder_up() {
+    let event = Event::new(0_u8).retry(Duration::from_micros(1_001));
+    let fields = reparse(&encode(&event).expect("an encodable event"));
+
+    assert_eq!(fields[0], ("retry".to_owned(), "2".to_owned()));
+}
+
+/// Truncating a non-zero delay under a millisecond would write `retry: 0`,
+/// which tells a client to reconnect at once.
+#[test]
+fn a_sub_millisecond_retry_is_never_written_as_zero() {
+    let event = Event::new(0_u8).retry(Duration::from_nanos(1));
+    let fields = reparse(&encode(&event).expect("an encodable event"));
+
+    assert_eq!(fields[0], ("retry".to_owned(), "1".to_owned()));
+}
+
+/// An explicit zero is the one value that already says what it means.
+#[test]
+fn a_zero_retry_is_written_as_zero() {
+    let event = Event::new(0_u8).retry(Duration::ZERO);
+    let fields = reparse(&encode(&event).expect("an encodable event"));
+
+    assert_eq!(fields[0], ("retry".to_owned(), "0".to_owned()));
 }
 
 /// An omitted field is absent rather than empty: a client reads `id:` with

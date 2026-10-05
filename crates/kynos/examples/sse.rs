@@ -29,8 +29,8 @@
 //!   `Feed::resuming_after` below is the application's, and that is the whole
 //!   division of labour.
 //! * **`retry` is advice, and it belongs on the first event.** It sets how long
-//!   a client waits before reconnecting, in milliseconds. Repeating it on every
-//!   event costs bytes on every event to say what was already said.
+//!   a client waits before reconnecting, sent in whole milliseconds. Repeating
+//!   it on every event costs bytes on every event to say what was already said.
 //! * **Keep-alive is a comment, so it appears in no description.** The protocol
 //!   requires a client to ignore comment lines, which is exactly what makes them
 //!   usable to stop an idle connection being reaped by an intermediary. Nothing
@@ -175,7 +175,7 @@ impl futures_core::Stream for Feed {
             // Two seconds, sent once. A client that reconnects sooner than the
             // producer can usefully serve it is a client the producer asked for.
             event = event
-                .retry(2_000)
+                .retry(Duration::from_secs(2))
                 .comment("reconnect after two seconds, resuming from the last id");
         }
 

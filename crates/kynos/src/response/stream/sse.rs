@@ -149,8 +149,11 @@ pub struct Event<T> {
     pub event: Option<String>,
     /// The event id, which a client returns as `Last-Event-ID` on reconnect.
     pub id: Option<String>,
-    /// How long a client should wait before reconnecting, in milliseconds.
-    pub retry: Option<u64>,
+    /// How long a client should wait before reconnecting.
+    ///
+    /// The format carries whole milliseconds, so any sub-millisecond remainder
+    /// is rounded up on the wire.
+    pub retry: Option<std::time::Duration>,
     /// A comment sent before the event data, if any.
     pub comment: Option<String>,
 }
@@ -182,9 +185,12 @@ impl<T> Event<T> {
         self
     }
 
-    /// Sets the client reconnection delay in milliseconds.
+    /// Sets how long a client should wait before reconnecting.
+    ///
+    /// The format carries whole milliseconds, so any sub-millisecond remainder
+    /// is rounded up on the wire.
     #[must_use]
-    pub fn retry(mut self, retry: u64) -> Self {
+    pub fn retry(mut self, retry: std::time::Duration) -> Self {
         self.retry = Some(retry);
         self
     }
@@ -314,12 +320,27 @@ fn encode<T: serde::Serialize>(event: &Event<T>) -> Result<bytes::Bytes, BoxErro
         field(&mut record, "id", id);
     }
     if let Some(retry) = event.retry {
-        field(&mut record, "retry", &retry.to_string());
+        field(&mut record, "retry", &milliseconds(retry).to_string());
     }
     field(&mut record, "data", &data);
     record.push('\n');
 
     Ok(bytes::Bytes::from(record))
+}
+
+/// A reconnect delay as the whole milliseconds `retry` carries.
+///
+/// Rounded *up*, as `Access-Control-Max-Age` and `Retry-After` are: truncating
+/// a sub-millisecond delay renders `0`, which tells a client to reconnect at
+/// once — the opposite of the wait that was asked for. An explicit zero stays
+/// zero.
+fn milliseconds(retry: std::time::Duration) -> u128 {
+    let whole = retry.as_millis();
+    if retry.subsec_nanos() % 1_000_000 > 0 {
+        whole + 1
+    } else {
+        whole
+    }
 }
 
 /// Writes one field, one line per line of its value.
