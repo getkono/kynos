@@ -149,7 +149,7 @@ pub(crate) fn described_statuses(responses: &kynos_openapi::Responses) -> Vec<u1
 /// Always `None` for a type whose implementation the `ApiError` derive emitted,
 /// since both halves come from one declaration there.
 #[must_use]
-pub fn short_circuit_mismatch<S: ShortCircuit>(
+pub(crate) fn short_circuit_mismatch<S: ShortCircuit>(
     registry: &mut Registry,
 ) -> Option<kynos_openapi::SpecError> {
     mismatch_between(
