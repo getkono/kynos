@@ -208,6 +208,41 @@ fn mounting_one_method_on_one_path_twice_fails_the_build() {
     );
 }
 
+/// `/files/{path}.txt` and `/files/v{name}` are two different templates, but
+/// the match table has no rule for which one `/files/v1.txt` reaches, so it
+/// cannot hold both. Every entry point reports that, under the second key.
+#[test]
+fn two_templates_the_matcher_cannot_order_fail_every_entry_point() {
+    let router = || {
+        Router::<()>::new()
+            .mount(at(OpenApiMethod::Get, "/files/{path}.txt", a_file))
+            .mount(at(OpenApiMethod::Get, "/files/v{name}", a_named_file))
+    };
+    let expected = "error at #/paths/~1files~1v{name}: `/files/v{name}` conflicts with \
+                    `/files/{path}.txt` in the router's match table";
+
+    let reported = router().validate().expect("a describable router");
+    let [violation] = reported.as_slice() else {
+        panic!("one violation: {reported:#?}");
+    };
+    assert_eq!(violation.to_string(), expected);
+
+    let violations = refusal(router().build(()).map(|_| ()));
+    let [violation] = violations.as_slice() else {
+        panic!("one violation: {violations:#?}");
+    };
+    assert_eq!(violation.to_string(), expected);
+
+    // The control: two suffixes are a combination the matcher orders.
+    assert!(
+        Router::<()>::new()
+            .mount(at(OpenApiMethod::Get, "/files/{path}.txt", a_file))
+            .mount(at(OpenApiMethod::Get, "/files/{name}.csv", a_named_file))
+            .build(())
+            .is_ok()
+    );
+}
+
 /// `/files/{path}` and `/files/{name}` match exactly the same requests, so the
 /// second is refused as a duplicate of the first.
 #[test]
