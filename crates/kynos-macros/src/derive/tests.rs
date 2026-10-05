@@ -1423,6 +1423,31 @@ mod schema {
                     ),
                     "`deserialize_with` reads or writes this field",
                 ),
+                case(
+                    "`deserialize_with` on the read pick of a struct split across two members",
+                    quote::quote!(
+                        #[serde(transparent)]
+                        struct Handle(
+                            #[serde(skip_deserializing)] u64,
+                            #[serde(skip_serializing, deserialize_with = "from_string")] u64,
+                        );
+                    ),
+                    "`deserialize_with` reads or writes this field",
+                ),
+                case(
+                    "`deserialize_with` before `serialize_with` on the member picked both ways",
+                    quote::quote!(
+                        #[serde(transparent)]
+                        struct Handle(
+                            #[serde(
+                                deserialize_with = "from_string",
+                                serialize_with = "as_string"
+                            )]
+                            u64,
+                        );
+                    ),
+                    "`deserialize_with` reads or writes this field",
+                ),
             ],
             expand_inner,
         );
