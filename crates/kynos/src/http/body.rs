@@ -6,7 +6,7 @@
 
 use std::{
     error::Error as StdError,
-    fmt,
+    fmt, mem,
     pin::Pin,
     sync::Mutex,
     task::{Context, Poll},
@@ -234,7 +234,28 @@ impl Drop for Watched {
             Delivery::Interrupted
         };
 
-        self.report(delivery);
+        // Release what is wrapped before reporting: an observer told the body
+        // is gone may treat whatever it held as gone too. The guard reports on
+        // its own drop, so a release that panics still reports as it unwinds.
+        let _report = Reporting {
+            report: self.report.take(),
+            delivery,
+        };
+        drop(mem::take(&mut self.inner));
+    }
+}
+
+/// Makes a [`Watched`] body's report when dropped, including by an unwind.
+struct Reporting {
+    report: Option<Box<dyn FnOnce(Delivery) + Send>>,
+    delivery: Delivery,
+}
+
+impl Drop for Reporting {
+    fn drop(&mut self) {
+        if let Some(report) = self.report.take() {
+            report(self.delivery);
+        }
     }
 }
 
