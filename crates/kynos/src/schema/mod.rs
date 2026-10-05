@@ -332,5 +332,18 @@ pub trait ParamValue:
 {
 }
 
+/// Whether `schema`'s `type` names `null`, whatever its other keywords say.
+pub(crate) fn type_admits_null(schema: &OpenApiSchema) -> bool {
+    use kynos_openapi::model::schema::types::{SchemaType, TypeSet};
+
+    schema
+        .as_object()
+        .and_then(|object| object.ty.as_ref())
+        .is_some_and(|ty| match ty {
+            TypeSet::One(one) => *one == SchemaType::Null,
+            TypeSet::Many(many) => many.contains(&SchemaType::Null),
+        })
+}
+
 #[cfg(test)]
 mod tests;

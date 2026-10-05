@@ -1,13 +1,11 @@
 //! The whole query string as one parameter, OpenAPI 3.2's `in: querystring`.
 
-use kynos_openapi::model::schema::types::{SchemaType, TypeSet};
-
 use crate::{
     error::rejection::QueryRejection,
     extract::{FromRequestParts, describe::Describe},
     http::{Parts, media::MediaType},
     router::operation::OperationCx,
-    schema::Schema,
+    schema::{Schema, type_admits_null},
 };
 
 /// The whole query string, described by media type.
@@ -173,16 +171,11 @@ fn admits_null(schema: &kynos_openapi::Schema) -> bool {
         return false;
     }
 
-    let typed_null = object.ty.as_ref().is_some_and(|ty| match ty {
-        TypeSet::One(one) => *one == SchemaType::Null,
-        TypeSet::Many(many) => many.contains(&SchemaType::Null),
-    });
-    let composed_null = [&object.any_of, &object.one_of]
-        .into_iter()
-        .flatten()
-        .any(|members| members.iter().any(admits_null));
-
-    typed_null || composed_null
+    type_admits_null(schema)
+        || [&object.any_of, &object.one_of]
+            .into_iter()
+            .flatten()
+            .any(|members| members.iter().any(admits_null))
 }
 
 #[cfg(test)]
