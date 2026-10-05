@@ -656,7 +656,7 @@ async fn body_of<C: Send + Sync + 'static>(
 #[cfg(feature = "openapi32")]
 #[kynos::get("/steady")]
 async fn steady()
--> kynos::response::stream::binary::BinaryStream<Trickle, kynos::extract::media::OctetStream> {
+-> kynos::response::stream::binary::BinaryStream<Trickle, kynos::http::media::OctetStream> {
     kynos::response::stream::binary::BinaryStream::new(Trickle::new(10, Duration::from_millis(5)))
 }
 
@@ -664,7 +664,7 @@ async fn steady()
 #[cfg(feature = "openapi32")]
 #[kynos::get("/stalled")]
 async fn stalled()
--> kynos::response::stream::binary::BinaryStream<Trickle, kynos::extract::media::OctetStream> {
+-> kynos::response::stream::binary::BinaryStream<Trickle, kynos::http::media::OctetStream> {
     kynos::response::stream::binary::BinaryStream::new(Trickle::new(1, Duration::from_secs(30)))
 }
 

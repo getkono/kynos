@@ -55,11 +55,7 @@
 //! [`scripts/cost_features.py`]: ../../../scripts/cost_features.py
 //! [`Binary<OctetStream>`]: kynos::extract::body::binary::Binary
 
-use kynos::{
-    extract::{body::binary::Binary, media::OctetStream},
-    openapi::Info,
-    prelude::*,
-};
+use kynos::{extract::body::binary::Binary, http::media::OctetStream, openapi::Info, prelude::*};
 
 /// The transport floor, inbound: the octets are read and dropped undecoded.
 #[kynos::post("/floor/bytes")]

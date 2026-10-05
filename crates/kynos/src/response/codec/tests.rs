@@ -82,7 +82,7 @@ async fn text_writes_the_string_and_states_its_charset() {
 
 #[tokio::test]
 async fn binary_writes_its_bytes_verbatim_under_the_type_it_was_given() {
-    use crate::extract::{body::binary::Binary, media::OctetStream};
+    use crate::{extract::body::binary::Binary, http::media::OctetStream};
 
     let response = Binary::<OctetStream>::new(&[0x00, 0xff, 0x10][..]).into_response();
 

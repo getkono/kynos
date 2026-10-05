@@ -107,7 +107,8 @@ impl Disposition {
 ///
 /// ```
 /// use kynos::{
-///     extract::{body::binary::Binary, media::Pdf},
+///     extract::body::binary::Binary,
+///     http::media::Pdf,
 ///     response::{disposition::ContentDisposition, headers::WithHeaders},
 /// };
 ///

@@ -1,7 +1,7 @@
 use super::{MEDIA_TYPE, RangedParts, Selected, byteranges};
 use crate::{
-    extract::{body::binary::Binary, media::OctetStream},
-    http::{Response, StatusCode, header},
+    extract::body::binary::Binary,
+    http::{Response, StatusCode, header, media::OctetStream},
     response::{
         IntoResponse, Responses,
         range::{

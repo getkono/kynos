@@ -3,7 +3,8 @@
 use bytes::Bytes;
 
 use crate::{
-    extract::{body::binary::Binary, media::MediaType},
+    extract::body::binary::Binary,
+    http::media::MediaType,
     response::{IntoResponse, Responses},
 };
 
@@ -45,7 +46,8 @@ mod sealed {
 ///
 /// ```
 /// use kynos::{
-///     extract::{body::binary::Binary, media::OctetStream},
+///     extract::body::binary::Binary,
+///     http::media::OctetStream,
 ///     response::range::rangeable::Rangeable,
 /// };
 ///

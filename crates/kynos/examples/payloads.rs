@@ -41,10 +41,8 @@
 use std::net::Ipv4Addr;
 
 use kynos::{
-    extract::{
-        body::{OneOf, binary::Binary, form::Form, multipart::MultipartForm, text::Text},
-        media::{MediaType, Png},
-    },
+    extract::body::{OneOf, binary::Binary, form::Form, multipart::MultipartForm, text::Text},
+    http::media::{MediaType, Png},
     middleware::limits::body_size::BodySize,
     openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType},
     prelude::*,

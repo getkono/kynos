@@ -439,9 +439,9 @@ mod partial {
     use kynos::{
         Router,
         error::rejection::RangeRejection,
-        extract::{body::binary::Binary, media::OctetStream},
+        extract::body::binary::Binary,
         http::etag::ETag,
-        http::{StatusCode, header},
+        http::{StatusCode, header, media::OctetStream},
         middleware::compression::Compression,
         response::{
             headers::WithHeaders,
@@ -706,8 +706,7 @@ mod partial {
         use bytes::Bytes;
         use kynos::{
             Router,
-            extract::media::OctetStream,
-            http::{StatusCode, header},
+            http::{StatusCode, header, media::OctetStream},
             middleware::compression::Compression,
             response::{headers::WithHeaders, stream::binary::BinaryStream},
         };
@@ -926,8 +925,8 @@ mod ranged_assets {
 mod levels {
     use kynos::{
         Router,
-        extract::{body::binary::Binary, media::OctetStream},
-        http::{StatusCode, header},
+        extract::body::binary::Binary,
+        http::{StatusCode, header, media::OctetStream},
         middleware::compression::{
             Compression,
             levels::{BrotliLevel, GzipLevel, ZstdLevel},
@@ -1046,8 +1045,8 @@ mod levels {
 mod encoding_policy {
     use kynos::{
         Router,
-        extract::{body::binary::Binary, media::OctetStream},
-        http::{StatusCode, header},
+        extract::body::binary::Binary,
+        http::{StatusCode, header, media::OctetStream},
         middleware::compression::{
             Compression,
             policy::{Encoding, WithEncoding},
@@ -1221,8 +1220,7 @@ mod streamed_failure {
 
     use kynos::{
         Router,
-        extract::media::OctetStream,
-        http::{Request, body::Body, header},
+        http::{Request, body::Body, header, media::OctetStream},
         middleware::{Observer, compression::Compression},
         response::stream::binary::BinaryStream,
         router::{operation::Route, service::Service},
@@ -1355,8 +1353,8 @@ mod streamed_failure {
 mod default_threshold {
     use kynos::{
         Router,
-        extract::{body::binary::Binary, media::OctetStream},
-        http::{StatusCode, header},
+        extract::body::binary::Binary,
+        http::{StatusCode, header, media::OctetStream},
         middleware::compression::{
             Compression,
             policy::{Encoding, WithEncoding},

@@ -2,8 +2,8 @@
 
 use crate::{
     error::rejection::QueryRejection,
-    extract::{FromRequestParts, describe::Describe, media::MediaType},
-    http::Parts,
+    extract::{FromRequestParts, describe::Describe},
+    http::{Parts, media::MediaType},
     router::operation::OperationCx,
     schema::Schema,
 };

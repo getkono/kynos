@@ -287,11 +287,11 @@ async fn a_header_can_be_read_and_asserted() {
 #[kynos::get("/recording")]
 async fn recording(
     range: kynos::response::range::Range<
-        kynos::extract::body::binary::Binary<kynos::extract::media::OctetStream>,
+        kynos::extract::body::binary::Binary<kynos::http::media::OctetStream>,
     >,
 ) -> Result<
     kynos::response::range::Ranged<
-        kynos::extract::body::binary::Binary<kynos::extract::media::OctetStream>,
+        kynos::extract::body::binary::Binary<kynos::http::media::OctetStream>,
     >,
     kynos::error::rejection::RangeRejection,
 > {

@@ -42,8 +42,7 @@ use std::{
 use bytes::Bytes;
 use kynos::{
     Router,
-    extract::media::MediaType,
-    http::etag::ETag,
+    http::{etag::ETag, media::MediaType},
     response::range::{
         served::{Conditions, Delivery, Served},
         source::ByteSource,

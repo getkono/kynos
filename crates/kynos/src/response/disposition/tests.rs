@@ -2,9 +2,9 @@ use kynos_openapi::model::schema::types::SchemaType;
 
 use super::{ContentDisposition, Disposition, EncodeHeaders};
 use crate::{
+    extract::body::binary::Binary,
     extract::params::header::HeaderParams,
-    extract::{body::binary::Binary, media::Pdf},
-    http::header,
+    http::{header, media::Pdf},
     response::{IntoResponse, Responses, headers::WithHeaders, status::Created},
     schema::registry::Registry,
 };

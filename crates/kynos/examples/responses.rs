@@ -47,10 +47,8 @@ use std::net::Ipv4Addr;
 
 use kynos::{
     error::rejection::RangeRejection,
-    extract::{
-        body::binary::Binary,
-        media::{OctetStream, Pdf},
-    },
+    extract::body::binary::Binary,
+    http::media::{OctetStream, Pdf},
     prelude::*,
     response::{
         disposition::ContentDisposition,
