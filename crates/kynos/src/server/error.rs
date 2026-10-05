@@ -14,7 +14,7 @@ pub enum ServerError {
     /// No address or listener was configured.
     #[error("the server has no listeners")]
     NoListeners,
-    /// A protocol setting was invalid.
+    /// A server setting was invalid.
     #[error("invalid server configuration: {0}")]
     InvalidConfiguration(&'static str),
     /// An address could not be resolved.
@@ -46,6 +46,14 @@ pub enum ServerError {
         /// The final accept failure.
         #[source]
         source: io::Error,
+    },
+    /// An accept loop ended without returning a result: it panicked or was
+    /// cancelled.
+    #[error("an accept loop {}", if *panicked { "panicked" } else { "was cancelled" })]
+    #[non_exhaustive]
+    AcceptLoop {
+        /// Whether the loop panicked, rather than being cancelled.
+        panicked: bool,
     },
     /// An operating-system shutdown signal could not be registered.
     #[error("could not register a shutdown signal")]
