@@ -483,7 +483,7 @@ public types lengthens every one of their paths, because no re-export may
 preserve the old one. `error/rejection.rs` is the clearest case: it is one of
 them, it declares every rejection type, and splitting it would turn
 `error::rejection::PathRejection` into
-`error::rejection::path::PathRejection`. Seventeen of the twenty-nine are that
+`error::rejection::path::PathRejection`. Sixteen of the twenty-nine are that
 shape, worth roughly a hundred public paths between them — and each is one
 cohesive family, which is precisely what the concern test says may stay a file.
 So they stay: a longer path is a worse name, and the rule's first clause already
@@ -503,10 +503,10 @@ own reason to change. The concern test answers yes there, so
 The budget is the honest record of what stayed. It falls when a module is split,
 and raising it means saying in the same commit why a new module needs the room.
 
-`response/status.rs` is the twenty-eighth, and it is the shape above rather than
-a new argument. It declares six public types — `Location`, `NoContent`,
-`Created`, `Accepted`, `Redirect` and `ValidRedirectCode` — so splitting it
-would turn `response::status::Created` into
+Three of them crossed the line after v0.1.0, and each was argued for as it did.
+`response/status.rs` is the shape above rather than a new argument. It declares
+six public types — `Location`, `NoContent`, `Created`, `Accepted`, `Redirect`
+and `ValidRedirectCode` — so splitting it would turn `response::status::Created` into
 `response::status::created::Created` and do the same to the other five. What
 pushed it over was the third case in the rule that decides a wrapper's declared
 response: a body may describe no 200, or one, or the wrapper's own status, and
@@ -515,9 +515,8 @@ representation the body had already declared. The case is four lines; the
 account of why the body's half wins is the rest, and it is the half a later
 reader needs.
 
-`error/problem.rs` is the twenty-ninth, and it is a different argument:
-splitting it would cost no public path at all. It holds the wire representation of an
-error — `Problem`, `IntoProblem`, the two writers every description of an error
+`error/problem.rs` is a different argument: splitting it would cost no public
+path at all. It holds the wire representation of an error — `Problem`, `IntoProblem`, the two writers every description of an error
 response goes through — and the narrowing that states which type URIs a status
 publishes, which arrived from `__private/` when framework code came to need it
 as well as the derive. The narrowing could sit in a private submodule for free,
@@ -527,9 +526,8 @@ separated the spelling from the only thing holding it to one place would put the
 next reader one file away from the argument. One concern, so one file — the
 first clause of the rule, reached by the second's not applying.
 
-`derive/schema/attributes.rs` is the thirtieth, and it is `problem.rs`'s
-argument: nothing in `kynos-macros` is public but the derives, so a split would
-cost no path. It holds what the `Schema` derive reads off one member's
+`derive/schema/attributes.rs` takes `problem.rs`'s argument: nothing in
+`kynos-macros` is public but the derives, so a split would cost no path. It holds what the `Schema` derive reads off one member's
 attribute list — its names, whether it is described, required or open, and its
 constraints — each a question the shape code asks of the same list. What pushed
 it over was reading both sides of a split `rename`, so a member now has the name
