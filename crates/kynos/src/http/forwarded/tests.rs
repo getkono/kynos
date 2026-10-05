@@ -271,6 +271,53 @@ fn a_quote_the_client_leaves_open_swallows_no_trusted_hop() {
     }
 }
 
+/// Repeated `Forwarded` lines are one list, in the order they were written.
+///
+/// RFC 9110 section 5.3 makes a repeated list field one comma-joined value, so
+/// the second line's elements follow the first's, and each spends its own hop.
+#[test]
+fn repeated_forwarded_lines_are_one_chain_in_written_order() {
+    let headers = map(&[
+        ("forwarded", "for=198.51.100.1, for=203.0.113.9"),
+        ("forwarded", "for=192.0.2.7, for=unknown"),
+    ]);
+
+    for (hops, client) in [
+        (1, None),
+        (2, Some("192.0.2.7")),
+        (3, Some("203.0.113.9")),
+        (4, Some("198.51.100.1")),
+    ] {
+        let resolved = Forwarded::resolve(
+            &headers,
+            Some(peer("10.0.0.1")),
+            &TrustedProxies::hops(hops),
+        );
+
+        assert_eq!(resolved.client(), client.map(ip), "hops({hops})");
+    }
+}
+
+/// Where several elements state a scheme, the last one written wins, across
+/// elements and across repeated lines, and is lowercased.
+#[test]
+fn the_last_written_scheme_wins_across_elements_and_lines() {
+    let headers = map(&[
+        (
+            "forwarded",
+            "for=198.51.100.1;proto=ws, for=203.0.113.9;proto=http",
+        ),
+        (
+            "forwarded",
+            "for=192.0.2.7;proto=http, for=10.0.0.2;proto=HTTPS",
+        ),
+    ]);
+
+    let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+
+    assert_eq!(resolved.proto(), Some("https"));
+}
+
 /// Every `nodename` form section 6 defines, and what each yields.
 ///
 /// The table is the grammar. `unknown` and an `obfnode` are identifiers rather
