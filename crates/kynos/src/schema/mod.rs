@@ -325,7 +325,7 @@ impl MapKey for String {}
             its `Schema`, so that schema must describe one value, not an object or an array; \
             implement `kynos::schema::ParamValue` for a newtype or enum whose schema does",
     note = "for a structured query such as a search filter, take the whole query string as \
-            `kynos::extract::params::query::QueryString` under `openapi32`"
+            `kynos::extract::params::querystring::QueryString` under `openapi32`"
 )]
 pub trait ParamValue:
     Schema + std::str::FromStr<Err: std::fmt::Display> + std::fmt::Display

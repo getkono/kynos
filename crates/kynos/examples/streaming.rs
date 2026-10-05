@@ -62,7 +62,7 @@ use kynos::{
             json_lines::{JsonLines, JsonSeq, records::Records},
         },
         media::{MediaType, OctetStream},
-        params::query::QueryString,
+        params::querystring::QueryString,
     },
     prelude::*,
     response::{
