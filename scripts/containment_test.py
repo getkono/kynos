@@ -1943,6 +1943,42 @@ class Main(unittest.TestCase):
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/extract/params/query.rs", reported[0])
 
+    def test_every_remaining_listed_crate_is_reported_at_a_stray_site(self):
+        # One case per architecture.md row whose *Named in* cell lists sites
+        # and that no case above holds. Each row is its own claim, so each gets
+        # its own stray: a site beside the allowed ones, doing the job a second
+        # site would plausibly be added for.
+        for stray, addition, description in [
+            ("crates/kynos/src/router/dispatch.rs", "use tracing::debug;",
+             "`tracing` is named only"),
+            ("crates/kynos/src/extract/body/form.rs", "use futures_core::Stream;",
+             "`futures-core` is named only"),
+            ("crates/kynos/src/extract/body/form.rs", "use multer::Multipart;",
+             "`multer` is named only"),
+            ("crates/kynos/src/response/codec/form.rs", "use prost::Message;",
+             "`prost` is named only"),
+            ("crates/kynos/src/schema/impls/temporal/mod.rs", "use uuid::Uuid;",
+             "`uuid` is named only"),
+            ("crates/kynos/src/schema/impls/identifier.rs", "use jiff::Timestamp;",
+             "`chrono` and `jiff` are named only"),
+            ("crates/kynos/src/schema/impls/identifier.rs", "use rust_decimal::Decimal;",
+             "`rust_decimal` and `bigdecimal` are named only"),
+            ("crates/kynos/src/extract/params/query.rs",
+             "use percent_encoding::percent_decode_str;", "`percent-encoding` is named only"),
+            ("crates/kynos/src/test/mod.rs", "use jsonschema::Validator;",
+             "`jsonschema` is named only"),
+            ("crates/kynos-openapi/src/lib.rs", "use serde_yaml_ng::to_string;",
+             "`serde_yaml_ng` is named only"),
+            ("crates/kynos/src/unchecked.rs", "use indexmap::IndexMap;",
+             "`indexmap` is named only"),
+        ]:
+            with self.subTest(addition=addition):
+                status, failures = self.report(corpus=self.appending(stray, f"\n{addition}\n"))
+                self.assertEqual(status, 1)
+                reported = self.naming(failures, description)
+                self.assertEqual(len(reported), 1)
+                self.assertIn(stray, reported[0])
+
     def test_a_renamed_surface_heading_skips_the_declaration_check(self):
         broken = gate.ARCHITECTURE.replace(self.SURFACE, "### The public surface", 1)
         broken = self.rewriting(broken, self.DECLARED_SITE, "crates/kynos/src/lib.rs")
