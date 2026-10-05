@@ -243,18 +243,18 @@ impl OperationCx<'_> {
     }
 
     /// Sets the operation identifier.
-    pub fn set_operation_id(&mut self, id: &str) {
-        self.operation.operation_id = Some(id.to_owned());
+    pub fn set_operation_id(&mut self, id: impl Into<String>) {
+        self.operation.operation_id = Some(id.into());
     }
 
     /// Sets the summary.
-    pub fn set_summary(&mut self, summary: &str) {
-        self.operation.summary = Some(summary.to_owned());
+    pub fn set_summary(&mut self, summary: impl Into<String>) {
+        self.operation.summary = Some(summary.into());
     }
 
     /// Sets the description.
-    pub fn set_description(&mut self, description: &str) {
-        self.operation.description = Some(description.to_owned());
+    pub fn set_description(&mut self, description: impl Into<String>) {
+        self.operation.description = Some(description.into());
     }
 
     /// Marks the operation deprecated.
