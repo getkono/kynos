@@ -339,7 +339,7 @@ impl SecurityScheme {
 
     /// States whether the scheme is deprecated.
     ///
-    /// [`deprecate`](Self::deprecate) is the common case. This exists because
+    /// [`deprecated`](Self::deprecated) is the common case. This exists because
     /// `deprecated: false` is a thing a description can say and a round trip
     /// has to keep saying, which a method that only ever writes `true` cannot
     /// express.
@@ -366,7 +366,7 @@ impl SecurityScheme {
     /// 3.1 — see [`emit`](crate::emit).
     #[cfg(feature = "openapi32")]
     #[must_use]
-    pub fn deprecate(mut self) -> Self {
+    pub fn deprecated(mut self) -> Self {
         let slot = match &mut self {
             Self::ApiKey { deprecated, .. }
             | Self::Http { deprecated, .. }
