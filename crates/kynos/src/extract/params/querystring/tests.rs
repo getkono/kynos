@@ -29,6 +29,19 @@ fn null_is_admitted_only_where_the_schema_visibly_says_so() {
     ));
     // A `const` pins one value, whatever `type` would otherwise allow.
     assert!(!admits(json!({ "type": ["string", "null"], "const": "x" })));
+    // So may `enum`, `allOf` and `not`, which only ever narrow `type`: none is
+    // evaluated, so each is unrecognised.
+    assert!(!admits(
+        json!({ "type": ["string", "null"], "enum": ["a"] })
+    ));
+    assert!(!admits(json!({
+        "type": ["string", "null"],
+        "allOf": [{ "type": "string" }]
+    })));
+    assert!(!admits(json!({
+        "type": ["string", "null"],
+        "not": { "type": "null" }
+    })));
     // Unrecognised rather than refused: an unconstrained object schema.
     assert!(!admits(json!({})));
 }
