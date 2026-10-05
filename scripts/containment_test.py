@@ -1787,7 +1787,7 @@ class Main(unittest.TestCase):
 
     def test_a_crate_named_outside_the_tree_its_row_allows_is_reported(self):
         # The dependency-graph stray scan, which reads the corpus and no
-        # document: the five rules in that loop are written in this file rather
+        # document: the rules in that loop are written in this file rather
         # than read out of `architecture.md`, so a corpus is the only thing a
         # case can hand it. `matchit` is the router's, and `unchecked.rs` is not
         # under `router/`.
@@ -1852,8 +1852,8 @@ class Main(unittest.TestCase):
 
     def test_a_crate_confined_to_two_files_is_reported_outside_them(self):
         # The other branch of the same loop, and the one no case reached. The
-        # row above is `UNDER` a tree; `sorted(found - where)` is what an
-        # `ONLY_IN` row runs, and it ran over an empty difference every time.
+        # row above is `UNDER` a tree; `listed` is what an `ONLY_IN` row runs,
+        # and it ran over files it listed every time.
         # So the `hyper` row could be widened to "anywhere" -- rewritten
         # `UNDER, ""`, which every path starts with -- and the suite stayed
         # green while the confinement held nothing. `unchecked.rs` is neither
@@ -1871,7 +1871,7 @@ class Main(unittest.TestCase):
         # Each row of that loop is a separate claim and widening one says
         # nothing about the others, so the branch being reached is not enough:
         # with `tower` rewritten `UNDER, ""` its row holds nothing at all while
-        # the four beside it go on holding, and the run reports every rule
+        # the rows beside it go on holding, and the run reports every rule
         # holds. `http/body.rs` is not `unchecked.rs`, which is the one file
         # this row allows.
         corpus = self.appending(
@@ -1902,6 +1902,84 @@ class Main(unittest.TestCase):
         )
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/http/body.rs", reported[0])
+
+    def test_the_body_crates_stay_at_their_listed_sites(self):
+        # The `http-body` row lists files and trees together, so a tree entry
+        # read as a file would report every file under it, and the intact-tree
+        # case holds that; this holds the other direction. `unchecked.rs` is
+        # neither one of the files nor under one of the trees.
+        corpus = self.appending(
+            "crates/kynos/src/unchecked.rs", "\nuse http_body_util::BodyExt;\n"
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "`http-body` and `http-body-util` are named only")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/unchecked.rs", reported[0])
+
+    def test_async_compression_stays_in_the_two_codec_middlewares(self):
+        # `extract/body/form.rs` decodes a body and is the nearest plausible
+        # stray: a decoder that is not one of the two middlewares the row allows.
+        corpus = self.appending(
+            "crates/kynos/src/extract/body/form.rs",
+            "\nuse async_compression::tokio::bufread::GzipDecoder;\n",
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "`async-compression` is named only")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/extract/body/form.rs", reported[0])
+
+    def test_serde_urlencoded_stays_at_the_form_codec_sites(self):
+        # `extract/params/query.rs` parses a query string, which is exactly the
+        # job a second `serde_urlencoded` site would be added for.
+        corpus = self.appending(
+            "crates/kynos/src/extract/params/query.rs",
+            "\nuse serde_urlencoded::from_str;\n",
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "`serde_urlencoded` is named only")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/extract/params/query.rs", reported[0])
+
+    def test_every_remaining_listed_crate_is_reported_at_a_stray_site(self):
+        # One case per architecture.md row whose *Named in* cell lists sites
+        # and that no case above holds. Each row is its own claim, so each gets
+        # its own stray: a site beside the allowed ones, doing the job a second
+        # site would plausibly be added for.
+        for stray, addition, description in [
+            ("crates/kynos/src/router/dispatch.rs", "use tracing::debug;",
+             "`tracing` is named only"),
+            ("crates/kynos/src/extract/body/form.rs", "use futures_core::Stream;",
+             "`futures-core` is named only"),
+            ("crates/kynos/src/extract/body/form.rs", "use multer::Multipart;",
+             "`multer` is named only"),
+            ("crates/kynos/src/response/codec/form.rs", "use prost::Message;",
+             "`prost` is named only"),
+            ("crates/kynos/src/schema/impls/temporal/mod.rs", "use uuid::Uuid;",
+             "`uuid` is named only"),
+            ("crates/kynos/src/schema/impls/identifier.rs", "use jiff::Timestamp;",
+             "`chrono` and `jiff` are named only"),
+            ("crates/kynos/src/schema/impls/identifier.rs", "use rust_decimal::Decimal;",
+             "`rust_decimal` and `bigdecimal` are named only"),
+            ("crates/kynos/src/extract/params/query.rs",
+             "use percent_encoding::percent_decode_str;", "`percent-encoding` is named only"),
+            ("crates/kynos/src/test/mod.rs", "use jsonschema::Validator;",
+             "`jsonschema` is named only"),
+            ("crates/kynos-openapi/src/lib.rs", "use serde_yaml_ng::to_string;",
+             "`serde_yaml_ng` is named only"),
+            ("crates/kynos/src/unchecked.rs", "use indexmap::IndexMap;",
+             "`indexmap` is named only"),
+            ("crates/kynos/src/__private/mod.rs", "use quote::ToTokens;",
+             "`proc-macro2`, `quote` and `syn` are named only"),
+        ]:
+            with self.subTest(addition=addition):
+                status, failures = self.report(corpus=self.appending(stray, f"\n{addition}\n"))
+                self.assertEqual(status, 1)
+                reported = self.naming(failures, description)
+                self.assertEqual(len(reported), 1)
+                self.assertIn(stray, reported[0])
 
     def test_a_renamed_surface_heading_skips_the_declaration_check(self):
         broken = gate.ARCHITECTURE.replace(self.SURFACE, "### The public surface", 1)
@@ -2481,6 +2559,20 @@ class Main(unittest.TestCase):
         corpus = self.appending(
             "crates/kynos/src/unchecked.rs",
             "\npub fn probe() -> u8 {\n    todo!()\n}\n",
+        )
+        status, failures = self.report(corpus=corpus)
+        self.assertEqual(status, 1)
+        reported = self.naming(failures, "stands in for a body")
+        self.assertEqual(len(reported), 1)
+        self.assertIn("crates/kynos/src/unchecked.rs", reported[0])
+
+    def test_an_unimplemented_body_is_reported(self):
+        # The same placeholder written with the other macro. AGENTS.md's lapsed
+        # exception only ever allowed `todo!()`, so `unimplemented!()` is no
+        # more permitted, and it panics identically when reached.
+        corpus = self.appending(
+            "crates/kynos/src/unchecked.rs",
+            "\npub fn probe() -> u8 {\n    unimplemented!()\n}\n",
         )
         status, failures = self.report(corpus=corpus)
         self.assertEqual(status, 1)

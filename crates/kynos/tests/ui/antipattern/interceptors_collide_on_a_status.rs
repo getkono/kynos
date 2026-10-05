@@ -6,7 +6,7 @@
 
 use kynos::{
     http::Request,
-    middleware::{Continued, Interceptor, Next, limits::BodySize},
+    middleware::{Continued, Interceptor, Next, limits::body_size::BodySize},
     prelude::*,
 };
 

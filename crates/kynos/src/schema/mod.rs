@@ -325,11 +325,24 @@ impl MapKey for String {}
             its `Schema`, so that schema must describe one value, not an object or an array; \
             implement `kynos::schema::ParamValue` for a newtype or enum whose schema does",
     note = "for a structured query such as a search filter, take the whole query string as \
-            `kynos::extract::params::query::QueryString` under `openapi32`"
+            `kynos::extract::params::querystring::QueryString` under `openapi32`"
 )]
 pub trait ParamValue:
     Schema + std::str::FromStr<Err: std::fmt::Display> + std::fmt::Display
 {
+}
+
+/// Whether `schema`'s `type` names `null`, whatever its other keywords say.
+pub(crate) fn type_admits_null(schema: &OpenApiSchema) -> bool {
+    use kynos_openapi::model::schema::types::{SchemaType, TypeSet};
+
+    schema
+        .as_object()
+        .and_then(|object| object.ty.as_ref())
+        .is_some_and(|ty| match ty {
+            TypeSet::One(one) => *one == SchemaType::Null,
+            TypeSet::Many(many) => many.contains(&SchemaType::Null),
+        })
 }
 
 #[cfg(test)]

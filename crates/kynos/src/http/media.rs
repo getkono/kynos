@@ -4,12 +4,17 @@
 //! [`Binary`](crate::extract::body::binary::Binary) state what its bytes are
 //! rather than shrugging. Declaring a unit struct and implementing
 //! [`MediaType`] is all a vendor type needs.
+//!
+//! The markers live under `http` rather than `extract` because they type
+//! response bodies as much as request bodies: the same `Binary<M>` is both,
+//! and a ranged [`Served`](crate::response::range::served::Served) response is
+//! typed by one too.
 
 use kynos_openapi::model::body::mime_names;
 
 /// A media type usable as the `M` parameter of
 /// [`Binary`](crate::extract::body::binary::Binary) or
-/// [`QueryString`](crate::extract::params::query::QueryString).
+/// [`QueryString`](crate::extract::params::querystring::QueryString).
 ///
 /// Implemented by the marker types in this module, and by any unit struct you
 /// declare for a vendor type.

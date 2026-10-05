@@ -14,12 +14,12 @@ use crate::{
 };
 
 /// The charset is part of the constant rather than left to the recipient to
-/// sniff, which is the call [`media::Html`](crate::extract::media::Html) already
+/// sniff, which is the call [`media::Html`](crate::http::media::Html) already
 /// makes for the same bytes.
 const HTML: &str = "text/html; charset=utf-8";
 
 /// Taken from the ungated `mime_names` rather than from
-/// [`media::Json`](crate::extract::media::Json), which is behind the `json`
+/// [`media::Json`](crate::http::media::Json), which is behind the `json`
 /// feature. That feature is about *application* payloads, and a reference that
 /// implied it would tie the page a human opens to a codec it never uses.
 const JSON: &str = mime_names::APPLICATION_JSON;

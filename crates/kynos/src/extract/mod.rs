@@ -34,14 +34,13 @@
 //!
 //! [`params`] holds inputs read from the request head, one module per
 //! parameter location. [`body`] holds inputs that consume the body, one module
-//! per codec. [`media`] names media types in the type system, and
-//! [`connection`] holds the two inputs that describe the connection rather than
-//! the contract.
+//! per codec, typed by the media type markers in
+//! [`http::media`](crate::http::media). [`connection`] holds the two inputs
+//! that describe the connection rather than the contract.
 
 pub mod body;
 pub mod connection;
 pub mod describe;
-pub mod media;
 pub mod params;
 // The receive half of `response::stream::sse`, gated with it. A 3.1 build has
 // no `itemSchema` to describe a stream with, so it has no `Sse<T>` to resume --

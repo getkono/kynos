@@ -138,6 +138,186 @@ fn the_de_facto_pair_is_read_when_it_is_all_there_is() {
     assert_eq!(resolved.client_is_secure(), Some(true));
 }
 
+/// An element that names no address still occupies the position its proxy
+/// wrote it at.
+///
+/// The trusted proxy wrote the rightmost element; the one left of it is the
+/// client's own word. Dropping an element that says `unknown` would slide that
+/// client-written address into the trusted position, so the walk lands on the
+/// `unknown` instead and resolves no address rather than a spoofable one. RFC
+/// 7239 section 6 makes `unknown` and an `obfnode` identifiers, not addresses;
+/// an element with no `for=` at all is still one proxy's hop.
+#[test]
+fn an_unknown_element_at_a_trusted_position_is_still_a_hop() {
+    for element in [
+        "for=unknown",
+        "for=\"unknown:4711\"",
+        "for=_hidden",
+        "for=\"_hidden:_port\"",
+        "for=not-an-address",
+        "by=10.0.0.2;proto=https",
+    ] {
+        let headers = map(&[("forwarded", format!("for=203.0.113.9, {element}").as_str())]);
+
+        let resolved =
+            Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+
+        assert_eq!(
+            resolved.client(),
+            None,
+            "`{element}` was skipped, handing its trusted position to the client's own element"
+        );
+    }
+}
+
+/// The `X-Forwarded-For` twin of the case above.
+#[test]
+fn an_unknown_x_forwarded_for_entry_at_a_trusted_position_is_still_a_hop() {
+    for entry in ["unknown", "_hidden", "not-an-address"] {
+        let headers = map(&[("x-forwarded-for", format!("203.0.113.9, {entry}").as_str())]);
+
+        let resolved =
+            Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+
+        assert_eq!(
+            resolved.client(),
+            None,
+            "`{entry}` was skipped, handing its trusted position to the client's own entry"
+        );
+    }
+}
+
+/// An element with no address spends one hop, so trust reaching past it stops
+/// exactly one element further left.
+#[test]
+fn an_unknown_element_spends_one_hop_of_trust() {
+    let forwarded = map(&[(
+        "forwarded",
+        "for=198.51.100.1, for=203.0.113.9, for=unknown",
+    )]);
+    let x_forwarded_for = map(&[("x-forwarded-for", "198.51.100.1, 203.0.113.9, unknown")]);
+
+    for headers in [forwarded, x_forwarded_for] {
+        let resolved =
+            Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(2));
+
+        assert_eq!(resolved.client(), Some(ip("203.0.113.9")));
+    }
+}
+
+/// An empty list element is no element at all.
+///
+/// RFC 9110 section 5.6.1.2 has a recipient ignore it, so a trailing comma
+/// spends no hop.
+#[test]
+fn an_empty_list_element_is_not_a_hop() {
+    let forwarded = map(&[("forwarded", "for=203.0.113.9, ")]);
+    let x_forwarded_for = map(&[("x-forwarded-for", "203.0.113.9, ")]);
+
+    for headers in [forwarded, x_forwarded_for] {
+        let resolved =
+            Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+
+        assert_eq!(resolved.client(), Some(ip("203.0.113.9")));
+    }
+}
+
+/// A delimiter inside a `quoted-string` value splits nothing.
+///
+/// RFC 7239 section 4 lets a `value` be a `quoted-string`, which may hold `,`
+/// and `;`, and a `quoted-pair` may escape a `"` inside it. Splitting there
+/// would invent a hop with no address, or a `for=` the proxy never wrote.
+#[test]
+fn a_delimiter_inside_a_quoted_value_splits_nothing() {
+    for element in [
+        r#"for=203.0.113.9;ext="a,b""#,
+        r#"for=203.0.113.9;ext="a;for=198.51.100.66""#,
+        r#"for=203.0.113.9;ext="a\",b""#,
+    ] {
+        let headers = map(&[("forwarded", element)]);
+
+        let resolved =
+            Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+
+        assert_eq!(
+            resolved.client(),
+            Some(ip("203.0.113.9")),
+            "`{element}` was split inside its quoted value"
+        );
+    }
+}
+
+/// A quote the client leaves open cannot absorb the elements trusted hops
+/// appended after it, so the client cannot choose the element trust lands on.
+#[test]
+fn a_quote_the_client_leaves_open_swallows_no_trusted_hop() {
+    for (field, client) in [
+        (r#"for=198.51.100.66;ext=", for=203.0.113.9"#, "203.0.113.9"),
+        (
+            r#"for=198.51.100.66;ext=", for="[2001:db8::9]""#,
+            "2001:db8::9",
+        ),
+        (
+            r#"ext="a\", for=198.51.100.66, for=203.0.113.9"#,
+            "203.0.113.9",
+        ),
+    ] {
+        let headers = map(&[("forwarded", field)]);
+
+        let resolved =
+            Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+
+        assert_eq!(resolved.client(), Some(ip(client)), "`{field}`");
+    }
+}
+
+/// Repeated `Forwarded` lines are one list, in the order they were written.
+///
+/// RFC 9110 section 5.3 makes a repeated list field one comma-joined value, so
+/// the second line's elements follow the first's, and each spends its own hop.
+#[test]
+fn repeated_forwarded_lines_are_one_chain_in_written_order() {
+    let headers = map(&[
+        ("forwarded", "for=198.51.100.1, for=203.0.113.9"),
+        ("forwarded", "for=192.0.2.7, for=unknown"),
+    ]);
+
+    for (hops, client) in [
+        (1, None),
+        (2, Some("192.0.2.7")),
+        (3, Some("203.0.113.9")),
+        (4, Some("198.51.100.1")),
+    ] {
+        let resolved = Forwarded::resolve(
+            &headers,
+            Some(peer("10.0.0.1")),
+            &TrustedProxies::hops(hops),
+        );
+
+        assert_eq!(resolved.client(), client.map(ip), "hops({hops})");
+    }
+}
+
+/// Where several elements state a scheme, the last one written wins, across
+/// elements and across repeated lines, and is lowercased.
+#[test]
+fn the_last_written_scheme_wins_across_elements_and_lines() {
+    let headers = map(&[
+        (
+            "forwarded",
+            "for=198.51.100.1;proto=ws, for=203.0.113.9;proto=http",
+        ),
+        (
+            "forwarded",
+            "for=192.0.2.7;proto=http, for=10.0.0.2;proto=HTTPS",
+        ),
+    ]);
+
+    let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+
+    assert_eq!(resolved.proto(), Some("https"));
+}
+
 /// Every `nodename` form section 6 defines, and what each yields.
 ///
 /// The table is the grammar. `unknown` and an `obfnode` are identifiers rather

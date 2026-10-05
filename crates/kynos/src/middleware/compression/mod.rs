@@ -370,13 +370,13 @@ fn as_level(level: u32) -> i32 {
 /// wrong encoder: the types already make that impossible, and this keeps the
 /// call sites from having to say so.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Levels {
+pub(crate) struct Levels {
     /// What gzip is asked for.
-    pub gzip: GzipLevel,
+    pub(crate) gzip: GzipLevel,
     /// What brotli is asked for.
-    pub brotli: BrotliLevel,
+    pub(crate) brotli: BrotliLevel,
     /// What zstd is asked for.
-    pub zstd: ZstdLevel,
+    pub(crate) zstd: ZstdLevel,
 }
 
 /// Compresses responses when the client accepts it.
@@ -449,7 +449,7 @@ pub struct Levels {
 /// covers that group, one on an endpoint covers that endpoint. What is *not*
 /// available is a global one plus a per-endpoint override — both would add
 /// `Content-Encoding` to the same operation, which
-/// [`header_names_disjoint`](crate::middleware::stack) refuses at the mount
+/// [`CompatibleWith`](crate::middleware::stack::CompatibleWith) refuses at the mount
 /// site. Mount the one that varies and leave the rest uncovered.
 ///
 /// A response whose length is already known is collected and encoded in one
@@ -553,7 +553,7 @@ impl Compression<()> {
     ///
     /// Available only on a `Compression` that has not named one, so a chain
     /// states the type at most once. See
-    /// [`BodySize::problem_type`](crate::middleware::limits::BodySize::problem_type)
+    /// [`BodySize::problem_type`](crate::middleware::limits::body_size::BodySize::problem_type)
     /// for the rule and its pass control.
     ///
     /// ```
@@ -614,13 +614,6 @@ impl<T> Compression<T> {
     #[must_use]
     pub fn zstd_level(mut self, level: ZstdLevel) -> Self {
         self.levels.zstd = level;
-        self
-    }
-
-    /// Sets all three at once.
-    #[must_use]
-    pub fn levels(mut self, levels: Levels) -> Self {
-        self.levels = levels;
         self
     }
 

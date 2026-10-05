@@ -1,8 +1,7 @@
 //! Streamed binary content with a declared media type.
 
 use crate::{
-    extract::media::MediaType,
-    http::{HeaderValue, Response, body::Body, header},
+    http::{HeaderValue, Response, body::Body, header, media::MediaType},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
 };
@@ -16,7 +15,7 @@ use crate::{
 /// ```no_run
 /// # #[cfg(feature = "openapi32")]
 /// # {
-/// use kynos::{extract::media::OctetStream, response::stream::binary::BinaryStream};
+/// use kynos::{http::media::OctetStream, response::stream::binary::BinaryStream};
 ///
 /// fn download<S>(chunks: S) -> BinaryStream<S, OctetStream> {
 ///     BinaryStream::new(chunks)

@@ -11,8 +11,8 @@ these are asked to enforce; this document is about the mechanics.
 | Unit | a sibling `tests.rs`, or an inline `mod tests` while the module is one file | `cargo nextest` | internal logic, including private items | in use |
 | Doctest | the item's own documentation | `mise run test:doc` | that documented code compiles, and that undocumentable code does not | in use |
 | Integration | [`crates/kynos/tests/`](../crates/kynos/tests/) | `cargo nextest` | that the public surface composes as a user would compose it | in use |
-| UI snapshot | `crates/kynos/tests/ui/` | `trybuild` | the exact text of a diagnostic | built |
-| Property | `crates/kynos-openapi/tests/`, over `support/`'s generators | `proptest` | round-tripping, determinism and totality over generated documents | built |
+| UI snapshot | `crates/kynos/tests/ui/` | `trybuild` | the exact text of a diagnostic | in use |
+| Property | `crates/kynos-openapi/tests/`, over `support/`'s generators | `proptest` | round-tripping, determinism and totality over generated documents | in use |
 | Conformance | a harness over a fixture app | `TestClient` over live responses | *emitted ⊇ observable* against a running service | in use |
 
 Tests move to a sibling `tests.rs` once a module passes ~400 lines, whether or
@@ -28,8 +28,7 @@ beside another, rather than inline.
 The sibling file is the settled shape here even below that line — `di/`,
 `schema/` and `response/negotiate/` all keep one while sitting well under 400 —
 so what the rule really fixes is the point past which staying inline stops being
-a choice. Only one module in the workspace still holds an inline `mod tests`,
-and it is well under that line.
+a choice. No library module in the workspace holds an inline `mod tests`.
 
 Each integration file exists for one reason. `hermeticity.rs` and `ui.rs` are
 different kinds of thing and are covered below.
@@ -50,10 +49,11 @@ constructor's number and a codec's cannot share a file with the routing path's.
 | File | Asserts |
 | --- | --- |
 | [`pipeline.rs`](../crates/kynos/tests/pipeline.rs) | an `async fn` is a `Handler`, `routes!` collects it, `Endpoints` accepts it, mounting reaches the context that supplies its dependencies, each route attribute writes its own method, and both ends of the arity list typecheck |
-| [`derives.rs`](../crates/kynos/tests/derives.rs) | every derive expands to a well-formed implementation of the trait it claims, and what the default `QueryParams::parameters` makes of a derived schema: an aliased field as one optional parameter per name, and no parameter for a member behind `allOf`, `oneOf` or `$ref`. Two runtime properties, the recorded exceptions to a derive being a type-level surface: the derived query decoder refuses a declared value whose octets are not UTF-8, naming its wire parameter, matches a percent-encoded name, ignores an undeclared pair, decodes `+` as a space and keeps an escaped `+` (`%2B`) as a `+`; and the derived cookie decoder refuses a declared cookie whose first value is not ASCII, naming its wire name, and ignores an unreadable undeclared cookie on the same field |
+| [`derives.rs`](../crates/kynos/tests/derives.rs) | every derive expands to a well-formed implementation of the trait it claims, and what the default `QueryParams::parameters` makes of a derived schema: an aliased field as one optional parameter per name, and no parameter for a member behind `allOf`, `oneOf` or `$ref`. The runtime properties, the recorded exceptions to a derive being a type-level surface: the derived query decoder refuses a declared value whose octets are not UTF-8, naming its wire parameter, matches a percent-encoded name, ignores an undeclared pair, decodes `+` as a space and keeps an escaped `+` (`%2B`) as a `+`; the derived cookie decoder refuses a declared cookie whose first value is not ASCII, naming its wire name, and ignores an unreadable undeclared cookie on the same field; the derived header decoder refuses a missing required header and a value that is not printable ASCII, naming its wire name, and reads an absent optional header as `None`; a derived `Reply` writes each variant's declared status, a bodied variant as JSON and a unit one with no content, and describes it by its `description`, else its doc comment, else its reason phrase, else the fixed sentence `the request succeeded`; and a derived `ApiError` publishes its extension members and no other field, its slug under `base` where it names no `type`, and its `Display` sentence as `detail` |
 | [`flatten.rs`](../crates/kynos/tests/flatten.rs) | that a flattened field's description agrees with the JSON its type writes and reads, checked against the emitted schema with a real JSON Schema validator in two ways — a value the type serializes, which the description must accept, and hand-written documents it must accept or refuse, such as a member of the wrong type or a key serde refuses, held to serde's own read in every closed case. Where a keyword's presence, absence or position is the point, such as where a flattened map's value schema is hoisted to or what an open flatten drops, it is asserted on the emitted schema itself as well. The cases: a flattened struct, a flattened tagged struct, whose tag reaches the parent through its `$ref`, an open map beside the parent's own properties and beside a flattened struct, an open map inside a tagged variant, the key constraint an open flatten drops, and an object `deny_unknown_fields` closes beside a flattened struct, alone and with a required or an optional field serde also reads under an `alias`, and beside a flattened adjacently tagged enum, whose refusals are held to serde's; a flattened `Problem` beside a member of the parent's own and beside an open map, a `Problem` as an internally tagged newtype variant's payload, and an open `Unchecked` payload, over a `serde_json::Map` and over a typed map, beside the parent's own properties and beside a field serde writes and never reads, as a map of `Unchecked` values is beside such a field too. Behind `macros` and `test-util`, which carries the validator |
 | [`aliases.rs`](../crates/kynos/tests/aliases.rs) | that a name serde reads under an `alias` means to a validator what it means to serde, for the bounds no `flatten.rs` case reaches: an optional field of a closed object under three names, bounded by a `not` over an `anyOf` of their pairs, beside a second aliased field whose bound it leaves in place, an externally tagged branch keyed by exactly one of its names, and a name two variants claim, internally and externally tagged, named in the first one's branch alone. Each document is held to serde's own read, so a bound fails even when the exact JSON in `derives.rs`, which is transcribed from the emitter, moved with it. Behind `macros` and `test-util` |
-| [`errors.rs`](../crates/kynos/tests/errors.rs) | each extractor rejects with the rejection type its signature names |
+| [`errors.rs`](../crates/kynos/tests/errors.rs) | each extractor rejects with the rejection type its signature names — and "each" is counted against the source: a sweep reads every `FromRequest` and `FromRequestParts` implementation out of `src/` and compares the types it finds with the ones witnessed, so an extractor added without a witness fails the build |
+| [`extractors.rs`](../crates/kynos/tests/extractors.rs) | what the extractors deciding from more than one input read, refuse and describe, each driven through the public trait and held to the exact rejection: which side of a `OneOf` its `Content-Type` selects, and that a malformed side fails as itself; that an `Option` body is absent only without a `Content-Type`; the closed table of parameters each text codec accepts after its media type; and that a `QueryString` is percent-decoded and read as one JSON document. Each beside the request body or parameter the same type describes. Behind `macros`, `json` and `form`, with the `QueryString` cases behind `openapi32` |
 | [`reporting.rs`](../crates/kynos/tests/reporting.rs) | every error type a caller can receive is `Error + Send + Sync + 'static` |
 | [`typed_uri.rs`](../crates/kynos/tests/typed_uri.rs) | a route attribute's `relative_uri` percent-encodes its parameters, and that the hand-written fixture it encodes with describes what it encodes — a `Schema` body nothing executes cannot disagree with the `encode` beside it |
 | [`size.rs`](../crates/kynos/tests/size.rs) | a build failure does not inline a `Violation`, a `Result` costs no more than it, and which of the three bodies Kynos erases are zero-sized — the reasons `alloc_body.rs`'s counts read the way they do, filed here because a `size_of` needs no allocator |
@@ -67,7 +67,7 @@ constructor's number and a codec's cannot share a file with the routing path's.
 | [`limits.rs`](../crates/kynos/tests/limits.rs), [`interceptors.rs`](../crates/kynos/tests/interceptors.rs), [`middleware.rs`](../crates/kynos/tests/middleware.rs), [`cors.rs`](../crates/kynos/tests/cors.rs), [`description.rs`](../crates/kynos/tests/description.rs), [`sse.rs`](../crates/kynos/tests/sse.rs) | each interceptor doing what it declares, setting only what it declared, and declaring it on exactly the operations it covers. `middleware.rs` also holds `partial` and `ranged_assets`, which assert that compression leaves anything a byte range is calculated against alone — a range is calculated over the encoded octets, so re-encoding a 206 puts a `Content-Range` on a body it is wrong about, and encoding a 200 that advertises `Accept-Ranges` puts one strong `ETag` over two representations. `ranged_assets` is the second half end to end: it resumes an asset download against the tag it was served with and splices the two halves back into the file. `description.rs` carries the same scope question one level down in its second section: which *statuses* within an operation a response field's declaration reaches, which is where `Accept-Ranges`, `Content-Range` and the 416 are each pinned to the statuses that give them a meaning — and where a response header nothing in the handler writes is pinned too, since a header group's and an interceptor's alike are filed under a wildcard and have to reach the exact key a consumer resolves to. Its third section is that question on the tag axis: which of the four tag scopes reaches the operation's `tags`, in what order, and whether each scope that names a tag also registers its metadata in the document's `tags` — a name arriving without its metadata is an `UndocumentedTag` warning on every operation carrying one, so both halves are asserted for every scope |
 | [`rate_limit.rs`](../crates/kynos/tests/rate_limit.rs) | the shipped limiter over a store: one quota and several, burst, keying, exemption, and both failure policies — and, since an application may replace the algorithm outright, that a `RateLimitPolicy` Kynos does not ship reaches the wire with its own `Retry-After` — behaviour that is a property of a *sequence* of requests rather than of any one |
 | [`client.rs`](../crates/kynos/tests/client.rs) | the `TestClient`'s own surface rather than the harness's: every method the router accepts, a query string, a cookie jar, a peer address, the three body setters, and the two assertions a suite would otherwise hand-roll — a 206 checked as a `Content-Range` *and* a body that fills it, and a finite event stream read as its events |
-| [`cookies.rs`](../crates/kynos/tests/cookies.rs) | that two `Set-Cookie` fields reach the wire as two, which no unit test of either end can see |
+| [`cookies.rs`](../crates/kynos/tests/cookies.rs) | `SetCookies` wired through the router: that two `Set-Cookie` fields reach the wire as two, that a cookie may depend on the request that asked for it, and that one that cannot be a field is dropped without taking the others |
 | [`localization.rs`](../crates/kynos/tests/localization.rs) | that a negotiated language reaches the wire and that `Vary` accumulates rather than replaces when a second interceptor also varies — the two properties neither end can see. Two `Accept-Language` field lines are read as one list, which no test of the parser can reach because only a request carries two; and a localized response paired with `Compression` carries both `accept-encoding` and `accept-language`, where either interceptor alone would see only its own contribution |
 | [`unchecked.rs`](../crates/kynos/tests/unchecked.rs) | that the escape hatches serve, that the router's own machinery still covers them, and what the waiver leaves on the document |
 | [`assets.rs`](../crates/kynos/tests/assets.rs) | both asset modes, and the stored-coding surface — that two representations get two strong tags, that a resume across them is refused, that a 304 answers per representation, and that `Vary` is sent only by the files that negotiate: what an embedded set describes, what a served directory records instead, that traversal is refused end to end, and the whole range surface a file answers with — the 206 carrying exactly the octets its `Content-Range` names, the 416 stating the complete length, an unusable field ignored, and `If-Range` and `If-None-Match` deciding which of the two a client gets |
@@ -124,12 +124,10 @@ one, because [`mise run panic:check`](../mise.toml) asserts that *building* it
 fails and greps the compiler's message. A passing build is the failure
 condition.
 
-The UI suite does not run under coverage instrumentation: `trybuild` spawns its
-own `cargo`, and `llvm-cov`'s flags reach the child and perturb the exact stderr
-a snapshot records. [`mise run ui:check`](../mise.toml) is its own task and its
-own CI step for that reason — and the exclusion belongs on the coverage command
-rather than on the nextest profile, because a profile-wide filter would remove
-the suite from every job that sets `NEXTEST_PROFILE`.
+The UI suite does not run under coverage instrumentation, for the reason
+[`mise run ui:check`](../mise.toml) gives. The exclusion belongs on the coverage
+command rather than on the nextest profile, because a profile-wide filter would
+remove the suite from every job that sets `NEXTEST_PROFILE`.
 
 That child `cargo` is not free of this repository's configuration, which is the
 half a snapshot's author has no reason to expect. `trybuild` generates a
@@ -225,10 +223,10 @@ from its own side, so the checkable thing between them is a committed corpus:
 [`tests/fixtures/conformance/`](../crates/kynos/tests/fixtures/conformance/),
 regenerated with `mise run fixtures:generate` and compared on every run.
 
-Ownership was worth settling rather than assuming. The acceptance contract this
-came from says a downstream generator must "pass fixtures generated by Kynos"
-and "the same Kynos-generated conformance fixtures" — Kynos emits the contract,
-the generator consumes it, and the fixtures are the contract written down. The
+Ownership was worth settling rather than assuming. Kynos emits the contract and
+a generator consumes it, so the fixtures belong on the emitting side: they are
+the contract written down, and only the side that writes it can say when it
+changed. The
 corpus carries the constructs a 3.2 generator is forked to understand and a 3.1
 one cannot express: `itemSchema`, `contentMediaType`, `contentSchema` and the
 SSE envelope.
@@ -286,50 +284,30 @@ Three obligations hold whatever the kind.
 
 **Every test target compiles and runs at baseline, not only under
 `--all-features`.** [`mise run test`](../mise.toml) passes `--all-features` and
-`features:check` passes `--no-dev-deps`, so until
-[`mise run test:baseline`](../mise.toml) landed, no test target had ever been
-built under `openapi31` alone — against every `openapi32` `#[cfg]`
-site in `kynos-openapi/src`. A feature gate no test build exercises is a gate
-whose off-state is unknown, and the suite passing on the first baseline run does
-not retire the obligation: it held by luck rather than by check.
+`features:check` passes `--no-dev-deps`, so
+[`mise run test:baseline`](../mise.toml) is the only task that builds a test
+target under `openapi31` alone — against every `openapi32` `#[cfg]` site in
+`kynos-openapi/src`. A feature gate no test build exercises is a gate whose
+off-state is unknown, and a suite that merely happens to pass at baseline holds
+by luck rather than by check.
 
 That leaves three shapes a test target is built at — every feature on, the
 default set, and `openapi31` alone — and a target gated on one optional feature
 apiece is at none of them.
 [`alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) is that target: five
-modules, one codec each, over a shared harness gated on their disjunction. The
-sets it is interesting at are `openapi31 + macros + F`, and no task built one —
-`features:targets` builds one feature at a time against `openapi31`, so `macros`
-and a codec are never in the same build, and `features:check` passes
-`--no-dev-deps`. [`mise run lint:codecs`](../mise.toml) is the six missing sets.
-It is a Clippy run rather than a test run because what those sets alone can see
-is a compile-time consequence — an item dead once one codec is off, an import
-with no user — rather than an assertion that fails; a misspelled feature *name*
-was never the exposure, since `unexpected_cfgs` validates one against the whole
-feature list wherever the file compiles at all. `202cfa5` is the class, and it
-was found by hand-linting the six sets before there was a task that did.
-
-A second target now sits at exactly those six sets and arrived after the task
-that lints them:
+modules, one codec each, over a shared harness gated on their disjunction, and
 [`cost/codec.rs`](../crates/kynos/cost/codec.rs), the fixture
-[`performance.md`](performance.md#the-taxonomy)'s codec sweep weighs. It is an
-example rather than a test, so `--all-targets` is what reaches it, and the sets
-it is *measured* at are the sets it is already linted at — which is why it
-needed no entry of its own.
+[`performance.md`](performance.md#the-taxonomy)'s codec sweep weighs, is
+measured at the same sets. [`mise run lint:codecs`](../mise.toml) lints the six
+`openapi31 + macros + F` sets; why those sets, and why Clippy rather than a
+test run, is argued in its comment there.
 
 A fourth shape is a *dependency's* feature forced on: one no manifest in the
 workspace asks for, and that Cargo unifies in anyway from whatever graph a
 downstream program builds. [`mise run test:arbitrary-precision`](../mise.toml)
-runs `kynos-openapi`'s suite with `serde_json/arbitrary_precision` on, under
-which a `serde_json::Number` serializes as a one-field struct only serde_json's
-own serializer reads back as a number, and reaches an untagged enum such as
-`RefOr` as a map — so how `to_yaml` writes one and how the model reads one are
-observable there and nowhere else. Two tests are excluded by exact name, the
-oracles holding `to_yaml` to what `serde_yaml_ng` writes for the model, because
-under that graph the two sides differ by design; `--no-tests=fail` keeps a
-filter matching nothing from passing. A dev-dependency asking for
-the feature is the shorter spelling and the wrong one here, since it unifies into
-every `--all-targets` build and leaves the default number path untested.
+runs `kynos-openapi`'s suite with `serde_json/arbitrary_precision` on; its
+comment there says what the switch changes, which two oracles it excludes and
+why the feature is forced per invocation rather than by a dev-dependency.
 
 **A gap [`nfr.md`](nfr.md) documents is characterized.** Excluding a known-lossy
 shape from a generator keeps the property honest, but on its own it leaves the
@@ -377,7 +355,12 @@ because neither set contains the other.
 The sweep drives a value of every short circuit this build compiled and can
 construct — nine of the ten with every feature on, six at the default set — and
 compares what `into_response` wrote against what `Responses` declared, with no
-document, no client and no route in between. That reaches the 406 in
+document, no client and no route in between. `Infallible` has no value to hand
+it, and `NotAcceptable`, `Undecodable` and `NotModified` are not compiled
+without `compression` and `cache`; all ten are held by name in
+`every_short_circuit_kynos_ships_is_accounted_for`, which asserts the set rather
+than the agreement, so an implementation added without a case fails there
+whatever the build compiled. The sweep reaches the 406 in
 `compression` and the 400, 413 and 415 in `decompression`, none of which any
 fixture app in the suite provokes. The matrix is the other direction: it holds
 whatever actually happened on a live exchange, which includes an application's
@@ -475,7 +458,7 @@ halve.
 | the document validators | `Validator` | `router/describe.rs` | a description is validated where it is built. The build either fails or drops the validator, and nothing on the request path holds one to run |
 | the JSON Schema interpreter | `jsonschema` | `test/conformance.rs` | it is behind `test-util` and exists to check an observed response against the description. The request parser is the other projection of the same declaration and interprets no schema |
 | the `openapi31` feature | `not(feature = "openapi31")` | `lib.rs`, `crates/kynos-openapi/src/lib.rs` | nothing is conditional on it. Both sites are the `#[cfg(not(feature = "openapi31"))] compile_error!` that refuses a build without it, and the 3.1 object model it names is compiled unconditionally. What that model does is held by the document, registry and validator rows above, and a request reaches none of the three |
-| the `yaml` feature | `serde_yaml_ng`, `feature = "yaml"` | `crates/kynos-openapi/src/emit/mod.rs`, `error/mod.rs` | `Document::to_yaml` is a method on the emitted document, reached only through `Service::openapi` after the build has finished. `Error::Yaml` carries a failure that emitter produced and is constructible nowhere else |
+| the `yaml` feature | `serde_yaml_ng`, `YamlError`, `feature = "yaml"` | `crates/kynos-openapi/src/emit/mod.rs`, `error/mod.rs` | `Document::to_yaml` is a method on the emitted document, reached only through `Service::openapi` after the build has finished. `Error::Yaml` carries the `YamlError` that emitter produced, and no framework site makes one otherwise |
 | the `test-util` feature | `feature = "test-util"` | `lib.rs` | one gate, on `pub mod test`. What it compiles is the conformance harness, whose interpreter is the `jsonschema` row above |
 | the `uuid` feature | `uuid`, `feature = "uuid"` | `schema/impls/{mod,identifier}.rs` | its whole contribution is `impl Schema for Uuid`, whose `Schema::schema` takes the `&mut Registry` that only `describe` mints, and `impl ParamValue for Uuid`, a marker with no items |
 | the `time` feature | `feature = "time"` | `lib.rs`, `schema/impls/mod.rs` | it carries no types: enabled without a backend it is a `compile_error!`, which `features:check` probes. The two sites are the gate that says so and the module it would open; the cost is its backends' rows |
@@ -778,7 +761,8 @@ mutated, each for its own reason:
   neither, so on any one platform two are uncompiled and their mutants missed.
 - The proc-macro entry points in `kynos-macros/src/lib.rs`, which only forward
   to a mutated `expand` function, so a mutant there is unviable.
-- Hand-written `Debug` impls, which hold no contract a test reads.
+- Hand-written `Debug` impls, which hold no contract a mutant can break: a
+  redacting one is tested, but a mutant only prints less.
 
 **What it does not see:**
 
@@ -895,7 +879,7 @@ justify on principle and cheap to justify on evidence.
 
 **A 413 no operation could produce.** `BodyRejection` declared `413` on every
 operation that reads a body, and the only thing that ever produced one was
-`middleware::limits::BodySize`. A service without that limit therefore promised
+`middleware::limits::body_size::BodySize`. A service without that limit therefore promised
 a response it could not send. Line coverage cannot see this: every line of the
 declaration runs, and the gap is between the document and the service rather
 than inside either. The fix was to remove the variant — recorded at

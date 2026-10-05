@@ -23,7 +23,7 @@
 //! Every expansion names `::kynos::…`, which this crate cannot depend on, so a
 //! doctest here would not compile whatever the derive emitted. The compiled
 //! demonstrations live in `crates/kynos/tests/derives.rs` and the framework's
-//! examples; `AGENTS.md` records the carve-out.
+//! examples; `AGENTS.md` records the rule.
 
 #[cfg(feature = "assets")]
 mod assets;
@@ -516,6 +516,10 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 /// Each field's type, or an `Option`'s inner type, is a
 /// `kynos::schema::ParamValue`.
 ///
+/// The helper attribute is `#[param]` rather than `#[path]` because `path` is a
+/// built-in attribute, and rustc refuses a `#[path]` on a field as ambiguous
+/// between the two.
+///
 /// # Rejected, because a parameter has one name
 ///
 /// - `#[serde(alias = "...")]` on any field: serde would read the field under
@@ -535,7 +539,8 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// `kynos::schema::ParamValue`: a field whose schema is an object is refused,
 /// since the default `form` style with `explode` would describe it as `x=1&y=2`
 /// while the decoder reads one `name=` pair. For a structured query,
-/// `QueryString<T, M>` describes the whole query string under `openapi32`.
+/// `kynos::extract::params::querystring::QueryString<T, M>` describes the whole
+/// query string under `openapi32`.
 ///
 /// A field's wire name is its `#[param(rename)]`, else serde's `rename`, else
 /// its identifier under the struct's `rename_all`, cased as the
@@ -544,6 +549,11 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// The `Schema` derive never reads `#[param(rename)]`, so a field that
 /// attribute renames is a parameter under one name and a property under
 /// another.
+///
+/// The helper attribute is `#[param]`, shared with
+/// [`PathParams`](macro@PathParams), rather than `#[query]` because `query` is
+/// already the `QUERY` route attribute under `openapi32`: a helper of that name
+/// would shadow it inside the struct, and a field would read as an operation.
 ///
 /// A declared parameter whose percent-decoded value is not UTF-8 is refused
 /// with the group's `QueryRejection`, naming it, as a value that fails to parse
@@ -577,6 +587,12 @@ pub fn derive_query_params(item: TokenStream) -> TokenStream {
 /// "kebab-case"` names `x_request_id` as `x-request-id`. The reserved names
 /// are checked against that final name.
 ///
+/// The helper attribute is named for the location, `#[header]`, because
+/// nothing else claims that name. `#[param]` is the fallback for
+/// [`PathParams`](macro@PathParams) and [`QueryParams`](macro@QueryParams),
+/// whose location names are already a built-in attribute and a route
+/// attribute.
+///
 /// # Rejected, because a parameter has one name
 ///
 /// - `#[serde(alias = "...")]` on any field: serde would read the field under
@@ -596,6 +612,10 @@ pub fn derive_headers(item: TokenStream) -> TokenStream {
 /// `#[cookie(rename)]`, else serde's `rename`, else its identifier under the
 /// struct's `rename_all`, cased as the [`Schema`](macro@Schema) derive cases a
 /// property.
+///
+/// The helper attribute is named for the location, `#[cookie]`, as
+/// [`HeaderParams`](macro@HeaderParams)'s is `#[header]`: nothing else claims
+/// either name.
 ///
 /// # Rejected, because a parameter has one name
 ///

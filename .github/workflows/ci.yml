@@ -29,8 +29,10 @@ env:
   NEXTEST_PROFILE: ci
 
 # Between them these jobs run every task in `mise run check`, plus the ones
-# too slow to belong there but for `cost:features`, which no pull request
-# waits on: `cost.yml` runs it after a merge, and as the release gate. Splitting
+# too slow to belong there but for those with workflows of their own:
+# `cost.yml` runs `cost:features` and `profile:requests`, which no pull request
+# waits on, after a merge and as the release gate; `mutants.yml` runs `mutants`
+# nightly and `mutants:diff` on each pull request. Splitting
 # them apart trades one serial runner for parallel ones and gives each its own
 # Cargo cache; keep a task in exactly one job so no two jobs compile the same
 # thing.
@@ -109,7 +111,8 @@ jobs:
           cargo-cache-key: test
       # The instrumented run is the test of record. It selects the same tests
       # as `mise run test`, so running both would execute the suite twice --
-      # except the compile-fail suite, which cannot run instrumented.
+      # except the compile-fail suite, which `ui:check` in `mise.toml` says
+      # cannot run instrumented.
       - name: Run tests under coverage
         run: mise run coverage:ci
       - name: Run the compile-fail suite

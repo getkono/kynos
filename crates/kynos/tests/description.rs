@@ -47,8 +47,9 @@ use std::collections::BTreeSet;
 use kynos::{
     ApiError, PathParams, Router, Schema,
     error::rejection::RangeRejection,
-    extract::{body::binary::Binary, media::OctetStream, params::path::Path},
-    middleware::limits::{BodySize, Timeout},
+    extract::{body::binary::Binary, params::path::Path},
+    http::media::OctetStream,
+    middleware::limits::{body_size::BodySize, timeout::Timeout},
     openapi::Document,
     response::{
         range::{Range, Ranged},
@@ -1598,7 +1599,7 @@ async fn search() -> NoContent {
 #[cfg(feature = "openapi32")]
 #[kynos::get("/filtered")]
 async fn filtered(
-    _: kynos::extract::params::query::QueryString<String, kynos::extract::media::Json>,
+    _: kynos::extract::params::querystring::QueryString<String, kynos::http::media::Json>,
 ) -> NoContent {
     NoContent
 }

@@ -127,10 +127,12 @@ async fn read_body(request: Request, media_type: &str) -> Result<Bytes, BodyReje
 /// representation's normal rejection.
 ///
 /// ```no_run
-/// use kynos::extract::{
-///     FromRequest,
-///     body::{OneOf, binary::Binary, text::Text},
-///     media::Pdf,
+/// use kynos::{
+///     extract::{
+///         FromRequest,
+///         body::{OneOf, binary::Binary, text::Text},
+///     },
+///     http::media::Pdf,
 /// };
 ///
 /// async fn upload(body: OneOf<Text, Binary<Pdf>>) {
@@ -162,7 +164,7 @@ async fn read_body(request: Request, media_type: &str) -> Result<Bytes, BodyReje
 /// unlike the pair above, where one side's media type is fixed by its type:
 ///
 /// ```compile_fail
-/// use kynos::extract::{body::{OneOf, binary::Binary}, media::{Pdf, Png}};
+/// use kynos::{extract::body::{OneOf, binary::Binary}, http::media::{Pdf, Png}};
 ///
 /// fn body<T: kynos::extract::FromRequest<()>>() {}
 /// body::<OneOf<Binary<Pdf>, Binary<Png>>>();

@@ -465,9 +465,8 @@ mod failing {
     use http_body_util::BodyExt;
     use kynos::{
         Router,
-        extract::media::OctetStream,
-        http::{Request, StatusCode, body::Body, header},
-        middleware::{cache::Cache, limits::BodyTimeout},
+        http::{Request, StatusCode, body::Body, header, media::OctetStream},
+        middleware::{cache::Cache, limits::body_timeout::BodyTimeout},
         response::range::{
             served::{Conditions, Delivery, Served},
             source::{ByteSource, SPAN},
@@ -621,8 +620,7 @@ mod streamed {
     use bytes::Bytes;
     use kynos::{
         Router,
-        extract::media::OctetStream,
-        http::StatusCode,
+        http::{StatusCode, media::OctetStream},
         middleware::cache::Cache,
         response::{headers::WithHeaders, stream::binary::BinaryStream},
     };

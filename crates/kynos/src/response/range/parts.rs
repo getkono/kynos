@@ -172,7 +172,8 @@ impl<T> Range<T> {
 ///
 /// ```
 /// use kynos::{
-///     extract::{body::binary::Binary, media::OctetStream},
+///     extract::body::binary::Binary,
+///     http::media::OctetStream,
 ///     response::range::{Range, parts::Selected},
 /// };
 ///

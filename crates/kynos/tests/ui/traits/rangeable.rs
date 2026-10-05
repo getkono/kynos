@@ -2,7 +2,7 @@
 //! seek, and RFC 9110 section 14.1.2 makes every byte offset relative to one.
 
 use kynos::{
-    extract::media::OctetStream,
+    http::media::OctetStream,
     response::{range::rangeable::Rangeable, stream::binary::BinaryStream},
 };
 

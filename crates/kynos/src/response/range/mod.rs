@@ -143,7 +143,8 @@ impl Selection {
 /// ```no_run
 /// use kynos::{
 ///     error::rejection::RangeRejection,
-///     extract::{body::binary::Binary, media::OctetStream},
+///     extract::body::binary::Binary,
+///     http::media::OctetStream,
 ///     response::range::{Range, Ranged},
 /// };
 ///

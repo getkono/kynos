@@ -27,6 +27,14 @@ pub(in crate::server) const ALPN_HTTP2: &[u8] = b"h2";
 #[cfg(feature = "http1")]
 pub(in crate::server) const ALPN_HTTP1_1: &[u8] = b"http/1.1";
 
+/// The largest flow-control window RFC 9113 §6.9.1 allows, 2^31-1.
+///
+/// `h2` asserts it while handshaking, so a larger window panics the connection
+/// rather than failing `prepare`. Spelled out because the refusal below names
+/// it as a literal.
+#[cfg(feature = "http2")]
+const MAX_HTTP2_WINDOW_SIZE: u32 = 2_147_483_647;
+
 pub(in crate::server) fn validate_protocol_config(
     #[cfg(feature = "http1")] http1: Http1Config,
     #[cfg(feature = "http2")] http2: Http2Config,
@@ -80,6 +88,13 @@ pub(in crate::server) fn validate_protocol_config(
             if initial_stream_window_size == 0 || initial_connection_window_size == 0 {
                 return Err(ServerError::InvalidConfiguration(
                     "HTTP/2 fixed flow-control windows must be non-zero",
+                ));
+            }
+            if initial_stream_window_size > MAX_HTTP2_WINDOW_SIZE
+                || initial_connection_window_size > MAX_HTTP2_WINDOW_SIZE
+            {
+                return Err(ServerError::InvalidConfiguration(
+                    "HTTP/2 fixed flow-control windows must not exceed 2147483647",
                 ));
             }
         }

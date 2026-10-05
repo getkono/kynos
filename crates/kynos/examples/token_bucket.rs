@@ -175,15 +175,15 @@ impl<K, C: Clock> TokenBucket<K, C> {
                 per_key: HashMap::new(),
                 swept_at,
             }),
-            advertised: vec![QuotaPolicy {
-                name: "burst".into(),
-                quota: u64::from(capacity),
+            advertised: vec![QuotaPolicy::new(
+                "burst",
+                u64::from(capacity),
                 // The window a quota of `capacity` is replenished over, which
                 // is what a client reading the policy needs to convert the
                 // ceiling into a rate.
-                window: Some(idle_before_full),
-                unit: QuotaUnit::Requests,
-            }],
+                Some(idle_before_full),
+                QuotaUnit::Requests,
+            )],
             clock,
         }
     }
@@ -205,12 +205,7 @@ impl<K, C: Clock> TokenBucket<K, C> {
 
     /// What an untouched bucket reports.
     fn full(&self) -> ServiceLimit {
-        ServiceLimit {
-            name: "burst".into(),
-            quota: self.ceiling(),
-            remaining: self.ceiling(),
-            reset: Duration::ZERO,
-        }
+        ServiceLimit::new("burst", self.ceiling(), self.ceiling(), Duration::ZERO)
     }
 
     /// Spends one token for `key`, or reports how long until one exists.
@@ -258,29 +253,19 @@ impl<K, C: Clock> TokenBucket<K, C> {
             // to wait a window waits longer than the service requires, and then
             // blames the service for the latency.
             let wait = Duration::from_secs_f64((1.0 - bucket.tokens) / self.refill_per_second);
-            return Err((
-                wait,
-                ServiceLimit {
-                    name: "burst".into(),
-                    quota: ceiling,
-                    remaining: 0,
-                    reset: wait,
-                },
-            ));
+            return Err((wait, ServiceLimit::new("burst", ceiling, 0, wait)));
         }
 
         bucket.tokens -= 1.0;
         let remaining = whole_tokens(bucket.tokens);
-        Ok(ServiceLimit {
-            name: "burst".into(),
-            quota: ceiling,
+        Ok(ServiceLimit::new(
+            "burst",
+            ceiling,
             remaining,
             // When the bucket is full again, which is what a client planning a
             // batch actually wants to know.
-            reset: Duration::from_secs_f64(
-                (self.capacity - bucket.tokens) / self.refill_per_second,
-            ),
-        })
+            Duration::from_secs_f64((self.capacity - bucket.tokens) / self.refill_per_second),
+        ))
     }
 }
 

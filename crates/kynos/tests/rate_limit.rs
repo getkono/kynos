@@ -458,7 +458,7 @@ async fn a_store_that_cannot_answer_allows_by_default() {
 /// limiter already declares.
 ///
 /// Not a 503: a second status here would collide with `Concurrency` on any
-/// route carrying both, and `statuses_disjoint` would refuse to compile it.
+/// route carrying both, and `CompatibleWith` would refuse to compile it.
 #[tokio::test]
 async fn a_store_that_cannot_answer_refuses_where_that_was_selected() {
     let service = limited(
@@ -646,12 +646,7 @@ impl<C: Sync + 'static> kynos::middleware::rate_limit::decision::RateLimitPolicy
 async fn a_policy_kynos_does_not_ship_reaches_the_wire() {
     use kynos::middleware::rate_limit::decision::{Decision, QuotaPolicy, QuotaUnit, ServiceLimit};
 
-    let limit = |remaining| ServiceLimit {
-        name: "burst".into(),
-        quota: 10,
-        remaining,
-        reset: Duration::from_secs(2),
-    };
+    let limit = |remaining| ServiceLimit::new("burst", 10, remaining, Duration::from_secs(2));
 
     let service = Router::<()>::new()
         .mount(kynos::routes![counted, other])
@@ -664,12 +659,12 @@ async fn a_policy_kynos_does_not_ship_reaches_the_wire() {
                     ]
                     .into_iter(),
                 ),
-                advertised: vec![QuotaPolicy {
-                    name: "burst".into(),
-                    quota: 10,
-                    window: Some(Duration::from_secs(2)),
-                    unit: QuotaUnit::Requests,
-                }],
+                advertised: vec![QuotaPolicy::new(
+                    "burst",
+                    10,
+                    Some(Duration::from_secs(2)),
+                    QuotaUnit::Requests,
+                )],
             })
             .standard_fields(),
         )

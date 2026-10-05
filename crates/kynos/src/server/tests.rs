@@ -64,10 +64,7 @@ fn http1_setters_write_their_own_fields() {
 fn http2_setters_write_their_own_fields() {
     use std::time::Duration;
 
-    let keep_alive = Http2KeepAlive {
-        interval: Duration::from_secs(7),
-        timeout: Duration::from_secs(3),
-    };
+    let keep_alive = Http2KeepAlive::new(Duration::from_secs(7), Duration::from_secs(3));
     let http2 = Http2Config::default()
         .max_concurrent_streams(64)
         .flow_control(Http2FlowControl::Adaptive)
@@ -852,10 +849,10 @@ async fn an_http2_peer_that_never_acknowledges_a_ping_is_disconnected() {
 
     let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
     let bound = crate::server::Server::new(test_service())
-        .http2(Http2Config::default().keep_alive(Some(Http2KeepAlive {
-            interval: Duration::from_millis(100),
-            timeout: Duration::from_millis(100),
-        })))
+        .http2(Http2Config::default().keep_alive(Some(Http2KeepAlive::new(
+            Duration::from_millis(100),
+            Duration::from_millis(100),
+        ))))
         .bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
             let _ = shutdown_receiver.await;
@@ -2746,7 +2743,7 @@ fn request_http1(address: std::net::SocketAddr) -> String {
 
 /// Every configuration `validate_protocol_config` refuses.
 ///
-/// Six branches, none of them reached before. A limit that stops being checked
+/// Seven branches, none of them reached before. A limit that stops being checked
 /// is one hyper is handed instead -- where a zero window stalls a connection
 /// and an oversized send buffer does not fit the protocol field it is written
 /// to. The branch is the whole value of the function, so each gets a case.
@@ -2812,12 +2809,21 @@ mod protocol_configuration {
                 "HTTP/2 fixed flow-control windows must be non-zero",
             ),
             (
+                "a fixed flow-control window past the protocol ceiling",
+                Http1Config::default(),
+                Http2Config::default().flow_control(Http2FlowControl::Fixed {
+                    initial_stream_window_size: 1 << 31,
+                    initial_connection_window_size: 1024,
+                }),
+                "HTTP/2 fixed flow-control windows must not exceed 2147483647",
+            ),
+            (
                 "a keep-alive that never waits",
                 Http1Config::default(),
-                Http2Config::default().keep_alive(Some(Http2KeepAlive {
-                    interval: Duration::ZERO,
-                    timeout: Duration::from_secs(5),
-                })),
+                Http2Config::default().keep_alive(Some(Http2KeepAlive::new(
+                    Duration::ZERO,
+                    Duration::from_secs(5),
+                ))),
                 "HTTP/2 keep-alive durations must be non-zero",
             ),
         ]
@@ -2836,6 +2842,29 @@ mod protocol_configuration {
             .expect("the defaults Kynos ships must be a configuration it accepts");
     }
 
+    /// RFC 9113 §6.9.1 caps a flow-control window at 2^31-1, and `h2` asserts
+    /// it during the handshake, so a larger window panicked every HTTP/2
+    /// connection instead of failing `prepare`. The case table reaches the
+    /// stream window; this holds the connection window to the same ceiling and
+    /// the ceiling itself to acceptance.
+    #[test]
+    fn fixed_windows_are_held_to_the_protocol_ceiling_on_either_side() {
+        const CEILING: u32 = (1 << 31) - 1;
+        let fixed = |stream, connection| {
+            Http2Config::default().flow_control(Http2FlowControl::Fixed {
+                initial_stream_window_size: stream,
+                initial_connection_window_size: connection,
+            })
+        };
+
+        validate_protocol_config(Http1Config::default(), fixed(CEILING, CEILING))
+            .expect("a window of exactly 2^31-1 is one the protocol carries");
+        assert_eq!(
+            refused(Http1Config::default(), fixed(CEILING, u32::MAX)),
+            "HTTP/2 fixed flow-control windows must not exceed 2147483647",
+        );
+    }
+
     /// A count, so a limit added without a case fails the build.
     #[test]
     fn every_refusal_has_a_case() {
@@ -2847,6 +2876,41 @@ mod protocol_configuration {
             branches,
             "`protocol.rs` refuses {branches} configuration(s) and {} have a case",
             cases().len()
+        );
+    }
+}
+
+/// An accept loop that ended without returning is its own failure, not an
+/// invalid setting, and the error says which way it ended.
+#[tokio::test]
+async fn a_failed_accept_loop_is_reported_as_one() {
+    use crate::server::{accept_loop_failure, error::ServerError};
+
+    let mut loops = tokio::task::JoinSet::new();
+    loops.spawn(async { panic!("an accept loop panicking on purpose") });
+    let panicked = loops
+        .join_next()
+        .await
+        .expect("one loop was spawned")
+        .expect_err("the loop panicked");
+
+    loops.spawn(std::future::pending::<()>());
+    loops.abort_all();
+    let cancelled = loops
+        .join_next()
+        .await
+        .expect("one loop was spawned")
+        .expect_err("the loop was cancelled");
+
+    for (error, expected_panicked, message) in [
+        (panicked, true, "an accept loop panicked"),
+        (cancelled, false, "an accept loop was cancelled"),
+    ] {
+        let failure = accept_loop_failure(&error);
+        assert_eq!(failure.to_string(), message);
+        assert!(
+            matches!(failure, ServerError::AcceptLoop { panicked } if panicked == expected_panicked),
+            "{failure:?}"
         );
     }
 }

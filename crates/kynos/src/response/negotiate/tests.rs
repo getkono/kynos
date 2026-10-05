@@ -3,9 +3,8 @@ use crate::{
     extract::{
         FromRequestParts,
         body::{binary::Binary, text::Text},
-        media::Pdf,
     },
-    http::{HeaderValue, header},
+    http::{HeaderValue, header, media::Pdf},
     response::{
         IntoResponse,
         negotiate::{Accept, representation::Representation},

@@ -23,12 +23,12 @@ use support::{App, get, send};
 
 /// The one policy both fixtures advertise.
 fn advertised() -> Vec<QuotaPolicy> {
-    vec![QuotaPolicy {
-        name: "default".into(),
-        quota: 100,
-        window: Some(std::time::Duration::from_secs(60)),
-        unit: QuotaUnit::Requests,
-    }]
+    vec![QuotaPolicy::new(
+        "default",
+        100,
+        Some(std::time::Duration::from_secs(60)),
+        QuotaUnit::Requests,
+    )]
 }
 
 /// A policy that always allows, reporting a fixed remaining count and reset.
@@ -47,12 +47,12 @@ impl RateLimitPolicy<App> for AlwaysAllows {
     }
 
     async fn check(&self, _: &Request, _: Route<'_>, _: &App) -> Decision {
-        Decision::allow(ServiceLimit {
-            name: "default".into(),
-            quota: 100,
-            remaining: 97,
-            reset: std::time::Duration::from_secs(42),
-        })
+        Decision::allow(ServiceLimit::new(
+            "default",
+            100,
+            97,
+            std::time::Duration::from_secs(42),
+        ))
     }
 }
 
@@ -74,12 +74,7 @@ impl RateLimitPolicy<App> for AlwaysDenies {
     async fn check(&self, _: &Request, _: Route<'_>, _: &App) -> Decision {
         Decision::deny(
             std::time::Duration::from_secs(30),
-            ServiceLimit {
-                name: "default".into(),
-                quota: 100,
-                remaining: 0,
-                reset: std::time::Duration::from_secs(30),
-            },
+            ServiceLimit::new("default", 100, 0, std::time::Duration::from_secs(30)),
         )
     }
 }
@@ -444,9 +439,9 @@ mod partial {
     use kynos::{
         Router,
         error::rejection::RangeRejection,
-        extract::{body::binary::Binary, media::OctetStream},
+        extract::body::binary::Binary,
         http::etag::ETag,
-        http::{StatusCode, header},
+        http::{StatusCode, header, media::OctetStream},
         middleware::compression::Compression,
         response::{
             headers::WithHeaders,
@@ -711,8 +706,7 @@ mod partial {
         use bytes::Bytes;
         use kynos::{
             Router,
-            extract::media::OctetStream,
-            http::{StatusCode, header},
+            http::{StatusCode, header, media::OctetStream},
             middleware::compression::Compression,
             response::{headers::WithHeaders, stream::binary::BinaryStream},
         };
@@ -931,8 +925,8 @@ mod ranged_assets {
 mod levels {
     use kynos::{
         Router,
-        extract::{body::binary::Binary, media::OctetStream},
-        http::{StatusCode, header},
+        extract::body::binary::Binary,
+        http::{StatusCode, header, media::OctetStream},
         middleware::compression::{
             Compression,
             levels::{BrotliLevel, GzipLevel, ZstdLevel},
@@ -1051,8 +1045,8 @@ mod levels {
 mod encoding_policy {
     use kynos::{
         Router,
-        extract::{body::binary::Binary, media::OctetStream},
-        http::{StatusCode, header},
+        extract::body::binary::Binary,
+        http::{StatusCode, header, media::OctetStream},
         middleware::compression::{
             Compression,
             policy::{Encoding, WithEncoding},
@@ -1226,8 +1220,7 @@ mod streamed_failure {
 
     use kynos::{
         Router,
-        extract::media::OctetStream,
-        http::{Request, body::Body, header},
+        http::{Request, body::Body, header, media::OctetStream},
         middleware::{Observer, compression::Compression},
         response::stream::binary::BinaryStream,
         router::{operation::Route, service::Service},
@@ -1360,8 +1353,8 @@ mod streamed_failure {
 mod default_threshold {
     use kynos::{
         Router,
-        extract::{body::binary::Binary, media::OctetStream},
-        http::{StatusCode, header},
+        extract::body::binary::Binary,
+        http::{StatusCode, header, media::OctetStream},
         middleware::compression::{
             Compression,
             policy::{Encoding, WithEncoding},

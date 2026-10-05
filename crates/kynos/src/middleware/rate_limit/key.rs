@@ -63,8 +63,10 @@ impl<C> RateLimitKey<C> for ByPeerAddress {
 /// against, which is worse than no limit at all because it looks like one.
 ///
 /// A request that resolves to no address — a `TestClient`, a directly driven
-/// `Service::call` — counts against one shared bucket rather than being
-/// exempted, for the reason [`ByPeerAddress`] gives.
+/// `Service::call`, or trust ending on an element naming none (`for=unknown`,
+/// an obfuscated or unparseable `for=`, or no `for=` at all, as in a trusted
+/// proxy sending only `Forwarded: proto=https`) — counts against one shared
+/// bucket rather than being exempted, for the reason [`ByPeerAddress`] gives.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ByClientAddress;
 

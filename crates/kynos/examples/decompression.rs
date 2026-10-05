@@ -29,7 +29,7 @@
 //!   Two kilobytes of zeroes are a gigabyte of gzip output, so a limit measured
 //!   before decoding measures the one number an attacker sets freely. The limit
 //!   `Decompression` takes is the route's body limit applied to what the
-//!   handler will actually see. Both answer 413, so `statuses_disjoint` refuses
+//!   handler will actually see. Both answer 413, so `CompatibleWith` refuses
 //!   the pair — correctly, since it would be ambiguous as well as redundant.
 //! * **The refusals are declared, and appear in the description.** 415, 413 and
 //!   400 reach every covered operation because [`Undecodable`] is the

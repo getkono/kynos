@@ -373,7 +373,7 @@ fn declared(headers: &http::HeaderMap) -> Option<Vec<Coding>> {
 ///
 /// A cap measured before decoding is not a cap. Two kilobytes of zeroes are a
 /// gigabyte of gzip output, so
-/// [`BodySize`](crate::middleware::limits::BodySize) guarding a route that
+/// [`BodySize`](crate::middleware::limits::body_size::BodySize) guarding a route that
 /// accepts codings guards nothing -- it measures the one number the attacker
 /// controls freely.
 ///
@@ -443,7 +443,7 @@ impl Decompression<(), (), ()> {
     ///
     /// Declared on the concrete type so that it still infers without a
     /// turbofish, as
-    /// [`BodySize::new`](crate::middleware::limits::BodySize::new) is.
+    /// [`BodySize::new`](crate::middleware::limits::body_size::BodySize::new) is.
     #[must_use]
     pub fn new(bytes: u64) -> Self {
         Self {

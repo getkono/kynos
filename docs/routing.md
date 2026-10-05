@@ -188,16 +188,17 @@ for it when a consumer pins a version, and let `openapi` decide otherwise.
 
 ## Typed URIs
 
-A route attribute emits an inherent `uri` constructor beside the endpoint type
-it generates ([`route/uri.rs`](../crates/kynos-macros/src/route/uri.rs)). Its
-signature is derived from the handler's own extractors:
+A route attribute emits an inherent `relative_uri` constructor beside the
+endpoint type it generates
+([`route/uri.rs`](../crates/kynos-macros/src/route/uri.rs)). Its signature is
+derived from the handler's own extractors:
 
-| Handler has | `uri` signature |
+| Handler has | `relative_uri` signature |
 | --- | --- |
-| neither | `uri() -> Uri` |
-| `Path<P>` | `uri(path: P) -> Uri` |
-| `Query<Q>` | `uri(query: Q) -> Uri` |
-| both | `uri(path: P, query: Q) -> Uri` |
+| neither | `relative_uri() -> Uri` |
+| `Path<P>` | `relative_uri(path: P) -> Uri` |
+| `Query<Q>` | `relative_uri(query: Q) -> Uri` |
+| both | `relative_uri(path: P, query: Q) -> Uri` |
 
 The values are percent-encoded on the way in, so a path parameter holding a `/`
 survives as `%2F` rather than silently becoming two segments —

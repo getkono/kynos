@@ -61,9 +61,9 @@ use kynos::{
             binary::Binary,
             json_lines::{JsonLines, JsonSeq, records::Records},
         },
-        media::{MediaType, OctetStream},
-        params::query::QueryString,
+        params::querystring::QueryString,
     },
+    http::media::{MediaType, OctetStream},
     prelude::*,
     response::{
         range::{Range, parts::RangedParts},

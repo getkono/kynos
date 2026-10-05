@@ -38,7 +38,7 @@
 //!   nothing, because by the time a response body is streaming the status and
 //!   the headers have already gone. Saying so in the type is what lets it
 //!   compose with every limit below it — there is no status for
-//!   `statuses_disjoint` to refuse. Where a limit *does* answer, the response
+//!   `CompatibleWith` to refuse. Where a limit *does* answer, the response
 //!   is a parameter: `Timeout::answer_with` substitutes a type of your own, and
 //!   because that type is a `ShortCircuit` the document still describes exactly
 //!   what the service can send.
@@ -51,7 +51,10 @@ use kynos::{
         Continued, Interceptor, Next,
         compression::{Compression, levels::GzipLevel},
         cors::Cors,
-        limits::{BodySize, BodyTimeout, Concurrency, Timeout},
+        limits::{
+            body_size::BodySize, body_timeout::BodyTimeout, concurrency::Concurrency,
+            timeout::Timeout,
+        },
         rate_limit::{
             RateLimit,
             decision::{Decision, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
@@ -248,12 +251,12 @@ impl PerProcess {
         Self {
             served: std::sync::Arc::default(),
             ceiling,
-            policies: vec![QuotaPolicy {
-                name: "per-process".into(),
-                quota: u64::from(ceiling),
-                window: Some(Duration::from_secs(60)),
-                unit: QuotaUnit::Requests,
-            }],
+            policies: vec![QuotaPolicy::new(
+                "per-process",
+                u64::from(ceiling),
+                Some(Duration::from_secs(60)),
+                QuotaUnit::Requests,
+            )],
         }
     }
 }
@@ -271,24 +274,24 @@ impl RateLimitPolicy<()> for PerProcess {
         if served >= self.ceiling {
             return Decision::deny(
                 Duration::from_secs(60),
-                ServiceLimit {
-                    name: "per-process".into(),
-                    quota: u64::from(self.ceiling),
-                    remaining: 0,
-                    reset: Duration::from_secs(60),
-                },
+                ServiceLimit::new(
+                    "per-process",
+                    u64::from(self.ceiling),
+                    0,
+                    Duration::from_secs(60),
+                ),
             );
         }
 
         // Every number comes from the policy because every one is a property of
         // the counter: the framework cannot know how many remain, and a
         // window's *length* is not the time until it resets.
-        Decision::allow(ServiceLimit {
-            name: "per-process".into(),
-            quota: u64::from(self.ceiling),
-            remaining: u64::from(self.ceiling - served - 1),
-            reset: Duration::from_secs(60),
-        })
+        Decision::allow(ServiceLimit::new(
+            "per-process",
+            u64::from(self.ceiling),
+            u64::from(self.ceiling - served - 1),
+            Duration::from_secs(60),
+        ))
     }
 }
 

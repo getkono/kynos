@@ -38,7 +38,7 @@ use kynos::{
     http::StatusCode,
     middleware::{
         cors::Cors,
-        limits::{BodySize, Concurrency, Timeout},
+        limits::{body_size::BodySize, concurrency::Concurrency, timeout::Timeout},
         rate_limit::{
             RateLimit,
             decision::{Decision, QuotaPolicy, RateLimitPolicy, ServiceLimit},
@@ -287,22 +287,17 @@ impl AllowsOnce {
     fn new() -> Self {
         Self {
             seen: std::sync::Arc::default(),
-            policies: vec![QuotaPolicy {
-                name: "fixture".into(),
-                quota: 1,
-                window: Some(Duration::from_secs(60)),
-                unit: kynos::middleware::rate_limit::decision::QuotaUnit::Requests,
-            }],
+            policies: vec![QuotaPolicy::new(
+                "fixture",
+                1,
+                Some(Duration::from_secs(60)),
+                kynos::middleware::rate_limit::decision::QuotaUnit::Requests,
+            )],
         }
     }
 
     fn limit(remaining: u64) -> ServiceLimit {
-        ServiceLimit {
-            name: "fixture".into(),
-            quota: 1,
-            remaining,
-            reset: Duration::from_secs(60),
-        }
+        ServiceLimit::new("fixture", 1, remaining, Duration::from_secs(60))
     }
 }
 

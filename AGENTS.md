@@ -6,10 +6,10 @@ Kynos is an idiomatic, performance-focused Rust framework for building REST APIs
 
 - OpenAPI compliance: The official OpenAPI specs in Markdown is vendored in `references/`. Strictly distinguish features behind `openapi31` (default enabled and baseline) and `openapi32` feature flags.
 - RFC9110 compliance: See `references/rfc9110.txt` when HTTP semantic correctness is involved.
-- Idiomatic and strict Rust API: API is pre-v1. All changes are on the table. API must be idiomatic Rust, and structurally strict to leverage compiler hints.
+- Idiomatic and strict Rust API: API is pre-v1. All changes are on the table: a README `frozen` row may still break in a 0.x minor, only through a `!` commit. API must be idiomatic Rust, and structurally strict to leverage compiler hints.
 - Production-ready: Our contract guarantees made it easy to make it production-grade since day one. Design APIs that do not break compatibility under future optimizations.
 - Be opinionated where it counts: We scope features that are strictly required for performance and where there should only be one recommended approach. For example, IO-related primitives is vertically integrated and coupled with core dependencies like `tokio` and dependency injection is fully-featured. However, we would not prescribe dependencies such as ORMs and logging backends.
-- Runtime: tokio-only and never abstracted over; direct tokio use stays inside `crates/kynos/src/server/`. See `docs/architecture.md`.
+- Runtime: tokio-only and never abstracted over; direct tokio use stays inside the sites `docs/architecture.md`'s runtime allowance table lists, which `containment:check` enforces.
 - Document all public API surface idiomatically and just tersely for internal logic.
 
 ## Development Guidelines
@@ -30,8 +30,8 @@ Kynos is an idiomatic, performance-focused Rust framework for building REST APIs
 - A module becomes a directory once it holds two independently-changing concerns; tests move to a sibling `tests.rs`. Passing ~400 lines excluding tests is when to ask that question, not an answer to it: a module holding one concern stays a file, because splitting it would only lengthen the paths of the items it declares. `containment:check` counts the ones that stay.
 - Submodules are `pub` with no parent re-exports, so every item has one canonical path; the crate root and `kynos::prelude` are the only curated shortcuts, and macro-support items live in `kynos::__private`. A module that declares no item of its own — only trait implementations — is private instead, since it has nothing for a path to point at.
 - A feature gate belongs on the `pub mod` line, not repeated on each item inside it.
-- Do not introduce public framework APIs as placeholders, with one exception: the pre-v1 API-skeleton milestone, during which the surface is designed ahead of its implementation so it can be reviewed and frozen as a whole. A placeholder body must be `todo!()`, must be fully documented, and must appear in a `no_run` doc example proving the surface is usable. Once the skeleton is frozen this exception lapses.
-- A proc macro is exempt from the `no_run` example rule only while its expansion cannot compile in its own crate; a derive must expand to a well-formed implementation with `todo!()` bodies rather than `todo!()`-ing during expansion, since an expansion that aborts can appear in no test at all.
+- Do not introduce public framework APIs as placeholders; the API-skeleton `todo!()` exception has lapsed and `containment:check` refuses any `todo!` outside doc examples.
+- A proc macro's doc examples are `ignore`d, since its expansion names `::kynos`, which its own crate cannot depend on; `crates/kynos/tests/` and the examples compile them instead.
 
 ## Tooling
 

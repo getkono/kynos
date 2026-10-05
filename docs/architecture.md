@@ -51,8 +51,8 @@ is checkable, so the sites are enumerated:
 
 | Site | Names | Why it is not in `server/` |
 | --- | --- | --- |
-| `server/{accept,connection,mod}.rs`, `server/tls/` | the five coupling points | — |
-| `middleware/limits.rs` | `tokio::{time::timeout, time::Instant, time::Sleep, time::sleep, sync::Semaphore}` | the timer wraps the chain's future, which does not exist until after routing; the permit bounds requests already in it; the body timer outlives both, because a streamed body is still being produced after the chain has returned |
+| `server/` | the five coupling points, and the listener, shutdown and lifecycle plumbing around them | — |
+| `middleware/limits/` | `tokio::{time::timeout, time::Instant, time::Sleep, time::sleep, sync::Semaphore}` | the timer wraps the chain's future, which does not exist until after routing; the permit bounds requests already in it; the body timer outlives both, because a streamed body is still being produced after the chain has returned |
 | `middleware/compression/` | `tokio::io::{AsyncRead, AsyncWrite, ReadBuf}` | `async-compression`'s encoders are written against tokio's I/O traits; no byte here crosses a socket |
 | `middleware/decompression/` | `tokio::io::{AsyncRead, ReadBuf}` | the same traits for the same reason, in the other direction: a client-compressed request body is decoded before an extractor sees it, which is as far from a socket as the encoders are |
 | `response/stream/sse.rs` | `tokio::time::{Instant, Sleep, sleep}` | a keep-alive is a property of one body, and the connection driver cannot know a body is an event stream |
@@ -91,9 +91,10 @@ the graph.
   implementations. The rule is scoped to the checked surface: `unchecked`
   hands the service to `tower`, whose `Service::Future` is an associated type
   Kynos does not choose, so
-  [`UncheckedService`](../crates/kynos/src/unchecked.rs) names a boxed future.
-  That is the shape of the escape hatch rather than an exception to the rule,
-  and it is the only one.
+  [`UncheckedService`](../crates/kynos/src/unchecked.rs) names a boxed future,
+  and so does [`UncheckedInner`](../crates/kynos/src/unchecked.rs), the service
+  an unchecked `tower` layer wraps. That is the shape of the escape hatch rather
+  than an exception to the rule, and those two are the only ones.
 
   The clause is about the surface, so a hand-rolled `Stream` on a type nobody
   can name is not an exception to it. Two exist and both are the same shape:
@@ -117,8 +118,9 @@ the graph.
   never as a bound on a handler.
 - No lifetimes in handler signatures. Generics that exist for performance stay
   private.
-- Every public type is either a re-export from `http`, `bytes` or `serde`, or
-  something Kynos is prepared to own indefinitely.
+- Every public type is either a re-export from `http`, `bytes`, `serde` or
+  `indexmap` (2.x, through the `kynos_openapi::Map` alias), or something Kynos
+  is prepared to own indefinitely.
 - Fields the specification makes mutually exclusive are one enum, not several
   `Option`s, and a field whose legal values are a subset of some wider type is
   that subset. No validator rule restates either. See
@@ -186,7 +188,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | Runtime, sockets, timers, signals | `tokio` | `server/` | built |
 | Request and response types | `http` | ambient | built |
 | Byte buffers | `bytes` | ambient | built |
-| Body trait and erasure | `http-body`, `http-body-util` | [`http/body.rs`](../crates/kynos/src/http/body.rs), [`extract/body/`](../crates/kynos/src/extract/body/), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
+| Body trait and erasure | `http-body`, `http-body-util` | [`http/body.rs`](../crates/kynos/src/http/body.rs), [`extract/body/`](../crates/kynos/src/extract/body/), [`middleware/cache/mod.rs`](../crates/kynos/src/middleware/cache/mod.rs), [`middleware/compression/`](../crates/kynos/src/middleware/compression/), [`middleware/decompression/`](../crates/kynos/src/middleware/decompression/), [`middleware/limits/`](../crates/kynos/src/middleware/limits/), [`response/range/source.rs`](../crates/kynos/src/response/range/source.rs), [`router/dispatch.rs`](../crates/kynos/src/router/dispatch.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
 | Protocol driver, HTTP/1 and HTTP/2 | `hyper` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs), [`http/body.rs`](../crates/kynos/src/http/body.rs) | built |
 | tokio adapters for the driver | `hyper-util` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs) | built |
 | Accepted-socket options tokio does not expose | `socket2` | [`server/tcp.rs`](../crates/kynos/src/server/tcp.rs) | built |
@@ -200,33 +202,32 @@ by naming the row X displaces rather than by arguing that X is good.
 | Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | built |
 | Streaming bodies | `futures-core` | [`response/stream/`](../crates/kynos/src/response/stream/), [`extract/body/json_lines/`](../crates/kynos/src/extract/body/json_lines/), [`http/body.rs`](../crates/kynos/src/http/body.rs), gated on `openapi32` | built |
 | JSON | `serde_json` | ambient with `serde` | built |
-| Form codec | `serde_urlencoded` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs) | built |
+| Form codec | `serde_urlencoded` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
 | Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | built |
 | Protobuf codec | `prost` | [`extract/body/protobuf.rs`](../crates/kynos/src/extract/body/protobuf.rs), [`response/codec/protobuf.rs`](../crates/kynos/src/response/codec/protobuf.rs) | built |
 | Scalar formats, identifiers | `uuid` | [`schema/impls/identifier.rs`](../crates/kynos/src/schema/impls/identifier.rs) | built |
 | Scalar formats, dates and times | `chrono`, `jiff` | [`schema/impls/temporal/`](../crates/kynos/src/schema/impls/temporal/) | built |
 | Scalar formats, decimals | `rust_decimal`, `bigdecimal` | [`schema/impls/decimal/`](../crates/kynos/src/schema/impls/decimal/) | built |
-| Compression | `async-compression` | [`middleware/compression/`](../crates/kynos/src/middleware/compression/) | built |
+| Compression | `async-compression` | [`middleware/compression/`](../crates/kynos/src/middleware/compression/), [`middleware/decompression/`](../crates/kynos/src/middleware/decompression/) | built |
 | tower interop, outward | `tower-service` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
 | tower interop, inward | `tower-layer` | [`unchecked.rs`](../crates/kynos/src/unchecked.rs) | built |
 | Document ordering | `indexmap` | [`kynos-openapi`](../crates/kynos-openapi/src/lib.rs) | built |
-| YAML emission | `serde_yaml_ng` | [`kynos-openapi/emit/`](../crates/kynos-openapi/src/emit/), [`error/mod.rs`](../crates/kynos/src/error/mod.rs) | built |
+| YAML emission | `serde_yaml_ng` | [`kynos-openapi/emit/`](../crates/kynos-openapi/src/emit/), behind the owned `YamlError` | built |
 | Macro parsing | `proc-macro2`, `quote`, `syn` | [`kynos-macros`](../crates/kynos-macros/src/) | built |
 | HTTP/3, QUIC | — | — | deferred |
 | WebSockets, WebTransport | — | — | out of scope |
 
-Five statuses, and the distinction is what keeps the table checkable:
+Four statuses, and the distinction is what keeps the table checkable:
 
 | Status | Meaning |
 | --- | --- |
 | `built` | Reached by code that is implemented |
-| `designed` | Declared by a member crate; the module that owns it is still skeleton |
 | `chosen` | Settled as the answer, declared by nobody. It appears in no manifest and no lockfile |
 | `deferred` | Not implemented, and no dependency chosen. The ground is cost rather than principle, so demonstrated demand reopens it |
 | `out of scope` | Refused on a stated ground, so no dependency will be chosen. Demand does not reopen it; a different argument would have to |
 
 A row whose *Named in* column says `never` or `ambient` is `built` when the
-code that reaches it is implemented; it has no owning module to be a skeleton.
+code that reaches it is implemented, even though no manifest of ours names it.
 `httparse` and `h2` are the clear cases: no member declares either, and they
 are reached only through `hyper`.
 

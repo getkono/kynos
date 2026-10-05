@@ -81,6 +81,73 @@ fn each_body_failure_has_its_own_status() {
     declares(&statuses, BodyRejection::statuses());
 }
 
+/// A schema failure is a set, so it travels as RFC 9457's `errors` extension:
+/// one `{pointer, detail}` entry per failing pointer, in pointer order, with
+/// the variant's sentence alone as `detail`.
+///
+/// The failures are inserted out of order, so the array's order is the map's
+/// rather than the caller's.
+#[test]
+fn a_schema_failure_travels_as_one_errors_entry_per_pointer() {
+    let problem = BodyRejection::Schema {
+        failures: [
+            ("/name".to_owned(), "expected a string".to_owned()),
+            ("/age".to_owned(), "expected an integer".to_owned()),
+        ]
+        .into_iter()
+        .collect(),
+    }
+    .into_problem();
+
+    assert_eq!(
+        serde_json::to_value(problem).expect("a problem serializes"),
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Unprocessable Entity",
+            "status": 422,
+            "detail": "the request body does not satisfy its schema",
+            "errors": [
+                { "pointer": "/age", "detail": "expected an integer" },
+                { "pointer": "/name", "detail": "expected a string" },
+            ],
+        })
+    );
+}
+
+/// A 415 names the media type the client sent, or says it sent none, so a
+/// client can tell a wrong `Content-Type` from a missing one.
+#[test]
+fn an_unsupported_media_type_names_what_was_received_or_its_absence() {
+    let document = |received: Option<&str>| {
+        serde_json::to_value(
+            BodyRejection::UnsupportedMediaType {
+                received: received.map(ToOwned::to_owned),
+            }
+            .into_problem(),
+        )
+        .expect("a problem serializes")
+    };
+
+    assert_eq!(
+        document(Some("text/csv")),
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Unsupported Media Type",
+            "status": 415,
+            "detail": "unsupported media type: `text/csv`",
+        })
+    );
+    assert_eq!(
+        document(None),
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Unsupported Media Type",
+            "status": 415,
+            "detail": "unsupported media type: the request declared no `Content-Type`",
+        })
+    );
+}
+
 #[test]
 fn negotiation_separates_a_bad_header_from_an_unmatchable_one() {
     let observed = [
@@ -369,119 +436,204 @@ fn every_rejection_a_caller_can_receive_has_a_case() {
     );
 }
 
-/// Every variant of every rejection: its name, the status it produces, and the
-/// set its own type declares.
-///
-/// The matches are exhaustive, so a variant added to any of the seven stops
-/// this file compiling until it is given a row — the idiom `error/tests.rs`
-/// uses for `Error`, applied to the types a *caller* meets rather than the one
-/// a builder does.
-fn ledger() -> Vec<(&'static str, StatusCode, &'static [StatusCode])> {
-    fn path(rejection: &PathRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
-        let name = match rejection {
-            PathRejection::Invalid { .. } => "PathRejection::Invalid",
-        };
-        (name, rejection.status(), PathRejection::statuses())
-    }
-
-    fn query(rejection: &QueryRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
-        let name = match rejection {
-            QueryRejection::Invalid { .. } => "QueryRejection::Invalid",
-        };
-        (name, rejection.status(), QueryRejection::statuses())
-    }
-
-    fn header(rejection: &HeaderRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
-        let name = match rejection {
-            HeaderRejection::Invalid { .. } => "HeaderRejection::Invalid",
-        };
-        (name, rejection.status(), HeaderRejection::statuses())
-    }
-
-    fn body(rejection: &BodyRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
-        let name = match rejection {
-            BodyRejection::Syntax { .. } => "BodyRejection::Syntax",
-            BodyRejection::Schema { .. } => "BodyRejection::Schema",
-            BodyRejection::UnsupportedMediaType { .. } => "BodyRejection::UnsupportedMediaType",
-        };
-        (name, rejection.status(), BodyRejection::statuses())
-    }
-
-    fn negotiation(
-        rejection: &NegotiationRejection,
-    ) -> (&'static str, StatusCode, &'static [StatusCode]) {
-        let name = match rejection {
-            NegotiationRejection::MalformedAccept { .. } => "NegotiationRejection::MalformedAccept",
-            NegotiationRejection::NotAcceptable => "NegotiationRejection::NotAcceptable",
-        };
-        (name, rejection.status(), NegotiationRejection::statuses())
-    }
-
-    fn range(rejection: RangeRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
-        let name = match rejection {
-            RangeRejection::NotSatisfiable { .. } => "RangeRejection::NotSatisfiable",
-        };
-        (name, rejection.status(), RangeRejection::statuses())
-    }
-
-    fn auth(rejection: &AuthRejection) -> (&'static str, StatusCode, &'static [StatusCode]) {
-        let name = match rejection {
-            AuthRejection::Unauthenticated { .. } => "AuthRejection::Unauthenticated",
-            AuthRejection::Forbidden { .. } => "AuthRejection::Forbidden",
-        };
-        (name, rejection.status(), AuthRejection::statuses())
-    }
-
-    let text = |detail: &str| detail.to_owned();
-
-    vec![
-        path(&PathRejection::Invalid {
-            name: text("id"),
-            detail: text("not a number"),
-        }),
-        query(&QueryRejection::Invalid {
-            name: text("limit"),
-            detail: text("not a number"),
-        }),
-        header(&HeaderRejection::Invalid {
-            name: text("if-none-match"),
-            detail: text("not an entity tag"),
-        }),
-        body(&BodyRejection::Syntax {
-            detail: text("unexpected end of input"),
-        }),
-        body(&BodyRejection::Schema {
-            failures: [(text("/name"), text("expected a string"))]
-                .into_iter()
-                .collect(),
-        }),
-        body(&BodyRejection::UnsupportedMediaType {
-            received: Some(text("text/plain")),
-        }),
-        negotiation(&NegotiationRejection::MalformedAccept {
-            detail: text("a bare comma"),
-        }),
-        negotiation(&NegotiationRejection::NotAcceptable),
-        range(RangeRejection::NotSatisfiable {
-            complete_length: 1234,
-        }),
-        auth(&AuthRejection::unauthenticated()),
-        auth(&AuthRejection::forbidden()),
-    ]
+/// One variant of one rejection: its name, the status the ledger expects of
+/// it, the status it produces, the set its own type declares, and the sentence
+/// it renders.
+struct Row {
+    name: &'static str,
+    expected: StatusCode,
+    produced: StatusCode,
+    declared: &'static [StatusCode],
+    sentence: String,
 }
 
-/// Every variant produces a status its own type declares.
+impl Row {
+    fn new(
+        name: &'static str,
+        expected: StatusCode,
+        (produced, declared): (StatusCode, &'static [StatusCode]),
+        rejection: &impl std::fmt::Display,
+    ) -> Self {
+        Self {
+            name,
+            expected,
+            produced,
+            declared,
+            sentence: rejection.to_string(),
+        }
+    }
+}
+
+// One witness per rejection type, each naming its variants in an exhaustive
+// match, so a variant added to any of the eight stops this file compiling until
+// it is given a row — the idiom `error/tests.rs` uses for `Error`, applied to
+// the types a *caller* meets rather than the one a builder does.
+// `CookieRejection`'s is under `cookie`, because the type exists only there.
+
+fn path(expected: StatusCode, rejection: &PathRejection) -> Row {
+    let name = match rejection {
+        PathRejection::Invalid { .. } => "PathRejection::Invalid",
+    };
+    let statuses = (rejection.status(), PathRejection::statuses());
+    Row::new(name, expected, statuses, rejection)
+}
+
+fn query(expected: StatusCode, rejection: &QueryRejection) -> Row {
+    let name = match rejection {
+        QueryRejection::Invalid { .. } => "QueryRejection::Invalid",
+    };
+    let statuses = (rejection.status(), QueryRejection::statuses());
+    Row::new(name, expected, statuses, rejection)
+}
+
+fn header(expected: StatusCode, rejection: &HeaderRejection) -> Row {
+    let name = match rejection {
+        HeaderRejection::Invalid { .. } => "HeaderRejection::Invalid",
+    };
+    let statuses = (rejection.status(), HeaderRejection::statuses());
+    Row::new(name, expected, statuses, rejection)
+}
+
+#[cfg(feature = "cookie")]
+fn cookie(expected: StatusCode, rejection: &super::CookieRejection) -> Row {
+    use super::CookieRejection;
+
+    let name = match rejection {
+        CookieRejection::Invalid { .. } => "CookieRejection::Invalid",
+    };
+    let statuses = (rejection.status(), CookieRejection::statuses());
+    Row::new(name, expected, statuses, rejection)
+}
+
+fn body(expected: StatusCode, rejection: &BodyRejection) -> Row {
+    let name = match rejection {
+        BodyRejection::Syntax { .. } => "BodyRejection::Syntax",
+        BodyRejection::Schema { .. } => "BodyRejection::Schema",
+        BodyRejection::UnsupportedMediaType { .. } => "BodyRejection::UnsupportedMediaType",
+    };
+    let statuses = (rejection.status(), BodyRejection::statuses());
+    Row::new(name, expected, statuses, rejection)
+}
+
+fn negotiation(expected: StatusCode, rejection: &NegotiationRejection) -> Row {
+    let name = match rejection {
+        NegotiationRejection::MalformedAccept { .. } => "NegotiationRejection::MalformedAccept",
+        NegotiationRejection::NotAcceptable => "NegotiationRejection::NotAcceptable",
+    };
+    let statuses = (rejection.status(), NegotiationRejection::statuses());
+    Row::new(name, expected, statuses, rejection)
+}
+
+fn range(expected: StatusCode, rejection: RangeRejection) -> Row {
+    let name = match rejection {
+        RangeRejection::NotSatisfiable { .. } => "RangeRejection::NotSatisfiable",
+    };
+    let statuses = (rejection.status(), RangeRejection::statuses());
+    Row::new(name, expected, statuses, &rejection)
+}
+
+fn auth(expected: StatusCode, rejection: &AuthRejection) -> Row {
+    let name = match rejection {
+        AuthRejection::Unauthenticated { .. } => "AuthRejection::Unauthenticated",
+        AuthRejection::Forbidden { .. } => "AuthRejection::Forbidden",
+    };
+    let statuses = (rejection.status(), AuthRejection::statuses());
+    Row::new(name, expected, statuses, rejection)
+}
+
+/// Every variant of every rejection, each with the exact status it must
+/// produce.
+fn ledger() -> Vec<Row> {
+    let text = |detail: &str| detail.to_owned();
+
+    [
+        path(
+            StatusCode::BAD_REQUEST,
+            &PathRejection::Invalid {
+                name: text("id"),
+                detail: text("not a number"),
+            },
+        ),
+        query(
+            StatusCode::BAD_REQUEST,
+            &QueryRejection::Invalid {
+                name: text("limit"),
+                detail: text("not a number"),
+            },
+        ),
+        header(
+            StatusCode::BAD_REQUEST,
+            &HeaderRejection::Invalid {
+                name: text("if-none-match"),
+                detail: text("not an entity tag"),
+            },
+        ),
+        #[cfg(feature = "cookie")]
+        cookie(
+            StatusCode::BAD_REQUEST,
+            &super::CookieRejection::Invalid {
+                name: text("session"),
+                detail: text("not base64"),
+            },
+        ),
+        body(
+            StatusCode::BAD_REQUEST,
+            &BodyRejection::Syntax {
+                detail: text("unexpected end of input"),
+            },
+        ),
+        body(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            &BodyRejection::Schema {
+                failures: [(text("/name"), text("expected a string"))]
+                    .into_iter()
+                    .collect(),
+            },
+        ),
+        body(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            &BodyRejection::UnsupportedMediaType {
+                received: Some(text("text/plain")),
+            },
+        ),
+        negotiation(
+            StatusCode::BAD_REQUEST,
+            &NegotiationRejection::MalformedAccept {
+                detail: text("a bare comma"),
+            },
+        ),
+        negotiation(
+            StatusCode::NOT_ACCEPTABLE,
+            &NegotiationRejection::NotAcceptable,
+        ),
+        range(
+            StatusCode::RANGE_NOT_SATISFIABLE,
+            RangeRejection::NotSatisfiable {
+                complete_length: 1234,
+            },
+        ),
+        auth(StatusCode::UNAUTHORIZED, &AuthRejection::unauthenticated()),
+        auth(StatusCode::FORBIDDEN, &AuthRejection::forbidden()),
+    ]
+    .into()
+}
+
+/// Every variant produces exactly the status the ledger expects of it, and its
+/// own type declares that status.
 ///
 /// The exhaustive matches above catch a variant added without a *name*; they
 /// cannot catch one added without a constructed value, because a match arm
 /// nothing reaches still compiles. So the list is transcribed and counted, and
-/// each row is checked against the set its type advertises.
+/// each row is checked against its expected status and the set its type
+/// advertises.
 #[test]
 fn every_variant_produces_a_status_its_type_declares() {
-    const WITNESSED: [&str; 11] = [
+    let witnessed = [
         "PathRejection::Invalid",
         "QueryRejection::Invalid",
         "HeaderRejection::Invalid",
+        #[cfg(feature = "cookie")]
+        "CookieRejection::Invalid",
         "BodyRejection::Syntax",
         "BodyRejection::Schema",
         "BodyRejection::UnsupportedMediaType",
@@ -493,11 +645,19 @@ fn every_variant_produces_a_status_its_type_declares() {
     ];
 
     let rows = ledger();
-    let named: Vec<&str> = rows.iter().map(|(name, _, _)| *name).collect();
+    let named: Vec<&str> = rows.iter().map(|row| row.name).collect();
 
-    assert_eq!(named, WITNESSED, "a variant was added or renamed");
+    assert_eq!(named, witnessed, "a variant was added or renamed");
 
-    for (name, produced, declared) in rows {
+    for Row {
+        name,
+        expected,
+        produced,
+        declared,
+        ..
+    } in rows
+    {
+        assert_eq!(produced, expected, "{name} produces the wrong status");
         assert!(
             declared.contains(&produced),
             "{name} produces {produced} and its type declares {declared:?}"
@@ -505,29 +665,20 @@ fn every_variant_produces_a_status_its_type_declares() {
     }
 }
 
-/// Every named variant renders a sentence rather than a debug dump, which is
-/// what a caller reporting one prints.
+/// Every variant renders a sentence rather than a debug dump, which is what a
+/// caller reporting one prints: no struct syntax, and lowercase with no
+/// trailing period, as a Rust error message is written.
 #[test]
 fn every_variant_renders_a_sentence() {
-    for rejection in [
-        BodyRejection::Syntax {
-            detail: "unexpected end of input".to_owned(),
-        },
-        BodyRejection::Schema {
-            failures: [("/name".to_owned(), "expected a string".to_owned())]
-                .into_iter()
-                .collect(),
-        },
-        BodyRejection::UnsupportedMediaType {
-            received: Some("text/plain".to_owned()),
-        },
-    ] {
-        let rendered = rejection.to_string();
-
-        assert!(!rendered.is_empty());
+    for Row { name, sentence, .. } in ledger() {
+        assert!(!sentence.is_empty(), "{name} renders nothing");
         assert!(
-            !rendered.contains('{'),
-            "`{rendered}` reads like a debug dump rather than a sentence"
+            !sentence.contains('{'),
+            "{name}'s `{sentence}` reads like a debug dump rather than a sentence"
+        );
+        assert!(
+            !sentence.starts_with(char::is_uppercase) && !sentence.ends_with('.'),
+            "{name}'s `{sentence}` is not a lowercase, unpunctuated error message"
         );
     }
 }

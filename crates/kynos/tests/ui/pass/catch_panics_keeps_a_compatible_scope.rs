@@ -9,7 +9,7 @@
 //! stopped compiling after a `group` at all.
 
 use kynos::{
-    middleware::limits::{BodySize, Timeout},
+    middleware::limits::{body_size::BodySize, timeout::Timeout},
     prelude::*,
 };
 

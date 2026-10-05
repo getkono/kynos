@@ -60,12 +60,9 @@ exchange say the same thing — and not naming a media type, so it catches a
 response described with no content while sending one and declaring content
 while sending none alike.
 
-It drives nine of the ten with every feature on, and six at the default set:
-`Infallible` has no value to hand it, and `NotAcceptable`, `Undecodable` and
-`NotModified` are not compiled without `compression` and `cache`. All ten are
-reached by `every_short_circuit_kynos_ships_is_accounted_for` in the same file,
-which asserts the *set of names* rather than the agreement — so an
-implementation added without a case fails there whatever the build compiled.
+Which implementations it drives at each feature set, and the test that holds the
+rest by name, is in
+[`testing.md`](testing.md#the-sweep-and-the-matrix-assert-one-property-over-two-sets).
 
 [RFC 9457]: ../references/rfc9457.txt
 
@@ -327,8 +324,8 @@ handler argument is built.
 
 **Interceptor statuses.** 429, 503 and 408 belong to
 [`RateLimit`](../crates/kynos/src/middleware/rate_limit/mod.rs),
-[`Concurrency` and `Timeout`](../crates/kynos/src/middleware/limits.rs),
-which return a response directly and declare it through
+[`Concurrency`](../crates/kynos/src/middleware/limits/concurrency.rs) and
+[`Timeout`](../crates/kynos/src/middleware/limits/timeout.rs), which return a response directly and declare it through
 an interceptor's `Short`. They are not extractor rejections and have no rejection
 variant; an interceptor builds a `Problem` itself, through the same
 `refusal_problem` that the type it names is read from. See
@@ -367,9 +364,10 @@ story.** `TlsError` earns one because every variant names both what was being
 configured and what was wrong with it. A bare `std::io::Error` does not, because
 it cannot say what was being opened — which is why `Error::Io` was removed and
 why the io failures the framework actually raises go through `ServerError::Bind`
-and friends, each naming its address. `serde_json::Error` and
-`serde_yaml_ng::Error` convert into separate variants rather than one, so the
-conversion is what records which emitter failed.
+and friends, each naming its address. `serde_json::Error` converts into a
+variant of its own, so the conversion is what records that the JSON emitter
+failed. `Error::Yaml` is transparent instead, because `YamlError` already says
+which encoding failed.
 
 **Policy: a cause is kept as a `source()`, not formatted into a `String`.** Two
 exceptions, and both are stated where they apply. A value rendered in a *list*
@@ -383,7 +381,10 @@ holding it would cost the derives the property tests rely on.
 Where a cause is kept but its type should not escape, it is boxed:
 `TlsError` holds `Box<dyn Error + Send + Sync>` so a rustls failure stays
 walkable without rustls's semantic version becoming Kynos's, or its name
-appearing outside `server/tls/`.
+appearing outside `server/tls/`. `kynos_openapi::emit::YamlError` holds the
+YAML library's error privately for the same reason: that library is pre-1.0,
+and naming its error in `to_yaml` or `Error::Yaml` would make each of its
+releases a breaking release of both crates.
 
 ## Where the union happens
 

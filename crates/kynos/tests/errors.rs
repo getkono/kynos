@@ -13,6 +13,11 @@
 //! rejections themselves — every variant, its status, and the set its type
 //! declares — are checked where they live, in
 //! [`error/rejection/tests.rs`](../src/error/rejection/tests.rs).
+//!
+//! "Each" is held to the source rather than to whoever last added a witness:
+//! [`every_extractor_kynos_ships_names_its_rejection`] reads every extractor
+//! implementation out of `src/` and compares the types it finds against the
+//! ones witnessed here.
 
 #![cfg(feature = "macros")]
 #![allow(dead_code)]
@@ -29,9 +34,9 @@ use kynos::{
         FromRequest, FromRequestParts,
         body::{binary::Binary, text::Text},
         connection::{ConnectInfo, MatchedPath},
-        media::OctetStream,
         params::{header::Headers as HeaderExtractor, path::Path, query::Query},
     },
+    http::media::OctetStream,
     response::{negotiate::Accept, range::Range},
     security::{
         Authenticates, Authenticator,
@@ -72,6 +77,21 @@ fn a_parameter_extractor_rejects_with_its_own_type() {
     head_rejects_with::<HeaderRejection, (), HeaderExtractor<Wanted>>();
 }
 
+/// The whole query string fails as a query parameter does, under the one name
+/// its `in: querystring` parameter carries.
+#[cfg(all(feature = "openapi32", feature = "json"))]
+#[test]
+fn a_whole_query_string_rejects_with_the_query_type() {
+    use kynos::{extract::params::querystring::QueryString, http::media::Json};
+
+    #[derive(serde::Deserialize)]
+    struct Filter {
+        limit: u32,
+    }
+
+    head_rejects_with::<QueryRejection, (), QueryString<Filter, Json>>();
+}
+
 #[cfg(feature = "cookie")]
 #[test]
 fn a_cookie_extractor_rejects_with_its_own_type() {
@@ -105,6 +125,34 @@ fn a_body_extractor_rejects_with_the_body_type() {
         body_rejects_with::<BodyRejection, (), Json<User>>();
     }
 
+    #[cfg(feature = "form")]
+    {
+        use kynos::extract::body::form::Form;
+
+        #[derive(serde::Deserialize)]
+        struct Login {
+            name: String,
+        }
+
+        body_rejects_with::<BodyRejection, (), Form<Login>>();
+    }
+
+    #[cfg(feature = "multipart")]
+    {
+        use kynos::extract::body::multipart::MultipartForm;
+
+        #[derive(Schema, kynos::MultipartForm)]
+        struct Upload {
+            name: String,
+        }
+
+        body_rejects_with::<BodyRejection, (), MultipartForm<Upload>>();
+    }
+
+    // `()` is the empty message, which `prost` implements `Message` for.
+    #[cfg(feature = "protobuf")]
+    body_rejects_with::<BodyRejection, (), kynos::extract::body::protobuf::Protobuf<()>>();
+
     // A streamed body rejects with the same type, which is what makes a
     // mid-stream failure a status the operation already declares rather than a
     // mechanism of its own.
@@ -129,6 +177,15 @@ fn an_optional_body_delegates_to_the_body_it_wraps() {
     body_rejects_with::<BodyRejection, (), Option<Text>>();
 }
 
+/// `OneOf` answers a 415 of its own and otherwise each side's rejection, so it
+/// can name only the type both sides already share.
+#[test]
+fn a_body_alternative_rejects_with_the_body_type() {
+    use kynos::extract::body::OneOf;
+
+    body_rejects_with::<BodyRejection, (), OneOf<Text, Binary<OctetStream>>>();
+}
+
 #[test]
 fn negotiation_rejects_with_the_negotiation_type() {
     head_rejects_with::<NegotiationRejection, (), Accept<()>>();
@@ -141,6 +198,30 @@ fn the_connection_extractors_cannot_fail() {
     head_rejects_with::<Infallible, (), MatchedPath>();
     head_rejects_with::<Infallible, (), ConnectInfo>();
     head_rejects_with::<Infallible, (), kynos::http::forwarded::Forwarded>();
+    head_rejects_with::<Infallible, (), kynos::extract::connection::Connection>();
+}
+
+/// The request-head readers whose unusable fields are ignored rather than
+/// refused: an `Accept-Language` matching nothing is served the default offer,
+/// RFC 9110 answers an unusable range or `If-Modified-Since` by ignoring it, and
+/// an undecodable `Last-Event-ID` reads as an absent one.
+#[test]
+fn the_ignorable_request_fields_cannot_fail() {
+    use kynos::response::{
+        language::{AcceptLanguage, offer::Languages},
+        range::served::Conditions,
+    };
+
+    struct Supported;
+
+    impl Languages for Supported {
+        const TAGS: &'static [&'static str] = &["en"];
+    }
+
+    head_rejects_with::<Infallible, (), AcceptLanguage<Supported>>();
+    head_rejects_with::<Infallible, (), Conditions>();
+    #[cfg(feature = "openapi32")]
+    head_rejects_with::<Infallible, (), kynos::extract::sse::LastEventId>();
 }
 
 /// Reading a `Range` cannot fail, which is the surprising half of that design.
@@ -232,4 +313,130 @@ fn a_scoped_extractor_rejects_with_its_scope_sets_rejection() {
         App,
         Scoped<Bearer<Claims>, ReadReports>,
     >();
+}
+
+/// Every type the witnesses above name, by the last segment of its path.
+///
+/// Feature-gated witnesses are listed whatever this build enabled, because the
+/// sweep below reads the source rather than the build: an extractor behind a
+/// feature is still one Kynos ships.
+const WITNESSED: &[&str] = &[
+    "Accept",
+    "AcceptLanguage",
+    "Auth",
+    "Binary",
+    "Conditions",
+    "ConnectInfo",
+    "Connection",
+    "Cookies",
+    "Form",
+    "Forwarded",
+    "Headers",
+    "Inject",
+    "Json",
+    "JsonLines",
+    "JsonSeq",
+    "LastEventId",
+    "MatchedPath",
+    "MaybeAuth",
+    "MultipartForm",
+    "OneOf",
+    "Option",
+    "Path",
+    "Protobuf",
+    "Query",
+    "QueryString",
+    "Range",
+    "Scoped",
+    "Text",
+];
+
+/// Every `.rs` file under `directory`, recursively.
+fn sources(directory: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(directory).expect("a readable source directory") {
+        let path = entry.expect("a readable directory entry").path();
+        if path.is_dir() {
+            files.extend(sources(&path));
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            files.push(path);
+        }
+    }
+    files
+}
+
+/// The type each `impl FromRequest<..> for T` or `impl FromRequestParts<..>
+/// for T` in `source` implements the trait for, by the last segment of its
+/// path.
+///
+/// Comment lines are dropped first, so a doc example cannot count, and
+/// whitespace is collapsed, so an implementation whose `for` wraps onto the
+/// next line counts like any other. A trait *bound* is followed by `+`, `,` or
+/// `{` rather than by `for`, so a bound never counts.
+fn implemented_for(source: &str) -> Vec<String> {
+    let code = source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .flat_map(str::split_whitespace)
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let mut types = Vec::new();
+    for (start, _) in code.match_indices("FromRequest") {
+        let rest = &code[start + "FromRequest".len()..];
+        let rest = rest.strip_prefix("Parts").unwrap_or(rest);
+        let Some(arguments) = rest.strip_prefix('<') else {
+            continue;
+        };
+
+        // Skip to the `>` closing the trait's own generic arguments.
+        let mut depth = 1;
+        let Some(close) = arguments.char_indices().find_map(|(at, character)| {
+            match character {
+                '<' => depth += 1,
+                '>' => depth -= 1,
+                _ => {}
+            }
+            (depth == 0).then_some(at)
+        }) else {
+            continue;
+        };
+
+        if let Some(implementor) = arguments[close + 1..].strip_prefix(" for ") {
+            let path = implementor
+                .split(|character: char| character == '<' || character.is_whitespace())
+                .next()
+                .unwrap_or_default();
+            types.push(path.rsplit("::").next().unwrap_or(path).to_owned());
+        }
+    }
+    types
+}
+
+/// The extractors Kynos ships, read from its source, are exactly the ones
+/// witnessed in this file.
+///
+/// The witnesses are a set someone chose, and an extractor added without one
+/// declares whatever its `Rejection` says with nothing pinning it — nine of
+/// them did, unnoticed, until this sweep. Comparing names rather than a count
+/// also catches a witness that stopped covering the type it was written for.
+#[test]
+fn every_extractor_kynos_ships_names_its_rejection() {
+    let mut shipped = sources(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src"
+    )))
+    .iter()
+    .flat_map(|file| {
+        implemented_for(&std::fs::read_to_string(file).expect("a readable source file"))
+    })
+    .collect::<Vec<_>>();
+    shipped.sort();
+
+    assert_eq!(
+        shipped, WITNESSED,
+        "the `FromRequest` and `FromRequestParts` implementations in `src/` and the \
+         extractors witnessed here differ; an extractor without a witness is one whose \
+         rejection type nothing pins"
+    );
 }

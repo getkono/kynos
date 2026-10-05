@@ -36,17 +36,17 @@ impl Document {
     /// `arbitrary_precision` feature is unified into the build: without it,
     /// `serde_json` holds no such number, and gives that key no meaning.
     #[cfg(feature = "yaml")]
-    pub fn to_yaml(&self) -> Result<String, serde_yaml_ng::Error> {
+    pub fn to_yaml(&self) -> Result<String, YamlError> {
         // Only a build that writes numbers as token mappings pays for, or is
         // changed by, the detour through a `Value`: a mapping there holds one
         // value per key, where the model's own serialization writes every key
         // it is given.
         if !yaml_numbers::serialized_as_token() {
-            return serde_yaml_ng::to_string(self);
+            return serde_yaml_ng::to_string(self).map_err(YamlError);
         }
-        let mut value = serde_yaml_ng::to_value(self)?;
-        yaml_numbers::restore(&mut value)?;
-        serde_yaml_ng::to_string(&value)
+        let mut value = serde_yaml_ng::to_value(self).map_err(YamlError)?;
+        yaml_numbers::restore(&mut value).map_err(YamlError)?;
+        serde_yaml_ng::to_string(&value).map_err(YamlError)
     }
 
     /// Produces this document as `version`, refusing a lossy downgrade.
@@ -70,6 +70,28 @@ impl Document {
         let mut emitted = self.clone();
         version.as_str().clone_into(&mut emitted.openapi);
         Ok(emitted)
+    }
+}
+
+/// The failure [`Document::to_yaml`] returns.
+///
+/// Opaque, so that the YAML library behind it stays an implementation detail:
+/// it is pre-1.0, and naming its error here would make each of its releases a
+/// breaking release of this crate. What the library said is kept as this
+/// error's [`source`](std::error::Error::source), so a reporter walking the
+/// chain still prints it.
+///
+/// It implements [`serde::ser::Error`], as a serializer's error does, which is
+/// also how one is constructed outside this crate.
+#[cfg(feature = "yaml")]
+#[derive(Debug, thiserror::Error)]
+#[error("the description could not be emitted as YAML")]
+pub struct YamlError(#[source] serde_yaml_ng::Error);
+
+#[cfg(feature = "yaml")]
+impl serde::ser::Error for YamlError {
+    fn custom<T: std::fmt::Display>(message: T) -> Self {
+        Self(<serde_yaml_ng::Error as serde::ser::Error>::custom(message))
     }
 }
 

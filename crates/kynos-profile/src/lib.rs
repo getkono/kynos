@@ -35,7 +35,7 @@ use crate::app::{
     service,
 };
 
-pub(crate) mod app;
+mod app;
 
 #[cfg(test)]
 mod tests;

@@ -37,10 +37,8 @@ use std::net::Ipv4Addr;
 
 use kynos::{
     error::rejection::NegotiationRejection,
-    extract::{
-        body::{binary::Binary, text::Text},
-        media::Pdf,
-    },
+    extract::body::{binary::Binary, text::Text},
+    http::media::Pdf,
     prelude::*,
     response::negotiate::{
         Accept, Negotiated,

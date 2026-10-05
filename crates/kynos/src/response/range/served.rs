@@ -21,8 +21,8 @@
 use std::{sync::Arc, time::SystemTime};
 
 use crate::{
-    extract::media::MediaType,
     http::etag::ETag,
+    http::media::MediaType,
     http::{HeaderValue, Method, Parts, Response, StatusCode, header},
     response::{
         IntoResponse,
@@ -42,7 +42,7 @@ use crate::{
 /// use bytes::Bytes;
 /// use kynos::{
 ///     http::etag::ETag,
-///     extract::media::OctetStream,
+///     http::media::OctetStream,
 ///     response::range::{
 ///         served::{Conditions, Delivery, Served},
 ///         source::InMemory,

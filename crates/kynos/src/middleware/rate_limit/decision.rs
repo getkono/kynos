@@ -8,7 +8,7 @@ use crate::{http, router::operation::Route};
 ///
 /// The `qu` parameter of `draft-ietf-httpapi-ratelimit-headers`.
 /// `concurrent-requests` is deliberately absent: that is
-/// [`Concurrency`](crate::middleware::limits::Concurrency)'s job, and it
+/// [`Concurrency`](crate::middleware::limits::concurrency::Concurrency)'s job, and it
 /// consumes no rate window.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
@@ -36,6 +36,7 @@ impl QuotaUnit {
 /// Configuration rather than state: what the service *will* enforce, which is
 /// the same for every request a limiter covers.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct QuotaPolicy {
     /// The name this policy is reported under.
     pub name: Cow<'static, str>,
@@ -55,6 +56,7 @@ pub struct QuotaPolicy {
 /// State rather than configuration: the same policy reports different values to
 /// different clients, which is why this is a separate type.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ServiceLimit {
     /// The policy this reports against.
     pub name: Cow<'static, str>,
@@ -68,6 +70,7 @@ pub struct ServiceLimit {
 
 /// What a policy reports when a request may continue.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Allowance {
     /// Every limit consulted, in the order they should be reported.
     pub limits: Vec<ServiceLimit>,
@@ -75,6 +78,7 @@ pub struct Allowance {
 
 /// What a policy reports when a request may not.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Denial {
     /// How long the client should wait before retrying.
     ///
@@ -84,6 +88,63 @@ pub struct Denial {
     pub retry_after: Duration,
     /// Every limit consulted, including the one that refused.
     pub limits: Vec<ServiceLimit>,
+}
+
+impl QuotaPolicy {
+    /// A policy permitting `quota` per `window`, counted in `unit`.
+    ///
+    /// `window` is `None` for a total allowance rather than a rate.
+    #[must_use]
+    pub fn new(
+        name: impl Into<Cow<'static, str>>,
+        quota: u64,
+        window: Option<Duration>,
+        unit: QuotaUnit,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            quota,
+            window,
+            unit,
+        }
+    }
+}
+
+impl ServiceLimit {
+    /// A limit of `quota`, with `remaining` left until `reset` elapses.
+    #[must_use]
+    pub fn new(
+        name: impl Into<Cow<'static, str>>,
+        quota: u64,
+        remaining: u64,
+        reset: Duration,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            quota,
+            remaining,
+            reset,
+        }
+    }
+}
+
+impl Allowance {
+    /// An allowance reporting `limits`, in report order.
+    #[must_use]
+    pub fn new(limits: Vec<ServiceLimit>) -> Self {
+        Self { limits }
+    }
+}
+
+impl Denial {
+    /// A refusal asking the client to wait `retry_after`, reporting `limits`.
+    #[must_use]
+    pub fn new(retry_after: Duration, limits: Vec<ServiceLimit>) -> Self {
+        Self {
+            retry_after,
+            limits,
+        }
+    }
 }
 
 /// The result of consulting a rate-limit policy.
@@ -100,18 +161,13 @@ impl Decision {
     /// Allows the request, reporting one limit.
     #[must_use]
     pub fn allow(limit: ServiceLimit) -> Self {
-        Self::Allow(Allowance {
-            limits: vec![limit],
-        })
+        Self::Allow(Allowance::new(vec![limit]))
     }
 
     /// Refuses the request, reporting one limit.
     #[must_use]
     pub fn deny(retry_after: Duration, limit: ServiceLimit) -> Self {
-        Self::Deny(Denial {
-            retry_after,
-            limits: vec![limit],
-        })
+        Self::Deny(Denial::new(retry_after, vec![limit]))
     }
 }
 

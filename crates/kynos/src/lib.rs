@@ -18,8 +18,9 @@
 //! Several things other Rust frameworks offer are absent, because OpenAPI
 //! cannot express them: wildcard routes, opaque middleware, raw request access,
 //! runtime-chosen status codes, WebSockets. The `unchecked` feature provides
-//! escape hatches for the first three, at the price of a description that is no
-//! longer authoritative. See the README for the full list and the reasoning.
+//! named escape hatches — `layer_unchecked`, `into_tower_unchecked`,
+//! `route_unchecked` and `upgrade_unchecked` — at the price of a description
+//! that is no longer authoritative for the route that took one. See the README for the full list and the reasoning.
 //!
 //! # The guarantees, as compile-fail tests
 //!

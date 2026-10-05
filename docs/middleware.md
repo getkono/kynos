@@ -182,10 +182,11 @@ Why the encoder does not simply re-tag per coding — `"rev-42-gzip"` beside
 `"rev-42"` — which would be sound and would keep strong validators: the only
 sanctioned way to write a response header is the `Adds` group, and declaring
 `etag` there would make `Compression` and `Cache::deriving_etags` a compile
-error on a stack that is otherwise correct. Re-tagging is what
-[#30](https://github.com/getkono/kynos/issues/30) needs before a ranged
-representation can be encoded at all, and it wants the validator minted where
-the range and the coding are both known rather than bolted on at the encoder.
+error on a stack that is otherwise correct. A ranged, content-coded
+representation ([#30](https://github.com/getkono/kynos/issues/30)) was resolved
+where the range and the coding are both known instead: an asset set stores each
+coding and mints a strong validator per stored coding, rather than one being
+bolted on at the encoder.
 
 **Compression levels are per algorithm, and one of the defaults departs.**
 gzip 6, brotli 4 and zstd 3. The three formats number their levels differently
@@ -202,7 +203,7 @@ that has not cached anything.
 
 Levels are set per mount, so scope is how they vary. There is no global setting
 with a per-endpoint override: two `Compression`s covering one operation both add
-`Content-Encoding`, and `header_names_disjoint` refuses that pair where it is
+`Content-Encoding`, and `CompatibleWith` refuses that pair where it is
 mounted.
 
 **`min_size` defaults to 2 KiB, read off a measurement
@@ -444,13 +445,14 @@ Three properties of that algorithm are decisions rather than details:
   seconds, because truncating a sub-second wait to zero tells a client to retry
   straight into the refusal it just received. Reporting the window's *length*
   instead would be a delay the service does not require, which is the same
-  objection `limits.rs` raises against inventing one for a concurrency cap.
+  objection `limits::concurrency` raises against inventing one for a
+  concurrency cap.
 
 A store that cannot answer **allows** by default. A limiter exists to shed load,
 and one that sheds everything when its cache blinks has turned a degradation
 into an incident. `StoreFailure::Deny` is the other choice, and it answers with
 the 429 the limiter already declares rather than a 503 — a second status would
-collide with `Concurrency` on any route carrying both, and `statuses_disjoint`
+collide with `Concurrency` on any route carrying both, and `CompatibleWith`
 would refuse to compile it.
 
 One thing worth knowing about the two halves. The 429's headers ride on
@@ -661,7 +663,7 @@ is a promise.
 of zeroes are a gigabyte of gzip output, so a cap measured before decoding
 measures the one number an attacker chooses freely. `Decompression` takes the
 limit instead and applies it to what the handler will actually see. The two
-cannot be mounted together — both answer 413, and `statuses_disjoint` refuses
+cannot be mounted together — both answer 413, and `CompatibleWith` refuses
 the pair — which is right rather than awkward: on a route that accepts content
 codings, `BodySize` alone is not a weaker guard but a misleading one.
 
@@ -738,7 +740,7 @@ service genuinely *is*, so an origin's own 504 would be indistinguishable from
 that hop's. §15.5.9's 408 describes the slow-body row above exactly and the
 handler-runtime row only by extension; it is the closest the specification
 defines and the one `tower-http` sends. 503 would read better for handler
-runtime and is unavailable: `Concurrency` declares it, and `statuses_disjoint`
+runtime and is unavailable: `Concurrency` declares it, and `CompatibleWith`
 would then refuse a router bounding handler time *and* capping concurrency,
 which is an ordinary pairing.
 
@@ -898,14 +900,11 @@ implies both `Secure` and `Path=/`.
 precedence wherever both appear, so a cookie carrying both is one attribute
 stating the lifetime and one being ignored. `Max-Age` is also a duration, which
 is what a server actually knows; `Expires` is an absolute HTTP-date, so
-emitting one means trusting the client's clock against the server's and
-serializing a date format that `architecture.md`'s dependency table has no row
-for — an HTTP-date crate is one of the three dependencies it names as refused.
+emitting one means trusting the client's clock against the server's.
 `Max-Age=0` is the removal, so nothing needs a date in the past either.
 
-That is the whole of what an acceptance contract asking for "Path, HttpOnly,
-Secure, SameSite, Max-Age, and expiry attributes" needs: the expiry is
-`Max-Age`, stated as a duration.
+So a cookie's expiry is still expressible, and expressed once: it is `Max-Age`,
+stated as a duration.
 
 The set being closed is asserted rather than intended.
 [`response/cookie/tests.rs`](../crates/kynos/src/response/cookie/tests.rs)
@@ -1336,17 +1335,12 @@ This harness is not the only instrument for that class, and is not the cheapest.
 [`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) asserts the
 same agreement directly, with no document, no client and no route: it drives
 each short circuit's value and compares what reaches the wire against what
-`Responses` declared. It is also the more exhaustive of the two here — the
-matrix reached five of the eight defective implementations and the sweep reached
-all eight. What the sweep covers is every implementation this build compiled a
-value for: nine of the ten with every feature on, six at the default set, with
-`Infallible` excluded because it is uninhabited. The tenth is held by name in
-`every_short_circuit_kynos_ships_is_accounted_for`, which asserts the set rather
-than the agreement. What the matrix buys instead is reach: it holds anything on
-a live exchange, an application's own short circuit and a handler included,
-where the sweep is total only over the set Kynos ships. Prefer the direct assertion
-for a claim about a type, and reach for the matrix when the claim is about an
-exchange.
+`Responses` declared. What the matrix buys instead is reach: it holds anything
+on a live exchange, an application's own short circuit and a handler included,
+where the sweep is total only over the set Kynos ships.
+[`testing.md`](testing.md#the-sweep-and-the-matrix-assert-one-property-over-two-sets)
+records what each one covers. Prefer the direct assertion for a claim about a
+type, and reach for the matrix when the claim is about an exchange.
 
 What it is not is a property test. The matrix is enumerated, so it covers the
 layers Kynos owns in the arrangements that file names — not every stack a

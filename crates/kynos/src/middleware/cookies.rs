@@ -116,7 +116,7 @@ where
 /// Not a session, not a signed jar, not a CSRF token. The first two are
 /// application policy — see [`response::cookie`](crate::response::cookie) — and
 /// the third could not compose: a CSRF interceptor's short circuit is 403,
-/// which `statuses_disjoint` would refuse to compile beside `Auth<S>` on every
+/// which `CompatibleWith` would refuse to compile beside `Auth<S>` on every
 /// authenticated route.
 #[derive(Clone, Debug)]
 pub struct SetCookies<S> {

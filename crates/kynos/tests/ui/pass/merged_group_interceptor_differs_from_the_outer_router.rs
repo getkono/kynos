@@ -5,7 +5,7 @@
 //! a group that adds `x-request-id` and answers with nothing.
 
 use kynos::{
-    middleware::{limits::BodySize, request_id::RequestId},
+    middleware::{limits::body_size::BodySize, request_id::RequestId},
     prelude::*,
 };
 

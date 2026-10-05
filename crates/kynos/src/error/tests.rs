@@ -175,7 +175,11 @@ mod variants {
             ),
             #[cfg(feature = "yaml")]
             (
-                Error::Yaml(serde_yaml_ng::from_str::<u8>("[").expect_err("a parse failure")),
+                Error::Yaml(
+                    <kynos_openapi::emit::YamlError as serde::ser::Error>::custom(
+                        "a number with no YAML representation",
+                    ),
+                ),
                 "could not be emitted as YAML",
             ),
             #[cfg(feature = "server")]

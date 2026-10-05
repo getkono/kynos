@@ -311,3 +311,62 @@ fn an_owned_key_survives_being_taken_from_the_request() {
         .expect("present");
     assert_eq!(key.into_inner(), "k-123");
 }
+
+// --- Debug output ----------------------------------------------------------
+
+/// `rendered` names the credential and does not contain `secret`.
+fn assert_redacted(rendered: &str, expected: &str, secret: &str) {
+    assert!(!rendered.contains(secret), "{rendered} prints the secret");
+    assert_eq!(rendered, expected);
+}
+
+#[test]
+fn a_bearer_token_is_redacted_from_debug_output() {
+    let token = bearer(&authorized("Bearer s3cret"))
+        .expect("a credential")
+        .expect("present");
+
+    assert_redacted(&format!("{token:?}"), "BearerToken(<redacted>)", "s3cret");
+}
+
+/// The user-id identifies whom a log line is about; only the password replays.
+#[test]
+fn basic_credentials_show_the_user_id_and_redact_the_password() {
+    let credentials = basic(&authorized("Basic YWxpY2U6czNjcmV0"))
+        .expect("a credential")
+        .expect("present");
+
+    assert_redacted(
+        &format!("{credentials:?}"),
+        r#"Credentials { username: "alice", password: <redacted> }"#,
+        "s3cret",
+    );
+}
+
+#[test]
+fn scheme_credentials_show_the_scheme_and_redact_the_credentials() {
+    let credentials = http_scheme(&authorized("Negotiate s3cret"), "Negotiate")
+        .expect("a credential")
+        .expect("present");
+
+    assert_redacted(
+        &format!("{credentials:?}"),
+        r#"SchemeCredentials { scheme: "Negotiate", credentials: <redacted> }"#,
+        "s3cret",
+    );
+}
+
+#[test]
+fn an_api_key_is_redacted_from_debug_output() {
+    let mut request = Request::new(crate::http::body::Body::empty());
+    request.headers_mut().insert(
+        HeaderName::from_static("x-api-key"),
+        HeaderValue::from_static("s3cret"),
+    );
+    let head = request.into_parts().0;
+    let key = api_key(&head, KeyLocation::Header, "x-api-key")
+        .expect("a credential")
+        .expect("present");
+
+    assert_redacted(&format!("{key:?}"), "ApiKey(<redacted>)", "s3cret");
+}

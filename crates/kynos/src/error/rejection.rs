@@ -15,8 +15,8 @@
 //!
 //! Statuses raised by an interceptor rather than an extractor — 429, 503 and
 //! 408 — are not here. [`RateLimit`](crate::middleware::rate_limit::RateLimit),
-//! [`Concurrency`](crate::middleware::limits::Concurrency) and
-//! [`Timeout`](crate::middleware::limits::Timeout) return a response directly
+//! [`Concurrency`](crate::middleware::limits::concurrency::Concurrency) and
+//! [`Timeout`](crate::middleware::limits::timeout::Timeout) return a response directly
 //! and declare it through `OperationContribution`.
 //!
 //! # What a rejection says
@@ -324,7 +324,7 @@ pub enum BodyRejection {
         received: Option<String>,
     },
     // There is deliberately no `TooLarge` variant. Capping a body is
-    // `middleware::limits::BodySize`'s job, and it answers 413 through its own
+    // `middleware::limits::body_size::BodySize`'s job, and it answers 413 through its own
     // `BodySizeExceeded` short circuit before a body extractor is reached — so
     // an extractor never meets an oversized body. A variant here would declare
     // a 413 on every operation taking a body, including the ones no `BodySize`

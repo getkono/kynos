@@ -20,8 +20,8 @@ use std::{
 use bytes::Bytes;
 use kynos::{
     Router,
-    extract::media::MediaType,
     http::etag::ETag,
+    http::media::MediaType,
     http::{Method, StatusCode},
     response::range::{
         served::{Conditions, Delivery, Served},

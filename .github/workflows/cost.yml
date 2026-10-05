@@ -4,11 +4,8 @@ name: Cost
 # because they are the jobs no pull request needs to wait for. What follows
 # argues the sweep; the `profile` job below carries its own reasons.
 #
-# The per-feature cost sweep was the one job in `ci.yml` no pull request needed
-# to wait for. It builds two fixtures at some fifty
-# feature points, over half of them fat-LTO release builds, and took three times
-# as long as any other job while gating nothing: it was never a required check,
-# and it exits zero whatever it measures.
+# The sweep builds two fixtures at some fifty feature points, over half of them
+# fat-LTO release builds, and gates no ordinary pull request.
 #
 # What the numbers are for is a release. So an ordinary pull request skips the
 # job, a push to master measures after the merge as a trend nobody waits on,

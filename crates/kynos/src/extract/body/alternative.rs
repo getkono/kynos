@@ -6,9 +6,9 @@
 
 use crate::extract::describe::RequestContent;
 
-use crate::extract::{
-    body::{binary::Binary, text::Text},
-    media::MediaType,
+use crate::{
+    extract::body::{binary::Binary, text::Text},
+    http::media::MediaType,
 };
 
 // Only the codec pairs describe a schema; text and raw bytes do not.

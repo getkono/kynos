@@ -5,9 +5,8 @@ use crate::{
     extract::{
         FromRequest,
         describe::{Describe, RequestContent},
-        media::MediaType,
     },
-    http::Request,
+    http::{Request, media::MediaType},
     router::operation::OperationCx,
     schema::registry::Registry,
 };
@@ -24,7 +23,7 @@ use crate::{
 /// public field, rather than destructuring in the argument pattern.
 ///
 /// ```no_run
-/// use kynos::extract::{body::binary::Binary, media::Png};
+/// use kynos::{extract::body::binary::Binary, http::media::Png};
 ///
 /// async fn upload(body: Binary<Png>) -> kynos::response::status::NoContent {
 ///     let bytes = body.into_inner();

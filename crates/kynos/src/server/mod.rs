@@ -42,7 +42,7 @@ use std::{future::pending, io, net::SocketAddr, num::NonZeroUsize, sync::Arc, ti
 use tokio::{
     net::TcpListener,
     sync::{Semaphore, watch},
-    task::JoinSet,
+    task::{JoinError, JoinSet},
 };
 
 use crate::{
@@ -348,9 +348,7 @@ impl<C: 'static> BoundServer<C> {
             completed = accept_loops.join_next() => match completed {
                 Some(Ok(Ok(()))) | None => (None, Box::pin(pending()) as ForceFuture),
                 Some(Ok(Err(error))) => (Some(error), Box::pin(pending()) as ForceFuture),
-                Some(Err(error)) => (Some(ServerError::InvalidConfiguration(
-                    if error.is_panic() { "an accept loop panicked" } else { "an accept loop was cancelled" }
-                )), Box::pin(pending()) as ForceFuture),
+                Some(Err(error)) => (Some(accept_loop_failure(&error)), Box::pin(pending()) as ForceFuture),
             },
             signal = &mut shutdown => match signal {
                 Ok(request) => (None, request.force),
@@ -389,6 +387,13 @@ impl<C: 'static> BoundServer<C> {
             .into()),
             Drain::Forced => Err(ServerError::ShutdownForced.into()),
         }
+    }
+}
+
+/// The error for an accept loop whose task ended without returning.
+fn accept_loop_failure(error: &JoinError) -> ServerError {
+    ServerError::AcceptLoop {
+        panicked: error.is_panic(),
     }
 }
 

@@ -140,12 +140,7 @@ impl<T: ProblemType> RateLimitSpelling<T> for Structured {
 ///
 /// impl RateLimitPolicy<()> for PerClient {
 ///     async fn check(&self, _: &http::Request, _: Route<'_>, _: &()) -> Decision {
-///         Decision::allow(ServiceLimit {
-///             name: "default".into(),
-///             quota: 100,
-///             remaining: 99,
-///             reset: Duration::from_secs(30),
-///         })
+///         Decision::allow(ServiceLimit::new("default", 100, 99, Duration::from_secs(30)))
 ///     }
 /// }
 ///
@@ -217,10 +212,7 @@ impl<P, D> RateLimit<P, D, ()> {
     /// # #[derive(Clone, Debug)] struct PerClient;
     /// # impl RateLimitPolicy<()> for PerClient {
     /// #     async fn check(&self, _: &http::Request, _: Route<'_>, _: &()) -> Decision {
-    /// #         Decision::allow(ServiceLimit {
-    /// #             name: "default".into(), quota: 100, remaining: 99,
-    /// #             reset: Duration::from_secs(30),
-    /// #         })
+    /// #         Decision::allow(ServiceLimit::new("default", 100, 99, Duration::from_secs(30)))
     /// #     }
     /// # }
     /// struct Throttled;
@@ -246,10 +238,7 @@ impl<P, D> RateLimit<P, D, ()> {
     /// # #[derive(Clone, Debug)] struct PerClient;
     /// # impl RateLimitPolicy<()> for PerClient {
     /// #     async fn check(&self, _: &http::Request, _: Route<'_>, _: &()) -> Decision {
-    /// #         Decision::allow(ServiceLimit {
-    /// #             name: "default".into(), quota: 100, remaining: 99,
-    /// #             reset: Duration::from_secs(30),
-    /// #         })
+    /// #         Decision::allow(ServiceLimit::new("default", 100, 99, Duration::from_secs(30)))
     /// #     }
     /// # }
     /// struct Throttled;

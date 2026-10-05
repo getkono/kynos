@@ -693,9 +693,9 @@ Everything else follows the same rule one level up: `paths` in mount order,
 `tags` in declaration order, an operation's `responses` in the order the handler
 and the interceptors covering it declared them.
 
-**This is a guarantee, not an accident of the current implementation.** Beam's
-acceptance contract gates its migration on byte-deterministic export, and a
-conformance-fixture corpus is only worth committing if regenerating it produces
+**This is a guarantee, not an accident of the current implementation.** A
+description that changes between two builds of the same code cannot be diffed in
+review or pinned by a client generator, and a conformance-fixture corpus is only worth committing if regenerating it produces
 the same file. The registry, the router and the validator each keep a `HashMap`;
 each is indexed and none is iterated, and
 [`tests/determinism.rs`](../crates/kynos/tests/determinism.rs) is what holds

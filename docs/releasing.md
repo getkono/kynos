@@ -79,7 +79,7 @@ is what `cargo publish` will do. CI runs the same task on every push, in the
 - **The changelog skips `refactor`, `test`, `style`, `build`, `ci` and `chore`.**
   A breaking commit of any of those types is still listed: the `!` parser in
   `release-plz.toml` matches it before any skip rule does, and it has to, because
-  around two thirds of the breaking commits in this history are `refactor!:`.
+  breaking changes in this history are routinely `refactor!:`.
 
 ## Trusted Publishing
 

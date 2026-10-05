@@ -44,7 +44,7 @@ use bytes::Bytes;
 use http_body_util::BodyExt;
 use kynos::{
     http::{self, body::Body},
-    middleware::{Continued, Interceptor, Next, limits::BodySize},
+    middleware::{Continued, Interceptor, Next, limits::body_size::BodySize},
     prelude::*,
     server::Server,
 };

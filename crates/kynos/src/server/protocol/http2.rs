@@ -7,10 +7,15 @@ use std::time::Duration;
 #[non_exhaustive]
 pub enum Http2FlowControl {
     /// Uses fixed initial stream and connection windows.
+    ///
+    /// Each window must lie in `1..=2^31-1`, the range RFC 9113 §6.9.1 allows
+    /// a flow-control window; [`Server::prepare`](crate::server::Server::prepare)
+    /// refuses any other with
+    /// [`ServerError::InvalidConfiguration`](crate::server::error::ServerError::InvalidConfiguration).
     Fixed {
-        /// Initial per-stream flow-control window.
+        /// Initial per-stream flow-control window, in `1..=2^31-1`.
         initial_stream_window_size: u32,
-        /// Initial connection flow-control window.
+        /// Initial connection flow-control window, in `1..=2^31-1`.
         initial_connection_window_size: u32,
     },
     /// Dynamically adjusts windows using measured bandwidth and latency.
@@ -24,12 +29,35 @@ pub enum Http2FlowControl {
 /// connection is never pinged. This is what releases an HTTP/2 connection
 /// whose peer vanished with no stream open: HTTP/1's header-read timeout has no
 /// counterpart there.
+///
+/// `#[non_exhaustive]`, so construct it with [`new`](Self::new):
+///
+/// ```
+/// # use std::time::Duration;
+/// # use kynos::server::protocol::http2::{Http2Config, Http2KeepAlive};
+/// let keep_alive = Http2KeepAlive::new(Duration::from_secs(60), Duration::from_secs(10));
+/// let http2 = Http2Config::default().keep_alive(Some(keep_alive));
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Http2KeepAlive {
     /// Time between keep-alive pings.
     pub interval: Duration,
     /// Time allowed for acknowledgement before closing the connection.
     pub timeout: Duration,
+}
+
+impl Http2KeepAlive {
+    /// Pings after `interval` of silence and closes the connection if the
+    /// acknowledgement takes longer than `timeout`.
+    ///
+    /// Both must be non-zero; [`Server::prepare`](crate::server::Server::prepare)
+    /// refuses either at zero with
+    /// [`ServerError::InvalidConfiguration`](crate::server::error::ServerError::InvalidConfiguration).
+    #[must_use]
+    pub const fn new(interval: Duration, timeout: Duration) -> Self {
+        Self { interval, timeout }
+    }
 }
 
 /// HTTP/2 tuning.
@@ -71,10 +99,10 @@ impl Default for Http2Config {
                 initial_stream_window_size: 1024 * 1024,
                 initial_connection_window_size: 1024 * 1024,
             },
-            keep_alive: Some(Http2KeepAlive {
-                interval: Duration::from_secs(30),
-                timeout: Duration::from_secs(20),
-            }),
+            keep_alive: Some(Http2KeepAlive::new(
+                Duration::from_secs(30),
+                Duration::from_secs(20),
+            )),
             max_header_list_size: 16 * 1024,
             max_send_buffer_size: 400 * 1024,
             max_pending_accept_reset_streams: 20,
