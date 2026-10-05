@@ -655,6 +655,38 @@ fn a_capture_is_what_a_path_parameter_costs() {
     );
 }
 
+/// Behind a trusted proxy the router resolves the `Forwarded` chain on every
+/// request, and [`nfr.md`](../../../docs/nfr.md#routing) accounts for that as
+/// one vector of addresses and one scheme string. Splitting the field must add
+/// nothing per element, so a third element costs what the second did -- the
+/// address vector's first capacity holds both.
+#[test]
+fn a_forwarded_element_costs_no_allocation_of_its_own() {
+    let service = router()
+        .trusted_proxies(kynos::http::forwarded::TrustedProxies::hops(1))
+        .build(())
+        .expect("a describable router");
+
+    let chain = |forwarded: &'static str| {
+        let mut request = request(Method::GET, STACKED, None, b"");
+        request.headers_mut().insert(
+            kynos::http::header::FORWARDED,
+            kynos::http::HeaderValue::from_static(forwarded),
+        );
+        let (allocations, response) = counting::counted(&service, request, STACKED_STATUS);
+        drop(response);
+        allocations
+    };
+
+    let two = chain("for=192.0.2.1;proto=http, for=192.0.2.2;proto=https");
+    let three = chain("for=192.0.2.1;proto=http, for=192.0.2.2;by=_a, for=192.0.2.3;proto=https");
+    assert_eq!(
+        three, two,
+        "a three-element Forwarded chain allocated {three} times against {two} \
+         for two; splitting an element allocated"
+    );
+}
+
 /// The leak check, and the half of the requirement that does hold: whatever a
 /// request costs, the ten-thousandth costs the same. A count that climbed would
 /// be state accumulating on the routing path, which no single-request

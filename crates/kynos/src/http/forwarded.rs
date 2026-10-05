@@ -205,7 +205,8 @@ impl Forwarded {
     /// Resolves what `headers` claim, as far as `trusted` permits.
     ///
     /// `peer` is the socket the request actually arrived on, and it is the
-    /// answer whenever the fields cannot be believed.
+    /// answer whenever the fields cannot be believed. An element naming no
+    /// address is still a hop: see [`client`](Self::client).
     #[must_use]
     pub fn resolve(
         headers: &HeaderMap,
@@ -242,7 +243,8 @@ impl Forwarded {
         let mut sender = peer_ip;
 
         // `believed` counts the elements already taken, so it is the index the
-        // walk is at -- and it is what `hops` is spent against.
+        // walk is at -- and it is what `hops` is spent against. One naming no
+        // address spends its hop too, or the client's own would slide into it.
         for (believed, address) in addresses.iter().rev().enumerate() {
             let trusted_sender =
                 sender.is_some_and(|sender| trusted.names(sender)) || (believed < trusted.hops);
@@ -250,8 +252,8 @@ impl Forwarded {
                 break;
             }
 
-            client = Some(*address);
-            sender = Some(*address);
+            client = *address;
+            sender = *address;
         }
 
         Self {
@@ -262,8 +264,10 @@ impl Forwarded {
 
     /// The client address, as far as the trust policy could resolve it.
     ///
-    /// `None` only where the request arrived on no socket and no trusted hop
-    /// named one — a `TestClient`, or a directly driven `Service::call`.
+    /// `None` where no socket and no trusted hop named one — a `TestClient`, a
+    /// driven `Service::call` — or where trust ends on an element naming no
+    /// address: `for=unknown`, an obfuscated or unparseable `for=`, or no
+    /// `for=` at all, as in a proxy sending only `Forwarded: proto=https`.
     #[must_use]
     pub fn client(&self) -> Option<IpAddr> {
         self.client
@@ -288,69 +292,73 @@ impl Forwarded {
     }
 }
 
-/// Every `for=` address a request claims, left to right, and the scheme.
+/// Every non-empty element's `for=` address, left to right, and the scheme. An
+/// element naming none (`unknown`, an `obfnode`, no `for=`) is a `None` hop.
 ///
 /// `Forwarded` wins where present, because it is the specified field and
 /// carries the scheme in the same element as the address it belongs to. The
 /// `X-Forwarded-*` pair is read only in its absence: those names appear in no
 /// specification -- RFC 7239 section 7.1 describes them and defines nothing --
 /// and reading both risks pairing one hop's address with another's scheme.
-fn elements(headers: &HeaderMap) -> (Vec<IpAddr>, Option<String>) {
-    let mut addresses = Vec::new();
-    let mut proto = None;
-
-    let mut saw_forwarded = false;
+fn elements(headers: &HeaderMap) -> (Vec<Option<IpAddr>>, Option<String>) {
+    let (mut addresses, mut proto, mut saw_forwarded) = (Vec::new(), None, false);
     for value in headers.get_all(FORWARDED) {
         let Ok(value) = value.to_str() else { continue };
         saw_forwarded = true;
 
-        for element in value.split(',') {
+        let (start, mut line_proto) = (addresses.len(), None);
+        for element in unquoted_rsplit(value, b',') {
             let mut element_address = None;
-            for pair in element.split(';') {
-                let Some((name, raw)) = pair.split_once('=') else {
-                    continue;
-                };
-                let raw = unquote(raw.trim());
-
+            let pairs = unquoted_rsplit(element, b';').filter_map(|pair| pair.split_once('='));
+            for (name, raw) in pairs.map(|(name, raw)| (name, unquote(raw.trim()))) {
                 if name.trim().eq_ignore_ascii_case("for") {
-                    element_address = node_address(raw);
+                    element_address = element_address.or(Some(node_address(raw)));
                 } else if name.trim().eq_ignore_ascii_case("proto") {
-                    proto = Some(raw.to_ascii_lowercase());
+                    line_proto = line_proto.or(Some(raw));
                 }
             }
-
-            if let Some(address) = element_address {
-                addresses.push(address);
-            }
+            addresses.push(element_address.flatten());
         }
+        addresses[start..].reverse();
+        proto = line_proto.or(proto);
     }
 
     if saw_forwarded {
-        return (addresses, proto);
+        return (addresses, proto.map(str::to_ascii_lowercase));
     }
 
     for value in headers.get_all(X_FORWARDED_FOR) {
         let Ok(value) = value.to_str() else { continue };
-        for hop in value.split(',') {
-            if let Some(address) = node_address(hop.trim()) {
-                addresses.push(address);
-            }
-        }
+        let hops = value.split(',').map(str::trim);
+        addresses.extend(hops.filter(|hop| !hop.is_empty()).map(node_address));
     }
 
     let proto = headers
         .get(X_FORWARDED_PROTO)
         .and_then(|value| value.to_str().ok())
-        .map(|value| {
-            value
-                .split(',')
-                .next()
-                .unwrap_or(value)
-                .trim()
-                .to_ascii_lowercase()
-        });
+        .and_then(|value| value.split(',').next())
+        .map(|first| first.trim().to_ascii_lowercase());
 
     (addresses, proto)
+}
+
+/// `text`'s non-blank pieces between `delimiter`s outside any `quoted-string`
+/// (an odd run of `\` escapes its `"`), last first, so a client's unclosed
+/// quote cannot swallow a hop's. Allocation-free: it runs behind every proxy.
+fn unquoted_rsplit(text: &str, delimiter: u8) -> impl Iterator<Item = &str> {
+    let (bytes, mut end) = (text.as_bytes(), Some(text.len()));
+    let pieces = std::iter::from_fn(move || {
+        let (stop, mut quoted) = (end?, false);
+        end = (0..stop).rev().find(|&at| {
+            if bytes[at] == b'"' {
+                let escapes = bytes[..at].iter().rev().take_while(|&&b| b == b'\\');
+                quoted ^= !quoted || escapes.count() % 2 == 0;
+            }
+            !quoted && bytes[at] == delimiter
+        });
+        Some(&text[end.map_or(0, |at| at + 1)..stop])
+    });
+    pieces.filter(|piece| !piece.trim().is_empty())
 }
 
 /// Strips one layer of `quoted-string` quoting.
