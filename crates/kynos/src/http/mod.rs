@@ -55,3 +55,15 @@ pub type Parts = http::request::Parts;
 
 /// An outgoing response.
 pub type Response = http::Response<Body>;
+
+/// RFC 9110 section 5.6.2 `token`.
+///
+/// Here rather than with either caller: a cookie name and a stored content
+/// coding are both tokens, and the two sit behind different features.
+#[cfg(any(feature = "cookie", feature = "assets"))]
+pub(crate) fn is_token(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+}
