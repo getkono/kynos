@@ -363,8 +363,10 @@ impl PeerCertificates {
 ///
 /// `Ok(None)` for every way of not having presented one: the connection is not
 /// TLS, the listener does not verify client certificates, the peer sent none,
-/// or this build has no `tls` feature. None of the four is distinguishable to a
-/// client, so none is distinguished here.
+/// or this build has no `tls` feature and no embedding recorded a chain through
+/// [`Connection::from_tls_peer`](crate::extract::connection::Connection::from_tls_peer).
+/// None of the four is distinguishable to a client, so none is distinguished
+/// here.
 ///
 /// # Why this is not gated on `tls`
 ///
