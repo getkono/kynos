@@ -179,6 +179,23 @@ pub(crate) fn split(text: &str) -> impl Iterator<Item = &str> {
     })
 }
 
+/// Whether `tag` is a strong `entity-tag` that [`matches`] can ever match.
+///
+/// RFC 9110 section 8.8.3's `DQUOTE *etagc DQUOTE`, with no `W/`, and with
+/// `etagc` narrowed to `%x21 / %x23-7E`: the grammar's `obs-text` is legal on
+/// the wire, but a precondition field is read as visible ASCII here, so a tag
+/// holding any other octet would never compare equal to anything.
+#[cfg(feature = "assets")]
+#[must_use]
+pub(crate) fn is_strong(tag: &str) -> bool {
+    tag.len() >= 2
+        && tag.starts_with('"')
+        && tag.ends_with('"')
+        && tag.as_bytes()[1..tag.len() - 1]
+            .iter()
+            .all(|&byte| byte == 0x21 || (0x23..=0x7e).contains(&byte))
+}
+
 /// Whether `tag` carries the weakness marker.
 #[must_use]
 pub(crate) fn is_weak(tag: &str) -> bool {

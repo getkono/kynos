@@ -46,6 +46,8 @@ use crate::router::endpoint::set::{Endpoints, IntoEndpoints};
 
 pub mod endpoint;
 
+pub mod error;
+
 mod range;
 
 #[cfg(feature = "assets-fs")]
@@ -53,8 +55,10 @@ pub mod fs;
 
 /// One file an asset set serves.
 ///
-/// `const`-constructible throughout, so an embedded set is one `static` and
-/// costs nothing to hold.
+/// `const`-constructible through the unchecked constructors, so an embedded set
+/// is one `static` and costs nothing to hold.
+/// [`try_embedded`](Asset::try_embedded) is the checked one, for an asset built
+/// by hand.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Asset {
     path: &'static str,
@@ -98,7 +102,8 @@ impl Encoded {
     /// from the file it encodes.
     ///
     /// `etag` must be a quoted `entity-tag` (RFC 9110 section 8.8.3), as
-    /// `assets!` mints it: it is sent and compared as given, never checked.
+    /// `assets!` mints it: it is sent and compared as given, checked only when
+    /// [`Asset::try_embedded_with_codings`] builds the asset holding it.
     #[must_use]
     pub const fn stored(coding: &'static str, bytes: &'static [u8], etag: &'static str) -> Self {
         Self {
@@ -141,7 +146,8 @@ impl Asset {
     /// a legal path template, through [`Router::mount`](crate::Router::mount)
     /// or [`Group::mount`](crate::router::group::Group::mount). `assets!`
     /// refuses such a name at compile time, so only a hand-built `Asset` can
-    /// reach it.
+    /// reach it — build one with [`try_embedded`](Self::try_embedded) instead
+    /// to be refused where it is made.
     #[must_use]
     pub const fn embedded(path: &'static str, bytes: &'static [u8], etag: &'static str) -> Self {
         Self {
@@ -164,6 +170,8 @@ impl Asset {
     ///
     /// Not here: mounting a set that holds this asset panics when `path` is not
     /// a legal path template, as [`embedded`](Self::embedded) says.
+    /// [`try_embedded_with_codings`](Self::try_embedded_with_codings) refuses
+    /// it where it is made.
     #[must_use]
     pub const fn embedded_with_codings(
         path: &'static str,

@@ -49,3 +49,11 @@ fn a_server_failure_is_reportable() {
 fn a_tls_failure_is_reportable() {
     reportable::<kynos::server::tls::error::TlsError>();
 }
+
+/// `InvalidAsset` is returned at startup, where a hand-built asset set is
+/// assembled, so it travels to `main` the way a build failure does.
+#[cfg(feature = "assets")]
+#[test]
+fn an_asset_refusal_is_reportable() {
+    reportable::<kynos::router::assets::error::InvalidAsset>();
+}
