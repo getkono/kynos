@@ -154,6 +154,36 @@ async fn a_watched_body_reports_once_across_both_of_its_ends() {
     );
 }
 
+/// Watching must not hide an end either: a driver that consults
+/// `is_end_stream` first never polls a body that states it, so a wrapper
+/// answering `false` would cost every empty response an extra poll.
+#[test]
+fn a_watched_empty_body_states_its_end() {
+    let reports = Reports::default();
+
+    assert!(reports.watching(Body::empty()).is_end_stream());
+}
+
+/// A body that declares its end on the frame carrying the last of it is
+/// delivered on that frame, before anything polls again or drops it: a driver
+/// that reads the declaration stops there, and the report must not wait for a
+/// poll that never comes.
+#[tokio::test]
+async fn a_watched_body_reports_delivery_on_the_frame_that_ends_it() {
+    let reports = Reports::default();
+    let mut body = reports.watching(Body::from_bytes(Bytes::from_static(b"1234")));
+
+    let frame = body
+        .frame()
+        .await
+        .expect("one frame")
+        .expect("a body built from bytes cannot fail");
+
+    assert_eq!(frame.into_data().ok(), Some(Bytes::from_static(b"1234")));
+    assert_eq!(reports.taken(), vec![Delivery::Complete]);
+    drop(body);
+}
+
 /// A body that logs its own release, so the report can be ordered against it.
 struct Releasing(Arc<Mutex<Vec<&'static str>>>);
 
