@@ -290,6 +290,34 @@ impl Default for Body {
     }
 }
 
+/// The same body [`Body::from_bytes`] builds.
+impl From<Bytes> for Body {
+    fn from(bytes: Bytes) -> Self {
+        Self::from_bytes(bytes)
+    }
+}
+
+/// Takes the buffer over without copying it.
+impl From<Vec<u8>> for Body {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::from_bytes(Bytes::from(bytes))
+    }
+}
+
+/// Takes the buffer over without copying it.
+impl From<String> for Body {
+    fn from(text: String) -> Self {
+        Self::from_bytes(Bytes::from(text))
+    }
+}
+
+/// Borrows the text for good rather than copying it.
+impl From<&'static str> for Body {
+    fn from(text: &'static str) -> Self {
+        Self::from_bytes(Bytes::from_static(text.as_bytes()))
+    }
+}
+
 mod watched;
 
 #[cfg(test)]

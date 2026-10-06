@@ -55,6 +55,22 @@ async fn a_body_carries_exactly_the_bytes_it_was_given() {
     assert_eq!(drain(Body::from_bytes(bytes.clone())).await, bytes);
 }
 
+/// Every `From` conversion, each holding exactly the octets it was given.
+#[tokio::test]
+async fn each_conversion_carries_exactly_its_bytes() {
+    let expected = Bytes::from_static(b"caf\xc3\xa9");
+    let converted = [
+        ("Bytes", Body::from(expected.clone())),
+        ("Vec<u8>", Body::from(expected.to_vec())),
+        ("String", Body::from(String::from("café"))),
+        ("&'static str", Body::from("café")),
+    ];
+
+    for (source, body) in converted {
+        assert_eq!(drain(body).await, expected, "a body from {source}");
+    }
+}
+
 #[tokio::test]
 async fn the_default_body_is_the_empty_one() {
     assert!(drain(Body::default()).await.is_empty());
