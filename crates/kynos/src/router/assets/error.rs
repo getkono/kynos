@@ -137,7 +137,11 @@ fn is_dot_segment(segment: &str) -> bool {
     while !rest.is_empty() {
         if let Some(after) = rest.strip_prefix('.') {
             rest = after;
-        } else if rest.len() >= 3 && rest[..3].eq_ignore_ascii_case("%2e") {
+        } else if rest
+            .as_bytes()
+            .get(..3)
+            .is_some_and(|head| head.eq_ignore_ascii_case(b"%2e"))
+        {
             rest = &rest[3..];
         } else {
             return false;
