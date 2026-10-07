@@ -6,7 +6,7 @@
 
 use std::{
     error::Error as StdError,
-    fmt, mem,
+    fmt,
     pin::Pin,
     sync::Mutex,
     task::{Context, Poll},
@@ -138,7 +138,7 @@ impl Body {
 
         Self {
             inner: Mutex::new(
-                Watched {
+                watched::Watched {
                     inner,
                     report: Some(Box::new(report)),
                 }
@@ -162,107 +162,10 @@ pub(crate) enum Delivery {
     Interrupted,
 }
 
-/// A body that reports how it ended.
-///
-/// Not generic over the callback. A boxed `FnOnce` is unconditionally [`Unpin`]
-/// whatever it captures, which is what lets `poll_frame` reach its fields
-/// through [`Pin::get_mut`] -- `unsafe` is forbidden here, so a hand-written
-/// projection is not available.
-struct Watched {
-    inner: UnsyncBoxBody<Bytes, BoxError>,
-    /// `None` once the report has been made, which is what makes it once.
-    report: Option<Box<dyn FnOnce(Delivery) + Send>>,
-}
-
-impl Watched {
-    /// Reports `delivery`, unless something already reported.
-    fn report(&mut self, delivery: Delivery) {
-        if let Some(report) = self.report.take() {
-            report(delivery);
-        }
-    }
-}
-
-impl HttpBody for Watched {
-    type Data = Bytes;
-    type Error = BoxError;
-
-    fn poll_frame(
-        self: Pin<&mut Self>,
-        context: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        let this = self.get_mut();
-        let polled = Pin::new(&mut this.inner).poll_frame(context);
-
-        match &polled {
-            // Nothing left: everything the body had was yielded.
-            Poll::Ready(None) => this.report(Delivery::Complete),
-            // A body may declare its end on the frame that carries the last of
-            // it rather than on a further poll, and a driver that reads the
-            // declaration stops polling. Ask, so that ending is not read as an
-            // interruption.
-            Poll::Ready(Some(Ok(_))) if this.inner.is_end_stream() => {
-                this.report(Delivery::Complete);
-            }
-            // A frame that failed leaves the body unfinished, and the drop
-            // below reports it as such. A frame with more behind it is not an
-            // ending at all.
-            Poll::Ready(Some(_)) | Poll::Pending => {}
-        }
-
-        polled
-    }
-
-    fn is_end_stream(&self) -> bool {
-        self.inner.is_end_stream()
-    }
-
-    fn size_hint(&self) -> SizeHint {
-        self.inner.size_hint()
-    }
-}
-
-impl Drop for Watched {
-    fn drop(&mut self) {
-        // A body already at its end was delivered whether or not anything
-        // polled it again: an empty response is the ordinary case, and a driver
-        // that consults `is_end_stream` first need never call `poll_frame` at
-        // all.
-        let delivery = if self.inner.is_end_stream() {
-            Delivery::Complete
-        } else {
-            Delivery::Interrupted
-        };
-
-        // Release what is wrapped before reporting: an observer told the body
-        // is gone may treat whatever it held as gone too. The guard reports on
-        // its own drop, so a release that panics still reports as it unwinds.
-        let _report = Reporting {
-            report: self.report.take(),
-            delivery,
-        };
-        drop(mem::take(&mut self.inner));
-    }
-}
-
-/// Makes a [`Watched`] body's report when dropped, including by an unwind.
-struct Reporting {
-    report: Option<Box<dyn FnOnce(Delivery) + Send>>,
-    delivery: Delivery,
-}
-
-impl Drop for Reporting {
-    fn drop(&mut self) {
-        if let Some(report) = self.report.take() {
-            report(self.delivery);
-        }
-    }
-}
-
 /// A body that fails once and yields nothing else.
 ///
 /// Never reports its end, not even after the error: a body that failed was not
-/// delivered, and [`Watched`] reads an ended body as a complete one.
+/// delivered, and [`Watched`](watched::Watched) reads an ended body as a complete one.
 #[cfg(any(feature = "cache", feature = "compression"))]
 struct Failed {
     error: Option<BoxError>,
@@ -386,6 +289,36 @@ impl Default for Body {
         Self::empty()
     }
 }
+
+/// The same body [`Body::from_bytes`] builds.
+impl From<Bytes> for Body {
+    fn from(bytes: Bytes) -> Self {
+        Self::from_bytes(bytes)
+    }
+}
+
+/// Takes the buffer over without copying it.
+impl From<Vec<u8>> for Body {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::from_bytes(Bytes::from(bytes))
+    }
+}
+
+/// Takes the buffer over without copying it.
+impl From<String> for Body {
+    fn from(text: String) -> Self {
+        Self::from_bytes(Bytes::from(text))
+    }
+}
+
+/// Borrows the text for good rather than copying it.
+impl From<&'static str> for Body {
+    fn from(text: &'static str) -> Self {
+        Self::from_bytes(Bytes::from_static(text.as_bytes()))
+    }
+}
+
+mod watched;
 
 #[cfg(test)]
 mod tests;

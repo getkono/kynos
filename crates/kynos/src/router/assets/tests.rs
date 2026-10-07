@@ -355,3 +355,69 @@ fn an_accepted_asset_mounts() {
     let router = crate::Router::<()>::new().mount(AssetSet::embedded(&CHECKED));
     let _ = router;
 }
+
+/// An index is a whole file name, so a file whose name only ends in it indexes
+/// nothing.
+///
+/// Every place the index name can sit against a segment boundary, closed:
+/// alone, after a `/`, after part of a name, and after part of a
+/// percent-escape, where the cut would leave a directory that is not a
+/// servable path.
+#[test]
+fn an_index_is_cut_only_at_a_segment_boundary() {
+    const CASES: &[(Asset, &str, Option<&str>)] = &[
+        (
+            Asset::embedded("index.html", b"", "\"t\""),
+            "index.html",
+            Some(""),
+        ),
+        (
+            Asset::embedded("docs/index.html", b"", "\"t\""),
+            "index.html",
+            Some("docs/"),
+        ),
+        (
+            Asset::embedded("xindex.html", b"", "\"t\""),
+            "index.html",
+            None,
+        ),
+        (
+            Asset::embedded("docs/xindex.html", b"", "\"t\""),
+            "index.html",
+            None,
+        ),
+        (
+            Asset::embedded("a/default.htm", b"", "\"t\""),
+            "default.htm",
+            Some("a/"),
+        ),
+        (
+            Asset::embedded("a%default.htm", b"", "\"t\""),
+            "default.htm",
+            None,
+        ),
+    ];
+
+    for (asset, index, expected) in CASES {
+        let set = AssetSet::embedded(std::slice::from_ref(asset)).index(index);
+        let directories: Vec<String> = set.indexed().map(|(_, directory)| directory).collect();
+        let path = asset.path;
+
+        assert_eq!(
+            directories,
+            expected.iter().map(|d| (*d).to_owned()).collect::<Vec<_>>(),
+            "`{path}` under the index `{index}`"
+        );
+        assert_eq!(set.len(), 1 + directories.len(), "`{path}` under `{index}`");
+    }
+}
+
+/// A custom index beside a name that ends in it after a `%` mounts rather than
+/// registering the unservable directory `/a%`.
+#[test]
+fn a_custom_index_beside_a_percent_escape_mounts() {
+    const ESCAPED: &[Asset] = &[Asset::embedded("a%default.htm", b"", "\"t\"")];
+
+    let _router =
+        crate::Router::<()>::new().mount(AssetSet::embedded(ESCAPED).index("default.htm"));
+}

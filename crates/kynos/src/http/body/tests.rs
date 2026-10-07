@@ -55,6 +55,22 @@ async fn a_body_carries_exactly_the_bytes_it_was_given() {
     assert_eq!(drain(Body::from_bytes(bytes.clone())).await, bytes);
 }
 
+/// Every `From` conversion, each holding exactly the octets it was given.
+#[tokio::test]
+async fn each_conversion_carries_exactly_its_bytes() {
+    let expected = Bytes::from_static(b"caf\xc3\xa9");
+    let converted = [
+        ("Bytes", Body::from(expected.clone())),
+        ("Vec<u8>", Body::from(expected.to_vec())),
+        ("String", Body::from(String::from("café"))),
+        ("&'static str", Body::from("café")),
+    ];
+
+    for (source, body) in converted {
+        assert_eq!(drain(body).await, expected, "a body from {source}");
+    }
+}
+
 #[tokio::test]
 async fn the_default_body_is_the_empty_one() {
     assert!(drain(Body::default()).await.is_empty());
@@ -136,6 +152,36 @@ async fn a_watched_body_reports_once_across_both_of_its_ends() {
         vec![Delivery::Complete],
         "the drop reported a second time over the read that had already reported"
     );
+}
+
+/// Watching must not hide an end either: a driver that consults
+/// `is_end_stream` first never polls a body that states it, so a wrapper
+/// answering `false` would cost every empty response an extra poll.
+#[test]
+fn a_watched_empty_body_states_its_end() {
+    let reports = Reports::default();
+
+    assert!(reports.watching(Body::empty()).is_end_stream());
+}
+
+/// A body that declares its end on the frame carrying the last of it is
+/// delivered on that frame, before anything polls again or drops it: a driver
+/// that reads the declaration stops there, and the report must not wait for a
+/// poll that never comes.
+#[tokio::test]
+async fn a_watched_body_reports_delivery_on_the_frame_that_ends_it() {
+    let reports = Reports::default();
+    let mut body = reports.watching(Body::from_bytes(Bytes::from_static(b"1234")));
+
+    let frame = body
+        .frame()
+        .await
+        .expect("one frame")
+        .expect("a body built from bytes cannot fail");
+
+    assert_eq!(frame.into_data().ok(), Some(Bytes::from_static(b"1234")));
+    assert_eq!(reports.taken(), vec![Delivery::Complete]);
+    drop(body);
 }
 
 /// A body that logs its own release, so the report can be ordered against it.
