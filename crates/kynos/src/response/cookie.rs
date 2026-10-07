@@ -194,7 +194,7 @@ impl Cookie {
     /// decode.
     #[must_use]
     pub fn encode(&self) -> Option<HeaderValue> {
-        if !is_token(&self.name) || !is_cookie_value(&self.value) {
+        if !crate::http::is_token(&self.name) || !is_cookie_value(&self.value) {
             return None;
         }
 
@@ -306,14 +306,6 @@ fn is_domain_value(text: &str) -> bool {
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
         })
-}
-
-/// RFC 9110 section 5.6.2 `token`.
-fn is_token(text: &str) -> bool {
-    !text.is_empty()
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
 }
 
 /// RFC 6265 section 4.1.1 `cookie-value`: no control, whitespace, `"`, `,`, `;`
