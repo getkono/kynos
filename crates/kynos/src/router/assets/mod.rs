@@ -267,6 +267,8 @@ impl AssetSet {
     /// `index.html` by default, because a set that serves it at
     /// `/index.html` and 404s at `/` surprises everyone. Both URLs are served,
     /// so both are described.
+    ///
+    /// `name` matches a whole file name, so `xindex.html` indexes nothing.
     #[must_use]
     pub fn index(mut self, name: &'static str) -> Self {
         self.index = Some(name);
@@ -332,6 +334,11 @@ impl AssetSet {
         self.assets.iter().filter_map(move |asset| {
             let index = self.index?;
             let directory = asset.path.strip_suffix(index)?;
+            // The index is a whole file name: `xindex.html` indexes nothing,
+            // and a cut inside `a%default.htm` would leave the unservable `a%`.
+            if !(directory.is_empty() || directory.ends_with('/')) {
+                return None;
+            }
             // `index.html` at the root serves `/`; `docs/index.html` serves
             // `docs/`. Both keep the trailing slash, which is what a browser
             // resolving a relative link against them expects.
