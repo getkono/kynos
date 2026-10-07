@@ -164,6 +164,7 @@ fn coded(coding: &'static str, etag: &'static str) -> Result<Asset, InvalidAsset
 
 /// Every refusal, each naming the input it refused.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn every_refusal_names_what_it_refused() {
     let cases = [
         (
