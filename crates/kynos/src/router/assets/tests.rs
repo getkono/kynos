@@ -215,6 +215,10 @@ fn every_refusal_names_what_it_refused() {
             InvalidAsset::Path { path: "app css" },
         ),
         (
+            Asset::try_embedded("a€", b"", "\"t\""),
+            InvalidAsset::Path { path: "a€" },
+        ),
+        (
             Asset::try_embedded("app.css?v=1", b"", "\"t\""),
             InvalidAsset::Path {
                 path: "app.css?v=1",
