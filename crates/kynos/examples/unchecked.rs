@@ -79,7 +79,7 @@ async fn serve_asset(request: Request) -> Response {
     // Built by hand, because there is no return type here to build it from --
     // which is the whole reason this route cannot be described.
     let body = format!("would serve {}", request.uri().path());
-    let mut response = Response::new(Body::from_bytes(bytes::Bytes::from(body)));
+    let mut response = Response::new(Body::from(body));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         kynos::http::HeaderValue::from_static(mime_names::TEXT_PLAIN),
