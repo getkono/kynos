@@ -1,4 +1,9 @@
-use super::{KeyLocation, api_key, basic, bearer, http_scheme};
+use std::net::{Ipv4Addr, SocketAddr};
+
+use bytes::Bytes;
+
+use super::{KeyLocation, api_key, basic, bearer, http_scheme, peer_certificates};
+use crate::extract::connection::{Connection, TlsIdentity};
 use crate::http::{HeaderName, HeaderValue, Parts, Request, header::AUTHORIZATION};
 
 /// A request head carrying `value` as its `Authorization`.
@@ -310,6 +315,66 @@ fn an_owned_key_survives_being_taken_from_the_request() {
         .expect("a credential")
         .expect("present");
     assert_eq!(key.into_inner(), "k-123");
+}
+
+// --- Peer certificates ------------------------------------------------------
+
+/// A request head carrying `connection`, as an embedding's accept loop records
+/// it.
+fn arrived_on(connection: Connection) -> Parts {
+    let mut request = Request::new(crate::http::body::Body::empty());
+    request.extensions_mut().insert(connection);
+    request.into_parts().0
+}
+
+fn sockets() -> (SocketAddr, SocketAddr) {
+    (
+        SocketAddr::from((Ipv4Addr::LOCALHOST, 50_000)),
+        SocketAddr::from((Ipv4Addr::LOCALHOST, 443)),
+    )
+}
+
+/// Ungated on purpose: an embedding that terminates TLS itself supplies the
+/// chain without Kynos's listener, so this holds in a build with no `tls`.
+#[test]
+fn an_embedded_handshake_presents_the_chain_it_recorded() {
+    let (peer, local) = sockets();
+    let leaf = Bytes::from_static(b"leaf DER");
+    let issuer = Bytes::from_static(b"issuer DER");
+    let identity = TlsIdentity::default()
+        .with_server_name("api.example.com")
+        .with_alpn_protocol(b"h2".to_vec())
+        .with_peer_certificates([leaf.clone(), issuer.clone()]);
+    let connection = Connection::from_tls_peer(peer, local, identity);
+    assert_eq!(connection.alpn_protocol(), Some(&b"h2"[..]));
+    let head = arrived_on(connection);
+
+    let presented = peer_certificates(&head)
+        .expect("never refused")
+        .expect("a recorded chain is presented");
+
+    assert_eq!(presented.chain(), [leaf.clone(), issuer]);
+    assert_eq!(presented.leaf(), Some(&leaf));
+    assert_eq!(presented.server_name(), Some("api.example.com"));
+}
+
+/// A handshake that verified no client certificate is not a credential, so
+/// `MaybeAuth<MutualTls>` sees an anonymous caller rather than an empty one.
+#[test]
+fn an_embedded_handshake_with_no_chain_presents_nothing() {
+    let (peer, local) = sockets();
+    let identity = TlsIdentity::default().with_server_name("api.example.com");
+    let head = arrived_on(Connection::from_tls_peer(peer, local, identity));
+
+    assert!(peer_certificates(&head).expect("never refused").is_none());
+}
+
+#[test]
+fn a_plaintext_connection_presents_nothing() {
+    let (peer, local) = sockets();
+    let head = arrived_on(Connection::from_peer(peer, local));
+
+    assert!(peer_certificates(&head).expect("never refused").is_none());
 }
 
 // --- Debug output ----------------------------------------------------------

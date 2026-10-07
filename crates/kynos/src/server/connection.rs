@@ -54,20 +54,20 @@ pub(in crate::server) async fn serve_connection<C: 'static>(
                 // Built once, here, and reference-counted onto every request the
                 // connection carries: a chain copied per request would copy a
                 // client certificate on every call of a busy mutual-TLS session.
-                let connection = Connection::from_tls_peer(
-                    peer_addr,
-                    local_addr,
-                    TlsIdentity::new(
-                        session.server_name().map(str::to_owned),
-                        session.alpn_protocol().map(<[u8]>::to_vec),
-                        session
-                            .peer_certificates()
-                            .unwrap_or_default()
-                            .iter()
-                            .map(|certificate| bytes::Bytes::copy_from_slice(certificate.as_ref()))
-                            .collect(),
-                    ),
+                let mut identity = TlsIdentity::default().with_peer_certificates(
+                    session
+                        .peer_certificates()
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|certificate| bytes::Bytes::copy_from_slice(certificate.as_ref())),
                 );
+                if let Some(name) = session.server_name() {
+                    identity = identity.with_server_name(name);
+                }
+                if let Some(protocol) = session.alpn_protocol() {
+                    identity = identity.with_alpn_protocol(protocol);
+                }
+                let connection = Connection::from_tls_peer(peer_addr, local_addr, identity);
                 if let Err(error) = serve_http(stream, service, config, connection, lifecycle).await
                 {
                     tracing::debug!(%error, %local_addr, %peer_addr, "TLS connection failed");

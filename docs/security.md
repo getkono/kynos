@@ -188,7 +188,12 @@ describes and the specification permits it.
 A client certificate is presented during the handshake, so no request field
 reveals it — which is exactly why the scheme has to be declared. It reaches an
 authenticator as `PeerCertificates`, read back from the
-[`Connection`](../crates/kynos/src/extract/connection.rs) the server recorded.
+[`Connection`](../crates/kynos/src/extract/connection.rs) the server recorded —
+or that an embedding terminating TLS in its own accept loop recorded through
+`Connection::from_tls_peer`. Whatever inserts that `Connection` is the trust
+anchor: `Auth<MutualTls>` reads the chain as one the handshake already verified
+and checks nothing itself, so an embedding records it only after verifying it,
+and nothing that runs before extraction may insert one of its own.
 
 `peer_certificates` is **not** gated on the `tls` feature, and that is a
 decision rather than an oversight. The feature would key on the wrong thing: a

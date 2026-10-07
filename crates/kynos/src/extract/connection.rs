@@ -73,11 +73,24 @@ pub struct ConnectInfo(pub SocketAddr);
 
 /// What the TLS handshake settled, carried without naming the backend.
 ///
-/// Built by the listener and read back through [`Connection`]. No rustls type
-/// reaches this, which is what keeps the TLS backend contained to
-/// `server/tls/` as `docs/architecture.md` requires — and what lets the type
-/// exist in a build with no TLS at all, where every connection simply carries
-/// none.
+/// Built by the listener — or by an embedding that terminates TLS in its own
+/// accept loop — and read back through [`Connection`]. No rustls type reaches
+/// this, which is what keeps the TLS backend contained to `server/tls/` as
+/// `docs/architecture.md` requires — and what lets the type exist in a build
+/// with no `tls` feature, where only an embedding's own handshake can fill one.
+///
+/// Starts empty; each `with_` method records one thing the handshake agreed.
+///
+/// ```
+/// use kynos::extract::connection::TlsIdentity;
+///
+/// # let leaf = bytes::Bytes::from_static(b"DER");
+/// let identity = TlsIdentity::default()
+///     .with_server_name("api.example.com")
+///     .with_alpn_protocol(b"h2".to_vec())
+///     .with_peer_certificates([leaf]);
+/// # let _ = identity;
+/// ```
 #[derive(Clone, Debug, Default)]
 pub struct TlsIdentity {
     server_name: Option<String>,
@@ -86,21 +99,30 @@ pub struct TlsIdentity {
 }
 
 impl TlsIdentity {
-    /// Records what a completed handshake agreed on.
+    /// The server name the client asked for through SNI.
+    #[must_use]
+    pub fn with_server_name(mut self, name: impl Into<String>) -> Self {
+        self.server_name = Some(name.into());
+        self
+    }
+
+    /// The protocol ALPN settled on, as its identification sequence.
+    #[must_use]
+    pub fn with_alpn_protocol(mut self, protocol: impl Into<Vec<u8>>) -> Self {
+        self.alpn = Some(protocol.into());
+        self
+    }
+
+    /// The certificate chain the peer presented, DER, leaf first, replacing
+    /// any recorded before.
     ///
-    /// `peer_certificates` is DER, leaf first, and empty unless the listener
-    /// was configured to verify client certificates.
-    #[cfg(feature = "tls")]
-    pub(crate) fn new(
-        server_name: Option<String>,
-        alpn: Option<Vec<u8>>,
-        peer_certificates: Vec<bytes::Bytes>,
-    ) -> Self {
-        Self {
-            server_name,
-            alpn,
-            peer_certificates,
-        }
+    /// Record it only once the chain has been verified: an
+    /// [`Auth<MutualTls>`](crate::security::schemes::MutualTls) reads it as a
+    /// credential the handshake already checked, and checks nothing itself.
+    #[must_use]
+    pub fn with_peer_certificates(mut self, chain: impl IntoIterator<Item = bytes::Bytes>) -> Self {
+        self.peer_certificates = chain.into_iter().collect();
+        self
     }
 }
 
@@ -158,13 +180,32 @@ impl Connection {
     /// A separate constructor rather than a builder on the one above, because
     /// the listener knows both halves at the same moment and a builder would
     /// mean allocating the connection twice to fill in the second.
-    #[cfg(feature = "tls")]
+    ///
+    /// Not gated on `tls`: an embedding that terminates TLS in its own accept
+    /// loop has a handshake to report without Kynos's listener, and this is
+    /// how [`PeerCertificates`](crate::security::carrier::PeerCertificates)
+    /// reaches it.
+    ///
+    /// ```
+    /// use kynos::{
+    ///     extract::connection::{Connection, TlsIdentity},
+    ///     http::{Request, body::Body},
+    /// };
+    ///
+    /// # let (peer, local) = ("192.0.2.1:50000".parse().unwrap(), "192.0.2.2:443".parse().unwrap());
+    /// # let verified_chain: Vec<bytes::Bytes> = Vec::new();
+    /// let connection = Connection::from_tls_peer(
+    ///     peer,
+    ///     local,
+    ///     TlsIdentity::default().with_peer_certificates(verified_chain),
+    /// );
+    ///
+    /// // Once per accepted socket; a clone per request is a reference count.
+    /// let mut request = Request::new(Body::empty());
+    /// request.extensions_mut().insert(connection.clone());
+    /// ```
     #[must_use]
-    pub(crate) fn from_tls_peer(
-        peer_addr: SocketAddr,
-        local_addr: SocketAddr,
-        tls: TlsIdentity,
-    ) -> Self {
+    pub fn from_tls_peer(peer_addr: SocketAddr, local_addr: SocketAddr, tls: TlsIdentity) -> Self {
         Self(Arc::new(Inner {
             peer_addr,
             local_addr,
@@ -197,8 +238,9 @@ impl Connection {
 
     /// The server name the client asked for through SNI.
     ///
-    /// `None` when the connection is not TLS — which includes every connection
-    /// in a build without the `tls` feature — or when the client sent no
+    /// `None` when the connection is not TLS — which, in a build without the
+    /// `tls` feature, is every connection an embedding did not record through
+    /// [`from_tls_peer`](Self::from_tls_peer) — or when the client sent no
     /// server-name indication.
     #[must_use]
     pub fn server_name(&self) -> Option<&str> {
@@ -218,7 +260,8 @@ impl Connection {
     ///
     /// Empty unless the listener was configured to verify client certificates
     /// and the peer presented one — so also empty behind a TLS-terminating
-    /// proxy, and in a build without the `tls` feature.
+    /// proxy, and in a build without the `tls` feature unless an embedding
+    /// recorded a chain through [`from_tls_peer`](Self::from_tls_peer).
     #[must_use]
     pub fn peer_certificates(&self) -> &[bytes::Bytes] {
         self.0
