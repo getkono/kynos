@@ -125,6 +125,24 @@ impl Directory {
 
         Some(resolved)
     }
+
+    /// The file `requested` names on disk and what `stat` said of it, or
+    /// `None` where nothing may be served.
+    ///
+    /// A directory stands for its index. Every failure is `None`, including
+    /// `PermissionDenied`: a file the process cannot read is, to a client, not
+    /// there, and 404 leaks least.
+    async fn locate(&self, requested: &str) -> Option<(PathBuf, std::fs::Metadata)> {
+        let mut path = self.resolve(requested)?;
+        let mut metadata = tokio::fs::metadata(&path).await.ok()?;
+
+        if metadata.is_dir() {
+            path.push(self.index?);
+            metadata = tokio::fs::metadata(&path).await.ok()?;
+        }
+
+        metadata.is_file().then_some((path, metadata))
+    }
 }
 
 /// A weak entity tag from what a `stat` already knows.
@@ -198,32 +216,9 @@ impl EncodeHeaders for FileHeaders {
 async fn serve(directory: &Directory, request: &Request) -> Response {
     let requested = crate::unchecked::captured(request, "path").unwrap_or_default();
 
-    let Some(mut path) = directory.resolve(&requested) else {
+    let Some((path, metadata)) = directory.locate(&requested).await else {
         return refused(StatusCode::NOT_FOUND);
     };
-
-    // Every read failure is a 404, including `PermissionDenied`. A file the
-    // process cannot read is, to a client, not there — and 404 leaks least.
-    // The same holds for the index read below, which stays a `match` only
-    // because it reassigns rather than binds.
-    let Ok(mut metadata) = tokio::fs::metadata(&path).await else {
-        return refused(StatusCode::NOT_FOUND);
-    };
-
-    if metadata.is_dir() {
-        let Some(index) = directory.index else {
-            return refused(StatusCode::NOT_FOUND);
-        };
-        path.push(index);
-        metadata = match tokio::fs::metadata(&path).await {
-            Ok(metadata) => metadata,
-            Err(_) => return refused(StatusCode::NOT_FOUND),
-        };
-    }
-
-    if !metadata.is_file() {
-        return refused(StatusCode::NOT_FOUND);
-    }
 
     let headers = FileHeaders {
         etag: etag(&metadata),
