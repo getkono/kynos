@@ -27,6 +27,7 @@ mod accept;
 mod connection;
 mod describe;
 mod lifecycle;
+mod request_body;
 
 pub mod address;
 pub mod error;
@@ -54,6 +55,7 @@ use crate::{
         error::ServerError,
         lifecycle::{Drain, Lifecycle},
         protocol::validate_protocol_config,
+        request_body::{DEFAULT_REQUEST_BODY_IDLE_TIMEOUT, validate_request_body_idle_timeout},
         shutdown::{ForceFuture, Shutdown, ShutdownFuture},
         tcp::{SocketOptions, TcpKeepAlive, validate_tcp_keepalive},
     },
@@ -85,6 +87,7 @@ pub struct Server<C> {
     shutdown_timeout: Duration,
     max_connections: NonZeroUsize,
     tcp_keepalive: Option<TcpKeepAlive>,
+    request_body_idle_timeout: Option<Duration>,
 }
 
 impl<C: 'static> Server<C> {
@@ -106,6 +109,7 @@ impl<C: 'static> Server<C> {
             max_connections: NonZeroUsize::new(DEFAULT_CONNECTION_LIMIT)
                 .expect("the default connection limit is non-zero"),
             tcp_keepalive: Some(TcpKeepAlive::default()),
+            request_body_idle_timeout: Some(DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
         }
     }
 
@@ -185,6 +189,30 @@ impl<C: 'static> Server<C> {
         self
     }
 
+    /// Sets how long a request body may go without a frame, or `None` to wait
+    /// indefinitely.
+    ///
+    /// On by default at 30 seconds, the same budget a request head is given.
+    /// The clock runs only while something is reading the body and has nothing
+    /// to read, so a large upload arriving steadily is never cut short, and a
+    /// handler that reads its body late is not charged for the wait.
+    ///
+    /// A body that stalls fails its read, and the request is answered `408
+    /// Request Timeout` in place of whatever the operation made of that
+    /// failure — over HTTP/1 with `Connection: close`, as RFC 9110 §15.5.9
+    /// advises, so the client cannot frame what it sends next as a new request.
+    /// A response the handler had already returned before the stall stands.
+    ///
+    /// The 408 is the server's rather than an operation's, so no operation
+    /// declares it — the same footing as a 431 from the protocol driver.
+    ///
+    /// [`prepare`](Self::prepare) refuses `Some(Duration::ZERO)`.
+    #[must_use]
+    pub fn request_body_idle_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.request_body_idle_timeout = timeout;
+        self
+    }
+
     /// Resolves and binds every configured listener atomically.
     ///
     /// # Errors
@@ -208,6 +236,7 @@ impl<C: 'static> Server<C> {
             self.http2,
         )?;
         validate_tcp_keepalive(self.tcp_keepalive)?;
+        validate_request_body_idle_timeout(self.request_body_idle_timeout)?;
 
         #[cfg(feature = "tls")]
         let mut service = self.service;
@@ -273,6 +302,7 @@ impl<C: 'static> Server<C> {
                 tls,
                 shutdown_timeout: self.shutdown_timeout,
                 max_connections: self.max_connections,
+                request_body_idle_timeout: self.request_body_idle_timeout,
             },
             shutdown: self.shutdown,
         })
@@ -307,6 +337,7 @@ pub(in crate::server) struct TransportConfig {
     tls: Option<TlsRuntime>,
     shutdown_timeout: Duration,
     max_connections: NonZeroUsize,
+    request_body_idle_timeout: Option<Duration>,
 }
 
 impl<C: 'static> BoundServer<C> {
