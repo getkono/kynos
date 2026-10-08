@@ -1051,11 +1051,7 @@ const RAISED_ELSEWHERE: &[&str] = &[
     // `crates/kynos/tests/unchecked.rs` cover them there.
     "RouteConflict",
     "InvalidRoutePattern",
-    // A 3.1-only build has no 3.2 construct to raise this with. A 3.2-capable
-    // one does, and carries a ledger case below.
-    #[cfg(not(feature = "openapi32"))]
-    "RequiresV3_2",
-    // The same: `encoding` conflicts with `prefixEncoding` and `itemEncoding`,
+    // `encoding` conflicts with `prefixEncoding` and `itemEncoding`,
     // neither of which a 3.1 build has.
     #[cfg(not(feature = "openapi32"))]
     "ConflictingEncoding",
@@ -1356,11 +1352,16 @@ fn ledger_opacity() -> Vec<(&'static str, SpecVersion, Document)> {
 
     // Validating as 3.1 a document only 3.2 can express. The same walk
     // `Document::emit` refuses on, so the two agree on what 3.1 can carry.
-    #[cfg(feature = "openapi32")]
+    // `$self` is written to the wire and read back, so each build holds it
+    // where it parses it: a 3.2-capable build in `Document::self_uri`, a
+    // 3.1-only one in the root's extensions, where it is just as refused.
     push("RequiresV3_2", {
         let mut document = document_with(&[("/users", get(operation()))]);
-        document.self_uri = Some("https://example.com/orders".to_owned());
         document
+            .extensions
+            .insert("$self", "https://example.com/orders");
+        serde_json::from_value(serde_json::to_value(&document).expect("serializable"))
+            .expect("a description carrying `$self` parses in every build")
     });
 
     // One opaque operation raises three at once: the operation is reported, the

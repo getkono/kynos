@@ -59,8 +59,10 @@
 //! # Features
 //!
 //! **Stage two is recorded twice, because it costs two different amounts.**
-//! `emit/downgrade.rs` gates its whole walk behind `openapi32`, so a baseline
-//! build returns an empty `Vec` and does the clone alone: stage two reads 125,
+//! `emit/downgrade.rs` gates its typed walk behind `openapi32`, and the walk
+//! for unrecognised fields that every build runs renders a pointer only for a
+//! field it reports, so on this fixture a baseline build allocates nothing
+//! walking and does the clone alone: stage two reads 125,
 //! 1205 and 12 005 there against the 374, 3524 and 35 024 at
 //! `--all-features`. Enforcing the larger number at baseline would run
 //! `mise run test:baseline` — a gate of its own — at a ratchet roughly three
@@ -163,14 +165,15 @@ struct Size {
 /// `--all-features`.
 ///
 /// The only `#[cfg]`-gated item here, and it is gated because the cost it
-/// records is: `emit::downgrade::three_two_only_constructs` walks `paths` per
-/// entry under `openapi32` and returns an empty `Vec` without it, so one table
+/// records is: `emit::downgrade::three_two_only_constructs` builds a pointer
+/// per node of `paths` under `openapi32` and none without it, so one table
 /// enforced under both would be roughly three times looser than its own
 /// measurement in the build that reads it lower.
 #[cfg(feature = "openapi32")]
 const EMIT_CEILINGS: [usize; 3] = [374, 3524, 35_024];
 
-/// ...and at baseline, where the downgrade walk is compiled out and
+/// ...and at baseline, where the typed downgrade walk is compiled out, the
+/// walk for unrecognised fields allocates nothing on this fixture, and
 /// [`Document::emit`]'s `self.clone()` is the whole of stage two.
 ///
 /// Transcribed from the baseline run exactly as the `--all-features` numbers
@@ -331,7 +334,7 @@ fn counted_json(document: &Document) -> (usize, usize) {
 /// carries on to the end, so a fixture carrying one is walked exactly as far.
 /// What the blocker skips is [`Document::emit`]'s `self.clone()`, which the
 /// early `Err` return never reaches — the cost the Features note above reads
-/// on its own at baseline, where the walk returns an empty `Vec` and the clone
+/// on its own at baseline, where the walk allocates nothing and the clone
 /// is all that is left. A blocker-free fixture is chosen for the larger of two
 /// readings, then, rather than for the longer of two walks.
 fn counted_emit(document: &Document) -> usize {

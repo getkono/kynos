@@ -129,6 +129,224 @@ mod unrecognised {
         blockers.sort();
         assert_eq!(blockers, expected());
     }
+
+    /// A description writing `planted` into every object that keeps it.
+    fn planted_description() -> Document {
+        serde_json::from_value(serde_json::json!({
+            "openapi": "3.1.2",
+            "planted": 1,
+            "info": {
+                "title": "Orders", "version": "1.0.0", "planted": 1,
+                "contact": {"planted": 1},
+                "license": {"name": "MIT", "planted": 1}
+            },
+            "servers": [{
+                "url": "https://{region}.example.com", "planted": 1,
+                "variables": {"region": {"default": "eu", "planted": 1}}
+            }],
+            "tags": [{
+                "name": "orders", "planted": 1,
+                "externalDocs": {"url": "https://example.com", "planted": 1}
+            }],
+            "externalDocs": {"url": "https://example.com", "planted": 1},
+            "paths": {
+                "/orders/{id}": {
+                    "planted": 1,
+                    "parameters": [{
+                        "name": "id", "in": "path", "required": true,
+                        "schema": {"type": "string"}, "planted": 1
+                    }],
+                    "post": {
+                        "planted": 1,
+                        "externalDocs": {"url": "https://example.com", "planted": 1},
+                        "requestBody": {
+                            "planted": 1,
+                            "content": {"multipart/form-data": {
+                                "planted": 1,
+                                "schema": {"type": "object"},
+                                "encoding": {"file": {"planted": 1}},
+                                "examples": {"one": {"value": {}, "planted": 1}}
+                            }}
+                        },
+                        "responses": {"200": {
+                            "description": "ok", "planted": 1,
+                            "headers": {"X-Rate": {"schema": {"type": "integer"}, "planted": 1}},
+                            "links": {"next": {"operationId": "getOrder", "planted": 1}}
+                        }},
+                        "callbacks": {"onEvent": {"{$request.body#/url}": {"planted": 1}}}
+                    }
+                }
+            },
+            "webhooks": {"created": {"planted": 1}},
+            "components": {
+                "planted": 1,
+                "schemas": {"Order": {
+                    "discriminator": {"propertyName": "kind", "planted": 1},
+                    "xml": {"planted": 1},
+                    "externalDocs": {"url": "https://example.com", "planted": 1},
+                    "properties": {"lines": {"items": {"xml": {"planted": 1}}}}
+                }},
+                "securitySchemes": {
+                    "key": {"type": "apiKey", "name": "key", "in": "header", "planted": 1},
+                    "oauth": {
+                        "type": "oauth2", "planted": 1,
+                        "flows": {
+                            "planted": 1,
+                            "implicit": {
+                                "authorizationUrl": "https://example.com/authorize",
+                                "scopes": {},
+                                "planted": 1
+                            }
+                        }
+                    }
+                },
+                "pathItems": {"Shared": {"planted": 1}}
+            }
+        }))
+        .expect("the description parses in every build")
+    }
+
+    /// One unrecognised field planted in every kind of object that carries
+    /// `extensions`, each reported where it was written.
+    ///
+    /// The count of locations is the coverage: an object the walk does not
+    /// reach is a missing line, and one it reaches twice is a repeated one.
+    /// Paths, Responses and Callback Objects route an unprefixed key to their
+    /// own entries when parsed, so theirs are planted after parsing.
+    #[test]
+    fn every_extensions_map_is_read() {
+        let mut document = planted_description();
+        document.paths.extensions.insert("planted", 1);
+        let operation = document
+            .paths
+            .items
+            .get_mut("/orders/{id}")
+            .and_then(|item| item.post.as_mut())
+            .expect("the operation parsed above");
+        operation.responses.extensions.insert("planted", 1);
+        let crate::model::reference::RefOr::Item(callback) = operation
+            .callbacks
+            .get_mut("onEvent")
+            .expect("the callback parsed above")
+        else {
+            panic!("the callback was written inline");
+        };
+        callback.extensions.insert("planted", 1);
+
+        let operation = "#/paths/~1orders~1{id}/post";
+        let body = format!("{operation}/requestBody/content/multipart~1form-data");
+        let response = format!("{operation}/responses/200");
+        let schema = "#/components/schemas/Order";
+        let oauth = "#/components/securitySchemes/oauth";
+        let mut expected = vec![
+            "#".to_owned(),
+            "#/info".to_owned(),
+            "#/info/contact".to_owned(),
+            "#/info/license".to_owned(),
+            "#/servers/0".to_owned(),
+            "#/servers/0/variables/region".to_owned(),
+            "#/tags/0".to_owned(),
+            "#/tags/0/externalDocs".to_owned(),
+            "#/externalDocs".to_owned(),
+            "#/paths".to_owned(),
+            "#/paths/~1orders~1{id}".to_owned(),
+            "#/paths/~1orders~1{id}/parameters/0".to_owned(),
+            operation.to_owned(),
+            format!("{operation}/externalDocs"),
+            format!("{operation}/requestBody"),
+            body.clone(),
+            format!("{body}/encoding/file"),
+            format!("{body}/examples/one"),
+            format!("{operation}/responses"),
+            response.clone(),
+            format!("{response}/headers/X-Rate"),
+            format!("{response}/links/next"),
+            format!("{operation}/callbacks/onEvent"),
+            format!("{operation}/callbacks/onEvent/{{$request.body#~1url}}"),
+            "#/webhooks/created".to_owned(),
+            "#/components".to_owned(),
+            format!("{schema}/discriminator"),
+            format!("{schema}/xml"),
+            format!("{schema}/externalDocs"),
+            format!("{schema}/properties/lines/items/xml"),
+            "#/components/securitySchemes/key".to_owned(),
+            oauth.to_owned(),
+            format!("{oauth}/flows"),
+            format!("{oauth}/flows/implicit"),
+            "#/components/pathItems/Shared".to_owned(),
+        ]
+        .into_iter()
+        .map(|object| format!("{object}/planted"))
+        .collect::<Vec<_>>();
+        expected.sort();
+
+        let mut blockers = three_two_only_constructs(&document);
+        blockers.sort();
+        assert_eq!(blockers, expected);
+    }
+
+    /// The same, for the containers only a 3.2-capable build types.
+    ///
+    /// Each container is itself a 3.2 construct, so the typed walk reports it
+    /// too; what is asserted here is that the field planted inside is reached.
+    #[cfg(feature = "openapi32")]
+    #[test]
+    fn every_extensions_map_a_three_two_container_holds_is_read() {
+        let document: Document = serde_json::from_value(serde_json::json!({
+            "openapi": "3.2.0",
+            "info": {"title": "Orders", "version": "1.0.0"},
+            "paths": {"/orders": {
+                "query": {"planted": 1},
+                "additionalOperations": {"LINK": {"planted": 1}}
+            }},
+            "components": {
+                "mediaTypes": {"Lines": {
+                    "planted": 1,
+                    "itemSchema": {"xml": {"planted": 1}},
+                    "prefixEncoding": [{"planted": 1}],
+                    "itemEncoding": {"planted": 1, "encoding": {"part": {"planted": 1}}}
+                }},
+                "securitySchemes": {"oauth": {"type": "oauth2", "flows": {
+                    "deviceAuthorization": {
+                        "deviceAuthorizationUrl": "https://example.com/device",
+                        "tokenUrl": "https://example.com/token",
+                        "scopes": {},
+                        "planted": 1
+                    }
+                }}}
+            }
+        }))
+        .expect("a 3.2 description parses");
+
+        let lines = "#/components/mediaTypes/Lines";
+        for planted in [
+            "#/paths/~1orders/query/planted".to_owned(),
+            "#/paths/~1orders/additionalOperations/LINK/planted".to_owned(),
+            format!("{lines}/planted"),
+            format!("{lines}/itemSchema/xml/planted"),
+            format!("{lines}/prefixEncoding/0/planted"),
+            format!("{lines}/itemEncoding/planted"),
+            format!("{lines}/itemEncoding/encoding/part/planted"),
+            "#/components/securitySchemes/oauth/flows/deviceAuthorization/planted".to_owned(),
+        ] {
+            let blockers = three_two_only_constructs(&document);
+            assert_eq!(
+                blockers.iter().filter(|found| **found == planted).count(),
+                1,
+                "{planted} must be reported once, in {blockers:?}"
+            );
+        }
+    }
+
+    /// An `x-` key is an extension, wherever it sits, and stands in nobody's
+    /// way.
+    #[test]
+    fn a_prefixed_key_is_not_reported() {
+        let mut document = super::document();
+        document.extensions.insert("x-planted", 1);
+        document.info.extensions.insert("x-planted", 1);
+        assert!(three_two_only_constructs(&document).is_empty());
+    }
 }
 
 /// An extension key that repeats a model field is written as `serde_yaml_ng`
