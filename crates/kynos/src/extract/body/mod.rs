@@ -51,32 +51,60 @@ fn content_type(headers: &HeaderMap) -> Option<(&str, &str)> {
     Some((media_type.trim(), parameters))
 }
 
-/// Whether the parameters trailing a media type are ones a codec accepts.
+/// The parameters each codec reads beyond `charset`, keyed by its media type.
 ///
-/// A codec accepts none at all, or `charset=utf-8`: Kynos decodes every text
-/// format as UTF-8, so another charset names something it would misread rather
-/// than something it can decline to notice. Any other parameter is a media type
-/// no [`media_types`](RequestContent::media_types) claims.
-fn parameters_are_acceptable(parameters: &str) -> bool {
+/// A codec absent here reads none. The table is what lets a `OneOf` select a
+/// side by the same rule that side decodes by, since all it holds of a side is
+/// that side's media types.
+const CODEC_PARAMETERS: &[(&str, &[&str])] = &[
+    #[cfg(feature = "multipart")]
+    (multipart::MEDIA_TYPE, multipart::PARAMETERS),
+];
+
+/// Whether the parameters trailing `media_type` are ones its codec accepts.
+///
+/// Every codec accepts none at all, or `charset=utf-8`: Kynos decodes every
+/// text format as UTF-8, so another charset names something it would misread
+/// rather than something it can decline to notice. Beyond that, a codec
+/// accepts the parameters [`CODEC_PARAMETERS`] lists for it, with any value,
+/// because it reads them itself. Any other parameter is a media type no
+/// [`media_types`](RequestContent::media_types) claims.
+fn parameters_are_acceptable(media_type: &str, parameters: &str) -> bool {
+    let read = CODEC_PARAMETERS
+        .iter()
+        .find(|(codec, _)| codec.eq_ignore_ascii_case(media_type))
+        .map_or(&[][..], |&(_, read)| read);
+
     parameters
         .split(';')
         .filter(|parameter| !parameter.trim().is_empty())
         .all(|parameter| {
             parameter.split_once('=').is_some_and(|(name, value)| {
-                name.trim().eq_ignore_ascii_case("charset")
-                    && value.trim().trim_matches('"').eq_ignore_ascii_case("utf-8")
+                let name = name.trim();
+                (name.eq_ignore_ascii_case("charset")
+                    && value.trim().trim_matches('"').eq_ignore_ascii_case("utf-8"))
+                    || read.iter().any(|read| name.eq_ignore_ascii_case(read))
             })
         })
 }
 
-/// Whether the request offers exactly `media_type`.
+/// Whether the request offers `media_type`, compared by type and subtype.
+///
+/// Parameters on either side are not part of the comparison: a marker such as
+/// [`Html`](crate::http::media::Html) spells its charset into its constant, and
+/// a multipart request always carries a `boundary`. The request's parameters
+/// are then held to what the codec accepts.
 ///
 /// The comparison is on the media type itself, never on a structured suffix: an
 /// operation accepts what its description claims, and `application/vnd.x+json`
 /// is not `application/json`.
 fn offers(headers: &HeaderMap, media_type: &str) -> bool {
+    let essence = media_type
+        .split_once(';')
+        .map_or(media_type, |(essence, _)| essence)
+        .trim();
     content_type(headers).is_some_and(|(offered, parameters)| {
-        offered.eq_ignore_ascii_case(media_type) && parameters_are_acceptable(parameters)
+        offered.eq_ignore_ascii_case(essence) && parameters_are_acceptable(essence, parameters)
     })
 }
 
