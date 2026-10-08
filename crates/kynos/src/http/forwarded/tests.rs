@@ -124,6 +124,25 @@ fn the_specified_field_wins_over_the_de_facto_one() {
     assert_eq!(resolved.proto(), Some("https"));
 }
 
+/// Behind a proxy that appends to `X-Forwarded-For`, a `Forwarded` the client
+/// wrote itself names nobody.
+///
+/// An AWS ALB, or a typical nginx, passes a client's `Forwarded` through
+/// untouched. Reading it there lets the client pick its own address and scheme
+/// on every request, which is the bucket a `ByClientAddress` limit counts.
+#[test]
+fn a_client_written_forwarded_is_not_read_behind_an_x_forwarded_for_proxy() {
+    let headers = map(&[
+        ("forwarded", "for=1.2.3.4;proto=https"),
+        ("x-forwarded-for", "198.51.100.9"),
+    ]);
+
+    let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+
+    assert_eq!(resolved.client(), Some(ip("198.51.100.9")));
+    assert_eq!(resolved.client_is_secure(), None);
+}
+
 /// With no `Forwarded`, the de-facto pair is read.
 #[test]
 fn the_de_facto_pair_is_read_when_it_is_all_there_is() {
