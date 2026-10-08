@@ -28,12 +28,29 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Form<T> 
     async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
         let bytes = super::read_body(request, MEDIA_TYPE).await?;
 
-        // Form syntax admits no malformed input -- an unpaired key is a key
-        // with an empty value, and a bad escape decodes lossily -- so every way
-        // this fails is a pair that does not fit `T`, which is a 422 rather
-        // than a 400. The failure is keyed by the root JSON Pointer because
-        // serde reports which field only inside its message.
-        serde_urlencoded::from_bytes(&bytes)
+        // A pair is text once decoded, and `serde_urlencoded` would replace
+        // octets that are not UTF-8 rather than refuse them, so they are
+        // refused here first: a 400, as `Query<T>` answers the same pair. The
+        // pairs are read through the reading `Query<T>` shares, so the two
+        // cannot disagree about which pair that is.
+        let text = std::str::from_utf8(&bytes).map_err(|error| BodyRejection::Syntax {
+            detail: format!("the form body is not valid UTF-8: {error}"),
+        })?;
+        for (name, value) in crate::__private::uri::query_pairs(Some(text)) {
+            for half in [name, value] {
+                std::str::from_utf8(&half).map_err(|error| BodyRejection::Syntax {
+                    detail: format!("a percent-decoded form pair is not valid UTF-8: {error}"),
+                })?;
+            }
+        }
+
+        // Past that, form syntax admits no malformed input -- an unpaired key
+        // is a key with an empty value, and a malformed escape is a literal
+        // `%` -- so every way this fails is a pair that does not fit `T`,
+        // which is a 422 rather than a 400. The failure is keyed by the root
+        // JSON Pointer because serde reports which field only inside its
+        // message.
+        serde_urlencoded::from_str(text)
             .map(Self)
             .map_err(|error| BodyRejection::Schema {
                 failures: BTreeMap::from([(String::new(), error.to_string())]),
