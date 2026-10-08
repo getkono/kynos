@@ -129,7 +129,7 @@ fn a_body_extractor_rejects_with_the_body_type() {
     {
         use kynos::extract::body::form::Form;
 
-        #[derive(serde::Deserialize)]
+        #[derive(Schema, serde::Deserialize)]
         struct Login {
             name: String,
         }

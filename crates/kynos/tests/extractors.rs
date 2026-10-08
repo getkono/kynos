@@ -193,7 +193,7 @@ mod content_type {
     /// by the root pointer.
     #[tokio::test]
     async fn a_form_body_that_does_not_fit_is_422() {
-        #[derive(Debug, serde::Deserialize)]
+        #[derive(Debug, kynos::Schema, serde::Deserialize)]
         #[allow(dead_code)]
         struct Page {
             page: u32,

@@ -21,7 +21,9 @@ use crate::{
 /// `application/json` with no parameters or with `charset=utf-8`; a missing or
 /// different content type rejects with 415. Malformed or incomplete JSON
 /// rejects with 400, while valid JSON that cannot deserialize into `T` or
-/// violates derived schema constraints rejects with 422.
+/// breaks a bound `T`'s schema declares rejects with 422, keyed by the JSON
+/// Pointer of each member that broke one. Which bounds are enforced is
+/// [`constraints`](crate::schema::constraints)' to say.
 ///
 /// ```no_run
 /// use kynos::extract::body::json::Json;
@@ -36,12 +38,15 @@ pub struct Json<T>(pub T);
 /// One spelling, read by both halves: what is decoded and what is described.
 const MEDIA_TYPE: &str = mime_names::APPLICATION_JSON;
 
-impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Json<T> {
+/// `T: Schema` because the schema is what the body is held to: the bounds a
+/// derived field declares are checked once `T` is deserialized.
+impl<C: Sync, T: serde::de::DeserializeOwned + Schema + Send> FromRequest<C> for Json<T> {
     type Rejection = BodyRejection;
 
     async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
         let bytes = super::read_body(request, MEDIA_TYPE).await?;
-        serde_json::from_slice(&bytes).map(Self).map_err(rejection)
+        let value = serde_json::from_slice(&bytes).map_err(rejection)?;
+        super::checked(value).map(Self)
     }
 }
 
