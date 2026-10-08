@@ -410,6 +410,44 @@ async fn a_preflight_refuses_the_head_an_uncovered_get_answers() {
     assert_eq!(field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS), None);
 }
 
+/// Only a `GET` makes a `HEAD` served: on a path with none, a `HEAD` is a
+/// method Kynos does not serve, so an `allow_methods` override naming it
+/// approves and advertises it as it would any route fronted elsewhere.
+#[tokio::test]
+async fn an_override_approves_a_head_on_a_path_serving_no_get() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![create_widget])
+        .intercept(
+            Cors::new()
+                .allow_origins(["https://app.example.com"])
+                .allow_methods([kynos::openapi::Method::Post, kynos::openapi::Method::Head]),
+        )
+        .build(())
+        .expect("a describable router");
+
+    let (status, fields) = send(
+        &service,
+        Method::OPTIONS,
+        "/widgets",
+        &[
+            ("origin", "https://app.example.com"),
+            ("access-control-request-method", "HEAD"),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_ORIGIN).as_deref(),
+        Some("https://app.example.com"),
+        "refused a HEAD the path does not serve though the override names it"
+    );
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS).as_deref(),
+        Some("POST, HEAD")
+    );
+}
+
 /// A predicate reaches both answers a browser sees: the preflight, and the
 /// real response. Two places read the allow-list, so a widening that only one
 /// of them honoured would let a preflight pass and the request that followed
