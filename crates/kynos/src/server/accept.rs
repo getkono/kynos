@@ -42,8 +42,8 @@ pub(in crate::server) enum AcceptRetry {
 /// accept would bring.
 ///
 /// A failure that belonged to one queued connection — an interrupted, aborted
-/// or reset connection, or a network error `accept(2)` says to retry like
-/// `EAGAIN` — retries at once. A listener that is no longer listening
+/// or reset connection, or on Linux a network error `accept(2)` says to retry
+/// like `EAGAIN` — retries at once. A listener that is no longer listening
 /// (`EINVAL`) cannot be waited back into service and ends at once. Every other
 /// failure, running out of file descriptors (`EMFILE`, `ENFILE`) or memory
 /// included, waits and retries without limit: the wait doubles from 10 ms to
@@ -68,8 +68,11 @@ impl AcceptBackoff {
         match error.kind() {
             io::ErrorKind::Interrupted
             | io::ErrorKind::ConnectionAborted
-            | io::ErrorKind::ConnectionReset
-            | io::ErrorKind::NetworkDown
+            | io::ErrorKind::ConnectionReset => AcceptRetry::Now,
+            // Only Linux's accept(2) reports these for the dequeued connection;
+            // Windows' `WSAENETDOWN` means its network subsystem has failed.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            io::ErrorKind::NetworkDown
             | io::ErrorKind::NetworkUnreachable
             | io::ErrorKind::HostUnreachable => AcceptRetry::Now,
             io::ErrorKind::InvalidInput => AcceptRetry::Never,
