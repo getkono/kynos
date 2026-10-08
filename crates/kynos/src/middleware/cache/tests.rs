@@ -303,6 +303,34 @@ fn every_status_class_is_classified_the_way_section_4_4_defines() {
     }
 }
 
+/// Only the request directive section 5.2.1.4 names forbids reuse.
+///
+/// The control is the negative half: `no-store` limits storage, not reuse,
+/// and a directive merely starting with the name is a different directive.
+#[test]
+fn only_a_request_saying_no_cache_forbids_reuse() {
+    for (fields, forbids) in [
+        (&[][..], false),
+        (&[("cache-control", "no-cache")][..], true),
+        (
+            &[
+                ("cache-control", "max-age=60"),
+                ("cache-control", "no-cache"),
+            ][..],
+            true,
+        ),
+        (&[("cache-control", "no-store")][..], false),
+        (&[("cache-control", "no-cache-please")][..], false),
+        (&[("pragma", "no-cache")][..], false),
+    ] {
+        assert_eq!(
+            freshness::forbids_reuse(&map(fields)),
+            forbids,
+            "{fields:?}"
+        );
+    }
+}
+
 /// A request naming no authority is filed under none, and `Host` decides where
 /// a version-2 request also carries `:authority`.
 ///
