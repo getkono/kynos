@@ -1338,6 +1338,8 @@ const RAISED_ELSEWHERE: &[&str] = &[
 fn ledger() -> Vec<(&'static str, SpecVersion, Document)> {
     let mut cases = ledger_paths();
     cases.extend(ledger_parameters());
+    #[cfg(feature = "openapi32")]
+    cases.extend(ledger_querystring());
     cases.extend(ledger_document());
     cases.extend(ledger_opacity());
     cases
@@ -1475,41 +1477,6 @@ fn ledger_parameters() -> Vec<(&'static str, SpecVersion, Document)> {
                 .with_responses(Responses::new().with(200, Response::default()))),
         )]),
     );
-    // 3.2 only, like the location all three are about.
-    #[cfg(feature = "openapi32")]
-    {
-        use crate::model::parameter::ParameterIn;
-
-        push(
-            "QuerystringWithoutContent",
-            document_with(&[(
-                "/users",
-                get(operation().with_parameter(Parameter::new(
-                    "filter",
-                    ParameterIn::Querystring,
-                    Schema::of_type(SchemaType::Object),
-                ))),
-            )]),
-        );
-        push(
-            "DuplicateQuerystring",
-            document_with(&[(
-                "/users",
-                get(operation()
-                    .with_parameter(querystring("filter"))
-                    .with_parameter(querystring("sort"))),
-            )]),
-        );
-        push(
-            "QueryBesideQuerystring",
-            document_with(&[(
-                "/users",
-                get(operation()
-                    .with_parameter(Parameter::query("q", Schema::of_type(SchemaType::String)))
-                    .with_parameter(querystring("filter"))),
-            )]),
-        );
-    }
     // 3.2 only: `prefixEncoding` is what `encoding` conflicts with, and it does
     // not exist under 3.1, so neither does the conflict.
     #[cfg(feature = "openapi32")]
@@ -1530,6 +1497,51 @@ fn ledger_parameters() -> Vec<(&'static str, SpecVersion, Document)> {
         )])
     });
     cases
+}
+
+/// Cases for the `in: querystring` rules, which are 3.2 only, like the location
+/// all three are about.
+#[cfg(feature = "openapi32")]
+fn ledger_querystring() -> Vec<(&'static str, SpecVersion, Document)> {
+    use crate::model::{parameter::ParameterIn, schema::Schema};
+
+    let operation = || Operation::new("listUsers").with_responses(ok_responses());
+    let get = |operation: Operation| PathItem::new().with_operation(Method::Get, operation);
+
+    vec![
+        (
+            "QuerystringWithoutContent",
+            SpecVersion::V3_2,
+            document_with(&[(
+                "/users",
+                get(operation().with_parameter(Parameter::new(
+                    "filter",
+                    ParameterIn::Querystring,
+                    Schema::of_type(SchemaType::Object),
+                ))),
+            )]),
+        ),
+        (
+            "DuplicateQuerystring",
+            SpecVersion::V3_2,
+            document_with(&[(
+                "/users",
+                get(operation()
+                    .with_parameter(querystring("filter"))
+                    .with_parameter(querystring("sort"))),
+            )]),
+        ),
+        (
+            "QueryBesideQuerystring",
+            SpecVersion::V3_2,
+            document_with(&[(
+                "/users",
+                get(operation()
+                    .with_parameter(Parameter::query("q", Schema::of_type(SchemaType::String)))
+                    .with_parameter(querystring("filter"))),
+            )]),
+        ),
+    ]
 }
 
 /// Cases for the whole-document rules: components, tags, servers, security.
