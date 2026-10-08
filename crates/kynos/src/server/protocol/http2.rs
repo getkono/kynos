@@ -27,8 +27,9 @@ pub enum Http2FlowControl {
 /// A PING is sent once a connection has read nothing for `interval`, and the
 /// connection is closed if it is not acknowledged within `timeout`, so a busy
 /// connection is never pinged. This is what releases an HTTP/2 connection
-/// whose peer vanished with no stream open: HTTP/1's header-read timeout has no
-/// counterpart there.
+/// whose peer vanished with no stream open. A peer that answers every PING is
+/// held to the HTTP/1 header-read timeout only until its first request head,
+/// and by nothing after it: HTTP/2 has no idle timeout of its own.
 ///
 /// `#[non_exhaustive]`, so construct it with [`new`](Self::new):
 ///

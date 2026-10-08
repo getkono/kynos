@@ -622,6 +622,15 @@ pub fn derive_headers(item: TokenStream) -> TokenStream {
 /// [`HeaderParams`](macro@HeaderParams)'s is `#[header]`: nothing else claims
 /// either name.
 ///
+/// # Values are read as sent
+///
+/// A field receives the cookie's value with no percent-decoding:
+/// `greeting=Hello%2C%20world%21` reads as `Hello%2C%20world%21`. Under
+/// `openapi32` each parameter states `style: cookie`, the style that applies
+/// and removes no encoding. OpenAPI 3.1 has no such style, so a 3.1 build
+/// states none, and the `form` default a reader then assumes describes a
+/// percent-encoded value this derive does not decode.
+///
 /// # Rejected, because a parameter has one name
 ///
 /// - `#[serde(alias = "...")]` on any field: serde would read the field under

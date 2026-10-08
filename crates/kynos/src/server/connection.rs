@@ -4,6 +4,7 @@
 //! hyper's protocol driver is handed the socket. The runtime's read and write
 //! halves are named here and nowhere else outside the accept loop.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{convert::Infallible, net::SocketAddr, sync::Arc};
 
 use hyper::service::service_fn;
@@ -14,6 +15,7 @@ use hyper_util::{
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     sync::watch,
+    time::Instant,
 };
 
 use crate::{
@@ -38,6 +40,14 @@ pub(in crate::server) async fn serve_connection<C: 'static>(
     config: TransportConfig,
     lifecycle: watch::Receiver<Lifecycle>,
 ) {
+    // A build without HTTP/1 has no header-read timeout to hold the head to.
+    #[cfg(feature = "http1")]
+    let deadline = (config.http1)
+        .first_head_deadline(std::time::Instant::now())
+        .map(Instant::from_std);
+    #[cfg(not(feature = "http1"))]
+    let deadline = None;
+
     #[cfg(feature = "tls")]
     let mut lifecycle = lifecycle;
 
@@ -68,8 +78,8 @@ pub(in crate::server) async fn serve_connection<C: 'static>(
                     identity = identity.with_alpn_protocol(protocol);
                 }
                 let connection = Connection::from_tls_peer(peer_addr, local_addr, identity);
-                if let Err(error) = serve_http(stream, service, config, connection, lifecycle).await
-                {
+                let served = serve_http(stream, service, config, connection, lifecycle, deadline);
+                if let Err(error) = served.await {
                     tracing::debug!(%error, %local_addr, %peer_addr, "TLS connection failed");
                 }
             }
@@ -82,22 +92,27 @@ pub(in crate::server) async fn serve_connection<C: 'static>(
     }
 
     let connection = Connection::from_peer(peer_addr, local_addr);
-    if let Err(error) = serve_http(stream, service, config, connection, lifecycle).await {
+    let served = serve_http(stream, service, config, connection, lifecycle, deadline);
+    if let Err(error) = served.await {
         tracing::debug!(%error, %local_addr, %peer_addr, "HTTP connection failed");
     }
 }
 
-async fn serve_http<C, I>(
-    io: I,
-    service: Arc<Service<C>>,
-    config: TransportConfig,
-    connection_info: Connection,
-    mut lifecycle: watch::Receiver<Lifecycle>,
-) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>
-where
-    C: 'static,
-    I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-{
+/// Resolves once `deadline` passes unless `head_seen` says a request head
+/// arrived, and never otherwise: past its first head, a connection is
+/// governed by hyper's own timers.
+async fn unheard(deadline: Option<Instant>, head_seen: Option<&AtomicBool>) {
+    if let Some(deadline) = deadline {
+        tokio::time::sleep_until(deadline).await;
+        if !head_seen.is_some_and(|head_seen| head_seen.load(Ordering::Relaxed)) {
+            return;
+        }
+    }
+    std::future::pending::<()>().await;
+}
+
+/// hyper's driver, tuned as `config` says.
+fn builder(config: &TransportConfig) -> auto::Builder<TokioExecutor> {
     let mut builder = auto::Builder::new(TokioExecutor::new());
     #[cfg(feature = "http1")]
     {
@@ -140,6 +155,22 @@ where
                 .keep_alive_timeout(keep_alive.timeout);
         }
     }
+    builder
+}
+
+async fn serve_http<C, I>(
+    io: I,
+    service: Arc<Service<C>>,
+    config: TransportConfig,
+    connection_info: Connection,
+    mut lifecycle: watch::Receiver<Lifecycle>,
+    deadline: Option<Instant>,
+) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>
+where
+    C: 'static,
+    I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let mut builder = builder(&config);
 
     // The handshake already settled which protocol this connection speaks, so
     // the driver is told rather than left to derive it a second time from the
@@ -160,7 +191,18 @@ where
         _ => None,
     };
 
+    // Set by the first request head the codec hands over, which ends the
+    // deadline's hold; loaded before it is stored, so a busy connection does
+    // not write a shared line on every request.
+    let head_seen = deadline.map(|_| Arc::new(AtomicBool::new(false)));
+    let handler_head_seen = head_seen.clone();
     let handler = service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
+        if let Some(head_seen) = handler_head_seen
+            .as_ref()
+            .filter(|head_seen| !head_seen.load(Ordering::Relaxed))
+        {
+            head_seen.store(true, Ordering::Relaxed);
+        }
         let service = Arc::clone(&service);
         // A reference count, not a copy of what the handshake produced.
         let connection_info = connection_info.clone();
@@ -184,7 +226,7 @@ where
     // the wait, and cancelled its own read.
     let io = match pinned {
         Some(protocol) => {
-            let Some(io) = first_byte(io, &mut lifecycle).await else {
+            let Some(io) = first_byte(io, &mut lifecycle, deadline).await else {
                 return Ok(());
             };
             builder = match protocol {
@@ -198,6 +240,11 @@ where
         None => FirstByte { first: None, io },
     };
 
+    // A connection with no request head is closed by dropping the codec, even
+    // mid-drain: nothing is in flight, and hyper's HTTP/2 server cannot finish
+    // a graceful shutdown before the preface arrives.
+    let unheard = unheard(deadline, head_seen.as_deref());
+    tokio::pin!(unheard);
     let connection = builder.serve_connection(TokioIo::new(io), handler);
     tokio::pin!(connection);
     tokio::select! {
@@ -207,11 +254,19 @@ where
                 return Ok(());
             }
             connection.as_mut().graceful_shutdown();
-            connection.await
+            tokio::select! {
+                biased;
+                result = &mut connection => result,
+                () = &mut unheard => Err(NO_REQUEST_HEAD.into()),
+            }
         }
         result = &mut connection => result,
+        () = &mut unheard => Err(NO_REQUEST_HEAD.into()),
     }
 }
+
+/// What the connection's log line reports when the deadline closed it.
+const NO_REQUEST_HEAD: &str = "no request head within the header-read timeout";
 
 /// The protocol a handshake settled on, held between the decision and the pin.
 ///
@@ -226,14 +281,17 @@ enum Protocol {
     Http2,
 }
 
-/// Waits for the client to send one byte, or for shutdown to start first.
+/// Waits for the client to send one byte, or for shutdown to start or
+/// `deadline` to pass first.
 ///
-/// `None` when shutdown started, when the peer closed, and when the read
-/// failed: all three mean a connection with nothing in flight, which is a
-/// socket to drop rather than a codec to build and shut down.
+/// `None` when shutdown started, when the deadline passed, when the peer
+/// closed, and when the read failed: all four mean a connection with nothing
+/// in flight, which is a socket to drop rather than a codec to build and shut
+/// down.
 async fn first_byte<I>(
     mut io: I,
     lifecycle: &mut watch::Receiver<Lifecycle>,
+    deadline: Option<Instant>,
 ) -> Option<FirstByte<I>>
 where
     I: AsyncRead + Unpin,
@@ -250,6 +308,8 @@ where
     let read = tokio::select! {
         biased;
         _ = wait_until_stopping(lifecycle) => return None,
+        // No byte has arrived, so no head can have.
+        () = unheard(deadline, None) => return None,
         read = std::future::poll_fn(|context| {
             std::pin::Pin::new(&mut io).poll_read(context, &mut buf)
         }) => read,
