@@ -96,7 +96,8 @@ impl Directory {
         self
     }
 
-    /// Resolves `requested` against the root, or `None` where it escapes.
+    /// Resolves `requested` against the root, or `None` where it escapes or
+    /// names something hidden.
     ///
     /// Structural rather than canonicalizing. Every component is examined and
     /// anything that is not a plain name is refused: `..` cannot climb out
@@ -105,12 +106,19 @@ impl Directory {
     /// canonicalized and then compared is one that has to be remembered; this
     /// one cannot be forgotten, because there is no branch that admits the bad
     /// input.
+    ///
+    /// A segment beginning with a dot is refused too, as
+    /// [`assets!`](crate::assets) skips one: `Directory::new(".")` over a
+    /// checkout must not hand out `.git` or `.env`.
     fn resolve(&self, requested: &str) -> Option<PathBuf> {
         let mut resolved = self.root.clone();
 
         for segment in requested.split('/') {
             if segment.is_empty() || segment == "." {
                 continue;
+            }
+            if segment.starts_with('.') {
+                return None;
             }
 
             // `Path::new(segment).components()` is what turns a segment into a
@@ -132,17 +140,50 @@ impl Directory {
     /// A directory stands for its index. Every failure is `None`, including
     /// `PermissionDenied`: a file the process cannot read is, to a client, not
     /// there, and 404 leaks least.
+    ///
+    /// No link below the root is followed, wherever it points: each segment
+    /// is `lstat`ed and a link refused, as [`assets!`](crate::assets) skips
+    /// one. The root itself is followed, since a deploy's `current` link is
+    /// the operator's rather than the directory's. The check precedes the
+    /// read, so a link swapped in between the two is not caught.
     async fn locate(&self, requested: &str) -> Option<(PathBuf, std::fs::Metadata)> {
-        let mut path = self.resolve(requested)?;
-        let mut metadata = tokio::fs::metadata(&path).await.ok()?;
+        let resolved = self.resolve(requested)?;
+        let mut path = self.root.clone();
+        let mut below = None;
+        for name in resolved.strip_prefix(&self.root).ok()? {
+            path.push(name);
+            below = Some(unlinked(&path).await?);
+        }
+        let mut metadata = match below {
+            Some(metadata) => metadata,
+            None => tokio::fs::metadata(&path).await.ok()?,
+        };
 
         if metadata.is_dir() {
             path.push(self.index?);
-            metadata = tokio::fs::metadata(&path).await.ok()?;
+            metadata = unlinked(&path).await?;
         }
 
         metadata.is_file().then_some((path, metadata))
     }
+}
+
+/// What `lstat` reports of `path`, or `None` where it is a link or cannot be
+/// read.
+async fn unlinked(path: &Path) -> Option<std::fs::Metadata> {
+    let metadata = tokio::fs::symlink_metadata(path).await.ok()?;
+    (!metadata.file_type().is_symlink()).then_some(metadata)
+}
+
+/// The media type a located file is served as.
+///
+/// Read from the file rather than from the request, so a directory's index is
+/// typed as the index it is.
+fn media_type(path: &Path) -> &'static str {
+    path.file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .and_then(media::for_path)
+        .unwrap_or(media::FALLBACK)
 }
 
 /// A weak entity tag from what a `stat` already knows.
@@ -259,8 +300,7 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
         return refused(StatusCode::NOT_FOUND);
     };
 
-    let media_type = media::for_path(&requested).unwrap_or(media::FALLBACK);
-    range::assembled(body, selection, media_type, &headers)
+    range::assembled(body, selection, media_type(&path), &headers)
 }
 
 /// The bytes from `first` to `last` inclusive, without reading the rest.
