@@ -212,7 +212,7 @@ fn authority_of(origin: &str) -> String {
 /// `Host` is preferred where both are present: it is what an HTTP/1.1 client
 /// sent, and section 8.3.1 requires the two to agree where a version-2 client
 /// sends both.
-fn own_authority(headers: &HeaderMap, authority: Option<&str>) -> Option<String> {
+pub(crate) fn own_authority(headers: &HeaderMap, authority: Option<&str>) -> Option<String> {
     headers
         .get(http::header::HOST)
         .and_then(|value| value.to_str().ok())

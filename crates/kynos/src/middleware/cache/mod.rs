@@ -262,17 +262,7 @@ where
     ) -> Result<Continued<D::Headers>, Infallible> {
         let () = reads;
 
-        let route = next.route();
-        let key = PrimaryKey {
-            namespace: self.namespace,
-            method: kynos_openapi::Method::from_wire_str(request.method().as_str())
-                .unwrap_or(kynos_openapi::Method::Get),
-            route: route.path().to_owned(),
-            target: request
-                .uri()
-                .path_and_query()
-                .map_or_else(|| request.uri().path().to_owned(), ToString::to_string),
-        };
+        let key = primary_key(self.namespace, &request, next.route().path());
 
         let request_headers = request.headers().clone();
         let method = request.method().clone();
@@ -401,6 +391,28 @@ where
 
         continued.set_body(crate::http::body::Body::from_bytes(bytes));
         Ok(continued.with_headers(D::headers(Duration::ZERO, etag)))
+    }
+}
+
+/// What `request` is filed under, for the operation whose `paths` key is
+/// `route`.
+fn primary_key(namespace: &'static str, request: &http::Request, route: &str) -> PrimaryKey {
+    PrimaryKey {
+        namespace,
+        method: kynos_openapi::Method::from_wire_str(request.method().as_str())
+            .unwrap_or(kynos_openapi::Method::Get),
+        authority: crate::middleware::csrf::own_authority(
+            request.headers(),
+            request
+                .uri()
+                .authority()
+                .map(::http::uri::Authority::as_str),
+        ),
+        route: route.to_owned(),
+        target: request
+            .uri()
+            .path_and_query()
+            .map_or_else(|| request.uri().path().to_owned(), ToString::to_string),
     }
 }
 

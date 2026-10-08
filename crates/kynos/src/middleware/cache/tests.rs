@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use super::{
     freshness::{self, CACHEABLE, HOP_BY_HOP, Unstorable},
-    is_non_error, refuses_cross_origin,
+    is_non_error, primary_key, refuses_cross_origin,
 };
 use crate::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 
@@ -301,4 +301,38 @@ fn every_status_class_is_classified_the_way_section_4_4_defines() {
     ] {
         assert!(!is_non_error(status), "{status} is neither 2xx nor 3xx");
     }
+}
+
+/// A request naming no authority is filed under none, and `Host` decides where
+/// a version-2 request also carries `:authority`.
+///
+/// The second half is the one an integration test cannot reach: a request
+/// carrying both is one no test client builds through the public surface.
+#[test]
+fn the_key_names_the_authority_the_request_carried() {
+    let request = |target: &str, host: Option<&str>| {
+        let mut request = crate::http::Request::new(crate::http::body::Body::empty());
+        *request.uri_mut() = target.parse().expect("a usable target");
+        if let Some(host) = host {
+            request
+                .headers_mut()
+                .insert(header::HOST, HeaderValue::from_str(host).expect("a host"));
+        }
+        request
+    };
+
+    assert_eq!(
+        primary_key("", &request("/reports?page=2", None), "/reports").authority,
+        None
+    );
+    assert_eq!(
+        primary_key(
+            "",
+            &request("http://B.example.com/reports", Some("A.example.com")),
+            "/reports"
+        )
+        .authority
+        .as_deref(),
+        Some("a.example.com")
+    );
 }
