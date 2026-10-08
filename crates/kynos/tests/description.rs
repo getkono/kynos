@@ -1713,7 +1713,7 @@ fn openapi_as_3_1_refuses_a_3_2_construct_and_names_it() {
     );
     assert_eq!(
         violation.to_string(),
-        "error at #: cannot emit as OpenAPI 3.1: 3 3.2-only construct(s) in use: \
+        "error at #: cannot emit as OpenAPI 3.1: 3 3.2-only or unrecognised field(s) in use: \
          #/paths/~1events/get/responses/200/content/text~1event-stream/itemSchema, \
          #/paths/~1search/query, #/paths/~1filtered/get/parameters/querystring"
     );
