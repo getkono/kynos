@@ -27,8 +27,11 @@
 //!
 //! **The browser fetches the bundle, not the process.** Both built-in pages
 //! load from a CDN, so a client behind a proxy that blocks it sees an empty
-//! page. An air-gapped or strict-CSP deployment serves its own bundle with
-//! [`assets`](crate::router::assets)'s embedded set and points a
+//! page. Each pins one exact version with an integrity hash and is served
+//! under a `Content-Security-Policy` admitting that bundle and its boot script
+//! alone, so an upstream publish cannot run on this origin. An air-gapped
+//! deployment, or one that must not trust a CDN at all, serves its own bundle
+//! with [`assets`](crate::router::assets)'s embedded set and points a
 //! [`Docs::custom`] page at it.
 //!
 //! # Mounting a reference widens the published contract
@@ -91,6 +94,9 @@ use crate::router::{
 #[derive(Clone, Debug)]
 pub struct Docs {
     page: Cow<'static, str>,
+    /// The `Content-Security-Policy` a shipped page is served under. `None`
+    /// for a custom page, whose loads Kynos cannot know.
+    policy: Option<&'static str>,
     at: PathTemplate,
     description_at: PathTemplate,
     title: Option<String>,
@@ -100,15 +106,28 @@ pub struct Docs {
 
 impl Docs {
     /// The Scalar playground: a reference with a client built into it.
+    ///
+    /// The bundle is pinned and integrity-checked, and the page is served
+    /// with a `Content-Security-Policy` admitting only that bundle and the
+    /// script that boots it.
     #[must_use]
     pub fn scalar() -> Self {
-        Self::custom(page::SCALAR)
+        Self::shipped(&page::SCALAR)
     }
 
     /// Redoc: the same description, read-only, in three panels.
+    ///
+    /// Pinned and served under a policy, as [`scalar`](Self::scalar) is.
     #[must_use]
     pub fn redoc() -> Self {
-        Self::custom(page::REDOC)
+        Self::shipped(&page::REDOC)
+    }
+
+    fn shipped(page: &page::Shipped) -> Self {
+        Self {
+            policy: Some(page.policy),
+            ..Self::custom(page.template)
+        }
     }
 
     /// Any other page.
@@ -123,11 +142,16 @@ impl Docs {
     ///
     /// A page naming neither is served as written -- and cannot be nested,
     /// since the URL it hardcodes does not move when the router does.
+    ///
+    /// Served with no `Content-Security-Policy` and no
+    /// `X-Content-Type-Options`: what a custom page loads is the application's
+    /// to know, so its headers are the application's to set.
     #[must_use]
     pub fn custom(page: impl Into<Cow<'static, str>>) -> Self {
         let mut violations = Vec::new();
         Self {
             page: page.into(),
+            policy: None,
             at: template("/docs", &mut violations),
             description_at: template("/openapi.json", &mut violations),
             title: None,
@@ -196,6 +220,7 @@ impl Docs {
             description: OnceLock::new(),
             description_path: OnceLock::new(),
             template: self.page,
+            policy: self.policy,
             title: self.title,
         });
 
@@ -275,6 +300,7 @@ pub(crate) struct State {
     /// The `paths` key the description ended up at, written by its own mount.
     description_path: OnceLock<String>,
     template: Cow<'static, str>,
+    policy: Option<&'static str>,
     title: Option<String>,
 }
 
@@ -291,6 +317,10 @@ const UNRENDERED: &str =
 impl State {
     pub(super) fn page(&self) -> &Bytes {
         self.page.get().expect(UNRENDERED)
+    }
+
+    pub(super) fn policy(&self) -> Option<&'static str> {
+        self.policy
     }
 
     pub(super) fn description(&self) -> &Bytes {

@@ -46,9 +46,9 @@
 //!
 //! Kynos ships the wiring and no reference UI: each built-in page is a script
 //! tag naming a CDN, so a client behind a proxy that blocks it sees an empty
-//! page. An air-gapped or strict-CSP deployment vendors the bundle with
-//! [`assets.rs`](assets.rs)'s embedded set and points a `Docs::custom` page at
-//! it. [`kynos::router::docs`] carries the rest.
+//! page. An air-gapped deployment, or one that must not trust a CDN, vendors
+//! the bundle with [`assets.rs`](assets.rs)'s embedded set and points a
+//! `Docs::custom` page at it. [`kynos::router::docs`] carries the rest.
 //!
 //! This document stays on 3.1 — no `QUERY`, no stream response. Both renderers
 //! document OpenAPI 3.1 support and neither documents 3.2, and `document.rs` is

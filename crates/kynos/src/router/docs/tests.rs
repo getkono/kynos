@@ -11,8 +11,172 @@ use super::{Docs, page};
 fn rendered(description_url: &str, title: &str) -> Vec<(&'static str, String)> {
     page::SHIPPED
         .iter()
-        .map(|(name, template)| (*name, page::render(template, description_url, title)))
+        .map(|(name, shipped)| {
+            (
+                *name,
+                page::render(shipped.template, description_url, title),
+            )
+        })
         .collect()
+}
+
+/// Every `<script ...>` opening tag in `html`, with the text up to its
+/// `</script>`.
+fn scripts(html: &str) -> Vec<(&str, &str)> {
+    html.split("<script")
+        .skip(1)
+        .map(|rest| {
+            let (tag, rest) = rest.split_once('>').expect("a closed opening tag");
+            let (body, _) = rest.split_once("</script>").expect("a closed script");
+            (tag, body)
+        })
+        .collect()
+}
+
+/// The CSP source expression naming `script` by its SHA-256.
+///
+/// The digest is `rustls`'s, which the dev-dependency graph already carries
+/// through `ring`, rather than a hashing crate added for one assertion.
+fn hash_source(script: &str) -> String {
+    use rustls::{SupportedCipherSuite, crypto::ring::cipher_suite::TLS13_AES_128_GCM_SHA256};
+
+    let SupportedCipherSuite::Tls13(suite) = TLS13_AES_128_GCM_SHA256 else {
+        unreachable!("a TLS 1.3 suite")
+    };
+    let digest = suite.common.hash_provider.hash(script.as_bytes());
+
+    format!("'sha256-{}'", base64(digest.as_ref()))
+}
+
+/// Standard, padded base64: the alphabet CSP hash sources use.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    let mut encoded = String::new();
+    for chunk in bytes.chunks(3) {
+        let word = chunk.iter().enumerate().fold(0_u32, |word, (index, byte)| {
+            word | u32::from(*byte) << (16 - 8 * index)
+        });
+        for index in 0..4 {
+            if index <= chunk.len() {
+                encoded.push(char::from(
+                    ALPHABET[(word >> (18 - 6 * index) & 63) as usize],
+                ));
+            } else {
+                encoded.push('=');
+            }
+        }
+    }
+    encoded
+}
+
+#[test]
+fn the_base64_helper_matches_the_rfc_4648_vectors() {
+    // `hash_source` is only as right as this, and nothing else checks it.
+    for (input, expected) in [
+        ("", ""),
+        ("f", "Zg=="),
+        ("fo", "Zm8="),
+        ("foo", "Zm9v"),
+        ("foobar", "Zm9vYmFy"),
+    ] {
+        assert_eq!(base64(input.as_bytes()), expected);
+    }
+}
+
+#[test]
+fn every_shipped_bundle_is_pinned_and_integrity_checked() {
+    for (name, shipped) in page::SHIPPED {
+        let external: Vec<_> = scripts(shipped.template)
+            .into_iter()
+            .filter(|(tag, _)| tag.contains("src="))
+            .collect();
+        assert!(!external.is_empty(), "the {name} page loads no bundle");
+
+        for (tag, _) in external {
+            let src = tag
+                .split_once("src=\"")
+                .and_then(|(_, rest)| rest.split_once('"'))
+                .map(|(src, _)| src)
+                .expect("a quoted src");
+
+            assert!(
+                tag.contains("integrity=\"sha384-"),
+                "the {name} page loads {src} unchecked",
+            );
+            assert!(
+                tag.contains("crossorigin=\"anonymous\""),
+                "the {name} page loads {src} without CORS, so integrity is not enforced",
+            );
+            assert!(
+                !src.contains("latest") && src.contains('@'),
+                "the {name} page loads {src}, which names no exact version",
+            );
+            // Naming the file rather than the origin admits nothing else the
+            // CDN hosts.
+            assert!(
+                shipped.policy.contains(&format!(" {src};")),
+                "the {name} policy does not admit {src} by its full URL",
+            );
+        }
+    }
+}
+
+#[test]
+fn every_shipped_boot_script_is_admitted_by_its_hash_whatever_is_substituted() {
+    // Rendered with hostile values, so a token that crept into a boot script
+    // changes the hash and fails here instead of in a browser.
+    for (name, html) in rendered("/it's", "Fish & <Chips>") {
+        let policy = page::SHIPPED
+            .iter()
+            .find(|(shipped, _)| *shipped == name)
+            .map(|(_, shipped)| shipped.policy)
+            .expect("a shipped page");
+
+        let inline: Vec<_> = scripts(&html)
+            .into_iter()
+            .filter(|(tag, _)| tag.is_empty())
+            .collect();
+        assert_eq!(inline.len(), 1, "the {name} page boots from one script");
+
+        for (_, body) in inline {
+            assert!(
+                policy.contains(&hash_source(body)),
+                "the {name} policy does not admit its boot script {body:?}",
+            );
+        }
+    }
+}
+
+#[test]
+fn every_shipped_page_runs_nothing_its_policy_does_not_name() {
+    // Every script is a bundle, the boot script, or the data block -- which
+    // the browser parses and never runs. Anything else would be a script the
+    // policy blocks or one the sweeps above do not reach.
+    for (name, shipped) in page::SHIPPED {
+        for (tag, _) in scripts(shipped.template) {
+            assert!(
+                tag.is_empty() || tag.contains("src=") || tag.contains("type=\"application/json\""),
+                "the {name} page carries a script the policy does not account for: {tag}",
+            );
+        }
+
+        for directive in ["object-src 'none'", "base-uri 'none'"] {
+            assert!(
+                shipped.policy.contains(directive),
+                "the {name} policy omits {directive}",
+            );
+        }
+    }
+}
+
+#[test]
+fn only_a_shipped_page_carries_a_policy() {
+    // A custom page's loads are the application's to know, so it gets none.
+    assert_eq!(Docs::scalar().policy, Some(page::SCALAR.policy));
+    assert_eq!(Docs::redoc().policy, Some(page::REDOC.policy));
+    assert_eq!(Docs::custom("<!doctype html>").policy, None);
+    assert_eq!(Docs::custom(page::SCALAR.template).policy, None);
 }
 
 #[test]
