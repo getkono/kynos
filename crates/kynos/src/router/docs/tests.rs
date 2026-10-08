@@ -129,7 +129,7 @@ fn every_shipped_boot_script_is_admitted_by_its_hash_whatever_is_substituted() {
     for (name, html) in rendered("/it's", "Fish & <Chips>") {
         let policy = page::SHIPPED
             .iter()
-            .find(|(shipped, _)| *shipped == name)
+            .find(|(shipped_name, _)| *shipped_name == name)
             .map(|(_, shipped)| shipped.policy)
             .expect("a shipped page");
 
