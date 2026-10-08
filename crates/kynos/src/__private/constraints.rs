@@ -3,7 +3,7 @@
 //! Each applies only to a value of its kind, as its JSON Schema keyword does,
 //! so a `None` behind any of the kind traits satisfies it.
 
-use crate::schema::constraints::{Items, Numeric, Pointer, Text, UniqueItems, Violations};
+use crate::schema::constraints::{Items, Numeric, Pointer, Textual, UniqueItems, Violations};
 
 #[doc(hidden)]
 pub fn minimum<T: Numeric + ?Sized>(
@@ -80,7 +80,7 @@ pub(crate) fn is_multiple(number: f64, factor: f64) -> bool {
 }
 
 #[doc(hidden)]
-pub fn min_length<T: Text + ?Sized>(
+pub fn min_length<T: Textual + ?Sized>(
     value: &T,
     bound: u64,
     at: Pointer<'_>,
@@ -92,7 +92,7 @@ pub fn min_length<T: Text + ?Sized>(
 }
 
 #[doc(hidden)]
-pub fn max_length<T: Text + ?Sized>(
+pub fn max_length<T: Textual + ?Sized>(
     value: &T,
     bound: u64,
     at: Pointer<'_>,

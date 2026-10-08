@@ -715,7 +715,7 @@ under the name serde reads it by — keeping the first failure at each.
 
 - **A keyword applies to its own kind only**, as in JSON Schema: an absent
   `Option` satisfies every bound. A bound on a type of another kind is a compile
-  error through `Numeric`, `Text`, `Items` or `UniqueItems`, since a check that
+  error through `Numeric`, `Textual`, `Items` or `UniqueItems`, since a check that
   can never fire is a silent weak schema. A derived newtype takes the kinds of
   its member.
 - **Lengths count code points**, not bytes, as JSON Schema does.

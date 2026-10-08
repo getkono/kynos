@@ -65,7 +65,7 @@ pub(super) fn kinds(
     let ty = &member.ty;
     let kinds = [
         (quote!(Numeric), quote!(number), quote!(f64)),
-        (quote!(Text), quote!(text), quote!(&str)),
+        (quote!(Textual), quote!(text), quote!(&str)),
         (quote!(Items), quote!(item_count), quote!(usize)),
         (quote!(UniqueItems), quote!(has_unique_items), quote!(bool)),
     ];

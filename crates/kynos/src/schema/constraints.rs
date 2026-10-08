@@ -10,7 +10,7 @@
 //! path, and a value inside every bound costs no allocation.
 //!
 //! A keyword reaches a field's value through the trait for its kind —
-//! [`Numeric`], [`Text`], [`Items`] or [`UniqueItems`] — so a bound on a type
+//! [`Numeric`], [`Textual`], [`Items`] or [`UniqueItems`] — so a bound on a type
 //! that cannot hold it is a compile error rather than a check that never
 //! fires. Like the keyword, each one applies only to a value of its kind: an
 //! absent `Option` is `null` and satisfies every bound.
@@ -291,10 +291,10 @@ pub trait Numeric {
     message = "`{Self}` is not a string, so a length bound cannot apply to it",
     label = "not a string",
     note = "`min_length` and `max_length` apply to `String`, and to an `Option`, `Box` or `Arc` \
-            of one; implement `kynos::schema::constraints::Text` for a newtype that is a string \
+            of one; implement `kynos::schema::constraints::Textual` for a newtype that is a string \
             on the wire"
 )]
-pub trait Text {
+pub trait Textual {
     /// This value as a JSON string, or `None` where it is `null`.
     fn text(&self) -> Option<&str>;
 }
@@ -350,7 +350,7 @@ macro_rules! numeric {
 
 numeric!(i8, i16, i32, i64, u8, u16, u32, u64, f32, f64);
 
-impl Text for String {
+impl Textual for String {
     fn text(&self) -> Option<&str> {
         Some(self)
     }
@@ -454,19 +454,19 @@ through!(
     UniqueItems::has_unique_items -> bool,
 );
 
-impl<T: Text> Text for Option<T> {
+impl<T: Textual> Textual for Option<T> {
     fn text(&self) -> Option<&str> {
         self.as_ref().and_then(T::text)
     }
 }
 
-impl<T: Text + ?Sized> Text for Box<T> {
+impl<T: Textual + ?Sized> Textual for Box<T> {
     fn text(&self) -> Option<&str> {
         T::text(self)
     }
 }
 
-impl<T: Text + ?Sized> Text for Arc<T> {
+impl<T: Textual + ?Sized> Textual for Arc<T> {
     fn text(&self) -> Option<&str> {
         T::text(self)
     }
