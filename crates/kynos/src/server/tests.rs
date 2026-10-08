@@ -909,6 +909,195 @@ async fn an_http2_peer_that_never_acknowledges_a_ping_is_disconnected() {
         .expect("server exits cleanly");
 }
 
+/// The header-read timeout the silent-connection cases configure.
+///
+/// Short, so a case that passes is quick, and far below
+/// [`SILENT_CONNECTION_BOUND`], so one that fails is not a slow pass.
+#[cfg(feature = "http1")]
+const HEAD_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// How long a silent-connection case waits for the server to close it.
+#[cfg(feature = "http1")]
+const SILENT_CONNECTION_BOUND: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// A plaintext server whose header-read timeout is [`HEAD_TIMEOUT`].
+#[cfg(feature = "http1")]
+async fn head_timed_server() -> (
+    std::net::SocketAddr,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<crate::error::Result<()>>,
+) {
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(test_service())
+        .http1(Http1Config::default().header_read_timeout(Some(HEAD_TIMEOUT)))
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let address = bound.local_addrs()[0];
+    (address, shutdown_sender, tokio::spawn(bound.serve()))
+}
+
+/// Reads `stream` until the server closes it, failing past
+/// [`SILENT_CONNECTION_BOUND`].
+///
+/// The read's own result is discarded: a closed connection reports zero bytes
+/// and a reset one an error, and both are the server letting go of it.
+#[cfg(feature = "http1")]
+async fn assert_server_closes(stream: &mut (impl tokio::io::AsyncRead + Unpin), case: &str) {
+    use tokio::io::AsyncReadExt as _;
+
+    let mut discarded = Vec::new();
+    let closed =
+        tokio::time::timeout(SILENT_CONNECTION_BOUND, stream.read_to_end(&mut discarded)).await;
+    assert!(
+        closed.is_ok(),
+        "{case}: the server still holds the connection {SILENT_CONNECTION_BOUND:?} after \
+         accepting it, past a {HEAD_TIMEOUT:?} header-read timeout"
+    );
+}
+
+/// A connection that never sends a byte is closed at the header-read timeout.
+///
+/// With both protocols compiled and no ALPN, hyper-util reads the first bytes
+/// to choose a codec, and hyper's own header-read timer only starts once that
+/// codec runs -- so the wait before it, which is the whole of this
+/// connection's life, had no timer, and it held a `max_connections` permit for
+/// as long as the client kept the socket open.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_connection_that_never_speaks_is_closed_at_the_header_read_timeout() {
+    let (address, shutdown_sender, server) = head_timed_server().await;
+
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    assert_server_closes(&mut stream, "a silent connection").await;
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// A connection that stops inside the HTTP/2 preface is closed the same way.
+///
+/// `PRI` is a prefix of the preface, so the protocol sniff can decide nothing
+/// from it and waits for the rest, which never comes.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_connection_that_stops_inside_the_http2_preface_is_closed() {
+    use tokio::io::AsyncWriteExt as _;
+
+    let (address, shutdown_sender, server) = head_timed_server().await;
+
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    stream.write_all(b"PRI").await.expect("the prefix writes");
+    assert_server_closes(&mut stream, "a connection stopped inside the preface").await;
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// An HTTP/2 connection that finishes its preface and opens no stream is
+/// closed at the header-read timeout.
+///
+/// hyper's client answers every PING itself, which is the peer the issue
+/// describes: keep-alive cannot tell it from a live one, and HTTP/2 has no
+/// header-read timer of its own, so the first request head is what it is held
+/// to.
+#[cfg(all(feature = "http1", feature = "http2"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_http2_connection_that_opens_no_stream_is_closed() {
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+
+    let (address, shutdown_sender, server) = head_timed_server().await;
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let (sender, connection) = hyper::client::conn::http2::handshake::<
+        _,
+        _,
+        http_body_util::Empty<bytes::Bytes>,
+    >(TokioExecutor::new(), TokioIo::new(stream))
+    .await
+    .expect("HTTP/2 handshake completes");
+    // The connection future ends once the server closes the socket, whatever
+    // it reports doing so.
+    let closed = tokio::time::timeout(SILENT_CONNECTION_BOUND, connection).await;
+    assert!(
+        closed.is_ok(),
+        "an HTTP/2 connection with no stream is still held {SILENT_CONNECTION_BOUND:?} after \
+         accepting it, past a {HEAD_TIMEOUT:?} header-read timeout"
+    );
+    drop(sender);
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+/// The bound is on the first request head only: a connection that produced one
+/// in time is not closed when the timeout passes.
+///
+/// HTTP/2 rather than HTTP/1, since an idle HTTP/1 connection is held to the
+/// header-read timeout between requests by hyper itself; an HTTP/2 one has no
+/// such timer, so a second request long after the first still finds the
+/// connection open only if the bound stopped at the first head.
+#[cfg(all(feature = "http1", feature = "http2"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_connection_that_sent_a_request_outlives_the_header_read_timeout() {
+    use http_body_util::Empty;
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+
+    let (address, shutdown_sender, server) = head_timed_server().await;
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let (mut sender, connection) =
+        hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+            .await
+            .expect("HTTP/2 handshake completes");
+    let connection = tokio::spawn(connection);
+    let request = || {
+        hyper::Request::builder()
+            .uri("http://localhost/")
+            .body(Empty::<bytes::Bytes>::new())
+            .expect("request builds")
+    };
+
+    sender
+        .send_request(request())
+        .await
+        .expect("the first request succeeds");
+    tokio::time::sleep(HEAD_TIMEOUT * 3).await;
+    sender
+        .send_request(request())
+        .await
+        .expect("the connection survives its header-read timeout once a request arrived");
+
+    drop(sender);
+    connection.abort();
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
 #[cfg(feature = "http2")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_drains_an_active_http2_stream() {
@@ -1457,6 +1646,51 @@ async fn a_client_contradicting_its_negotiated_protocol_is_refused() {
         .expect("server exits cleanly");
 }
 
+/// A TLS connection that negotiated `protocol` and then says nothing is closed
+/// at the header-read timeout, counted from accept.
+///
+/// The pin waits for the client's first byte before it builds a codec, and the
+/// TLS handshake timeout ends before that wait starts, so the wait had no timer.
+#[cfg(all(feature = "tls", feature = "http1"))]
+async fn assert_silent_tls_connection_is_closed(protocol: &[u8]) {
+    use tokio_rustls::rustls::pki_types::ServerName;
+
+    let (address, authority, shutdown_sender, server) = tls_server_with(test_service(), |server| {
+        server.http1(Http1Config::default().header_read_timeout(Some(HEAD_TIMEOUT)))
+    })
+    .await;
+
+    let stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("server accepts");
+    let mut stream = alpn_connector(authority.as_bytes(), &[protocol])
+        .connect(
+            ServerName::try_from("localhost").expect("valid DNS name"),
+            stream,
+        )
+        .await
+        .expect("the handshake succeeds");
+    assert_server_closes(&mut stream, "a silent pinned TLS connection").await;
+
+    let _ = shutdown_sender.send(());
+    server
+        .await
+        .expect("server task joins")
+        .expect("server exits cleanly");
+}
+
+#[cfg(all(feature = "tls", feature = "http1"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_silent_tls_connection_pinned_to_http1_is_closed() {
+    assert_silent_tls_connection_is_closed(b"http/1.1").await;
+}
+
+#[cfg(all(feature = "tls", feature = "http1", feature = "http2"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_silent_tls_connection_pinned_to_h2_is_closed() {
+    assert_silent_tls_connection_is_closed(b"h2").await;
+}
+
 /// A TLS listener serving `service`, and the authority a client must trust.
 ///
 /// Both ALPN cases need the same three parts -- an authority, the server
@@ -1471,6 +1705,20 @@ async fn tls_server(
     tokio::sync::oneshot::Sender<()>,
     tokio::task::JoinHandle<crate::error::Result<()>>,
 ) {
+    tls_server_with(service, |server| server).await
+}
+
+/// [`tls_server`], with `configure` applied to the server before it prepares.
+#[cfg(feature = "tls")]
+async fn tls_server_with(
+    service: crate::router::service::Service<()>,
+    configure: impl FnOnce(crate::server::Server<()>) -> crate::server::Server<()>,
+) -> (
+    std::net::SocketAddr,
+    String,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<crate::error::Result<()>>,
+) {
     let issued = authority();
     let tls = crate::server::tls::TlsConfig::from_pem(
         issued.server.certificate.as_bytes(),
@@ -1478,7 +1726,7 @@ async fn tls_server(
     )
     .expect("server identity parses");
     let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
-    let bound = crate::server::Server::new(service)
+    let bound = configure(crate::server::Server::new(service))
         .bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .tls(tls)
         .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
