@@ -315,6 +315,56 @@ async fn a_group_scoped_cors_advertises_only_the_methods_it_covers() {
     );
 }
 
+/// A method the path answers outside every `Cors` is refused on preflight, even
+/// where a covering scope's `allow_methods` names it.
+///
+/// The override is for routes Kynos does not serve. Here Kynos does serve
+/// `DELETE`, under no `Cors` at all, so approving the preflight would send the
+/// browser on to a request whose side effect runs while its response carries no
+/// CORS header.
+#[tokio::test]
+async fn a_preflight_refuses_a_served_method_no_cors_covers() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![delete_widget])
+        .group(
+            kynos::router::group::Group::new("/")
+                .mount(kynos::routes![list_widgets])
+                .intercept(
+                    Cors::new()
+                        .allow_origins(["https://app.example.com"])
+                        .allow_methods([
+                            kynos::openapi::Method::Get,
+                            kynos::openapi::Method::Delete,
+                        ]),
+                ),
+        )
+        .build(())
+        .expect("a describable router");
+
+    let (status, fields) = send(
+        &service,
+        Method::OPTIONS,
+        "/widgets",
+        &[
+            ("origin", "https://app.example.com"),
+            ("access-control-request-method", "DELETE"),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(
+        field(&fields, header::VARY).is_some(),
+        "a refusal is cached too"
+    );
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        None,
+        "approved a preflight for a method no CORS configuration covers"
+    );
+    assert_eq!(field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS), None);
+}
+
 /// A predicate reaches both answers a browser sees: the preflight, and the
 /// real response. Two places read the allow-list, so a widening that only one
 /// of them honoured would let a preflight pass and the request that followed
