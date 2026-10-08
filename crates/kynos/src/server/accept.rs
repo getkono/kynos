@@ -38,8 +38,8 @@ pub(in crate::server) enum AcceptRetry {
     Never,
 }
 
-/// The consecutive failed accepts a listener has seen, and the retry schedule
-/// they put it on.
+/// Where a listener stands in its retry schedule: the wait its next failed
+/// accept would bring.
 ///
 /// A failure that belonged to one queued connection — an interrupted, aborted
 /// or reset connection, or a network error `accept(2)` says to retry like
@@ -49,9 +49,17 @@ pub(in crate::server) enum AcceptRetry {
 /// included, waits and retries without limit: the wait doubles from 10 ms to
 /// a one-second cap, holding nothing while it waits, so a descriptor freed by a
 /// closing connection is taken up within a second.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(in crate::server) struct AcceptBackoff {
-    failures: u32,
+    next: Duration,
+}
+
+impl Default for AcceptBackoff {
+    fn default() -> Self {
+        Self {
+            next: ACCEPT_RETRY_INITIAL,
+        }
+    }
 }
 
 impl AcceptBackoff {
@@ -66,13 +74,9 @@ impl AcceptBackoff {
             | io::ErrorKind::HostUnreachable => AcceptRetry::Now,
             io::ErrorKind::InvalidInput => AcceptRetry::Never,
             _ => {
-                let delay = ACCEPT_RETRY_INITIAL * (1 << self.failures);
-                if delay < ACCEPT_RETRY_MAX {
-                    self.failures += 1;
-                    AcceptRetry::After(delay)
-                } else {
-                    AcceptRetry::After(ACCEPT_RETRY_MAX)
-                }
+                let delay = self.next;
+                self.next = (delay * 2).min(ACCEPT_RETRY_MAX);
+                AcceptRetry::After(delay)
             }
         }
     }
@@ -80,7 +84,7 @@ impl AcceptBackoff {
     /// Forgets the failures before a successful accept, so the next failure
     /// starts the schedule over.
     pub(in crate::server) fn succeed(&mut self) {
-        self.failures = 0;
+        self.next = ACCEPT_RETRY_INITIAL;
     }
 }
 
