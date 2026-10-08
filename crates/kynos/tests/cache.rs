@@ -421,6 +421,38 @@ async fn an_unsafe_method_invalidates_only_its_own_hosts_copy() {
     );
 }
 
+/// RFC 9111 section 5.2.1.4: a request saying `no-cache` is not answered from
+/// the store without validation, and this cache does not validate, so the
+/// handler answers it.
+///
+/// The response it gets is stored as any other is, since the directive limits
+/// reuse rather than storage: the request after it is a hit.
+#[tokio::test]
+async fn a_request_saying_no_cache_is_answered_by_the_handler() {
+    let service = cached(Stored::default());
+    let before = CALLS.load(Ordering::SeqCst);
+
+    get(&service, "/reports").call().await;
+
+    let refreshed = get(&service, "/reports")
+        .header("cache-control", "max-age=0, No-Cache")
+        .call()
+        .await;
+    assert_eq!(refreshed.status, StatusCode::OK);
+    assert_eq!(
+        calls_during(before),
+        2,
+        "a request saying no-cache was answered from the store"
+    );
+
+    get(&service, "/reports").call().await;
+    assert_eq!(
+        calls_during(before),
+        2,
+        "the response to a no-cache request was not stored for the next one"
+    );
+}
+
 // --- What the cache adds --------------------------------------------------
 
 /// `Age` is declared and set, and it is not described.
