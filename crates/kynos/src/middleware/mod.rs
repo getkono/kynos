@@ -212,40 +212,52 @@ pub enum MiddlewareError {
 /// Field names are case-insensitive (RFC 9110 section 5.1), so a name already
 /// present in another spelling is not added again. `Vary: *` already says the
 /// response depends on more than field names can express, so nothing narrows it.
+///
+/// Every `Vary` line counts, since RFC 9110 section 5.3 lets a list field
+/// arrive split across lines, and the union is written back as one line. The
+/// merge is over bytes rather than text, so a line that is not UTF-8 survives
+/// verbatim instead of being overwritten as if it were empty.
 pub(crate) fn vary_on(fields: &mut crate::http::HeaderMap, names: &'static [&'static str]) {
     if names.is_empty() {
         return;
     }
 
-    let existing = fields
-        .get(crate::http::header::VARY)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
+    let mut merged: Vec<&[u8]> = Vec::new();
 
-    if existing.split(',').any(|name| name.trim() == "*") {
-        return;
+    for line in fields.get_all(crate::http::header::VARY) {
+        for name in line.as_bytes().split(|&byte| byte == b',') {
+            let name = name.trim_ascii();
+
+            if name == b"*" {
+                return;
+            }
+
+            if !name.is_empty() {
+                merged.push(name);
+            }
+        }
     }
 
-    let mut merged: Vec<&str> = existing
-        .split(',')
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .collect();
+    let present = merged.len();
 
     for name in names {
         if !merged
             .iter()
-            .any(|present| present.eq_ignore_ascii_case(name))
+            .any(|present| present.eq_ignore_ascii_case(name.as_bytes()))
         {
-            merged.push(name);
+            merged.push(name.as_bytes());
         }
     }
 
-    // An unrepresentable value is dropped rather than panicking: every name
-    // reaching this is a `&'static str` a `HeaderParams` implementation wrote
-    // down, and a response path that panics is worse than one missing a cache
-    // hint.
-    if let Ok(value) = crate::http::HeaderValue::from_str(&merged.join(", ")) {
+    if merged.len() == present {
+        return;
+    }
+
+    // An unrepresentable value is dropped rather than panicking: every line
+    // merged here was already a valid field value, every name added is a
+    // `&'static str` a `HeaderParams` implementation wrote down, and a
+    // response path that panics is worse than one missing a cache hint.
+    if let Ok(value) = crate::http::HeaderValue::from_bytes(&merged.join(&b", "[..])) {
         fields.insert(crate::http::header::VARY, value);
     }
 }
