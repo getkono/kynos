@@ -105,6 +105,37 @@ async fn every_shipped_reference_is_served_as_html() {
     }
 }
 
+/// A shipped page confines its script; a custom page is left to the
+/// application.
+///
+/// Which policy each page carries, and that it admits that page's scripts, is
+/// stated over the templates in `src/router/docs/tests.rs`. This is the half
+/// only a served response shows: that the page endpoint sends it, and sends
+/// nothing for a page Kynos did not write.
+#[tokio::test]
+async fn only_a_shipped_page_is_served_with_a_policy_and_nosniff() {
+    for docs in [Docs::scalar(), Docs::redoc()] {
+        let reply = get(&served(docs), "/docs").call().await;
+
+        assert!(
+            reply
+                .field("content-security-policy")
+                .is_some_and(|policy| policy.starts_with("script-src ")),
+            "a shipped page is served with no script policy",
+        );
+        assert_eq!(
+            reply.field("x-content-type-options").as_deref(),
+            Some("nosniff"),
+        );
+    }
+
+    let reply = get(&served(Docs::custom("<!doctype html>")), "/docs")
+        .call()
+        .await;
+    assert_eq!(reply.field("content-security-policy"), None);
+    assert_eq!(reply.field("x-content-type-options"), None);
+}
+
 #[tokio::test]
 async fn the_description_route_serves_the_document_this_router_emits() {
     // The strongest form of the claim, and it subsumes "parses as JSON" and
