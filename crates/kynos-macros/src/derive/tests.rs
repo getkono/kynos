@@ -4116,6 +4116,14 @@ mod security_scheme {
                 ),
                 "must not be declared as a parameter",
             ),
+            case(
+                "an API key named outside the token grammar",
+                quote::quote!(
+                    #[security(api_key(in = "header", name = "X Api Key"))]
+                    struct ApiKey;
+                ),
+                "contains ' '",
+            ),
         ]
     }
 
@@ -4245,6 +4253,21 @@ mod security_scheme {
                 + version_gated_ledger().len()
                 + UNREACHABLE_HERE,
         );
+    }
+
+    /// An API key's name is held to the token grammar exactly where the wire
+    /// holds it there: a header field name (RFC 9110 §5.1) and a cookie name
+    /// (RFC 6265 §4.1.1) are tokens, while a query parameter name is any
+    /// string its percent-encoding can carry.
+    #[test]
+    fn an_api_key_name_is_a_token_only_in_a_header_or_a_cookie() {
+        for (location, token_only) in [("header", true), ("cookie", true), ("query", false)] {
+            let input: syn::DeriveInput = syn::parse_quote!(
+                #[security(api_key(in = #location, name = "X Api Key"))]
+                struct ApiKey;
+            );
+            assert_eq!(expand_inner(&input).is_err(), token_only, "{location}");
+        }
     }
 
     /// A declared flow reaches the expansion.
