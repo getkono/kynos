@@ -91,22 +91,23 @@ fn http2_setters_write_their_own_fields() {
 /// failure ends the listener, and every failure past it does too.
 #[test]
 fn a_failing_accept_backs_off_by_doubling_and_gives_up_at_the_fifth() {
-    use std::time::Duration;
+    use std::{io, time::Duration};
 
-    use crate::server::accept::AcceptBackoff;
+    use crate::server::accept::{AcceptBackoff, AcceptRetry};
 
+    let error = io::Error::other("accept failed");
     let mut backoff = AcceptBackoff::default();
-    let schedule = (0..6).map(|_| backoff.fail()).collect::<Vec<_>>();
+    let schedule = (0..6).map(|_| backoff.fail(&error)).collect::<Vec<_>>();
 
     assert_eq!(
         schedule,
         [
-            Some(Duration::from_millis(10)),
-            Some(Duration::from_millis(20)),
-            Some(Duration::from_millis(40)),
-            Some(Duration::from_millis(80)),
-            None,
-            None,
+            AcceptRetry::After(Duration::from_millis(10)),
+            AcceptRetry::After(Duration::from_millis(20)),
+            AcceptRetry::After(Duration::from_millis(40)),
+            AcceptRetry::After(Duration::from_millis(80)),
+            AcceptRetry::Never,
+            AcceptRetry::Never,
         ]
     );
 }
@@ -115,16 +116,20 @@ fn a_failing_accept_backs_off_by_doubling_and_gives_up_at_the_fifth() {
 /// success never add up to the limit.
 #[test]
 fn a_successful_accept_restarts_the_backoff() {
-    use std::time::Duration;
+    use std::{io, time::Duration};
 
-    use crate::server::accept::AcceptBackoff;
+    use crate::server::accept::{AcceptBackoff, AcceptRetry};
 
+    let error = io::Error::other("accept failed");
     let mut backoff = AcceptBackoff::default();
-    backoff.fail();
-    backoff.fail();
+    backoff.fail(&error);
+    backoff.fail(&error);
     backoff.succeed();
 
-    assert_eq!(backoff.fail(), Some(Duration::from_millis(10)));
+    assert_eq!(
+        backoff.fail(&error),
+        AcceptRetry::After(Duration::from_millis(10))
+    );
 }
 
 #[test]

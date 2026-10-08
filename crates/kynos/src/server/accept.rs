@@ -27,28 +27,44 @@ use crate::{
 const ACCEPT_RETRY_INITIAL: Duration = Duration::from_millis(10);
 const MAX_CONSECUTIVE_ACCEPT_FAILURES: u32 = 5;
 
+/// What the accept loop does after a failed accept.
+#[derive(Debug, PartialEq, Eq)]
+pub(in crate::server) enum AcceptRetry {
+    /// Accept again at once: the failure belonged to one queued connection.
+    Now,
+    /// Wait this long, then accept again.
+    After(Duration),
+    /// Stop accepting: the listener reports [`ServerError::Accept`].
+    Never,
+}
+
 /// The consecutive failed accepts a listener has seen, and the retry schedule
 /// they put it on.
 ///
 /// The wait doubles from 10 ms, and the fifth consecutive failure gives up, so
 /// the longest wait is 80 ms and a listener retries for 150 ms in all before
 /// it reports [`ServerError::Accept`]. A transient failure the loop does not
-/// count — an interrupted or aborted connection — never reaches this.
+/// count — an interrupted or aborted connection — retries at once.
 #[derive(Debug, Default)]
 pub(in crate::server) struct AcceptBackoff {
     failures: u32,
 }
 
 impl AcceptBackoff {
-    /// Records one more failed accept, and returns how long to wait before
-    /// accepting again, or `None` when this failure ends the listener.
-    pub(in crate::server) fn fail(&mut self) -> Option<Duration> {
+    /// Records one more failed accept, and returns what the loop does next.
+    pub(in crate::server) fn fail(&mut self, error: &io::Error) -> AcceptRetry {
+        if matches!(
+            error.kind(),
+            io::ErrorKind::Interrupted | io::ErrorKind::ConnectionAborted
+        ) {
+            return AcceptRetry::Now;
+        }
         if self.failures >= MAX_CONSECUTIVE_ACCEPT_FAILURES - 1 {
-            return None;
+            return AcceptRetry::Never;
         }
         let delay = ACCEPT_RETRY_INITIAL * (1 << self.failures);
         self.failures += 1;
-        Some(delay)
+        AcceptRetry::After(delay)
     }
 
     /// Forgets the failures before a successful accept, so the next failure
@@ -116,21 +132,17 @@ pub(in crate::server) async fn accept_loop<C: 'static>(
                     .await;
                 });
             }
-            Err(source)
-                if matches!(
-                    source.kind(),
-                    io::ErrorKind::Interrupted | io::ErrorKind::ConnectionAborted
-                ) =>
-            {
-                drop(permit);
-            }
             Err(source) => {
                 drop(permit);
-                let Some(delay) = backoff.fail() else {
-                    return Err(ServerError::Accept {
-                        address: local_addr,
-                        source,
-                    });
+                let delay = match backoff.fail(&source) {
+                    AcceptRetry::Now => continue,
+                    AcceptRetry::After(delay) => delay,
+                    AcceptRetry::Never => {
+                        return Err(ServerError::Accept {
+                            address: local_addr,
+                            source,
+                        });
+                    }
                 };
                 tracing::warn!(%source, %local_addr, ?delay, "retrying failed accept");
                 tokio::select! {
