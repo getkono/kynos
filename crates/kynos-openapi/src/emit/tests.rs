@@ -39,6 +39,98 @@ fn a_document_using_no_three_two_construct_has_no_blockers() {
     assert!(downgrade::three_two_only_constructs(&document()).is_empty());
 }
 
+/// Fields the model does not recognise, found in an `extensions` map.
+///
+/// A flattened `extensions` absorbs every key its object leaves unclaimed, so a
+/// field the build does not model lands there rather than failing to parse. In
+/// a build without `openapi32` that is every 3.2 field, and in every build it
+/// is a `$ref` written as a `content` entry. Neither is an extension -- its name
+/// lacks the `x-` prefix -- and 3.1 cannot read either, so both stand in the way
+/// of a 3.1 emission.
+///
+/// Ungated on purpose: the build without `openapi32` is the one the defect
+/// lives in, and every expected location here is the same in both builds,
+/// since a 3.2 field the model types and one it absorbs are reported at the
+/// same pointer.
+mod unrecognised {
+    use crate::{
+        emit::downgrade::three_two_only_constructs,
+        model::document::{Document, SpecVersion},
+        validate::violation::SpecError,
+    };
+
+    /// A 3.2 description, as a build without `openapi32` reads it.
+    fn three_two_description() -> Document {
+        serde_json::from_value(serde_json::json!({
+            "openapi": "3.2.0",
+            "$self": "https://example.com/openapi.json",
+            "info": {"title": "Orders", "version": "1.0.0"},
+            "servers": [{"url": "https://example.com", "name": "production"}],
+            "tags": [{"name": "orders", "parent": "commerce", "kind": "nav"}],
+            "paths": {
+                "/orders": {
+                    "query": {"responses": {"200": {"description": "ok"}}},
+                    "get": {
+                        "responses": {
+                            "200": {
+                                "description": "ok",
+                                "content": {
+                                    "application/json": {
+                                        "$ref": "#/components/mediaTypes/Order"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "components": {
+                "schemas": {"Order": {"xml": {"nodeType": "element"}}},
+                "examples": {"Order": {"dataValue": {"id": 1}}}
+            }
+        }))
+        .expect("a 3.2 description parses in every build")
+    }
+
+    /// Every location, sorted: the two walks visit them in different orders,
+    /// and a location named twice would survive a set.
+    fn expected() -> Vec<String> {
+        let mut expected = [
+            "#/$self",
+            "#/components/examples/Order/dataValue",
+            "#/components/schemas/Order/xml/nodeType",
+            "#/paths/~1orders/get/responses/200/content/application~1json/$ref",
+            "#/paths/~1orders/query",
+            "#/servers/0/name",
+            "#/tags/0/kind",
+            "#/tags/0/parent",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        expected.sort();
+        expected
+    }
+
+    #[test]
+    fn a_parsed_three_two_description_names_every_field_three_one_cannot_hold() {
+        let mut blockers = three_two_only_constructs(&three_two_description());
+        blockers.sort();
+        assert_eq!(blockers, expected());
+    }
+
+    #[test]
+    fn a_parsed_three_two_description_refuses_to_emit_as_three_one() {
+        let error = three_two_description()
+            .emit(SpecVersion::V3_1)
+            .expect_err("3.2 fields cannot be relabelled as 3.1");
+        let SpecError::RequiresV3_2 { mut blockers } = error else {
+            panic!("expected a downgrade refusal, got {error:?}");
+        };
+        blockers.sort();
+        assert_eq!(blockers, expected());
+    }
+}
+
 /// An extension key that repeats a model field is written as `serde_yaml_ng`
 /// writes the model: beside the field, not in place of it.
 ///
