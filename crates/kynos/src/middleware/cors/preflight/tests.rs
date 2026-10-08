@@ -57,6 +57,29 @@ fn a_served_method_no_scope_covers_is_refused_even_where_an_override_names_it() 
     assert_refused(&response);
 }
 
+/// The same override never advertises that method on a preflight it does
+/// answer. A browser caches every method `Access-Control-Allow-Methods` names
+/// for the origin and URL, and would send the uncovered one with no preflight
+/// of its own.
+#[test]
+fn an_override_never_advertises_a_served_method_no_scope_covers() {
+    let reader = CorsConfig {
+        methods: Some(vec![Method::Get, Method::Delete]),
+        ..named()
+    };
+
+    let response = partly_covered(reader).answer(&asking(
+        Some("https://app.example.com"),
+        Some("GET"),
+        None,
+    ));
+
+    assert_eq!(
+        field(&response, header::ACCESS_CONTROL_ALLOW_METHODS).as_deref(),
+        Some("GET")
+    );
+}
+
 /// Without an override nothing answers for an uncovered method either: no
 /// scope's real response would carry the headers a permission promises.
 #[test]
