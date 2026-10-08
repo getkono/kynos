@@ -232,6 +232,32 @@ mod content_type {
             "expected a syntax failure, got {rejection:?}"
         );
     }
+
+    /// A form pair is text once decoded, so a name or value whose octets are
+    /// not UTF-8 -- escaped or sent raw -- is a 400, as it is for `Query<T>`,
+    /// rather than a lossy string handed to the handler.
+    #[tokio::test]
+    async fn a_form_body_that_is_not_utf_8_is_400() {
+        for body in [
+            &b"name=%FF"[..],
+            b"%FF=x",
+            b"name=caf%C3",
+            b"name=\xff",
+            b"ok=1&name=%FF",
+        ] {
+            let rejection = read::<Form<BTreeMap<String, String>>>(
+                Some("application/x-www-form-urlencoded"),
+                body,
+            )
+            .await
+            .expect_err("a pair that is not UTF-8 is refused");
+
+            assert!(
+                matches!(rejection, BodyRejection::Syntax { .. }),
+                "{body:?}: expected a syntax failure, got {rejection:?}"
+            );
+        }
+    }
 }
 
 mod one_of {
