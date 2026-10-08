@@ -682,9 +682,9 @@ stall held one stream, and the 408 ends that stream alone. A response the
 handler had already returned before its read stalled stands, since by then its
 head may be on the wire. `None` waits indefinitely.
 
-The timer lives in the server rather than in an extractor because only the
-server has a peer to wait on, and it is set once there rather than per codec so
-no reader can be left out. The cases are in
+The server applies the timer rather than an extractor or an interceptor because
+only the server has a peer to wait on, and it wraps the body once, before the
+chain sees it, so no reader can be left out. The cases are in
 [`server/tests.rs`](../crates/kynos/src/server/tests.rs) over a real socket, each
 protocol's 408 and a body whose every gap is under the limit but whose total is
 over it.
