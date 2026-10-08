@@ -1011,6 +1011,13 @@ async fn exercise_the_combined_guards(client: &TestClient<App>) {
         .await
         .assert_status(StatusCode::OK);
 
+    // Neither credential presented is absence, the 401 `AllOf` declares.
+    client
+        .get("/both")
+        .send()
+        .await
+        .assert_status(StatusCode::UNAUTHORIZED);
+
     client
         .get("/both")
         .header("authorization", "Bearer tok_ok")
