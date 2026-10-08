@@ -356,17 +356,27 @@ pub(crate) fn reject_non_token_names(
     grammar: &str,
 ) -> syn::Result<()> {
     for (field, name) in fields.named.iter().zip(names) {
-        let problem = match name.chars().find(|&character| !is_tchar(character)) {
-            Some(character) => format!("the {kind} `{name}` contains {character:?}"),
-            None if name.is_empty() => format!("the {kind} name is empty"),
-            None => continue,
-        };
-        return Err(syn::Error::new(
-            field.span(),
-            format!("{problem}, and {grammar} is a token: letters, digits and !#$%&'*+-.^_`|~"),
-        ));
+        if let Some(message) = non_token_message(name, kind, grammar) {
+            return Err(syn::Error::new(field.span(), message));
+        }
     }
     Ok(())
+}
+
+/// Says why `name` is not a token, or `None` where it is one.
+///
+/// The rule behind [`reject_non_token_names`], for a site whose name is not a
+/// field's: the diagnostic it words is that function's, so the two never
+/// disagree about what a token is.
+pub(crate) fn non_token_message(name: &str, kind: &str, grammar: &str) -> Option<String> {
+    let problem = match name.chars().find(|&character| !is_tchar(character)) {
+        Some(character) => format!("the {kind} `{name}` contains {character:?}"),
+        None if name.is_empty() => format!("the {kind} name is empty"),
+        None => return None,
+    };
+    Some(format!(
+        "{problem}, and {grammar} is a token: letters, digits and !#$%&'*+-.^_`|~"
+    ))
 }
 
 /// RFC 9110 §5.6.2's `tchar`.
