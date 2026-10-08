@@ -23,13 +23,14 @@
 use super::{
     Container, DataEnum, DeriveInput, Field, Fields, TokenStream2, Variant,
     aliases::{read_names, variants_read_names},
-    attributes::{Bound, bounds, is_described, is_phantom, is_unit_like},
-    described_variants, is_flattened, positional_members, quote, skip_value, string_value,
-    transparent_member,
+    attributes::{
+        Bound, DefaultFrom, bounds, is_described, is_phantom, is_unit_like, serde_default,
+    },
+    described_variants, is_flattened, positional_members, quote, transparent_member,
 };
 
 use proc_macro2::Span;
-use syn::{Data, ExprPath, Ident, Index, LitStr};
+use syn::{Data, Ident, Index, LitStr};
 
 /// The body of `check_constraints`, which reads `self`, `at` and `violations`.
 pub(super) fn body(input: &DeriveInput, container: &Container) -> TokenStream2 {
@@ -47,66 +48,6 @@ pub(super) fn body(input: &DeriveInput, container: &Container) -> TokenStream2 {
     }
 }
 
-/// The constraint kinds a newtype takes from its member.
-///
-/// A newtype is its member on the wire, so a bound a field of the newtype's
-/// type declares applies to that member: `#[schema(max_length = 8)] label:
-/// Label` bounds the string `Label` wraps. Each kind is implemented under a
-/// bound on the member's type, written under a `for<'__kynos>` binder so that
-/// a member of another kind leaves the implementation inapplicable rather than
-/// failing the derive: the bound then names no parameter, which rustc would
-/// otherwise refuse as trivially false.
-///
-/// Nothing for any other shape, which is not one value on the wire.
-pub(super) fn kinds(
-    input: &DeriveInput,
-    container: &Container,
-    generics: &syn::Generics,
-) -> TokenStream2 {
-    let Data::Struct(data) = &input.data else {
-        return TokenStream2::new();
-    };
-    let member = match &data.fields {
-        fields if container.transparent => transparent_member(fields),
-        Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => unnamed.unnamed.first(),
-        _ => None,
-    };
-    let Some(member) = member.filter(|member| is_checked(member)) else {
-        return TokenStream2::new();
-    };
-
-    let name = &input.ident;
-    let access = member_access(&data.fields, member);
-    let ty = &member.ty;
-    let kinds = [
-        (quote!(Numeric), quote!(number), quote!(f64)),
-        (quote!(Textual), quote!(text), quote!(&str)),
-        (quote!(Items), quote!(item_count), quote!(usize)),
-        (quote!(UniqueItems), quote!(has_unique_items), quote!(bool)),
-    ];
-
-    kinds
-        .into_iter()
-        .map(|(kind, method, output)| {
-            let kind = quote!(::kynos::schema::constraints::#kind);
-            let mut generics = generics.clone();
-            generics
-                .make_where_clause()
-                .predicates
-                .push(syn::parse_quote!(for<'__kynos> #ty: #kind));
-            let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-            quote! {
-                #[allow(deprecated)]
-                impl #impl_generics #kind for #name #ty_generics #where_clause {
-                    fn #method(&self) -> ::core::option::Option<#output> {
-                        <#ty as #kind>::#method(&self.#access)
-                    }
-                }
-            }
-        })
-        .collect()
-}
-
 /// Where a member sits relative to its parent's pointer.
 enum Step {
     /// Where its parent is.
@@ -117,14 +58,6 @@ enum Step {
     Index(usize),
 }
 
-/// Where serde takes the value it fills a missing member with.
-enum DefaultFrom {
-    /// A bare `default`: the type's `Default`.
-    Default,
-    /// `default = "path"`: what the function at `path` returns.
-    Path(ExprPath),
-}
-
 /// The value serde would fill a missing member with, as an expression.
 struct Filled {
     /// An `Option` of the value the default is taken from: `None` where the
@@ -133,28 +66,6 @@ struct Filled {
     /// The member's value, reached from `__kynos_filled`, a reference to the
     /// unwrapped [`value`](Self::value).
     project: TokenStream2,
-}
-
-/// The `default` in a `#[serde(...)]` list, and where it takes its value.
-fn serde_default(attrs: &[syn::Attribute]) -> Option<DefaultFrom> {
-    let mut found = None;
-    for attr in attrs {
-        if !attr.path().is_ident("serde") {
-            continue;
-        }
-        // Shape errors in serde's own attribute are serde's to report.
-        let _ = attr.parse_nested_meta(|meta| {
-            if !meta.path.is_ident("default") {
-                return skip_value(&meta);
-            }
-            found = Some(match string_value(&meta)? {
-                Some(path) => DefaultFrom::Path(syn::parse_str(&path)?),
-                None => DefaultFrom::Default,
-            });
-            Ok(())
-        });
-    }
-    found
 }
 
 /// What serde fills a member with when the document leaves it out: its own
@@ -274,8 +185,8 @@ fn enum_check(data: &DataEnum, container: &Container) -> TokenStream2 {
 
 /// One variant's arm: a pattern binding each checked member, and the checks.
 ///
-/// `names` are the names serde reads the variant under, its read name first.
-fn arm(variant: &Variant, names: &[String], container: &Container) -> TokenStream2 {
+/// `read_as` are the names serde reads the variant under, its read name first.
+fn arm(variant: &Variant, read_as: &[String], container: &Container) -> TokenStream2 {
     let ident = &variant.ident;
     let fields = container.fields_of(variant);
 
@@ -283,7 +194,7 @@ fn arm(variant: &Variant, names: &[String], container: &Container) -> TokenStrea
     let payload = match (&container.tag, &container.content) {
         (Some(_), Some(content)) => Step::Member(vec![content.clone()]),
         (Some(_), None) => Step::Here,
-        (None, _) => Step::Member(names.to_vec()),
+        (None, _) => Step::Member(read_as.to_vec()),
     };
 
     let (pattern, checks) = match &variant.fields {
@@ -346,7 +257,7 @@ fn arm(variant: &Variant, names: &[String], container: &Container) -> TokenStrea
 ///
 /// A `PhantomData` is `null` on the wire and has no `Schema`, so there is
 /// nothing to descend into.
-fn is_checked(field: &Field) -> bool {
+pub(super) fn is_checked(field: &Field) -> bool {
     is_described(field) && !is_phantom(&field.ty)
 }
 
@@ -367,7 +278,7 @@ fn binding(position: usize) -> Ident {
 }
 
 /// How `self` reaches a struct field: its name, or its declared index.
-fn member_access(fields: &Fields, field: &Field) -> TokenStream2 {
+pub(super) fn member_access(fields: &Fields, field: &Field) -> TokenStream2 {
     if let Some(name) = &field.ident {
         return quote!(#name);
     }

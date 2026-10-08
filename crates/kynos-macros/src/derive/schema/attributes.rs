@@ -406,6 +406,37 @@ pub(super) fn serde_flag(attrs: &[syn::Attribute], keys: &[&str]) -> bool {
     found
 }
 
+/// Where serde takes the value it fills a missing member with.
+pub(super) enum DefaultFrom {
+    /// A bare `default`: the type's `Default`.
+    Default,
+    /// `default = "path"`: what the function at `path` returns.
+    Path(syn::ExprPath),
+}
+
+/// The `default` in a `#[serde(...)]` list, and where it takes its value.
+///
+/// Shape errors in the list are serde's to report, so this raises none.
+pub(super) fn serde_default(attrs: &[syn::Attribute]) -> Option<DefaultFrom> {
+    let mut found = None;
+    for attr in attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        let _ = attr.parse_nested_meta(|meta| {
+            if !meta.path.is_ident("default") {
+                return skip_value(&meta);
+            }
+            found = Some(match string_value(&meta)? {
+                Some(path) => DefaultFrom::Path(syn::parse_str(&path)?),
+                None => DefaultFrom::Default,
+            });
+            Ok(())
+        });
+    }
+    found
+}
+
 /// One constraint a field's `#[schema(...)]` declares.
 pub(super) struct Bound {
     /// The `Constraints` field it fills, which is the attribute's own key.

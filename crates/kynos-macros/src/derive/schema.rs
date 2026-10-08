@@ -34,6 +34,7 @@
 mod aliases;
 mod attributes;
 mod check;
+mod kinds;
 mod refusals;
 mod shape;
 
@@ -102,7 +103,7 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let container = Container::read(input);
     let body = body(input, &container);
     let check = check::body(input, &container);
-    let kinds = check::kinds(input, &container, &generics);
+    let kinds = kinds::newtype(input, &container, &generics);
     let witnesses = flatten_witnesses(input, &container, &generics);
     let flatten = flattens(input, &container).then(|| {
         quote! {
