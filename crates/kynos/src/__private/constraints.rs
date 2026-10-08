@@ -160,9 +160,9 @@ pub fn unique_items<T: UniqueItems + ?Sized>(
 ///
 /// Which name the document used is gone once it is read, so a pointer under
 /// any one of them may name a member the document does not hold. `check`
-/// reports relative to [`Pointer::root`], which is the member, and the
-/// failure at the inner pointer that sorts first is the one kept, its
-/// location written into the detail.
+/// reports relative to [`Pointer::root`], which is the member, and each
+/// failure is moved to `at`, its location written into the detail, so the
+/// one at the inner pointer that sorts first is the one named.
 #[doc(hidden)]
 pub fn aliased(
     at: Pointer<'_>,
@@ -172,9 +172,9 @@ pub fn aliased(
 ) {
     let mut inner = Violations::new();
     check(Pointer::root(), &mut inner);
-    let Some((pointer, detail)) = inner.into_failures().into_iter().next() else {
+    if inner.is_empty() {
         return;
-    };
+    }
 
     let mut member = String::from("the member read as ");
     for (index, name) in names.iter().enumerate() {
@@ -189,13 +189,15 @@ pub fn aliased(
         member.push_str(name);
         member.push('`');
     }
-    if pointer.is_empty() {
-        violations.report(at, format!("{member} {detail}"));
-    } else {
-        violations.report(
-            at,
-            format!("{member} breaks a bound at `{pointer}`: {detail}"),
-        );
+    for (pointer, detail) in inner.into_each() {
+        if pointer.is_empty() {
+            violations.report(at, format!("{member} {detail}"));
+        } else {
+            violations.report(
+                at,
+                format!("{member} breaks a bound at `{pointer}`: {detail}"),
+            );
+        }
     }
 }
 

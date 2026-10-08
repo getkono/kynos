@@ -209,9 +209,12 @@ impl fmt::Display for Pointer<'_> {
 /// reports into, and what a body extractor turns into the 422's
 /// [`BodyRejection::Schema`](crate::error::rejection::BodyRejection::Schema)
 /// failures.
+///
+/// Two are equal when every location broke the same bounds in the same order,
+/// including those a 422 does not name.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Violations {
-    failures: BTreeMap<String, String>,
+    failures: BTreeMap<String, Vec<String>>,
 }
 
 impl Violations {
@@ -225,26 +228,28 @@ impl Violations {
 
     /// Records that the value at `at` broke a bound, described by `detail`.
     ///
-    /// One failure is kept per location, the first reported: a value too
+    /// One failure is named per location, the first reported: a value too
     /// short and off its pattern is refused for one reason, which is enough
-    /// for a client to correct it.
+    /// for a client to correct it. The rest are still recorded, so two values
+    /// breaking different bounds at one location are told apart.
     pub fn report(&mut self, at: Pointer<'_>, detail: impl Into<String>) {
         self.failures
             .entry(at.to_string())
-            .or_insert_with(|| detail.into());
+            .or_default()
+            .push(detail.into());
     }
 
     /// Reports what `check` finds at `at` itself, for a member whose own
     /// location the document cannot name — a set's, whose wire position is
     /// not its iteration order.
     ///
-    /// `check` reports relative to [`Pointer::root`], and of what it reports,
-    /// the failure at the inner pointer that sorts first is moved to `at`,
-    /// naming the location inside the member.
+    /// `check` reports relative to [`Pointer::root`], and each failure it
+    /// reports is moved to `at`, naming the location inside the member, so
+    /// the one at the inner pointer that sorts first is the one named.
     pub(crate) fn within(&mut self, at: Pointer<'_>, check: impl FnOnce(&mut Self)) {
         let mut inner = Self::new();
         check(&mut inner);
-        if let Some((pointer, detail)) = inner.failures.into_iter().next() {
+        for (pointer, detail) in inner.into_each() {
             self.report(
                 at,
                 format!("a member breaks a bound at `{pointer}`: {detail}"),
@@ -252,12 +257,22 @@ impl Violations {
         }
     }
 
-    /// Records each of `other`'s failures at a location nothing was reported
-    /// at yet, as [`report`](Self::report) keeps the first per location.
+    /// Records each of `other`'s failures after those already reported at
+    /// its location, as [`report`](Self::report) does.
     pub(crate) fn absorb(&mut self, other: Self) {
-        for (pointer, detail) in other.failures {
-            self.failures.entry(pointer).or_insert(detail);
+        for (pointer, details) in other.failures {
+            self.failures.entry(pointer).or_default().extend(details);
         }
+    }
+
+    /// Every failure, each location's in the order reported, the locations
+    /// in pointer order.
+    pub(crate) fn into_each(self) -> impl Iterator<Item = (String, String)> {
+        self.failures.into_iter().flat_map(|(pointer, details)| {
+            details
+                .into_iter()
+                .map(move |detail| (pointer.clone(), detail))
+        })
     }
 
     /// Whether nothing was reported.
@@ -266,10 +281,14 @@ impl Violations {
         self.failures.is_empty()
     }
 
-    /// The failures, keyed by JSON Pointer.
+    /// The failures, keyed by JSON Pointer: the first reported at each
+    /// location.
     #[must_use]
     pub fn into_failures(self) -> BTreeMap<String, String> {
         self.failures
+            .into_iter()
+            .filter_map(|(pointer, details)| Some((pointer, details.into_iter().next()?)))
+            .collect()
     }
 }
 
