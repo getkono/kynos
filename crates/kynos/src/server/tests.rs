@@ -920,6 +920,25 @@ const HEAD_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
 #[cfg(feature = "http1")]
 const SILENT_CONNECTION_BOUND: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// The first-head deadline is the header-read timeout counted from accept, and
+/// there is none when the timeout is disabled or would overflow the clock.
+#[cfg(feature = "http1")]
+#[test]
+fn the_first_head_deadline_counts_the_header_read_timeout_from_accept() {
+    use std::time::{Duration, Instant};
+
+    let accepted = Instant::now();
+    let deadline = |timeout| {
+        Http1Config::default()
+            .header_read_timeout(timeout)
+            .first_head_deadline(accepted)
+    };
+
+    assert_eq!(deadline(Some(HEAD_TIMEOUT)), Some(accepted + HEAD_TIMEOUT));
+    assert_eq!(deadline(None), None);
+    assert_eq!(deadline(Some(Duration::MAX)), None);
+}
+
 /// A plaintext server whose header-read timeout is [`HEAD_TIMEOUT`].
 #[cfg(feature = "http1")]
 async fn head_timed_server() -> (

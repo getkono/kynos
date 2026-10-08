@@ -1,6 +1,6 @@
 //! HTTP/1 tuning.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The smallest per-connection read/write buffer the crate accepts.
 ///
@@ -31,6 +31,13 @@ pub struct Http1Config {
     /// Whether to keep connections alive between requests.
     pub keep_alive: bool,
     /// How long a client may take to send the request head.
+    ///
+    /// The first request head on any connection is held to it from accept,
+    /// whatever protocol the connection turns out to speak: a client that has
+    /// sent no complete head this long after connecting -- over HTTP/2 or
+    /// TLS too, and before either side knows which protocol it is -- is
+    /// disconnected. Past the first head, it bounds each later HTTP/1 head;
+    /// an HTTP/2 connection is then held only to its keep-alive.
     pub header_read_timeout: Option<Duration>,
     /// The maximum number of request headers.
     pub max_headers: usize,
@@ -57,7 +64,8 @@ impl Http1Config {
         self
     }
 
-    /// Sets how long a client may take to send the request head.
+    /// Sets how long a client may take to send the request head, counted from
+    /// accept for a connection's first head under either protocol.
     ///
     /// `None` waits indefinitely, which is a decision rather than a default: a
     /// client that never finishes a request head holds the connection open.
@@ -87,6 +95,20 @@ impl Http1Config {
     pub fn max_buffer_size(mut self, max_buffer_size: usize) -> Self {
         self.max_buffer_size = max_buffer_size;
         self
+    }
+}
+
+impl Http1Config {
+    /// When a connection accepted at `accepted` must have produced its first
+    /// request head, under either protocol.
+    ///
+    /// hyper's own header-read timer starts only once an HTTP/1 codec runs, so
+    /// the protocol sniff and the pin's wait for a first byte had none, and
+    /// HTTP/2 has none at all. `None` when the timeout is disabled or would
+    /// overflow the clock.
+    pub(in crate::server) fn first_head_deadline(&self, accepted: Instant) -> Option<Instant> {
+        self.header_read_timeout
+            .and_then(|timeout| accepted.checked_add(timeout))
     }
 }
 
