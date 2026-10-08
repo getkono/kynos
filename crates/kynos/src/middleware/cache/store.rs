@@ -25,8 +25,10 @@ pub struct PrimaryKey {
     pub namespace: &'static str,
     /// The request method. `GET` or `HEAD` for anything stored.
     pub method: Method,
-    /// The request's authority, lowercased: `Host`, or a version-2 request's
-    /// `:authority`. `None` where the request carried neither.
+    /// The request's authority, lowercased: the target's (an absolute-form
+    /// target, or a version-2 request's `:authority`), else `Host`. `None`
+    /// where the request carried neither. The target's wins because RFC 9112
+    /// section 3.2.2 has an origin server ignore `Host` beside one.
     ///
     /// RFC 9111 section 2 keys a stored response on the whole target URI, and
     /// an application that picks a tenant from `Host` answers one path

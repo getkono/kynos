@@ -49,7 +49,8 @@ const SEC_FETCH_SITE: http::HeaderName = http::HeaderName::from_static("sec-fetc
 ///    the request came from this origin, or was not caused by a page at all.
 ///    Any other value is refused here, without reading on.
 /// 4. With no `Sec-Fetch-Site`, an `Origin` whose authority equals the
-///    request's own `Host` — the fallback for a browser too old to send it.
+///    request's own — its target's, else its `Host` — the fallback for a
+///    browser too old to send it.
 /// 5. **Neither field present.** A browser always sends at least one on an
 ///    unsafe request; something that sends neither is `curl`, a mobile client
 ///    or a server, none of which is subject to CSRF because none carries
@@ -201,7 +202,7 @@ fn authority_of(origin: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// The request's own authority, from `Host` or from the target.
+/// The request's own authority, from the target or from `Host`.
 ///
 /// Both, because only HTTP/1.1 carries it in a field. RFC 9113 section 8.3.1
 /// replaces `Host` with the `:authority` pseudo-header, which `http` puts on
@@ -209,14 +210,18 @@ fn authority_of(origin: &str) -> String {
 /// through `Host` alone has no authority at all, and every `Origin` it carries
 /// would fail to match one.
 ///
-/// `Host` is preferred where both are present: it is what an HTTP/1.1 client
-/// sent, and section 8.3.1 requires the two to agree where a version-2 client
-/// sends both.
+/// The target's authority wins where both are present. An HTTP/1.1 request
+/// carries one there only in absolute form, and RFC 9112 section 3.2.2 says an
+/// origin server receiving that form "MUST ignore the received Host header
+/// field"; a version-2 request's `:authority` is the field section 8.3.1 makes
+/// authoritative.
 pub(crate) fn own_authority(headers: &HeaderMap, authority: Option<&str>) -> Option<String> {
-    headers
-        .get(http::header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .or(authority)
+    authority
+        .or_else(|| {
+            headers
+                .get(http::header::HOST)
+                .and_then(|value| value.to_str().ok())
+        })
         .map(|host| host.trim().to_ascii_lowercase())
         .filter(|host| !host.is_empty())
 }

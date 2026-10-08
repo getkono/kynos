@@ -953,13 +953,15 @@ and script cannot forge it, so an unsafe request that says it came from another
 site can be refused on that alone. Four header comparisons, no dependency.
 
 The fallback for a browser too old to send it compares `Origin` against the
-request's own authority, and that authority is read from `Host` *or* from the
-request target. RFC 9113 §8.3.1 replaces `Host` with the `:authority`
+request's own authority, and that authority is read from the request target
+*or* from `Host`. RFC 9113 §8.3.1 replaces `Host` with the `:authority`
 pseudo-header, which `http` puts on the URI rather than in the map, so reading
 `Host` alone found no authority on any HTTP/2 request — and refused every
 same-origin unsafe request from exactly the browsers the fallback exists for.
-`Host` wins where both are present: §8.3.1 requires them to agree, so the
-choice is a tie-break rather than a policy.
+The target wins where both are present: an HTTP/1.1 request carries an
+authority there only in absolute form, and RFC 9112 §3.2.2 has an origin server
+ignore `Host` beside one. `Cache` keys on the same reading, so the two cannot
+disagree about which host a request was for.
 
 ## Vary is declared apart from the names
 
