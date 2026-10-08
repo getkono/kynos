@@ -25,6 +25,10 @@ use crate::{
 /// Pointer of each member that broke one. Which bounds are enforced is
 /// [`constraints`](crate::schema::constraints)' to say.
 ///
+/// Extracting one therefore requires `T: Schema` as well as
+/// `T: DeserializeOwned`; a type extracted outside a described handler
+/// derives [`Schema`] for the bounds it is held to.
+///
 /// ```no_run
 /// use kynos::extract::body::json::Json;
 ///

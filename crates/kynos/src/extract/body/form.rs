@@ -16,6 +16,11 @@ use crate::{
 };
 
 /// An `application/x-www-form-urlencoded` request body.
+///
+/// Requires the `form` feature. A body that is not UTF-8 rejects with 400,
+/// and pairs that cannot deserialize into `T` or break a bound `T`'s schema
+/// declares reject with 422, as [`Json`](super::json::Json)'s do. Extracting
+/// one therefore requires `T: Schema` as well as `T: DeserializeOwned`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Form<T>(pub T);
 
