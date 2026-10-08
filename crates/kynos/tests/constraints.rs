@@ -156,6 +156,8 @@ async fn a_document_inside_every_bound_is_admitted() {
     admits::<Order>(order_with("nickname", json!("abc"))).await;
     admits::<Order>(order_with("name", json!("ab"))).await;
     admits::<Order>(order_with("seats", json!(10))).await;
+    admits::<Order>(order_with("seats", json!(1))).await;
+    admits::<Order>(order_with("tags", json!(["a"]))).await;
 }
 
 #[tokio::test]
