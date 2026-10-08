@@ -317,6 +317,25 @@ fn a_dangling_component_ref_declares_nothing() {
     ));
 }
 
+/// Components that reference each other in a cycle stand for no parameter, and
+/// following them terminates.
+#[test]
+fn a_cycle_of_component_refs_declares_nothing() {
+    let mut document = document_with_component_parameter(
+        &[("/users/{id}", get_with_ref("#/components/parameters/A"))],
+        "A",
+        crate::RefOr::Ref(crate::model::reference::Ref::parameter("B")),
+    );
+    document.components.parameters.insert(
+        "B".to_owned(),
+        crate::RefOr::Ref(crate::model::reference::Ref::parameter("A")),
+    );
+    assert!(matches!(
+        errors(&document).as_slice(),
+        [SpecError::UndeclaredPathVariable { name }] if name == "id"
+    ));
+}
+
 #[test]
 fn a_path_parameter_must_be_required() {
     let mut parameter = Parameter::path("id", Schema::of_type(SchemaType::String));
