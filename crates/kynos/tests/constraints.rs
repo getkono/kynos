@@ -344,6 +344,21 @@ struct Profile {
     #[serde(default)]
     #[schema(min_length = 1, max_length = 3)]
     label: String,
+    /// The filled value breaks `minimum` alone, so a value breaking it and
+    /// `multiple_of` too was sent, although both are reported at one place.
+    #[serde(default)]
+    #[schema(minimum = 1, multiple_of = 2)]
+    parity: i32,
+    /// The same, one member down: the filled value's own member breaks
+    /// `minimum` alone.
+    #[serde(default)]
+    stride: Stride,
+}
+
+#[derive(Debug, Default, Schema, Deserialize)]
+struct Stride {
+    #[schema(minimum = 1, multiple_of = 2)]
+    step: i32,
 }
 
 /// A container default whose filled value breaks a member's bound.
@@ -393,6 +408,8 @@ async fn a_defaulted_member_is_held_to_its_bounds_where_its_filled_value_meets_t
     refuses::<Profile>(json!({ "code": "abcd" }), &["/code"]).await;
     refuses::<Profile>(json!({ "retries": 0 }), &["/retries"]).await;
     refuses::<Profile>(json!({ "label": "abcdef" }), &["/label"]).await;
+    refuses::<Profile>(json!({ "parity": -1 }), &["/parity"]).await;
+    refuses::<Profile>(json!({ "stride": { "step": -1 } }), &["/stride/step"]).await;
     refuses::<Window>(json!({ "size": 0 }), &["/size"]).await;
 }
 
