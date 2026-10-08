@@ -94,7 +94,10 @@ fn assert_unsupported<T: std::fmt::Debug>(
 }
 
 mod content_type {
-    use kynos::{extract::body::binary::Binary, http::media::Html};
+    use kynos::{
+        extract::body::binary::Binary,
+        http::media::{Html, MediaType},
+    };
 
     use super::{BTreeMap, BodyRejection, Form, Json, Text, assert_unsupported, read};
 
@@ -212,6 +215,45 @@ mod content_type {
             read::<Binary<Html>>(Some("text/html; charset=iso-8859-1"), b"<p>").await,
             Some("text/html; charset=iso-8859-1"),
         );
+    }
+
+    /// A marker whose constant carries a parameter other than `charset`
+    /// accepts a request carrying exactly that parameter, as well as the bare
+    /// media type, and refuses the same parameter with any other value.
+    #[tokio::test]
+    async fn a_marker_accepts_the_parameter_its_constant_declares() {
+        #[derive(Debug)]
+        struct Versioned;
+
+        impl MediaType for Versioned {
+            const MEDIA_TYPE: &'static str = "application/vnd.x; version=2";
+        }
+
+        for content_type in [
+            "application/vnd.x; version=2",
+            "application/vnd.x",
+            "APPLICATION/VND.X;VERSION=\"2\"",
+            "application/vnd.x; version=2; charset=utf-8",
+        ] {
+            let body = read::<Binary<Versioned>>(Some(content_type), b"x")
+                .await
+                .unwrap_or_else(|rejection| {
+                    panic!("`{content_type}` is the marker's media type, got {rejection:?}")
+                });
+            assert_eq!(body.into_inner(), &b"x"[..]);
+        }
+
+        for content_type in [
+            "application/vnd.x; version=3",
+            "application/vnd.x; version",
+            "application/vnd.x; version=2; release=1",
+            "application/vnd.x; boundary=x",
+        ] {
+            assert_unsupported(
+                read::<Binary<Versioned>>(Some(content_type), b"x").await,
+                Some(content_type),
+            );
+        }
     }
 
     /// Form syntax admits no malformed input, so a pair that does not fit
