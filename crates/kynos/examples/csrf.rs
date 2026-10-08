@@ -18,9 +18,10 @@
 //!   keep the token — a session — and a crypto stack to sign it, neither of
 //!   which Kynos ships. Four header comparisons need neither.
 //! * **The order the rules are tried in is the order they are written.** A safe
-//!   method first, then the browser's own `Sec-Fetch-Site`, then the trusted
-//!   list, then an `Origin` that equals the request's own authority, and last a
-//!   request carrying neither field. Each exchange below is one of those rules.
+//!   method first, then the trusted list, then the browser's own
+//!   `Sec-Fetch-Site`, then an `Origin` that equals the request's own
+//!   authority, and last a request carrying neither field. Each exchange below
+//!   is one of those rules.
 //! * **`Csrf` is mounted outside `SetCookies`, and that is the useful order.**
 //!   The first `intercept` call is the outermost interceptor, so a refused
 //!   request never reaches the cookie source — a 403 that also handed out a
@@ -217,7 +218,7 @@ async fn a_safe_method_is_never_refused(service: &Service<()>) {
     show(&response, &header::SET_COOKIE);
 }
 
-/// Rule 2, the affirmative half: the browser states the request came from here.
+/// Rule 3, the affirmative half: the browser states the request came from here.
 async fn a_same_origin_write_is_served(service: &Service<()>) {
     let response = send(
         service,
@@ -231,7 +232,7 @@ async fn a_same_origin_write_is_served(service: &Service<()>) {
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 }
 
-/// Rule 2, the refusal: the same field, stating the opposite.
+/// Rule 3, the refusal: the same field, stating the opposite.
 ///
 /// This is the whole defence in one exchange. `Sec-Fetch-Site` is set by the
 /// browser and forbidden to script, so `cross-site` is a fact rather than a
@@ -254,12 +255,19 @@ async fn a_cross_site_write_is_refused(service: &Service<()>) {
     println!("  set-cookie: <absent>");
 }
 
-/// Rule 3: a front end served from somewhere else, named explicitly.
+/// Rule 2: a front end served from somewhere else, named explicitly.
 ///
-/// No `Sec-Fetch-Site` here, which is what an older browser sends — it still
-/// sends `Origin` on an unsafe request.
+/// The browser calls this `cross-site`, as it would any write from another
+/// origin, so the trusted list is tried before `Sec-Fetch-Site` is read.
+/// Script can set neither field, so the console's `Origin` is a fact too.
 async fn a_trusted_origin_is_admitted(service: &Service<()>) {
-    let response = send(service, Method::POST, "/profile", &[("origin", CONSOLE)]).await;
+    let response = send(
+        service,
+        Method::POST,
+        "/profile",
+        &[("sec-fetch-site", "cross-site"), ("origin", CONSOLE)],
+    )
+    .await;
 
     println!("\nPOST from the trusted console -> {}", response.status());
     assert_eq!(response.status(), StatusCode::NO_CONTENT);

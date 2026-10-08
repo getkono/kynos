@@ -74,13 +74,46 @@ fn browser_cases() -> Vec<Case> {
             &[("sec-fetch-site", "same-site")],
             false,
         ),
-        // `Sec-Fetch-Site` wins over `Origin`: it is the field that cannot lie.
+        // A trusted `Origin` is tried before `Sec-Fetch-Site`, because every
+        // current browser says `cross-site` from a front end served elsewhere,
+        // and script can no more set `Origin` than it can `Sec-Fetch-Site`.
         (
-            "cross-site claiming a trusted origin",
+            "cross-site from a trusted origin",
             Method::POST,
             &[
                 ("sec-fetch-site", "cross-site"),
                 ("origin", "https://admin.example.com"),
+            ],
+            true,
+        ),
+        (
+            "same-site from a trusted origin",
+            Method::POST,
+            &[
+                ("sec-fetch-site", "same-site"),
+                ("origin", "https://admin.example.com"),
+            ],
+            true,
+        ),
+        (
+            "cross-site from an untrusted origin",
+            Method::POST,
+            &[
+                ("sec-fetch-site", "cross-site"),
+                ("origin", "https://evil.example.com"),
+            ],
+            false,
+        ),
+        // The own-host match is the fallback for a browser without fetch
+        // metadata; one that sent it has already said where the request came
+        // from, and that statement stands.
+        (
+            "cross-site with an origin matching the request's own host",
+            Method::POST,
+            &[
+                ("sec-fetch-site", "cross-site"),
+                ("origin", "https://api.example.com"),
+                ("host", "api.example.com"),
             ],
             false,
         ),
