@@ -331,11 +331,14 @@ fn only_a_request_saying_no_cache_forbids_reuse() {
     }
 }
 
-/// A request naming no authority is filed under none, and `Host` decides where
-/// a version-2 request also carries `:authority`.
+/// A request naming no authority is filed under none, and the target's
+/// authority decides where the request also carries a `Host` that disagrees.
 ///
-/// The second half is the one an integration test cannot reach: a request
-/// carrying both is one no test client builds through the public surface.
+/// RFC 9112 section 3.2.2: an origin server receiving an absolute-form target
+/// "MUST ignore the received Host header field". The request below is an
+/// HTTP/1.1 one, as `Request::new` builds it; a version-2 request's
+/// `:authority` lands on the same URI and is read the same way. Filing it under
+/// `Host` would let one request plant a response for another host.
 #[test]
 fn the_key_names_the_authority_the_request_carried() {
     let request = |target: &str, host: Option<&str>| {
@@ -361,6 +364,6 @@ fn the_key_names_the_authority_the_request_carried() {
         )
         .authority
         .as_deref(),
-        Some("a.example.com")
+        Some("b.example.com")
     );
 }

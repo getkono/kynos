@@ -353,8 +353,8 @@ async fn a_response_stored_for_one_host_is_not_served_to_another() {
 }
 
 /// A host is matched without regard to case, as RFC 3986 section 3.2.2 compares
-/// it, and a version-2 request's `:authority` names the same resource a
-/// version-1 `Host` does.
+/// it, and an authority carried on an absolute-form target names the same
+/// resource the same authority carried in `Host` does.
 #[tokio::test]
 async fn one_host_is_one_key_however_it_was_spelled() {
     let service = cached(Stored::default());
