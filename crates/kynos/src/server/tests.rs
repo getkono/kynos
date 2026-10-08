@@ -87,28 +87,90 @@ fn http2_setters_write_their_own_fields() {
     );
 }
 
-/// The whole retry schedule: four doubling waits, then the fifth consecutive
-/// failure ends the listener, and every failure past it does too.
+/// The whole retry schedule: the wait doubles from 10 ms to a one-second cap,
+/// and a listener never gives up on a failure waiting can clear.
 #[test]
-fn a_failing_accept_backs_off_by_doubling_and_gives_up_at_the_fifth() {
+fn a_failing_accept_backs_off_by_doubling_to_a_cap_and_never_gives_up() {
     use std::{io, time::Duration};
 
     use crate::server::accept::{AcceptBackoff, AcceptRetry};
 
     let error = io::Error::other("accept failed");
     let mut backoff = AcceptBackoff::default();
-    let schedule = (0..6).map(|_| backoff.fail(&error)).collect::<Vec<_>>();
+    let schedule = (0..10).map(|_| backoff.fail(&error)).collect::<Vec<_>>();
 
     assert_eq!(
         schedule,
-        [
-            AcceptRetry::After(Duration::from_millis(10)),
-            AcceptRetry::After(Duration::from_millis(20)),
-            AcceptRetry::After(Duration::from_millis(40)),
-            AcceptRetry::After(Duration::from_millis(80)),
-            AcceptRetry::Never,
-            AcceptRetry::Never,
-        ]
+        [10, 20, 40, 80, 160, 320, 640, 1000, 1000, 1000]
+            .map(|millis| AcceptRetry::After(Duration::from_millis(millis)))
+    );
+}
+
+/// Running out of file descriptors, for the process (EMFILE) or the system
+/// (ENFILE), is not a listener failure: a client holding enough idle
+/// connections open must not stop the server. Both numbers are the same on
+/// every Unix.
+#[cfg(unix)]
+#[test]
+fn running_out_of_file_descriptors_never_ends_the_listener() {
+    use std::{io, time::Duration};
+
+    use crate::server::accept::{AcceptBackoff, AcceptRetry};
+
+    for (name, errno) in [("EMFILE", 24), ("ENFILE", 23)] {
+        let error = io::Error::from_raw_os_error(errno);
+        let mut backoff = AcceptBackoff::default();
+        let last = (0..100).map(|_| backoff.fail(&error)).last();
+
+        assert_eq!(
+            last,
+            Some(AcceptRetry::After(Duration::from_secs(1))),
+            "{name}"
+        );
+    }
+}
+
+/// A listener that is no longer listening cannot be waited back into
+/// service, so the first such failure ends it.
+#[test]
+fn a_listener_that_is_not_listening_ends_at_once() {
+    use std::io;
+
+    use crate::server::accept::{AcceptBackoff, AcceptRetry};
+
+    let error = io::Error::from(io::ErrorKind::InvalidInput);
+
+    assert_eq!(AcceptBackoff::default().fail(&error), AcceptRetry::Never);
+}
+
+/// A failure that belonged to one queued connection, including the network
+/// errors accept(2) says to retry like EAGAIN, retries at once and does not
+/// advance the schedule.
+#[test]
+fn a_failure_of_one_queued_connection_retries_at_once() {
+    use std::{io, time::Duration};
+
+    use crate::server::accept::{AcceptBackoff, AcceptRetry};
+
+    let mut backoff = AcceptBackoff::default();
+    for kind in [
+        io::ErrorKind::Interrupted,
+        io::ErrorKind::ConnectionAborted,
+        io::ErrorKind::ConnectionReset,
+        io::ErrorKind::NetworkDown,
+        io::ErrorKind::NetworkUnreachable,
+        io::ErrorKind::HostUnreachable,
+    ] {
+        assert_eq!(
+            backoff.fail(&io::Error::from(kind)),
+            AcceptRetry::Now,
+            "{kind:?}"
+        );
+    }
+
+    assert_eq!(
+        backoff.fail(&io::Error::other("accept failed")),
+        AcceptRetry::After(Duration::from_millis(10))
     );
 }
 
