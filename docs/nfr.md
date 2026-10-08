@@ -535,7 +535,7 @@ serde writes and the one it reads. One concern, so one file.
 
 `schema/constraints.rs` is `status.rs`'s shape. It declares `Constraints`, the
 `Pointer` and `Violations` a check reports through, and the four kind traits —
-`Numeric`, `Text`, `Items`, `UniqueItems` — a bound reaches a value by, so a
+`Numeric`, `Textual`, `Items`, `UniqueItems` — a bound reaches a value by, so a
 split would turn `constraints::Numeric` into `constraints::kinds::Numeric` and
 likewise for the rest. What pushed it over was enforcing the bounds it used to
 only describe, and the two halves are one concern: a field bound's two
