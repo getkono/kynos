@@ -321,6 +321,106 @@ async fn a_failed_unsafe_method_leaves_the_stored_response_alone() {
     );
 }
 
+// --- Which request a stored response answers ------------------------------
+
+/// RFC 9111 section 2 keys a stored response on the whole target URI, and the
+/// authority is part of it.
+///
+/// Without it, a handler that picks a tenant from `Host` hands one tenant's
+/// page to the next one asking for the same path.
+#[tokio::test]
+async fn a_response_stored_for_one_host_is_not_served_to_another() {
+    let service = cached(Stored::default());
+    let before = CALLS.load(Ordering::SeqCst);
+
+    for host in ["a.example.com", "a.example.com", "b.example.com"] {
+        assert_eq!(
+            get(&service, "/reports")
+                .header("host", host)
+                .call()
+                .await
+                .status,
+            StatusCode::OK
+        );
+    }
+
+    assert_eq!(
+        calls_during(before),
+        2,
+        "the second host was answered from the first host's copy, or the first host was never \
+         answered from its own"
+    );
+}
+
+/// A host is matched without regard to case, as RFC 3986 section 3.2.2 compares
+/// it, and a version-2 request's `:authority` names the same resource a
+/// version-1 `Host` does.
+#[tokio::test]
+async fn one_host_is_one_key_however_it_was_spelled() {
+    let service = cached(Stored::default());
+    let before = CALLS.load(Ordering::SeqCst);
+
+    assert_eq!(
+        get(&service, "/reports")
+            .header("host", "a.example.com")
+            .call()
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get(&service, "/reports")
+            .header("host", "A.Example.COM")
+            .call()
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get(&service, "http://a.example.com/reports")
+            .call()
+            .await
+            .status,
+        StatusCode::OK
+    );
+
+    assert_eq!(
+        calls_during(before),
+        1,
+        "one host spelled two ways, or carried two ways, was filed under two keys"
+    );
+}
+
+/// An unsafe method drops the copy stored for its own host, and only that one.
+#[tokio::test]
+async fn an_unsafe_method_invalidates_only_its_own_hosts_copy() {
+    let service = cached(Stored::default());
+    let before = CALLS.load(Ordering::SeqCst);
+
+    for host in ["a.example.com", "b.example.com"] {
+        get(&service, "/reports").header("host", host).call().await;
+    }
+
+    assert_eq!(
+        send(&service, Method::POST, "/reports")
+            .header("host", "a.example.com")
+            .call()
+            .await
+            .status,
+        StatusCode::NO_CONTENT
+    );
+
+    for host in ["a.example.com", "b.example.com"] {
+        get(&service, "/reports").header("host", host).call().await;
+    }
+
+    assert_eq!(
+        calls_during(before),
+        3,
+        "the write to one host left its own copy in place, or dropped another host's"
+    );
+}
+
 // --- What the cache adds --------------------------------------------------
 
 /// `Age` is declared and set, and it is not described.
