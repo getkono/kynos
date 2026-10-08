@@ -634,9 +634,9 @@ four different answers depending on which layer is asked.
 | Header-list size | `max_buffer_size` | `max_header_list_size` | — | — | yes |
 | Query-string length | subsumed by the URI | subsumed by the list size | — | — | yes, loosely |
 | Body size | — | — | — | `BodySize`, when mounted | **no, deliberately** |
-| Request-head read time | `header_read_timeout`, 30 s | n/a | — | — | yes |
+| Request-head read time | `header_read_timeout`, 30 s | the first head only | `header_read_timeout` again, from accept to the first head, before a protocol is known | — | yes |
 | Slow body | — | — | — | `Timeout`, *outside* `BodySize` | **no** |
-| Keep-alive idle | `header_read_timeout` covers the wait for the next head | — ; a client answering every PING may idle indefinitely | — | — | HTTP/1 only |
+| Keep-alive idle | `header_read_timeout` covers the wait for the next head | — ; past its first request, a client answering every PING may idle indefinitely | — | — | HTTP/1 only |
 | Vanished peer | `tcp_keepalive`, with nothing in flight | `Http2KeepAlive`, a PING after 30 s silent and 20 s to answer | `tcp_keepalive`, probing after 60 s idle, every 15 s | — | yes; mid-response over HTTP/1 by retransmission only |
 | Handler runtime | — | — | — | `Timeout`, when mounted | **no** |
 | Response body stall | — | — | — | `BodyTimeout::idle`, when mounted | **no** |
@@ -938,8 +938,9 @@ Sessions are named in [`architecture.md`](architecture.md#invariants)'s third
 invariant as the example of what a layer above Kynos owns.
 
 **CSRF and a credential guard do not exclude each other.** `Auth<S>` is not an
-interceptor. It is an extractor — `FromRequestParts` in
-[`security/auth.rs`](../crates/kynos/src/security/auth.rs) — and its 403 reaches
+interceptor. It is a guard — the sealed `Guard` in the handler's first argument
+slot, implemented in [`security/auth.rs`](../crates/kynos/src/security/auth.rs)
+— and its 403 reaches
 the document through `OperationCx::add_responses`, never through a `const`.
 `CompatibleWith` compares only interceptor `Short`s, and `Auth<S>` has none, so
 `Csrf`'s 403 (`CrossSite`) never meets the credential guard's in that comparison

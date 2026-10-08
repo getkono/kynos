@@ -1,4 +1,4 @@
-use super::{ANY, matches, split, strong_match, weak_match};
+use super::{ANY, matches, matches_strongly, split, strong_match, weak_match};
 use crate::http::HeaderValue;
 
 /// A list assembled from members, and the members it was assembled from.
@@ -140,4 +140,46 @@ fn a_comma_between_two_quoted_tags_separates_them() {
     assert!(matches(&field, r#""b""#));
     assert!(!matches(&field, r#""a,b""#));
     assert!(!matches(&field, r#""c""#));
+}
+
+/// `If-Match` reads the same list `If-None-Match` does, and compares each
+/// member strongly.
+///
+/// RFC 9110 section 13.1.1: *an origin server MUST use the strong comparison
+/// function when comparing entity tags for If-Match*. The cases differ from
+/// one another in one property each — weakness on the field's side, weakness
+/// on the representation's side, the member's position in the list, and the
+/// absence of any tag to compare against.
+#[test]
+fn if_match_compares_every_listed_tag_strongly() {
+    for (field, current, holds) in [
+        (r#""r3""#, Some(r#""r3""#), true),
+        (r#""r2""#, Some(r#""r3""#), false),
+        (r#""r2", "r3""#, Some(r#""r3""#), true),
+        (r#""x", "a,b", "y""#, Some(r#""a,b""#), true),
+        (r#"W/"r3""#, Some(r#""r3""#), false),
+        (r#""r3""#, Some(r#"W/"r3""#), false),
+        (r#""r3""#, None, false),
+    ] {
+        assert_eq!(
+            matches_strongly(&HeaderValue::from_static(field), current),
+            holds,
+            "`{field}` against {current:?}"
+        );
+    }
+}
+
+/// `*` holds for any current representation, tagged or not, and strongly or
+/// weakly.
+///
+/// Section 13.1.1: *if the field value is "\*", the condition is true if the
+/// origin server has a current representation for the target resource* — a
+/// condition on existence, not on a validator.
+#[test]
+fn if_match_any_holds_whatever_the_representation_is_tagged() {
+    let field = HeaderValue::from_static(" * ");
+
+    for current in [Some(r#""r3""#), Some(r#"W/"r3""#), None] {
+        assert!(matches_strongly(&field, current), "{current:?}");
+    }
 }

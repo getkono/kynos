@@ -58,6 +58,25 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         &quote!(::kynos::openapi::ParameterIn::Cookie),
         false,
     );
+    // A cookie reaches its field as it was sent: `value_of` removes no
+    // percent-encoding. An unstated style defaults to `form`, which tells a
+    // client to percent-encode, so a 3.2 build states `cookie`, which applies
+    // and removes none; `explode: true` is its default, and a scalar field
+    // ignores it. 3.1 has no style saying so, and a description stating this
+    // one cannot be emitted as 3.1, so a 3.1 build states nothing.
+    let parameters = if cfg!(feature = "openapi32") {
+        quote! {
+            let parameters = { #parameters };
+            parameters
+                .into_iter()
+                .map(|parameter| {
+                    parameter.with_style(::kynos::openapi::Style::Cookie, true)
+                })
+                .collect()
+        }
+    } else {
+        parameters
+    };
 
     Ok(quote! {
         impl #impl_generics ::kynos::extract::params::cookie::CookieParams

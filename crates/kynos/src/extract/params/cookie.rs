@@ -45,8 +45,13 @@ pub trait CookieParams: Sized {
     /// unconstrained schema, and marks none of them required: a group that has
     /// not said which cookies a request must carry has not said they all are.
     ///
-    /// `style` is left unstated: `form` is the default for a cookie parameter,
-    /// so stating it would only repeat the location.
+    /// `style` is left unstated, so it defaults to `form`, which tells a client
+    /// to percent-encode. Whether a value is decoded is [`decode`]'s choice,
+    /// which this default cannot see; a group reading values as sent, as the
+    /// `CookieParams` derive does, states `style: cookie` under `openapi32`
+    /// by overriding this.
+    ///
+    /// [`decode`]: CookieParams::decode
     fn parameters(registry: &mut Registry) -> Vec<kynos_openapi::Parameter> {
         let _ = registry;
         Self::NAMES

@@ -41,11 +41,15 @@ const SEC_FETCH_SITE: http::HeaderName = http::HeaderName::from_static("sec-fetc
 ///
 /// 1. A **safe method** — `GET`, `HEAD`, `OPTIONS`. RFC 9110 section 9.2.1 says
 ///    these are read-only, so forging one achieves nothing a link could not.
-/// 2. `Sec-Fetch-Site` of `same-origin` or `none`. The browser is stating that
+/// 2. An `Origin` on the trusted list, for a deployment whose front end is
+///    served from somewhere else — whatever `Sec-Fetch-Site` says, since a
+///    browser calls such a request `cross-site` and script cannot set either
+///    field.
+/// 3. `Sec-Fetch-Site` of `same-origin` or `none`. The browser is stating that
 ///    the request came from this origin, or was not caused by a page at all.
-/// 3. An `Origin` on the trusted list, for a deployment whose front end is
-///    served from somewhere else.
-/// 4. An `Origin` whose authority equals the request's own `Host`.
+///    Any other value is refused here, without reading on.
+/// 4. With no `Sec-Fetch-Site`, an `Origin` whose authority equals the
+///    request's own `Host` — the fallback for a browser too old to send it.
 /// 5. **Neither field present.** A browser always sends at least one on an
 ///    unsafe request; something that sends neither is `curl`, a mobile client
 ///    or a server, none of which is subject to CSRF because none carries
@@ -142,6 +146,14 @@ impl<T> Csrf<T> {
             .get(http::header::ORIGIN)
             .and_then(|value| value.to_str().ok());
 
+        // A trusted origin first. A front end served from elsewhere is
+        // `cross-site` to every current browser, so tried after the line below
+        // it would never be reached; and script can no more set `Origin` than
+        // `Sec-Fetch-Site`, so admitting it here forges nothing.
+        if origin.is_some_and(|origin| self.trusts(origin)) {
+            return true;
+        }
+
         // The browser's own statement, and the reason this works at all: script
         // cannot set `Sec-Fetch-Site`, so `same-origin` is a fact rather than a
         // claim. `none` means no page caused the request -- a bookmark, an
@@ -154,9 +166,7 @@ impl<T> Csrf<T> {
         // `Origin` on an unsafe request, or something that is not a browser.
         match origin {
             Some(origin) => {
-                self.trusts(origin)
-                    || own_authority(headers, authority)
-                        .is_some_and(|host| host == authority_of(origin))
+                own_authority(headers, authority).is_some_and(|host| host == authority_of(origin))
             }
             // Neither field: not a browser, so not subject to CSRF.
             None => true,

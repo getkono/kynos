@@ -1,0 +1,16 @@
+error[E0277]: `fn(Auth<ServiceKey>, Auth<Bearer>) -> impl Future<Output = NoContent> {both}` is not a Kynos handler
+  --> tests/ui/antipattern/two_guards.rs:61:26
+   |
+61 |     is_handler::<App, _, _>(both);
+   |                          ^ not a handler
+   |
+   = help: the trait `Handler<App, _>` is not implemented for fn item `fn(Auth<ServiceKey>, Auth<Bearer>) -> impl Future<Output = NoContent> {both}`
+   = note: every argument must implement `Describe`, and `FromRequestParts` — or `FromRequest`, for the last one
+   = note: a guard — `Auth`, `MaybeAuth` or `Scoped` — is the first argument, and there is at most one: combine schemes with `AnyOf` or `AllOf` instead
+   = note: the return type must implement `IntoResponse` and `Responses`
+   = note: the handler's future must be `Send`: nothing that is not — an `Rc`, a `RefCell` borrow, a lock guard — may be held across an `.await`
+note: required by a bound in `is_handler`
+  --> tests/ui/antipattern/two_guards.rs:58:24
+   |
+58 | fn is_handler<C, A, H: kynos::handler::Handler<C, A>>(_: H) {}
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `is_handler`
