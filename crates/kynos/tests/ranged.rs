@@ -569,5 +569,11 @@ fn the_description_names_what_a_delivery_reads_and_sends() {
         .collect();
     statuses.sort_unstable();
 
-    assert_eq!(statuses, ["200", "206", "304", "412"]);
+    assert_eq!(statuses, ["200", "206", "304", "412", "416"]);
+
+    let Some(kynos::openapi::RefOr::Item(unsatisfiable)) = operation.responses.responses.get("416")
+    else {
+        panic!("an inline 416");
+    };
+    assert!(unsatisfiable.headers.contains_key("Content-Range"));
 }
