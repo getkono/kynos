@@ -1073,6 +1073,29 @@ whose declaration varies with the method, which the contribution model states
 once per interceptor rather than once per operation. Until then, a service
 relying on create-only semantics must enforce them in the handler.
 
+### What a stored response is filed under
+
+RFC 9111 §2 keys a stored response on the request method and the whole target
+URI. `PrimaryKey` holds the method, the target's path and query, and its
+authority — lowercased, as RFC 3986 §3.2.2 compares a host — so a handler that
+picks a tenant from the host is never answered from another tenant's copy, and
+a write to one host drops only that host's entry. The authority is the one
+`Csrf` reads: the target's, else `Host`.
+
+**The scheme is left out**, which departs from §2. Behind a TLS-terminating
+proxy the service cannot see the scheme the client used, and a key holding a
+guessed one would change with the deployment rather than the request. The cost
+is that `http` and `https` share an entry. A default port is not stripped
+either, for the same reason: which port is default depends on that scheme. Two
+spellings of one origin cost a miss, never a wrong hit.
+
+**A request saying `no-cache` is answered by the handler.** §5.2.1.4 forbids
+reusing a stored response for it without validation, and `Cache` does not
+validate, so the lookup is skipped. What the handler produces is stored as any
+other response is, since the directive limits reuse rather than storage.
+`Pragma: no-cache` is not read: §5.4 deprecates the field and places no
+requirement on a cache receiving it.
+
 ### What is never stored
 
 `no-store` from either side, `no-cache`, `private`, `Vary: *`, any response
