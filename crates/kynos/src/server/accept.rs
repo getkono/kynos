@@ -25,7 +25,7 @@ use crate::{
 };
 
 const ACCEPT_RETRY_INITIAL: Duration = Duration::from_millis(10);
-const MAX_CONSECUTIVE_ACCEPT_FAILURES: u32 = 5;
+const ACCEPT_RETRY_MAX: Duration = Duration::from_secs(1);
 
 /// What the accept loop does after a failed accept.
 #[derive(Debug, PartialEq, Eq)]
@@ -41,10 +41,14 @@ pub(in crate::server) enum AcceptRetry {
 /// The consecutive failed accepts a listener has seen, and the retry schedule
 /// they put it on.
 ///
-/// The wait doubles from 10 ms, and the fifth consecutive failure gives up, so
-/// the longest wait is 80 ms and a listener retries for 150 ms in all before
-/// it reports [`ServerError::Accept`]. A transient failure the loop does not
-/// count — an interrupted or aborted connection — retries at once.
+/// A failure that belonged to one queued connection — an interrupted, aborted
+/// or reset connection, or a network error `accept(2)` says to retry like
+/// `EAGAIN` — retries at once. A listener that is no longer listening
+/// (`EINVAL`) cannot be waited back into service and ends at once. Every other
+/// failure, running out of file descriptors (`EMFILE`, `ENFILE`) or memory
+/// included, waits and retries without limit: the wait doubles from 10 ms to
+/// a one-second cap, holding nothing while it waits, so a descriptor freed by a
+/// closing connection is taken up within a second.
 #[derive(Debug, Default)]
 pub(in crate::server) struct AcceptBackoff {
     failures: u32,
@@ -53,18 +57,24 @@ pub(in crate::server) struct AcceptBackoff {
 impl AcceptBackoff {
     /// Records one more failed accept, and returns what the loop does next.
     pub(in crate::server) fn fail(&mut self, error: &io::Error) -> AcceptRetry {
-        if matches!(
-            error.kind(),
-            io::ErrorKind::Interrupted | io::ErrorKind::ConnectionAborted
-        ) {
-            return AcceptRetry::Now;
+        match error.kind() {
+            io::ErrorKind::Interrupted
+            | io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::NetworkDown
+            | io::ErrorKind::NetworkUnreachable
+            | io::ErrorKind::HostUnreachable => AcceptRetry::Now,
+            io::ErrorKind::InvalidInput => AcceptRetry::Never,
+            _ => {
+                let delay = ACCEPT_RETRY_INITIAL * (1 << self.failures);
+                if delay < ACCEPT_RETRY_MAX {
+                    self.failures += 1;
+                    AcceptRetry::After(delay)
+                } else {
+                    AcceptRetry::After(ACCEPT_RETRY_MAX)
+                }
+            }
         }
-        if self.failures >= MAX_CONSECUTIVE_ACCEPT_FAILURES - 1 {
-            return AcceptRetry::Never;
-        }
-        let delay = ACCEPT_RETRY_INITIAL * (1 << self.failures);
-        self.failures += 1;
-        AcceptRetry::After(delay)
     }
 
     /// Forgets the failures before a successful accept, so the next failure
