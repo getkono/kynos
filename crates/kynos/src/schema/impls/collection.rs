@@ -6,6 +6,7 @@ use kynos_openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType};
 
 use crate::schema::{
     MapKey, Schema,
+    constraints::{Pointer, Violations},
     flatten::{AdmitsAny, OpenMap},
     impls::with_object,
     registry::Registry,
@@ -44,9 +45,55 @@ fn map<K: MapKey, V: Schema>(registry: &mut Registry) -> OpenApiSchema {
     })
 }
 
+/// Checks each element of a sequence at its index.
+fn check_elements<'a, T: Schema + 'a>(
+    elements: impl Iterator<Item = &'a T>,
+    at: Pointer<'_>,
+    violations: &mut Violations,
+) {
+    for (index, element) in elements.enumerate() {
+        element.check_constraints(at.index(index), violations);
+    }
+}
+
+/// Checks each member of a set, at the set: its iteration order is not the
+/// order the document listed it in, so no index would name it.
+fn check_members<'a, T: Schema + 'a>(
+    members: impl Iterator<Item = &'a T>,
+    at: Pointer<'_>,
+    violations: &mut Violations,
+) {
+    violations.within(at, |inner| {
+        for member in members {
+            member.check_constraints(Pointer::root(), inner);
+        }
+    });
+}
+
+/// Checks each value of a map under its key, or at the map where the key
+/// cannot say what member name it is.
+fn check_values<'a, K: MapKey + 'a, V: Schema + 'a>(
+    entries: impl Iterator<Item = (&'a K, &'a V)>,
+    at: Pointer<'_>,
+    violations: &mut Violations,
+) {
+    for (key, value) in entries {
+        match key.as_member() {
+            Some(name) => value.check_constraints(at.member(name), violations),
+            None => violations.within(at, |inner| {
+                value.check_constraints(Pointer::root(), inner);
+            }),
+        }
+    }
+}
+
 impl<T: Schema> Schema for Vec<T> {
     fn schema(registry: &mut Registry) -> OpenApiSchema {
         array::<T>(registry, false)
+    }
+
+    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+        check_elements(self.iter(), at, violations);
     }
 }
 
@@ -54,11 +101,19 @@ impl<T: Schema> Schema for VecDeque<T> {
     fn schema(registry: &mut Registry) -> OpenApiSchema {
         array::<T>(registry, false)
     }
+
+    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+        check_elements(self.iter(), at, violations);
+    }
 }
 
 impl<T: Schema> Schema for [T] {
     fn schema(registry: &mut Registry) -> OpenApiSchema {
         array::<T>(registry, false)
+    }
+
+    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+        check_elements(self.iter(), at, violations);
     }
 }
 
@@ -71,11 +126,19 @@ impl<T: Schema, const N: usize> Schema for [T; N] {
             object.max_items = Some(length);
         })
     }
+
+    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+        check_elements(self.iter(), at, violations);
+    }
 }
 
 impl<T: Schema, S> Schema for HashSet<T, S> {
     fn schema(registry: &mut Registry) -> OpenApiSchema {
         array::<T>(registry, true)
+    }
+
+    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+        check_members(self.iter(), at, violations);
     }
 }
 
@@ -83,17 +146,29 @@ impl<T: Schema> Schema for BTreeSet<T> {
     fn schema(registry: &mut Registry) -> OpenApiSchema {
         array::<T>(registry, true)
     }
+
+    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+        check_members(self.iter(), at, violations);
+    }
 }
 
 impl<K: MapKey, V: Schema, S> Schema for HashMap<K, V, S> {
     fn schema(registry: &mut Registry) -> OpenApiSchema {
         map::<K, V>(registry)
     }
+
+    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+        check_values(self.iter(), at, violations);
+    }
 }
 
 impl<K: MapKey, V: Schema> Schema for BTreeMap<K, V> {
     fn schema(registry: &mut Registry) -> OpenApiSchema {
         map::<K, V>(registry)
+    }
+
+    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+        check_values(self.iter(), at, violations);
     }
 }
 

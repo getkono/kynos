@@ -6,7 +6,12 @@
 
 use kynos_openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType};
 
-use crate::schema::{Schema, impls::with_object, registry::Registry};
+use crate::schema::{
+    Schema,
+    constraints::{Pointer, Violations},
+    impls::with_object,
+    registry::Registry,
+};
 
 /// Emits one implementation per arity.
 macro_rules! tuples {
@@ -21,6 +26,19 @@ macro_rules! tuples {
                         object.items = Some(Box::new(OpenApiSchema::never()));
                         object.min_items = Some(length);
                     })
+                }
+
+                // Each member is bound under its type parameter's name, which
+                // is what lets one repetition both name and count it.
+                #[allow(non_snake_case)]
+                fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+                    let ($($member,)+) = self;
+                    let mut index = 0;
+                    $(
+                        $member.check_constraints(at.index(index), violations);
+                        index += 1;
+                    )+
+                    let _ = index;
                 }
             }
         )+

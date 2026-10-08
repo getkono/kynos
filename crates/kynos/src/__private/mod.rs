@@ -1,7 +1,7 @@
 //! Implementation detail of the `kynos-macros` expansions. Not public API.
 //!
-//! What lives here is the endpoint, path, problem, reply and URI support a
-//! route attribute or a derive expands to. An item is `pub` only because
+//! What lives here is the constraint, endpoint, path, problem, reply and URI
+//! support a route attribute or a derive expands to. An item is `pub` only because
 //! expanded code has to name it, and `#[doc(hidden)]` because no human should;
 //! a helper the crate shares with that support but no expansion names, such as
 //! the percent-coding in [`uri`], stays `pub(crate)`. Nothing in this module is
@@ -11,6 +11,7 @@
 //! items through `router`, `extract` and the rest — puts items no caller can
 //! use into modules callers read.
 
+pub mod constraints;
 pub mod endpoint;
 pub mod path;
 pub mod problem;

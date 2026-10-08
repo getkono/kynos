@@ -9,6 +9,7 @@ use kynos_openapi::{
 
 use crate::schema::{
     Schema,
+    constraints::{Pointer, Violations},
     flatten::{AdmitsAny, ClosedFlatten, Flatten, OpenMap},
     impls::with_object,
     registry::Registry,
@@ -55,6 +56,12 @@ impl<T: Schema> Schema for Option<T> {
     fn schema(registry: &mut Registry) -> OpenApiSchema {
         nullable(registry.resolve::<T>())
     }
+
+    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+        if let Some(value) = self {
+            value.check_constraints(at, violations);
+        }
+    }
 }
 
 /// Emits a delegating implementation for a wrapper with no wire form of its own.
@@ -68,6 +75,10 @@ macro_rules! transparent {
 
                 fn name() -> Option<ComponentName> {
                     T::name()
+                }
+
+                fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+                    T::check_constraints(self, at, violations);
                 }
             }
         )+

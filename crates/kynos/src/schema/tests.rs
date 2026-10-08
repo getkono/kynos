@@ -840,3 +840,114 @@ mod unchecked_is_transparent {
         assert_eq!(read.into_inner(), serde_json::json!({ "supplier": "acme" }));
     }
 }
+
+/// How a container locates a violation inside its members, where
+/// `tests/constraints.rs` cannot reach it through a derived type: a member the
+/// document cannot address, and the first of two reports at one location.
+mod checking {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use crate::{
+        __private::constraints::{is_multiple, max_length, minimum, unique_items},
+        schema::{
+            MapKey, Schema,
+            constraints::{Pointer, Violations},
+            registry::Registry,
+        },
+    };
+
+    /// A value whose only bound is that it is never `0`, reported at `at`.
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    struct NonZero(u8);
+
+    impl Schema for NonZero {
+        fn schema(registry: &mut Registry) -> kynos_openapi::Schema {
+            u8::schema(registry)
+        }
+
+        fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+            minimum(&self.0, 1.0, at.member("inner"), violations);
+        }
+    }
+
+    /// A key that cannot say what member name it is written under.
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    struct Opaque;
+
+    impl Schema for Opaque {
+        fn schema(registry: &mut Registry) -> kynos_openapi::Schema {
+            String::schema(registry)
+        }
+    }
+
+    impl MapKey for Opaque {}
+
+    fn failures<T: Schema>(value: &T) -> BTreeMap<String, String> {
+        let mut violations = Violations::new();
+        value.check_constraints(Pointer::root().member("v"), &mut violations);
+        violations.into_failures()
+    }
+
+    #[test]
+    fn a_set_member_is_reported_at_the_set_naming_where_inside_it() {
+        let failures = failures(&BTreeSet::from([NonZero(0), NonZero(1)]));
+        assert_eq!(
+            failures,
+            BTreeMap::from([(
+                "/v".to_owned(),
+                "a member breaks a bound at `/inner`: must be at least 1".to_owned()
+            )])
+        );
+    }
+
+    #[test]
+    fn a_map_value_is_reported_under_its_key_or_at_the_map_without_one() {
+        let named = failures(&BTreeMap::from([("k".to_owned(), NonZero(0))]));
+        assert_eq!(named.keys().collect::<Vec<_>>(), ["/v/k/inner"]);
+
+        let opaque = failures(&BTreeMap::from([(Opaque, NonZero(0))]));
+        assert_eq!(opaque.keys().collect::<Vec<_>>(), ["/v"]);
+    }
+
+    #[test]
+    fn an_absent_option_breaks_no_bound() {
+        assert!(failures(&None::<NonZero>).is_empty());
+        let mut violations = Violations::new();
+        max_length(&None::<String>, 0, Pointer::root(), &mut violations);
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn the_first_report_at_a_location_is_the_one_kept() {
+        let mut violations = Violations::new();
+        violations.report(Pointer::root(), "first");
+        violations.report(Pointer::root(), "second");
+        assert_eq!(
+            violations.into_failures(),
+            BTreeMap::from([(String::new(), "first".to_owned())])
+        );
+    }
+
+    #[test]
+    fn uniqueness_finds_a_repeat_wherever_it_sits() {
+        for (items, unique) in [
+            (vec![3, 1, 2], true),
+            (vec![3, 1, 3], false),
+            (vec![1, 2, 3, 4, 1], false),
+            (vec![], true),
+        ] {
+            let mut violations = Violations::new();
+            unique_items(&items, Pointer::root(), &mut violations);
+            assert_eq!(violations.is_empty(), unique, "{items:?}");
+        }
+    }
+
+    #[test]
+    fn a_multiple_is_an_integral_quotient() {
+        assert!(is_multiple(-15.0, 5.0));
+        assert!(is_multiple(0.0, 5.0));
+        assert!(is_multiple(7.5, 2.5));
+        assert!(!is_multiple(12.0, 5.0));
+        assert!(!is_multiple(1.0, 3.0));
+    }
+}
