@@ -319,3 +319,151 @@ async fn an_enum_reports_where_its_tagging_puts_the_payload() {
     )
     .await;
 }
+
+fn three() -> u32 {
+    3
+}
+
+/// Members serde fills when the document leaves them out, which the emitted
+/// schema therefore leaves out of `required`.
+#[derive(Debug, Schema, Deserialize)]
+struct Profile {
+    /// `String::default()` breaks this bound itself.
+    #[serde(default)]
+    #[schema(min_length = 1)]
+    name: String,
+    /// The filled value meets this bound, so a value breaking it was sent.
+    #[serde(default)]
+    #[schema(max_length = 3)]
+    code: String,
+    #[serde(default = "three")]
+    #[schema(minimum = 1)]
+    retries: u32,
+}
+
+/// A container default whose filled value breaks a member's bound.
+#[derive(Debug, Default, Schema, Deserialize)]
+#[serde(default)]
+struct Paging {
+    #[schema(minimum = 1)]
+    page: u32,
+}
+
+/// A container default whose filled value meets the member's bound.
+#[derive(Debug, Schema, Deserialize)]
+#[serde(default)]
+struct Window {
+    #[schema(minimum = 1)]
+    size: u32,
+}
+
+impl Default for Window {
+    fn default() -> Self {
+        Self { size: 10 }
+    }
+}
+
+/// A generic container, whose defaulted member's filled value the check
+/// reaches although nothing bounds `T` by `Default`.
+#[derive(Debug, Schema, Deserialize)]
+struct Envelope<T> {
+    #[serde(default)]
+    #[schema(min_items = 1)]
+    items: Vec<T>,
+}
+
+#[tokio::test]
+async fn a_member_serde_filled_is_not_refused_for_its_filled_value() {
+    admits::<Profile>(json!({})).await;
+    admits::<Paging>(json!({})).await;
+    admits::<Window>(json!({})).await;
+    admits::<Envelope<String>>(json!({})).await;
+}
+
+#[tokio::test]
+async fn a_defaulted_member_is_held_to_its_bounds_where_its_filled_value_meets_them() {
+    refuses::<Profile>(json!({ "code": "abcd" }), &["/code"]).await;
+    refuses::<Profile>(json!({ "retries": 0 }), &["/retries"]).await;
+    refuses::<Window>(json!({ "size": 0 }), &["/size"]).await;
+}
+
+/// A field and a variant serde also reads under an `alias`.
+#[derive(Debug, Schema, Deserialize)]
+struct Account {
+    #[serde(alias = "nick")]
+    #[schema(max_length = 3)]
+    handle: String,
+}
+
+#[derive(Debug, Schema, Deserialize)]
+struct Holder {
+    account: Account,
+}
+
+#[derive(Debug, Schema, Deserialize)]
+enum Shape {
+    #[serde(alias = "sq")]
+    Square {
+        #[schema(maximum = 5)]
+        side: u8,
+    },
+}
+
+#[tokio::test]
+async fn a_member_read_under_an_alias_is_reported_at_the_object_holding_it() {
+    // Which name the document used is gone once it is read, so the pointer
+    // names the object, which the document does hold.
+    refuses::<Account>(json!({ "nick": "abcd" }), &[""]).await;
+    refuses::<Account>(json!({ "handle": "abcd" }), &[""]).await;
+    refuses::<Holder>(json!({ "account": { "nick": "abcd" } }), &["/account"]).await;
+    refuses::<Shape>(json!({ "sq": { "side": 6 } }), &[""]).await;
+    admits::<Shape>(json!({ "Square": { "side": 5 } })).await;
+}
+
+/// `Form<T>` runs the same check after `serde_urlencoded` reads the body.
+#[cfg(feature = "form")]
+mod form {
+    use kynos::{
+        Schema,
+        error::rejection::BodyRejection,
+        extract::{FromRequest, body::form::Form},
+        http::{HeaderValue, Request, body::Body, header},
+    };
+    use serde::Deserialize;
+
+    #[derive(Debug, Schema, Deserialize)]
+    struct Signup {
+        #[schema(min_length = 2)]
+        name: String,
+        #[schema(maximum = 10)]
+        seats: u32,
+    }
+
+    async fn read(body: &'static str) -> Result<Signup, BodyRejection> {
+        let mut request =
+            Request::new(Body::from_bytes(bytes::Bytes::from_static(body.as_bytes())));
+        request.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/x-www-form-urlencoded"),
+        );
+        Form::<Signup>::from_request(request, &())
+            .await
+            .map(|Form(signup)| signup)
+    }
+
+    #[tokio::test]
+    async fn a_form_body_is_held_to_the_same_bounds() {
+        let signup = read("name=ab&seats=10").await.expect("inside every bound");
+        assert_eq!((signup.name.as_str(), signup.seats), ("ab", 10));
+
+        match read("name=a&seats=11").await {
+            Err(BodyRejection::Schema { failures }) => {
+                assert_eq!(
+                    failures.into_keys().collect::<Vec<_>>(),
+                    ["/name", "/seats"]
+                );
+            }
+            other => panic!("a form breaking two bounds was not refused at both: {other:?}"),
+        }
+    }
+}
