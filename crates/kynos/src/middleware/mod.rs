@@ -214,7 +214,9 @@ pub enum MiddlewareError {
 /// response depends on more than field names can express, so nothing narrows it.
 ///
 /// Every `Vary` line counts, since RFC 9110 section 5.3 lets a list field
-/// arrive split across lines, and the union is written back as one line. The
+/// arrive split across lines. When a name is added, the union is written back
+/// as one line; when every name is already present, the lines stay as they
+/// were. The
 /// merge is over bytes rather than text, so a line that is not UTF-8 survives
 /// verbatim instead of being overwritten as if it were empty.
 pub(crate) fn vary_on(fields: &mut crate::http::HeaderMap, names: &'static [&'static str]) {

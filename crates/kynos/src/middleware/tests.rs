@@ -114,6 +114,15 @@ fn a_wildcard_on_any_vary_line_absorbs_every_name_added_to_it() {
     assert_eq!(lines, [b"accept".to_vec(), b"*".to_vec()]);
 }
 
+/// Lines that already hold every name stay as they were: the merge rewrites
+/// the field only when it has a name to add.
+#[test]
+fn vary_lines_that_already_hold_every_name_are_left_as_they_were() {
+    let lines = vary_lines_after(&[b"origin", b"cookie"], &["origin"]);
+
+    assert_eq!(lines, [b"origin".to_vec(), b"cookie".to_vec()]);
+}
+
 /// A line that is not UTF-8 still names something a cache must key on, so
 /// it survives byte for byte, and so does every line beside it.
 #[test]
