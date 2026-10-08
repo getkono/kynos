@@ -136,6 +136,9 @@ impl TrustedProxies {
     }
 
     /// Also trusts these exact addresses.
+    ///
+    /// Adds nothing to a policy that names no [`ProxyHeader`], such as
+    /// [`none`](Self::none): that policy still trusts nobody.
     #[must_use]
     pub fn and_addresses(mut self, addresses: impl IntoIterator<Item = IpAddr>) -> Self {
         self.addresses.extend(addresses);
@@ -143,6 +146,9 @@ impl TrustedProxies {
     }
 
     /// Also trusts every address in these networks.
+    ///
+    /// Adds nothing to a policy that names no [`ProxyHeader`], such as
+    /// [`none`](Self::none): that policy still trusts nobody.
     #[must_use]
     pub fn and_networks(mut self, networks: impl IntoIterator<Item = (IpAddr, u8)>) -> Self {
         self.networks.extend(networks);
