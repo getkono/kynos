@@ -286,7 +286,7 @@ decision rather than a deferral.** The figures are
 ceiling at a measured value, but a ceiling is only worth setting where the
 quantity it guards is one this repository controls, and this one is mostly not:
 each delta is the codec's code *and* its dependency's — `serde_json`,
-`serde_urlencoded`, `multer`, `prost`, `async-compression` — plus the payload
+`serde_html_form`, `multer`, `prost`, `async-compression` — plus the payload
 type's two derives. A ceiling over that would fail on an upstream release that
 grew `multer` and pass through a Kynos extractor that doubled, which is the
 gate-that-cannot-fail-honestly [`performance.md`](performance.md#the-boundary)
@@ -549,7 +549,7 @@ fails the build when a crate is named outside the module that owns it.
 | compatibility | `tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `http-body` and `http-body-util` are named only at the body sites architecture.md lists | `mise run containment:check` | `enforced` |
 | compatibility | `async-compression` is named only under `middleware/compression/` and `middleware/decompression/` | `mise run containment:check` | `enforced` |
-| compatibility | `serde_urlencoded` is named only in `extract/body/form.rs`, `response/codec/form.rs` and `test/mod.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `serde_html_form` is named only in `extract/body/form.rs`, `response/codec/form.rs` and `test/mod.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `tracing` is named only under `server/` and in `middleware/trace.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `futures-core` is named only under `response/stream/` and `extract/body/json_lines/` and in `http/body.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `multer` is named only in `extract/body/multipart.rs` | `mise run containment:check` | `enforced` |

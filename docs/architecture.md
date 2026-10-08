@@ -202,7 +202,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | built |
 | Streaming bodies | `futures-core` | [`response/stream/`](../crates/kynos/src/response/stream/), [`extract/body/json_lines/`](../crates/kynos/src/extract/body/json_lines/), [`http/body.rs`](../crates/kynos/src/http/body.rs), gated on `openapi32` | built |
 | JSON | `serde_json` | ambient with `serde` | built |
-| Form codec | `serde_urlencoded` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
+| Form codec | `serde_html_form` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
 | Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | built |
 | Protobuf codec | `prost` | [`extract/body/protobuf.rs`](../crates/kynos/src/extract/body/protobuf.rs), [`response/codec/protobuf.rs`](../crates/kynos/src/response/codec/protobuf.rs) | built |
 | Scalar formats, identifiers | `uuid` | [`schema/impls/identifier.rs`](../crates/kynos/src/schema/impls/identifier.rs) | built |

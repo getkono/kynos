@@ -179,4 +179,46 @@ mod a_form_body_decodes_what_it_describes {
 
         assert_eq!(rejection.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
+
+    /// An empty number input is submitted as `name=`, which is no number; an
+    /// optional field reads it as absent rather than refusing the form.
+    #[tokio::test]
+    async fn an_empty_optional_number_is_none() {
+        #[derive(Debug, serde::Deserialize)]
+        struct Filter {
+            limit: Option<u32>,
+        }
+
+        let filter = read::<Filter>(b"limit=").await.expect("an absent number");
+
+        assert_eq!(filter.limit, None);
+    }
+
+    /// The two shapes `Form`'s documentation says are described but not
+    /// decoded, held to the 422 it promises for them.
+    #[tokio::test]
+    async fn a_nested_struct_and_a_flattened_number_are_422() {
+        #[derive(Debug, serde::Deserialize)]
+        #[allow(dead_code)]
+        struct Inner {
+            n: u32,
+        }
+        #[derive(Debug, serde::Deserialize)]
+        #[allow(dead_code)]
+        struct Nested {
+            inner: Inner,
+        }
+        #[derive(Debug, serde::Deserialize)]
+        #[allow(dead_code)]
+        struct Flattened {
+            #[serde(flatten)]
+            inner: Inner,
+        }
+
+        let nested = read::<Nested>(b"n=1").await.expect_err("not decoded");
+        let flattened = read::<Flattened>(b"n=1").await.expect_err("not decoded");
+
+        assert_eq!(nested.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(flattened.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
 }
