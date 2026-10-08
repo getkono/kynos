@@ -40,7 +40,7 @@ pub(crate) struct Scope {
     /// what a proposed method is matched against.
     covered: Vec<Method>,
     /// The methods this scope advertises: the ones it covers, unless
-    /// `allow_methods` overrode them.
+    /// `allow_methods` overrode them, less any the path serves under no `Cors`.
     advertised: Vec<Method>,
 }
 
@@ -107,12 +107,27 @@ impl Preflight {
     /// `scopes` is non-empty: a path with no CORS on it gets no `Preflight` at
     /// all.
     pub(crate) fn new(
-        scopes: Vec<Scope>,
+        mut scopes: Vec<Scope>,
         served: Vec<Method>,
         allow: Option<HeaderValue>,
         fallback: FallbackPolicy,
     ) -> Self {
         debug_assert!(!scopes.is_empty(), "a preflight with nothing covering it");
+
+        // A browser caches every method an approved preflight advertises for
+        // the origin and URL, and sends a cached one with no preflight of its
+        // own. So no override advertises a method the path serves under no
+        // `Cors`, which `scope_for` would have refused had it been asked.
+        let uncovered: Vec<Method> = served
+            .iter()
+            .copied()
+            .filter(|method| !scopes.iter().any(|scope| scope.covered.contains(method)))
+            .collect();
+        for scope in &mut scopes {
+            scope
+                .advertised
+                .retain(|method| !uncovered.contains(method));
+        }
 
         Self {
             scopes,

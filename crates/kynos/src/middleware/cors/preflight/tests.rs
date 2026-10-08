@@ -68,11 +68,8 @@ fn an_override_never_advertises_a_served_method_no_scope_covers() {
         ..named()
     };
 
-    let response = partly_covered(reader).answer(&asking(
-        Some("https://app.example.com"),
-        Some("GET"),
-        None,
-    ));
+    let response =
+        partly_covered(reader).answer(&asking(Some("https://app.example.com"), Some("GET"), None));
 
     assert_eq!(
         field(&response, header::ACCESS_CONTROL_ALLOW_METHODS).as_deref(),

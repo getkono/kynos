@@ -814,7 +814,9 @@ does, since it is answered once per path. So the answer is assembled per scope:
 honour it. A proposed method no scope covers is refused with no CORS header at
 all where the path serves it under no `Cors`, whatever an `allow_methods`
 override names: approving it would let a request's side effect run behind a
-response the browser cannot read. A method the path does not serve is answered
+response the browser cannot read. For the same reason no answer advertises such
+a method, since a browser caches every method an approved preflight lists and
+sends a cached one with no preflight. A method the path does not serve is answered
 by the first scope whose override names it, and refused where none does.
 
 **Mount `Cors` outermost.** A short-circuiting interceptor mounted *outside* it

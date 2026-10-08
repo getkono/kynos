@@ -333,7 +333,7 @@ impl<D> Cors<D> {
     /// sibling scope's methods are its own to advertise. Overriding is for a
     /// deployment that fronts routes Kynos does not serve: a preflight
     /// proposing a method the path serves under no `Cors` is refused whatever
-    /// this list names.
+    /// this list names, and no preflight advertises such a method.
     #[must_use]
     pub fn allow_methods<I>(mut self, methods: I) -> Self
     where
