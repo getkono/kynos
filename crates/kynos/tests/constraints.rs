@@ -363,13 +363,16 @@ impl Default for Window {
     }
 }
 
-/// A generic container, whose defaulted member's filled value the check
-/// reaches although nothing bounds `T` by `Default`.
+/// A generic container: `Vec<T>` is `Default` whatever `T` is, so the check
+/// reaches the value `items` is filled with, and `extra`'s is out of reach
+/// where nothing bounds `T` by `Default`, which still compiles.
 #[derive(Debug, Schema, Deserialize)]
 struct Envelope<T> {
     #[serde(default)]
     #[schema(min_items = 1)]
     items: Vec<T>,
+    #[serde(default)]
+    extra: T,
 }
 
 #[tokio::test]

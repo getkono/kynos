@@ -9,23 +9,38 @@
 //! payload sits under its name when externally tagged, under the content
 //! member when adjacently tagged, and beside the tag when internally tagged.
 //!
+//! A member serde reads under an `alias` as well is reported at the object
+//! holding it instead, since which name the document used is gone once it is
+//! read. A member serde fills from a `default` when the document leaves it
+//! out is reported only where the value it would be filled with meets its
+//! bounds: where that value breaks them, a value breaking them may be one the
+//! document never sent, which the emitted schema, not listing the member in
+//! `required`, admits.
+//!
 //! `pattern` is described and not checked; `kynos::schema::constraints` says
 //! why.
 
 use super::{
     Container, DataEnum, DeriveInput, Field, Fields, TokenStream2, Variant,
-    attributes::{Bound, bounds, field_read_name, is_described, is_phantom, is_unit_like},
-    described_variants, is_flattened, positional_members, quote, transparent_member,
-    variant_read_name,
+    aliases::{read_names, variants_read_names},
+    attributes::{Bound, bounds, is_described, is_phantom, is_unit_like},
+    described_variants, is_flattened, positional_members, quote, skip_value, string_value,
+    transparent_member,
 };
 
 use proc_macro2::Span;
-use syn::{Data, Ident, Index, LitStr};
+use syn::{Data, ExprPath, Ident, Index, LitStr};
 
 /// The body of `check_constraints`, which reads `self`, `at` and `violations`.
 pub(super) fn body(input: &DeriveInput, container: &Container) -> TokenStream2 {
     match &input.data {
-        Data::Struct(data) => struct_check(&data.fields, container),
+        Data::Struct(data) => {
+            let default = container
+                .default
+                .then(|| serde_default(&input.attrs))
+                .flatten();
+            struct_check(&data.fields, container, default.as_ref())
+        }
         Data::Enum(data) => enum_check(data, container),
         // Refused at the top of `expand_inner`.
         Data::Union(_) => TokenStream2::new(),
@@ -96,19 +111,95 @@ pub(super) fn kinds(
 enum Step {
     /// Where its parent is.
     Here,
-    /// Under a member name.
-    Member(String),
+    /// Under a member name, or under any of several, the read name first.
+    Member(Vec<String>),
     /// At an array position.
     Index(usize),
 }
 
+/// Where serde takes the value it fills a missing member with.
+enum DefaultFrom {
+    /// A bare `default`: the type's `Default`.
+    Default,
+    /// `default = "path"`: what the function at `path` returns.
+    Path(ExprPath),
+}
+
+/// The value serde would fill a missing member with, as an expression.
+struct Filled {
+    /// An `Option` of the value the default is taken from: `None` where the
+    /// expansion cannot name it.
+    value: TokenStream2,
+    /// The member's value, reached from `__kynos_filled`, a reference to the
+    /// unwrapped [`value`](Self::value).
+    project: TokenStream2,
+}
+
+/// The `default` in a `#[serde(...)]` list, and where it takes its value.
+fn serde_default(attrs: &[syn::Attribute]) -> Option<DefaultFrom> {
+    let mut found = None;
+    for attr in attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        // Shape errors in serde's own attribute are serde's to report.
+        let _ = attr.parse_nested_meta(|meta| {
+            if !meta.path.is_ident("default") {
+                return skip_value(&meta);
+            }
+            found = Some(match string_value(&meta)? {
+                Some(path) => DefaultFrom::Path(syn::parse_str(&path)?),
+                None => DefaultFrom::Default,
+            });
+            Ok(())
+        });
+    }
+    found
+}
+
+/// What serde fills a member with when the document leaves it out: its own
+/// `default`, else the container's, read through `access` from the value the
+/// container's default gives. `None` where serde fills nothing.
+fn filled(
+    field: &Field,
+    container: Option<&DefaultFrom>,
+    access: Option<&TokenStream2>,
+) -> Option<Filled> {
+    let value = |from: &DefaultFrom, ty: TokenStream2| match from {
+        DefaultFrom::Default => quote! {
+            (&&::kynos::__private::constraints::Filled::<#ty>::new()).filled()
+        },
+        DefaultFrom::Path(path) => quote!(::core::option::Option::Some(#path())),
+    };
+
+    if let Some(own) = serde_default(&field.attrs) {
+        let ty = &field.ty;
+        return Some(Filled {
+            value: value(&own, quote!(#ty)),
+            project: quote!(__kynos_filled),
+        });
+    }
+    let (from, access) = container.zip(access)?;
+    Some(Filled {
+        value: value(from, quote!(Self)),
+        project: quote!(&__kynos_filled.#access),
+    })
+}
+
 /// A struct's members, read through `self`.
-fn struct_check(fields: &Fields, container: &Container) -> TokenStream2 {
+///
+/// A transparent struct and a newtype are their member on the wire, which a
+/// document therefore cannot leave out, so serde fills nothing there.
+fn struct_check(
+    fields: &Fields,
+    container: &Container,
+    default: Option<&DefaultFrom>,
+) -> TokenStream2 {
     if container.transparent {
         return transparent_member(fields)
             .map(|field| {
                 let access = member_access(fields, field);
-                member(&quote!(&self.#access), field, &Step::Here)
+                member(&quote!(&self.#access), field, &Step::Here, None)
             })
             .unwrap_or_default();
     }
@@ -120,13 +211,19 @@ fn struct_check(fields: &Fields, container: &Container) -> TokenStream2 {
             .filter(|field| is_checked(field))
             .map(|field| {
                 let access = member_access(fields, field);
-                member(&quote!(&self.#access), field, &named_step(field, container))
+                let filled = filled(field, default, Some(&access));
+                member(
+                    &quote!(&self.#access),
+                    field,
+                    &named_step(field, container),
+                    filled.as_ref(),
+                )
             })
             .collect(),
         Fields::Unnamed(unnamed) if unnamed.unnamed.len() == 1 => {
             let field = &unnamed.unnamed[0];
             if is_checked(field) {
-                member(&quote!(&self.0), field, &Step::Here)
+                member(&quote!(&self.0), field, &Step::Here, None)
             } else {
                 TokenStream2::new()
             }
@@ -137,7 +234,13 @@ fn struct_check(fields: &Fields, container: &Container) -> TokenStream2 {
             .filter(|(_, field)| is_checked(field))
             .map(|(position, field)| {
                 let access = member_access(fields, field);
-                member(&quote!(&self.#access), field, &Step::Index(position))
+                let filled = filled(field, default, Some(&access));
+                member(
+                    &quote!(&self.#access),
+                    field,
+                    &Step::Index(position),
+                    filled.as_ref(),
+                )
             })
             .collect(),
         Fields::Unit => TokenStream2::new(),
@@ -147,10 +250,13 @@ fn struct_check(fields: &Fields, container: &Container) -> TokenStream2 {
 /// An enum's members, read through a `match` on `self` with one arm per
 /// variant that carries any.
 fn enum_check(data: &DataEnum, container: &Container) -> TokenStream2 {
-    let arms: Vec<TokenStream2> = described_variants(data)
+    let variants = described_variants(data);
+    let names = variants_read_names(&variants, container);
+    let arms: Vec<TokenStream2> = variants
         .into_iter()
-        .filter(|variant| !is_unit_like(&variant.fields))
-        .map(|variant| arm(variant, container))
+        .zip(names)
+        .filter(|(variant, _)| !is_unit_like(&variant.fields))
+        .map(|(variant, names)| arm(variant, &names, container))
         .collect();
 
     if arms.is_empty() {
@@ -167,21 +273,17 @@ fn enum_check(data: &DataEnum, container: &Container) -> TokenStream2 {
 }
 
 /// One variant's arm: a pattern binding each checked member, and the checks.
-fn arm(variant: &Variant, container: &Container) -> TokenStream2 {
+///
+/// `names` are the names serde reads the variant under, its read name first.
+fn arm(variant: &Variant, names: &[String], container: &Container) -> TokenStream2 {
     let ident = &variant.ident;
     let fields = container.fields_of(variant);
 
     // Where the payload sits, relative to the enum's own pointer.
     let payload = match (&container.tag, &container.content) {
-        (Some(_), Some(content)) => {
-            let content = LitStr::new(content, Span::call_site());
-            quote!(let at = at.member(#content);)
-        }
-        (Some(_), None) => TokenStream2::new(),
-        (None, _) => {
-            let name = LitStr::new(&variant_read_name(variant, container), Span::call_site());
-            quote!(let at = at.member(#name);)
-        }
+        (Some(_), Some(content)) => Step::Member(vec![content.clone()]),
+        (Some(_), None) => Step::Here,
+        (None, _) => Step::Member(names.to_vec()),
     };
 
     let (pattern, checks) = match &variant.fields {
@@ -199,6 +301,7 @@ fn arm(variant: &Variant, container: &Container) -> TokenStream2 {
                     &quote!(#binding),
                     field,
                     &named_step(field, &fields),
+                    filled(field, None, None).as_ref(),
                 ));
             }
             (quote!(Self::#ident { #(#bindings,)* .. }), checks)
@@ -213,12 +316,12 @@ fn arm(variant: &Variant, container: &Container) -> TokenStream2 {
                 match on_wire.filter(|_| is_checked(field)) {
                     Some(index) => {
                         let binding = binding(position);
-                        let step = if newtype {
-                            Step::Here
+                        let (step, filled) = if newtype {
+                            (Step::Here, None)
                         } else {
-                            Step::Index(index)
+                            (Step::Index(index), filled(field, None, None))
                         };
-                        checks.push(member(&quote!(#binding), field, &step));
+                        checks.push(member(&quote!(#binding), field, &step, filled.as_ref()));
                         bindings.push(quote!(#binding));
                     }
                     None => bindings.push(quote!(_)),
@@ -233,11 +336,9 @@ fn arm(variant: &Variant, container: &Container) -> TokenStream2 {
         return TokenStream2::new();
     }
 
+    let checks = located(&payload, &quote!({ #(#checks)* }));
     quote! {
-        #pattern => {
-            #payload
-            #(#checks)*
-        }
+        #pattern => #checks
     }
 }
 
@@ -255,7 +356,7 @@ fn named_step(field: &Field, container: &Container) -> Step {
     if is_flattened(field) {
         Step::Here
     } else {
-        Step::Member(field_read_name(field, container))
+        Step::Member(read_names(field, container))
     }
 }
 
@@ -278,18 +379,53 @@ fn member_access(fields: &Fields, field: &Field) -> TokenStream2 {
     quote!(#index)
 }
 
-/// One member's checks: each of its own bounds, then its value's.
-fn member(value: &TokenStream2, field: &Field, step: &Step) -> TokenStream2 {
-    let ty = &field.ty;
-    let locate = match step {
-        Step::Here => TokenStream2::new(),
-        Step::Member(name) => {
-            let name = LitStr::new(name, Span::call_site());
-            quote!(let at = at.member(#name);)
+/// `checks`, a block reading `at` and `violations`, run with `at` moved by
+/// `step`.
+///
+/// A member under several names is checked from the member itself and
+/// reported at its parent, which is where `at` already is.
+fn located(step: &Step, checks: &TokenStream2) -> TokenStream2 {
+    match step {
+        Step::Here => checks.clone(),
+        Step::Member(names) if names.len() > 1 => {
+            let names = names
+                .iter()
+                .map(|name| LitStr::new(name, Span::call_site()));
+            quote! {
+                {
+                    ::kynos::__private::constraints::aliased(
+                        at,
+                        &[#(#names),*],
+                        violations,
+                        |at, violations| #checks,
+                    );
+                }
+            }
         }
-        Step::Index(index) => quote!(let at = at.index(#index);),
-    };
+        Step::Member(names) => {
+            let locate = names.first().map(|name| {
+                let name = LitStr::new(name, Span::call_site());
+                quote!(let at = at.member(#name);)
+            });
+            quote!({ #locate #checks })
+        }
+        Step::Index(index) => quote!({ let at = at.index(#index); #checks }),
+    }
+}
 
+/// One member's checks: each of its own bounds, then its value's.
+///
+/// A member serde fills when the document leaves it out is checked a second
+/// time, on the value it would be filled with, only where its own value broke
+/// something; what its own value broke is reported only where the filled
+/// value breaks nothing. The success path pays for neither.
+fn member(
+    value: &TokenStream2,
+    field: &Field,
+    step: &Step,
+    filled: Option<&Filled>,
+) -> TokenStream2 {
+    let ty = &field.ty;
     let keywords = bounds(field)
         .into_iter()
         .filter(|bound| bound.key != "pattern")
@@ -299,13 +435,46 @@ fn member(value: &TokenStream2, field: &Field, step: &Step) -> TokenStream2 {
                 ::kynos::__private::constraints::#key::<#ty>(value, #bound at, violations);
             }
         });
+    let check = quote! {
+        #(#keywords)*
+        ::kynos::schema::Schema::check_constraints(value, at, violations);
+    };
 
-    quote! {
-        {
-            let value: &#ty = #value;
-            #locate
-            #(#keywords)*
-            ::kynos::schema::Schema::check_constraints(value, at, violations);
-        }
-    }
+    let checks = match filled {
+        None => quote! {
+            {
+                let value: &#ty = #value;
+                #check
+            }
+        },
+        Some(Filled {
+            value: filled,
+            project,
+        }) => quote! {
+            {
+                #[allow(unused_imports)]
+                use ::kynos::__private::constraints::{ByDefault as _, Unfilled as _};
+
+                let __kynos_check = |
+                    value: &#ty,
+                    violations: &mut ::kynos::schema::constraints::Violations,
+                | {
+                    #check
+                };
+                let mut __kynos_sent = ::kynos::schema::constraints::Violations::new();
+                __kynos_check(#value, &mut __kynos_sent);
+                if !__kynos_sent.is_empty() {
+                    if let ::core::option::Option::Some(__kynos_filled) = &#filled {
+                        let mut __kynos_own = ::kynos::schema::constraints::Violations::new();
+                        __kynos_check(#project, &mut __kynos_own);
+                        if __kynos_own.is_empty() {
+                            ::kynos::__private::constraints::absorb(violations, __kynos_sent);
+                        }
+                    }
+                }
+            }
+        },
+    };
+
+    located(step, &checks)
 }

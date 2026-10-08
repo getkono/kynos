@@ -3,6 +3,8 @@
 //! Each applies only to a value of its kind, as its JSON Schema keyword does,
 //! so a `None` behind any of the kind traits satisfies it.
 
+use std::marker::PhantomData;
+
 use crate::schema::constraints::{Items, Numeric, Pointer, Textual, UniqueItems, Violations};
 
 #[doc(hidden)]
@@ -150,5 +152,103 @@ pub fn unique_items<T: UniqueItems + ?Sized>(
 ) {
     if value.has_unique_items() == Some(false) {
         violations.report(at, "must not hold the same item twice");
+    }
+}
+
+/// Checks a member serde reads under any of `names`, its read name first,
+/// and reports what `check` finds at `at`, the object holding the member.
+///
+/// Which name the document used is gone once it is read, so a pointer under
+/// any one of them may name a member the document does not hold. `check`
+/// reports relative to [`Pointer::root`], which is the member, and the
+/// failure at the inner pointer that sorts first is the one kept, its
+/// location written into the detail.
+#[doc(hidden)]
+pub fn aliased(
+    at: Pointer<'_>,
+    names: &[&str],
+    violations: &mut Violations,
+    check: impl FnOnce(Pointer<'_>, &mut Violations),
+) {
+    let mut inner = Violations::new();
+    check(Pointer::root(), &mut inner);
+    let Some((pointer, detail)) = inner.into_failures().into_iter().next() else {
+        return;
+    };
+
+    let mut member = String::from("the member read as ");
+    for (index, name) in names.iter().enumerate() {
+        if index > 0 {
+            member.push_str(if index + 1 == names.len() {
+                " or "
+            } else {
+                ", "
+            });
+        }
+        member.push('`');
+        member.push_str(name);
+        member.push('`');
+    }
+    if pointer.is_empty() {
+        violations.report(at, format!("{member} {detail}"));
+    } else {
+        violations.report(
+            at,
+            format!("{member} breaks a bound at `{pointer}`: {detail}"),
+        );
+    }
+}
+
+/// Records `sent` into `violations`: what a defaulted member's value broke,
+/// once the value serde fills that member with is known to meet its bounds.
+#[doc(hidden)]
+pub fn absorb(violations: &mut Violations, sent: Violations) {
+    violations.absorb(sent);
+}
+
+/// The value serde fills a missing `T` with through `#[serde(default)]`:
+/// `T::default()` where the call site can prove `T: Default`, and nothing
+/// where it cannot, as in a generic container whose parameter carries no
+/// `Default` bound.
+///
+/// Selected by method resolution on `(&&Filled::<T>::new()).filled()` with
+/// [`ByDefault`] and [`Unfilled`] in scope: [`ByDefault`]'s implementation
+/// is reached first and applies only under `T: Default`.
+#[doc(hidden)]
+pub struct Filled<T>(PhantomData<fn() -> T>);
+
+impl<T> Filled<T> {
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<T> std::fmt::Debug for Filled<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Filled")
+    }
+}
+
+#[doc(hidden)]
+pub trait ByDefault<T> {
+    fn filled(&self) -> Option<T>;
+}
+
+impl<T: Default> ByDefault<T> for &Filled<T> {
+    fn filled(&self) -> Option<T> {
+        Some(T::default())
+    }
+}
+
+#[doc(hidden)]
+pub trait Unfilled<T> {
+    fn filled(&self) -> Option<T>;
+}
+
+impl<T> Unfilled<T> for Filled<T> {
+    fn filled(&self) -> Option<T> {
+        None
     }
 }

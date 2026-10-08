@@ -252,6 +252,14 @@ impl Violations {
         }
     }
 
+    /// Records each of `other`'s failures at a location nothing was reported
+    /// at yet, as [`report`](Self::report) keeps the first per location.
+    pub(crate) fn absorb(&mut self, other: Self) {
+        for (pointer, detail) in other.failures {
+            self.failures.entry(pointer).or_insert(detail);
+        }
+    }
+
     /// Whether nothing was reported.
     #[must_use]
     pub fn is_empty(&self) -> bool {
