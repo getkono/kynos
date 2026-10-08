@@ -188,9 +188,9 @@ mod content_type {
         );
     }
 
-    /// Form syntax admits no malformed input, so a pair that does not fit
-    /// the type is the only way a form body fails — and that is a 422 keyed
-    /// by the root pointer.
+    /// Form syntax admits no malformed input, so past a pair that is not
+    /// UTF-8, a pair that does not fit the type is the only way a form body
+    /// fails — and that is a 422 keyed by the root pointer.
     #[tokio::test]
     async fn a_form_body_that_does_not_fit_is_422() {
         #[derive(Debug, serde::Deserialize)]
