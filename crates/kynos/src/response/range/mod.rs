@@ -442,12 +442,19 @@ mod tests;
 ///
 /// One place, so the description and the deliverer cannot disagree about which
 /// statuses exist. The set is exactly what section 14 and section 13 allow a
-/// ranged GET or HEAD to answer with: 200, 206, 304 and 416, plus the 400 an
+/// ranged GET or HEAD to answer with: 200, 206, 304, 412 and 416, plus the 400 an
 /// unreadable `Range` never produces — section 14.2 says an unusable field is
 /// ignored, so there is no 400 here and declaring one would be a promise
 /// nothing keeps.
+///
+/// The 416 is [`RangeRejection`]'s own description, problem document and
+/// `Content-Range` included, since that rejection is what `deliver` answers an
+/// unsatisfiable `Range` with.
 #[must_use]
-pub(crate) fn delivery_responses(media_type: &str) -> kynos_openapi::Responses {
+pub(crate) fn delivery_responses(
+    registry: &mut Registry,
+    media_type: &str,
+) -> kynos_openapi::Responses {
     use kynos_openapi::{Header, MediaType, Response as OpenApiResponse, Schema, StatusPattern};
 
     let content = || MediaType::new(Schema::Object(Box::default()));
@@ -466,7 +473,11 @@ pub(crate) fn delivery_responses(media_type: &str) -> kynos_openapi::Responses {
             206,
             OpenApiResponse::with_content("the part the request asked for", media_type, content()),
         )
-        .with(304, OpenApiResponse::new("the client's copy is current"));
+        .with(304, OpenApiResponse::new("the client's copy is current"))
+        .with(
+            412,
+            OpenApiResponse::new("the representation is not the one the client's copy came from"),
+        );
 
     for (status, name, header) in [
         (200, "Accept-Ranges", string()),
@@ -492,6 +503,10 @@ pub(crate) fn delivery_responses(media_type: &str) -> kynos_openapi::Responses {
                 .insert(name.to_owned(), kynos_openapi::RefOr::Item(header));
         }
     }
+
+    responses
+        .responses
+        .extend(<RangeRejection as Responses>::responses(registry).responses);
 
     responses
 }

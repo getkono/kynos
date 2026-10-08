@@ -252,5 +252,28 @@ pub(crate) fn matches(field: &HeaderValue, current: &str) -> bool {
     split(text).any(|candidate| weak_match(candidate, current))
 }
 
+/// Whether an `If-Match` `field` holds for a representation tagged `current`,
+/// per RFC 9110 section 13.1.1.
+///
+/// The [strong comparison](strong_match) applies, which section 13.1.1 asks of
+/// an origin server outright: `If-Match` guards against acting on a
+/// representation other than the one the client saw, so a weak tag — on either
+/// side — satisfies nothing. `*` holds wherever a current representation
+/// exists, which every caller has already established by reaching here, so it
+/// holds even for a representation with no tag (`current` is `None`). A field
+/// that is not visible ASCII names nothing.
+#[must_use]
+pub(crate) fn matches_strongly(field: &HeaderValue, current: Option<&str>) -> bool {
+    let Ok(text) = field.to_str() else {
+        return false;
+    };
+
+    if text.trim() == ANY {
+        return true;
+    }
+
+    current.is_some_and(|current| split(text).any(|candidate| strong_match(candidate, current)))
+}
+
 #[cfg(test)]
 mod tests;
