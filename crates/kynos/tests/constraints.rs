@@ -339,6 +339,11 @@ struct Profile {
     #[serde(default = "three")]
     #[schema(minimum = 1)]
     retries: u32,
+    /// The filled value breaks `min_length` alone, so a value breaking
+    /// `max_length` was sent.
+    #[serde(default)]
+    #[schema(min_length = 1, max_length = 3)]
+    label: String,
 }
 
 /// A container default whose filled value breaks a member's bound.
@@ -387,6 +392,7 @@ async fn a_member_serde_filled_is_not_refused_for_its_filled_value() {
 async fn a_defaulted_member_is_held_to_its_bounds_where_its_filled_value_meets_them() {
     refuses::<Profile>(json!({ "code": "abcd" }), &["/code"]).await;
     refuses::<Profile>(json!({ "retries": 0 }), &["/retries"]).await;
+    refuses::<Profile>(json!({ "label": "abcdef" }), &["/label"]).await;
     refuses::<Window>(json!({ "size": 0 }), &["/size"]).await;
 }
 
