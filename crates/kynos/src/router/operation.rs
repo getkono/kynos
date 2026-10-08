@@ -138,16 +138,14 @@ impl OperationCx<'_> {
         self.operation.request_body = Some(RefOr::Item(body));
     }
 
-    /// Adds a security requirement.
+    /// Sets the operation's security: the whole list of alternatives, once.
     ///
-    /// Repeating a requirement already declared is a no-op: a list of
-    /// requirements is satisfied when any one of them is, so a duplicate adds
-    /// nothing but noise.
-    pub fn add_security(&mut self, requirement: kynos_openapi::SecurityRequirement) {
-        let declared = self.operation.security.get_or_insert_with(Vec::new);
-        if !declared.contains(&requirement) {
-            declared.push(requirement);
-        }
+    /// # Panics
+    ///
+    /// Panics if already set: a handler takes one [`Guard`](crate::security::Guard).
+    pub fn set_security(&mut self, requirements: Vec<kynos_openapi::SecurityRequirement>) {
+        let previous = self.operation.security.replace(requirements);
+        assert!(previous.is_none(), "its security is already set");
     }
 
     /// Registers a security scheme under `components`.

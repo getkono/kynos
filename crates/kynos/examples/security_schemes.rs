@@ -14,7 +14,7 @@
 //! router built with a context implementing no `Authenticates<S>` does not
 //! compile — in the same way, and at the same place, as a missing dependency.
 //!
-//! Five things are worth noticing:
+//! Six things are worth noticing:
 //!
 //! * **The scheme's kind is in the attribute, not in a string somewhere.** A
 //!   misspelled kind is a compile error, and the grammar nests the kind so that
@@ -39,6 +39,11 @@
 //!   implementations, so the set of schemes an application supports is visible
 //!   in one place rather than spread across the handlers requiring them. Only
 //!   one of them verifies for real; the other six say so in their name.
+//! * **An operation takes one guard.** A second credential argument does not
+//!   compile, because both would run while the description listed them as
+//!   alternatives. `/exports` accepts either of two schemes through `AnyOf`,
+//!   and `/partners/settlements` demands two together through `AllOf`: the
+//!   combination is the guard's type, so it is what runs and what is declared.
 //!
 //! The challenge is declared on the scheme rather than on the authenticator, so
 //! the `WWW-Authenticate` a client receives and the one the description
@@ -67,6 +72,7 @@ use kynos::{
         Authenticates, Authenticator,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
         carrier::{BearerToken, Carries, Credentials},
+        requirement::{AllOf, AnyOf, Either2},
         schemes::{Basic, MutualTls},
     },
     server::Server,
@@ -425,6 +431,31 @@ async fn reports(caller: Scoped<AccessToken, ReadReports>) -> NoContent {
     NoContent
 }
 
+/// Exports data for whoever is calling, a machine or a person.
+///
+/// `AnyOf` declares `security: [{ServiceKey: []}, {AccessToken: []}]`, which
+/// OpenAPI reads as "either", and checks them in that order: the first that
+/// authenticates wins, and the credential says which one it was.
+#[kynos::get("/exports")]
+async fn exports(caller: Auth<AnyOf<(ServiceKey, AccessToken)>>) -> NoContent {
+    match caller.into_inner() {
+        Either2::First(key) => drop(key),
+        Either2::Second(claims) => drop(claims.subject),
+    }
+    NoContent
+}
+
+/// Settles a partner's account, which needs both its certificate and a token.
+///
+/// `AllOf` declares the single requirement `[{MutualTls: [], AccessToken: []}]`,
+/// which OpenAPI reads as "both" — exactly what the guard enforces.
+#[kynos::post("/partners/settlements")]
+async fn settlement(caller: Auth<AllOf<(MutualTls, AccessToken)>>) -> NoContent {
+    let (certificate, claims) = caller.into_inner();
+    let _ = (certificate, claims.subject);
+    NoContent
+}
+
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
     let router = Router::<App>::new()
@@ -443,6 +474,8 @@ async fn main() -> kynos::Result<()> {
             delegated_users,
             federated_me,
             reports,
+            exports,
+            settlement,
         ]);
 
     let document = router.openapi()?;

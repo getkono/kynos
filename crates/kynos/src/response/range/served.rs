@@ -1,8 +1,9 @@
 //! Delivering a representation from a [`ByteSource`].
 //!
 //! The whole of RFC 9110's conditional-and-ranged algorithm for GET and HEAD,
-//! in the order the specification puts it: evaluate the preconditions, then the
-//! `Range` field, then send.
+//! in the order section 13.2.2 puts it: `If-Match`, else `If-Unmodified-Since`;
+//! then `If-None-Match`, else `If-Modified-Since`; then `If-Range` and the
+//! `Range` field it guards; then send.
 //!
 //! # Why the order is not a detail
 //!
@@ -152,7 +153,17 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
     pub async fn deliver(self, conditions: &Conditions) -> Result<Delivery<M>, S::Error> {
         let complete_length = self.source.complete_length().await?;
 
-        // Section 13.1: preconditions first, and `If-None-Match` before
+        // Section 13.2.2 steps 1 and 2: the lost-update preconditions before
+        // anything else, so a resume against a representation that has since
+        // changed is refused outright rather than answered with a part of the
+        // new one.
+        if self.precondition_failed(conditions) {
+            let mut response = Response::new(crate::http::body::Body::empty());
+            *response.status_mut() = StatusCode::PRECONDITION_FAILED;
+            return Ok(Delivery::new(response));
+        }
+
+        // Steps 3 and 4: the cache validations, and `If-None-Match` before
         // `If-Modified-Since` -- section 13.1.3 says the date is not evaluated
         // at all when the resource has an entity tag and the request carries
         // one.
@@ -278,6 +289,47 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
             .and_then(|value| value.to_str().ok().map(str::to_owned))
     }
 
+    /// Whether section 13.2.2's first two steps refuse the request.
+    ///
+    /// `If-Match` if the request carries one, and `If-Unmodified-Since` only
+    /// where it does not: section 13.1.4 says a recipient *MUST ignore
+    /// If-Unmodified-Since if the request contains an If-Match header field*.
+    fn precondition_failed(&self, conditions: &Conditions) -> bool {
+        // Section 13.1.1, read across every field line: a list-based field
+        // split over two lines is still one list.
+        let mut if_match = conditions
+            .fields
+            .get_all(header::IF_MATCH)
+            .iter()
+            .peekable();
+        if if_match.peek().is_some() {
+            let current = self.tag();
+            return !if_match
+                .any(|field| crate::http::etag::matches_strongly(field, current.as_deref()));
+        }
+
+        // Section 13.1.4: ignored where the value is not one HTTP-date --
+        // including a list of them, which two field lines are -- and where the
+        // representation has no modification date to compare.
+        let mut lines = conditions
+            .fields
+            .get_all(header::IF_UNMODIFIED_SINCE)
+            .iter();
+        let (Some(line), None) = (lines.next(), lines.next()) else {
+            return false;
+        };
+        let (Some(modified), Some(since)) = (
+            self.last_modified,
+            line.to_str().ok().and_then(crate::http::date::parse),
+        ) else {
+            return false;
+        };
+
+        // The condition holds where the last change is at or before the date
+        // sent, at the field's one-second resolution.
+        seconds(modified) > seconds(since)
+    }
+
     /// Whether section 13.1's preconditions say the client's copy is current.
     fn unmodified(&self, conditions: &Conditions) -> bool {
         // Section 13.1.3: "A recipient MUST ignore If-Modified-Since if the
@@ -363,18 +415,18 @@ impl<M: MediaType> IntoResponse for Delivery<M> {
 
 impl<M: MediaType> crate::response::Responses for Delivery<M> {
     fn responses(registry: &mut crate::schema::registry::Registry) -> kynos_openapi::Responses {
-        let _ = registry;
-        crate::response::range::delivery_responses(M::MEDIA_TYPE)
+        crate::response::range::delivery_responses(registry, M::MEDIA_TYPE)
     }
 }
 
 /// The request fields a ranged delivery reads.
 ///
-/// One extractor rather than four, because the four are evaluated together and
+/// One extractor rather than six, because the six are evaluated together and
 /// in an order the specification fixes — a handler that took them separately
 /// could apply them in the wrong one. Taking this argument is also what puts
-/// `Range`, `If-Range`, `If-None-Match` and `If-Modified-Since` in the emitted
-/// description, so an operation that answers a resume says so.
+/// `Range`, `If-Range`, `If-Match`, `If-Unmodified-Since`, `If-None-Match` and
+/// `If-Modified-Since` in the emitted description, so an operation that answers
+/// a resume says so.
 #[derive(Clone, Debug)]
 pub struct Conditions {
     /// The method, which decides whether a `Range` is defined at all and
@@ -387,9 +439,10 @@ pub struct Conditions {
 impl<C: Sync> crate::extract::FromRequestParts<C> for Conditions {
     type Rejection = std::convert::Infallible;
 
-    /// Infallible. Every unusable value among these four is one the
-    /// specification answers by ignoring — section 14.2 for `Range` and
-    /// `If-Range`, section 13.1.3 for a malformed `If-Modified-Since` — so
+    /// Infallible. Every unusable value among these six is one the
+    /// specification answers by ignoring or by a failed condition — section
+    /// 14.2 for `Range` and `If-Range`, sections 13.1.3 and 13.1.4 for a
+    /// malformed date, and section 13.1.1 for an `If-Match` naming no tag — so
     /// there is no request a client can send that fails to produce a value.
     async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
         Ok(Self {
@@ -405,6 +458,15 @@ impl crate::extract::describe::Describe for Conditions {
         operation.add_parameter(crate::response::range::conditional_parameter());
 
         for (name, description) in [
+            (
+                "If-Match",
+                "The entity tag the client's copy was taken from, per RFC 9110 section 13.1.1",
+            ),
+            (
+                "If-Unmodified-Since",
+                "The date the client's copy carries, refused if the representation changed since, \
+                 per RFC 9110 section 13.1.4",
+            ),
             (
                 "If-None-Match",
                 "The entity tag the client already holds, per RFC 9110 section 13.1.2",

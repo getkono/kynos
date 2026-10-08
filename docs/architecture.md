@@ -56,7 +56,7 @@ is checkable, so the sites are enumerated:
 | `middleware/compression/` | `tokio::io::{AsyncRead, AsyncWrite, ReadBuf}` | `async-compression`'s encoders are written against tokio's I/O traits; no byte here crosses a socket |
 | `middleware/decompression/` | `tokio::io::{AsyncRead, ReadBuf}` | the same traits for the same reason, in the other direction: a client-compressed request body is decoded before an extractor sees it, which is as far from a socket as the encoders are |
 | `response/stream/sse.rs` | `tokio::time::{Instant, Sleep, sleep}` | a keep-alive is a property of one body, and the connection driver cannot know a body is an event stream |
-| `router/assets/fs/` | `tokio::fs::{metadata, read, File}`, `tokio::io::{AsyncReadExt, AsyncSeekExt}` | which file a request wants is not known until routing has chosen the operation, and the read is the operation; a byte range seeks to what it asked for rather than reading the file and discarding most of it |
+| `router/assets/fs/` | `tokio::fs::{metadata, symlink_metadata, read, File}`, `tokio::io::{AsyncReadExt, AsyncSeekExt}` | which file a request wants is not known until routing has chosen the operation, and the read is the operation; a byte range seeks to what it asked for rather than reading the file and discarding most of it |
 
 **Six rows, and the count is the check.** [`nfr.md`](nfr.md#runtime) states the
 containment requirement against this table rather than against `server/` alone,

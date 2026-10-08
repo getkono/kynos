@@ -23,29 +23,45 @@ pub enum ViaRequest {}
 #[derive(Debug)]
 pub enum ViaParts {}
 
+/// Marks a handler whose first argument is a [`Guard`](crate::security::Guard).
+///
+/// Leads the argument tuple, before [`ViaRequest`] or [`ViaParts`], so that the
+/// guarded and unguarded implementations do not overlap either.
+#[derive(Debug)]
+pub enum Guarded {}
+
 /// An `async fn` usable as an operation handler.
 ///
-/// Implemented for functions of up to sixteen arguments where every argument
-/// but the last implements [`FromRequestParts`](crate::extract::FromRequestParts)
-/// and [`Describe`](crate::extract::describe::Describe), the last implements
-/// either of those or [`FromRequest`](crate::extract::FromRequest), and the
-/// return type implements [`IntoResponse`](crate::response::IntoResponse) and
-/// [`Responses`](crate::response::Responses).
+/// Implemented for functions of up to sixteen extractors where every extractor
+/// but the last implements
+/// [`FromRequestParts`](crate::extract::FromRequestParts) and
+/// [`Describe`](crate::extract::describe::Describe), the last implements either
+/// of those or [`FromRequest`](crate::extract::FromRequest), and the return
+/// type implements [`IntoResponse`](crate::response::IntoResponse) and
+/// [`Responses`](crate::response::Responses) — optionally after one
+/// [`Guard`](crate::security::Guard), which takes the first slot the way a body
+/// takes the last.
 ///
 /// The bounds are the whole enforcement mechanism. An argument that cannot
 /// implement `Describe` — a raw request, a whole header map, an untyped body —
 /// has no way into a handler signature, and a return type that cannot
-/// implement `Responses` has no way out.
+/// implement `Responses` has no way out. There is no implementation with two
+/// guards, so an operation cannot demand two requirements its description
+/// would list as alternatives.
 ///
 /// `A` is `(Marker, T1, .., Tn)`: a [`ViaRequest`] or [`ViaParts`] marker
-/// followed by the argument types, or `()` for a handler that takes none. It
-/// carries no information a caller supplies — it is inferred at every call site
-/// — and exists only so the implementations are disjoint.
+/// followed by the argument types, or `()` for a handler that takes none. A
+/// guarded handler's is `(Guarded, Marker, G, T1, .., Tn)`, or `(Guarded, G)`
+/// when the guard is its only argument. It carries no information a caller
+/// supplies — it is inferred at every call site — and exists only so the
+/// implementations are disjoint.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a Kynos handler",
     label = "not a handler",
     note = "every argument must implement `Describe`, and `FromRequestParts` — or `FromRequest`, \
             for the last one",
+    note = "a guard — `Auth`, `MaybeAuth` or `Scoped` — is the first argument, and there is at \
+            most one: combine schemes with `AnyOf` or `AllOf` instead",
     note = "the return type must implement `IntoResponse` and `Responses`",
     note = "the handler's future must be `Send`: nothing that is not — an `Rc`, a `RefCell` \
             borrow, a lock guard — may be held across an `.await`"
@@ -60,8 +76,8 @@ pub trait Handler<C, A>: Clone + Send + Sync + 'static {
     /// Describes the handler's inputs and outputs into the operation.
     ///
     /// Contributes, in order: each argument's
-    /// [`Describe`](crate::extract::describe::Describe); each argument's
-    /// rejection responses; the return type's
+    /// [`Describe`](crate::extract::describe::Describe), guard first; each
+    /// argument's rejection responses; the return type's
     /// [`Responses`](crate::response::Responses).
     ///
     /// The rejection half happens here rather than in each `Describe`

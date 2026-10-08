@@ -9,19 +9,150 @@
 //! description looks equally plausible either way. Here, requiring a credential
 //! and declaring it are the same act.
 //!
+//! # One guard per operation
+//!
+//! A guard is a handler's first argument, and a handler takes at most one. Two
+//! guards would both run, so the server would demand both, while each declared
+//! its own security requirement, which OpenAPI reads as "either". Schemes
+//! combine inside the guard's type parameter instead — see [`requirement`] —
+//! so what compiles, what runs and what the description says are one type.
+//!
 //! # How this module is laid out
 //!
-//! The three traits live here; [`auth`] holds the extractors a handler takes a
-//! verified credential in, and [`schemes`] the schemes Kynos can describe
-//! without a derive.
+//! The traits live here; [`auth`] holds the guards a handler takes a verified
+//! credential in, [`requirement`] the ways schemes combine inside one, and
+//! [`schemes`] the schemes Kynos can describe without a derive.
 
 pub mod auth;
 pub mod carrier;
+pub mod requirement;
 pub mod schemes;
 
 use std::future::Future;
 
-use crate::error::rejection::AuthRejection;
+use crate::{
+    error::rejection::AuthRejection,
+    extract::describe::Describe,
+    http::Parts,
+    response::{IntoResponse, Responses},
+};
+
+/// What closes the set of guards.
+mod sealed {
+    /// The private supertrait. Deliberately empty.
+    pub trait Sealed {}
+}
+
+/// A handler argument that enforces a security requirement.
+///
+/// Sealed, and implemented by [`Auth`](auth::Auth),
+/// [`MaybeAuth`](auth::MaybeAuth) and [`Scoped`](auth::Scoped). A guard is not
+/// a [`FromRequestParts`](crate::extract::FromRequestParts): it has a slot of
+/// its own, the first, the way a body has the last. A
+/// [`Handler`](crate::handler::Handler) is implemented for functions with that
+/// slot and for functions without it, and for nothing with two, so a second
+/// guard is a compile error rather than a requirement the description gets
+/// wrong.
+///
+/// ```no_run
+/// # use kynos::{
+/// #     error::rejection::AuthRejection,
+/// #     extract::params::path::Path,
+/// #     security::{Authenticates, Authenticator, auth::Auth, carrier::BearerToken, schemes::Bearer},
+/// # };
+/// # struct Tokens;
+/// # impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+/// #     async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
+/// #         Err(AuthRejection::unauthenticated())
+/// #     }
+/// #     async fn authorize(&self, _: &String, _: &'static [&'static str], _: &C) -> Result<(), AuthRejection> {
+/// #         Ok(())
+/// #     }
+/// # }
+/// # struct App;
+/// # impl Authenticates<Bearer> for App {
+/// #     type Authenticator = Tokens;
+/// #     fn authenticator(&self) -> &Tokens { &Tokens }
+/// # }
+/// # #[derive(kynos::Schema, kynos::PathParams)]
+/// # struct Id { id: u64 }
+/// # fn is_handler<C, A, H: kynos::handler::Handler<C, A>>(_: H) {}
+/// async fn read(caller: Auth<Bearer>, Path(id): Path<Id>) {}
+///
+/// is_handler::<App, _, _>(read);
+/// ```
+///
+/// The guard comes first:
+///
+/// ```compile_fail
+/// # use kynos::{
+/// #     error::rejection::AuthRejection,
+/// #     extract::params::path::Path,
+/// #     security::{Authenticates, Authenticator, auth::Auth, carrier::BearerToken, schemes::Bearer},
+/// # };
+/// # struct Tokens;
+/// # impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+/// #     async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
+/// #         Err(AuthRejection::unauthenticated())
+/// #     }
+/// #     async fn authorize(&self, _: &String, _: &'static [&'static str], _: &C) -> Result<(), AuthRejection> {
+/// #         Ok(())
+/// #     }
+/// # }
+/// # struct App;
+/// # impl Authenticates<Bearer> for App {
+/// #     type Authenticator = Tokens;
+/// #     fn authenticator(&self) -> &Tokens { &Tokens }
+/// # }
+/// # #[derive(kynos::Schema, kynos::PathParams)]
+/// # struct Id { id: u64 }
+/// # fn is_handler<C, A, H: kynos::handler::Handler<C, A>>(_: H) {}
+/// async fn read(Path(id): Path<Id>, caller: Auth<Bearer>) {}
+///
+/// is_handler::<App, _, _>(read);
+/// ```
+///
+/// And comes once. Two schemes are one guard's
+/// [`AnyOf`](requirement::AnyOf) or [`AllOf`](requirement::AllOf):
+///
+/// ```compile_fail
+/// # use kynos::{
+/// #     error::rejection::AuthRejection,
+/// #     security::{Authenticates, Authenticator, auth::Auth, carrier::BearerToken, schemes::Bearer},
+/// # };
+/// # struct Tokens;
+/// # impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+/// #     async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
+/// #         Err(AuthRejection::unauthenticated())
+/// #     }
+/// #     async fn authorize(&self, _: &String, _: &'static [&'static str], _: &C) -> Result<(), AuthRejection> {
+/// #         Ok(())
+/// #     }
+/// # }
+/// # struct App;
+/// # impl Authenticates<Bearer> for App {
+/// #     type Authenticator = Tokens;
+/// #     fn authenticator(&self) -> &Tokens { &Tokens }
+/// # }
+/// # fn is_handler<C, A, H: kynos::handler::Handler<C, A>>(_: H) {}
+/// async fn read(caller: Auth<Bearer>, again: Auth<Bearer>) {}
+///
+/// is_handler::<App, _, _>(read);
+/// ```
+pub trait Guard<C>: sealed::Sealed + Describe + Sized + Send {
+    /// How this guard refuses, and what that refusal looks like in the
+    /// description.
+    type Rejection: IntoResponse + Responses;
+
+    /// Checks the request head, yielding the verified credential.
+    ///
+    /// Runs before every other argument is extracted, and reads the head
+    /// without changing it.
+    fn guard(
+        parts: &Parts,
+        context: &C,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send;
+}
 
 /// Compares two secrets without returning on the first byte that differs.
 ///

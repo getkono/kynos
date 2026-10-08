@@ -16,8 +16,8 @@
 //!
 //! "Each" is held to the source rather than to whoever last added a witness:
 //! [`every_extractor_kynos_ships_names_its_rejection`] reads every extractor
-//! implementation out of `src/` and compares the types it finds against the
-//! ones witnessed here.
+//! and guard implementation out of `src/` and compares the types it finds
+//! against the ones witnessed here.
 
 #![cfg(feature = "macros")]
 #![allow(dead_code)]
@@ -39,7 +39,7 @@ use kynos::{
     http::media::OctetStream,
     response::{negotiate::Accept, range::Range},
     security::{
-        Authenticates, Authenticator,
+        Authenticates, Authenticator, Guard,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
         carrier::BearerToken,
         schemes::Bearer,
@@ -54,6 +54,10 @@ fn head_rejects_with<E, C, T: FromRequestParts<C, Rejection = E>>() {}
 /// Asserts that `T`, read from a request body against context `C`, rejects with
 /// exactly `E`.
 fn body_rejects_with<E, C, T: FromRequest<C, Rejection = E>>() {}
+
+/// Asserts that guard `T`, checked against context `C`, rejects with exactly
+/// `E`.
+fn guard_rejects_with<E, C, T: Guard<C, Rejection = E>>() {}
 
 #[derive(Schema, PathParams)]
 struct UserPath {
@@ -293,10 +297,10 @@ impl Scopes for ReadReports {
 /// advertising a challenge it will never send.
 #[test]
 fn an_authenticated_extractor_rejects_with_the_auth_type() {
-    head_rejects_with::<AuthRejection, App, Auth<Bearer<Claims>>>();
+    guard_rejects_with::<AuthRejection, App, Auth<Bearer<Claims>>>();
     // `MaybeAuth` too: a credential that is present and wrong is a 401 there as
     // much as here, so it raises the same rejection rather than a weaker one.
-    head_rejects_with::<AuthRejection, App, MaybeAuth<Bearer<Claims>>>();
+    guard_rejects_with::<AuthRejection, App, MaybeAuth<Bearer<Claims>>>();
 }
 
 /// `Scoped` is the one guard whose rejection names its scope set.
@@ -308,7 +312,7 @@ fn an_authenticated_extractor_rejects_with_the_auth_type() {
 /// compiles everywhere else and silently un-narrows every scoped operation.
 #[test]
 fn a_scoped_extractor_rejects_with_its_scope_sets_rejection() {
-    head_rejects_with::<
+    guard_rejects_with::<
         kynos::error::rejection::ScopedRejection<ReadReports>,
         App,
         Scoped<Bearer<Claims>, ReadReports>,
@@ -365,9 +369,9 @@ fn sources(directory: &std::path::Path) -> Vec<std::path::PathBuf> {
     files
 }
 
-/// The type each `impl FromRequest<..> for T` or `impl FromRequestParts<..>
-/// for T` in `source` implements the trait for, by the last segment of its
-/// path.
+/// The type each `impl FromRequest<..> for T`, `impl FromRequestParts<..> for
+/// T` or `impl Guard<..> for T` in `source` implements the trait for, by the
+/// last segment of its path.
 ///
 /// Comment lines are dropped first, so a doc example cannot count, and
 /// whitespace is collapsed, so an implementation whose `for` wraps onto the
@@ -382,9 +386,17 @@ fn implemented_for(source: &str) -> Vec<String> {
         .join(" ");
 
     let mut types = Vec::new();
-    for (start, _) in code.match_indices("FromRequest") {
-        let rest = &code[start + "FromRequest".len()..];
-        let rest = rest.strip_prefix("Parts").unwrap_or(rest);
+    let traits = code
+        .match_indices("FromRequest")
+        .map(|(start, name)| {
+            let rest = &code[start + name.len()..];
+            rest.strip_prefix("Parts").unwrap_or(rest)
+        })
+        .chain(
+            code.match_indices(" Guard<")
+                .map(|(start, name)| &code[start + name.len() - 1..]),
+        );
+    for rest in traits {
         let Some(arguments) = rest.strip_prefix('<') else {
             continue;
         };
@@ -435,7 +447,7 @@ fn every_extractor_kynos_ships_names_its_rejection() {
 
     assert_eq!(
         shipped, WITNESSED,
-        "the `FromRequest` and `FromRequestParts` implementations in `src/` and the \
+        "the `FromRequest`, `FromRequestParts` and `Guard` implementations in `src/` and the \
          extractors witnessed here differ; an extractor without a witness is one whose \
          rejection type nothing pins"
     );

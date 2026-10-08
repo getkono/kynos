@@ -17,10 +17,12 @@
 use kynos::{
     Provider, Schema,
     di::inject::Inject,
+    error::rejection::AuthRejection,
     extract::{body::json::Json, params::path::Path},
     handler::Handler,
     response::status::{Created, NoContent},
     router::endpoint::set::{Endpoints, IntoEndpoints},
+    security::{Authenticates, Authenticator, auth::Auth, carrier::BearerToken, schemes::Bearer},
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -169,9 +171,10 @@ fn a_route_tag_reaches_the_endpoint_metadata() {
 
 // --- The arity list ------------------------------------------------------
 
-// `Handler` is implemented by a macro run once per arity, twice each: one
-// implementation where the last argument consumes the body, one where every
-// argument reads only the head. Thirty-three implementations in all, and
+// `Handler` is implemented by a macro run once per arity, four times each: the
+// last argument consumes the body or every argument reads only the head, each
+// with and without a guard in front. Sixty-six implementations in all, with the
+// two that take nothing but a guard or nothing at all, and
 // `an_async_fn_is_a_handler` reaches three of them.
 //
 // A macro list is not a thing a reader checks by eye, and the arity that
@@ -243,6 +246,105 @@ async fn sixteen_with_body(
     NoContent
 }
 
+/// Refuses every token: nothing here runs a guard, and the witnesses below need
+/// only a context that can check one.
+struct Tokens;
+
+impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+    async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
+        Err(AuthRejection::unauthenticated())
+    }
+
+    async fn authorize(
+        &self,
+        _: &String,
+        _: &'static [&'static str],
+        _: &C,
+    ) -> Result<(), AuthRejection> {
+        Ok(())
+    }
+}
+
+impl Authenticates<Bearer> for App {
+    type Authenticator = Tokens;
+
+    fn authenticator(&self) -> &Tokens {
+        &Tokens
+    }
+}
+
+/// A guard and nothing else. Its own implementation, beside the empty one.
+async fn guard_only(caller: Auth<Bearer>) -> NoContent {
+    let _ = caller;
+    NoContent
+}
+
+/// A guard, then one argument reading the head.
+async fn guard_one_part(caller: Auth<Bearer>, a1: Inject<Pool>) -> NoContent {
+    let _ = (caller, a1);
+    NoContent
+}
+
+/// A guard, then one argument consuming the body.
+async fn guard_one_body(caller: Auth<Bearer>, body: Json<User>) -> NoContent {
+    let _ = (caller, body);
+    NoContent
+}
+
+/// A guard, then sixteen arguments reading the head.
+#[allow(clippy::too_many_arguments)]
+async fn guard_sixteen_parts(
+    caller: Auth<Bearer>,
+    a1: Inject<Pool>,
+    a2: Inject<Pool>,
+    a3: Inject<Pool>,
+    a4: Inject<Pool>,
+    a5: Inject<Pool>,
+    a6: Inject<Pool>,
+    a7: Inject<Pool>,
+    a8: Inject<Pool>,
+    a9: Inject<Pool>,
+    a10: Inject<Pool>,
+    a11: Inject<Pool>,
+    a12: Inject<Pool>,
+    a13: Inject<Pool>,
+    a14: Inject<Pool>,
+    a15: Inject<Pool>,
+    a16: Inject<Pool>,
+) -> NoContent {
+    let _ = (
+        caller, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16,
+    );
+    NoContent
+}
+
+/// A guard, then sixteen arguments, the last consuming the body.
+#[allow(clippy::too_many_arguments)]
+async fn guard_sixteen_with_body(
+    caller: Auth<Bearer>,
+    a1: Inject<Pool>,
+    a2: Inject<Pool>,
+    a3: Inject<Pool>,
+    a4: Inject<Pool>,
+    a5: Inject<Pool>,
+    a6: Inject<Pool>,
+    a7: Inject<Pool>,
+    a8: Inject<Pool>,
+    a9: Inject<Pool>,
+    a10: Inject<Pool>,
+    a11: Inject<Pool>,
+    a12: Inject<Pool>,
+    a13: Inject<Pool>,
+    a14: Inject<Pool>,
+    a15: Inject<Pool>,
+    body: Json<User>,
+) -> NoContent {
+    let _ = (
+        caller, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, body,
+    );
+    NoContent
+}
+
 #[test]
 fn both_ends_of_the_arity_list_are_handlers() {
     // Zero takes neither marker: there is nothing to tell apart.
@@ -252,6 +354,13 @@ fn both_ends_of_the_arity_list_are_handlers() {
     is_handler::<App, _, _>(one_body);
     is_handler::<App, _, _>(sixteen_parts);
     is_handler::<App, _, _>(sixteen_with_body);
+
+    // The guard's slot is in addition to the sixteen, at both ends.
+    is_handler::<App, _, _>(guard_only);
+    is_handler::<App, _, _>(guard_one_part);
+    is_handler::<App, _, _>(guard_one_body);
+    is_handler::<App, _, _>(guard_sixteen_parts);
+    is_handler::<App, _, _>(guard_sixteen_with_body);
 }
 
 /// The witnessed top arity, counted against the list that produces it.
