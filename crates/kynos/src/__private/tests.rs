@@ -1,6 +1,6 @@
 use crate::{
     __private::{
-        path::path_parameter_names_match,
+        path::{PathParameter, path_parameter_at},
         uri::{decode_path_value, encode_ext_value, endpoint_uri_with_path, query_pairs},
     },
     extract::params::path::{EncodePath, PathParams},
@@ -24,12 +24,19 @@ fn typed_endpoint_paths_percent_encode_each_segment() {
     assert_eq!(uri, "/reports/sales%2F2026%20report");
 }
 
+/// Each answer the route attribute renders a message for, computed in const
+/// context as the attribute's assertion computes it.
 #[test]
-fn path_parameter_names_compare_in_const_context() {
-    const MATCHES: bool = path_parameter_names_match(&["tenant", "id"], &["tenant", "id"]);
-    const DIFFERS: bool = path_parameter_names_match(&["tenant", "id"], &["id", "tenant"]);
-    assert!(std::hint::black_box(MATCHES));
-    assert!(!std::hint::black_box(DIFFERS));
+fn path_parameters_compare_by_position_in_const_context() {
+    const VARIABLES: &[&str] = &["tenant", "id"];
+    const MATCHES: PathParameter = path_parameter_at(&["tenant", "id"], VARIABLES, 1);
+    const MOVED: PathParameter = path_parameter_at(&["id", "tenant"], VARIABLES, 0);
+    const UNKNOWN: PathParameter = path_parameter_at(&["tenant", "user_id"], VARIABLES, 1);
+    const MISSING: PathParameter = path_parameter_at(&["tenant"], VARIABLES, 1);
+    assert_eq!(std::hint::black_box(MATCHES), PathParameter::Matches);
+    assert_eq!(std::hint::black_box(MOVED), PathParameter::Moved(1));
+    assert_eq!(std::hint::black_box(UNKNOWN), PathParameter::Unknown);
+    assert_eq!(std::hint::black_box(MISSING), PathParameter::Missing);
 }
 
 /// RFC 8187 section 3.2.1, transcribed here rather than read from

@@ -29,14 +29,9 @@ pub(crate) fn endpoint_uri_impl(
     // Read from `EndpointMeta::PATH_VARIABLES` rather than rebuilt here, so
     // that what the description will say and what the handler destructures are
     // checked against one source rather than two that could drift.
-    let path_assertion = path_type.as_ref().map(|path_type| {
-        quote! {
-            const _: () = assert!(::kynos::__private::path::path_parameter_names_match(
-                <#path_type as ::kynos::extract::params::path::PathParams>::NAMES,
-                <#endpoint as ::kynos::router::endpoint::meta::EndpointMeta>::PATH_VARIABLES,
-            ), "PathParams names must exactly match route variables in declaration order");
-        }
-    });
+    let path_assertion = path_type
+        .as_ref()
+        .map(|path_type| path_assertion(endpoint, path_type, path, variables));
 
     // The name is the warning. A route attribute knows only the path it was
     // written with; a `Group` prefix and a `nest` prefix are applied while the
@@ -100,6 +95,86 @@ pub(crate) fn endpoint_uri_impl(
         #path_assertion
         #uri
     })
+}
+
+/// The const assertion that the route's `Path<T>` declares exactly its
+/// variables, in order.
+///
+/// One check per variable, so the failure names the variable it is about. A
+/// const panic on the declared MSRV renders only a single `&str`, which rules
+/// out formatting the group's own name into the message: each arm carries a
+/// literal composed here, from the names this expansion holds.
+fn path_assertion(
+    endpoint: &syn::Ident,
+    path_type: &Type,
+    path: &str,
+    variables: &[String],
+) -> TokenStream2 {
+    let group = quote!(#path_type).to_string().replace(' ', "");
+    let count = variables.len();
+    let order = variables
+        .iter()
+        .map(|variable| format!("`{variable}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let rule = "PathParams names must match the route's variables one for one, in order";
+
+    let checks = variables.iter().enumerate().map(|(index, variable)| {
+        let ordinal = format!("variable {} of {count}", index + 1);
+        let missing = format!(
+            "`{group}` declares no path parameter for `{variable}`, {ordinal} of the route \
+             `{path}`; {rule}"
+        );
+        let unknown = format!(
+            "`{group}` declares a path parameter where the route `{path}` has `{variable}` \
+             ({ordinal}), and it is named for none of the route's variables; name it \
+             `{variable}`, or rename it with `#[serde(rename = \"{variable}\")]`"
+        );
+        let moved = variables
+            .iter()
+            .enumerate()
+            .filter(|(other, _)| *other != index)
+            .map(|(other, declared)| {
+                let message = format!(
+                    "`{group}` declares `{declared}` where the route `{path}` has `{variable}` \
+                     ({ordinal}); declare its path parameters in the route's order: {order}"
+                );
+                quote! {
+                    ::kynos::__private::path::PathParameter::Moved(#other) => {
+                        ::core::panic!("{}", #message)
+                    }
+                }
+            });
+        quote! {
+            match ::kynos::__private::path::path_parameter_at(names, variables, #index) {
+                ::kynos::__private::path::PathParameter::Matches => {}
+                ::kynos::__private::path::PathParameter::Missing => {
+                    ::core::panic!("{}", #missing)
+                }
+                #(#moved)*
+                ::kynos::__private::path::PathParameter::Moved(_)
+                | ::kynos::__private::path::PathParameter::Unknown => {
+                    ::core::panic!("{}", #unknown)
+                }
+            }
+        }
+    });
+    let extra = format!(
+        "`{group}` declares more path parameters than the route `{path}` has variables \
+         ({count}: {order}); {rule}"
+    );
+
+    quote! {
+        const _: () = {
+            let names = <#path_type as ::kynos::extract::params::path::PathParams>::NAMES;
+            let variables =
+                <#endpoint as ::kynos::router::endpoint::meta::EndpointMeta>::PATH_VARIABLES;
+            #(#checks)*
+            if names.len() > variables.len() {
+                ::core::panic!("{}", #extra)
+            }
+        };
+    }
 }
 
 fn extractor_type(function: &ItemFn, extractor: &str) -> syn::Result<Option<Type>> {
