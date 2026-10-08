@@ -811,8 +811,11 @@ is checked against the router's and never against a sibling's, on the premise
 that no request reaches two operations — and a preflight is the request that
 does, since it is answered once per path. So the answer is assembled per scope:
 `Access-Control-Request-Method` picks the configuration whose real response will
-honour it, and a proposed method no scope covers falls back to the first, which
-refuses it in the advertised list either way.
+honour it. A proposed method no scope covers is refused with no CORS header at
+all where the path serves it under no `Cors`, whatever an `allow_methods`
+override names: approving it would let a request's side effect run behind a
+response the browser cannot read. A method the path does not serve is answered
+by the first scope whose override names it, and refused where none does.
 
 **Mount `Cors` outermost.** A short-circuiting interceptor mounted *outside* it
 answers without the `Access-Control-*` fields, and the browser then reports an

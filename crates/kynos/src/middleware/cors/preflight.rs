@@ -62,18 +62,36 @@ impl Scope {
 
     /// Whether this scope covers the method a preflight proposed.
     fn covers(&self, proposed: &HeaderValue) -> bool {
-        self.covered.iter().any(|method| {
-            proposed
-                .as_bytes()
-                .eq_ignore_ascii_case(method.as_wire_str().as_bytes())
-        })
+        names(&self.covered, proposed)
     }
+
+    /// Whether this scope's `allow_methods` override names the method a
+    /// preflight proposed.
+    fn overrides_for(&self, proposed: &HeaderValue) -> bool {
+        self.config
+            .methods
+            .as_deref()
+            .is_some_and(|methods| names(methods, proposed))
+    }
+}
+
+/// Whether `methods` names the method a preflight proposed.
+fn names(methods: &[Method], proposed: &HeaderValue) -> bool {
+    methods.iter().any(|method| {
+        proposed
+            .as_bytes()
+            .eq_ignore_ascii_case(method.as_wire_str().as_bytes())
+    })
 }
 
 /// What a path answers an `OPTIONS` request with, once CORS covers it.
 pub(crate) struct Preflight {
     /// Every `Cors` covering this path, in mount order.
     scopes: Vec<Scope>,
+    /// Every method an operation on this path answers, with the HEAD a GET
+    /// answers where the path declares none. A proposed method in here that no
+    /// scope covers runs under no `Cors`, so no override may approve it.
+    served: Vec<Method>,
     /// The `Allow` header a non-preflight `OPTIONS` carries, so that request
     /// keeps the answer it had before CORS was mounted. `None` where nothing
     /// in the service implements `OPTIONS`, whose answer is a 501 instead.
@@ -90,6 +108,7 @@ impl Preflight {
     /// all.
     pub(crate) fn new(
         scopes: Vec<Scope>,
+        served: Vec<Method>,
         allow: Option<HeaderValue>,
         fallback: FallbackPolicy,
     ) -> Self {
@@ -97,31 +116,41 @@ impl Preflight {
 
         Self {
             scopes,
+            served,
             allow,
             fallback,
         }
     }
 
-    /// The scope that answers a preflight proposing `method`.
+    /// The scope that answers a preflight proposing `method`, or `None` where
+    /// it is refused.
     ///
-    /// The one covering it, and otherwise the first — a proposed method no
-    /// scope covers is refused whichever configuration decides the origin,
-    /// since the advertised list will not name it either. Falling back rather
-    /// than answering nothing keeps the refusal legible in a browser console.
-    fn scope_for(&self, method: &HeaderValue) -> &Scope {
-        self.scopes
-            .iter()
-            .find(|scope| scope.covers(method))
-            .unwrap_or(&self.scopes[0])
+    /// The scope covering it, since that is the one whose real response will
+    /// carry the headers this answer promises. A method the path serves under
+    /// no `Cors` is refused even where an `allow_methods` override names it:
+    /// approving it would send the browser on to a request whose side effect
+    /// runs while its response carries no CORS header. A method the path does
+    /// not serve at all is answered by the first scope whose override names it,
+    /// which is the deployment fronting routes Kynos does not serve.
+    fn scope_for(&self, method: &HeaderValue) -> Option<&Scope> {
+        if let Some(covering) = self.scopes.iter().find(|scope| scope.covers(method)) {
+            return Some(covering);
+        }
+
+        if names(&self.served, method) {
+            return None;
+        }
+
+        self.scopes.iter().find(|scope| scope.overrides_for(method))
     }
 
     /// Answers `request`.
     ///
     /// Implements the Fetch standard's preflight in order: a request that is not
     /// a preflight falls through to exactly the 405 or 501 the dispatcher would
-    /// have produced, an origin the covering configuration does not permit is
-    /// answered with no CORS header at all, and a permitted one gets the full
-    /// set.
+    /// have produced, a method no configuration answers for and an origin the
+    /// covering configuration does not permit are both answered with no CORS
+    /// header at all, and a permitted one gets the full set.
     pub(crate) fn answer(&self, request: &Request) -> Response {
         let headers = request.headers();
 
@@ -136,23 +165,24 @@ impl Preflight {
             return self.not_a_preflight();
         };
 
-        // The proposed method picks the configuration, because that is the
-        // scope whose real response will carry — or withhold — the headers this
-        // answer is a promise about.
-        let scope = self.scope_for(requested_method);
-        let config = &scope.config;
-
         let mut response = Response::new(crate::http::body::Body::empty());
         *response.status_mut() = StatusCode::NO_CONTENT;
 
         // `Vary` rides on every answer, permitted or not: what a cache must not
-        // do is reuse a refusal for a different origin either.
+        // do is reuse a refusal for a different origin or method either.
         crate::middleware::vary_on(response.headers_mut(), PREFLIGHT_VARIES);
 
+        // The proposed method picks the configuration, because that is the
+        // scope whose real response will carry — or withhold — the headers this
+        // answer is a promise about. An absent header is how the protocol says
+        // no, to a method as to an origin. Inventing a 403 would be a status no
+        // description declares, for a request that is not an operation.
+        let Some(scope) = self.scope_for(requested_method) else {
+            return response;
+        };
+        let config = &scope.config;
+
         if !config.permits(origin) {
-            // An absent header is how the protocol says no. Inventing a 403
-            // would be a status no description declares, for a request that is
-            // not an operation.
             return response;
         }
 
