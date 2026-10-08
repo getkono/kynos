@@ -221,6 +221,102 @@ fn path_parameters_hoisted_onto_the_path_item_satisfy_the_template() {
     assert!(errors(&document_with(&[("/users/{id}", item)])).is_empty());
 }
 
+/// `document_with`, plus one reusable parameter under `#/components/parameters`.
+fn document_with_component_parameter(
+    paths: &[(&str, PathItem)],
+    name: &str,
+    parameter: crate::RefOr<Parameter>,
+) -> Document {
+    let mut document = document_with(paths);
+    document
+        .components
+        .parameters
+        .insert(name.to_owned(), parameter);
+    document
+}
+
+fn get_with_ref(location: &str) -> PathItem {
+    let mut operation = Operation::new("getUser").with_responses(ok_responses());
+    operation
+        .parameters
+        .push(crate::RefOr::Ref(crate::model::reference::Ref::new(
+            location,
+        )));
+    PathItem::new().with_operation(Method::Get, operation)
+}
+
+/// A Reference Object stands in for the Parameter Object it names, so a `$ref`
+/// into `#/components/parameters` declares the variable as an inline parameter
+/// would.
+#[test]
+fn a_path_parameter_supplied_by_ref_satisfies_the_template() {
+    let document = document_with_component_parameter(
+        &[("/users/{id}", get_with_ref("#/components/parameters/Id"))],
+        "Id",
+        crate::RefOr::Item(Parameter::path("id", Schema::of_type(SchemaType::String))),
+    );
+    assert!(errors(&document).is_empty(), "got {:?}", errors(&document));
+}
+
+/// A component may itself be a reference to another component.
+#[test]
+fn a_chain_of_component_refs_is_followed_to_the_parameter() {
+    let mut document = document_with_component_parameter(
+        &[("/users/{id}", get_with_ref("#/components/parameters/Id"))],
+        "Id",
+        crate::RefOr::Ref(crate::model::reference::Ref::parameter("UserId")),
+    );
+    document.components.parameters.insert(
+        "UserId".to_owned(),
+        crate::RefOr::Item(Parameter::path("id", Schema::of_type(SchemaType::String))),
+    );
+    assert!(errors(&document).is_empty(), "got {:?}", errors(&document));
+}
+
+/// The correspondence is two-sided: a referenced path parameter with no
+/// variable to fill is unused, as an inline one is.
+#[test]
+fn a_path_parameter_supplied_by_ref_needs_a_matching_template_variable() {
+    let document = document_with_component_parameter(
+        &[("/users", get_with_ref("#/components/parameters/Id"))],
+        "Id",
+        crate::RefOr::Item(Parameter::path("id", Schema::of_type(SchemaType::String))),
+    );
+    assert!(matches!(
+        errors(&document).as_slice(),
+        [SpecError::UnusedPathParameter { name }] if name == "id"
+    ));
+}
+
+/// A reference this document cannot resolve may name the variable, so the
+/// variable is not reported undeclared on a guess: an external document, and a
+/// pointer that is not a component name, are both outside what a validator of
+/// one document can read.
+#[test]
+fn a_ref_outside_the_components_does_not_fabricate_an_undeclared_variable() {
+    for location in [
+        "common.yaml#/components/parameters/Id",
+        "#/paths/~1accounts~1{id}/get/parameters/0",
+    ] {
+        let found = errors(&document_with(&[("/users/{id}", get_with_ref(location))]));
+        assert!(found.is_empty(), "{location}: got {found:?}");
+    }
+}
+
+/// A local reference to a component that does not exist declares nothing, so
+/// the variable it was meant to declare is still undeclared.
+#[test]
+fn a_dangling_component_ref_declares_nothing() {
+    let found = errors(&document_with(&[(
+        "/users/{id}",
+        get_with_ref("#/components/parameters/Id"),
+    )]));
+    assert!(matches!(
+        found.as_slice(),
+        [SpecError::UndeclaredPathVariable { name }] if name == "id"
+    ));
+}
+
 #[test]
 fn a_path_parameter_must_be_required() {
     let mut parameter = Parameter::path("id", Schema::of_type(SchemaType::String));
@@ -261,6 +357,39 @@ fn duplicate_name_and_location_pairs_are_rejected() {
     let found = errors(&document_with(&[("/users", item)]));
     assert!(matches!(
         found.as_slice(),
+        [SpecError::DuplicateParameter { name, .. }] if name == "page"
+    ));
+}
+
+/// The list is unique by what each entry *is*, so a duplicate that arrives by
+/// `$ref` is a duplicate.
+#[test]
+fn a_duplicate_arriving_by_ref_is_rejected() {
+    let mut operation = Operation::new("listUsers")
+        .with_parameter(Parameter::query(
+            "page",
+            Schema::of_type(SchemaType::Integer),
+        ))
+        .with_responses(ok_responses());
+    operation
+        .parameters
+        .push(crate::RefOr::Ref(crate::model::reference::Ref::parameter(
+            "Page",
+        )));
+    let document = document_with_component_parameter(
+        &[(
+            "/users",
+            PathItem::new().with_operation(Method::Get, operation),
+        )],
+        "Page",
+        crate::RefOr::Item(Parameter::query(
+            "page",
+            Schema::of_type(SchemaType::Integer),
+        )),
+    );
+
+    assert!(matches!(
+        errors(&document).as_slice(),
         [SpecError::DuplicateParameter { name, .. }] if name == "page"
     ));
 }
