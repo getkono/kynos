@@ -53,6 +53,21 @@ pub fn three_two_only_constructs(document: &Document) -> Vec<String> {
     blockers
 }
 
+/// Lists the fields in a document that the model does not recognise.
+///
+/// Each is a key without the `x-` prefix kept in an object's
+/// [`Extensions`](crate::model::extensions::Extensions), at the location it was
+/// written. These are the blockers [`three_two_only_constructs`] lists in every
+/// build. A build with `openapi32` types every 3.2 field, so there each one is
+/// a field the model holds at neither version, such as a misspelling or an
+/// extension missing its prefix, and emitting at 3.2 instead does not type it.
+#[must_use]
+pub fn unrecognised_fields(document: &Document) -> Vec<String> {
+    let mut found = Vec::new();
+    unrecognised::collect_unrecognised_fields(document, &mut found);
+    found
+}
+
 /// The 3.2-only fields the model types, which a build without `openapi32`
 /// cannot hold.
 #[cfg(feature = "openapi32")]
