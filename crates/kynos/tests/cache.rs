@@ -51,13 +51,13 @@ impl<C: Sync> CacheStore<C> for Stored {
             .unwrap_or_default()
     }
 
+    /// Replaces what `key` held, which is the contract's "replaces the variant
+    /// whose selecting values match" for a fixture none of whose routes vary.
     async fn put(&self, key: PrimaryKey, response: StoredResponse, _: &C) {
         self.0
             .lock()
             .expect("no test panics while holding this")
-            .entry(key)
-            .or_default()
-            .push(response);
+            .insert(key, vec![response]);
     }
 
     async fn invalidate(&self, key: &PrimaryKey, _: &C) {
@@ -83,6 +83,19 @@ struct Report {
 async fn reports() -> WithHeaders<Json<Report>, CacheControl> {
     CALLS.fetch_add(1, Ordering::SeqCst);
     WithHeaders::new(Json(Report { id: 1 }), CacheControl)
+}
+
+/// Cacheable, and numbers each response by the call that produced it, so a
+/// hit names the call it replays.
+#[kynos::get("/numbered")]
+async fn numbered() -> WithHeaders<Json<Report>, CacheControl> {
+    let id = CALLS.fetch_add(1, Ordering::SeqCst);
+    WithHeaders::new(
+        Json(Report {
+            id: u64::try_from(id).expect("a call count fits"),
+        }),
+        CacheControl,
+    )
 }
 
 /// Says nothing about how long it may be reused.
@@ -135,7 +148,14 @@ impl kynos::extract::params::header::EncodeHeaders for CacheControl {
 /// A service caching through `store`.
 fn cached(store: Stored) -> kynos::router::service::Service<()> {
     Router::<()>::new()
-        .mount(kynos::routes![reports, uncacheable, tagged, create, empty])
+        .mount(kynos::routes![
+            reports,
+            numbered,
+            uncacheable,
+            tagged,
+            create,
+            empty
+        ])
         .intercept(Cache::new(store).namespace("test"))
         .build(())
         .expect("a describable router")
@@ -426,15 +446,16 @@ async fn an_unsafe_method_invalidates_only_its_own_hosts_copy() {
 /// handler answers it.
 ///
 /// The response it gets is stored as any other is, since the directive limits
-/// reuse rather than storage: the request after it is a hit.
+/// reuse rather than storage: the request after it is a hit on *that*
+/// response, not on the one stored before it.
 #[tokio::test]
 async fn a_request_saying_no_cache_is_answered_by_the_handler() {
     let service = cached(Stored::default());
     let before = CALLS.load(Ordering::SeqCst);
 
-    get(&service, "/reports").call().await;
+    let first = get(&service, "/numbered").call().await;
 
-    let refreshed = get(&service, "/reports")
+    let refreshed = get(&service, "/numbered")
         .header("cache-control", "max-age=0, No-Cache")
         .call()
         .await;
@@ -444,11 +465,13 @@ async fn a_request_saying_no_cache_is_answered_by_the_handler() {
         2,
         "a request saying no-cache was answered from the store"
     );
+    assert_ne!(refreshed.json()["id"], first.json()["id"]);
 
-    get(&service, "/reports").call().await;
+    let after = get(&service, "/numbered").call().await;
+    assert_eq!(calls_during(before), 2, "the request after it missed");
     assert_eq!(
-        calls_during(before),
-        2,
+        after.json()["id"],
+        refreshed.json()["id"],
         "the response to a no-cache request was not stored for the next one"
     );
 }
