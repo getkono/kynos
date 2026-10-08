@@ -5,7 +5,10 @@ use quote::quote;
 use syn::{DeriveInput, parse_macro_input};
 
 use crate::derive::{
-    common::{named_fields, names_const, reject_duplicate_names, wire_names},
+    common::{
+        NameCase, named_fields, names_const, reject_duplicate_names, reject_non_token_names,
+        wire_names,
+    },
     params::{Param, construct, decode_field, parameters_body},
 };
 
@@ -20,7 +23,9 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
 pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "Cookies")?;
     let names = wire_names(input, fields, "cookie")?;
-    reject_duplicate_names(fields, &names, "cookie")?;
+    reject_non_token_names(fields, &names, "cookie", "an RFC 6265 cookie name")?;
+    // Cookie names are matched exactly, as `http::cookie::value_of` reads them.
+    reject_duplicate_names(fields, &names, "cookie", NameCase::Sensitive)?;
 
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
