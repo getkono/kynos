@@ -238,8 +238,9 @@ impl Violations {
     /// location the document cannot name — a set's, whose wire position is
     /// not its iteration order.
     ///
-    /// `check` reports relative to [`Pointer::root`], and the first thing it
-    /// reports is moved to `at`, naming the location inside the member.
+    /// `check` reports relative to [`Pointer::root`], and of what it reports,
+    /// the failure at the inner pointer that sorts first is moved to `at`,
+    /// naming the location inside the member.
     pub(crate) fn within(&mut self, at: Pointer<'_>, check: impl FnOnce(&mut Self)) {
         let mut inner = Self::new();
         check(&mut inner);
