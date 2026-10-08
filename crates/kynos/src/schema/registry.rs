@@ -188,3 +188,6 @@ pub struct SchemaConflict {
     /// The contested component name.
     pub name: String,
 }
+
+#[cfg(test)]
+mod tests;
