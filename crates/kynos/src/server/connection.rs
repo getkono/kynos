@@ -197,8 +197,9 @@ where
     let head_seen = deadline.map(|_| Arc::new(AtomicBool::new(false)));
     let handler_head_seen = head_seen.clone();
     let handler = service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
-        if let Some(head_seen) = &handler_head_seen
-            && !head_seen.load(Ordering::Relaxed)
+        if let Some(head_seen) = handler_head_seen
+            .as_ref()
+            .filter(|head_seen| !head_seen.load(Ordering::Relaxed))
         {
             head_seen.store(true, Ordering::Relaxed);
         }
