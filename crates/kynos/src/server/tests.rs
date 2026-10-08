@@ -3373,6 +3373,60 @@ mod request_body_idle {
         ));
     }
 
+    /// A limit past the end of the clock -- `Duration::MAX` -- leaves the body
+    /// waiting rather than panicking in `Instant + Duration`, and never marks
+    /// the request stalled.
+    #[tokio::test]
+    async fn a_limit_past_the_clock_leaves_the_body_waiting() {
+        use std::{
+            convert::Infallible,
+            pin::pin,
+            task::{Context, Poll, Waker},
+        };
+
+        use bytes::Bytes;
+        use http_body::{Body as _, Frame};
+
+        use crate::{
+            http::{StatusCode, Version},
+            middleware::limits::request_body::{answer, bounded},
+        };
+
+        /// A body whose peer never sends another frame.
+        struct Silent;
+
+        impl http_body::Body for Silent {
+            type Data = Bytes;
+            type Error = Infallible;
+
+            fn poll_frame(
+                self: std::pin::Pin<&mut Self>,
+                _: &mut Context<'_>,
+            ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+                Poll::Pending
+            }
+        }
+
+        let (body, stall) = bounded(Silent, Some(Duration::MAX), Version::HTTP_11, |_| {
+            unreachable!("a body that is not over is bounded")
+        });
+        let mut body = pin!(body);
+        let mut context = Context::from_waker(Waker::noop());
+        for _ in 0..2 {
+            assert!(
+                body.as_mut().poll_frame(&mut context).is_pending(),
+                "a limit the clock cannot reach never fires"
+            );
+        }
+
+        let response = answer(crate::http::Response::default(), stall);
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "a body that only waited is not a stall"
+        );
+    }
+
     /// A service that reads its whole body, as every buffering codec does, and
     /// answers with its length -- or 400 when the read failed, which is what
     /// the codecs make of a failed read and what a stall must not reach the
