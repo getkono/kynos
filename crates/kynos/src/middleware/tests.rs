@@ -70,6 +70,59 @@ fn a_wildcard_vary_absorbs_every_name_added_to_it() {
     assert_eq!(vary, "*");
 }
 
+/// Every `Vary` line a response carries after `names` merge into `lines`.
+fn vary_lines_after(lines: &[&[u8]], names: &'static [&'static str]) -> Vec<Vec<u8>> {
+    let mut fields = crate::http::HeaderMap::new();
+
+    for line in lines {
+        fields.append(
+            header::VARY,
+            HeaderValue::from_bytes(line).expect("a representable Vary line"),
+        );
+    }
+
+    super::vary_on(&mut fields, names);
+
+    fields
+        .get_all(header::VARY)
+        .iter()
+        .map(|value| value.as_bytes().to_owned())
+        .collect()
+}
+
+/// RFC 9110 section 5.3 lets a list field arrive split across lines, so a
+/// name on the second line is as much a member as one on the first.
+/// Reading only the first and then replacing every line dropped `cookie`
+/// here, and a cache keyed on what was left served one user's response to
+/// another.
+#[test]
+fn a_vary_union_keeps_the_field_names_of_every_line() {
+    let lines = vary_lines_after(&[b"accept-language", b"cookie"], &["accept-encoding"]);
+
+    assert_eq!(
+        lines,
+        [b"accept-language, cookie, accept-encoding".to_vec()]
+    );
+}
+
+/// A wildcard on a later line absorbs every name just as one on the first
+/// does.
+#[test]
+fn a_wildcard_on_any_vary_line_absorbs_every_name_added_to_it() {
+    let lines = vary_lines_after(&[b"accept", b"*"], &["origin"]);
+
+    assert_eq!(lines, [b"accept".to_vec(), b"*".to_vec()]);
+}
+
+/// A line that is not UTF-8 still names something a cache must key on, so
+/// it survives byte for byte, and so does every line beside it.
+#[test]
+fn a_vary_line_that_is_not_utf8_is_kept_with_every_other_line() {
+    let lines = vary_lines_after(&[b"x-caf\xe9", b"cookie"], &["origin"]);
+
+    assert_eq!(lines, [b"x-caf\xe9, cookie, origin".to_vec()]);
+}
+
 /// A group that is not repeatable replaces whatever was there.
 ///
 /// The control for the repeatable case, which
