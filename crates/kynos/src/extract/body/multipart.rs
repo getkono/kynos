@@ -29,7 +29,11 @@ use crate::{
 pub struct MultipartForm<T>(pub T);
 
 /// One spelling, read by both halves: what is decoded and what is described.
-const MEDIA_TYPE: &str = mime_names::MULTIPART_FORM_DATA;
+pub(super) const MEDIA_TYPE: &str = mime_names::MULTIPART_FORM_DATA;
+
+/// The parameters this codec reads: RFC 2046 delimits the parts with
+/// `boundary`, which every multipart request therefore carries.
+pub(super) const PARAMETERS: &[&str] = &["boundary"];
 
 /// One uploaded file within a [`MultipartForm`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -183,11 +187,16 @@ impl FromPart for String {
 /// The delimiter the request declares, or the rejection saying why there is
 /// none to read the body with.
 ///
-/// A `Content-Type` naming anything but `multipart/form-data` is the 415 every
-/// codec here raises. One naming it without a `boundary` is different: the
-/// media type is accepted and RFC 2046 delimits the parts with that parameter,
-/// so what arrived is a body no parser can find the parts in.
+/// A `Content-Type` naming anything but `multipart/form-data`, or a parameter
+/// beside it this codec does not read, is the 415 every codec here raises. One
+/// naming it without a `boundary` is different: the media type is accepted and
+/// RFC 2046 delimits the parts with that parameter, so what arrived is a body
+/// no parser can find the parts in.
 fn boundary(headers: &HeaderMap) -> Result<String, BodyRejection> {
+    if !super::offers(headers, MEDIA_TYPE) {
+        return Err(super::unsupported_media_type(headers));
+    }
+
     let declared = headers
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok());

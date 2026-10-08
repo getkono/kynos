@@ -94,6 +94,11 @@ fn assert_unsupported<T: std::fmt::Debug>(
 }
 
 mod content_type {
+    use kynos::{
+        extract::body::binary::Binary,
+        http::media::{Html, MediaType},
+    };
+
     use super::{BTreeMap, BodyRejection, Form, Json, Text, assert_unsupported, read};
 
     /// One parameter list a client may append to a codec's media type, and
@@ -119,6 +124,8 @@ mod content_type {
         ("; charset=utf-8; version=1", false),
         ("; version=1", false),
         ("; charset", false),
+        // `boundary` is multipart's parameter, not one every codec reads.
+        ("; boundary=x", false),
     ];
 
     /// Reads one acceptable body through the codec for `media_type`.
@@ -186,6 +193,67 @@ mod content_type {
             read::<Json<u32>>(Some("application/vnd.acme+json"), b"1").await,
             Some("application/vnd.acme+json"),
         );
+    }
+
+    /// A marker whose constant carries a parameter is matched by type and
+    /// subtype: `Html` is `text/html; charset=utf-8`, and a request naming it
+    /// bare or with that charset, in any spelling, is a body for it.
+    #[tokio::test]
+    async fn a_marker_carrying_a_charset_is_matched_by_type_and_subtype() {
+        for content_type in [
+            "text/html; charset=utf-8",
+            "text/html",
+            "TEXT/HTML;charset=\"UTF-8\"",
+        ] {
+            let body = read::<Binary<Html>>(Some(content_type), b"<p>")
+                .await
+                .unwrap_or_else(|rejection| panic!("`{content_type}` is HTML, got {rejection:?}"));
+            assert_eq!(body.into_inner(), &b"<p>"[..]);
+        }
+
+        assert_unsupported(
+            read::<Binary<Html>>(Some("text/html; charset=iso-8859-1"), b"<p>").await,
+            Some("text/html; charset=iso-8859-1"),
+        );
+    }
+
+    /// A marker whose constant carries a parameter other than `charset`
+    /// accepts a request carrying exactly that parameter, as well as the bare
+    /// media type, and refuses the same parameter with any other value.
+    #[tokio::test]
+    async fn a_marker_accepts_the_parameter_its_constant_declares() {
+        #[derive(Debug)]
+        struct Versioned;
+
+        impl MediaType for Versioned {
+            const MEDIA_TYPE: &'static str = "application/vnd.x; version=2";
+        }
+
+        for content_type in [
+            "application/vnd.x; version=2",
+            "application/vnd.x",
+            "APPLICATION/VND.X;VERSION=\"2\"",
+            "application/vnd.x; version=2; charset=utf-8",
+        ] {
+            let body = read::<Binary<Versioned>>(Some(content_type), b"x")
+                .await
+                .unwrap_or_else(|rejection| {
+                    panic!("`{content_type}` is the marker's media type, got {rejection:?}")
+                });
+            assert_eq!(body.into_inner(), &b"x"[..]);
+        }
+
+        for content_type in [
+            "application/vnd.x; version=3",
+            "application/vnd.x; version",
+            "application/vnd.x; version=2; release=1",
+            "application/vnd.x; boundary=x",
+        ] {
+            assert_unsupported(
+                read::<Binary<Versioned>>(Some(content_type), b"x").await,
+                Some(content_type),
+            );
+        }
     }
 
     /// Form syntax admits no malformed input, so past a pair that is not
@@ -342,6 +410,99 @@ mod one_of {
                 "required": true
             })
         );
+    }
+}
+
+#[cfg(feature = "multipart")]
+mod multipart {
+    use kynos::{Schema, extract::body::multipart::MultipartForm};
+
+    use super::{BodyRejection, Json, OneOf, Payload, StatusCode, assert_unsupported, read};
+
+    /// The one field the multipart bodies below carry.
+    #[derive(Debug, PartialEq, Schema, kynos::MultipartForm)]
+    struct Upload {
+        name: String,
+    }
+
+    /// One part filling `name` with `kynos`, delimited by `x`.
+    const BODY: &[u8] =
+        b"--x\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\nkynos\r\n--x--\r\n";
+
+    /// What [`BODY`] decodes to.
+    fn upload() -> MultipartForm<Upload> {
+        MultipartForm(Upload {
+            name: "kynos".to_owned(),
+        })
+    }
+
+    /// A multipart request always carries `boundary`, so that is the request a
+    /// `OneOf` must select its multipart side for — whichever side it is.
+    #[tokio::test]
+    async fn a_one_of_body_selects_its_multipart_side_with_a_boundary() {
+        for content_type in [
+            "multipart/form-data; boundary=x",
+            "multipart/form-data;boundary=\"x\"",
+            "Multipart/Form-Data; charset=utf-8; boundary=x",
+        ] {
+            let left =
+                read::<OneOf<MultipartForm<Upload>, Json<Payload>>>(Some(content_type), BODY)
+                    .await
+                    .unwrap_or_else(|rejection| {
+                        panic!("`{content_type}` is multipart, got {rejection:?}")
+                    });
+            assert_eq!(left, OneOf::Left(upload()));
+
+            let right =
+                read::<OneOf<Json<Payload>, MultipartForm<Upload>>>(Some(content_type), BODY)
+                    .await
+                    .unwrap_or_else(|rejection| {
+                        panic!("`{content_type}` is multipart, got {rejection:?}")
+                    });
+            assert_eq!(right, OneOf::Right(upload()));
+        }
+    }
+
+    /// `boundary` is the one parameter multipart reads beyond a UTF-8 charset,
+    /// so any other is a 415 — alone and inside a `OneOf` alike, since the
+    /// side a `OneOf` selects is one that side would itself accept.
+    #[tokio::test]
+    async fn a_multipart_body_refuses_a_parameter_it_does_not_read() {
+        for content_type in [
+            "multipart/form-data; boundary=x; version=1",
+            "multipart/form-data; charset=iso-8859-1; boundary=x",
+        ] {
+            assert_unsupported(
+                read::<MultipartForm<Upload>>(Some(content_type), BODY).await,
+                Some(content_type),
+            );
+            assert_unsupported(
+                read::<OneOf<Json<Payload>, MultipartForm<Upload>>>(Some(content_type), BODY).await,
+                Some(content_type),
+            );
+        }
+    }
+
+    /// A multipart media type without its `boundary` is still multipart's to
+    /// answer: the side is selected, and it fails as that side does alone —
+    /// a 400, since no parser can find the parts — rather than a 415.
+    #[tokio::test]
+    async fn a_multipart_side_without_a_boundary_fails_as_multipart() {
+        let alone = read::<MultipartForm<Upload>>(Some("multipart/form-data"), BODY)
+            .await
+            .expect_err("no boundary delimits the parts");
+        let selected =
+            read::<OneOf<Json<Payload>, MultipartForm<Upload>>>(Some("multipart/form-data"), BODY)
+                .await
+                .expect_err("no boundary delimits the parts");
+
+        for rejection in [alone, selected] {
+            assert_eq!(rejection.status(), StatusCode::BAD_REQUEST);
+            assert!(
+                matches!(rejection, BodyRejection::Syntax { .. }),
+                "expected multipart's syntax failure, got {rejection:?}"
+            );
+        }
     }
 }
 
