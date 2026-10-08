@@ -1565,6 +1565,42 @@ fn a_router_using_no_3_2_construct_is_described_as_3_1() {
     assert_eq!(claimed_version(&router), "3.1.2");
 }
 
+/// The one violation a router refused to describe reports.
+fn sole_refusal<C: 'static>(router: &Router<C>) -> kynos::openapi::SpecError {
+    let Err(kynos::Error::Invalid { violations }) = router.openapi() else {
+        panic!("a router carrying an unrecognised field was described");
+    };
+    let [violation] = violations.as_slice() else {
+        panic!("one violation: {violations:#?}");
+    };
+    assert_eq!(violation.location, "#");
+    violation.error.clone()
+}
+
+/// A router's own metadata holding `key` beside its extensions.
+fn info_with(key: &str) -> kynos::openapi::Info {
+    let mut info = kynos::openapi::Info::new("API", "1.0.0");
+    info.extensions.insert(key, true);
+    info
+}
+
+/// A key without the `x-` prefix is no field either version expresses, so
+/// describing the router refuses it in every build rather than claiming
+/// whichever version would carry it.
+#[test]
+fn an_unrecognised_field_refuses_the_description() {
+    let router = Router::<()>::new()
+        .info(info_with("foo"))
+        .mount(kynos::routes![alpha]);
+
+    assert_eq!(
+        sole_refusal(&router),
+        kynos::openapi::SpecError::RequiresV3_2 {
+            blockers: vec!["#/info/foo".to_owned()],
+        }
+    );
+}
+
 /// A stream that ends at once: describing one is all that is asked of it.
 #[cfg(feature = "openapi32")]
 struct NoEvents;
@@ -1628,6 +1664,24 @@ fn a_querystring_parameter_raises_the_description_to_3_2() {
     let router = Router::<()>::new().mount(kynos::routes![alpha, filtered]);
 
     assert_eq!(claimed_version(&router), "3.2.0");
+}
+
+/// A 3.2 construct beside an unrecognised field does not carry the description
+/// to 3.2, which cannot express the field either: the refusal names the field
+/// alone, since the construct is not what stands in the way.
+#[cfg(feature = "openapi32")]
+#[test]
+fn an_unrecognised_field_refuses_a_description_using_3_2() {
+    let router = Router::<()>::new()
+        .info(info_with("foo"))
+        .mount(kynos::routes![alpha, search]);
+
+    assert_eq!(
+        sole_refusal(&router),
+        kynos::openapi::SpecError::RequiresV3_2 {
+            blockers: vec!["#/info/foo".to_owned()],
+        }
+    );
 }
 
 /// `openapi_as` targets and never downgrades: 3.1 asked of an API using
