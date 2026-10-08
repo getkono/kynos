@@ -502,15 +502,22 @@ fn build_flow(flow: &FlowArgs) -> proc_macro2::TokenStream {
     built
 }
 
-/// The challenge an HTTP authentication scheme sends without being told.
+/// The challenge a kind sends without being told.
 ///
-/// `basic` carries `charset="UTF-8"`, per RFC 7617 section 2: it is what tells
-/// a client to send a non-ASCII password as UTF-8, and `UTF-8` is the only
-/// value the registry defines. No `realm` in either, since its value is a
-/// deployment's to choose and `challenge = "..."` is how a scheme says so.
+/// `oauth2` and `openid_connect` answer `Bearer` like `bearer` does: their
+/// credential is an access token read by the same carrier, and RFC 6750
+/// section 3 is the challenge for one. `basic` carries `charset="UTF-8"`, per
+/// RFC 7617 section 2: it is what tells a client to send a non-ASCII password
+/// as UTF-8, and `UTF-8` is the only value the registry defines. No `realm` in
+/// any, since its value is a deployment's to choose and `challenge = "..."` is
+/// how a scheme says so.
+///
+/// The rest have none. `api_key` and `mutual_tls` travel outside
+/// `Authorization`, so no registered scheme names them, and `http` names a
+/// scheme whose parameters only the application knows.
 fn default_challenge(kind: &Ident) -> proc_macro2::TokenStream {
     match kind.to_string().as_str() {
-        "bearer" => quote!(::core::option::Option::Some("Bearer")),
+        "bearer" | "oauth2" | "openid_connect" => quote!(::core::option::Option::Some("Bearer")),
         "basic" => quote!(::core::option::Option::Some(r#"Basic charset="UTF-8""#)),
         _ => quote!(::core::option::Option::None),
     }
