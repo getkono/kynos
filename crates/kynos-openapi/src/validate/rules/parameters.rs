@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use crate::{
     Map,
     model::{
+        components::Components,
         parameter::{
             Parameter, ParameterIn,
             header::{Header, is_ignored_header, is_ignored_header_parameter},
@@ -33,27 +34,90 @@ fn fold_header_case(parameter: &Parameter) -> String {
     }
 }
 
+/// What one entry of a parameter list stands for, read against this document.
+pub(in crate::validate) enum Resolved<'doc> {
+    /// The entry is, or resolves to, this Parameter Object.
+    Found(&'doc Parameter),
+    /// A local reference to a component this document does not declare, or a
+    /// cycle of them: there is definitely no parameter behind it.
+    Missing,
+    /// A reference this document alone cannot follow: another document, or a
+    /// pointer that does not name a component. It may stand for any parameter.
+    Elsewhere,
+}
+
+/// Follows `parameter` through `#/components/parameters` to the object it
+/// stands for.
+///
+/// Only a whole component name is resolved. A name escaped with `~` or `%` is
+/// read as [`Resolved::Elsewhere`] rather than decoded, since no valid
+/// component name needs either (`check_component_names` reports one that
+/// does).
+pub(in crate::validate) fn resolve_parameter<'doc>(
+    parameter: &'doc RefOr<Parameter>,
+    components: &'doc Components,
+) -> Resolved<'doc> {
+    let mut current = parameter;
+    // Each hop lands on a distinct component unless the chain cycles, so one
+    // hop more than there are components proves a cycle.
+    for _ in 0..=components.parameters.len() {
+        let reference = match current {
+            RefOr::Item(parameter) => return Resolved::Found(parameter),
+            RefOr::Ref(reference) => reference,
+        };
+        let Some(name) = reference
+            .location
+            .strip_prefix("#/components/parameters/")
+            .filter(|name| !name.contains(['/', '~', '%']))
+        else {
+            return Resolved::Elsewhere;
+        };
+        let Some(next) = components.parameters.get(name) else {
+            return Resolved::Missing;
+        };
+        current = next;
+    }
+    Resolved::Missing
+}
+
+/// Checks one list of parameters, as written on a Path Item or an Operation.
+///
+/// Uniqueness is decided by what each entry resolves to, so a duplicate that
+/// arrives by `$ref` is one. Every other rule here reads only the entries
+/// written inline: a referenced component belongs to `components`, not to
+/// this list, and checking it here would report it once per reference.
 pub(in crate::validate) fn check_parameter_list(
     location: &str,
     parameters: &[RefOr<Parameter>],
+    components: &Components,
     violations: &mut Vec<Violation>,
 ) {
     let mut seen: HashSet<(String, ParameterIn)> = HashSet::new();
 
-    for parameter in parameters.iter().filter_map(RefOr::as_item) {
+    for entry in parameters {
+        // An entry that resolves to nothing is skipped: the list holds no
+        // parameter there to compare.
+        let Resolved::Found(resolved) = resolve_parameter(entry, components) else {
+            continue;
+        };
+
         // A *field* name is case-insensitive (RFC 9110 section 5.1), which is
         // the same reading `is_ignored_header_parameter` already takes. A path,
         // query or cookie name is not, so only a header folds.
-        let key = (fold_header_case(parameter), parameter.location);
+        let key = (fold_header_case(resolved), resolved.location);
         if !seen.insert(key) {
             violations.push(Violation::error(
                 location,
                 SpecError::DuplicateParameter {
-                    name: parameter.name.clone(),
-                    location: format!("{:?}", parameter.location).to_lowercase(),
+                    name: resolved.name.clone(),
+                    location: format!("{:?}", resolved.location).to_lowercase(),
                 },
             ));
         }
+
+        let Some(parameter) = entry.as_item() else {
+            continue;
+        };
 
         if parameter.location == ParameterIn::Header && is_ignored_header_parameter(&parameter.name)
         {
