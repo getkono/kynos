@@ -328,8 +328,9 @@ fn located(step: &Step, checks: &TokenStream2) -> TokenStream2 {
 ///
 /// A member serde fills when the document leaves it out is checked a second
 /// time, on the value it would be filled with, only where its own value broke
-/// something; what its own value broke is reported only where the filled
-/// value breaks nothing. The success path pays for neither.
+/// something; what its own value broke is reported unless the filled value
+/// breaks exactly the same bounds, since only then can the two not be told
+/// apart. The success path pays for neither.
 fn member(
     value: &TokenStream2,
     field: &Field,
@@ -378,7 +379,7 @@ fn member(
                     if let ::core::option::Option::Some(__kynos_filled) = &#filled {
                         let mut __kynos_own = ::kynos::schema::constraints::Violations::new();
                         __kynos_check(#project, &mut __kynos_own);
-                        if __kynos_own.is_empty() {
+                        if __kynos_own != __kynos_sent {
                             ::kynos::__private::constraints::absorb(violations, __kynos_sent);
                         }
                     }

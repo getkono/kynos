@@ -726,11 +726,12 @@ under the name serde reads it by — keeping the first failure at each.
   name through `MapKey::as_member`.
 - **A member read under an `alias` is reported at its object**, its names in
   the detail, since which name the document used is gone once serde reads it.
-- **A member serde fills from a `default` is held to its bounds only where its
-  filled value meets them.** The schema leaves it out of `required`, so a
-  document without it is admitted; where the filled value itself breaks a
-  bound, a value breaking it cannot be told from one serde filled, and is
-  admitted too, although the validator would refuse it if sent. The filled
+- **A member serde fills from a `default` is held to its bounds unless its
+  filled value breaks the same ones.** The schema leaves it out of `required`,
+  so a document without it is admitted; where the filled value itself breaks
+  a bound, a value breaking exactly the same bounds cannot be told from one
+  serde filled, and is admitted too, although the validator would refuse it
+  if sent. A value breaking any other bound is refused. The filled
   value is computed only once a check fails, through `default = "path"`, or
   through `Default` where the derive can prove the type implements it; a
   generic parameter with no `Default` bound leaves it unknown, and the member

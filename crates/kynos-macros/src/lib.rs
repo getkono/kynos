@@ -264,8 +264,8 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// `Form` run on the value they deserialized, refusing a broken bound with a
 /// 422 naming the member by JSON Pointer. A member serde also reads under an
 /// `alias` is named by the object holding it, and a member serde fills from a
-/// `default` is refused only where the value it would be filled with meets
-/// its bounds. `pattern` alone is described and not yet enforced. A bound on a type of another kind — `max_length` on a number —
+/// `default` is admitted with a broken bound only where the value it would be
+/// filled with breaks the same bounds. `pattern` alone is described and not yet enforced. A bound on a type of another kind — `max_length` on a number —
 /// is a compile error, and a derived newtype takes its member's kinds, so
 /// `#[schema(max_length = 8)] label: Label` bounds the string `Label` wraps.
 ///

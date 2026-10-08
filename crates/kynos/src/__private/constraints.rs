@@ -200,7 +200,8 @@ pub fn aliased(
 }
 
 /// Records `sent` into `violations`: what a defaulted member's value broke,
-/// once the value serde fills that member with is known to meet its bounds.
+/// once the value serde fills that member with is known not to break exactly
+/// the same bounds.
 #[doc(hidden)]
 pub fn absorb(violations: &mut Violations, sent: Violations) {
     violations.absorb(sent);
