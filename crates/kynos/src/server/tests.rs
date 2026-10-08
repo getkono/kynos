@@ -143,9 +143,8 @@ fn a_listener_that_is_not_listening_ends_at_once() {
     assert_eq!(AcceptBackoff::default().fail(&error), AcceptRetry::Never);
 }
 
-/// A failure that belonged to one queued connection, including the network
-/// errors accept(2) says to retry like EAGAIN, retries at once and does not
-/// advance the schedule.
+/// A failure that belonged to one queued connection retries at once and does
+/// not advance the schedule.
 #[test]
 fn a_failure_of_one_queued_connection_retries_at_once() {
     use std::{io, time::Duration};
@@ -157,6 +156,31 @@ fn a_failure_of_one_queued_connection_retries_at_once() {
         io::ErrorKind::Interrupted,
         io::ErrorKind::ConnectionAborted,
         io::ErrorKind::ConnectionReset,
+    ] {
+        assert_eq!(
+            backoff.fail(&io::Error::from(kind)),
+            AcceptRetry::Now,
+            "{kind:?}"
+        );
+    }
+
+    assert_eq!(
+        backoff.fail(&io::Error::other("accept failed")),
+        AcceptRetry::After(Duration::from_millis(10))
+    );
+}
+
+/// Linux's accept(2) reports a network error of the dequeued connection and
+/// says to retry it like EAGAIN, so it retries at once.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn a_network_error_of_one_queued_connection_retries_at_once() {
+    use std::{io, time::Duration};
+
+    use crate::server::accept::{AcceptBackoff, AcceptRetry};
+
+    let mut backoff = AcceptBackoff::default();
+    for kind in [
         io::ErrorKind::NetworkDown,
         io::ErrorKind::NetworkUnreachable,
         io::ErrorKind::HostUnreachable,
@@ -172,6 +196,30 @@ fn a_failure_of_one_queued_connection_retries_at_once() {
         backoff.fail(&io::Error::other("accept failed")),
         AcceptRetry::After(Duration::from_millis(10))
     );
+}
+
+/// Elsewhere a network error from accept is the listener's: Windows reports
+/// `WSAENETDOWN` when the network subsystem has failed. Retrying it at once
+/// would spin the accept loop, so it waits like any other failure.
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+#[test]
+fn a_network_error_of_the_listener_waits() {
+    use std::{io, time::Duration};
+
+    use crate::server::accept::{AcceptBackoff, AcceptRetry};
+
+    let mut backoff = AcceptBackoff::default();
+    for (kind, millis) in [
+        (io::ErrorKind::NetworkDown, 10),
+        (io::ErrorKind::NetworkUnreachable, 20),
+        (io::ErrorKind::HostUnreachable, 40),
+    ] {
+        assert_eq!(
+            backoff.fail(&io::Error::from(kind)),
+            AcceptRetry::After(Duration::from_millis(millis)),
+            "{kind:?}"
+        );
+    }
 }
 
 /// A successful accept starts the schedule over, so the next failure waits
