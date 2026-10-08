@@ -260,7 +260,12 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// `max_length`, `pattern`, `min_items`, `max_items` and the `unique_items`
 /// flag. They become JSON Schema assertions *and* the parser's checks, which is
 /// what keeps the description honest without a JSON Schema interpreter on the
-/// hot path.
+/// hot path: the derive generates `Schema::check_constraints`, which `Json` and
+/// `Form` run on the value they deserialized, refusing a broken bound with a
+/// 422 naming the member by JSON Pointer. `pattern` alone is described and not
+/// yet enforced. A bound on a type of another kind — `max_length` on a number —
+/// is a compile error, and a derived newtype takes its member's kinds, so
+/// `#[schema(max_length = 8)] label: Label` bounds the string `Label` wraps.
 ///
 /// `format` is **not** among them. It states what a value *is*, which follows
 /// from the type or from nothing, so a `String` annotated as a UUID is a
