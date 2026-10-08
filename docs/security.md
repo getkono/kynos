@@ -58,6 +58,18 @@ request, so it *cannot* reach for a field the scheme did not declare. The
 constraint is the feature: every framework that configures a credential finder
 beside its documentation has two statements that agree until someone edits one.
 
+### A derived scheme's challenge follows from its kind
+
+The kind fixes the `WWW-Authenticate` a 401 carries, and `challenge = "..."`
+replaces it, typically to add a `realm`:
+
+| Kind | Default challenge | Because |
+| --- | --- | --- |
+| `bearer`, `oauth2`, `openid_connect` | `Bearer` | Each reads an access token from `Authorization`; RFC 6750 section 3 |
+| `basic` | `Basic charset="UTF-8"` | RFC 7617 section 2 |
+| `http(scheme = ..)` | none | Its parameters are the application's to know |
+| `api_key`, `mutual_tls` | none | Travels outside `Authorization`, so no registered scheme names it |
+
 ### The three states of a presented credential
 
 `Carries::present` returns `Result<Option<T>, AuthRejection>`, and all three
