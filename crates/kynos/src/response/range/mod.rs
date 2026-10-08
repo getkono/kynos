@@ -446,8 +446,15 @@ mod tests;
 /// unreadable `Range` never produces — section 14.2 says an unusable field is
 /// ignored, so there is no 400 here and declaring one would be a promise
 /// nothing keeps.
+///
+/// The 416 is [`RangeRejection`]'s own description, problem document and
+/// `Content-Range` included, since that rejection is what `deliver` answers an
+/// unsatisfiable `Range` with.
 #[must_use]
-pub(crate) fn delivery_responses(media_type: &str) -> kynos_openapi::Responses {
+pub(crate) fn delivery_responses(
+    registry: &mut Registry,
+    media_type: &str,
+) -> kynos_openapi::Responses {
     use kynos_openapi::{Header, MediaType, Response as OpenApiResponse, Schema, StatusPattern};
 
     let content = || MediaType::new(Schema::Object(Box::default()));
@@ -496,6 +503,10 @@ pub(crate) fn delivery_responses(media_type: &str) -> kynos_openapi::Responses {
                 .insert(name.to_owned(), kynos_openapi::RefOr::Item(header));
         }
     }
+
+    responses
+        .responses
+        .extend(<RangeRejection as Responses>::responses(registry).responses);
 
     responses
 }

@@ -415,8 +415,7 @@ impl<M: MediaType> IntoResponse for Delivery<M> {
 
 impl<M: MediaType> crate::response::Responses for Delivery<M> {
     fn responses(registry: &mut crate::schema::registry::Registry) -> kynos_openapi::Responses {
-        let _ = registry;
-        crate::response::range::delivery_responses(M::MEDIA_TYPE)
+        crate::response::range::delivery_responses(registry, M::MEDIA_TYPE)
     }
 }
 
