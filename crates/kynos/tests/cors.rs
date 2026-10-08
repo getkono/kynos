@@ -365,6 +365,51 @@ async fn a_preflight_refuses_a_served_method_no_cors_covers() {
     assert_eq!(field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS), None);
 }
 
+/// A third method on the same path, for a `Cors` covering neither of the others.
+#[kynos::post("/widgets")]
+async fn create_widget() -> NoContent {
+    NoContent
+}
+
+/// The `HEAD` a `GET` answers counts as served, so it runs under the `GET`'s
+/// chain: where that chain holds no `Cors`, a `HEAD` preflight is refused even
+/// though a sibling scope's `allow_methods` names it.
+#[tokio::test]
+async fn a_preflight_refuses_the_head_an_uncovered_get_answers() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![list_widgets])
+        .group(
+            kynos::router::group::Group::new("/")
+                .mount(kynos::routes![create_widget])
+                .intercept(
+                    Cors::new()
+                        .allow_origins(["https://app.example.com"])
+                        .allow_methods([kynos::openapi::Method::Head]),
+                ),
+        )
+        .build(())
+        .expect("a describable router");
+
+    let (status, fields) = send(
+        &service,
+        Method::OPTIONS,
+        "/widgets",
+        &[
+            ("origin", "https://app.example.com"),
+            ("access-control-request-method", "HEAD"),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        None,
+        "approved a preflight for the HEAD an uncovered GET answers"
+    );
+    assert_eq!(field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS), None);
+}
+
 /// A predicate reaches both answers a browser sees: the preflight, and the
 /// real response. Two places read the allow-list, so a widening that only one
 /// of them honoured would let a preflight pass and the request that followed
