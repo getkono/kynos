@@ -20,11 +20,11 @@ use tokio::{
 
 use crate::{
     extract::connection::Connection,
+    middleware::limits::request_body,
     router::service::Service,
     server::{
         TransportConfig,
         lifecycle::{Lifecycle, wait_until_stopping},
-        request_body,
     },
 };
 
@@ -197,7 +197,6 @@ where
     // not write a shared line on every request.
     let head_seen = deadline.map(|_| Arc::new(AtomicBool::new(false)));
     let handler_head_seen = head_seen.clone();
-    let body_idle_timeout = config.request_body_idle_timeout;
     let handler = service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
         if let Some(head_seen) = handler_head_seen
             .as_ref()
@@ -211,16 +210,11 @@ where
         async move {
             let (mut parts, body) = request.into_parts();
             parts.extensions.insert(connection_info);
-            let version = parts.version;
-            let (body, stalled) = request_body::bounded(body, body_idle_timeout);
-            let request = crate::http::Request::from_parts(parts, body);
-            let response = service.call(request).await;
-            // Read after the chain returned, so a response already on its way
-            // before a full-duplex handler's read stalled is left alone.
-            Ok::<_, Infallible>(match stalled {
-                Some(stalled) if stalled.is_set() => stalled.response(version),
-                _ => response,
-            })
+            let erase = crate::http::body::Body::from_incoming;
+            let limit = config.request_body_idle_timeout;
+            let (body, stall) = request_body::bounded(body, limit, parts.version, erase);
+            let response = service.call(crate::http::Request::from_parts(parts, body));
+            Ok::<_, Infallible>(request_body::answer(response.await, stall))
         }
     });
 

@@ -3312,10 +3312,11 @@ fn the_configured_http1_header_cap_is_the_one_the_driver_is_told() {
 mod request_body_idle {
     use std::time::Duration;
 
-    use crate::server::{
-        Server,
-        error::ServerError,
-        request_body::{DEFAULT_REQUEST_BODY_IDLE_TIMEOUT, validate_request_body_idle_timeout},
+    use crate::{
+        middleware::limits::request_body::{
+            DEFAULT_REQUEST_BODY_IDLE_TIMEOUT, validate_request_body_idle_timeout,
+        },
+        server::{Server, error::ServerError},
     };
 
     /// The idle timeout the stalling cases configure: short, so a passing case

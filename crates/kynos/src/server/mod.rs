@@ -27,7 +27,6 @@ mod accept;
 mod connection;
 mod describe;
 mod lifecycle;
-mod request_body;
 
 pub mod address;
 pub mod error;
@@ -48,6 +47,9 @@ use tokio::{
 
 use crate::{
     error::Result,
+    middleware::limits::request_body::{
+        DEFAULT_REQUEST_BODY_IDLE_TIMEOUT, validate_request_body_idle_timeout,
+    },
     router::service::Service,
     server::{
         accept::accept_loop,
@@ -55,7 +57,6 @@ use crate::{
         error::ServerError,
         lifecycle::{Drain, Lifecycle},
         protocol::validate_protocol_config,
-        request_body::{DEFAULT_REQUEST_BODY_IDLE_TIMEOUT, validate_request_body_idle_timeout},
         shutdown::{ForceFuture, Shutdown, ShutdownFuture},
         tcp::{SocketOptions, TcpKeepAlive, validate_tcp_keepalive},
     },
