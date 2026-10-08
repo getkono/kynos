@@ -3427,6 +3427,50 @@ mod request_body_idle {
         );
     }
 
+    /// The bound body reports its inner body's end and size, so a reader that
+    /// sizes a buffer or stops early sees the body it would have unbounded.
+    #[test]
+    fn a_bounded_body_reports_its_inner_end_and_size() {
+        use std::{
+            pin::pin,
+            task::{Context, Waker},
+        };
+
+        use bytes::Bytes;
+        use http_body::Body as _;
+        use http_body_util::Full;
+
+        use crate::{http::Version, middleware::limits::request_body::bounded};
+
+        let (body, _) = bounded(
+            Full::new(Bytes::from_static(b"abc")),
+            Some(IDLE_UNREACHED),
+            Version::HTTP_11,
+            |_| unreachable!("a body that is not over is bounded"),
+        );
+        let mut body = pin!(body);
+        assert!(
+            !body.is_end_stream(),
+            "a body with a frame left is not over"
+        );
+        assert_eq!(body.size_hint().exact(), Some(3));
+
+        let mut context = Context::from_waker(Waker::noop());
+        let frame = body.as_mut().poll_frame(&mut context);
+        assert!(
+            matches!(frame, std::task::Poll::Ready(Some(Ok(_)))),
+            "the inner frame passes through"
+        );
+        assert!(
+            body.is_end_stream(),
+            "a body whose inner body ended is over"
+        );
+        assert_eq!(body.size_hint().exact(), Some(0));
+    }
+
+    /// A limit no unit test waits out.
+    const IDLE_UNREACHED: Duration = Duration::from_secs(60);
+
     /// A service that reads its whole body, as every buffering codec does, and
     /// answers with its length -- or 400 when the read failed, which is what
     /// the codecs make of a failed read and what a stall must not reach the
