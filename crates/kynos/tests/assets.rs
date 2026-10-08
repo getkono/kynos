@@ -674,17 +674,20 @@ mod directory {
         );
     }
 
-    /// A directory serves its index.
+    /// A directory serves its index, typed as the index rather than as the
+    /// directory that was requested.
     #[tokio::test]
     async fn a_directory_serves_its_index() {
         let service = served().build(()).expect("a buildable router");
 
-        assert!(
-            get(&service, "/files/docs/")
-                .call()
-                .await
-                .text()
-                .contains("Docs")
+        let reply = get(&service, "/files/docs/").call().await;
+
+        assert!(reply.text().contains("Docs"));
+        assert_eq!(
+            reply
+                .field(kynos::http::header::CONTENT_TYPE.as_str())
+                .as_deref(),
+            Some("text/html; charset=utf-8")
         );
     }
 
