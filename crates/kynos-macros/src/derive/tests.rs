@@ -4383,9 +4383,159 @@ mod headers {
         );
     }
 
+    /// A field name is an RFC 9110 §5.1 token, so a name outside that grammar
+    /// is refused, whichever source gave it: `HeaderName::from_static` would
+    /// panic on it in `encode`, and no request could ever carry it to `decode`.
+    #[test]
+    fn a_name_outside_the_token_grammar_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a space, from the Kynos `rename`",
+                    quote::quote!(
+                        struct Tracing {
+                            #[header(rename = "X Id")]
+                            id: String,
+                        }
+                    ),
+                    "contains ' '",
+                ),
+                case(
+                    "a delimiter, from serde's `rename`",
+                    quote::quote!(
+                        struct Tracing {
+                            #[serde(rename = "x:id")]
+                            id: String,
+                        }
+                    ),
+                    "contains ':'",
+                ),
+                case(
+                    "a character outside ASCII",
+                    quote::quote!(
+                        struct Tracing {
+                            #[header(rename = "x-café")]
+                            id: String,
+                        }
+                    ),
+                    "contains 'é'",
+                ),
+                case(
+                    "no character at all",
+                    quote::quote!(
+                        struct Tracing {
+                            #[header(rename = "")]
+                            id: String,
+                        }
+                    ),
+                    "is empty",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// Every character the token grammar allows, in either case, is accepted.
+    #[test]
+    fn a_name_of_every_token_character_is_accepted() {
+        let input: DeriveInput = syn::parse_quote!(
+            struct Tracing {
+                #[header(rename = "Az09!#$%&'*+-.^_`|~")]
+                id: String,
+            }
+        );
+        if let Err(error) = expand_inner(&input) {
+            panic!("a token was refused as a header name: {error}");
+        }
+    }
+
+    /// Field names are case-insensitive (RFC 9110 §5.1), so two spellings of
+    /// one name read the same header and are refused as one name declared twice.
+    #[test]
+    fn names_differing_only_in_case_are_duplicates() {
+        each_case_is_refused(
+            vec![case(
+                "`X-Id` beside `x-id`",
+                quote::quote!(
+                    struct Tracing {
+                        #[header(rename = "X-Id")]
+                        upper: String,
+                        #[header(rename = "x-id")]
+                        lower: String,
+                    }
+                ),
+                "two fields declare the header",
+            )],
+            expand_inner,
+        );
+    }
+
     #[test]
     fn every_headers_diagnostic_has_a_case() {
         every_diagnostic_has_a_case("headers.rs", include_str!("headers.rs"), ledger().len());
+    }
+}
+
+mod cookies {
+    use super::{case, each_case_is_refused};
+    use crate::derive::cookies::expand_inner;
+
+    /// A cookie name is an RFC 6265 §4.1.1 token: `=` would end it and `;`
+    /// would end the pair, so a cookie declared under either could never match.
+    #[test]
+    fn a_name_outside_the_token_grammar_is_refused() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "the name-value separator",
+                    quote::quote!(
+                        struct Session {
+                            #[cookie(rename = "a=b")]
+                            id: String,
+                        }
+                    ),
+                    "contains '='",
+                ),
+                case(
+                    "the pair separator, from serde's `rename`",
+                    quote::quote!(
+                        struct Session {
+                            #[serde(rename = "a;b")]
+                            id: String,
+                        }
+                    ),
+                    "contains ';'",
+                ),
+                case(
+                    "no character at all",
+                    quote::quote!(
+                        struct Session {
+                            #[cookie(rename = "")]
+                            id: String,
+                        }
+                    ),
+                    "is empty",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// Cookie names are compared exactly, as `http::cookie::value_of` matches
+    /// them, so names differing only in case are two cookies and both stand.
+    #[test]
+    fn names_differing_only_in_case_are_distinct() {
+        let input: syn::DeriveInput = syn::parse_quote!(
+            struct Session {
+                #[cookie(rename = "SID")]
+                upper: String,
+                #[cookie(rename = "sid")]
+                lower: String,
+            }
+        );
+        if let Err(error) = expand_inner(&input) {
+            panic!("two cookie names differing in case were refused: {error}");
+        }
     }
 }
 
