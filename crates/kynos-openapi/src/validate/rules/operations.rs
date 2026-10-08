@@ -115,6 +115,13 @@ impl Validator {
         }
 
         check_parameter_list(location, &operation.parameters, violations);
+        #[cfg(feature = "openapi32")]
+        super::parameters::check_querystring(
+            location,
+            &item.parameters,
+            &operation.parameters,
+            violations,
+        );
         if let Some(template) = template {
             check_path_correspondence(location, template, item, operation, violations);
         }

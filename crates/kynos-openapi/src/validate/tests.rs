@@ -1177,6 +1177,55 @@ fn a_conflict_within_the_path_item_is_reported_once_where_it_is() {
     );
 }
 
+/// An operation adding a querystring parameter to a path item that already
+/// conflicts is reported for what it adds: beside each inherited parameter,
+/// against the querystring parameter it declares.
+#[cfg(feature = "openapi32")]
+#[test]
+fn an_operation_adding_to_a_conflicting_path_item_is_reported_for_its_own_part() {
+    use crate::model::reference::RefOr;
+
+    let mut item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("listUsers")
+            .with_parameter(querystring("sort"))
+            .with_responses(ok_responses()),
+    );
+    item.parameters.push(RefOr::Item(Parameter::query(
+        "q",
+        Schema::of_type(SchemaType::String),
+    )));
+    item.parameters.push(RefOr::Item(querystring("filter")));
+
+    let at = "#/paths/~1users/get".to_owned();
+    assert_eq!(
+        querystring_violations(&document_with(&[("/users", item)])),
+        vec![
+            (
+                "#/paths/~1users".to_owned(),
+                SpecError::QueryBesideQuerystring {
+                    query: "q".to_owned(),
+                    querystring: "filter".to_owned(),
+                }
+            ),
+            (
+                at.clone(),
+                SpecError::DuplicateQuerystring {
+                    first: "filter".to_owned(),
+                    second: "sort".to_owned(),
+                }
+            ),
+            (
+                at,
+                SpecError::QueryBesideQuerystring {
+                    query: "q".to_owned(),
+                    querystring: "sort".to_owned(),
+                }
+            ),
+        ]
+    );
+}
+
 // --- The variant ledger ---------------------------------------------------
 
 /// A variant's name, as an exhaustive match.
