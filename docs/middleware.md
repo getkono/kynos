@@ -931,8 +931,9 @@ Sessions are named in [`architecture.md`](architecture.md#invariants)'s third
 invariant as the example of what a layer above Kynos owns.
 
 **CSRF and a credential guard do not exclude each other.** `Auth<S>` is not an
-interceptor. It is an extractor — `FromRequestParts` in
-[`security/auth.rs`](../crates/kynos/src/security/auth.rs) — and its 403 reaches
+interceptor. It is a guard — the sealed `Guard` in the handler's first argument
+slot, implemented in [`security/auth.rs`](../crates/kynos/src/security/auth.rs)
+— and its 403 reaches
 the document through `OperationCx::add_responses`, never through a `const`.
 `CompatibleWith` compares only interceptor `Short`s, and `Auth<S>` has none, so
 `Csrf`'s 403 (`CrossSite`) never meets the credential guard's in that comparison
