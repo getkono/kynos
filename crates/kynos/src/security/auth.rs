@@ -1,29 +1,37 @@
-//! The credentials a handler takes, and the scopes they must carry.
+//! The guards a handler takes, and the scopes they must carry.
 //!
-//! Taking one of these as a handler argument enforces the requirement, adds the
-//! scheme to the operation's `security`, and adds 401 and 403 to its
-//! `responses`. There is no way to do one without the others — which is the
-//! whole point.
+//! Taking one of these as a handler's [`Guard`] enforces the requirement, sets
+//! the operation's `security`, and adds 401 and 403 to its `responses`. There
+//! is no way to do one without the others — which is the whole point.
 
 use kynos_openapi::{
-    ComponentName, Header, Schema, SecurityRequirement, StatusPattern,
-    model::schema::types::SchemaType,
+    Header, Schema, SecurityRequirement, StatusPattern, model::schema::types::SchemaType,
 };
 
 use crate::{
     error::rejection::{AuthRejection, ScopedRejection, auth_responses},
-    extract::{FromRequestParts, describe::Describe},
+    extract::describe::Describe,
     http::{HeaderValue, Parts, StatusCode},
     router::operation::OperationCx,
-    security::{Authenticates, Authenticator, SecurityScheme, carrier::Carries},
+    security::{
+        Authenticates, Authenticator, Guard, SecurityScheme,
+        carrier::Carries,
+        requirement::{CheckedBy, Requirement, require},
+        sealed,
+    },
 };
 
-/// A credential proving the request satisfies scheme `S`.
+/// A credential proving the request satisfies requirement `S`.
 ///
-/// Taking this as a handler argument does three things at once: it enforces the
-/// requirement, it adds `S` to the operation's `security`, and it adds 401 and
-/// 403 to the operation's `responses`. There is no way to do one without the
-/// others.
+/// Taking this as a handler's guard — its first argument — does three things at
+/// once: it enforces the requirement, it sets the operation's `security` to
+/// `S`'s, and it adds 401 and 403 to the operation's `responses`. There is no
+/// way to do one without the others.
+///
+/// `S` is a scheme, or schemes combined through
+/// [`AnyOf`](crate::security::requirement::AnyOf) or
+/// [`AllOf`](crate::security::requirement::AllOf), which is the only way an
+/// operation demands more than one: a handler takes one guard.
 ///
 /// ```no_run
 /// # use kynos::security::auth::Auth;
@@ -39,14 +47,14 @@ use crate::{
 /// #     }
 /// # }
 /// ```
-pub struct Auth<S: SecurityScheme>(pub S::Credential);
+pub struct Auth<S: Requirement>(pub S::Credential);
 
 // Hand-written rather than derived: a derive bounds the implementation on the
 // *scheme*, which is a marker and carries nothing, while what is actually
 // being cloned or compared is the credential. `Default` and `Ord` are absent
 // on purpose — `Auth::default()` would be an unverified credential, and there
 // is no meaningful order on one.
-impl<S: SecurityScheme> Clone for Auth<S>
+impl<S: Requirement> Clone for Auth<S>
 where
     S::Credential: Clone,
 {
@@ -55,9 +63,9 @@ where
     }
 }
 
-impl<S: SecurityScheme> Copy for Auth<S> where S::Credential: Copy {}
+impl<S: Requirement> Copy for Auth<S> where S::Credential: Copy {}
 
-impl<S: SecurityScheme> std::fmt::Debug for Auth<S>
+impl<S: Requirement> std::fmt::Debug for Auth<S>
 where
     S::Credential: std::fmt::Debug,
 {
@@ -66,7 +74,7 @@ where
     }
 }
 
-impl<S: SecurityScheme> PartialEq for Auth<S>
+impl<S: Requirement> PartialEq for Auth<S>
 where
     S::Credential: PartialEq,
 {
@@ -75,16 +83,16 @@ where
     }
 }
 
-impl<S: SecurityScheme> Eq for Auth<S> where S::Credential: Eq {}
+impl<S: Requirement> Eq for Auth<S> where S::Credential: Eq {}
 
-impl<S: SecurityScheme> Auth<S> {
+impl<S: Requirement> Auth<S> {
     /// Unwraps the verified credential.
     pub fn into_inner(self) -> S::Credential {
         self.0
     }
 }
 
-impl<S: SecurityScheme> Describe for Auth<S> {
+impl<S: Requirement> Describe for Auth<S> {
     /// Declares `about:blank` for its 403, and cannot declare anything else.
     ///
     /// The type on a named 403 is [`Scopes::FORBIDDEN_TYPE`], and this argument
@@ -93,45 +101,43 @@ impl<S: SecurityScheme> Describe for Auth<S> {
     /// See the trait's documentation for why the seam sits there rather than on
     /// the scheme.
     fn describe(operation: &mut OperationCx<'_>) {
-        declare::<S>(operation, S::scopes().to_vec(), None);
+        let security = S::declare(operation);
+        declare(operation, S::challenge(), security, None);
     }
 }
 
-impl<C, S> FromRequestParts<C> for Auth<S>
+impl<S: Requirement> sealed::Sealed for Auth<S> {}
+
+impl<C, S> Guard<C> for Auth<S>
 where
-    C: Authenticates<S> + Sync,
-    S: Carries,
+    C: Sync,
+    S: CheckedBy<C>,
 {
     type Rejection = AuthRejection;
 
-    async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
-        // The challenge is the scheme's, not the authenticator's, and it is
-        // attached here so that it is the same string `describe` declared.
-        let challenged = |rejection: AuthRejection| rejection.with_challenge(S::challenge());
-
+    async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
+        // The challenge is the requirement's, not the authenticator's, and it
+        // is attached here so that it is the same string `describe` declared.
+        //
         // Absent is this operation's 401 rather than the verifier's: `Auth`
         // demands a credential, so having none is exactly the failure it exists
         // to produce, and there is nothing for an authenticator to check.
-        let presented = S::present(parts)
-            .map_err(challenged)?
-            .ok_or_else(AuthRejection::unauthenticated)
-            .map_err(challenged)?;
-
-        context
-            .authenticator()
-            .authenticate(presented, context)
+        S::check(parts, context)
             .await
+            .and_then(|checked| checked.ok_or_else(AuthRejection::unauthenticated))
             .map(Self)
-            .map_err(challenged)
+            .map_err(|rejection| rejection.with_challenge(S::challenge()))
     }
 }
 
-/// A credential proving scheme `S`, when the request presented one.
+/// A credential proving requirement `S`, when the request presented one.
 ///
 /// Declares `security: [{}, {S: []}]` — the empty requirement first, which is
 /// how OpenAPI spells "anonymous access is also permitted". A reader of the
 /// description learns that the credential is *honoured* rather than *demanded*,
-/// which is a different promise and one no flag on a middleware can make.
+/// which is a different promise and one no flag on a middleware can make. For
+/// a combined `S` the empty requirement leads `S`'s own alternatives, so
+/// `MaybeAuth<AnyOf<(A, B)>>` declares `[{}, {A: []}, {B: []}]`.
 ///
 /// A credential that is present and wrong is still a 401. Only *absence* is
 /// anonymity: a client that sent a broken token is not an anonymous client, and
@@ -154,11 +160,11 @@ where
 /// #     }
 /// # }
 /// ```
-pub struct MaybeAuth<S: SecurityScheme>(pub Option<S::Credential>);
+pub struct MaybeAuth<S: Requirement>(pub Option<S::Credential>);
 
 // See `Auth`: bounded on the credential rather than on the scheme, and without
 // `Default` or `Ord`.
-impl<S: SecurityScheme> Clone for MaybeAuth<S>
+impl<S: Requirement> Clone for MaybeAuth<S>
 where
     S::Credential: Clone,
 {
@@ -167,9 +173,9 @@ where
     }
 }
 
-impl<S: SecurityScheme> Copy for MaybeAuth<S> where S::Credential: Copy {}
+impl<S: Requirement> Copy for MaybeAuth<S> where S::Credential: Copy {}
 
-impl<S: SecurityScheme> std::fmt::Debug for MaybeAuth<S>
+impl<S: Requirement> std::fmt::Debug for MaybeAuth<S>
 where
     S::Credential: std::fmt::Debug,
 {
@@ -178,7 +184,7 @@ where
     }
 }
 
-impl<S: SecurityScheme> PartialEq for MaybeAuth<S>
+impl<S: Requirement> PartialEq for MaybeAuth<S>
 where
     S::Credential: PartialEq,
 {
@@ -187,50 +193,46 @@ where
     }
 }
 
-impl<S: SecurityScheme> Eq for MaybeAuth<S> where S::Credential: Eq {}
+impl<S: Requirement> Eq for MaybeAuth<S> where S::Credential: Eq {}
 
-impl<S: SecurityScheme> MaybeAuth<S> {
+impl<S: Requirement> MaybeAuth<S> {
     /// Unwraps the verified credential, if the request carried one.
     pub fn into_inner(self) -> Option<S::Credential> {
         self.0
     }
 }
 
-impl<S: SecurityScheme> Describe for MaybeAuth<S> {
+impl<S: Requirement> Describe for MaybeAuth<S> {
     /// Declares `about:blank` for its 403, for the reason
     /// [`Auth`](Auth#method.describe) gives: naming no scope set, it has no
     /// [`Scopes::FORBIDDEN_TYPE`] to declare.
     fn describe(operation: &mut OperationCx<'_>) {
-        // Before `declare`, because `add_security` appends in call order and
-        // the empty requirement leading the list is how a reader sees that the
-        // scheme is one of two acceptable answers rather than the only one.
-        operation.add_security(SecurityRequirement::anonymous());
-        declare::<S>(operation, S::scopes().to_vec(), None);
+        // First, because the empty requirement leading the list is how a reader
+        // sees that the scheme is one acceptable answer rather than the only
+        // one.
+        let mut security = vec![SecurityRequirement::anonymous()];
+        security.extend(S::declare(operation));
+        declare(operation, S::challenge(), security, None);
     }
 }
 
-impl<C, S> FromRequestParts<C> for MaybeAuth<S>
+impl<S: Requirement> sealed::Sealed for MaybeAuth<S> {}
+
+impl<C, S> Guard<C> for MaybeAuth<S>
 where
-    C: Authenticates<S> + Sync,
-    S: Carries,
+    C: Sync,
+    S: CheckedBy<C>,
 {
     type Rejection = AuthRejection;
 
-    async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
-        let challenged = |rejection: AuthRejection| rejection.with_challenge(S::challenge());
-
-        // The one place the three states of `present` are all distinct: absent
-        // is anonymity, malformed is a 401, and present is a check.
-        let Some(presented) = S::present(parts).map_err(challenged)? else {
-            return Ok(Self(None));
-        };
-
-        context
-            .authenticator()
-            .authenticate(presented, context)
+    async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
+        // The one place the three states of a presented credential are all
+        // distinct: absent is anonymity, malformed is a 401, and present is a
+        // check.
+        S::check(parts, context)
             .await
-            .map(|credential| Self(Some(credential)))
-            .map_err(challenged)
+            .map(Self)
+            .map_err(|rejection| rejection.with_challenge(S::challenge()))
     }
 }
 
@@ -382,13 +384,16 @@ impl<S: SecurityScheme, R: Scopes> Describe for Scoped<S, R> {
                 scopes.push(scope);
             }
         }
-        declare::<S>(operation, scopes, R::FORBIDDEN_TYPE);
+        let security = vec![require::<S>(operation, scopes)];
+        declare(operation, S::challenge(), security, R::FORBIDDEN_TYPE);
     }
 }
 
-impl<C, S, R> FromRequestParts<C> for Scoped<S, R>
+impl<S: SecurityScheme, R: Scopes> sealed::Sealed for Scoped<S, R> {}
+
+impl<C, S, R> Guard<C> for Scoped<S, R>
 where
-    C: Authenticates<S> + Sync,
+    C: Authenticates<S>,
     S: Carries,
     R: Scopes,
 {
@@ -397,7 +402,7 @@ where
     /// to be read here rather than only in [`Describe`].
     type Rejection = ScopedRejection<R>;
 
-    async fn from_request_parts(parts: &mut Parts, context: &C) -> Result<Self, Self::Rejection> {
+    async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
         // Both halves, because a `authorize` that answers 401 rather than 403
         // owes the client a challenge for the same reason `authenticate` does.
         let challenged = |rejection: AuthRejection| {
@@ -422,19 +427,24 @@ where
     }
 }
 
-/// Declares scheme `S` as required by this operation, and defines it.
+/// Sets the operation's `security` to the guard's, and declares how it refuses.
 ///
-/// The three halves are one act: the requirement names the scheme, the
-/// registration defines it under the same key, and the 401 carries the
-/// challenge the scheme itself supplies.
+/// The halves are one act: `security` names the schemes the guard already
+/// registered, the 401 and 403 are the statuses it can send, and the 401
+/// carries the challenge the requirement itself supplies.
+///
+/// `security` is the guard's whole list, set once rather than appended to, so
+/// it is exactly the alternatives the guard checks — there is no second guard
+/// whose requirement a reader would take for another alternative.
 ///
 /// `forbidden_type` is [`Scopes::FORBIDDEN_TYPE`] where the argument named a
 /// scope set, and `None` where it named only a scheme. It is the one thing the
-/// three arguments do not share, which is why it is a parameter here rather
-/// than a method on [`SecurityScheme`]: the seam is per scope set.
-fn declare<S: SecurityScheme>(
+/// three guards do not share, which is why it is a parameter here rather than a
+/// method on [`SecurityScheme`]: the seam is per scope set.
+fn declare(
     operation: &mut OperationCx<'_>,
-    scopes: Vec<&'static str>,
+    challenge: Option<&'static str>,
+    security: Vec<SecurityRequirement>,
     forbidden_type: Option<&'static str>,
 ) {
     // Before the header, not after: `add_response_header` invents a thinly
@@ -452,7 +462,7 @@ fn declare<S: SecurityScheme>(
     // before writing the header, so a challenge that cannot be a field value is
     // absent from both the response and the description rather than one of
     // them.
-    if let Some(challenge) = S::challenge().filter(|value| HeaderValue::from_str(value).is_ok()) {
+    if let Some(challenge) = challenge.filter(|value| HeaderValue::from_str(value).is_ok()) {
         operation.add_response_header(
             StatusPattern::Code(StatusCode::UNAUTHORIZED.as_u16()),
             "WWW-Authenticate",
@@ -465,26 +475,7 @@ fn declare<S: SecurityScheme>(
         );
     }
 
-    // One name for both halves, so the scheme the requirement demands and the
-    // scheme the document defines cannot be different keys.
-    let name = component_name::<S>();
-    operation.add_security(SecurityRequirement::scoped(name.as_str(), scopes));
-    operation.add_security_scheme(name, S::describe());
-}
-
-/// The component key scheme `S` is both registered and required under.
-///
-/// [`SecurityScheme::NAME`] is an ordinary `&'static str`, so it need not be a
-/// legal component key, and [`Describe`] has no way to report that it was not.
-/// Sanitizing rather than refusing is what keeps the requirement and the
-/// registration naming one string, which is the disagreement
-/// [`OperationCx::add_security_scheme`] exists to prevent. Only an empty name
-/// fails to sanitize, and the scheme's own type name stands in for it.
-fn component_name<S: SecurityScheme>() -> ComponentName {
-    ComponentName::sanitized(S::NAME).unwrap_or_else(|_| {
-        ComponentName::sanitized(std::any::type_name::<S>())
-            .expect("a Rust type name is never empty")
-    })
+    operation.set_security(security);
 }
 
 #[cfg(test)]
