@@ -705,6 +705,31 @@ each process re-runs the whole build — router, registry, validation — under 
 fresh hash seed, so every collection upstream of the model is rebuilt and
 re-walked. A second call would reuse the same maps and agree with itself.
 
+## Enforcing field constraints
+
+A `#[schema(...)]` bound is emitted as its keyword and generated as a check:
+`#[derive(Schema)]` implements `Schema::check_constraints`, and `Json<T>` and
+`Form<T>` run it on the value serde produced. A broken bound is a 422 whose
+`errors` name each member by JSON Pointer — the member's position on the wire,
+under the name serde reads it by — keeping the first failure at each.
+
+- **A keyword applies to its own kind only**, as in JSON Schema: an absent
+  `Option` satisfies every bound. A bound on a type of another kind is a compile
+  error through `Numeric`, `Text`, `Items` or `UniqueItems`, since a check that
+  can never fire is a silent weak schema. A derived newtype takes the kinds of
+  its member.
+- **Lengths count code points**, not bytes, as JSON Schema does.
+- **`unique_items` sorts** through `PartialOrd`, so the check is `O(n log n)`
+  rather than a pairwise scan a request could make quadratic.
+- **A set's member is reported at the set**, since its iteration order is not
+  the document's; so is a map value whose key type does not say its member
+  name through `MapKey::as_member`.
+- **`pattern` is described, not enforced.** Enforcing it needs an ECMA-262
+  regular expression engine Kynos does not depend on yet.
+
+The check runs on the typed value, so no JSON Schema interpreter sits on the
+request path, and a value inside every bound allocates nothing.
+
 ## Rules
 
 | # | Rule | Enforced by |
@@ -753,6 +778,7 @@ re-walked. A second call would reuse the same maps and agree with itself.
 | 42 | `rename_all` is applied as serde applies it: to a field's identifier read as snake_case (`apply_to_field`), and to a variant's split before each uppercase letter (`apply_to_variant`), with ASCII case mapping; the parameter derives and `MultipartForm` name fields by the same rule | `rename_all_names_every_member_as_serde_does` in [`tests/derives.rs`](../crates/kynos/tests/derives.rs), against serde's own output for all eight styles |
 | 43 | A container `rename_all(serialize = ..., deserialize = ...)` whose two sides agree is read as that one style, and every key after it in the same `#[serde(...)]` is still read; one whose sides differ, or which names one side only, is refused, since the style reaches every member serde both writes and reads; the parameter derives refuse the split form whatever its sides, and `MultipartForm` refuses one whose sides differ as this derive does, since a part carries one name in both directions | `a_split_rename_all_whose_sides_agree_is_read` in [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde writes and reads; the `Schema` and `MultipartForm` ledgers, `a_split_rename_all_naming_one_side_is_refused` and `a_rename_giving_one_part_name_is_accepted` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); `a_split_rename_all_is_refused_even_where_its_sides_agree` in [`derive/common/tests.rs`](../crates/kynos-macros/src/derive/common/tests.rs); and `tests/ui/macros/schema_split_rename_all.rs` and `tests/ui/macros/multipart_split_rename_all.rs` for the wording |
 | 44 | A struct variant's field is named by its `rename`, else the variant's own `rename_all`, else the enum's `rename_all_fields`, else its identifier, and never by the enum's `rename_all`, which names variants alone, under every tagging and at every site that names it: the branch, the names serde reads it by, and the split-`rename` check; a split `rename_all_fields` that reaches a struct variant, or the split `rename_all` of a struct variant serde both writes and reads, whose sides differ is refused as a container one is, one whose sides agree is read as that one style, a variant serde only reads names its fields by its rule's deserialize side, and a unit or tuple variant's own split `rename_all` names no field and is accepted, as serde accepts it | `a_struct_variants_fields_are_named_as_serde_names_them` in [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over external, internal and adjacent tagging against what serde writes, `a_split_field_rule_whose_sides_agree_is_read` there for a split `rename_all_fields` and variant `rename_all` whose sides agree, and `a_read_only_variants_fields_are_named_as_serde_reads_them` there against what serde reads; `a_split_rename_is_judged_by_the_variants_field_rule`, `a_split_field_rule_whose_sides_differ_is_refused` and `a_split_field_rule_no_field_is_named_both_ways_by_is_accepted` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs) |
+| 45 | Every `#[schema(...)]` bound but `pattern` that a described member declares is enforced by `Json<T>` and `Form<T>` after deserialization, as a 422 keyed by the member's JSON Pointer on the wire, and agrees with the emitted keyword on whether a document is admitted | [`tests/constraints.rs`](../crates/kynos/tests/constraints.rs), against a draft 2020-12 validator over the emitted schema; the locations no derived type reaches in [`schema/tests.rs`](../crates/kynos/src/schema/tests.rs) |
 
 ## Rationale
 
