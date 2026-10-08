@@ -174,8 +174,8 @@ fn a_failure_of_one_queued_connection_retries_at_once() {
     );
 }
 
-/// A successful accept starts the schedule over, so failures separated by a
-/// success never add up to the limit.
+/// A successful accept starts the schedule over, so the next failure waits
+/// 10 ms again.
 #[test]
 fn a_successful_accept_restarts_the_backoff() {
     use std::{io, time::Duration};
