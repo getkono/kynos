@@ -1,5 +1,5 @@
 //! Rules that apply to the document as a whole: servers, tags, component
-//! names.
+//! names, the root security requirements.
 
 use std::collections::HashSet;
 
@@ -8,8 +8,33 @@ use std::collections::HashMap;
 
 use crate::{
     model::{components::ComponentName, document::Document},
-    validate::violation::{SpecError, Violation},
+    validate::{
+        Validator,
+        violation::{SpecError, Violation},
+    },
 };
+
+impl Validator {
+    /// Checks that every name in the root `security` list resolves, by the
+    /// rule an operation's requirements are held to.
+    pub(in crate::validate) fn check_security(
+        self,
+        document: &Document,
+        violations: &mut Vec<Violation>,
+    ) {
+        let schemes = &document.components.security_schemes;
+        for (index, requirement) in document.security.iter().enumerate() {
+            for name in requirement.0.keys() {
+                if !schemes.contains_key(name) && !self.names_a_scheme_by_uri(name) {
+                    violations.push(Violation::error(
+                        format!("#/security/{index}"),
+                        SpecError::UnknownSecurityScheme { name: name.clone() },
+                    ));
+                }
+            }
+        }
+    }
+}
 
 pub(in crate::validate) fn check_servers(document: &Document, violations: &mut Vec<Violation>) {
     for (index, server) in document.servers.iter().enumerate() {

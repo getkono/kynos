@@ -79,6 +79,7 @@ impl Validator {
         check_servers(document, &mut violations);
         check_tags(document, &mut violations);
         check_component_names(document, &mut violations);
+        self.check_security(document, &mut violations);
         self.check_paths(document, &mut violations);
         check_unchecked_schemas(document, &mut violations);
         check_opaque(document, &mut violations);
