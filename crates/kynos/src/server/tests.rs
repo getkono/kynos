@@ -1356,6 +1356,59 @@ fn mutual_tls_rejects_an_existing_incompatible_component() {
     assert!(document.security.is_empty());
 }
 
+/// A mounted reference serves the description the bound server reports,
+/// mutual TLS included.
+///
+/// `prepare` adds the scheme after `Router::build` rendered the reference, so
+/// this is the one edit a reference can only carry if the served bytes follow
+/// the document. Here rather than in `tests/docs.rs` because the bound server
+/// hands its service to nothing public short of a mutual-TLS handshake.
+#[cfg(all(feature = "tls", feature = "docs"))]
+#[tokio::test]
+async fn a_mounted_reference_serves_the_mutual_tls_the_bound_server_reports() {
+    use http_body_util::BodyExt as _;
+
+    let issued = authority();
+    let client_authentication =
+        crate::server::tls::ClientCertificateConfig::from_pem_roots(issued.certificate.as_bytes())
+            .expect("CA parses");
+    let tls = crate::server::tls::TlsConfig::from_pem(
+        issued.server.certificate.as_bytes(),
+        issued.server.key.as_bytes(),
+    )
+    .expect("server identity parses")
+    .require_client_certificate(client_authentication);
+    let service = crate::Router::<()>::new()
+        .docs(crate::router::docs::Docs::scalar())
+        .build(())
+        .expect("a describable router");
+
+    let bound = crate::server::Server::new(service)
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .tls(tls)
+        .prepare()
+        .await
+        .expect("TLS listener prepares");
+    let expected = bound.openapi().to_json().expect("a serializable document");
+    assert!(
+        expected.contains(crate::server::tls::document::MUTUAL_TLS_NAME),
+        "the premise of this case is that the bound document declares mutual TLS"
+    );
+
+    let request = hyper::Request::get("/openapi.json")
+        .body(crate::http::body::Body::empty())
+        .expect("request builds");
+    let reply = bound.service.call(request).await;
+    let served = reply
+        .into_body()
+        .collect()
+        .await
+        .expect("a buffered description")
+        .to_bytes();
+
+    assert_eq!(String::from_utf8_lossy(&served), expected);
+}
+
 #[cfg(all(feature = "tls", feature = "http1"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 // Long because it is one scenario end to end: a CA, a server identity, a client
