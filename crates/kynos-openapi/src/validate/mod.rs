@@ -1,24 +1,16 @@
 //! Structural validation of a [`Document`].
 //!
 //! Everything checked here is a rule the OpenAPI specification states but that
-//! the type system cannot enforce on its own — uniqueness across a whole
-//! document, correspondence between a path template and its parameters, names
-//! that must resolve against what the document declares elsewhere.
+//! the type system cannot enforce — uniqueness across a whole document,
+//! correspondence between a path template and its parameters, names that must
+//! resolve. Mutual exclusions between fields are spelled as types instead.
 //!
-//! Mutual exclusions between fields are deliberately not among them. The model
-//! spells those as types, so a document that violates one can be neither built
-//! nor parsed and never reaches a rule here.
-//!
-//! Kynos runs this when a router is built, so a description that would mislead
-//! a client generator fails at startup rather than being published.
-//!
-//! [`Validator::validate`] is the orchestrator; the rules themselves are
-//! internal, one module per family of specification rule.
+//! Kynos runs this when a router is built, so a misleading description fails
+//! at startup rather than being published.
 
 pub mod violation;
 
-// The rules are implementation, not surface: a caller consumes
-// [`Violation`]s, never a checking function.
+// Internal: a caller consumes [`Violation`]s, never a checking function.
 mod rules;
 
 use crate::{
@@ -54,29 +46,14 @@ impl Validator {
     pub fn validate(&self, document: &Document) -> Vec<Violation> {
         let mut violations = Vec::new();
 
-        // A document is checked against the version it claims to be. A
-        // 3.2-capable build types 3.2-only fields, and a 3.1-only one keeps
-        // them in `extensions` under names lacking the `x-` prefix; either
-        // way, being asked to validate such a document as 3.1 has to say so
-        // rather than pass a description 3.1 cannot express. This is the same walk `Document::emit` refuses on,
-        // read here so that validating and emitting agree.
-        //
-        // `EmptyDocument` used to be the only rule this version was consulted
-        // for, and it is raised nowhere now: every version requires a document
-        // to carry at least one of `paths`, `components` or `webhooks`, and
-        // `Document::paths` is always serialized, so the condition is prevented
-        // by construction rather than reported after the fact.
+        // Validating as 3.1 refuses 3.2 constructs by the same walk
+        // `Document::emit` refuses on, so validating and emitting agree.
         if !self.version.supports_3_2() {
             let blockers = crate::emit::downgrade::three_two_only_constructs(document);
             if !blockers.is_empty() {
                 violations.push(Violation::error("#", SpecError::RequiresV3_2 { blockers }));
             }
         }
-
-        // A License Object setting both `identifier` and `url` used to be
-        // checked here. `License` now holds at most one of the two, so a
-        // document carrying both cannot reach this function: it fails to
-        // deserialize, and there is no way to build one.
 
         check_servers(document, &mut violations);
         check_tags(document, &mut violations);

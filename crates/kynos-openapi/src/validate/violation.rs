@@ -48,23 +48,13 @@ impl std::fmt::Display for Violation {
     }
 }
 
-/// A violation is a line in a report rather than a link in a chain, so it
-/// carries no cause.
-///
-/// A validation run yields a list, and every consumer prints that list —
-/// `Router::validate` hands one back, and `Error::Invalid` renders one. `Display`
-/// is self-contained for that reason, so offering the [`SpecError`] it already
-/// names as a `source()` would make any reporter print the same sentence twice.
-///
-/// The implementation is still worth having: it is what lets a single violation
-/// be boxed, returned through `?`, or downcast back out of a `dyn Error`.
+/// A violation is a line in a report, so it carries no cause: its `Display`
+/// already includes the [`SpecError`].
 impl std::error::Error for Violation {}
 
 /// Escapes one map key for use as a JSON Pointer token, per RFC 6901.
 ///
-/// Every `paths` key contains a `/`, so a location that embeds one unescaped
-/// reads as several tokens and resolves against nothing. Shared so that the
-/// three places that build locations cannot disagree.
+/// Every `paths` key contains a `/`, which must not split the location.
 pub(crate) fn pointer_token(key: &str) -> String {
     key.replace('~', "~0").replace('/', "~1")
 }
@@ -114,10 +104,8 @@ pub enum SpecError {
     /// Reachable only for a description read from somewhere else: a template
     /// Kynos constructs is checked when it is parsed.
     ///
-    /// `reason` holds the parse failure itself rather than its text, so a caller
-    /// can match on which rule the key broke. It is interpolated rather than
-    /// declared as a `#[source]`: a violation is rendered in a list, so its
-    /// message has to be self-contained, and a cause could then only repeat it.
+    /// `reason` is the parse failure itself, so a caller can match on it; it is
+    /// interpolated rather than a `#[source]`, keeping the message self-contained.
     #[error("`{template}` is not a legal path template: {reason}")]
     InvalidPathTemplate {
         /// The offending key.
@@ -160,9 +148,6 @@ pub enum SpecError {
     ///
     /// 3.2 requires `content` there: the value is the whole query string, and
     /// only a media type says how that string encodes it.
-    ///
-    /// Gated, like every rule below about `querystring`: the location is 3.2's,
-    /// so under 3.1 no document could provoke it.
     #[cfg(feature = "openapi32")]
     #[error("`in: querystring` parameter `{name}` must be described by `content`, not `schema`")]
     QuerystringWithoutContent {
@@ -262,10 +247,6 @@ pub enum SpecError {
     ///
     /// 3.2 makes the three mutually exclusive: the first names properties, the
     /// other two name array positions, and an object cannot be both.
-    ///
-    /// Gated, because the two fields it conflicts with are 3.2's — under 3.1
-    /// there is nothing for `encoding` to conflict with, so a variant that
-    /// existed there would be one no document could ever provoke.
     #[cfg(feature = "openapi32")]
     #[error(
         "`encoding` describes named properties and `prefixEncoding`/`itemEncoding` describe array \
@@ -276,8 +257,7 @@ pub enum SpecError {
     /// A response carried no description, which 3.1 requires.
     ///
     /// 3.2 makes it optional, so this is raised only when validating against
-    /// 3.1. The model holds `Option<String>` because a 3.2 document may state
-    /// only a summary; the version is what decides whether that is legal.
+    /// 3.1.
     #[error("a response must have a description under OpenAPI 3.1")]
     MissingResponseDescription,
 
@@ -411,10 +391,8 @@ pub enum SpecError {
 
     /// The description is opaque somewhere but does not say so at the root.
     ///
-    /// The document-level stamp is the one-glance signal a consumer reads
-    /// before deciding whether to trust anything else, so a description that
-    /// omits it while carrying an opaque operation or route is worse than one
-    /// that is honestly incomplete.
+    /// The root stamp is what a consumer reads first, so omitting it is worse
+    /// than being honestly incomplete.
     #[error(
         "this description contains opaque operations or routes but is not marked \
          non-authoritative"
@@ -423,11 +401,8 @@ pub enum SpecError {
 
     /// A Kynos annotation was present but not in the shape Kynos emits.
     ///
-    /// `detail` is text where
-    /// [`InvalidPathTemplate`](Self::InvalidPathTemplate)'s `reason` is a value,
-    /// and the asymmetry is forced rather than chosen: this cause is a
-    /// `serde_json::Error`, which is neither `Clone` nor `PartialEq`, so keeping
-    /// it would cost the derives every other value in the validation model has.
+    /// `detail` is text because the cause, a `serde_json::Error`, is neither
+    /// `Clone` nor `PartialEq`.
     #[error("`{name}` is present but is not in the form Kynos emits: {detail}")]
     MalformedAnnotation {
         /// The offending field name.
@@ -437,6 +412,9 @@ pub enum SpecError {
     },
 
     /// The document declared nothing at all.
+    ///
+    /// Not raised by [`Validator`](crate::validate::Validator): `paths` is
+    /// always serialized, so no document can declare nothing.
     #[error("a document must declare at least one of `paths`, `components` or `webhooks`")]
     EmptyDocument,
 

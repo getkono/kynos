@@ -1,13 +1,9 @@
 //! Schema rules: the annotation that marks a schema as deliberately
 //! unconstrained, wherever a document holds one.
 //!
-//! Every schema a document writes is visited once, where it is written: the
-//! reusable schemas, each parameter's and header's own schema, and each media
-//! type's `schema` (and 3.2 `itemSchema`) under an operation, a reusable
-//! component or a callback — then every subschema below each of them. A
-//! `$ref` is never followed. The definition it names is visited where it is
-//! written, so a component named twice is reported once, and no cycle guard is
-//! needed over what is an owned tree.
+//! Every schema a document writes is visited once, where it is written, then
+//! every subschema below it. A `$ref` is never followed, so a component is
+//! reported once and no cycle guard is needed.
 
 use crate::{
     Map,
@@ -266,10 +262,8 @@ fn check_encoding(location: &str, encoding: &Encoding, violations: &mut Vec<Viol
 
 /// A media type's own schema, the one position where `true` is the payload.
 ///
-/// Below it `true` is an ordinary keyword value: the problem document Kynos
-/// emits for every JSON body carries `additionalProperties: true`, and
-/// reporting that would refuse every such router under
-/// `deny_unchecked_schemas`.
+/// Below it `true` is an ordinary keyword value, such as the problem
+/// document's `additionalProperties: true`.
 fn check_payload(location: &str, schema: &Schema, violations: &mut Vec<Violation>) {
     if matches!(schema, Schema::Bool(true)) {
         violations.push(Violation::warning(location, SpecError::UncheckedSchema));

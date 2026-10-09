@@ -137,10 +137,8 @@ pub(in crate::validate) fn check_component_names(
 ) {
     let components = &document.components;
 
-    // Every section, because the specification says "**All** the fixed
-    // fields declared above". Five of them were consulted, which let a key
-    // in any of the others through whatever it was. `extensions` is not a
-    // section: its keys are `x-` prefixed names, checked by their own rule.
+    // Every section: the specification says "**All** the fixed fields declared
+    // above". `extensions` keys are checked by their own rule.
     let groups = [
         ("schemas", components.schemas.keys().collect::<Vec<_>>()),
         ("responses", components.responses.keys().collect()),
@@ -173,9 +171,8 @@ pub(in crate::validate) fn check_component_names(
 
 /// Checks each reusable parameter once, where it is defined.
 ///
-/// A list that references one checks only its uniqueness, so a component is
-/// reported here and not once per reference. One that is itself a `$ref` is
-/// checked where it leads.
+/// Not once per reference; one that is itself a `$ref` is checked where it
+/// leads.
 pub(in crate::validate) fn check_component_parameters(
     document: &Document,
     violations: &mut Vec<Violation>,

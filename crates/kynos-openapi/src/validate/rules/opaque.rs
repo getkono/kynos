@@ -1,9 +1,8 @@
 //! Opacity rules: what an `unchecked` waiver must leave behind, and what a
 //! consumer is entitled to be told about it.
 //!
-//! Nothing here decides whether a waiver was wise. The rules check only that
-//! the record of one is present, readable, and summarized at the root — so
-//! that a description is never quietly less complete than it looks.
+//! The rules check only that a waiver's record is present, readable, and
+//! summarized at the root.
 
 use crate::{
     annotation::{
@@ -52,9 +51,8 @@ pub(in crate::validate) fn check_opaque(document: &Document, violations: &mut Ve
             // Honestly incomplete: worth saying, not worth failing over.
             violations.push(Violation::warning("#", SpecError::NotAuthoritative));
         } else {
-            // The root stamp is what a consumer reads before deciding whether
-            // to trust anything else, so its absence is the graver claim and
-            // reporting both would only bury it.
+            // A missing root stamp is the graver claim; reporting both would
+            // bury it.
             violations.push(Violation::error("#", SpecError::AuthorityNotStamped));
         }
     }

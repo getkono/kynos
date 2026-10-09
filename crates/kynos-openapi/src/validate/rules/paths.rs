@@ -41,9 +41,8 @@ impl Validator {
             let template = match PathTemplate::parse(raw.clone()) {
                 Ok(template) => template,
                 Err(error) => {
-                    // Nobody constructed this one: a document read from disk
-                    // reaches here without ever passing through `parse`, so
-                    // this is the only place the key is ever checked.
+                    // A deserialized key never passed through `parse`; this is
+                    // the only place it is checked.
                     violations.push(Violation::error(
                         &location,
                         SpecError::InvalidPathTemplate {
@@ -79,15 +78,9 @@ impl Validator {
             );
         }
 
-        // Every other container an operation can be described in. The
-        // specification scopes `operationId` uniqueness to "all operations
-        // described in the API", and each of these describes some — so a walk
-        // that stopped at `paths` left every operation-level rule stopping
-        // there too. `rules/opaque.rs` already visits the same four.
-        //
-        // No template: a webhook name and a callback expression are not path
-        // templates, so the correspondence rule has nothing to compare and is
-        // skipped rather than fabricated. Every other rule applies unchanged.
+        // Every other container an operation can be described in, since
+        // `operationId` is unique across "all operations described in the API".
+        // No template: webhook names and callback expressions are not paths.
         for (name, item) in &document.webhooks {
             self.check_item(
                 &format!("#/webhooks/{}", pointer_token(name)),
@@ -140,10 +133,8 @@ impl Validator {
 
     /// One Path Item's parameters and every operation on it.
     ///
-    /// `template` is `None` wherever the item hangs off something that is not
-    /// a path — a webhook, a reusable component, a callback expression — which
-    /// is the only rule that distinguishes those positions from `paths`. Each
-    /// operation's inline callbacks are walked from here too.
+    /// `template` is `None` where the item hangs off a webhook, a reusable
+    /// component or a callback expression. Inline callbacks are walked too.
     #[allow(clippy::too_many_arguments)]
     fn check_item<'doc>(
         self,
@@ -170,10 +161,8 @@ impl Validator {
             .operations()
             .map(|(method, operation)| (method.as_wire_str().to_lowercase(), operation));
 
-        // 3.2 puts an operation under `additionalOperations` when no field of
-        // its own exists for the method, and `operations()` is `Method::all()`
-        // driven, so it never yields one. An operation written there is as
-        // real as one written beside it.
+        // `operations()` never yields an operation under 3.2's
+        // `additionalOperations`.
         #[cfg(feature = "openapi32")]
         let named = named.chain(
             item.additional_operations
@@ -200,11 +189,8 @@ impl Validator {
                 violations,
             );
 
-            // An operation's own callbacks describe operations as much as
-            // `components.callbacks` does, so they are walked the same way:
-            // no template, and a referenced callback is left to the component
-            // it names rather than visited once per reference. Inline items
-            // only, so the recursion is bounded by the document's own depth.
+            // Inline callbacks only, without a template; a referenced one is
+            // checked at its component, which also bounds the recursion.
             for (name, callback) in &operation.callbacks {
                 let Some(callback) = callback.as_item() else {
                     continue;
@@ -233,10 +219,8 @@ impl Validator {
 
 /// Checks that path template variables and `in: path` parameters agree.
 ///
-/// Parameters hoisted onto the enclosing Path Item count towards the
-/// correspondence, so a shared parameter does not have to be repeated on every
-/// operation. A `$ref` into `#/components/parameters` counts as the parameter
-/// it names.
+/// Parameters on the enclosing Path Item count, and a `$ref` into
+/// `#/components/parameters` counts as the parameter it names.
 pub(in crate::validate) fn check_path_correspondence(
     location: &str,
     template: &PathTemplate,
@@ -245,13 +229,10 @@ pub(in crate::validate) fn check_path_correspondence(
     components: &Components,
     violations: &mut Vec<Violation>,
 ) {
-    // Declaration order, not hash order: `validate` promises violations "most
-    // structural first", and a caller diffing two runs of the same document
-    // must not see them shuffle.
+    // Declaration order, not hash order, so violations are stable across runs.
     let mut declared: Vec<&str> = Vec::new();
-    // A reference this document cannot follow may declare any variable, so
-    // none is reported undeclared on a guess. A missing component declares
-    // nothing and leaves the check standing.
+    // An unfollowable reference may declare any variable, so none is reported
+    // undeclared; a missing component declares nothing.
     let mut unknowable = false;
     for entry in item.parameters.iter().chain(operation.parameters.iter()) {
         let parameter = match resolve_parameter(entry, components) {
