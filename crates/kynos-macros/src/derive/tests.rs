@@ -515,11 +515,20 @@ mod schema {
 
     /// Only a generic type naming itself where its schema descends is refused:
     /// a concrete type is named and so `$ref`s itself, and a member serde skips
-    /// both ways, a `PhantomData`, or a path qualified to another type of the
-    /// same identifier is never described as this type.
+    /// both ways, a `PhantomData`, a path qualified to another type of the
+    /// same identifier, or an associated type projected from it is never
+    /// described as this type.
     #[test]
     fn a_self_reference_the_schema_never_descends_into_is_accepted() {
         for declaration in [
+            quote::quote!(
+                struct Node<T: Tr> {
+                    value: T,
+                    by_self: <Self as Tr>::Out,
+                    by_name: Vec<<Node<T> as Tr>::Out>,
+                    by_trait: <T as Tr<Node<T>>>::Out,
+                }
+            ),
             quote::quote!(
                 struct Node {
                     next: Option<Box<Node>>,
