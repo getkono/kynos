@@ -243,16 +243,15 @@ impl Http2Config {
 pub(in crate::server) struct Streams {
     opened: AtomicUsize,
     closed: AtomicUsize,
-    /// Woken by the first stream, and by each close that leaves none in flight.
+    /// Woken by each close that leaves none in flight. An open wakes nothing:
+    /// the idle wait has nothing to do until that stream closes.
     quiet: Notify,
 }
 
 impl Streams {
     /// Counts one stream in flight until the returned guard drops.
     pub(in crate::server) fn open(self: &Arc<Self>) -> InFlight {
-        if self.opened.fetch_add(1, Ordering::SeqCst) == 0 {
-            self.quiet.notify_one();
-        }
+        self.opened.fetch_add(1, Ordering::SeqCst);
         InFlight(Arc::clone(self))
     }
 
