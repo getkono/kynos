@@ -9,19 +9,13 @@ use crate::{
 /// Whether one response may be encoded.
 ///
 /// Negotiation decides *which* coding; this decides whether the question is
-/// asked at all. It is a property of the response rather than of the route,
-/// because the two reasons for overriding it are both per response: a body that
-/// reflects a secret back to the client, and a body too large to be worth
-/// sending as it is.
+/// asked at all, per response.
 ///
 /// Reaches [`Compression`](super::Compression) through the response's
-/// extensions, which is what lets a handler state it without any interceptor
-/// having to declare a header for it. A response carrying none is
+/// extensions (see [`WithEncoding`]). A response carrying none is
 /// [`Automatic`](Encoding::Automatic).
 ///
-/// `#[non_exhaustive]`: the set is Kynos's rather than a specification's, so a
-/// fourth policy is a thing this crate may decide on and a downstream `match`
-/// should not have to be rewritten for it.
+/// `#[non_exhaustive]`: Kynos may add a policy without a breaking change.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Encoding {
@@ -30,35 +24,22 @@ pub enum Encoding {
     Automatic,
     /// Never encode this response.
     ///
-    /// The BREACH case. Compressing a body that mixes a secret with something
-    /// the client chose leaks the secret through the length, and no
-    /// negotiation makes that safe — so a response reflecting input beside a
-    /// CSRF token, a session identifier or an API key says so here.
-    ///
-    /// RFC 9110 section 17.6 describes the attack and is deliberately not
-    /// normative about it, so this is a policy the application owns rather than
-    /// something the framework can infer.
+    /// The BREACH case (RFC 9110 section 17.6): compressing a body that mixes a
+    /// secret with something the client chose leaks the secret through the
+    /// length. Use it for a response reflecting input beside a CSRF token, a
+    /// session identifier or an API key.
     Disabled,
     /// Encode it, or refuse the request with 406.
     ///
-    /// `required-compatible`: required, and compatible with whatever the client
-    /// said it accepts. Identity stops being an acceptable answer, so a client
-    /// that will take only identity is told 406 rather than handed forty
-    /// megabytes uncompressed.
+    /// Identity stops being an acceptable answer, so a client that will take
+    /// only identity is told 406 rather than handed the body uncompressed.
     ///
-    /// It also outranks [`min_size`](super::Compression::min_size): a body
-    /// under the threshold is encoded all the same when the client accepts a
-    /// coding. An empty body has nothing to encode, so it is refused with 406
-    /// whatever the client accepts.
+    /// It also outranks [`min_size`](super::Compression::min_size). An empty
+    /// body, or one [`Compression`](super::Compression) must leave alone (a
+    /// ranged or strongly tagged response), is refused with 406 whatever the
+    /// client accepts. The 406 is one `Compression` already declares.
     ///
-    /// This is the one setting that can turn a 200 into an error, and the error
-    /// is one [`Compression`](super::Compression) already declares — mounting
-    /// it contributes 406 to every covered operation whether or not any handler
-    /// asks for this.
-    ///
-    /// Without a `Compression` covering the route it does nothing at all: an
-    /// extension nobody reads is inert, and there is no interceptor to produce
-    /// the refusal.
+    /// Without a `Compression` covering the route it does nothing at all.
     Required,
 }
 
@@ -89,10 +70,8 @@ impl Encoding {
 /// # }
 /// ```
 ///
-/// Describes exactly what the response inside it describes. A compression
-/// policy is not part of an operation's contract: it changes how the bytes
-/// travel, not what they are, and the one status it can produce is declared by
-/// the interceptor that produces it.
+/// Describes exactly what the response inside it describes: the one status a
+/// policy can produce is declared by the interceptor that produces it.
 #[derive(Clone, Copy, Debug)]
 pub struct WithEncoding<T> {
     /// The response.

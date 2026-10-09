@@ -1,13 +1,7 @@
 //! Limits, and the responses they make possible.
 //!
-//! Each limit here owns a type for the response it answers with. That is what
-//! keeps the declaration and the behaviour one fact rather than two: the status
-//! a limit can produce is the status its response type describes, and a header
-//! that rides that status — `Retry-After` on a 503 — is described by the same
-//! type that sets it, rather than by a separate entry keyed on the status.
-//!
-//! Each limit is its own module, holding the interceptor and the response it
-//! answers with:
+//! Each limit is its own module, holding the interceptor and the response type
+//! it answers with, which both sets and describes its status and headers:
 //!
 //! - [`body_size`] caps a request body, answering 413.
 //! - [`timeout`] caps how long a handler runs, answering 408.

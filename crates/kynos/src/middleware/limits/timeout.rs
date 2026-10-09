@@ -64,30 +64,9 @@ impl<T: ProblemType> Responses for TimedOut<T> {
 
 /// Caps how long a handler may run.
 ///
-/// Contributes 408.
-///
-/// # Why 408 and not 504
-///
-/// RFC 9110 section 15.6.5 scopes 504 to a server "while acting as a gateway or
-/// proxy" awaiting "an upstream server it needed to access". Kynos is an origin
-/// and this interceptor wraps its own chain, so every clause of that definition
-/// is false — and 504 is a status a load balancer or CDN in front of the service
-/// genuinely sends, which made an origin's own indistinguishable from that hop's
-/// in logs and in client retry logic.
-///
-/// 408 is not exact either. Section 15.5.9 defines it as the server not having
-/// received "a complete request message within the time that it was prepared to
-/// wait", which describes the slow-body arrangement below precisely and the
-/// handler-runtime case only by extension. It is the closest status the
-/// specification defines, it carries a retry semantic clients already implement,
-/// and it is what `tower-http` sends for the same situation.
-///
-/// 503 would have read better for handler runtime — "temporary overload" — and
-/// is not available: [`Concurrency`](super::concurrency::Concurrency) declares
-/// it, so `CompatibleWith` would refuse a router carrying both. Bounding
-/// handler time *and* capping concurrency is an ordinary pairing, and a status
-/// choice that made it uncompilable would be a worse answer than an inexact
-/// one.
+/// Contributes 408 (RFC 9110 section 15.5.9), not 504: an origin is not the
+/// gateway section 15.6.5 scopes 504 to, and 503 is taken by
+/// [`Concurrency`](super::concurrency::Concurrency).
 ///
 /// # Mount it outside a [`BodySize`](super::body_size::BodySize)
 ///
@@ -107,15 +86,11 @@ impl<T: ProblemType> Responses for TimedOut<T> {
 ///
 /// The response type is a parameter, defaulting to [`TimedOut`]. Reach for
 /// [`answer_with`](Timeout::answer_with) when a timeout should carry more than
-/// a status and a sentence — a support identifier, a `Retry-After`, a
-/// diagnostic an operator can correlate — or when the whole service answers
-/// timeouts in a house-specific shape.
+/// a status and a sentence — a support identifier, a `Retry-After` — or when
+/// the whole service answers timeouts in its own shape.
 ///
-/// The substitute is a [`ShortCircuit`], so it still declares the statuses it
-/// can produce and still contributes them to every operation the interceptor
-/// covers. A custom response cannot make the document wrong: whatever it
-/// answers with, `CompatibleWith` sees the same `STATUSES` the compiler
-/// checks against every other interceptor in the stack.
+/// The substitute is a [`ShortCircuit`], so its `STATUSES` are still
+/// contributed to every covered operation and checked by `CompatibleWith`.
 ///
 /// ```no_run
 /// use std::time::Duration;
@@ -149,20 +124,15 @@ impl<T: ProblemType> Responses for TimedOut<T> {
 pub struct Timeout<R = TimedOut<()>> {
     /// The maximum handler duration.
     pub limit: Duration,
-    /// Names the response without holding one.
-    ///
-    /// `fn() -> R` so that `R` decides nothing about this type's auto traits:
-    /// a `Timeout` is `Send` because a `Duration` is.
+    /// Names the response without holding one; `fn() -> R` keeps `R` out of
+    /// this type's auto traits.
     _response: PhantomData<fn() -> R>,
 }
 
 impl Timeout<TimedOut<()>> {
     /// Limits handlers to `limit`.
     ///
-    /// Answers with [`TimedOut`]. Declared on the concrete type rather than on
-    /// the generic one so that this still infers without a turbofish: a default
-    /// type parameter does not participate in inference from an associated
-    /// function.
+    /// Answers with [`TimedOut`].
     #[must_use]
     pub fn new(limit: Duration) -> Self {
         Self {
@@ -173,16 +143,11 @@ impl Timeout<TimedOut<()>> {
 
     /// Names the RFC 9457 problem type this timeout's 408 carries.
     ///
-    /// The smaller half of [`answer_with`](Timeout::answer_with): this names
-    /// the type a [`TimedOut`] publishes and changes nothing else, where
-    /// `answer_with` replaces the response outright. Reach for that one when a
-    /// timeout owes more than a URI — a `Retry-After`, a support identifier, a
-    /// shape the whole service answers timeouts in.
+    /// Changes only the type a [`TimedOut`] publishes; to replace the response
+    /// outright, use [`answer_with`](Timeout::answer_with).
     ///
     /// Available only on a timeout still answering with an unnamed
-    /// [`TimedOut`], so a chain states the type at most once. See
-    /// [`BodySize::problem_type`](super::body_size::BodySize::problem_type) for
-    /// the rule and its pass control.
+    /// [`TimedOut`], so a chain states the type at most once.
     ///
     /// ```
     /// # use std::time::Duration;
@@ -211,7 +176,7 @@ impl<R> Timeout<R> {
     ///
     /// `S` is built from the limit that elapsed, so `From<Duration>` is where a
     /// warning, a metric or a trace event belongs: it runs exactly when a
-    /// handler is abandoned, which is the moment nothing else observes.
+    /// handler is abandoned.
     #[must_use]
     pub fn answer_with<S>(self) -> Timeout<S>
     where
@@ -224,8 +189,7 @@ impl<R> Timeout<R> {
     }
 }
 
-// Hand-written rather than derived: a derive would bound `R: Clone` and
-// `R: Debug`, and `PhantomData<fn() -> R>` needs neither.
+// Not derived: a derive would bound `R: Clone` and `R: Debug`.
 impl<R> Clone for Timeout<R> {
     fn clone(&self) -> Self {
         *self
@@ -261,9 +225,7 @@ where
     ) -> Result<Continued<()>, R> {
         let _ = (reads, context);
 
-        // The timer is the one thing this cannot do for itself. Dropping the
-        // chain's future is what stops the handler: there is no other way to
-        // abandon work that is already running.
+        // Dropping the chain's future on expiry is what abandons the handler.
         match tokio::time::timeout(self.limit, next.run(request)).await {
             Ok(continued) => Ok(continued),
             Err(_elapsed) => Err(R::from(self.limit)),
@@ -277,8 +239,7 @@ impl<T> From<Duration> for TimedOut<T> {
     }
 }
 
-// Written out rather than derived, for the reason `body_size` gives: a derive
-// would bound each on the marker.
+// Not derived: a derive would bound each on the marker.
 
 impl<T> Clone for TimedOut<T> {
     fn clone(&self) -> Self {

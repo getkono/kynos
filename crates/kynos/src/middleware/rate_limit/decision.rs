@@ -7,9 +7,8 @@ use crate::{http, router::operation::Route};
 /// The unit a quota counts in.
 ///
 /// The `qu` parameter of `draft-ietf-httpapi-ratelimit-headers`.
-/// `concurrent-requests` is deliberately absent: that is
-/// [`Concurrency`](crate::middleware::limits::concurrency::Concurrency)'s job, and it
-/// consumes no rate window.
+/// `concurrent-requests` is absent: that is
+/// [`Concurrency`](crate::middleware::limits::concurrency::Concurrency)'s job.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum QuotaUnit {
@@ -33,8 +32,8 @@ impl QuotaUnit {
 
 /// One quota policy a response advertises.
 ///
-/// Configuration rather than state: what the service *will* enforce, which is
-/// the same for every request a limiter covers.
+/// Configuration rather than state: the same for every request a limiter
+/// covers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct QuotaPolicy {
@@ -54,7 +53,7 @@ pub struct QuotaPolicy {
 /// One live service limit, as it stands for *this* request.
 ///
 /// State rather than configuration: the same policy reports different values to
-/// different clients, which is why this is a separate type.
+/// different clients.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ServiceLimit {
@@ -82,9 +81,7 @@ pub struct Allowance {
 pub struct Denial {
     /// How long the client should wait before retrying.
     ///
-    /// The policy's to compute, because the policy owns the counters. Kynos
-    /// will not invent one: a number derived from a window's *length* rather
-    /// than from its remaining time is one the service cannot honour.
+    /// The policy's to compute, because the policy owns the counters.
     pub retry_after: Duration,
     /// Every limit consulted, including the one that refused.
     pub limits: Vec<ServiceLimit>,
@@ -174,16 +171,13 @@ impl Decision {
 /// Application policy used to identify clients and maintain counters.
 ///
 /// Kynos supplies the description, the 429 and the headers; how a client is
-/// identified and where the counters live is the application's, because
-/// prescribing a store would mean prescribing a dependency.
+/// identified and where the counters live is the application's.
 /// [`Quotas`](super::quota::Quotas) is the implementation Kynos ships over a
 /// store *you* supply.
 pub trait RateLimitPolicy<C>: Send + Sync + 'static {
     /// The quota policies this limiter advertises, in report order.
     ///
-    /// Borrowed and read once per response: these are configuration, so a
-    /// limiter returning them by value would allocate per request for
-    /// something that never changes.
+    /// Borrowed, since they are configuration read once per response.
     fn advertised(&self) -> &[QuotaPolicy] {
         &[]
     }
@@ -191,8 +185,7 @@ pub trait RateLimitPolicy<C>: Send + Sync + 'static {
     /// Decides whether this request may continue.
     ///
     /// `route` is the `paths` key rather than the request path, so a policy
-    /// keying on the operation has bounded cardinality — the same property
-    /// [`MatchedPath`](crate::extract::connection::MatchedPath) exists for.
+    /// keying on the operation has bounded cardinality.
     fn check(
         &self,
         request: &http::Request,

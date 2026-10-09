@@ -15,8 +15,7 @@ use crate::{
 
 /// Describes `Retry-After`, which is a delta-seconds count or an HTTP-date.
 ///
-/// A string, because the field is one or the other and a schema claiming it is
-/// always an integer would be wrong half the time.
+/// A string, since an integer schema would be wrong for the HTTP-date form.
 fn retry_after_header() -> kynos_openapi::Header {
     kynos_openapi::Header::new(kynos_openapi::Schema::of_type(SchemaType::String))
         .with_description("How long to wait before retrying, in seconds or as an HTTP-date")
@@ -24,8 +23,7 @@ fn retry_after_header() -> kynos_openapi::Header {
 
 /// Sets `Retry-After` on `response` when there is a delay to advertise.
 fn set_retry_after(response: &mut http::Response, retry_after: Option<Duration>) {
-    // Deliberately not a let-chain: those are stable well above the declared
-    // MSRV, and this is not worth raising the floor for.
+    // Not a let-chain: those are stable only above the declared MSRV.
     let Some(delay) = retry_after else { return };
 
     if let Ok(value) = http::HeaderValue::from_str(&delay.as_secs().to_string()) {
@@ -37,18 +35,14 @@ fn set_retry_after(response: &mut http::Response, retry_after: Option<Duration>)
 
 /// What [`Concurrency`] answers with when every slot is taken.
 ///
-/// The `Retry-After` header is *this type's*, not a separate entry keyed on
-/// 503: the type that sets the header is the type that describes it, so the two
-/// cannot come apart.
+/// The type that sets `Retry-After` is the type that describes it.
 ///
 /// `T` names the problem type the body carries; `()` leaves `about:blank`. Set
-/// it with [`Concurrency::problem_type`], which is the one URI away that tells
-/// a shed 503 from every other 503 a service can send.
+/// it with [`Concurrency::problem_type`].
 pub struct AtCapacity<T = ()> {
     /// How long a client should wait, when there is a useful answer.
     pub retry_after: Option<Duration>,
-    /// Carries `T` without storing one, as in
-    /// [`BodySizeExceeded`](super::body_size::BodySizeExceeded).
+    /// Carries `T` without storing one.
     problem_type: PhantomData<fn() -> T>,
 }
 
@@ -91,21 +85,17 @@ impl<T: ProblemType> Responses for AtCapacity<T> {
 ///
 /// Contributes 503 and a `Retry-After` response header.
 ///
-/// Requests are shed rather than queued by default: a queue is a delay a client
-/// cannot see, and 503 is the answer [`AtCapacity`] describes.
-/// [`queue_for`](Concurrency::queue_for) makes the wait bounded and explicit for
-/// a deployment that would rather absorb a burst than refuse it.
+/// Requests are shed rather than queued by default;
+/// [`queue_for`](Concurrency::queue_for) allows a bounded wait to absorb a burst.
 ///
 /// Cloning shares the permits, so one limit stays one limit however many copies
-/// the router holds — and mounting a *separate* instance on each endpoint is
-/// how one cap per endpoint is spelled.
+/// the router holds; mount a *separate* instance on each endpoint for one cap
+/// per endpoint.
 ///
 /// # A limit of zero is not a limit
 ///
-/// It is a service that answers 503 to everything, for ever, without saying so
-/// anywhere. The limit is therefore a [`NonZeroUsize`], which is the same
-/// spelling [`Server::max_connections`](crate::server::Server::max_connections)
-/// uses for the same concept:
+/// It would answer 503 to everything, so the limit is a [`NonZeroUsize`], as
+/// in [`Server::max_connections`](crate::server::Server::max_connections):
 ///
 /// ```
 /// # use std::num::NonZeroUsize;
@@ -123,9 +113,8 @@ impl<T: ProblemType> Responses for AtCapacity<T> {
 ///
 /// # Naming what the 503 is
 ///
-/// A 503 from a concurrency cap and a 503 from anything else are one URI apiece
-/// away from being distinguishable, and
-/// [`problem_type`](Concurrency::problem_type) is that URI.
+/// [`problem_type`](Concurrency::problem_type) puts an application's own URI on
+/// the refusal, so a shed 503 is told apart from every other 503.
 pub struct Concurrency<T = ()> {
     /// The maximum number of requests in flight at once.
     pub limit: NonZeroUsize,
@@ -138,9 +127,6 @@ pub struct Concurrency<T = ()> {
 
 impl Concurrency<()> {
     /// Limits in-flight requests to `limit`.
-    ///
-    /// Declared on the concrete type so that it still infers without a
-    /// turbofish, as [`BodySize::new`](super::body_size::BodySize::new) is.
     #[must_use]
     pub fn new(limit: NonZeroUsize) -> Self {
         Self {
@@ -155,9 +141,7 @@ impl Concurrency<()> {
     /// Names the RFC 9457 problem type this cap's 503 carries.
     ///
     /// Available only on a cap that has not named one, so a chain states the
-    /// type at most once. See
-    /// [`BodySize::problem_type`](super::body_size::BodySize::problem_type) for
-    /// the rule and its pass control.
+    /// type at most once.
     ///
     /// ```
     /// # use std::num::NonZeroUsize;
@@ -188,11 +172,8 @@ impl Concurrency<()> {
 impl<T> Concurrency<T> {
     /// Waits up to `wait` for a slot before shedding.
     ///
-    /// Declares nothing new. The answer when the wait expires is the same 503,
-    /// and a delay is not a response — `Timeout` already changes how long an
-    /// exchange takes without contributing a status for the change.
-    ///
-    /// Zero, the default, sheds immediately.
+    /// Declares nothing new: an expired wait is the same 503. Zero, the
+    /// default, sheds immediately.
     #[must_use]
     pub fn queue_for(mut self, wait: Duration) -> Self {
         self.queue_for = wait;
@@ -201,11 +182,9 @@ impl<T> Concurrency<T> {
 
     /// The `Retry-After` a shed response carries.
     ///
-    /// Absent by default, because how long a slot takes to free is a property
-    /// of the requests already running and a number invented here is one the
-    /// service cannot honour. A deployment behind an autoscaler *does* know,
-    /// which is why this is a value it supplies rather than a guess Kynos makes
-    /// — and why [`AtCapacity`] describes the header either way.
+    /// Absent by default: how long a slot takes to free depends on the requests
+    /// already running, so only the deployment can supply a figure.
+    /// [`AtCapacity`] describes the header either way.
     #[must_use]
     pub fn retry_after(mut self, delay: Duration) -> Self {
         self.retry_after = Some(delay);
@@ -214,9 +193,7 @@ impl<T> Concurrency<T> {
 
     /// Takes a slot, waiting no longer than the configured queue.
     ///
-    /// An owned permit rather than a counter pair: the chain's future can be
-    /// dropped at any await point, and a slot that leaked on cancellation would
-    /// shrink the limit until the process restarted.
+    /// An owned permit, so a slot is released even if the chain is cancelled.
     async fn acquire(&self) -> Option<OwnedSemaphorePermit> {
         if self.queue_for.is_zero() {
             return Arc::clone(&self.slots).try_acquire_owned().ok();
@@ -255,8 +232,7 @@ where
     }
 }
 
-// Written out rather than derived, for the reason `body_size` gives: a derive
-// would bound each on the marker.
+// Not derived: a derive would bound each on the marker.
 
 impl<T> Clone for AtCapacity<T> {
     fn clone(&self) -> Self {
@@ -305,8 +281,7 @@ impl<T> Clone for Concurrency<T> {
 
         Self {
             limit: *limit,
-            // Shared, so one limit stays one limit however many copies the
-            // router holds.
+            // Shared: one limit across every copy.
             slots: Arc::clone(slots),
             queue_for: *queue_for,
             retry_after: *retry_after,

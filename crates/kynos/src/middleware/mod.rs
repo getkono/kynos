@@ -1,62 +1,38 @@
 //! Middleware that declares what it does to the contract.
 //!
-//! # Why not `tower::Layer`
-//!
-//! A `Layer` can change the status, rewrite the body, add headers, or refuse
-//! the request entirely, and the type system says nothing about which. Wrapping
-//! an operation in one therefore invalidates its description in a way no tool
-//! can detect. That is the single largest source of wrong OpenAPI documents in
-//! the Rust ecosystem today.
-//!
-//! Kynos splits middleware in two:
+//! A `tower::Layer` can change the status, rewrite the body, add headers, or
+//! refuse the request, and its type says nothing about which. Kynos splits
+//! middleware in two instead:
 //!
 //! - An [`Interceptor`] can affect the exchange, and declares how in its own
 //!   signature: the responses it can answer with, the headers it adds, and the
-//!   headers it reads are three associated types, so what it says and what it
-//!   does are the same text.
+//!   headers it reads are three associated types. Attaching one to a group
+//!   documents its effect on every operation underneath.
 //! - An [`Observer`] sees everything and changes nothing, so it needs to
 //!   declare nothing. Logging, tracing and metrics live here.
 //!
-//! This is stricter than tower, and also *more* useful: you can write your own
-//! interceptor, and attaching it to a group documents its effect on every
-//! operation underneath automatically. With tower that mapping is maintained by
-//! hand, and drifts.
-//!
-//! The `unchecked` feature restores `Layer` support for anyone who needs it,
-//! at the price of a description marked non-authoritative.
+//! The `unchecked` feature restores `Layer` support, at the price of a
+//! description marked non-authoritative.
 //!
 //! # Wire-visible but contract-neutral
 //!
-//! Some headers are defined by HTTP itself and handled by every client without
-//! being told: `Vary`, `Content-Encoding`, the CORS set. These are still
-//! *declared* -- an interceptor cannot set a header it did not name, and two
-//! interceptors naming one header do not compile -- but their group sets
-//! [`HeaderParams::DESCRIBED`] to `false`, so they stay out of the emitted
-//! description. Declaring and describing are separate questions, and only the
-//! first is about correctness.
+//! Headers HTTP itself defines -- `Vary`, `Content-Encoding`, the CORS set --
+//! are still *declared*, but their group sets [`HeaderParams::DESCRIBED`] to
+//! `false`, so they stay out of the emitted description.
 //!
 //! [`HeaderParams::DESCRIBED`]: crate::extract::params::header::HeaderParams::DESCRIBED
 //!
 //! # The order a chain runs in
 //!
-//! **The first `intercept` call is the outermost interceptor.** A chain is a
-//! slice run head-first, and each scope's own interceptors come before the ones
-//! a group or a nested router contributed -- so a router's are outside a
-//! group's, and an endpoint's are innermost of all.
+//! **The first `intercept` call is the outermost interceptor.** Each scope's
+//! own interceptors come before the ones a group or a nested router
+//! contributed -- so a router's are outside a group's, and an endpoint's are
+//! innermost of all.
 //!
-//! Order is not part of the type. [`CompatibleWith`](stack::CompatibleWith)
-//! checks that two interceptors do not add one header or answer with one
-//! status, and a set has no positions. Where an arrangement is wrong rather
-//! than merely different -- `Conditional` outside `Cache`, `Timeout` outside
-//! the limit whose read it bounds -- documentation is what says so, and
-//! `docs/middleware.md` carries the list.
-//!
-//! # How this module is laid out
-//!
-//! The two traits and [`Continued`] live here; every interceptor Kynos
-//! ships has its own module. Adding one is a new file plus one `pub mod` line,
-//! and the ones that need a feature are gated at that line rather than at each
-//! item.
+//! Order is not part of the type: [`CompatibleWith`](stack::CompatibleWith)
+//! checks only that two interceptors do not add one header or answer with one
+//! status. `docs/middleware.md` lists the arrangements that are wrong, such as
+//! `Conditional` outside `Cache`.
 
 pub mod catch_panic;
 pub mod contribution;
@@ -67,9 +43,7 @@ pub mod rate_limit;
 pub mod request_id;
 pub mod stack;
 
-// Object-safe forms of the two RPITIT traits, so a heterogeneous chain fits in
-// one collection. `pub(crate)` because the router holds the chain and runs it;
-// never `pub`, so `Pin<Box<dyn Future>>` reaches no user signature.
+// Never `pub`, so `Pin<Box<dyn Future>>` reaches no user signature.
 pub(crate) mod erased;
 
 #[cfg(feature = "cache")]
@@ -97,37 +71,27 @@ use crate::{
 
 /// Middleware that can affect the exchange, and says how in its own signature.
 ///
-/// There is no `contribution` method. What an interceptor declares and what it
-/// does are the same text: each associated type is both the obligation and the
-/// declaration, so an interceptor cannot say one thing and do another.
+/// Each associated type is both the obligation and the declaration:
 ///
 /// * [`Short`](Interceptor::Short) is the only way to answer without reaching
 ///   the handler, and its [`Responses`](crate::response::Responses) is what
-///   the document prints. A 401
-///   cannot be declared without a type carrying it, nor sent without declaring
-///   it. Use [`Infallible`](std::convert::Infallible) to always continue.
+///   the document prints. Use [`Infallible`](std::convert::Infallible) to
+///   always continue.
 /// * [`Adds`](Interceptor::Adds) is the response headers this interceptor
 ///   attaches. [`Next::run`] yields `Continued<()>` and
 ///   [`Continued::with_headers`] is the only way to reach `Continued<H>`, so
-///   declaring headers and never attaching them does not compile. Attaching
-///   undeclared ones has no method to call either, because `with_headers` is
-///   on `Continued<()>` alone: one group reaches one response, and it is the
-///   group `Adds` names.
+///   the headers attached are exactly the ones declared.
 /// * [`Reads`](Interceptor::Reads) is the request headers it consumes, handed
-///   over already extracted. An interceptor cannot declare a parameter it
-///   never reads, because reading is how it gets one.
+///   over already extracted.
 ///
-/// The `C: Sync + 'static` bound is stated once here rather than repeated on
-/// every implementation: it is what makes [`Next`] `Send` unconditionally, so
-/// no interceptor has to reason about whether its own future is.
+/// The `C: Sync + 'static` bound is what makes [`Next`] `Send`
+/// unconditionally.
 ///
 /// # What is left undeclared
 ///
 /// [`Continued::take_body`] and [`Continued::set_body`] rewrite a body without
-/// declaring anything, because a body has no name to collide on and an encoding
-/// a consumer must know about is a header. Injecting a route and retrying are not
-/// expressible here at all: the first is what the `unchecked` escape hatches
-/// are for, and the second is invisible in any single response. See
+/// declaring anything. Injecting a route and retrying are not expressible here
+/// at all; the first is what the `unchecked` escape hatches are for. See
 /// [`docs/middleware.md`] for the invariant this buys and the one it does not.
 ///
 /// [`docs/middleware.md`]: https://github.com/getkono/kynos/blob/master/docs/middleware.md
@@ -163,21 +127,15 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
 
 /// An interceptor configured with a combination it cannot honour.
 ///
-/// Every other thing an interceptor declares is read from its types, so the
-/// compiler catches it. These are the ones a *builder* decides at run time,
-/// where there is no type to read — so they are checked once, while the router
-/// is assembled, and never per request.
+/// Checked once, while the router is assembled, and never per request.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum MiddlewareError {
     /// A [`Cors`](cors::Cors) permitted every origin and credentials together.
     ///
     /// The CORS protocol forbids `Access-Control-Allow-Origin: *` on a
-    /// credentialed response, so there is no response satisfying both. Refusing
-    /// is not pedantry: the fallback is to echo the request's own origin, which
-    /// turns "allow any origin" plus "allow credentials" into
-    /// reflect-any-origin-with-credentials — the most permissive configuration
-    /// the protocol has, reached by asking for something else.
+    /// credentialed response, and echoing the request's origin instead would
+    /// grant every origin credentialed access.
     #[error(
         "a CORS configuration permits any origin and also permits credentials, which the protocol \
          forbids; drop `allow_credentials`, or replace `allow_any_origin` with the origins \
@@ -190,10 +148,7 @@ pub enum MiddlewareError {
     ///
     /// On a credentialed response the CORS protocol reads
     /// `Access-Control-Expose-Headers: *` as the literal field name `*` rather
-    /// than as a wildcard, so the pair exposes nothing. Unlike the origin case
-    /// the failure is silent — no browser reports it, and the headers are
-    /// simply unreadable — which is what makes refusing it worth more than
-    /// shipping it.
+    /// than as a wildcard, so the pair silently exposes nothing.
     #[error(
         "a CORS configuration exposes every response header and also permits credentials, which          the protocol reads as exposing a header literally named `*`; name the headers          `expose_headers` should expose, or drop `allow_credentials`"
     )]
@@ -202,23 +157,11 @@ pub enum MiddlewareError {
 
 /// Merges `names` into whatever `Vary` a response already carries.
 ///
-/// A union rather than an insert, because `Vary` is the one response header two
-/// interceptors may both contribute to: RFC 9110 section 12.5.5 defines it as an
-/// unordered set of field names, so `Compression` varying on `Accept-Encoding`
-/// and `Cors` varying on `Origin` both belong on the same response. Overwriting
-/// would leave a cache keying on one of the two, which is a stale-response bug
-/// rather than a missing nicety.
-///
-/// Field names are case-insensitive (RFC 9110 section 5.1), so a name already
-/// present in another spelling is not added again. `Vary: *` already says the
-/// response depends on more than field names can express, so nothing narrows it.
-///
-/// Every `Vary` line counts, since RFC 9110 section 5.3 lets a list field
-/// arrive split across lines. When a name is added, the union is written back
-/// as one line; when every name is already present, the lines stay as they
-/// were. The
-/// merge is over bytes rather than text, so a line that is not UTF-8 survives
-/// verbatim instead of being overwritten as if it were empty.
+/// A union, since `Vary` is a set several interceptors contribute to (RFC 9110
+/// section 12.5.5). Names compare case-insensitively (section 5.1), every
+/// `Vary` line counts (section 5.3), and `Vary: *` is never narrowed. Merged
+/// over bytes so a non-UTF-8 line survives; lines are rewritten only when a
+/// name is added.
 pub(crate) fn vary_on(fields: &mut crate::http::HeaderMap, names: &'static [&'static str]) {
     if names.is_empty() {
         return;
@@ -255,10 +198,7 @@ pub(crate) fn vary_on(fields: &mut crate::http::HeaderMap, names: &'static [&'st
         return;
     }
 
-    // An unrepresentable value is dropped rather than panicking: every line
-    // merged here was already a valid field value, every name added is a
-    // `&'static str` a `HeaderParams` implementation wrote down, and a
-    // response path that panics is worse than one missing a cache hint.
+    // Unreachable in practice; a missing cache hint beats a panicking response.
     if let Ok(value) = crate::http::HeaderValue::from_bytes(&merged.join(&b", "[..])) {
         fields.insert(crate::http::header::VARY, value);
     }
@@ -266,14 +206,11 @@ pub(crate) fn vary_on(fields: &mut crate::http::HeaderMap, names: &'static [&'st
 
 /// A response that came back through the rest of the chain.
 ///
-/// Obtainable only from [`Next::run`], which is what makes
-/// [`Interceptor::Short`] exhaustive: an interceptor either forwards what the
-/// chain produced or answers with a type that describes itself, and there is no
-/// third way to mint a response.
+/// Obtainable only from [`Next::run`], so an interceptor either forwards what
+/// the chain produced or answers with its [`Interceptor::Short`].
 ///
-/// `H` records the headers attached so far. It starts as `()` and only
-/// [`with_headers`](Continued::with_headers) changes it, so the headers an
-/// interceptor declares and the headers it attaches are one fact.
+/// `H` records the header group attached. It starts as `()` and only
+/// [`with_headers`](Continued::with_headers) changes it.
 #[must_use = "a `Continued` is the response; dropping it drops what the chain produced"]
 pub struct Continued<H = ()> {
     response: Response,
@@ -300,19 +237,9 @@ impl Continued<()> {
     /// Attaches a declared header group.
     ///
     /// Changes the type, so an interceptor whose `Adds` names a group has to
-    /// call this to return at all — and one whose `Adds` is `()` has nothing it
-    /// could attach.
-    ///
-    /// On `Continued<()>` alone, which is what makes a response carry the one
-    /// group `Adds` names. [`Next::run`] yields `Continued<()>`, this consumes
-    /// it, and `Continued<G>` has no second call — so there is no way to write
-    /// a group and then relabel back to the declared type with that group's
-    /// fields already on the response. It reached the wire that way, and
-    /// [`CompatibleWith`](stack::CompatibleWith), which compares `Adds::NAMES`,
-    /// never saw the group that put it there.
-    // By value so the call reads `.with_headers(Group { .. })`. The group is
-    // built for this call and has no second reader, so borrowing it would
-    // only ask the caller to write `&` for a value it is done with.
+    /// call this to return at all. Available on `Continued<()>` alone, so a
+    /// response carries exactly one group.
+    // By value so the call reads `.with_headers(Group { .. })`.
     #[allow(clippy::needless_pass_by_value)]
     pub fn with_headers<G: EncodeHeaders>(mut self, headers: G) -> Continued<G> {
         crate::extract::params::header::write(self.response.headers_mut(), &headers);
@@ -324,15 +251,11 @@ impl Continued<()> {
     }
 }
 
-// No `H: HeaderParams` bound: what keeps `H` a header group is construction --
-// `new` for `()` and `with_headers` for a `G: EncodeHeaders` -- rather than a
-// bound on an accessor none of these bodies needs.
+// Construction, not a bound, keeps `H` a header group.
 impl<H> Continued<H> {
     /// The status the chain produced.
     ///
-    /// Readable because logging or metrics may want it; there is deliberately
-    /// no way to *change* it, since a status an interceptor invents is a status
-    /// no type declared.
+    /// Read-only: a status an interceptor invents is one no type declared.
     #[must_use]
     pub fn status(&self) -> crate::http::StatusCode {
         self.response.status()
@@ -340,9 +263,8 @@ impl<H> Continued<H> {
 
     /// The headers the chain produced.
     ///
-    /// Readable, not writable: [`with_headers`](Continued::with_headers) is the
-    /// only way to add one, and it is what keeps the added set equal to the
-    /// declared set.
+    /// Read-only: [`with_headers`](Continued::with_headers) is the only way to
+    /// add one.
     #[must_use]
     pub fn headers(&self) -> &crate::http::HeaderMap {
         self.response.headers()
@@ -350,11 +272,9 @@ impl<H> Continued<H> {
 
     /// The extensions the chain produced.
     ///
-    /// Readable, not writable, and for the same reason `headers` is: an
-    /// interceptor reads what a handler decided and does not decide for it.
-    /// This is the untyped channel — a handler puts a value in, an interceptor
-    /// that knows the type takes it out, and nothing about the operation's
-    /// description changes, because an extension has no wire form to describe.
+    /// Read-only. A handler puts a value in and an interceptor that knows the
+    /// type takes it out; an extension has no wire form, so nothing is
+    /// described.
     #[must_use]
     pub fn extensions(&self) -> &crate::http::Extensions {
         self.response.extensions()
@@ -363,14 +283,8 @@ impl<H> Continued<H> {
     /// Takes the body out, leaving an empty one behind.
     ///
     /// Paired with [`set_body`](Continued::set_body) for anything that reads a
-    /// response and hands the same bytes on. Two calls rather than one
-    /// combinator because draining a body is asynchronous and fallible, and a
-    /// closure returning a body can be neither.
-    ///
-    /// A body needs no declaration: it has no name to collide on, so two
-    /// interceptors rewriting one compose where two setting one header do not.
-    /// The status and the headers are untouched by both halves, which is what
-    /// stops this becoming a way to mint a response.
+    /// response and hands the same bytes on. The status and headers are
+    /// untouched by both halves.
     #[must_use = "the body is removed; put one back with `set_body`"]
     pub fn take_body(&mut self) -> crate::http::body::Body {
         std::mem::take(self.response.body_mut())
@@ -378,21 +292,16 @@ impl<H> Continued<H> {
 
     /// Puts a body back.
     ///
-    /// What it does *not* license is changing what the body means. An encoding
-    /// a consumer has to know about is a header, and a header has to be in
-    /// [`Adds`](Interceptor::Adds) — which is why `Compression` declares
-    /// `Content-Encoding` rather than quietly re-encoding behind this.
+    /// An encoding a consumer has to know about is a header, so it still
+    /// belongs in [`Adds`](Interceptor::Adds).
     pub fn set_body(&mut self, body: crate::http::body::Body) {
         *self.response.body_mut() = body;
     }
 
     /// Removes a field the declared group `G` names.
     ///
-    /// For the one case [`with_headers`](Continued::with_headers) cannot
-    /// express: a field the chain set that the interceptor owns and that has
-    /// stopped being true — `Compression`'s `Content-Length` over a streamed
-    /// encode, whose length is not known when the head goes. Held to the rule
-    /// `with_headers` writes under: only a name `G::NAMES` declares.
+    /// For a field the interceptor owns that has stopped being true, such as
+    /// `Content-Length` over a streamed encode.
     #[cfg(feature = "compression")]
     pub(crate) fn remove_declared<G: crate::extract::params::header::HeaderParams>(
         &mut self,
@@ -418,9 +327,7 @@ impl<H> Continued<H> {
 
 /// The remainder of the interceptor chain.
 ///
-/// A cursor rather than a linked structure: running the rest of the chain is
-/// taking the head of a slice, and reaching the end is calling the endpoint. A
-/// route with no interceptors therefore pays nothing.
+/// A cursor over a slice; reaching the end calls the endpoint.
 pub struct Next<'a, C> {
     remaining: &'a [Arc<dyn ErasedInterceptor<C>>],
     terminal: &'a dyn ErasedTerminal<C>,
@@ -455,12 +362,8 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
 
     /// Runs the rest of the chain.
     ///
-    /// The only source of a [`Continued`], which is what leaves
-    /// [`Interceptor::Short`] as the sole other way an interceptor can answer.
+    /// The only source of a [`Continued`].
     pub async fn run(self, request: Request) -> Continued<()> {
-        // Taking the head of the slice is the whole of "running the rest": an
-        // empty remainder is the endpoint, so a route with no interceptors
-        // reaches the handler with nothing in between.
         let response = match self.remaining.split_first() {
             Some((head, remaining)) => {
                 let next = Self {
@@ -488,26 +391,20 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
 
 /// Middleware that observes without altering.
 ///
-/// Because it cannot change the exchange, it contributes nothing to the
-/// description — which is why an observer needs no declaration and can see
-/// everything, including the headers no extractor will surface to a handler.
+/// It contributes nothing to the description, so it needs no declaration and
+/// can see everything.
 ///
-/// `route` is `None` when no operation matched: a 404 is still worth logging,
-/// and an observer that could not see one would be blind to exactly the
-/// traffic worth investigating.
+/// `route` is `None` when no operation matched.
 pub trait Observer<C>: Send + Sync + 'static {
     /// Called when a request arrives, before any interceptor.
     fn on_request(&self, request: &Request, route: Option<Route<'_>>, context: &C);
 
     /// Called when a response is about to be written.
     ///
-    /// `elapsed` measures producing the response head, not delivering the body
-    /// beneath it. A streaming response is reported here once its first frame
-    /// is ready and long before its last, so reading this as request latency
-    /// overstates how fast a long-lived response was — and says nothing about
-    /// whether the peer received it.
-    /// [`on_disconnect`](Observer::on_disconnect) is what reports the body that
-    /// never finished.
+    /// `elapsed` measures producing the response head, not delivering the
+    /// body; a streaming response is reported long before its last frame.
+    /// [`on_disconnect`](Observer::on_disconnect) reports a body that never
+    /// finished.
     fn on_response(
         &self,
         response: &Response,
@@ -520,28 +417,17 @@ pub trait Observer<C>: Send + Sync + 'static {
     /// The peer did not receive the response
     /// [`on_response`](Observer::on_response) already reported: a download
     /// cancelled, a long poll abandoned, an event stream whose reader went
-    /// away. A response body that failed part-way ends the same way and cannot
-    /// be told apart here, which is the honest reading — in both cases what was
-    /// announced was not delivered.
+    /// away. A body that failed part-way is reported the same way.
     ///
-    /// `elapsed` runs from the request arriving to the body being dropped, so
-    /// it measures how long the peer stayed rather than how long the head took.
+    /// `elapsed` runs from the request arriving to the body being dropped.
     ///
-    /// Not every departure is one of these. A client that leaves while the
-    /// handler is still working has no response body to drop yet, and so is not
-    /// reported: what is watched here is the delivery, and there is nothing to
-    /// deliver until the handler has produced something.
+    /// A client that leaves while the handler is still working is not
+    /// reported, since there is no response body to drop yet.
     ///
-    /// Called only once the body has been released: whatever it owned, such as
-    /// a handler's event stream, has already been dropped, so an observer may
-    /// treat it as gone. A body whose own drop panics is still reported, once.
-    ///
-    /// Called from the drop, which is whatever task last held the body. Do the
-    /// same little work here that belongs in any destructor: record it and
-    /// return, never block and never await.
-    ///
-    /// Defaulted to nothing, so an observer written before this existed keeps
-    /// compiling.
+    /// Called once the body has been released, so whatever it owned is gone;
+    /// a body whose own drop panics is still reported, once. Called from the
+    /// drop on whatever task last held the body: record and return, never
+    /// block or await.
     fn on_disconnect(&self, route: Option<Route<'_>>, elapsed: std::time::Duration) {
         let _ = (route, elapsed);
     }
@@ -551,12 +437,9 @@ pub trait Observer<C>: Send + Sync + 'static {
     /// [`on_response`](Observer::on_response) sees the 500 it became.
     ///
     /// `route` is always `Some`, naming the operation the panic unwound out
-    /// of: only a routed operation runs anything that can panic. A panic is
-    /// reported once, by the innermost scope that recovered it. One nothing
-    /// recovers is not reported here: it unwinds past the dispatcher. Nor is
-    /// one an endpoint recovered beneath an interceptor that then replaced the
-    /// 500 with a short circuit of its own, because the response that carried
-    /// it never reached the dispatcher.
+    /// of. A panic is reported once, by the innermost scope that recovered it.
+    /// Not reported: a panic nothing recovers, or one whose 500 an outer
+    /// interceptor replaced with a short circuit of its own.
     fn on_panic(&self, payload: &(dyn std::any::Any + Send), route: Option<Route<'_>>) {
         let _ = (payload, route);
     }

@@ -63,10 +63,8 @@ impl Quota {
 
     /// Permits `extra` beyond the sustained rate inside any one window.
     ///
-    /// The advertised quota becomes `limit + extra`, because that is what the
-    /// service will actually honour — and advertising a lower number would be a
-    /// promise the service breaks in the client's favour and then contradicts
-    /// in its own headers.
+    /// The advertised quota becomes `limit + extra`, which is what the service
+    /// actually honours.
     #[must_use]
     pub fn burst(mut self, extra: u64) -> Self {
         self.burst = extra;
@@ -100,14 +98,9 @@ impl Quota {
 
 /// The sliding-window estimate, `elapsed` into a window of `window`.
 ///
-/// `current + previous × (window − elapsed) / window`. A fixed window lets a
-/// client spend a whole quota at the end of one and a whole quota at the start
-/// of the next, which is twice the rate the policy names; weighting the previous
-/// window by how much of it is still in view removes that without keeping a log
-/// of individual requests.
-///
-/// Saturating throughout: a counter is a `u64` and an overflowing estimate must
-/// refuse rather than wrap into permission.
+/// `current + previous × (window − elapsed) / window`, which stops a fixed
+/// window's boundary doubling the rate. Saturating, so overflow refuses rather
+/// than wraps into permission.
 pub(super) fn estimate(previous: u64, current: u64, elapsed: Duration, window: Duration) -> u64 {
     if window.is_zero() {
         return current;
@@ -127,13 +120,7 @@ pub(super) fn estimate(previous: u64, current: u64, elapsed: Duration, window: D
 /// The earliest instant the estimate falls to `headroom`.
 ///
 /// Assuming the client sends nothing more: the current window's remainder, plus
-/// however much of the *next* window has to pass before the carried weight has
-/// decayed far enough.
-///
-/// A number the service can honour, which is the whole point. The obvious
-/// alternative — reporting the window's length — is a delay the service does not
-/// actually require, and `limits::concurrency` raises the same objection against
-/// inventing a `Retry-After` for a concurrency cap.
+/// however much of the next window must pass for the carried weight to decay.
 pub(super) fn recovers_in(
     current: u64,
     headroom: u64,
@@ -146,12 +133,8 @@ pub(super) fn recovers_in(
         return remaining_window;
     }
 
-    // Once this window closes, `current` becomes the carried half and decays
-    // linearly. It reaches `headroom` after `window × (current − headroom) / current`.
-    //
-    // Integer arithmetic in milliseconds rather than a float ratio: a `u64`
-    // counter past 2^53 loses precision as an `f64`, and a delay that rounds the
-    // wrong way is one the service does not honour.
+    // Decays to `headroom` after `window × (current − headroom) / current`, in
+    // integer milliseconds: an `f64` loses precision past 2^53.
     let excess = u128::from(current - headroom);
     let window_ms = window.as_millis();
     let decay_ms = window_ms
@@ -238,8 +221,7 @@ where
 
     async fn check(&self, request: &http::Request, route: Route<'_>, context: &C) -> Decision {
         let Some(partition) = self.key.partition(request, route, context) else {
-            // Exempt: no counter read, none written, and the response reports
-            // the full quota rather than a number that would imply a bucket.
+            // Exempt: no counter touched, and the full quota reported.
             return Decision::Allow(Allowance::new(
                 self.enforced
                     .iter()
@@ -272,9 +254,8 @@ where
             let current_key = format!("{partition}|{}|{index}", quota.name);
             let previous_key = format!("{partition}|{}|{}", quota.name, index.saturating_sub(1));
 
-            // Read before increment. A denied request must not consume quota, or
-            // a throttled client can never recover: every retry would push the
-            // window along and the estimate would never fall.
+            // Read before increment: a denied request must not consume quota, or
+            // a retrying client never recovers.
             let counted = match (
                 self.store.read(&current_key).await,
                 self.store.read(&previous_key).await,

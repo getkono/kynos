@@ -49,24 +49,18 @@ impl<C> RateLimitKey<C> for ByPeerAddress {
 
 /// The client address, resolved through the router's trusted-proxy policy.
 ///
-/// What [`ByPeerAddress`] should be for any service behind a load balancer.
-/// The peer of a proxied request is the proxy, so keying on it counts every
-/// client of that proxy against one bucket — a per-IP limit that is silently a
-/// global one.
+/// Use this rather than [`ByPeerAddress`] behind a load balancer, whose peer is
+/// the proxy for every client.
 ///
-/// Resolution is the router's, not this key's:
 /// [`Router::trusted_proxies`](crate::Router::trusted_proxies) states which
 /// hops may be believed, and until it is called this behaves exactly like
-/// [`ByPeerAddress`]. That is deliberate rather than convenient — RFC 7239
-/// section 8.1 says the field "cannot be relied upon to be correct", so a
-/// limiter that read it unasked would let a client choose the bucket it counts
-/// against, which is worse than no limit at all because it looks like one.
+/// [`ByPeerAddress`]: RFC 7239 section 8.1 says the field "cannot be relied
+/// upon to be correct", and an untrusted one would let a client choose its
+/// bucket.
 ///
-/// A request that resolves to no address — a `TestClient`, a directly driven
-/// `Service::call`, or trust ending on an element naming none (`for=unknown`,
-/// an obfuscated or unparseable `for=`, or no `for=` at all, as in a trusted
-/// proxy sending only `Forwarded: proto=https`) — counts against one shared
-/// bucket rather than being exempted, for the reason [`ByPeerAddress`] gives.
+/// A request that resolves to no address (no socket, or trust ending on an
+/// element naming none, such as `for=unknown`) counts against one shared
+/// bucket rather than being exempted.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ByClientAddress;
 
@@ -93,11 +87,9 @@ impl<C> RateLimitKey<C> for ByClientAddress {
 /// A request field's value.
 ///
 /// The field is read directly rather than through
-/// [`Reads`](crate::middleware::Interceptor::Reads), for the reason `Cors` reads
-/// `Origin` the same way: a key is not a parameter of the operation, and
-/// `Authorization` cannot be declared as one at all. An application that wants
-/// the field described declares it with `#[derive(HeaderParams)]` on the
-/// operation.
+/// [`Reads`](crate::middleware::Interceptor::Reads), so it is not described; an
+/// application that wants it described declares it with
+/// `#[derive(HeaderParams)]` on the operation.
 ///
 /// A request without the field counts against one shared bucket, so removing
 /// the header is not a way past the limit.
@@ -125,9 +117,8 @@ impl<C> RateLimitKey<C> for ByHeader {
 
 /// The matched operation.
 ///
-/// What "per endpoint" means when one limiter covers several. The `paths` key
-/// rather than the request path, so cardinality is bounded by the number of
-/// operations rather than by the number of URLs a client can invent.
+/// "Per endpoint" when one limiter covers several. Keyed on the `paths` key, so
+/// cardinality is bounded by the number of operations.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ByRoute;
 

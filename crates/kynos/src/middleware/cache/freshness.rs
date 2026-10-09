@@ -6,20 +6,14 @@ use crate::http::{HeaderMap, StatusCode, header};
 
 /// Statuses a response may be stored under.
 ///
-/// RFC 9110 section 15.1's heuristically-cacheable set, minus 206. A partial
-/// response *can* arise — [`response::range`](crate::response::range) serves
-/// one — and 206 stays out because this cache stores and replays whole
-/// responses: it has no way to recombine a stored part with the range a later
-/// request asks for, and section 14.4 forbids recombining what a recipient
-/// cannot verify. A closed enumeration, checked by a table test.
+/// RFC 9110 section 15.1's heuristically-cacheable set, minus 206: this cache
+/// stores whole responses and cannot recombine parts (section 14.4).
 pub(super) const CACHEABLE: &[u16] = &[200, 203, 204, 300, 301, 308, 404, 405, 410, 414, 501];
 
 /// Fields a stored response must not keep.
 ///
-/// RFC 9110 section 7.6.1: connection-specific, and meaningless to whoever
-/// reads the response back. `Age` goes with them because it is recomputed on
-/// the way out — a stored one would be the age at the time of storage, added to
-/// the age since.
+/// RFC 9110 section 7.6.1's connection-specific fields, plus `Age`, which is
+/// recomputed on the way out.
 pub(super) const HOP_BY_HOP: &[&str] = &[
     "connection",
     "proxy-connection",
@@ -31,11 +25,7 @@ pub(super) const HOP_BY_HOP: &[&str] = &[
     "age",
 ];
 
-/// Why a response was not stored.
-///
-/// Not public: an application does not act on it. Named rather than a `bool`
-/// so a reader of the code can see the whole list at once, and so the table
-/// test can count its cases against the set.
+/// Why a response was not stored; a closed set the table test counts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Unstorable {
     /// The method is neither `GET` nor `HEAD`.
@@ -62,12 +52,7 @@ pub(super) enum Unstorable {
     /// The response said nothing about how long it may be reused, and no
     /// default was configured.
     NoFreshness,
-    // There is deliberately no `Body` variant. Capping a stored body is the
-    // interceptor's job: `bounded` refuses one whose length is unknown or past
-    // `max_body_bytes`, and returns before any reason is named. A variant here
-    // could not be produced by `storable`, so it would owe a case that no test
-    // could write -- and `every_refusal_has_a_case` would have to exempt it
-    // from the count that makes the set closed.
+    // No `Body` variant: `bounded` caps a body before `storable` is asked.
 }
 
 /// Whether a response may be stored, and for how long.
@@ -82,9 +67,8 @@ pub(super) fn storable(
     secured: bool,
     default_freshness: Option<Duration>,
 ) -> Result<Duration, Unstorable> {
-    // RFC 9111 section 3 permits `POST` only with an explicit
-    // `Content-Location`, and getting that wrong is a correctness bug for a
-    // capability nobody asks for.
+    // RFC 9111 section 3 permits caching `POST` only with `Content-Location`;
+    // not supported.
     if !matches!(
         method,
         &crate::http::Method::GET | &crate::http::Method::HEAD
@@ -107,10 +91,8 @@ pub(super) fn storable(
         ("private", Unstorable::Private),
         ("no-cache", Unstorable::NoCache),
     ] {
-        // `private` and `no-cache` may name fields, which narrows them. Kynos
-        // treats a narrowed directive as the whole one: storing part of a
-        // response is not something this cache can do, so the conservative
-        // reading is the only correct one.
+        // A field-narrowed `private` or `no-cache` counts as the whole one:
+        // this cache cannot store part of a response.
         if response_control
             .iter()
             .any(|value| value == directive || value.starts_with(&format!("{directive}=")))
@@ -124,19 +106,14 @@ pub(super) fn storable(
         return Err(Unstorable::VaryWildcard);
     }
 
-    // No opt-out. Replaying a response that mints a session to a second client
-    // is the worst bug a cache has, and `Vary` cannot protect against it: the
-    // cookie is in the *response*, and nothing in the request selects it.
+    // No opt-out: `Vary` cannot keep a minted session from a second client.
     if response.contains_key(header::SET_COOKIE) {
         return Err(Unstorable::SetCookie);
     }
 
     // RFC 9111 section 3.5: a response to an authenticated request is shared
-    // only where it says so. `Authorization` is the one credential the section
-    // names; an API key in a field or cookie of its own, or a client
-    // certificate, is seen only through the operation's declared requirement.
-    // A requirement that also admits anonymous access counts as well: which
-    // of the two a request was is decided by the guard, after any cache hit.
+    // only where it says so. Other credentials are seen only through the
+    // declared requirement, which counts even where it admits anonymous access.
     if (secured || request.contains_key(header::AUTHORIZATION)) && !shared(&response_control) {
         return Err(Unstorable::Authorized);
     }
@@ -147,20 +124,15 @@ pub(super) fn storable(
 /// Whether a stored response may be served for an operation declaring a
 /// security requirement.
 ///
-/// Only one that said it may be shared, the condition [`storable`] stores one
-/// under. Checked again where it is read because the store outlives the rule:
-/// a response stored while the operation was unguarded is otherwise served past
-/// the guard added since.
+/// Rechecked on read because the store outlives the rule: a response stored
+/// before a guard was added must not be served past it.
 pub(super) fn servable_when_secured(stored: &HeaderMap) -> bool {
     shared(&directives(stored))
 }
 
 /// Whether the directives say a shared cache may reuse the response for any
 /// requester, as RFC 9111 section 3.5 lists them for an authenticated request.
-///
-/// `must-revalidate` is the third directive the section lists, and it is not
-/// read: it permits storage only where the cache revalidates, and this one
-/// does not.
+/// `must-revalidate` is not read, since this cache does not revalidate.
 fn shared(control: &[String]) -> bool {
     control
         .iter()
@@ -169,26 +141,16 @@ fn shared(control: &[String]) -> bool {
 
 /// Whether the request forbids answering it from the store.
 ///
-/// RFC 9111 section 5.2.1.4: `no-cache` asks that a stored response not be
-/// used without successful validation, and this cache does not validate, so
-/// the request goes to the handler. It still may store what comes back: the
-/// directive limits reuse, not storage.
-///
-/// `Pragma: no-cache` is not read. Section 5.4 deprecates the field and
-/// requires nothing of a cache that receives it.
+/// RFC 9111 section 5.2.1.4 `no-cache`, since this cache does not validate.
+/// `Pragma` is not read (section 5.4 deprecates it).
 pub(super) fn forbids_reuse(request: &HeaderMap) -> bool {
     directives(request).iter().any(|value| value == "no-cache")
 }
 
 /// How long a response may be reused.
 ///
-/// `s-maxage` wins over `max-age`, because this is a shared cache and that is
-/// what the directive is for.
-///
-/// There is no heuristic. RFC 9111 section 4.2.2 permits one, and every
-/// heuristic is a guess that turns a correct origin into an incorrect cache —
-/// so a response that did not say is not reused unless a default was configured
-/// deliberately.
+/// `s-maxage` wins over `max-age`, this being a shared cache. No RFC 9111
+/// section 4.2.2 heuristic; only a configured default.
 fn freshness(control: &[String], default: Option<Duration>) -> Option<Duration> {
     for directive in ["s-maxage=", "max-age="] {
         if let Some(seconds) = control

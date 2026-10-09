@@ -22,10 +22,8 @@ pub enum IfNoneMatch {
 
 /// The preconditions [`Conditional`] evaluates.
 ///
-/// `If-Match` and `If-Unmodified-Since` are deliberately absent. Honouring
-/// either on an unsafe method means evaluating it *before* the change, which
-/// only the handler can do — and an interceptor claiming a 412 it decided
-/// afterwards would be advertising lost-update protection it does not provide.
+/// `If-Match` and `If-Unmodified-Since` are absent: they must be evaluated
+/// before the change, which only the handler can do.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Preconditions {
     /// What the client already holds, if it said.
@@ -55,8 +53,7 @@ impl DecodeHeaders for Preconditions {
     /// Never fails.
     ///
     /// RFC 9110 section 13.1: a recipient ignores a condition it cannot
-    /// evaluate. So a malformed precondition is *absent* rather than a 400, and
-    /// this interceptor adds no rejection to the operations it covers.
+    /// evaluate, so a malformed precondition is absent rather than a 400.
     fn decode(headers: &HeaderMap) -> Result<Self, HeaderRejection> {
         Ok(Self {
             if_none_match: headers
@@ -89,10 +86,8 @@ impl NotModified {
     /// The 304 for a response carrying `headers`.
     ///
     /// RFC 9110 section 15.4.5 requires a 304 to carry the fields a 200 would
-    /// have sent that a cache needs to update its stored copy. `Last-Modified`
-    /// is absent from that list and included anyway, because a client that
-    /// validated with a date has nothing else to refresh its record with —
-    /// though Kynos never sends one itself.
+    /// have sent that a cache needs to update its stored copy, plus
+    /// `Last-Modified` for a client that validated with a date.
     #[must_use]
     pub fn from_headers(headers: &HeaderMap) -> Self {
         const REPLAYED: &[http::HeaderName] = &[
@@ -157,19 +152,14 @@ impl Responses for NotModified {
 /// status, so the 304 is a short circuit taken after the chain returns rather
 /// than before it runs.
 ///
-/// The handler's work is therefore done and discarded. That is the cost, and it
-/// is why mounting this *outside* a [`Cache`](crate::middleware::cache::Cache)
-/// matters: a cache hit is cheap, and turning a cheap hit into a 304 is the
-/// arrangement worth having. Outside is the *earlier* `intercept` call, per
-/// [the module's ordering rule](crate::middleware#the-order-a-chain-runs-in),
-/// and getting it backwards is not cosmetic -- a hit is served by constructing
-/// a `Continued` rather than by calling `next.run`, so it never reaches a
-/// `Conditional` mounted inside the cache and the 304 becomes unreachable on
-/// exactly the request that should get it.
+/// The handler's work is therefore done and discarded, which is why this
+/// belongs *outside* a [`Cache`](crate::middleware::cache::Cache) (the earlier
+/// `intercept` call, per
+/// [the module's ordering rule](crate::middleware#the-order-a-chain-runs-in)):
+/// a cache hit never reaches a `Conditional` mounted inside it.
 ///
-/// Safe methods only. `If-None-Match` on an unsafe method means something else
-/// entirely — "only if it does not already exist" — and answering that with a
-/// 304 rather than a 412 would be wrong in the direction that loses data.
+/// Safe methods only: `If-None-Match` on an unsafe method calls for a 412, not
+/// a 304.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Conditional;
 
@@ -202,16 +192,8 @@ impl<C: Sync + 'static> Interceptor<C> for Conditional {
             return Ok(continued);
         };
 
-        // Only a 200 can be revalidated. RFC 9110 section 15.4.5 defines 304 as
-        // the answer to a request that "would have resulted in a 200 (OK)
-        // response if it were not for the fact that the condition evaluated to
-        // false" -- so the status is part of the precondition, not merely a
-        // filter for failures.
-        //
-        // `is_success()` was too wide by five: 201, 202, 203, 204 and 206. The
-        // last is the one that bites, since a 304 replays `ETag` and `Vary` but
-        // never `Content-Range`, leaving a resuming client unable to tell
-        // "your range is current" from "the whole representation is current".
+        // Only a 200, not any 2xx: RFC 9110 section 15.4.5 defines 304 as the
+        // answer to a request that "would have resulted in a 200 (OK) response".
         if continued.status() != http::StatusCode::OK {
             return Ok(continued);
         }
@@ -226,17 +208,13 @@ impl<C: Sync + 'static> Interceptor<C> for Conditional {
 
 /// Whether the client's copy is the one the response carries.
 ///
-/// The *weak* comparison, per RFC 9110 section 13.1.2: `W/"x"` and `"x"` are
-/// the same representation for a cache validation, which is what
-/// `If-None-Match` is for.
+/// The weak comparison, per RFC 9110 section 13.1.2.
 fn matched(condition: &IfNoneMatch, headers: &HeaderMap) -> bool {
     let Some(current) = headers
         .get(header::ETAG)
         .and_then(|value| value.to_str().ok())
     else {
-        // No validator, nothing to match. `*` included: RFC 9110 says it
-        // matches "any current representation", and a response carrying no tag
-        // has none to compare.
+        // No validator matches nothing, `*` included.
         return false;
     };
 

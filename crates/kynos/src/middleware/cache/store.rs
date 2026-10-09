@@ -8,20 +8,15 @@ use crate::http::{HeaderMap, HeaderValue, StatusCode};
 
 /// What identifies a resource, before content negotiation.
 ///
-/// Not a variant: a resource may have several representations and this names
-/// the resource. [`CacheStore::get`] returns every variant filed under one of
-/// these, and Kynos picks among them — because only a stored response knows
-/// what it varied on, and a store that selected would have to reimplement
-/// RFC 9111 section 4.1 once per store.
+/// Names the resource, not a variant: [`CacheStore::get`] returns every variant
+/// filed under one of these, and Kynos selects among them (RFC 9111 section
+/// 4.1).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PrimaryKey {
     /// The application's namespace.
     ///
-    /// Bump it on a deploy that changes what an operation returns. A store that
-    /// outlives a process can hold a response the new binary no longer
-    /// declares, and that would breach *emitted ⊇ observable* — one line here
-    /// is the remedy, and it is a deploy step rather than something the type
-    /// system can carry.
+    /// Bump it on a deploy that changes what an operation returns: a store that
+    /// outlives a process can hold a response the new binary no longer declares.
     pub namespace: &'static str,
     /// The request method. `GET` or `HEAD` for anything stored.
     pub method: Method,
@@ -30,10 +25,8 @@ pub struct PrimaryKey {
     /// where the request carried neither. The target's wins because RFC 9112
     /// section 3.2.2 has an origin server ignore `Host` beside one.
     ///
-    /// RFC 9111 section 2 keys a stored response on the whole target URI, and
-    /// an application that picks a tenant from `Host` answers one path
-    /// differently per host. The scheme is not part of the key: behind a
-    /// terminating proxy a service cannot see the one the client used.
+    /// The scheme is not part of the key: behind a terminating proxy a service
+    /// cannot see the one the client used.
     pub authority: Option<String>,
     /// The `paths` key, not the request path.
     pub route: String,
@@ -136,9 +129,8 @@ impl StoredResponse {
 
 /// Where a [`Cache`](super::Cache) keeps responses.
 ///
-/// The store is the application's, for the reason
-/// [`RateLimitStore`](crate::middleware::rate_limit::store::RateLimitStore) is:
-/// prescribing one would mean prescribing a dependency.
+/// The application supplies the store, as it does a
+/// [`RateLimitStore`](crate::middleware::rate_limit::store::RateLimitStore).
 ///
 /// # The contract
 ///

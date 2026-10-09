@@ -12,17 +12,12 @@
 //! cached body; mount this outside `Cors` and `Compression`, so what is stored
 //! is a response whose negotiated headers have already landed. Outside is the
 //! *earlier* `intercept` call, per
-//! [the module's ordering rule](super#the-order-a-chain-runs-in) -- and getting
-//! it backwards here is not cosmetic, since a hit never reaches an interceptor
-//! mounted inside the cache.
+//! [the module's ordering rule](super#the-order-a-chain-runs-in); a hit never
+//! reaches an interceptor mounted inside the cache.
 //!
-//! The order is documented rather than enforced. Enforcing it needs a marker
-//! threaded through `CompatibleWith` for one interceptor, which generalizes the
-//! `Cors` downcast into the capability `docs/middleware.md` explicitly bounds.
-//! What *is* enforced is the case where getting it wrong is catastrophic: a
-//! response carrying CORS headers whose `Vary` does not name `origin` is
-//! refused outright, because storing one hands one origin's
-//! `Access-Control-Allow-Origin` to another.
+//! The order is documented rather than enforced, except that a response
+//! carrying CORS headers whose `Vary` does not name `origin` is never stored,
+//! since it would hand one origin's `Access-Control-Allow-Origin` to another.
 
 pub mod store;
 
@@ -77,9 +72,8 @@ impl sealed::Sealed for Tagged {}
 
 /// What a [`Cache`] adds to a response.
 ///
-/// `Age` is not described. It is a cache-to-cache field, and putting it in a
-/// generated client would be telling a consumer about something none of them
-/// act on — the same judgement `Vary` and the CORS set already get.
+/// `Age` is not described: it is a cache-to-cache field no generated client
+/// acts on.
 #[derive(Clone, Debug, Default)]
 pub struct CacheHeaders<const TAGGED: bool = false> {
     age: Duration,
@@ -206,9 +200,8 @@ impl<S> Cache<S, Plain> {
 
     /// Also derives a strong `ETag` for a stored response carrying none.
     ///
-    /// Changes the type, because it changes what every covered operation
-    /// declares — and because mounting this beside anything else setting `ETag`
-    /// has to be a compile error rather than a response with two.
+    /// Changes the type, since every covered operation then declares `ETag`;
+    /// mounting it beside anything else setting `ETag` is a compile error.
     #[must_use]
     pub fn deriving_etags(self) -> Cache<S, Tagged> {
         Cache {
@@ -243,10 +236,8 @@ impl<S, D> Cache<S, D> {
 
     /// A freshness lifetime for a response that stated none.
     ///
-    /// Off by default. RFC 9111 section 4.2.2 permits a heuristic and every
-    /// heuristic is a guess that turns a correct origin into an incorrect
-    /// cache, so this is a number a deployment supplies rather than one Kynos
-    /// invents.
+    /// Off by default: Kynos applies no RFC 9111 section 4.2.2 heuristic, so
+    /// this is a guess only a deployment can make.
     #[must_use]
     pub fn default_freshness(mut self, lifetime: Duration) -> Self {
         self.default_freshness = Some(lifetime);
@@ -274,9 +265,8 @@ where
         let () = reads;
 
         let key = primary_key(self.namespace, &request, next.route().path());
-        // Read from what routing recorded, which an endpoint's own chain sees
-        // as the router's does. A request no router dispatched carries no
-        // record, and is read as guarded: refusing a store is the safe error.
+        // A request no router dispatched carries no record and is read as
+        // guarded: refusing a store is the safe error.
         let secured = request
             .extensions()
             .get::<crate::router::dispatch::Routed>()
@@ -285,10 +275,6 @@ where
         let request_headers = request.headers().clone();
         let method = request.method().clone();
 
-        // A hit replays a status the operation already declares, which is why
-        // `Short` is `Infallible`: nothing here invents a response. A request
-        // forbidding reuse skips the store rather than reading and discarding.
-        //
         // A hit is served before the operation's guard runs, so for a guarded
         // operation only a response that said it may be shared is a hit.
         let stored = if freshness::forbids_reuse(&request_headers) {
@@ -316,32 +302,16 @@ where
             *response.status_mut() = stored.status();
             *response.headers_mut() = stored.headers().clone();
 
-            // `Continued::new` is `pub(crate)`, and this is the one place
-            // outside `Next::run` that calls it. The invariant it protects --
-            // an interceptor either forwards what the chain produced or answers
-            // with its declared `Short` -- is not weakened: a hit replays a
-            // response *this operation produced*, stored only after it passed
-            // the storability rules. A third-party interceptor still cannot
-            // mint one, because the constructor is not public.
+            // The one `Continued::new` outside `Next::run`: sound, because a hit
+            // replays a response this operation itself produced.
             return Ok(Continued::new(response).with_headers(D::headers(age, etag)));
         }
 
         let mut continued = next.run(request).await;
 
-        // RFC 9111 section 4.4: a cache **MUST** invalidate the target URI when
-        // it receives a non-error status code in response to an unsafe request
-        // method, where a non-error status is 2xx or 3xx.
-        //
-        // `is_safe` is false for an extension method the crate does not know,
-        // which is what section 4.4 asks for in as many words -- "including
-        // methods whose safety is unknown". Treating an unknown method as safe
-        // would serve a stale body after a change nobody could rule out.
-        //
-        // Both stored methods are dropped, not the one that arrived. The
-        // requirement invalidates a *URI*, `PrimaryKey` carries the method, and
-        // only `GET` and `HEAD` are ever stored -- so the key an unsafe request
-        // would build names nothing, and dropping it would satisfy the letter
-        // of the check while leaving the copy the client is about to read.
+        // RFC 9111 section 4.4 invalidates the target URI on a non-error status
+        // to an unsafe (or unknown) method; the URI's stored entries are its
+        // `GET` and `HEAD` keys, not the key this request's method would build.
         if !method.is_safe() && is_non_error(continued.status()) {
             for stored in [kynos_openapi::Method::Get, kynos_openapi::Method::Head] {
                 self.store
@@ -367,9 +337,8 @@ where
             return Ok(continued.with_headers(D::headers(Duration::ZERO, None)));
         };
 
-        // Declining to store a response is not a licence to alter the one
-        // being forwarded, so a body not buffered is handed on as it arrived,
-        // and one whose read failed is handed on failing.
+        // A body not buffered is forwarded as it arrived, and one whose read
+        // failed is forwarded failing.
         let bytes = match bounded(continued.take_body(), self.max_body_bytes).await {
             Ok(bytes) => bytes,
             Err(unbuffered) => {
@@ -388,9 +357,6 @@ where
             .or_else(|| D::DERIVES.then(|| derived_etag(&bytes)));
 
         if refuses_cross_origin(&headers) {
-            // The mis-ordering case, caught without needing to know the order:
-            // a response carrying CORS headers whose `Vary` does not name
-            // `origin` would hand one origin's answer to another.
             continued.set_body(crate::http::body::Body::from_bytes(bytes));
             return Ok(continued.with_headers(D::headers(Duration::ZERO, etag)));
         }
@@ -443,21 +409,15 @@ fn primary_key(namespace: &'static str, request: &http::Request, route: &str) ->
     }
 }
 
-/// Whether `status` is a non-error status, per RFC 9111 section 4.4.
-///
-/// "A non-error response is one with a 2xx (Successful) or 3xx (Redirection)
-/// status code." Named rather than inlined because the sentence it encodes is
-/// the whole of why a refused write leaves a stored copy alone.
+/// Whether `status` is a non-error (2xx or 3xx) status, per RFC 9111 section
+/// 4.4.
 fn is_non_error(status: http::StatusCode) -> bool {
     status.is_success() || status.is_redirection()
 }
 
 /// A strong entity tag over a body.
 ///
-/// FNV-1a with the length folded in, for the reason
-/// [`assets`](crate::router::assets) gives: a validator is not a security
-/// primitive, and a cryptographic hash would mean a dependency carrying
-/// `unsafe`.
+/// FNV-1a with the length folded in: a validator is not a security primitive.
 fn derived_etag(body: &bytes::Bytes) -> String {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -485,13 +445,9 @@ fn refuses_cross_origin(headers: &HeaderMap) -> bool {
 /// Reads a body whole, or hands it back unread where its length is unknown or
 /// past `limit`.
 ///
-/// The decision is taken on the size hint before the body is read, so a body
-/// declined is one nothing has consumed. A body that cannot state its length is
-/// a stream, and buffering one to cache it defeats the reason it is a stream.
-///
-/// A read that fails part-way comes back as a body that fails the same way, so
-/// the client sees the failure rather than a complete, shorter response: RFC
-/// 9111 section 3.3 forbids a cache sending an incomplete response unmarked.
+/// Decided on the size hint, so a declined body is unconsumed. A read failing
+/// part-way comes back as a body failing the same way: RFC 9111 section 3.3
+/// forbids sending an incomplete response unmarked.
 async fn bounded(
     body: crate::http::body::Body,
     limit: u64,

@@ -16,11 +16,8 @@ use crate::{
 
 /// A delay in whole seconds, rounded *up*.
 ///
-/// `Retry-After` and the draft's `t` parameter are both delta-seconds, and
-/// truncating a sub-second wait to zero tells a client to retry immediately
-/// into the refusal it just received. Rounding up overstates the wait by under
-/// a second and is a number the service can actually honour, which is the rule
-/// the rest of this module follows.
+/// Truncating a sub-second wait to zero would tell a client to retry
+/// immediately into the refusal it just received.
 pub(super) fn whole_seconds(delay: Duration) -> u64 {
     delay.as_secs() + u64::from(delay.subsec_nanos() > 0)
 }
@@ -47,10 +44,8 @@ fn structured(description: &str) -> kynos_openapi::RefOr<kynos_openapi::Header> 
 ///
 /// The unprefixed names belong to `draft-ietf-httpapi-ratelimit-headers`, which
 /// has already *replaced* the triple with a single structured `RateLimit` field
-/// plus `RateLimit-Policy`. These names are
-/// [`DESCRIBED`](HeaderParams::DESCRIBED), so they reach generated clients —
-/// which makes squatting names a working group is still revising expensive
-/// rather than cosmetic.
+/// plus `RateLimit-Policy`; these names are
+/// [`DESCRIBED`](HeaderParams::DESCRIBED), so they reach generated clients.
 ///
 /// [`RateLimit::standard_fields`](super::RateLimit::standard_fields) is the
 /// other spelling, for a service that has decided the draft is settled enough.
@@ -67,9 +62,8 @@ pub struct RateLimitHeaders {
 impl RateLimitHeaders {
     /// The triple, reported from the first limit a policy consulted.
     ///
-    /// One triple however many quotas were checked, because the spelling has
-    /// room for one. A service enforcing several wants
-    /// [`Structured`](super::Structured), which has room for all of them.
+    /// A service enforcing several quotas wants
+    /// [`Structured`](super::Structured), which reports all of them.
     pub(super) fn from_limits(limits: &[ServiceLimit]) -> Self {
         limits.first().map_or(
             Self {
@@ -98,9 +92,7 @@ impl HeaderParams for RateLimitHeaders {
     ) -> kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>> {
         let _ = registry;
 
-        // Hand-written rather than derived: each of the three is a count, and a
-        // count is an integer — where a derive over a `Duration` field would
-        // give a string.
+        // Hand-written: a derive over the `Duration` field would give a string.
         let mut headers = kynos_openapi::Map::new();
         headers.insert(
             "X-RateLimit-Limit".to_owned(),
@@ -140,8 +132,7 @@ impl EncodeHeaders for RateLimitHeaders {
 ///
 /// Both are structured-field Lists of Items: `RateLimit-Policy` says what the
 /// service enforces, `RateLimit` says where this client stands against it.
-/// Unlike the `X-` triple these carry *every* quota, which is what makes a
-/// limiter with a per-second and a per-day window reportable at all.
+/// Unlike the `X-` triple these carry *every* quota.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RateLimitFields {
     /// Where the client stands against each policy.
@@ -218,17 +209,10 @@ fn render_policies(policies: &[QuotaPolicy]) -> Option<http::HeaderValue> {
 
             let mut member = format!("{};q={}", sf_string(&policy.name)?, policy.quota);
             if let Some(window) = policy.window {
-                // Writing into the string rather than allocating another to
-                // append; the members are built once per response.
                 let _ = write!(member, ";w={}", window.as_secs());
             }
-            // `requests` is the draft's default, so stating it says nothing.
-            //
-            // Rendered through `sf_string` like the two names beside it, because
-            // section 3.1.2 says "The value MUST be a String" and every unit
-            // Kynos ships happens to be a valid token as well -- which is what
-            // made a bare one parse, and then mis-type against any client that
-            // checks the member's type.
+            // `requests` is the draft's default. The draft's section 3.1.2 says
+            // the value "MUST be a String", not a token.
             if policy.unit != crate::middleware::rate_limit::decision::QuotaUnit::Requests {
                 if let Some(unit) = sf_string(policy.unit.as_str()) {
                     let _ = write!(member, ";qu={unit}");
@@ -247,9 +231,7 @@ fn render_policies(policies: &[QuotaPolicy]) -> Option<http::HeaderValue> {
 /// one.
 ///
 /// RFC 8941 section 3.3.3: a `sf-string` is printable ASCII, and `\` and `"`
-/// are escaped. A name that cannot be rendered drops its member rather than
-/// producing a field a parser will reject — one unnameable policy must not cost
-/// the client the others.
+/// are escaped. An unrenderable name drops only its own member, not the field.
 fn sf_string(name: &str) -> Option<String> {
     if !name.bytes().all(|byte| (0x20..0x7f).contains(&byte)) {
         return None;

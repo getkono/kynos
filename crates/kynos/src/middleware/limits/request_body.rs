@@ -1,12 +1,8 @@
 //! The idle timeout the server holds a request body to, and the 408 a stalled
 //! one is answered with.
 //!
-//! The server applies it rather than an interceptor because only the server
-//! has a peer to wait on: a body a test or an embedding builds in memory never
-//! stalls. Wrapping the body once, before the chain sees it, bounds every
-//! reader at once -- each codec, `BodySize`'s count, a decompressor, a streamed
-//! `Records`. It lives with the other limits because it is one, and because
-//! this is where a body and a timer may both be named.
+//! The server applies it, since only it has a peer to wait on; wrapping the body
+//! before the chain sees it bounds every reader at once.
 
 use std::{
     pin::Pin,
@@ -48,9 +44,8 @@ pub(crate) fn validate_request_body_idle_timeout(
 /// `body`, failing once its reader has waited `limit` for a frame, and the
 /// stall that [`answer`] reads back after the chain has returned.
 ///
-/// A body that is already over -- every bodyless `GET` -- or that no limit
-/// applies to is handed to `unbounded` instead and watched by nothing: there is
-/// no frame to wait for, and no reason to pay for a wrapper.
+/// A body that is already over, or that no limit applies to, is handed to
+/// `unbounded` unwrapped.
 pub(crate) fn bounded<B>(
     body: B,
     limit: Option<Duration>,
@@ -81,9 +76,8 @@ where
 
 /// `response`, unless the body of the request it answers stalled.
 ///
-/// Read after the chain returned, so a response a full-duplex handler had
-/// already returned before its read stalled stands: its head may be on the
-/// wire by then.
+/// Read after the chain returned, so a full-duplex handler's response that
+/// predates the stall stands: its head may be on the wire.
 pub(crate) fn answer(response: http::Response, stall: Option<Stall>) -> http::Response {
     match stall {
         Some(stall) if stall.stalled.load(Ordering::Acquire) => stall.response(),
@@ -105,13 +99,9 @@ pub(crate) struct Stall {
 impl Stall {
     /// The 408 a stalled request is answered with.
     ///
-    /// RFC 9110 §15.5.9: the server "did not receive a complete request
-    /// message within the time that it was prepared to wait", and it "SHOULD
-    /// send the `close` connection option" -- so an HTTP/1 connection is
-    /// closed rather than left to frame whatever the client sends next as a
-    /// new request. HTTP/2 carries no connection-specific field, and needs
-    /// none: the stall held one stream, and answering it ends that stream
-    /// alone.
+    /// RFC 9110 §15.5.9: the server "SHOULD send the `close` connection
+    /// option", so HTTP/1 closes; HTTP/2 has no such field, and the stall
+    /// held only one stream.
     fn response(&self) -> http::Response {
         let mut response = Problem::new(StatusCode::REQUEST_TIMEOUT)
             .with_detail(format!(
@@ -130,9 +120,8 @@ impl Stall {
 
 /// The error a stalled body ends with.
 ///
-/// What the reader sees is a failed read, so each extractor refuses it the way
-/// it refuses any transport failure; [`answer`] then replaces that refusal
-/// with the 408, since the chain cannot tell a stall from a reset.
+/// The reader sees a failed read; [`answer`] then replaces its refusal with
+/// the 408, since the chain cannot tell a stall from a reset.
 #[derive(Debug)]
 struct Stalled {
     after: Duration,
@@ -152,14 +141,9 @@ impl std::error::Error for Stalled {}
 
 /// A request body that fails once its reader has waited its limit for a frame.
 ///
-/// The clock runs only while a reader is waiting: it is armed by the poll that
-/// finds nothing, and disarmed by the frame that ends the wait. A handler that
-/// reads its body late, or a client waiting on `100 Continue` -- which hyper
-/// sends only once the body is first polled -- is therefore not counted as a
-/// stall.
-///
-/// The timer is boxed so this needs no projection, which is the same reason
-/// `BodyTimeout`'s body boxes its own.
+/// The clock runs only while a reader is waiting, so a late reader or a client
+/// awaiting `100 Continue` (sent on first poll) is not a stall. The timer is
+/// boxed so this needs no projection.
 struct Idle<B> {
     inner: B,
     /// Allocated by the first wait and reset by every later one.
@@ -189,8 +173,7 @@ where
             return Poll::Ready(None);
         }
 
-        // The body first, and the clock only when it has nothing: a frame that
-        // is ready ends the wait however long the reader took to ask for it.
+        // The body first: a ready frame ends the wait however late it was asked for.
         if let Poll::Ready(polled) = Pin::new(&mut this.inner).poll_frame(context) {
             this.waiting = false;
             return Poll::Ready(polled.map(|frame| frame.map_err(Into::into)));
@@ -199,8 +182,7 @@ where
         let limit = this.stall.limit;
         if !this.waiting {
             this.waiting = true;
-            // `checked_add` because `Instant + Duration` panics where the limit
-            // is the operator's number; a limit past the clock never fires.
+            // `Instant + Duration` can panic; a limit past the clock never fires.
             let Some(deadline) = Instant::now().checked_add(limit) else {
                 return Poll::Pending;
             };
