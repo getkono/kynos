@@ -5,9 +5,8 @@ generated pull requests that nobody read; a change you cannot explain line by
 line in review is not ready to open. Using tools to write it is fine, handing
 review to them is not.
 
-Usage questions and design arguments go to
-[Discussions](https://github.com/getkono/kynos/discussions), vulnerabilities to
-a [security advisory](.github/SECURITY.md), everything else to an issue first.
+Vulnerabilities go to a [security advisory](.github/SECURITY.md); usage
+questions, design arguments and everything else go to an issue first.
 Participation is under the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## Setup
@@ -18,8 +17,11 @@ mise pins the toolchain and every tool the gates use.
 ```bash
 mise install
 mise exec -- hk install --mise   # commit-msg, pre-commit and pre-push hooks
-mise run check                   # every gate CI runs
+mise run check                   # the gates a local change owes
 ```
+
+CI runs those too, runs `coverage:ci` in place of `test`, and adds
+`msrv:check`, `publish:check` and `commits:check`.
 
 `mise tasks` lists the rest. The ones worth knowing by name:
 
@@ -50,7 +52,8 @@ shared state or ordering, and never mask a flake with a retry.
 [Conventional Commits](https://www.conventionalcommits.org/), checked by convco
 in the `commit-msg` hook and in CI. Merge commits are exempt.
 
-- Atomic: each commit builds, passes the gates, and does one thing.
+- Atomic: each commit builds, passes the gates, and does one thing. The one
+  exception is a bug fix's red-test commit below, which fails by design.
 - A breaking change is a `!` commit, and the changelog lists it. That applies
   to rows the README marks `frozen` too, while the API is 0.x.
 - Pull requests are usually merged rather than squashed, so the series is what
@@ -77,5 +80,3 @@ features.
 ## Pull requests
 
 The [template](.github/PULL_REQUEST_TEMPLATE.md) asks for what review needs.
-A maintainer reviews every pull request by hand and merges it; green CI is
-necessary, not sufficient.
