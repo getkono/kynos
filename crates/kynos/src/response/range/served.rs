@@ -295,17 +295,9 @@ impl<S: ByteSource, M: MediaType> Served<S, M> {
     /// where it does not: section 13.1.4 says a recipient *MUST ignore
     /// If-Unmodified-Since if the request contains an If-Match header field*.
     fn precondition_failed(&self, conditions: &Conditions) -> bool {
-        // Section 13.1.1, read across every field line: a list-based field
-        // split over two lines is still one list.
-        let mut if_match = conditions
-            .fields
-            .get_all(header::IF_MATCH)
-            .iter()
-            .peekable();
-        if if_match.peek().is_some() {
-            let current = self.tag();
-            return !if_match
-                .any(|field| crate::http::etag::matches_strongly(field, current.as_deref()));
+        // Section 13.1.1, the same evaluation an asset makes.
+        if let Some(holds) = crate::http::etag::if_match(&conditions.fields, || self.tag()) {
+            return !holds;
         }
 
         // Section 13.1.4: ignored where the value is not one HTTP-date --

@@ -1169,8 +1169,8 @@ async fn exercise_the_reference(client: &TestClient<App>) {
         .assert_status(StatusCode::OK);
 }
 
-/// Every status a ranged file can answer with, so the document's 200, 206, 304
-/// and 416 are each checked against a response that actually happened.
+/// Every status a ranged file can answer with, so the document's 200, 206, 304,
+/// 412 and 416 are each checked against a response that actually happened.
 #[cfg(feature = "assets")]
 async fn exercise_the_ranges(client: &TestClient<App>) {
     client
@@ -1199,4 +1199,12 @@ async fn exercise_the_ranges(client: &TestClient<App>) {
         .send()
         .await
         .assert_status(StatusCode::NOT_MODIFIED);
+
+    client
+        .get("/files/report.bin")
+        .header("if-match", "\"report-v0\"")
+        .header("range", "bytes=2-5")
+        .send()
+        .await
+        .assert_status(StatusCode::PRECONDITION_FAILED);
 }
