@@ -1,15 +1,9 @@
 //! Writing a codec type as a response.
 //!
-//! The types themselves are defined once under
-//! [`extract::body`](crate::extract::body) — a codec is one type used in both
-//! directions, and defining it twice would be two contracts. What lives here is
-//! the responding half: one module per codec, gated the same way its extracting
-//! half is.
+//! The codec types are defined once under
+//! [`extract::body`](crate::extract::body); this is their responding half.
 
-// Private, for the reason `schema::impls` gives: each of these declares no
-// item, only the responding half of a codec whose type lives under
-// `extract::body`, so there is nothing here for a canonical path to point at.
-// `multipart` is the exception -- it declares `IntoMultipart` and `IntoPart`.
+// Private where they declare no item; `multipart` declares `IntoMultipart`.
 mod binary;
 mod text;
 

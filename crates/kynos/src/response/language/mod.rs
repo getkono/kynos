@@ -1,32 +1,14 @@
 //! Choosing a response language from the client's `Accept-Language` field.
 //!
-//! # Why this is a sibling of `negotiate` rather than part of it
+//! Unlike `Accept`, `Accept-Language` is not one of the header parameters
+//! OpenAPI ignores, so it is described as a parameter. The description also
+//! carries the `Content-Language` response header and the set of tags it may
+//! hold; this module keeps what a service sends within that declared set.
 //!
-//! [`negotiate`](crate::response::negotiate)'s whole argument is that `Accept`
-//! is *never* declared as a parameter, because OpenAPI says such a definition
-//! shall be ignored. That is false for this axis: the specification names
-//! exactly three such fields — `Accept`, `Content-Type` and `Authorization` —
-//! and `Accept-Language` is not among them. Here the parameter is the thing
-//! that describes the negotiation, where there it is the `content` map.
+//! Language negotiation is independent of
+//! [`negotiate`](crate::response::negotiate): a response can use both.
 //!
-//! The two axes are also independent: a response can negotiate on both, and
-//! neither type mentions the other.
-//!
-//! # What OpenAPI can say about a language, which is less than it looks
-//!
-//! Nothing, directly. Neither 3.1 nor 3.2 has any notion of localization: a
-//! description is a single-language artifact, `content` is keyed by media type
-//! with no language axis, and there is no way to write "this schema's
-//! `description`, in French". What a document *can* carry is the negotiation
-//! itself — the `Accept-Language` parameter, the `Content-Language` response
-//! header, and the set of tags that header may hold.
-//!
-//! So the set of tags a service offers is the one thing here that reaches the
-//! description, and this module's job is to keep what it sends and what it
-//! declared the same set.
-//!
-//! The strings themselves are the application's. Kynos negotiates; it does not
-//! translate, and it ships no catalogue — see
+//! Kynos negotiates; it does not translate, and it ships no catalogue — see
 //! [`architecture.md`](../../../../docs/architecture.md)'s third invariant.
 
 pub mod headers;
@@ -65,33 +47,14 @@ use crate::{
 /// assert_eq!(preferred.choose(), "fr");
 /// ```
 ///
-/// # Why this cannot fail
+/// # Infallible
 ///
-/// [`Rejection`](FromRequestParts::Rejection) is [`Infallible`], and neither
-/// half of that is an oversight.
-///
-/// **No 406.** RFC 9110 section 12.1 lets an origin decide "that sending a
-/// response that doesn't conform to the user agent's preferences is better than
-/// sending a 406", and section 15.5.7 defines that status as the case where a
-/// server is *unwilling to supply a default representation*. Kynos is willing.
-/// The asymmetry with [`Accept`](crate::response::negotiate::Accept) is real: a
-/// browser sends `*/*` and reaches that 406 almost never, but sends a narrow
-/// `Accept-Language` on every request — so refusing here would fail exactly the
-/// users whose language is missing, which is who the fallback is for.
-///
-/// What keeps the fallback honest is `Content-Language`. Every localized
-/// response states the language it actually chose, so a client that cannot use
-/// the default can see that rather than having to guess.
-///
-/// **No 400 either.** A range this field cannot parse is dropped and the rest
-/// of the field still counts, which is the call Kynos already makes for an
-/// `If-Modified-Since` that is not an HTTP-date: a field the server can
-/// partly read is one it should partly honour, and nothing in RFC 9110 obliges
-/// a 400 here.
-///
-/// The consequence is worth stating plainly: **adding language negotiation to
-/// an operation adds no status to its description.** The only thing this
-/// contributes is the `Accept-Language` parameter.
+/// [`Rejection`](FromRequestParts::Rejection) is [`Infallible`]. A client whose
+/// language is not offered is served the first offered tag rather than a 406
+/// (RFC 9110 sections 12.1, 15.5.7), and `Content-Language` states which one.
+/// A range that cannot be parsed is dropped and the rest of the field counts.
+/// Language negotiation therefore adds no status to an operation's description,
+/// only the `Accept-Language` parameter.
 ///
 /// [`Infallible`]: std::convert::Infallible
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -119,14 +82,12 @@ impl<L: Languages> AcceptLanguage<L> {
 
     /// The offered tag these preferences select.
     ///
-    /// Always an element of [`Languages::TAGS`], which is what makes the
-    /// emitted `Content-Language` enumeration true: the value written to that
-    /// field is a member of the declared set by construction rather than by
-    /// review.
+    /// Always an element of [`Languages::TAGS`], so it is a member of the
+    /// declared `Content-Language` enumeration.
     #[must_use]
     pub fn choose(&self) -> &'static str {
-        // Forces the offer's compile-time check. Without a use, an associated
-        // `const` is never evaluated and a malformed offer would reach the wire.
+        // An associated `const` is only evaluated when used; this forces the
+        // offer's compile-time check.
         let () = <L as CheckedOffer>::CHECK;
 
         let index = matching::select(&self.preferences, L::TAGS).unwrap_or(0);
@@ -134,17 +95,13 @@ impl<L: Languages> AcceptLanguage<L> {
     }
 }
 
-// Bound on `Languages` rather than left open: an offer that names no languages
-// cannot be chosen from, and stating the bound here is what puts the trait's own
-// diagnostic on the handler argument, where a reader meets the mistake.
+// The `Languages` bound puts the trait's diagnostic on the handler argument.
 impl<C: Sync, L: Languages> FromRequestParts<C> for AcceptLanguage<L> {
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
-        // A field that may appear more than once is equivalent to one field
-        // holding the comma-separated list, which is the form `parse` reads.
-        // An absent field leaves an empty list and takes the default, which is
-        // what RFC 9110 section 12.5.4 leaves a server to decide.
+        // Repeated field lines are one comma-separated list; an absent field
+        // takes the default (RFC 9110 section 12.5.4).
         let mut field = String::new();
         for value in parts.headers.get_all(header::ACCEPT_LANGUAGE) {
             let Ok(value) = value.to_str() else {
@@ -163,16 +120,11 @@ impl<C: Sync, L: Languages> FromRequestParts<C> for AcceptLanguage<L> {
 impl<L: Languages> AcceptLanguage<L> {
     /// Builds the response in the language these preferences chose.
     ///
-    /// The closure receives the chosen tag, because a handler needs it *before*
-    /// it builds anything: the tag is what indexes the catalogue. That is the
-    /// shape difference from
-    /// [`Accept::respond_with`](crate::response::negotiate::Accept::respond_with),
-    /// which takes one closure per alternative and runs the one that won.
+    /// The closure receives the chosen tag, which typically indexes the
+    /// application's catalogue.
     ///
-    /// This is the only way to construct a [`Localized`], which is what makes
-    /// the description true by construction: the tag on the wire is one
-    /// [`choose`](AcceptLanguage::choose) returned, so it is a member of the
-    /// `Content-Language` enumeration the operation declares.
+    /// This is the only way to construct a [`Localized`], so the tag on the
+    /// wire is always one [`choose`](AcceptLanguage::choose) returned.
     ///
     /// ```
     /// use kynos::response::language::{AcceptLanguage, offer::Languages};
@@ -206,13 +158,10 @@ impl<L: Languages> AcceptLanguage<L> {
 
 /// A response stating the natural language it is written in.
 ///
-/// There is no public constructor, and that is the whole design: a `Localized`
-/// exists only because
-/// [`AcceptLanguage::respond_with`](AcceptLanguage::respond_with) built one, so
-/// the tag it carries is necessarily a member of [`Languages::TAGS`] — which is
-/// exactly the set the emitted `Content-Language` enumerates.
-///
-/// The control, which differs from the case below in exactly that:
+/// The only constructor is
+/// [`AcceptLanguage::respond_with`](AcceptLanguage::respond_with), so the tag
+/// it carries is always a member of [`Languages::TAGS`], the set the emitted
+/// `Content-Language` enumerates.
 ///
 /// ```
 /// # use kynos::response::language::{AcceptLanguage, offer::Languages};
@@ -259,13 +208,8 @@ impl<T, L: Languages> Localized<T, L> {
     }
 }
 
-/// The body's status is kept: the field rides whatever response the body
-/// already produces.
-///
-/// Through [`header::write`](crate::extract::params::header), which is the one
-/// writer `WithHeaders` and `Continued::with_headers` also go through — so
-/// `Vary: Accept-Language` is merged into whatever `Vary` is already there
-/// rather than replacing it.
+/// Keeps the body's status and adds `Content-Language`, merging
+/// `Vary: Accept-Language` into any `Vary` already present.
 impl<T: IntoResponse, L: Languages> IntoResponse for Localized<T, L> {
     fn into_response(self) -> Response {
         let mut response = self.body.into_response();
@@ -277,17 +221,11 @@ impl<T: IntoResponse, L: Languages> IntoResponse for Localized<T, L> {
     }
 }
 
-/// `Content-Language` joins every response the body describes, since every one
-/// of them is produced through this wrapper and carries it.
+/// `Content-Language` joins every response the body `T` describes, and no
+/// other: in `Result<Localized<Json<T>, L>, E>` the error is not localized.
 ///
-/// Reached through the body's own `Responses` rather than through
-/// [`OperationCx::add_response_header`], deliberately. That method's range
-/// patterns mint a `2XX` entry beside a declared `200`, which is a key no
-/// reader of the 200 will find and a response the service cannot produce. The
-/// statuses that carry this field are exactly the ones `T` declares — so a
-/// handler returning `Result<Localized<Json<T>, L>, E>` states the language on
-/// the success and not on the error, which is true: a problem document is not
-/// localized by this type.
+/// Not via [`OperationCx::add_response_header`], whose range patterns would
+/// mint a `2XX` entry beside a declared `200`.
 impl<T: Responses, L: Languages> Responses for Localized<T, L> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let mut responses = T::responses(registry);

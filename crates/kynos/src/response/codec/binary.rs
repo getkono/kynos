@@ -19,10 +19,8 @@ impl<M: MediaType> IntoResponse for Binary<M> {
 }
 
 impl<M: MediaType> Responses for Binary<M> {
-    // The empty Schema Object, for the reason the extracting half gives at
-    // length: raw binary as a whole message body is outside the type system
-    // JSON Schema describes, and a `contentMediaType` here would only repeat
-    // the key the content sits under.
+    // The empty Schema Object: raw bytes are outside what JSON Schema describes,
+    // and `contentMediaType` would only repeat the content key.
     fn responses(_registry: &mut Registry) -> kynos_openapi::Responses {
         kynos_openapi::Responses::new().with(
             200,

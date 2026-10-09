@@ -39,10 +39,7 @@ pub mod negotiate;
 pub mod range;
 pub mod status;
 
-// RFC 2046 delimiters, shared by the two multipart subtypes Kynos writes. The
-// gate is the disjunction of theirs rather than either one, for the reason its
-// own documentation gives: a home under either writer would leave the other
-// writing its own delimiters.
+// RFC 2046 delimiters, shared by both multipart subtypes Kynos writes.
 #[cfg(any(feature = "multipart", feature = "openapi32"))]
 mod framing;
 
@@ -78,10 +75,8 @@ pub trait IntoResponse {
 
 /// A value that can describe every response it may produce.
 ///
-/// Bound on every handler return type. Together with
-/// [`IntoResponse`] this is the pair that makes the description total: one
-/// says what goes on the wire, the other says what the document claims, and a
-/// type must supply both.
+/// Bound on every handler return type, beside [`IntoResponse`]: one says what
+/// the document claims, the other what goes on the wire.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not declare which responses it can produce",
     label = "undeclared responses",
@@ -95,25 +90,12 @@ pub trait Responses {
 
 /// A response an interceptor can produce without reaching the handler.
 ///
-/// [`Responses`] already says what such a type describes, but it says it by
-/// building a value from a [`Registry`], and a `const fn` cannot call it. Two
-/// interceptors covering one operation and claiming the same status is a
-/// conflict worth catching while the program is compiled rather than while the
-/// router is built, so the statuses are also available as a `const`.
+/// `STATUSES` restates [`Responses`] as a `const`, so two interceptors claiming
+/// the same status on one operation are caught at compile time.
 ///
-/// # Keeping the two in step
-///
-/// `STATUSES` and [`Responses::responses`] are two statements of one fact, so
-/// they can disagree. Two things stop that mattering:
-///
-/// * `#[derive(kynos::ApiError)]` emits this implementation from the statuses
-///   it already reads, so the ordinary path cannot disagree with itself.
-/// * A hand-written implementation is checked while the router is built, and a
-///   mismatch is reported as
-///   [`SpecError::ShortCircuitMismatch`](kynos_openapi::SpecError::ShortCircuitMismatch).
-///
-/// Which leaves the const as an optimisation of a fact rather than a second
-/// source of it.
+/// `#[derive(kynos::ApiError)]` emits both from one declaration. A hand-written
+/// implementation is checked while the router is built, and a mismatch is
+/// [`SpecError::ShortCircuitMismatch`](kynos_openapi::SpecError::ShortCircuitMismatch).
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be an interceptor's short circuit",
     label = "not a short circuit",
@@ -128,9 +110,7 @@ pub trait ShortCircuit: IntoResponse + Responses {
 
 /// The statuses a [`kynos_openapi::Responses`] value declares as exact codes.
 ///
-/// Wildcard patterns and `default` are skipped: they are ranges rather than
-/// claims about one status, and a short circuit that answers with a range has
-/// nothing exact for the conflict check to compare.
+/// Wildcard patterns and `default` are skipped: they name no one status.
 #[must_use]
 pub(crate) fn described_statuses(responses: &kynos_openapi::Responses) -> Vec<u16> {
     responses
@@ -143,11 +123,7 @@ pub(crate) fn described_statuses(responses: &kynos_openapi::Responses) -> Vec<u1
 /// Checks that a [`ShortCircuit`]'s const and its responses agree.
 ///
 /// Returns the violation when they do not. Called while the router is built,
-/// which is the only place both halves are available at once — the const is
-/// visible to the compiler and the responses need a [`Registry`].
-///
-/// Always `None` for a type whose implementation the `ApiError` derive emitted,
-/// since both halves come from one declaration there.
+/// where a [`Registry`] exists.
 #[must_use]
 pub(crate) fn short_circuit_mismatch<S: ShortCircuit>(
     registry: &mut Registry,
@@ -159,11 +135,7 @@ pub(crate) fn short_circuit_mismatch<S: ShortCircuit>(
     )
 }
 
-/// The comparison itself, without the type parameter.
-///
-/// Split out so it can be tested against hand-built values: the generic form
-/// needs a `Responses` produced from a `Registry`, and what is worth asserting
-/// is the comparison, not the plumbing.
+/// The comparison itself, without the type parameter, for testing.
 fn mismatch_between(
     name: &str,
     statuses: &[u16],
@@ -191,10 +163,7 @@ fn mismatch_between(
 
 /// The empty body, which is 200 like every other bare body type.
 ///
-/// 204 is a claim of its own — that there is no content and none is coming —
-/// and [`NoContent`](status::NoContent) is how a handler makes it. A handler
-/// that returned nothing at all was not asked which it meant, so it gets the
-/// status a body type has when no wrapper changes it.
+/// Return [`NoContent`](status::NoContent) for a 204.
 impl IntoResponse for () {
     fn into_response(self) -> Response {
         Response::new(Body::empty())
@@ -212,10 +181,8 @@ impl Responses for () {
     }
 }
 
-/// The uninhabited type, which no extractor that names it can ever produce.
-///
-/// Present so that an infallible extractor can say so in its `Rejection`
-/// rather than inventing an error it never returns.
+/// The uninhabited type, so an infallible extractor can name it as its
+/// `Rejection`.
 impl IntoResponse for Infallible {
     fn into_response(self) -> Response {
         match self {}
@@ -240,25 +207,14 @@ impl ShortCircuit for Infallible {
 
 /// `Result` unions the responses of both sides.
 ///
-/// This is where a handler's success and failure descriptions come together: a
-/// `Result<Json<User>, ApiError>` documents 200 alongside every status
-/// `ApiError` can produce, with no restatement anywhere.
+/// A `Result<Json<User>, ApiError>` documents 200 alongside every status
+/// `ApiError` can produce.
 ///
 /// # When both sides claim one status
 ///
-/// The success side wins, and the failure side's entry for that status is
-/// dropped. A description keys responses by status alone, so of the two only
-/// one can be emitted whatever is chosen here — and the two have no relation
-/// beyond the key they share, which is exactly what
-/// [`kynos_openapi::Responses::merge_from`]'s first-wins rule is for. This is
-/// its one remaining caller.
-///
-/// It is deliberately *not*
-/// [`union_from`](kynos_openapi::Responses::union_from), which an operation's
-/// contributors go through instead: that unions two problem documents on one
-/// status, and a success representation beside a problem document is not two
-/// branches of anything. An error type sharing a status with the success type
-/// is asking for a status that means two things, which is a
+/// The success side wins, through
+/// [`kynos_openapi::Responses::merge_from`], and the failure side's entry is
+/// dropped. A status that means two things calls for a
 /// [`Reply`](crate::Reply) enum rather than a `Result`.
 impl<T, E> Responses for Result<T, E>
 where

@@ -1,52 +1,25 @@
 //! Serving several byte ranges of one representation.
 //!
-//! RFC 9110 section 15.3.7.2: *if multiple parts are being transferred, the
-//! server generating the 206 response MUST generate "multipart/byteranges"
-//! content*. This is that, and it is behind `openapi32` because 3.1 cannot
-//! describe it. The only vocabulary for *an unnamed, request-determined number
-//! of parts, each carrying a required header* is 3.2's `itemSchema` and
-//! `itemEncoding`, and the specification's own worked example — *Streaming Byte
-//! Ranges* — is `multipart/byteranges` exactly. Describing the body as opaque
-//! bytes under 3.1 instead is the thing this framework exists not to do.
+//! RFC 9110 section 15.3.7.2 requires `multipart/byteranges` content for a
+//! 206 carrying several parts. Requires `openapi32`: only 3.2's `itemSchema`
+//! and `itemEncoding` can describe a request-determined number of parts.
 //!
-//! # Opt in, rather than on
+//! Multipart is reached only by returning [`RangedParts<T>`];
+//! [`Range::apply`](super::Range::apply) still serves the first satisfiable
+//! part, so enabling the feature changes no existing handler's output.
 //!
-//! [`Range::apply`](super::Range::apply) is untouched: it still serves the
-//! first satisfiable part, under either specification version. Multipart is
-//! reached only by returning [`RangedParts<T>`], because `openapi32` is
-//! documented as *purely additive for programs that use no 3.2-only construct*
-//! and a flag that silently changed what an existing handler put on the wire
-//! would not be that.
+//! Section 15.3.7.2 governs the parts:
 //!
-//! # What the parts are, and are not
+//! * Ranges that overlap or touch are merged, whatever order they were written
+//!   in, and the survivors are sent in the order their specs appeared:
+//!   `bytes=8-9, 0-1` is answered `8-9` first.
+//! * One part left after merging is a single-part 206, never a one-part
+//!   multipart body.
+//! * `Content-Range` is sent per part, never in the header section, so its
+//!   top-level declaration is not required.
 //!
-//! Every satisfiable range is resolved and merged with any it overlaps **or
-//! touches** — see [`spec::coalesce`](super::spec). Three things follow, and
-//! section 15.3.7.2 sanctions each:
-//!
-//! * *A server MAY coalesce any of the ranges that overlap ... regardless of
-//!   the order in which the corresponding range-spec appeared*, so a spec may
-//!   merge with one written before it. The order the surviving parts *leave*
-//!   in is a different sentence, two paragraphs later: *a server that generates
-//!   a multipart response SHOULD send the parts in the same order that the
-//!   corresponding range-spec appeared in the received Range header field*. So
-//!   `bytes=8-9, 0-1` is answered `8-9` first, which is also what
-//!   [`Range::select`](super::Range::select) answers with.
-//! * *A server MAY generate a "multipart/byteranges" response with only a
-//!   single body part if ... only one range remained after coalescing* — Kynos
-//!   does not. One part is a single-part 206, because the same sentence
-//!   forbids a multipart answer to a single-range request and a client that
-//!   asked for two overlapping ranges is no likelier to want the framing.
-//! * *A server MUST NOT generate a Content-Range header field in the HTTP
-//!   header section of a multiple part response (this field will be sent in
-//!   each part instead).* So the field is per part here, and the top-level
-//!   declaration of it is **not required** — the one place in this module where
-//!   the description has to be weaker than the single-part case.
-//!
-//! The merge is also what makes section 17.15's amplification attack
-//! unrepresentable rather than bounded: after it the parts are disjoint, so the
-//! octets a response encloses cannot exceed the complete length however the
-//! field was written.
+//! Merged parts are disjoint, so a response never encloses more octets than
+//! the complete length (section 17.15).
 
 use bytes::Bytes;
 use kynos_openapi::{Encoding, RefOr, Schema};
@@ -72,10 +45,8 @@ pub(crate) const MEDIA_TYPE: &str = "multipart/byteranges";
 
 /// What a `range-set` selects once its parts have been merged.
 ///
-/// [`Single`](Selected::Single) is everything
-/// [`Selection`] already answers — the whole representation,
-/// or one part. [`Several`](Selected::Several) is the case that needs a media
-/// type of its own.
+/// [`Single`](Selected::Single) is everything [`Selection`] already answers;
+/// [`Several`](Selected::Several) needs a media type of its own.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Selected {
     /// One representation or one part of it, which is a 200 or a single-part
@@ -85,10 +56,8 @@ pub enum Selected {
     /// Two or more disjoint parts, in the order the field named them, which is
     /// a `multipart/byteranges` 206.
     Several {
-        /// The parts, each an inclusive `(first, last)` offset pair. Disjoint,
-        /// so the total never exceeds `complete_length` — and in the order of
-        /// the earliest `range-spec` that fed each of them, which is what
-        /// section 15.3.7.2 asks a multipart response to send.
+        /// The parts, each an inclusive `(first, last)` offset pair: disjoint,
+        /// and in the order of the earliest `range-spec` that fed each.
         ranges: Vec<(u64, u64)>,
         /// The length of the whole representation.
         complete_length: u64,
@@ -145,12 +114,8 @@ impl<T> Range<T> {
 
     /// Cuts `whole` down to every part this request asked for.
     ///
-    /// Selecting copies nothing: each part is a refcounted `Bytes::slice` of
-    /// the one representation. *Writing* the response does, and this is where
-    /// it differs from [`Range::apply`], which is zero-copy end to end — a
-    /// `multipart/byteranges` body interleaves per-part headers with the octets
-    /// they describe, so the selected octets are copied once into the single
-    /// buffer that framing renders.
+    /// Unlike [`Range::apply`], writing the response copies the selected
+    /// octets once, into the buffer that interleaves them with part headers.
     ///
     /// # Errors
     ///
@@ -201,11 +166,8 @@ impl<T> RangedParts<T> {
         &self.selected
     }
 
-    /// The whole representation the parts are taken from.
-    ///
-    /// The *whole* one, deliberately: a multipart body is written by slicing at
-    /// the moment each part is framed, so there is nothing smaller to hold on
-    /// to and no copy to hand back.
+    /// The whole representation the parts are taken from; parts are sliced
+    /// only when framed.
     pub fn body(&self) -> &T {
         &self.whole
     }
@@ -215,7 +177,6 @@ impl<T> RangedParts<T> {
 impl<T: Rangeable> IntoResponse for RangedParts<T> {
     fn into_response(self) -> Response {
         match self.selected {
-            // Identical to what `Ranged` sends, by being what `Ranged` sends.
             Selected::Single(selection) => {
                 let body = match selection {
                     Selection::Whole(_) => self.whole,
@@ -265,12 +226,7 @@ fn multipart<T: Rangeable>(
 
 /// The header lines one body part declares, CRLF-terminated.
 ///
-/// Section 15.3.7.2 asks for exactly two. *Within the header area of each body
-/// part, the server MUST generate a Content-Range header field corresponding to
-/// the range being enclosed in that body part. If the selected representation
-/// would have had a Content-Type header field in a 200 (OK) response, the
-/// server SHOULD generate that same Content-Type header field in the header
-/// area of each body part.*
+/// `Content-Type` and `Content-Range`, per section 15.3.7.2.
 fn part_headers<T: Rangeable>(first: u64, last: u64, complete_length: u64) -> Vec<u8> {
     let mut headers = Vec::with_capacity(96);
 
@@ -295,10 +251,9 @@ fn part_headers<T: Rangeable>(first: u64, last: u64, complete_length: u64) -> Ve
 
 /// The two statuses this type can produce, and the two shapes its 206 takes.
 ///
-/// The 206 declares both media types because both are reachable from one
-/// operation: one satisfiable part after coalescing is the representation's own
-/// type, and several is `multipart/byteranges`. A consumer distinguishes them
-/// the way section 15.3.7 tells it to — by reading `Content-Type`.
+/// The 206 declares both the representation's media type (one part after
+/// merging) and `multipart/byteranges` (several); `Content-Type` tells them
+/// apart.
 impl<T: Rangeable> Responses for RangedParts<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let advertised = AcceptRanges::response_headers(registry);
@@ -322,11 +277,8 @@ impl<T: Rangeable> Responses for RangedParts<T> {
         declare(&mut partial, &advertised);
         partial.headers.insert(
             "Content-Range".to_owned(),
-            // **Not required**, and this is the one place that matters.
-            // Section 15.3.7.2 forbids the field in the header section of a
-            // multipart 206, so a required declaration here would promise a
-            // field the very shape beside it must not send. The required one
-            // lives in `itemEncoding.headers`, where it belongs.
+            // Not required: section 15.3.7.2 forbids it atop a multipart 206,
+            // whose parts declare it in `itemEncoding.headers` instead.
             RefOr::Item(ContentRange::satisfied_header().required(false)),
         );
 
@@ -336,12 +288,8 @@ impl<T: Rangeable> Responses for RangedParts<T> {
 
 /// The `multipart/byteranges` content, shaped as OpenAPI 3.2's own example is.
 ///
-/// `itemSchema` rather than `schema`, because the number of parts is decided by
-/// the request: there is no array whose length a document could state. Each
-/// part carries the representation's media type and a required `Content-Range`,
-/// which is section 14.6's *one or more body parts, each with its own
-/// Content-Type and Content-Range fields* said in the vocabulary that has words
-/// for it.
+/// `itemSchema`, since the request decides the number of parts; each part
+/// carries the media type and a required `Content-Range` (section 14.6).
 fn byteranges(media_type: &str) -> kynos_openapi::MediaType {
     let mut content = kynos_openapi::MediaType::sequential(Schema::Object(Box::default()));
     content.item_encoding = Some(Box::new(

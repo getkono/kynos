@@ -54,8 +54,6 @@ where
     S: futures_core::Stream,
     S::Item: Schema,
 {
-    // `itemSchema` rather than `schema`: what a consumer reads one line at a
-    // time is one item, and 3.2 added the field so that saying so is possible.
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         kynos_openapi::Responses::new().with(
             200,
@@ -97,8 +95,6 @@ where
     S: futures_core::Stream,
     S::Item: Schema,
 {
-    // The framing differs from JSON Lines and the described item does not: both
-    // repeat one JSON value, which is what a sequential media type is.
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         kynos_openapi::Responses::new().with(
             200,
@@ -111,13 +107,9 @@ where
     }
 }
 
-/// The items, framed as the bytes of one record each.
+/// The items, each framed as one JSON value between a prefix and a suffix.
 ///
-/// Both framings here are one JSON value between a prefix and a suffix, so one
-/// adapter carries both rather than two that differ in two string constants.
-///
-/// The stream is held boxed so that it can be polled without a projection:
-/// `Pin<Box<S>>` is `Unpin` whatever `S` is, and `unsafe` is forbidden here.
+/// Boxed so `Pin<Box<S>>` is `Unpin` and polls without an `unsafe` projection.
 struct Framed<S> {
     items: Pin<Box<S>>,
     prefix: &'static [u8],
@@ -146,8 +138,7 @@ where
         let (prefix, suffix) = (framed.prefix, framed.suffix);
 
         match framed.items.as_mut().poll_next(context) {
-            // A failure here has no status left to spend -- the 200 went out
-            // with the first record -- so the body ends rather than lies.
+            // The status is already sent, so a failure can only end the body.
             Poll::Ready(Some(item)) => Poll::Ready(Some(encode(&item, prefix, suffix))),
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,

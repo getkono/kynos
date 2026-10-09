@@ -1,28 +1,15 @@
 //! Language tags, read as the grammar RFC 5646 closes.
 //!
-//! # Why this is code rather than a dependency
-//!
-//! [`architecture.md`](../../../../../docs/architecture.md) refuses a
-//! language-tag *database*, and the reason applies here unchanged: what a
-//! registry answers is whether `en` names a real language, and that is a table
-//! only sampling can verify. Well-formedness is not that. RFC 5646 section 2.1
-//! is a grammar over subtag shapes plus one closed list of seventeen tags that
-//! predate it, which is exactly the shape this project writes down and tests.
-//!
-//! So a [`LanguageTag`] states that a string *could* name a language, never
-//! that it does. `zz-Qaaa-QM` is well-formed and names nothing; refusing it
-//! would need the registry, and serving it hurts no one — the client asked for
-//! a language nobody offers and gets the default, which is the same answer it
-//! gets for `ja`.
+//! A [`LanguageTag`] is well-formed (RFC 5646 section 2.1), never checked
+//! against the registry: `zz-Qaaa-QM` is accepted though it names nothing. See
+//! [`architecture.md`](../../../../../docs/architecture.md) on why Kynos ships
+//! no language-tag database.
 
 pub(super) mod grammar;
 
 use std::fmt;
 
 /// Why a string does not name a language.
-///
-/// One variant per way the grammar can be missed, so a test matching
-/// exhaustively fails to compile when a refusal is added without a case.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, thiserror::Error)]
 #[non_exhaustive]
 pub enum TagDefect {
@@ -35,19 +22,12 @@ pub enum TagDefect {
     #[error("every subtag is one to eight letters or digits")]
     MalformedSubtag,
 
-    /// The first subtag is not a `language`.
-    ///
-    /// Separate from [`MalformedSubtag`](TagDefect::MalformedSubtag) because
-    /// the primary subtag is the one position the grammar spells out on its
-    /// own: two to eight letters, and never a digit.
+    /// The first subtag is not a `language`: two to eight letters.
     #[error("a tag opens with two to eight letters naming a language")]
     PrimaryLanguage,
 
-    /// A well-shaped subtag appeared where the grammar has no room for it.
-    ///
-    /// `en-GB-oed` is the motivating case, and it is why the irregular list
-    /// exists: `oed` is three letters, which is not a variant, and nothing but
-    /// a variant, an extension or a private-use sequence may follow a region.
+    /// A well-shaped subtag appeared where the grammar has no room for it, as
+    /// `oed` in `en-GB-oed` outside the irregular list.
     #[error("a subtag appeared where the grammar allows none")]
     Misplaced,
 
@@ -58,15 +38,8 @@ pub enum TagDefect {
 
 /// A well-formed BCP 47 language tag.
 ///
-/// Well-formed per RFC 5646 section 2.1, and deliberately not *valid*: see the
-/// module documentation for why the registry is out of scope.
-///
-/// The stored form is normalized to the casing section 2.1.1 recommends, which
-/// that section gives as an algorithm needing no registry access — lowercase
-/// throughout, except that a two-letter subtag which neither opens the tag nor
-/// follows a singleton is uppercased and a four-letter one in the same position
-/// is titlecased. Case carries no meaning either way, so normalizing costs
-/// nothing and puts the recommended form on the wire.
+/// Well-formed per RFC 5646 section 2.1, not checked against the registry.
+/// Stored in the casing section 2.1.1 recommends.
 ///
 /// ```
 /// use kynos::response::language::tag::LanguageTag;
@@ -104,11 +77,8 @@ impl LanguageTag {
 
     /// Whether `value` is a well-formed tag, answerable in a `const` context.
     ///
-    /// This is what lets a set of offered tags be checked while the program is
-    /// compiled rather than when a request arrives. It is the same walk
-    /// [`parse`] runs rather than a second reading of the grammar that could
-    /// disagree with it, which is why it is written over byte indices: none of
-    /// `str`'s iterators are available in a `const` context.
+    /// Lets an offer be checked at compile time, with the same grammar
+    /// [`parse`] uses.
     ///
     /// [`parse`]: LanguageTag::parse
     #[must_use]
@@ -131,13 +101,8 @@ impl std::str::FromStr for LanguageTag {
     }
 }
 
-/// The casing section 2.1.1 recommends, reproduced without the registry.
-///
-/// "All subtags ... use lowercase letters with two exceptions: two-letter and
-/// four-letter subtags that neither appear at the start of the tag nor occur
-/// after singletons." A singleton opens an extension or the private-use
-/// sequence, and everything inside one stays lowercase — which is why
-/// `az-Latn-x-latn` titlecases the first `Latn` and not the second.
+/// The casing RFC 5646 section 2.1.1 recommends: lowercase, except two- and
+/// four-letter subtags neither first nor after a singleton (`az-Latn-x-latn`).
 fn normalize(value: &str) -> String {
     let mut normalized = String::with_capacity(value.len());
     let mut after_singleton = false;
@@ -158,8 +123,6 @@ fn normalize(value: &str) -> String {
             }
         }
 
-        // A singleton is itself a subtag, so everything after this one is
-        // inside an extension or the private-use sequence until the tag ends.
         after_singleton = after_singleton || subtag.len() == 1;
     }
 

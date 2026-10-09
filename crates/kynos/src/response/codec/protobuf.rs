@@ -9,8 +9,7 @@ use crate::{
 
 impl<T: prost::Message> IntoResponse for Protobuf<T> {
     fn into_response(self) -> Response {
-        // Encoding a message into a growable buffer cannot fail: the only error
-        // `prost` reports is insufficient capacity, which is what growing is.
+        // Infallible: `prost`'s only error is insufficient capacity.
         let encoded = self.0.encode_to_vec();
 
         let mut response = Response::new(Body::from_bytes(bytes::Bytes::from(encoded)));

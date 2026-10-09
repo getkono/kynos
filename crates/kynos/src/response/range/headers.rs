@@ -15,27 +15,11 @@
 //! complete-length   = 1*DIGIT
 //! ```
 //!
-//! Kynos always states the complete length. Section 14.4 asks a sender to,
-//! *unless the complete length is unknown or difficult to determine*, and a
-//! [`Rangeable`](super::rangeable::Rangeable) body is octets already in hand —
-//! so the `*` spelling has no case here.
+//! Kynos always states the complete length, so the `*` spelling is never sent.
 //!
-//! # Why both groups are described
-//!
-//! [`DESCRIBED`](HeaderParams::DESCRIBED) is `true` on both, where
-//! `ContentEncoding` sets it `false`. A content coding is undone beneath the
-//! API surface and every client already handles it without being told. These
-//! two are not that:
-//!
-//! * Section 15.3.7 says *a client MUST inspect a 206 response's Content-Type
-//!   and Content-Range field(s) to determine what parts are enclosed and
-//!   whether additional requests are needed*. A consumer that cannot see the
-//!   field cannot do what the specification requires of it.
-//! * `Accept-Ranges` is what an SDK author reads to decide whether a resumable
-//!   download exists at all.
-//!
-//! Both are contract rather than transport, which is the question
-//! `DESCRIBED` asks.
+//! Both groups are [`DESCRIBED`](HeaderParams::DESCRIBED): a client must read
+//! `Content-Range` (section 15.3.7), and `Accept-Ranges` tells it a resumable
+//! download exists.
 
 use kynos_openapi::{
     Header, MediaType, RefOr, Schema, SchemaObject,
@@ -53,11 +37,8 @@ use crate::{
 
 /// The media type a header value is described under.
 ///
-/// The OpenAPI 3.2 worked example for `multipart/byteranges` describes
-/// `Content-Range` as `content: {text/plain: {schema}}`, for the reason its
-/// Appendix D gives — a header value is not serialized the way a schema-shaped
-/// parameter is. Written once here so the top-level field and a future
-/// per-part one are one shape.
+/// `text/plain`, as OpenAPI 3.2's `multipart/byteranges` example describes
+/// `Content-Range` (Appendix D).
 const AS_TEXT: &str = mime_names::TEXT_PLAIN;
 
 /// `^bytes$`, the only `acceptable-ranges` Kynos sends.
@@ -69,10 +50,7 @@ const RANGE_RESP_PATTERN: &str = r"^bytes \d+-\d+/\d+$";
 /// `unsatisfied-range`.
 const UNSATISFIED_RANGE_PATTERN: &str = r"^bytes \*/\d+$";
 
-/// A string schema constrained to `pattern`.
-///
-/// Shared with the `Range` parameter, so a field Kynos reads and a field it
-/// writes are described the same way.
+/// A string schema constrained to `pattern`, shared with the `Range` parameter.
 pub(crate) fn constrained(pattern: &str) -> Schema {
     Schema::Object(Box::new(SchemaObject {
         ty: Some(TypeSet::One(SchemaType::String)),
@@ -90,17 +68,11 @@ fn described(pattern: &str, description: &str) -> Header {
 
 /// The advertisement that this operation serves byte ranges.
 ///
-/// A unit struct rather than a set of units: `bytes` is the only unit Kynos
-/// understands, so there is nothing for a value to choose. The reserved
-/// `Accept-Ranges: none` spelling is not sent either — an operation that does
-/// not range simply does not carry this group, which says the same thing
-/// without adding a field to every response in the service.
+/// Always `bytes`, the only unit Kynos understands; an operation that does not
+/// range omits the field rather than sending `none`.
 ///
-/// # This group is written, not read
-///
-/// It implements `EncodeHeaders` and not `DecodeHeaders`, so
-/// `Headers<AcceptRanges>` as a handler argument does not compile; it is a
-/// response header. That used to be a panic on the first request.
+/// A response header only: it does not implement `DecodeHeaders`, so
+/// `Headers<AcceptRanges>` as a handler argument does not compile.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AcceptRanges;
 
@@ -134,16 +106,11 @@ impl EncodeHeaders for AcceptRanges {
 /// Which part of a representation a response carries, or how long the whole of
 /// it is.
 ///
-/// One field with two grammars, so one type with two variants. Section 14.4
-/// gives the first to a 206 and the second to a 416, and says the field *has no
-/// meaning for status codes that do not explicitly describe its semantic* — so
-/// it is attached per status rather than to every response a body declares,
-/// which is why this is not composed through
-/// [`WithHeaders`](crate::response::headers::WithHeaders).
+/// Section 14.4 gives the first variant to a 206 and the second to a 416, and
+/// the field means nothing on other statuses, so it is attached per status
+/// rather than through [`WithHeaders`](crate::response::headers::WithHeaders).
 ///
-/// # This group is written, not read
-///
-/// As with [`AcceptRanges`]: it encodes and does not decode.
+/// A response header only, like [`AcceptRanges`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ContentRange {
     /// `range-resp`: the part enclosed, and the complete length it came from.
@@ -188,15 +155,8 @@ impl ContentRange {
         )
     }
 
-    /// The Header Object a 416 declares.
-    ///
-    /// Separate from [`satisfied_header`](Self::satisfied_header) because the
-    /// two statuses carry different grammars, so a single schema would have to
-    /// admit both and constrain neither.
-    ///
-    /// Read by [`RangeRejection`](crate::error::rejection::RangeRejection)'s own
-    /// `Responses`, so the field is declared wherever the 416 is and nowhere
-    /// else.
+    /// The Header Object a 416 declares, as
+    /// [`RangeRejection`](crate::error::rejection::RangeRejection) does.
     #[must_use]
     pub fn unsatisfied_header() -> Header {
         described(
@@ -209,14 +169,8 @@ impl ContentRange {
 impl HeaderParams for ContentRange {
     const NAMES: &'static [&'static str] = &["content-range"];
 
-    /// The 206 shape.
-    ///
-    /// `response_headers` describes a group without reference to a status, and
-    /// this field has two grammars keyed by one. The 206 is the shape a
-    /// [`Ranged`](super::Ranged) response carries, so it is the one this
-    /// answers with; the 416 shape reaches the description through
-    /// [`unsatisfied_header`](ContentRange::unsatisfied_header), on the
-    /// rejection that produces that status.
+    /// The 206 shape; the 416 one is
+    /// [`unsatisfied_header`](ContentRange::unsatisfied_header).
     fn response_headers(registry: &mut Registry) -> kynos_openapi::Map<RefOr<Header>> {
         let _ = registry;
 
@@ -231,8 +185,7 @@ impl HeaderParams for ContentRange {
 
 impl EncodeHeaders for ContentRange {
     fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-        // Infallible by construction: the value is `bytes`, a space, digits and
-        // three punctuation characters, every one of them printable ASCII.
+        // Printable ASCII by construction.
         let value =
             HeaderValue::from_str(&self.field_value()).expect("a field value of printable ASCII");
         vec![(header::CONTENT_RANGE, value)]

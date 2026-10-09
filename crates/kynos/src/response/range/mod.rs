@@ -1,73 +1,30 @@
 //! Serving one byte range of a representation.
 //!
-//! The shape mirrors [`negotiate`](crate::response::negotiate): an extractor
-//! that reads one request field and declares it, and a response type whose
-//! [`Responses`] declares every arm it can produce. Three things depart from
-//! that precedent, and RFC 9110 forces each one.
+//! [`Range<T>`] reads the request's `Range` field and declares it as a
+//! parameter, so a consumer can see the operation is resumable. It never
+//! fails: RFC 9110 section 14.2 answers every unusable field (an unknown unit,
+//! a malformed value, a method other than `GET`) by ignoring it, so a bad
+//! field yields the whole representation and a 200, never a 400. The reason is
+//! reported as a [`spec::Ignored`].
 //!
-//! **`Range` is a declarable parameter.** [`Accept`](super::negotiate::Accept)
-//! is not, because the specification says a parameter definition for `Accept`,
-//! `Content-Type` or `Authorization` shall be ignored. `Range` is none of those
-//! three, and declaring it is the point: a consumer that cannot see the field
-//! does not know the operation is resumable.
+//! A handler returning `Result<Ranged<T>, RangeRejection>` declares all three
+//! statuses it can produce: 200 and 206 from [`Ranged<T>`], 416 from
+//! [`RangeRejection`].
 //!
-//! **The extractor is infallible.** Section 14.2 answers every unusable `Range`
-//! with *ignore it* — an unknown unit, a malformed value, a method for which
-//! range handling is not defined — so reading one cannot fail. A bad field
-//! produces the whole representation and a 200, never a 400. The reasons are
-//! named in [`spec::Ignored`] rather than collapsed into an [`Option`], so each
-//! is a case a test can count.
+//! # `If-Range`
 //!
-//! **The status varies.** 200, 206 or 416, and none of them is chosen at run
-//! time: 200 and 206 are what [`Ranged<T>`] declares, and the 416 rides on
-//! [`RangeRejection`], so a handler
-//! returning `Result<Ranged<T>, RangeRejection>` has the three in its type.
-//!
-//! # `Range` on a method other than `GET`
-//!
-//! Section 14.2: *a server MUST ignore a Range header field received with a
-//! request method that is unrecognized or for which range handling is not
-//! defined. For this specification, GET is the only method for which range
-//! handling is defined.* That is one comparison in
-//! `Range`'s own `from_request_parts`, producing
-//! [`spec::Ignored::MethodUndefined`].
-//!
-//! Deliberately **not** a compile error and not a router-build refusal. Making
-//! it one would mean a way for a `Describe` implementation to reject the
-//! operation it is describing, which is new router machinery — a refusal
-//! channel on `OperationCx` and a `SpecError` variant — riding on one feature.
-//! The RFC asks for a runtime ignore, and the runtime ignore is what this does.
-//!
-//! # `If-Range` is answered by ignoring the range
-//!
-//! Section 13.1.5 makes `If-Range` a precondition on *applying* the `Range`
-//! field: the range is served only if the client's copy is still current. A
-//! handler-supplied `Ranged<T>` carries no validator for that condition to be
-//! evaluated against — the octets arrive with no entity tag and no
-//! modification date — so a present `If-Range` is
-//! [`spec::Ignored::Conditional`] and the whole representation is sent. That is
-//! always a correct answer: the client's stored copy is only ever *replaced*,
-//! never spliced with a part it did not ask for.
-//!
-//! It is a narrow position, not a permanent one. Kynos does issue validators
-//! elsewhere — `router::assets` mints entity tags, and `http::etag` holds the
-//! quote-aware comparison every caller goes through — so the asset-server
-//! integration is where a real `If-Range` evaluation belongs, because that is
-//! where a validator exists. Nothing here writes a second entity-tag
-//! comparator.
+//! Section 13.1.5 makes `If-Range` a precondition on applying `Range`. A
+//! handler-built `Ranged<T>` has no validator to evaluate it against, so a
+//! present `If-Range` is [`spec::Ignored::Conditional`] and the whole
+//! representation is sent. [`served`] evaluates it where a validator exists.
 //!
 //! # One range, and only the first
 //!
-//! A `range-set` of up to eight specs parses, and the first satisfiable
-//! spec in it is the one served. Section 14.2 says outright that *the above does
-//! not imply that a server will send all requested ranges*, and section 15.3.7
-//! that a 206 is self-descriptive, so a client can tell what it received.
-//!
-//! Several parts at once is `multipart/byteranges`, which lives in
-//! [`parts`] behind `openapi32` — 3.1 has no vocabulary for a
-//! request-determined number of parts each carrying a required header. It is
-//! reached by returning `RangedParts<T>` rather than by turning the flag on,
-//! so what an existing handler puts on the wire does not depend on a feature.
+//! A `range-set` of up to eight specs parses, and the first satisfiable spec is
+//! served; section 14.2 does not require sending every requested range.
+//! Several parts at once is `multipart/byteranges`, reached by returning
+//! [`parts`]' `RangedParts<T>` (requires `openapi32`, since 3.1 cannot describe
+//! a request-determined number of parts).
 
 pub mod headers;
 #[cfg(feature = "openapi32")]
@@ -104,8 +61,7 @@ pub enum Selection {
     /// applied.
     ///
     /// Every reason is one section 14.2 answers with *ignore it*, so this is a
-    /// 200 rather than a failure — and carrying the reason is what lets a test
-    /// tell the eight of them apart.
+    /// 200 rather than a failure.
     Whole(Ignored),
 
     /// One part of the representation, which is a 206.
@@ -136,8 +92,7 @@ impl Selection {
 /// answers by ignoring it, so this yields a value whatever arrived, and
 /// [`select`](Range::select) reports which reason applied.
 ///
-/// `T` is the representation the range will be taken from, kept at the type
-/// level. It is what ties the field this reads to the body the handler returns:
+/// `T` is the representation the range will be taken from:
 /// `Range<Binary<Pdf>>` resolves against a `Binary<Pdf>` and nothing else.
 ///
 /// ```no_run
@@ -165,8 +120,7 @@ pub struct Range<T> {
 }
 
 impl<T> Range<T> {
-    /// The one constructor, so every `Range` came from a field or from a reason
-    /// to ignore one.
+    /// The one constructor.
     fn read(requested: Result<Vec<spec::Spec>, Ignored>) -> Self {
         Self {
             requested,
@@ -195,9 +149,8 @@ impl<T> Range<T> {
 
     /// What this request selects from a representation of `complete_length`.
     ///
-    /// Separate from [`apply`](Range::apply) because a sender that knows how
-    /// long a representation is without holding it — a file on disk — needs the
-    /// answer before it reads a byte.
+    /// For a sender that knows the length without holding the octets, such as
+    /// a file on disk; [`apply`](Range::apply) is the in-memory shorthand.
     ///
     /// # Errors
     ///
@@ -237,27 +190,17 @@ impl<C: Sync, T> FromRequestParts<C> for Range<T> {
     type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Infallible> {
-        // No validator: the octets a handler hands to `apply` arrive with no
-        // entity tag, so section 13.1.5's condition cannot hold. See the module
-        // documentation for why that is a narrow position rather than a
-        // permanent one.
+        // No validator: a handler's octets carry no entity tag, so section
+        // 13.1.5's condition cannot hold.
         Ok(Self::read(spec::read(&parts.method, &parts.headers, None)))
     }
 }
 
 /// Declares the `Range` parameter, and nothing else.
 ///
-/// **No 416.** Reading the field cannot fail, so the argument contributes no
-/// rejection: the 416 originates in [`apply`](Range::apply) and reaches the
-/// document through the handler's return type, where
-/// `Responses for Result<Ranged<T>, RangeRejection>` unions the two sides. That
-/// is what makes it declared on exactly the operations that can produce one —
-/// a handler that reads the field and answers whole, which RFC 9110 section
-/// 14.2 allows outright, advertises no status it cannot reach.
-///
-/// The `T: Rangeable` bound earns its place here even though nothing below
-/// reads it: it is what puts the refusal on the argument, where a reader is
-/// looking, rather than on the return type.
+/// No 416: that is declared through the handler's return type, so only an
+/// operation that can produce one declares it. The `T: Rangeable` bound puts a
+/// non-rangeable `T`'s compile error on the argument.
 impl<T: Rangeable> Describe for Range<T> {
     fn describe(operation: &mut OperationCx<'_>) {
         operation.add_parameter(parameter());
@@ -266,10 +209,8 @@ impl<T: Rangeable> Describe for Range<T> {
 
 /// What a `range-set` selects from a representation of `complete_length`.
 ///
-/// The rule rather than the extractor: `router::assets` reaches it holding a
-/// validator and a length from a `stat` rather than a `Range<T>`, and a second
-/// implementation of section 14.1.2's satisfiability is exactly what this
-/// module exists to prevent.
+/// The one implementation of section 14.1.2's satisfiability, shared with
+/// callers that hold no `Range<T>`.
 ///
 /// # Errors
 ///
@@ -284,9 +225,7 @@ pub(crate) fn select(
         Ok(specs) => specs,
     };
 
-    // Section 14.2 permits ignoring the field when the selected representation
-    // has no content, and a zero-length part has no `incl-range` that could
-    // describe it.
+    // Section 14.2 permits ignoring the field for an empty representation.
     if complete_length == 0 {
         return Ok(Selection::Whole(Ignored::EmptyRepresentation));
     }
@@ -304,11 +243,7 @@ pub(crate) fn select(
 
 /// The `Range` parameter an operation serving byte ranges declares.
 ///
-/// Written once, because the extractor and the asset server share no type and
-/// must still declare one field with one grammar — and public for the reason
-/// [`ContentRange::unsatisfied_header`] is: an endpoint
-/// that serves ranges without going through [`Ranged<T>`] still owes a consumer
-/// the same declaration.
+/// For an endpoint that serves ranges without going through [`Ranged<T>`].
 #[must_use]
 pub fn parameter() -> Parameter {
     Parameter::header("Range", headers::constrained(&spec::pattern()))
@@ -321,11 +256,8 @@ pub fn parameter() -> Parameter {
 
 /// The `If-Range` precondition on applying that field.
 ///
-/// Declared only where a validator exists to evaluate it against — which is
-/// `router::assets` and not [`Range<T>`], whose octets arrive with no entity
-/// tag. A parameter an operation always ignores is noise in the description,
-/// which is why this is a separate constructor rather than part of
-/// [`parameter`].
+/// Declared only where a validator exists to evaluate it, which excludes
+/// [`Range<T>`].
 #[must_use]
 pub(crate) fn conditional_parameter() -> Parameter {
     Parameter::header(
@@ -363,9 +295,6 @@ impl<T> Ranged<T> {
 }
 
 /// 200 with `Accept-Ranges`, or 206 with `Accept-Ranges` and `Content-Range`.
-///
-/// Written through [`header::write`](crate::extract::params::header), which is
-/// the one writer both a handler's headers and an interceptor's go through.
 impl<T: Rangeable> IntoResponse for Ranged<T> {
     fn into_response(self) -> Response {
         let selection = self.selection;
@@ -396,11 +325,8 @@ impl<T: Rangeable> IntoResponse for Ranged<T> {
 
 /// The two statuses this type can produce, each carrying the fields it sends.
 ///
-/// `Content-Range` is on the 206 alone. Section 14.4: the field *has no meaning
-/// for status codes that do not explicitly describe its semantic*, and only 206
-/// and 416 do — which is also why this is not a
-/// [`WithHeaders`](crate::response::headers::WithHeaders), whose group joins
-/// every response the body declares with one required-ness.
+/// `Content-Range` is on the 206 alone (section 14.4), which is why this is not
+/// a [`WithHeaders`](crate::response::headers::WithHeaders).
 impl<T: Rangeable> Responses for Ranged<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let advertised = AcceptRanges::response_headers(registry);
@@ -440,16 +366,8 @@ mod tests;
 
 /// The statuses and fields a [`Served`](served::Served) delivery can produce.
 ///
-/// One place, so the description and the deliverer cannot disagree about which
-/// statuses exist. The set is exactly what section 14 and section 13 allow a
-/// ranged GET or HEAD to answer with: 200, 206, 304, 412 and 416, plus the 400 an
-/// unreadable `Range` never produces — section 14.2 says an unusable field is
-/// ignored, so there is no 400 here and declaring one would be a promise
-/// nothing keeps.
-///
-/// The 416 is [`RangeRejection`]'s own description, problem document and
-/// `Content-Range` included, since that rejection is what `deliver` answers an
-/// unsatisfiable `Range` with.
+/// 200, 206, 304, 412 and [`RangeRejection`]'s 416; no 400, since section 14.2
+/// ignores an unusable `Range`.
 #[must_use]
 pub(crate) fn delivery_responses(
     registry: &mut Registry,

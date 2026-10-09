@@ -10,12 +10,8 @@ use crate::{
 
 /// Where a response points a client next.
 ///
-/// The value of a `Location` header, and the reason it is a type rather than a
-/// `String`: a route attribute's
-/// `relative_uri` returns an [`http::Uri`], and neither that
-/// type nor `String` belongs to Kynos, so no `From` between them can be written
-/// here. Naming the concept is what lets both spellings arrive without a
-/// conversion at every call site.
+/// The value of a `Location` header, converted from a string or from the
+/// [`http::Uri`] a route attribute's `relative_uri` returns.
 ///
 /// ```
 /// use kynos::response::status::Location;
@@ -29,10 +25,8 @@ use crate::{
 ///
 /// [`http::Uri`]: crate::http::Uri
 ///
-/// A location is deliberately *not* validated here. A `Location` field value is
-/// a URI reference, which includes relative forms that only mean something
-/// against the request URI, so rejecting anything at this point would refuse
-/// values the specification permits.
+/// Not validated: a `Location` value is a URI reference, relative forms
+/// included.
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Location(String);
 
@@ -62,8 +56,6 @@ impl From<&str> for Location {
     }
 }
 
-// The conversion this type exists for. A typed URI is the sanctioned way to
-// name another operation, so handing one to `Created::at` must cost nothing.
 impl From<crate::http::Uri> for Location {
     fn from(value: crate::http::Uri) -> Self {
         Self(value.to_string())
@@ -82,9 +74,7 @@ pub struct NoContent;
 
 /// A 201 Created response carrying the created representation.
 ///
-/// The `Location` header is required rather than optional: a 201 without one
-/// tells a client something was created but not where, which is rarely what
-/// anybody wants and is trivial to forget.
+/// The `Location` header is required, so a 201 always says where.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Created<T> {
     /// The created representation.
@@ -163,8 +153,6 @@ impl ValidRedirectCode<307> for () {}
 impl ValidRedirectCode<308> for () {}
 
 /// The status a bare body type describes itself under.
-///
-/// Changing it is what every wrapper in this module is for.
 const BODY_STATUS: u16 = 200;
 
 /// The status [`Created`] fixes.
@@ -175,11 +163,8 @@ const ACCEPTED: u16 = 202;
 
 /// Sets `Location` on `response`, unless the value cannot be a field value.
 ///
-/// The only strings refused here are ones holding a control character, which a
-/// URI reference never legitimately does and which a field value must never
-/// carry: writing one out would let a caller-supplied string forge the rest of
-/// the message. Omitting the field is the safe half of that trade, and
-/// [`Location`] accepts everything else the specification permits.
+/// Only a control character is refused, since it could forge the rest of the
+/// message; the field is then omitted.
 fn set_location(response: &mut Response, location: &Location) {
     if let Ok(value) = HeaderValue::from_str(location.as_str()) {
         response.headers_mut().insert(header::LOCATION, value);
@@ -188,8 +173,7 @@ fn set_location(response: &mut Response, location: &Location) {
 
 /// Describes a `Location` field that is always sent.
 ///
-/// A string rather than a schema with a `format`, because the value is a URI
-/// *reference* and the relative forms are as legal as the absolute ones.
+/// A plain string with no `format`, since relative references are legal.
 fn location_header(description: &str) -> kynos_openapi::Header {
     kynos_openapi::Header::new(kynos_openapi::Schema::of_type(SchemaType::String))
         .with_description(description)
@@ -199,69 +183,24 @@ fn location_header(description: &str) -> kynos_openapi::Header {
 /// Takes the response a body describes for itself, re-described for the status
 /// its wrapper fixes.
 ///
-/// A bare body type describes itself under 200, so the wrapper's own status is
-/// where that response belongs: the content, headers and links carry over, and
-/// the description becomes the wrapper's, since what a 201 or a 202 means is
-/// the half of the statement a body was never in a position to make. Anything
-/// the body declared under another status stays where it is — that was not
-/// 200's to re-key.
+/// In order of precedence:
 ///
-/// A `$ref` is left in place rather than re-described, because it names a
-/// response the document holds elsewhere and every other use of it would be
-/// re-described too.
+/// * An entry the body already declares under the wrapper's status is returned
+///   unchanged, or `None` if it is a `$ref`, which this may not overwrite.
+/// * The body's 200 is moved to the wrapper's status with the wrapper's
+///   description; a `$ref` 200 is left in place.
+/// * With no 200, a body declaring exactly one response has its
+///   representation carried over by [`sole_representation`], since that is
+///   all it can send; otherwise the wrapper's response is empty.
 ///
-/// # A body that describes no 200
-///
-/// The wrapper overwrites the status on whatever the body produced, so the
-/// body's representation reaches the wire under 201 or 202 whichever key the
-/// body filed it under. Declaring nothing there would describe an empty
-/// response over a body, which is the disagreement `assert_conformance`
-/// reports.
-///
-/// So the representation is carried over by [`sole_representation`], under one
-/// condition: that the body declares exactly one response at all. That response
-/// is the whole of what the body puts on the wire, so re-describing it under the
-/// wrapper's status promises what every value of the body sends. A second
-/// response leaves the wrapper empty as before, bodiless or not: `{204: none,
-/// 409: content}` sends both under the wrapper's status, so declaring the 409's
-/// representation would promise it for the values that send nothing.
-///
-/// No body type Kynos ships reaches any of this: `Ranged<T>` and
-/// `RangedParts<T>` declare the 200 the representation they range over
-/// declares, `Delivery<M>` writes one itself, and `Result<T, E>` declares
-/// whatever its `Ok` half does, so every wrapper over them takes the re-keying
-/// arm above. What arrives here is a body naming its own statuses — one
-/// response per variant, and a 200 only where a variant asked for one, which is
-/// what `#[derive(Reply)]` writes. `Created<R>` over a single-variant `R`
-/// carrying a representation is the composition the carry-over is for.
-///
-/// What is *not* addressed here is the leftover entry. A body's 409 stays in
-/// the set while the wrapper re-keys everything it sends to 201, so the
-/// description keeps a status the type cannot produce. That is true of every
-/// leftover any such body leaves behind and predates this fallback, so
-/// removing them is a decision about the wrapper's whole contract rather than
-/// about the missing representation.
-///
-/// # A body that describes the wrapper's own status
-///
-/// That entry, unchanged, so the caller adds only what the wrapper itself
-/// contributes. The body already said what it sends there, and it is the half
-/// that knows: a wrapper knows the status and what the status *means*, and
-/// re-keying a 200 over it would replace a statement with a weaker one.
-/// `Created<R>` over an `R` whose own variant is the 201 is the composition
-/// this covers, and it is the one `#[derive(Reply)]` makes easy to write.
-///
-/// `None` only for a `$ref` there, which names a response the document holds
-/// elsewhere: there is nothing to merge into and nothing this wrapper may
-/// overwrite, so it declares nothing and leaves the reference alone.
+/// A body's other statuses stay in the set, even though the wrapper re-keys
+/// everything it sends.
 fn body_response(
     description: &str,
     status: u16,
     body: &mut kynos_openapi::Responses,
 ) -> Option<kynos_openapi::Response> {
-    // Read rather than remove: `Responses::with` replaces an existing key in
-    // place, so leaving the entry where it is keeps the emitted order the body
-    // chose, and `determinism.rs` compares that order byte for byte.
+    // Read rather than remove, so the emitted order the body chose survives.
     match body
         .responses
         .get(&kynos_openapi::StatusPattern::Code(status).to_string())
@@ -285,9 +224,7 @@ fn body_response(
         None => {
             let mut response = kynos_openapi::Response::new(description);
             if let Some(sole) = sole_representation(body) {
-                // Headers and links as well as the representation: the re-key
-                // arm above carries all three by reusing the whole `Response`,
-                // and a body that reaches here sends the same three.
+                // All three, as the re-key arm above carries.
                 response.content.clone_from(&sole.content);
                 response.headers.clone_from(&sole.headers);
                 response.links.clone_from(&sole.links);
@@ -300,20 +237,9 @@ fn body_response(
 /// The representations a body declares, when it declares exactly one response
 /// and that response carries any.
 ///
-/// One response is the whole of what the body puts on the wire, so it is the
-/// one case where the wrapper re-describing it promises nothing a value of the
-/// body fails to send. `None` for a second response even where only one of the
-/// two carries content: the other reaches the wire under the wrapper's status
-/// as well, and it carries none.
-///
-/// `None` for a `$ref` too — it names a response the document holds elsewhere,
-/// so what it carries is not a question answerable from here.
-///
-/// The `default` counts as that one response, because a fallback response is
-/// as much a thing the body can put on the wire as a keyed one. A *wildcard*
-/// does not: `4XX` is a range rather than a claim about any one status, so
-/// there is nothing in it for the wrapper's single status to borrow, and
-/// carrying it over would declare an error representation as what a 201 sends.
+/// `None` for a second response even if it has no content, since it too is
+/// sent under the wrapper's status, and for a `$ref`. A `default` counts as
+/// the one response; a wildcard such as `4XX` does not.
 fn sole_representation(body: &kynos_openapi::Responses) -> Option<&kynos_openapi::Response> {
     let mut keyed = body.responses.iter();
 
@@ -323,7 +249,6 @@ fn sole_representation(body: &kynos_openapi::Responses) -> Option<&kynos_openapi
             key.parse::<u16>().ok()?;
             response
         }
-        // Both, or neither: two responses is not one, and none is nothing.
         _ => return None,
     };
 
@@ -344,9 +269,7 @@ fn sole_representation(body: &kynos_openapi::Responses) -> Option<&kynos_openapi
 
 /// What each redirect status tells a client, as RFC 9110 defines it.
 ///
-/// The five differ in two ways a consumer acts on — whether the move is
-/// permanent, and whether the method survives the replay — so one description
-/// for all of them would leave out the whole of the choice.
+/// Each states whether the move is permanent and whether the method survives.
 fn redirect_description(code: u16) -> &'static str {
     match code {
         301 => "the resource has a new permanent URI, given by `Location`",
@@ -354,8 +277,7 @@ fn redirect_description(code: u16) -> &'static str {
         303 => "the response to this request is at the URI given by `Location`, retrieved with GET",
         307 => "the resource is temporarily at `Location`; the method is preserved on replay",
         308 => "the resource has a new permanent URI in `Location`; the method survives replay",
-        // Unreachable while `ValidRedirectCode` witnesses exactly the five
-        // statuses above, which is what bounds every caller.
+        // Unreachable while `ValidRedirectCode` witnesses only the five above.
         _ => "the client is directed to the URI given by `Location`",
     }
 }
@@ -434,8 +356,7 @@ where
 {
     fn into_response(self) -> Response {
         let mut response = Response::new(Body::empty());
-        // The witness admits five statuses and every one of them is a status
-        // code, so the conversion cannot fail for a `Redirect` that exists.
+        // The witness admits only valid status codes.
         *response.status_mut() =
             StatusCode::from_u16(CODE).expect("a witnessed redirect code is a status code");
         set_location(&mut response, &self.location);

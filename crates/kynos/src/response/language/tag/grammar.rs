@@ -1,24 +1,13 @@
 //! The `Language-Tag` production, walked over byte indices.
 //!
-//! Private: it declares no type, and what it answers about a string is
-//! [`LanguageTag`](super::LanguageTag)'s to say.
-//!
-//! Byte indices rather than `split('-')`, because none of `str`'s iterators are
-//! available in a `const` context and
-//! [`is_well_formed`](super::LanguageTag::is_well_formed) has to be. One walk
-//! rather than two, so a `const` answer and a run-time one cannot disagree.
+//! Byte indices because `str`'s iterators are unavailable in the `const`
+//! context [`is_well_formed`](super::LanguageTag::is_well_formed) needs; one
+//! walk serves both it and `parse`.
 
 use super::TagDefect;
 
-/// The seventeen tags RFC 5646 section 2.1 calls `irregular`.
-///
-/// These are the whole of the closed list, and the *only* grandfathered tags
-/// that need one: the ABNF's own comment says the irregular tags "do not match
-/// the 'langtag' production and would not otherwise be considered
-/// 'well-formed'", while the nine `regular` ones "match the 'langtag'
-/// production" and so fall out of the grammar below for free. Transcribing
-/// those nine as well would be nine rows asserting what the parser already
-/// does.
+/// The seventeen tags RFC 5646 section 2.1 calls `irregular`. The `regular`
+/// grandfathered tags match `langtag` and need no list.
 pub(in crate::response::language) const IRREGULAR: [&str; 17] = [
     "en-GB-oed",
     "i-ami",
@@ -52,8 +41,7 @@ const fn is_alpha(byte: u8) -> bool {
     byte.is_ascii_alphabetic()
 }
 
-/// ASCII case folding, written out because a tag is ASCII by construction and
-/// `u8::eq_ignore_ascii_case` is not something to lean on at the declared MSRV.
+/// ASCII lowercase folding, written out because a tag is ASCII by construction.
 const fn folded(byte: u8) -> u8 {
     if byte.is_ascii_uppercase() {
         byte + (b'a' - b'A')
@@ -127,8 +115,7 @@ pub(super) const fn check(value: &str) -> Result<(), TagDefect> {
         return Err(TagDefect::Empty);
     }
 
-    // `grandfathered`, irregular half. Checked before anything else because
-    // these are precisely the tags the grammar below rejects.
+    // Irregular grandfathered tags first: the grammar below rejects them.
     let mut index = 0;
     while index < IRREGULAR.len() {
         if whole_matches(bytes, IRREGULAR[index].as_bytes()) {
@@ -137,8 +124,7 @@ pub(super) const fn check(value: &str) -> Result<(), TagDefect> {
         index += 1;
     }
 
-    // Every subtag is one to eight alphanumerics before anything positional is
-    // asked, so a malformed one is reported as malformed rather than misplaced.
+    // Shape before position, so a malformed subtag is not reported misplaced.
     let mut cursor = 0;
     while cursor <= bytes.len() {
         let end = subtag_end(bytes, cursor);
@@ -186,8 +172,7 @@ const fn langtag(bytes: &[u8], mut cursor: usize, extlang_allowed: bool) -> Resu
         let length = end - start;
         cursor = end;
 
-        // `privateuse` closes the tag: everything after "x" is 1*8alphanum,
-        // already checked, and no other production may follow.
+        // `privateuse` closes the tag; its subtags were checked above.
         if subtag_matches(bytes, start, end, b"x") {
             return if end == bytes.len() {
                 Err(TagDefect::DanglingSingleton)
@@ -196,8 +181,7 @@ const fn langtag(bytes: &[u8], mut cursor: usize, extlang_allowed: bool) -> Resu
             };
         }
 
-        // `extension = singleton 1*("-" (2*8alphanum))`. A singleton is one
-        // alphanumeric other than "x", handled just above.
+        // `extension = singleton 1*("-" (2*8alphanum))`
         if length == 1 {
             if end == bytes.len() {
                 return Err(TagDefect::DanglingSingleton);
@@ -210,8 +194,6 @@ const fn langtag(bytes: &[u8], mut cursor: usize, extlang_allowed: bool) -> Resu
             continue;
         }
 
-        // Inside an extension every subtag is 2*8alphanum, which the sweep
-        // above already established.
         if in_extensions {
             continue;
         }
@@ -240,8 +222,7 @@ const fn langtag(bytes: &[u8], mut cursor: usize, extlang_allowed: bool) -> Resu
                 || (length == 3 && all_digit(bytes, start, end)))
         {
             seen_region = true;
-            // A region closes the script position too: `en-GB-Latn` is not a
-            // tag, because the ABNF puts script before region.
+            // Script precedes region: `en-GB-Latn` is not a tag.
             seen_script = true;
             continue;
         }

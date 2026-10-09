@@ -11,15 +11,6 @@
 //! Content-Language = #language-tag
 //! language-tag     = <Language-Tag, see [RFC5646], Section 2.1>
 //! ```
-//!
-//! # Why `Accept-Language` is a parameter where `Accept` is not
-//!
-//! OpenAPI names exactly three header fields whose parameter definition "SHALL
-//! be ignored" — `Accept`, `Content-Type` and `Authorization` — and
-//! `Accept-Language` is not among them. So declaring it is a claim a consumer
-//! will honour, where declaring `Accept` is not, and
-//! [`negotiate`](crate::response::negotiate) is right to contribute none while
-//! this module is right to contribute one.
 
 use std::borrow::Cow;
 
@@ -39,29 +30,15 @@ use crate::{
     schema::registry::Registry,
 };
 
-/// The media type a header value is described under.
-///
-/// The same call [`range::headers`](crate::response::range::headers) makes, and
-/// for the reason OpenAPI 3.2's Appendix D gives: a header value is not
-/// serialized the way a schema-shaped parameter is.
+/// The media type a header value is described under (OpenAPI 3.2 Appendix D).
 const AS_TEXT: &str = mime_names::TEXT_PLAIN;
 
 /// The field a client states its language preferences in.
 ///
-/// The schema is an unconstrained string, and both halves of that are
-/// deliberate.
-///
-/// No `enum`, because the value is a *priority list* rather than a tag:
-/// `da, en-gb;q=0.8, en;q=0.7` is RFC 9110's own example and is not a member of
-/// any set of offered tags. The offered set is stated on `Content-Language`,
-/// where it is true. What the offer does reach here is the description and one
-/// example, which is where prose belongs.
-///
-/// No `pattern` either, unlike [`range::parameter`](crate::response::range::parameter).
-/// That field is refused when it is malformed, so a pattern documents a real
-/// rejection; this one never is — an unreadable range is dropped and the rest
-/// of the field still counts — so a pattern would document a refusal the
-/// service does not make.
+/// The schema is an unconstrained string: the value is a priority list, not a
+/// tag, so the offer is enumerated on `Content-Language` instead; and an
+/// unreadable range is dropped rather than refused, so a `pattern` would
+/// document a rejection the service never makes.
 #[must_use]
 pub fn parameter(tags: &[&str]) -> Parameter {
     Parameter::header(
@@ -97,32 +74,23 @@ fn english_list(tags: &[&str]) -> String {
 
 /// The natural language a response is written in.
 ///
-/// Written, never read: this implements [`EncodeHeaders`] and not
-/// `DecodeHeaders`, so it cannot be a handler argument. A client's preference
-/// arrives on [`AcceptLanguage`](super::AcceptLanguage) instead.
+/// Written, never read: it implements [`EncodeHeaders`] only, so it cannot be a
+/// handler argument; a client's preference arrives on
+/// [`AcceptLanguage`](super::AcceptLanguage).
 ///
-/// # Why it is described where `ContentEncoding` is not
-///
-/// [`DESCRIBED`](HeaderParams::DESCRIBED) is `true` here. A content coding is
-/// undone beneath the API surface and every client already handles it without
-/// being told; a language is not that. It is what makes serving a default
-/// instead of a 406 honest — a client that cannot use the language it was given
-/// can only find out by reading this field, so a consumer that cannot see it is
-/// one that cannot do anything about the fallback.
-///
-/// `Vary: Accept-Language` rides along through
-/// [`VARIES`](HeaderParams::VARIES) and is deliberately never described: a
-/// shared cache reads `Vary`, and a client generator has no use for it.
+/// Unlike `ContentEncoding` it is [`DESCRIBED`](HeaderParams::DESCRIBED): it is
+/// how a client learns it was served the default language.
+/// `Vary: Accept-Language` is added through [`VARIES`](HeaderParams::VARIES)
+/// and is not described.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContentLanguage(Cow<'static, str>);
 
 impl ContentLanguage {
     /// States a language a catalogue resolved at run time.
     ///
-    /// Takes a parsed [`LanguageTag`] rather than a string, so the field cannot
-    /// carry something no client can read. This is the path for a catalogue
-    /// discovered at startup, whose tags no `const` can name — see
-    /// [`Languages`](super::Languages) for the trade.
+    /// Takes a parsed [`LanguageTag`], so the field is always well-formed. For
+    /// a catalogue discovered at startup, whose tags no `const` can name — see
+    /// [`Languages`](super::Languages).
     #[must_use]
     pub fn new(tag: &LanguageTag) -> Self {
         Self(Cow::Owned(tag.as_str().to_owned()))
@@ -144,12 +112,9 @@ impl HeaderParams for ContentLanguage {
     const NAMES: &'static [&'static str] = &["content-language"];
     const VARIES: &'static [&'static str] = &["accept-language"];
 
-    /// The unconstrained shape, for a caller composing this through
-    /// [`WithHeaders`](crate::response::headers::WithHeaders) with a catalogue
-    /// nothing wrote down.
-    ///
-    /// [`Localized`](super::Localized) does not use this: it knows the offer
-    /// and states it, which is the whole reason the offer is a `const`.
+    /// The unconstrained shape, for use through
+    /// [`WithHeaders`](crate::response::headers::WithHeaders);
+    /// [`Localized`](super::Localized) enumerates its offer instead.
     fn response_headers(_registry: &mut Registry) -> Map<RefOr<Header>> {
         let mut headers = Map::new();
         headers.insert("Content-Language".to_owned(), RefOr::Item(described(None)));
@@ -159,9 +124,7 @@ impl HeaderParams for ContentLanguage {
 
 impl EncodeHeaders for ContentLanguage {
     fn encode(&self) -> Vec<(HeaderName, HeaderValue)> {
-        // A well-formed tag is letters, digits and hyphens, so it is always a
-        // valid field value. The type has no other way in: `new` takes a parsed
-        // tag and `offered` takes one the compiler checked.
+        // Both constructors take a well-formed tag: letters, digits, hyphens.
         let value = HeaderValue::from_str(&self.0)
             .expect("a well-formed language tag is a valid field value");
 
@@ -171,9 +134,7 @@ impl EncodeHeaders for ContentLanguage {
 
 /// The Header Object an offer of `tags` declares.
 ///
-/// `required` is `true`, which is the point: a response that negotiated its
-/// language always says which one it chose, so a client never has to guess
-/// whether it got a fallback.
+/// `required`, since a negotiated response always states its language.
 #[must_use]
 pub fn header(tags: &[&str]) -> Header {
     described(Some(tags))
@@ -182,10 +143,7 @@ pub fn header(tags: &[&str]) -> Header {
 /// `Content-Language`, with or without the offer enumerated.
 fn described(tags: Option<&[&str]>) -> Header {
     let schema = match tags {
-        // The offer *is* expressible here, unlike on the request parameter: the
-        // field carries one tag rather than a priority list, and `Localized`
-        // has no public constructor, so the only value that can reach the wire
-        // is a member of this set.
+        // One tag, always from the offer: `Localized` has no public constructor.
         Some(tags) => Schema::Object(Box::new(SchemaObject {
             ty: Some(TypeSet::One(SchemaType::String)),
             enumeration: Some(

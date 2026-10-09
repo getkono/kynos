@@ -1,16 +1,9 @@
 //! The sealed traits behind content negotiation.
 //!
-//! [`Representation`] is what makes a type offerable as one alternative, and
-//! [`Representations`] lifts that to a tuple. Both are sealed: the set of
-//! offerable representations is exactly the set of codecs Kynos can describe,
-//! and a downstream implementation would be one it cannot.
-//!
-//! Sealed, and nameable. These traits appear in the bound on
-//! [`Accept::respond_with`](super::Accept::respond_with), so a program that is generic
-//! over what it can offer has to be able to write them down; a bound nobody can
-//! name is a bound nobody can satisfy deliberately. What stops an outside
-//! implementation is the private supertrait below rather than the module being
-//! shut.
+//! [`Representation`] makes a type offerable as one alternative, and
+//! [`Representations`] lifts that to a tuple. Both are sealed, since the
+//! offerable set is exactly the codecs Kynos can describe, but public so a
+//! bound on [`Accept::respond_with`](super::Accept::respond_with) can name them.
 
 use kynos_openapi::model::body::mime_names;
 
@@ -29,27 +22,18 @@ use crate::extract::body::multipart::MultipartForm;
 use crate::extract::body::protobuf::Protobuf;
 
 /// What makes the set of offerable representations closed.
-///
-/// Implemented by Kynos for each codec it can describe, and unnameable
-/// downstream, so [`Representation`] cannot gain an implementation whose media
-/// type the description does not know about.
 mod sealed {
-    /// The private supertrait. Deliberately empty.
+    /// The private supertrait.
     pub trait Sealed {}
 
-    /// The same for producer tuples.
-    ///
-    /// A second marker rather than a second impl of the first: a tuple of
-    /// closures and a tuple of representations are both `(A, B)` to the
-    /// coherence checker, so one trait cannot cover both.
+    /// The same for producer tuples; a separate trait because coherence sees
+    /// both kinds of tuple as `(A, B)`.
     pub trait SealedProducers {}
 }
 
 /// A type offerable as one alternative in content negotiation.
 ///
-/// Sealed. The offerable set is exactly the codecs Kynos can describe, because
-/// an alternative it cannot describe is one the emitted `content` map would be
-/// silent about.
+/// Sealed: the offerable set is exactly the codecs Kynos can describe.
 pub trait Representation: IntoResponse + Responses + sealed::Sealed {
     /// The media type this representation is offered under.
     fn media_type() -> &'static str;
@@ -110,9 +94,8 @@ where
     }
 }
 
-// The bound is deferred to the codec rather than restating the protobuf
-// message trait, so that the codec crate stays named only under the two
-// protobuf modules the dependency table gives it.
+// Bound through the codec so the protobuf crate stays named only where
+// `containment:check` allows it.
 #[cfg(feature = "protobuf")]
 impl<T> sealed::Sealed for Protobuf<T> {}
 
@@ -128,9 +111,8 @@ where
 
 /// A tuple of [`Representation`]s, in the order they are offered.
 ///
-/// Sealed, and implemented for tuples of arity two through eight. Order is
-/// meaningful: it breaks a tie when the client's `Accept` field ranks two
-/// alternatives equally.
+/// Sealed, and implemented for tuples of arity two through eight. Order breaks
+/// a tie when the client's `Accept` field ranks two alternatives equally.
 pub trait Representations: sealed::Sealed {
     /// The media types on offer, in tuple order.
     fn media_types() -> Vec<&'static str>;
@@ -142,13 +124,8 @@ pub trait Representations: sealed::Sealed {
 
 /// Produces whichever representation negotiation chose, and only that one.
 ///
-/// A tuple of closures rather than a tuple of values. Building every
-/// alternative to discard all but one is work no request asked for: rendering a
-/// PDF for a client that wanted JSON costs the same whether or not the bytes are
-/// then thrown away.
-///
-/// Each closure is handed the same `&S`, so the source outlives the choice and
-/// no arm has to win ownership of it.
+/// A tuple of closures, so unchosen alternatives are never built. Each is
+/// handed the same `&S`.
 pub trait Producers<S, T: Representations>: sealed::SealedProducers {
     /// Invokes the closure at `index` and nothing else.
     ///
@@ -159,14 +136,8 @@ pub trait Producers<S, T: Representations>: sealed::SealedProducers {
 
 /// Folds one alternative's responses into the offer's.
 ///
-/// Every alternative answers with the same status, so what an offer contributes
-/// is one response listing every media type — the `content` map the module
-/// documentation calls the actual description of the negotiation — rather than
-/// one response per arm, which a Responses Object keyed by status could not hold
-/// anyway.
-///
-/// A `$ref` on either side carries no `content` map to union, so it only fills a
-/// status nothing has claimed yet.
+/// Alternatives sharing a status union their `content` maps into one response.
+/// A `$ref` has no `content` to union, so it only fills an unclaimed status.
 fn merge_content(offered: &mut kynos_openapi::Responses, from: kynos_openapi::Responses) {
     if offered.default_response.is_none() {
         offered.default_response = from.default_response;
@@ -188,12 +159,8 @@ fn merge_content(offered: &mut kynos_openapi::Responses, from: kynos_openapi::Re
     }
 }
 
-/// Seals producer tuples by arity.
-///
-/// Unparameterized, because a marker trait cannot carry the closure bounds
-/// without leaving `S` unconstrained. What actually closes the set is
-/// [`Producers`] itself, which is implemented only for tuples of closures
-/// returning a [`Representation`].
+/// Seals producer tuples by arity; the closure bounds live on [`Producers`],
+/// since a marker trait cannot carry them without leaving `S` unconstrained.
 macro_rules! seal_producers {
     ($($produce:ident),+) => {
         impl<$($produce),+> sealed::SealedProducers for ($($produce,)+) {}
@@ -230,8 +197,6 @@ macro_rules! tuple_representations {
             fn produce_at(self, source: &S, index: usize) -> Response {
                 let ($($value,)+) = self;
                 match index {
-                    // Exactly one closure runs. The others are dropped without
-                    // ever being called, which is the whole point.
                     $($index => $value(source).into_response(),)+
                     _ => unreachable!("negotiated representation index was validated"),
                 }
