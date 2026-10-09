@@ -19,7 +19,6 @@ use super::{
     PanicPolicy, PathEntry, PathItem, Paths, Registry, Result, Route, Router, Service, Severity,
     SpecError, SpecVersion, TrailingSlashPolicy, Violation, dispatch,
 };
-use crate::router::operation::declares_security;
 
 // Each behind the feature that provides it, as `mod.rs` had them.
 #[cfg(feature = "docs")]
@@ -337,19 +336,17 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             let location = format!("#/paths/{}", pointer_token(&key));
             let method = mounted.endpoint.method();
 
-            // The identifier and the security are needed before the operation
-            // exists, because they are part of the `Route` an interceptor is
-            // described against. A throwaway registry keeps the probe from
-            // recording a conflict the real pass is about to record again.
-            let (operation_id, secured) = {
+            // The identifier is needed before the operation exists, because it
+            // is half of the `Route` an interceptor is described against. A
+            // throwaway registry keeps the probe from recording a conflict the
+            // real pass is about to record again.
+            let operation_id = {
                 let mut probe = Registry::new();
                 let mut cx = OperationCx::new(&mut probe);
                 mounted.endpoint.describe(&mut cx);
-                let probed = cx.finish();
-                let secured = declares_security(&probed);
-                (probed.operation_id.unwrap_or_default(), secured)
+                cx.finish().operation_id.unwrap_or_default()
             };
-            let route = Route::new(&key, &operation_id, method, secured);
+            let route = Route::new(&key, &operation_id, method);
 
             let mut cx = OperationCx::new(&mut registry);
             mounted.endpoint.describe(&mut cx);
@@ -580,4 +577,16 @@ pub(super) fn match_table_refusal(pattern: &str, error: matchit::InsertError) ->
             pattern: pattern.to_owned(),
         },
     }
+}
+
+/// Whether `operation` declares a security requirement.
+///
+/// An absent `security` and an empty list both declare none. A list holding the
+/// empty requirement beside a scheme declares one, since a request presenting
+/// the credential is answered as its holder.
+fn declares_security(operation: &kynos_openapi::Operation) -> bool {
+    operation
+        .security
+        .as_ref()
+        .is_some_and(|requirements| !requirements.is_empty())
 }

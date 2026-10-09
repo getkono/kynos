@@ -94,9 +94,9 @@ pub(crate) struct Served<C> {
     /// ones stay inside the endpoint, which is what runs them.
     pub(crate) interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
     pub(crate) catch_panics: bool,
-    /// Whether the described operation declares a security requirement, which
-    /// [`Route::is_secured`] hands to every interceptor. False for what no
-    /// description covers: an unchecked route and a synthesized preflight.
+    /// Whether the described operation declares a security requirement. False
+    /// for what no description covers: an unchecked route and a synthesized
+    /// preflight.
     pub(crate) secured: bool,
     /// Layers of undeclared effect covering this operation, outermost first.
     /// Empty for every operation no waiver reached, which is the usual case.
@@ -137,6 +137,19 @@ pub(crate) struct Routed {
     /// interceptors parsing `Forwarded` for themselves would be two answers to
     /// one security question, and the policy that governs it is the router's.
     pub(crate) forwarded: crate::http::forwarded::Forwarded,
+    /// Whether the matched operation declares a security requirement, true
+    /// also for one admitting anonymous access beside it.
+    ///
+    /// Here rather than on [`Route`], because the record reaches the router's
+    /// chain and an endpoint's own alike, and a `Route` an endpoint builds for
+    /// its own chain would have to describe its handler again to know.
+    /// `Cache` is the reader: a hit is served before the operation's guard
+    /// runs.
+    #[cfg_attr(
+        not(feature = "cache"),
+        expect(dead_code, reason = "the cache is the one reader")
+    )]
+    pub(crate) secured: bool,
 }
 
 /// Every operation declared on one `paths` key.
@@ -273,12 +286,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             path: index,
             position,
         };
-        let route = Route::new(
-            &entry.template,
-            &operation.operation_id,
-            operation.method,
-            operation.secured,
-        );
+        let route = Route::new(&entry.template, &operation.operation_id, operation.method);
 
         let forwarded = self.forwarded(&request);
         request.extensions_mut().insert(Routed {
@@ -288,6 +296,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             matched: entry.matched.clone(),
             captures,
             forwarded,
+            secured: operation.secured,
         });
 
         for observer in &self.observers {
@@ -387,12 +396,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         Box::pin(async move {
             let entry = &self.paths[path];
             let operation = &entry.operations[position];
-            let route = Route::new(
-                &entry.template,
-                &operation.operation_id,
-                operation.method,
-                operation.secured,
-            );
+            let route = Route::new(&entry.template, &operation.operation_id, operation.method);
             self.run(operation, route, request).await
         })
     }
@@ -402,12 +406,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         let entry = &self.paths[at.path];
         let operation = &entry.operations[at.position];
 
-        Route::new(
-            &entry.template,
-            &operation.operation_id,
-            operation.method,
-            operation.secured,
-        )
+        Route::new(&entry.template, &operation.operation_id, operation.method)
     }
 
     /// Notifies every observer and hands the response on.

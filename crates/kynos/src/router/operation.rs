@@ -19,33 +19,16 @@ pub struct Route<'a> {
     path: &'a str,
     operation_id: &'a str,
     method: Method,
-    secured: bool,
 }
 
 impl<'a> Route<'a> {
-    /// Names an operation, and whether it declares a security requirement.
-    pub(crate) fn new(path: &'a str, operation_id: &'a str, method: Method, secured: bool) -> Self {
+    /// Names an operation.
+    pub(crate) fn new(path: &'a str, operation_id: &'a str, method: Method) -> Self {
         Self {
             path,
             operation_id,
             method,
-            secured,
         }
-    }
-
-    /// Whether the operation declares a security requirement, which makes a
-    /// response to it one a credential may have shaped.
-    ///
-    /// True for a requirement that also admits anonymous access, since a
-    /// request carrying the credential is answered as its holder.
-    /// Crate-internal: the cache is what reads it, and an operation served by
-    /// an unchecked handler is never described, so it is false there.
-    #[cfg_attr(
-        not(feature = "cache"),
-        expect(dead_code, reason = "the cache is the one reader")
-    )]
-    pub(crate) fn is_secured(&self) -> bool {
-        self.secured
     }
 
     /// The `paths` key this request matched, exactly as the description spells
@@ -99,22 +82,6 @@ impl<'a> OperationCx<'a> {
     pub fn finish(self) -> kynos_openapi::Operation {
         self.operation
     }
-
-    /// Whether what has been described so far declares a security requirement.
-    pub(crate) fn is_secured(&self) -> bool {
-        declares_security(&self.operation)
-    }
-}
-
-/// Whether `operation` declares a security requirement.
-///
-/// An absent `security` and an empty list both declare none; a list holding
-/// the empty requirement beside a scheme still declares one.
-pub(crate) fn declares_security(operation: &kynos_openapi::Operation) -> bool {
-    operation
-        .security
-        .as_ref()
-        .is_some_and(|requirements| !requirements.is_empty())
 }
 
 impl OperationCx<'_> {

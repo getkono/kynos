@@ -54,10 +54,6 @@ pub struct EndpointBuilder<C, H, A, P = Propagate, I = ()> {
     tags: Vec<DeclaredTag>,
     deprecated: bool,
     interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
-    /// Whether the handler declares a security requirement, for the `Route`
-    /// this endpoint's own interceptors are handed. Read only while there are
-    /// some, and probed when the first one is added.
-    secured: bool,
 
     // `fn() -> _` rather than the bare tuple: the parameters exist to name a
     // shape, and letting them decide whether this builder is `Send` would make
@@ -108,7 +104,6 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
             tags: Vec::new(),
             deprecated: false,
             interceptors: Vec::new(),
-            secured: false,
             _private: PhantomData,
         }
     }
@@ -125,7 +120,6 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
             tags: self.tags,
             deprecated: self.deprecated,
             interceptors: self.interceptors,
-            secured: self.secured,
             _private: PhantomData,
         }
     }
@@ -243,25 +237,9 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
         let () = <I as CompatibleWith<N, C>>::CHECK;
 
         let mut builder: EndpointBuilder<C, H, A, P, Cons<N, I>> = self.retype();
-        // Only an endpoint with interceptors of its own hands them a `Route`,
-        // so the handler is probed for its security once, on the first one.
-        if builder.interceptors.is_empty() {
-            builder.secured = handler_secured::<C, H, A>();
-        }
         builder.interceptors.push(Arc::new(interceptor));
         builder
     }
-}
-
-/// Whether the handler's own description declares a security requirement.
-///
-/// A throwaway registry, as the router's probe for the operation identifier
-/// uses, so nothing it registers is recorded twice.
-fn handler_secured<C, H: Handler<C, A>, A>() -> bool {
-    let mut probe = crate::schema::registry::Registry::new();
-    let mut operation = OperationCx::new(&mut probe);
-    <H as Handler<C, A>>::describe(&mut operation);
-    operation.is_secured()
 }
 
 impl<C, H, A, P, I> IntoEndpoints<C> for EndpointBuilder<C, H, A, P, I>
@@ -314,7 +292,6 @@ where
             self.path.as_str(),
             self.operation_id.unwrap_or_default(),
             self.method,
-            operation.is_secured(),
         );
         for interceptor in &self.interceptors {
             interceptor.describe(route, operation);
@@ -360,7 +337,6 @@ where
                     self.path.as_str(),
                     self.operation_id.unwrap_or_default(),
                     self.method,
-                    self.secured,
                 );
                 Next::new(&self.interceptors, &terminal, context, route)
                     .run(request)

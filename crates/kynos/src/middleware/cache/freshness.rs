@@ -73,8 +73,7 @@ pub(super) enum Unstorable {
 /// Whether a response may be stored, and for how long.
 ///
 /// `secured` is whether the operation declares a security requirement, as
-/// [`Route::is_secured`](crate::router::operation::Route::is_secured) reports
-/// it.
+/// routing recorded it for the request.
 pub(super) fn storable(
     method: &crate::http::Method,
     status: StatusCode,

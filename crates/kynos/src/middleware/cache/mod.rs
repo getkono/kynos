@@ -274,7 +274,13 @@ where
         let () = reads;
 
         let key = primary_key(self.namespace, &request, next.route().path());
-        let secured = next.route().is_secured();
+        // Read from what routing recorded, which an endpoint's own chain sees
+        // as the router's does. A request no router dispatched carries no
+        // record, and is read as guarded: refusing a store is the safe error.
+        let secured = request
+            .extensions()
+            .get::<crate::router::dispatch::Routed>()
+            .is_none_or(|routed| routed.secured);
 
         let request_headers = request.headers().clone();
         let method = request.method().clone();
