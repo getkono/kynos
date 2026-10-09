@@ -1142,6 +1142,251 @@ fn a_violation_says_everything_in_one_line() {
     assert!(std::error::Error::source(&violation).is_none());
 }
 
+// --- `in: querystring` ----------------------------------------------------
+
+/// A querystring parameter described the way 3.2 requires: by `content`.
+#[cfg(feature = "openapi32")]
+fn querystring(name: &str) -> Parameter {
+    use crate::model::{body::media_type::MediaType, parameter::ParameterIn};
+
+    Parameter::with_content(
+        name,
+        ParameterIn::Querystring,
+        "application/x-www-form-urlencoded",
+        MediaType::new(Schema::of_type(SchemaType::Object)),
+    )
+}
+
+/// The querystring violations a document raises, with where each was raised.
+#[cfg(feature = "openapi32")]
+fn querystring_violations(document: &Document) -> Vec<(String, SpecError)> {
+    Validator::new(SpecVersion::V3_2)
+        .validate(document)
+        .into_iter()
+        .filter(|v| {
+            matches!(
+                v.error,
+                SpecError::QuerystringWithoutContent { .. }
+                    | SpecError::DuplicateQuerystring { .. }
+                    | SpecError::QueryBesideQuerystring { .. }
+            )
+        })
+        .map(|v| (v.location, v.error))
+        .collect()
+}
+
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_lone_querystring_parameter_described_by_content_is_valid() {
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("listUsers")
+            .with_parameter(querystring("filter"))
+            .with_parameter(Parameter::header(
+                "X-Trace",
+                Schema::of_type(SchemaType::String),
+            ))
+            .with_responses(ok_responses()),
+    );
+
+    let violations =
+        Validator::new(SpecVersion::V3_2).validate(&document_with(&[("/users", item)]));
+    assert!(violations.is_empty(), "{violations:?}");
+}
+
+#[cfg(feature = "openapi32")]
+#[test]
+fn each_querystring_rule_names_the_parameters_it_is_about() {
+    use crate::model::parameter::ParameterIn;
+
+    let item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("listUsers")
+            .with_parameter(Parameter::query("q", Schema::of_type(SchemaType::String)))
+            .with_parameter(querystring("filter"))
+            .with_parameter(Parameter::new(
+                "sort",
+                ParameterIn::Querystring,
+                Schema::of_type(SchemaType::String),
+            ))
+            .with_responses(ok_responses()),
+    );
+
+    let at = "#/paths/~1users/get".to_owned();
+    assert_eq!(
+        querystring_violations(&document_with(&[("/users", item)])),
+        vec![
+            (
+                at.clone(),
+                SpecError::QuerystringWithoutContent {
+                    name: "sort".to_owned()
+                }
+            ),
+            (
+                at.clone(),
+                SpecError::DuplicateQuerystring {
+                    first: "filter".to_owned(),
+                    second: "sort".to_owned(),
+                }
+            ),
+            (
+                at,
+                SpecError::QueryBesideQuerystring {
+                    query: "q".to_owned(),
+                    querystring: "filter".to_owned(),
+                }
+            ),
+        ]
+    );
+}
+
+/// 3.2 forbids the pair "in the same operation (or in the operation's
+/// path-item)", so a conflict split across the two is still one.
+#[cfg(feature = "openapi32")]
+#[test]
+fn querystring_rules_count_the_path_items_parameters() {
+    use crate::model::reference::RefOr;
+
+    let mut item = PathItem::new()
+        .with_operation(
+            Method::Get,
+            Operation::new("listUsers")
+                .with_parameter(Parameter::query("q", Schema::of_type(SchemaType::String)))
+                .with_responses(ok_responses()),
+        )
+        .with_operation(
+            Method::Post,
+            Operation::new("searchUsers")
+                .with_parameter(querystring("sort"))
+                .with_responses(ok_responses()),
+        );
+    item.parameters.push(RefOr::Item(querystring("filter")));
+
+    assert_eq!(
+        querystring_violations(&document_with(&[("/users", item)])),
+        vec![
+            (
+                "#/paths/~1users/get".to_owned(),
+                SpecError::QueryBesideQuerystring {
+                    query: "q".to_owned(),
+                    querystring: "filter".to_owned(),
+                }
+            ),
+            (
+                "#/paths/~1users/post".to_owned(),
+                SpecError::DuplicateQuerystring {
+                    first: "filter".to_owned(),
+                    second: "sort".to_owned(),
+                }
+            ),
+        ]
+    );
+}
+
+/// An operation's parameter replaces its path item's of the same name and
+/// location, so redeclaring the querystring parameter leaves one, not two.
+#[cfg(feature = "openapi32")]
+#[test]
+fn an_operation_overriding_its_path_items_querystring_parameter_declares_one() {
+    use crate::model::reference::RefOr;
+
+    let mut item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("listUsers")
+            .with_parameter(querystring("filter"))
+            .with_responses(ok_responses()),
+    );
+    item.parameters.push(RefOr::Item(querystring("filter")));
+
+    assert_eq!(
+        querystring_violations(&document_with(&[("/users", item)])),
+        vec![]
+    );
+}
+
+/// A conflict wholly inside the path item's own list is the path item's, and
+/// is not repeated once per operation that inherits it.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_conflict_within_the_path_item_is_reported_once_where_it_is() {
+    use crate::model::reference::RefOr;
+
+    let mut item = PathItem::new()
+        .with_operation(
+            Method::Get,
+            Operation::new("listUsers").with_responses(ok_responses()),
+        )
+        .with_operation(
+            Method::Post,
+            Operation::new("searchUsers").with_responses(ok_responses()),
+        );
+    item.parameters.push(RefOr::Item(Parameter::query(
+        "q",
+        Schema::of_type(SchemaType::String),
+    )));
+    item.parameters.push(RefOr::Item(querystring("filter")));
+
+    assert_eq!(
+        querystring_violations(&document_with(&[("/users", item)])),
+        vec![(
+            "#/paths/~1users".to_owned(),
+            SpecError::QueryBesideQuerystring {
+                query: "q".to_owned(),
+                querystring: "filter".to_owned(),
+            }
+        )]
+    );
+}
+
+/// An operation adding a querystring parameter to a path item that already
+/// conflicts is reported for what it adds: beside each inherited parameter,
+/// against the querystring parameter it declares.
+#[cfg(feature = "openapi32")]
+#[test]
+fn an_operation_adding_to_a_conflicting_path_item_is_reported_for_its_own_part() {
+    use crate::model::reference::RefOr;
+
+    let mut item = PathItem::new().with_operation(
+        Method::Get,
+        Operation::new("listUsers")
+            .with_parameter(querystring("sort"))
+            .with_responses(ok_responses()),
+    );
+    item.parameters.push(RefOr::Item(Parameter::query(
+        "q",
+        Schema::of_type(SchemaType::String),
+    )));
+    item.parameters.push(RefOr::Item(querystring("filter")));
+
+    let at = "#/paths/~1users/get".to_owned();
+    assert_eq!(
+        querystring_violations(&document_with(&[("/users", item)])),
+        vec![
+            (
+                "#/paths/~1users".to_owned(),
+                SpecError::QueryBesideQuerystring {
+                    query: "q".to_owned(),
+                    querystring: "filter".to_owned(),
+                }
+            ),
+            (
+                at.clone(),
+                SpecError::DuplicateQuerystring {
+                    first: "filter".to_owned(),
+                    second: "sort".to_owned(),
+                }
+            ),
+            (
+                at,
+                SpecError::QueryBesideQuerystring {
+                    query: "q".to_owned(),
+                    querystring: "sort".to_owned(),
+                }
+            ),
+        ]
+    );
+}
+
 // --- The variant ledger ---------------------------------------------------
 
 /// A variant's name, as an exhaustive match.
@@ -1159,6 +1404,12 @@ fn variant_name(error: &SpecError) -> &'static str {
         SpecError::UnusedPathParameter { .. } => "UnusedPathParameter",
         SpecError::PathParameterNotRequired { .. } => "PathParameterNotRequired",
         SpecError::DuplicateParameter { .. } => "DuplicateParameter",
+        #[cfg(feature = "openapi32")]
+        SpecError::QuerystringWithoutContent { .. } => "QuerystringWithoutContent",
+        #[cfg(feature = "openapi32")]
+        SpecError::DuplicateQuerystring { .. } => "DuplicateQuerystring",
+        #[cfg(feature = "openapi32")]
+        SpecError::QueryBesideQuerystring { .. } => "QueryBesideQuerystring",
         SpecError::ShortCircuitMismatch { .. } => "ShortCircuitMismatch",
         SpecError::IllegalStyle { .. } => "IllegalStyle",
         SpecError::IgnoredHeaderParameter { .. } => "IgnoredHeaderParameter",
@@ -1216,6 +1467,14 @@ const RAISED_ELSEWHERE: &[&str] = &[
     // neither of which a 3.1 build has.
     #[cfg(not(feature = "openapi32"))]
     "ConflictingEncoding",
+    // And `in: querystring` is a 3.2 location, so a 3.1 build has no parameter
+    // to raise any of these three with.
+    #[cfg(not(feature = "openapi32"))]
+    "QuerystringWithoutContent",
+    #[cfg(not(feature = "openapi32"))]
+    "DuplicateQuerystring",
+    #[cfg(not(feature = "openapi32"))]
+    "QueryBesideQuerystring",
     // `kynos`'s `short_circuit_mismatch` compares an interceptor's declared
     // statuses against the responses it describes. No document reaches it, and
     // `crates/kynos/src/response/mod.rs` covers it where it lives.
@@ -1236,6 +1495,8 @@ const RAISED_ELSEWHERE: &[&str] = &[
 fn ledger() -> Vec<(&'static str, SpecVersion, Document)> {
     let mut cases = ledger_paths();
     cases.extend(ledger_parameters());
+    #[cfg(feature = "openapi32")]
+    cases.extend(ledger_querystring());
     cases.extend(ledger_document());
     cases.extend(ledger_opacity());
     cases
@@ -1393,6 +1654,51 @@ fn ledger_parameters() -> Vec<(&'static str, SpecVersion, Document)> {
         )])
     });
     cases
+}
+
+/// Cases for the `in: querystring` rules, which are 3.2 only, like the location
+/// all three are about.
+#[cfg(feature = "openapi32")]
+fn ledger_querystring() -> Vec<(&'static str, SpecVersion, Document)> {
+    use crate::model::{parameter::ParameterIn, schema::Schema};
+
+    let operation = || Operation::new("listUsers").with_responses(ok_responses());
+    let get = |operation: Operation| PathItem::new().with_operation(Method::Get, operation);
+
+    vec![
+        (
+            "QuerystringWithoutContent",
+            SpecVersion::V3_2,
+            document_with(&[(
+                "/users",
+                get(operation().with_parameter(Parameter::new(
+                    "filter",
+                    ParameterIn::Querystring,
+                    Schema::of_type(SchemaType::Object),
+                ))),
+            )]),
+        ),
+        (
+            "DuplicateQuerystring",
+            SpecVersion::V3_2,
+            document_with(&[(
+                "/users",
+                get(operation()
+                    .with_parameter(querystring("filter"))
+                    .with_parameter(querystring("sort"))),
+            )]),
+        ),
+        (
+            "QueryBesideQuerystring",
+            SpecVersion::V3_2,
+            document_with(&[(
+                "/users",
+                get(operation()
+                    .with_parameter(Parameter::query("q", Schema::of_type(SchemaType::String)))
+                    .with_parameter(querystring("filter"))),
+            )]),
+        ),
+    ]
 }
 
 /// Cases for the whole-document rules: components, tags, servers, security.

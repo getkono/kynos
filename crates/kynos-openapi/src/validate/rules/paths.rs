@@ -152,6 +152,8 @@ impl Validator {
         violations: &mut Vec<Violation>,
     ) {
         check_parameter_list(location, &item.parameters, violations);
+        #[cfg(feature = "openapi32")]
+        super::parameters::check_querystring(location, &[], &item.parameters, violations);
 
         let named = item
             .operations()
