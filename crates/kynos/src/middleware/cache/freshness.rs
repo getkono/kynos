@@ -115,11 +115,8 @@ pub(super) fn storable(
         }
     }
 
-    if response
-        .get(header::VARY)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.split(',').any(|name| name.trim() == "*"))
-    {
+    // Every line, as `vary` reads them: a split list carries `*` on any of them.
+    if vary(response).iter().any(|name| name == "*") {
         return Err(Unstorable::VaryWildcard);
     }
 
@@ -141,6 +138,19 @@ pub(super) fn storable(
     }
 
     freshness(&response_control, default_freshness).ok_or(Unstorable::NoFreshness)
+}
+
+/// Whether the request forbids answering it from the store.
+///
+/// RFC 9111 section 5.2.1.4: `no-cache` asks that a stored response not be
+/// used without successful validation, and this cache does not validate, so
+/// the request goes to the handler. It still may store what comes back: the
+/// directive limits reuse, not storage.
+///
+/// `Pragma: no-cache` is not read. Section 5.4 deprecates the field and
+/// requires nothing of a cache that receives it.
+pub(super) fn forbids_reuse(request: &HeaderMap) -> bool {
+    directives(request).iter().any(|value| value == "no-cache")
 }
 
 /// How long a response may be reused.

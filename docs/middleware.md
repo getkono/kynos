@@ -635,7 +635,7 @@ four different answers depending on which layer is asked.
 | Query-string length | subsumed by the URI | subsumed by the list size | — | — | yes, loosely |
 | Body size | — | — | — | `BodySize`, when mounted | **no, deliberately** |
 | Request-head read time | `header_read_timeout`, 30 s | the first head only | `header_read_timeout` again, from accept to the first head, before a protocol is known | — | yes |
-| Slow body | — | — | — | `Timeout`, *outside* `BodySize` | **no** |
+| Slow body | — | — | `request_body_idle_timeout`, 30 s between frames → 408 | `Timeout`, *outside* `BodySize`, for a total | yes, by the gap |
 | Keep-alive idle | `header_read_timeout` covers the wait for the next head | — ; past its first request, a client answering every PING may idle indefinitely | — | — | HTTP/1 only |
 | Vanished peer | `tcp_keepalive`, with nothing in flight | `Http2KeepAlive`, a PING after 30 s silent and 20 s to answer | `tcp_keepalive`, probing after 60 s idle, every 15 s | — | yes; mid-response over HTTP/1 by retransmission only |
 | Handler runtime | — | — | — | `Timeout`, when mounted | **no** |
@@ -667,18 +667,36 @@ cannot be mounted together — both answer 413, and `CompatibleWith` refuses
 the pair — which is right rather than awkward: on a route that accepts content
 codings, `BodySize` alone is not a weaker guard but a misleading one.
 
-**The slow-body row depends on mounting order.** `BodySize` reads a length-less
-body frame by frame, so a client sending one frame slowly holds that loop open.
-`Timeout` wraps whatever is beneath it, which means it bounds the read only when
-it is mounted *outside* the limit doing the reading — the earlier `intercept`
-call, per [the ordering rule](#the-order-a-chain-runs-in). The types do not
-enforce it, and neither does a test:
-`a_timeout_over_a_body_limit_declares_both_statuses` in
-[`tests/limits.rs`](../crates/kynos/tests/limits.rs) mounts the arrangement but
-asserts only on the emitted document, which is order-insensitive and passes
-either way. Pinning the read needs a client that dribbles a chunked body over a
-real socket, which the harness cannot express today. This paragraph is where a
-reader learns the rule, and nothing below it is checked.
+**A stalled body is the server's to bound, and a slow one is not.** The
+server wraps every request body it reads off a socket in an idle timer,
+`Server::request_body_idle_timeout`, 30 seconds by default. The clock runs only
+while something is reading the body and has nothing to read, so it bounds the
+gap between frames: a large upload arriving steadily is never cut short, a
+handler that reads its body late is not charged for the wait, and neither is a
+client holding its body back for `100 Continue`, which hyper sends on the first
+read. A body that stalls fails that read — whoever is reading it: a codec,
+`BodySize`'s count, `Decompression`, a streamed `Records` — and the request is
+answered 408 in place of whatever the operation made of the failure, with
+`Connection: close` over HTTP/1 as RFC 9110 §15.5.9 advises. Over HTTP/2 the
+stall held one stream, and the 408 ends that stream alone. A response the
+handler had already returned before its read stalled stands, since by then its
+head may be on the wire. `None` waits indefinitely.
+
+The server applies the timer rather than an extractor or an interceptor because
+only the server has a peer to wait on, and it wraps the body once, before the
+chain sees it, so no reader can be left out. The cases are in
+[`server/tests.rs`](../crates/kynos/src/server/tests.rs) over a real socket, each
+protocol's 408 and a body whose every gap is under the limit but whose total is
+over it.
+
+A client that sends one byte every 29 seconds still passes. Bounding the
+*total* is `Timeout`'s job, and it bounds the read only when it is mounted
+*outside* the limit doing the reading — the earlier `intercept` call, per
+[the ordering rule](#the-order-a-chain-runs-in). The types do not enforce it,
+and neither does a test: `a_timeout_over_a_body_limit_declares_both_statuses`
+in [`tests/limits.rs`](../crates/kynos/tests/limits.rs) mounts the arrangement
+but asserts only on the emitted document, which is order-insensitive and passes
+either way.
 
 **A response body is bounded by neither of the rows above.** `Timeout` wraps the
 chain's future, and that future completes when the *head* is ready. A handler
@@ -763,6 +781,13 @@ request." A limiter reading it unasked would let a client choose the bucket it
 counts against — a limit that looks like one and is not, which is worse than
 none.
 
+Trust also names the one field the trusted hops write: `ProxyHeader::Forwarded`
+or `ProxyHeader::XForwarded`, and only that one is read. A proxy appends to one
+and passes the other through as the client sent it, so the request cannot be
+what chooses between them. Neither is a default, because guessing wrong is the
+same spoof: an AWS ALB appends to `X-Forwarded-For`, and a service reading
+`Forwarded` behind it lets the client write its own address.
+
 ### A response no type predicts
 
 The soundness invariant is *emitted ⊇ observable responses* for the responses
@@ -772,6 +797,13 @@ operation and no `Responses` implementation ever saw it. It joins the panic, the
 unhandled 500 and the upstream proxy on the list of responses the invariant does
 not reach — named here rather than left to be discovered, because a consumer
 meeting one is entitled to know Kynos never claimed otherwise.
+
+The **408** a stalled request body is answered with is on that list too. The
+server writes it in place of the operation's response, so no operation
+declares it, and an `Observer` inside the chain records what the operation
+made of the failed read rather than the 408 the client received. Declaring it
+instead would put a 408 on every operation that takes a body, which no
+in-process `TestClient` could ever exercise, since only a socket stalls.
 
 ## Preflight
 
@@ -811,8 +843,13 @@ is checked against the router's and never against a sibling's, on the premise
 that no request reaches two operations — and a preflight is the request that
 does, since it is answered once per path. So the answer is assembled per scope:
 `Access-Control-Request-Method` picks the configuration whose real response will
-honour it, and a proposed method no scope covers falls back to the first, which
-refuses it in the advertised list either way.
+honour it. A proposed method no scope covers is refused with no CORS header at
+all where the path serves it under no `Cors`, whatever an `allow_methods`
+override names: approving it would let a request's side effect run behind a
+response the browser cannot read. For the same reason no answer advertises such
+a method, since a browser caches every method an approved preflight lists and
+sends a cached one with no preflight. A method the path does not serve is answered
+by the first scope whose override names it, and refused where none does.
 
 **Mount `Cors` outermost.** A short-circuiting interceptor mounted *outside* it
 answers without the `Access-Control-*` fields, and the browser then reports an
@@ -931,8 +968,9 @@ Sessions are named in [`architecture.md`](architecture.md#invariants)'s third
 invariant as the example of what a layer above Kynos owns.
 
 **CSRF and a credential guard do not exclude each other.** `Auth<S>` is not an
-interceptor. It is an extractor — `FromRequestParts` in
-[`security/auth.rs`](../crates/kynos/src/security/auth.rs) — and its 403 reaches
+interceptor. It is a guard — the sealed `Guard` in the handler's first argument
+slot, implemented in [`security/auth.rs`](../crates/kynos/src/security/auth.rs)
+— and its 403 reaches
 the document through `OperationCx::add_responses`, never through a `const`.
 `CompatibleWith` compares only interceptor `Short`s, and `Auth<S>` has none, so
 `Csrf`'s 403 (`CrossSite`) never meets the credential guard's in that comparison
@@ -953,13 +991,15 @@ and script cannot forge it, so an unsafe request that says it came from another
 site can be refused on that alone. Four header comparisons, no dependency.
 
 The fallback for a browser too old to send it compares `Origin` against the
-request's own authority, and that authority is read from `Host` *or* from the
-request target. RFC 9113 §8.3.1 replaces `Host` with the `:authority`
+request's own authority, and that authority is read from the request target
+*or* from `Host`. RFC 9113 §8.3.1 replaces `Host` with the `:authority`
 pseudo-header, which `http` puts on the URI rather than in the map, so reading
 `Host` alone found no authority on any HTTP/2 request — and refused every
 same-origin unsafe request from exactly the browsers the fallback exists for.
-`Host` wins where both are present: §8.3.1 requires them to agree, so the
-choice is a tie-break rather than a policy.
+The target wins where both are present: an HTTP/1.1 request carries an
+authority there only in absolute form, and RFC 9112 §3.2.2 has an origin server
+ignore `Host` beside one. `Cache` keys on the same reading, so the two cannot
+disagree about which host a request was for.
 
 ## Vary is declared apart from the names
 
@@ -1070,6 +1110,29 @@ one, which can never produce it. Closing it properly needs a precondition guard
 whose declaration varies with the method, which the contribution model states
 once per interceptor rather than once per operation. Until then, a service
 relying on create-only semantics must enforce them in the handler.
+
+### What a stored response is filed under
+
+RFC 9111 §2 keys a stored response on the request method and the whole target
+URI. `PrimaryKey` holds the method, the target's path and query, and its
+authority — lowercased, as RFC 3986 §3.2.2 compares a host — so a handler that
+picks a tenant from the host is never answered from another tenant's copy, and
+a write to one host drops only that host's entry. The authority is the one
+`Csrf` reads: the target's, else `Host`.
+
+**The scheme is left out**, which departs from §2. Behind a TLS-terminating
+proxy the service cannot see the scheme the client used, and a key holding a
+guessed one would change with the deployment rather than the request. The cost
+is that `http` and `https` share an entry. A default port is not stripped
+either, for the same reason: which port is default depends on that scheme. Two
+spellings of one origin cost a miss, never a wrong hit.
+
+**A request saying `no-cache` is answered by the handler.** §5.2.1.4 forbids
+reusing a stored response for it without validation, and `Cache` does not
+validate, so the lookup is skipped. What the handler produces is stored as any
+other response is, since the directive limits reuse rather than storage.
+`Pragma: no-cache` is not read: §5.4 deprecates the field and places no
+requirement on a cache receiving it.
 
 ### What is never stored
 

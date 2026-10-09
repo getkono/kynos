@@ -1,0 +1,5 @@
+error: the header `x request id` contains ' ', and an RFC 9110 field name is a token: letters, digits and !#$%&'*+-.^_`|~
+ --> tests/ui/macros/header_params_non_token_name.rs:3:5
+  |
+3 |     #[serde(rename = "x request id")]
+  |     ^

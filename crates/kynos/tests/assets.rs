@@ -425,6 +425,116 @@ async fn an_if_range_that_does_not_hold_sends_the_whole_file() {
     }
 }
 
+// --- Lost-update preconditions ----------------------------------------------
+//
+// RFC 9110 section 13.2.2 evaluates `If-Match` first, before `If-None-Match`
+// and before the `Range` field, and section 13.1.1 answers a false one with a
+// 412. A resume against a file that changed underneath it is refused outright
+// rather than answered with a part of the new file.
+
+/// A stale `If-Match` beside a `Range` is a 412, not a part of the new file.
+#[tokio::test]
+async fn a_stale_if_match_is_refused_before_the_range() {
+    let service = served().build(()).expect("a describable router");
+
+    let reply = get(&service, "/static/css/app.css")
+        .header("if-match", "\"before-the-deployment\"")
+        .header("range", "bytes=0-3")
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::PRECONDITION_FAILED);
+    assert!(reply.body.is_empty());
+    assert_eq!(reply.field(header::CONTENT_RANGE.as_str()), None);
+}
+
+/// The current tag, a list holding it, and `*` all hold, so the range is
+/// served.
+#[tokio::test]
+async fn an_if_match_naming_this_representation_lets_the_range_through() {
+    let service = served().build(()).expect("a describable router");
+
+    let etag = get(&service, "/static/css/app.css")
+        .call()
+        .await
+        .field(header::ETAG.as_str())
+        .expect("an entity tag");
+
+    for condition in [etag.clone(), format!("\"other\", {etag}"), "*".to_owned()] {
+        let reply = get(&service, "/static/css/app.css")
+            .header("if-match", &condition)
+            .header("range", "bytes=0-3")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::PARTIAL_CONTENT, "{condition}");
+        assert_eq!(reply.text(), &STYLESHEET[0..=3], "{condition}");
+    }
+}
+
+/// Section 13.1.1 takes the strong comparison, so the weak spelling of the
+/// current tag is not a match.
+#[tokio::test]
+async fn an_if_match_compares_strongly() {
+    let service = served().build(()).expect("a describable router");
+
+    let etag = get(&service, "/static/css/app.css")
+        .call()
+        .await
+        .field(header::ETAG.as_str())
+        .expect("an entity tag");
+
+    let reply = get(&service, "/static/css/app.css")
+        .header("if-match", &format!("W/{etag}"))
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::PRECONDITION_FAILED);
+}
+
+/// Section 13.2.2: `If-Match` is evaluated before `If-None-Match`, so a stale
+/// one is a 412 even where the other would have been a 304.
+#[tokio::test]
+async fn a_stale_if_match_outranks_a_matching_if_none_match() {
+    let service = served().build(()).expect("a describable router");
+
+    let etag = get(&service, "/static/css/app.css")
+        .call()
+        .await
+        .field(header::ETAG.as_str())
+        .expect("an entity tag");
+
+    let reply = get(&service, "/static/css/app.css")
+        .header("if-match", "\"before-the-deployment\"")
+        .header("if-none-match", &etag)
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::PRECONDITION_FAILED);
+}
+
+/// `If-Match` is compared against the representation this request selects:
+/// the identity tag does not hold for the brotli form.
+#[tokio::test]
+async fn an_if_match_is_evaluated_against_the_selected_representation() {
+    let service = served().build(()).expect("a describable router");
+
+    let identity_tag = get(&service, "/static/css/app.css")
+        .call()
+        .await
+        .field(header::ETAG.as_str())
+        .expect("an entity tag");
+
+    let crossed = get(&service, "/static/css/app.css")
+        .header("accept-encoding", "br")
+        .header("if-match", &identity_tag)
+        .header("range", "bytes=0-3")
+        .call()
+        .await;
+
+    assert_eq!(crossed.status, StatusCode::PRECONDITION_FAILED);
+}
+
 // --- What the document says -----------------------------------------------
 
 /// Every served path is a literal `paths` key, and the document is
@@ -453,7 +563,7 @@ fn every_file_is_a_described_operation() {
     );
 }
 
-/// Each operation declares the four statuses it can produce, and no more.
+/// Each operation declares the five statuses it can produce, and no more.
 #[test]
 fn each_operation_declares_every_status_a_file_can_answer_with() {
     let document = served().openapi().expect("a describable router");
@@ -470,7 +580,7 @@ fn each_operation_declares_every_status_a_file_can_answer_with() {
         .collect();
     statuses.sort_unstable();
 
-    assert_eq!(statuses, ["200", "206", "304", "416"]);
+    assert_eq!(statuses, ["200", "206", "304", "412", "416"]);
 
     // The 200 says what the file is, carries the validator that makes the 304
     // reachable, and advertises the unit that makes the 206 askable for.
@@ -538,7 +648,13 @@ fn each_operation_declares_the_fields_it_reads() {
 
     assert_eq!(
         names,
-        ["Accept-Encoding", "If-None-Match", "If-Range", "Range"]
+        [
+            "Accept-Encoding",
+            "If-Match",
+            "If-None-Match",
+            "If-Range",
+            "Range"
+        ]
     );
 
     let plain = document.paths.items["/static/docs/index.html"]
@@ -553,7 +669,10 @@ fn each_operation_declares_the_fields_it_reads() {
         .collect();
     plain_names.sort_unstable();
 
-    assert_eq!(plain_names, ["If-None-Match", "If-Range", "Range"]);
+    assert_eq!(
+        plain_names,
+        ["If-Match", "If-None-Match", "If-Range", "Range"]
+    );
 }
 
 /// Two files get two operation ids, and each is derived from its own path.
@@ -674,17 +793,20 @@ mod directory {
         );
     }
 
-    /// A directory serves its index.
+    /// A directory serves its index, typed as the index rather than as the
+    /// directory that was requested.
     #[tokio::test]
     async fn a_directory_serves_its_index() {
         let service = served().build(()).expect("a buildable router");
 
-        assert!(
-            get(&service, "/files/docs/")
-                .call()
-                .await
-                .text()
-                .contains("Docs")
+        let reply = get(&service, "/files/docs/").call().await;
+
+        assert!(reply.text().contains("Docs"));
+        assert_eq!(
+            reply
+                .field(kynos::http::header::CONTENT_TYPE.as_str())
+                .as_deref(),
+            Some("text/html; charset=utf-8")
         );
     }
 
@@ -826,6 +948,69 @@ mod directory {
             .await;
 
         assert_eq!(unconditional.status, StatusCode::PARTIAL_CONTENT);
+    }
+
+    /// A weak validator never satisfies an `If-Match` either, since section
+    /// 13.1.1 takes the strong comparison: every listed tag is a 412 before
+    /// the range is read, and only `*` holds.
+    #[tokio::test]
+    async fn only_a_wildcard_if_match_holds_against_a_weak_validator() {
+        let service = served().build(()).expect("a buildable router");
+
+        let etag = get(&service, "/files/css/app.css")
+            .call()
+            .await
+            .field(kynos::http::header::ETAG.as_str())
+            .expect("an entity tag");
+        assert!(etag.starts_with("W/"), "{etag}");
+
+        for condition in [
+            etag.clone(),
+            etag.trim_start_matches("W/").to_owned(),
+            "\"before-the-deployment\"".to_owned(),
+        ] {
+            let refused = get(&service, "/files/css/app.css")
+                .header("if-match", &condition)
+                .header("range", "bytes=0-3")
+                .call()
+                .await;
+
+            assert_eq!(
+                refused.status,
+                StatusCode::PRECONDITION_FAILED,
+                "{condition}"
+            );
+            assert!(refused.body.is_empty(), "{condition}");
+        }
+
+        let wildcard = get(&service, "/files/css/app.css")
+            .header("if-match", "*")
+            .header("range", "bytes=0-3")
+            .call()
+            .await;
+
+        assert_eq!(wildcard.status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(wildcard.text(), &super::STYLESHEET[0..=3]);
+    }
+
+    /// Section 13.2.2: `If-Match` is evaluated before `If-None-Match`.
+    #[tokio::test]
+    async fn a_failed_if_match_outranks_a_matching_if_none_match() {
+        let service = served().build(()).expect("a buildable router");
+
+        let etag = get(&service, "/files/css/app.css")
+            .call()
+            .await
+            .field(kynos::http::header::ETAG.as_str())
+            .expect("an entity tag");
+
+        let reply = get(&service, "/files/css/app.css")
+            .header("if-match", &etag)
+            .header("if-none-match", &etag)
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::PRECONDITION_FAILED);
     }
 
     // --- What the document says ------------------------------------------

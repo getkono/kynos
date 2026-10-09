@@ -1,7 +1,7 @@
 //! The two operations a reference mounts.
 //!
 //! Neither is special. Each is an ordinary [`Endpoint`] with one status, one
-//! media type and a payload rendered before the service existed -- which is the
+//! media type and a payload rendered from the finished document -- which is the
 //! only thing about them the rest of the router has to know.
 
 use std::sync::Arc;
@@ -94,7 +94,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for DocsPage {
         // The page is the same for every caller: nothing here reads the
         // request, which is why the operation declares no parameter.
         let _ = (request, context);
-        let mut response = answer(self.state.page().clone(), HTML);
+        let mut response = answer(self.state.page(), HTML);
 
         if let Some(policy) = self.state.policy() {
             secure(response.headers_mut(), policy);
@@ -137,11 +137,11 @@ impl<C: Send + Sync + 'static> Endpoint<C> for DocsDescription {
 
     async fn call(&self, request: Request, context: &C) -> Response {
         let _ = (request, context);
-        answer(self.state.description().clone(), JSON)
+        answer(self.state.description(), JSON)
     }
 }
 
-/// One payload rendered before the service existed, with the media type it was
+/// One payload rendered from the finished document, with the media type it was
 /// rendered as.
 ///
 /// Built directly rather than through

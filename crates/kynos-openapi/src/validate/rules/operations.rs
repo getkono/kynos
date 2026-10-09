@@ -34,7 +34,7 @@ impl Validator {
     /// relative URI is spelled `./foo` — so `Bearer` with nothing declared is
     /// the misspelling this rule exists to catch, and accepting it would leave
     /// the rule with nothing to reject.
-    fn names_a_scheme_by_uri(self, name: &str) -> bool {
+    pub(in crate::validate) fn names_a_scheme_by_uri(self, name: &str) -> bool {
         self.version.supports_3_2()
             && (name.contains('/') || name.contains(':') || name.contains('#'))
     }

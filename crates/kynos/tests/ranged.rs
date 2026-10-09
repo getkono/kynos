@@ -114,9 +114,19 @@ async fn recording_head(conditions: Conditions) -> Delivery<Mpeg> {
         .expect("this source cannot fail")
 }
 
+/// The same octets with no validator at all, so a condition has nothing to
+/// compare against.
+#[kynos::get("/recordings/untagged")]
+async fn untagged(conditions: Conditions) -> Delivery<Mpeg> {
+    Served::<_, Mpeg>::new(Catalogue::new())
+        .deliver(&conditions)
+        .await
+        .expect("this source cannot fail")
+}
+
 fn service() -> kynos::router::service::Service<()> {
     Router::<()>::new()
-        .mount(kynos::routes![recording, recording_head])
+        .mount(kynos::routes![recording, recording_head, untagged])
         .build(())
         .expect("a describable router")
 }
@@ -317,6 +327,182 @@ async fn if_range_admits_a_resume_and_refuses_a_stale_one() {
     assert_eq!(stale.body, RECORDING);
 }
 
+// --- The lost-update preconditions ----------------------------------------
+
+/// 412 for a resume against a representation that has since changed.
+///
+/// The case a client resuming a download relies on: it holds the first part
+/// of `"r2"` and asks for the rest only if the representation is still that
+/// one. Section 13.2.2 evaluates `If-Match` first, and a false condition is
+/// answered 412 before the `Range` is read — a 206 here would splice the tail
+/// of `"r3"` onto the head of `"r2"`.
+#[tokio::test]
+async fn a_stale_if_match_is_refused_before_the_range_is_read() {
+    let reply = get(&service(), "/recordings/current")
+        .header("if-match", "\"r2\"")
+        .header("range", "bytes=10-")
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::PRECONDITION_FAILED);
+    assert!(reply.body.is_empty());
+    assert_eq!(reply.field("content-range"), None);
+}
+
+/// The control: the same request naming the current tag is answered with the
+/// part.
+#[tokio::test]
+async fn a_current_if_match_admits_the_range() {
+    let reply = get(&service(), "/recordings/current")
+        .header("if-match", "\"r2\", \"r3\"")
+        .header("range", "bytes=10-19")
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(reply.body, &RECORDING[10..=19]);
+}
+
+/// `If-Match` takes the strong comparison, so a weak tag naming the current
+/// representation still fails.
+///
+/// Section 13.1.1, and the difference from `If-None-Match`, which takes the
+/// weak one and would have matched.
+#[tokio::test]
+async fn a_weak_if_match_is_refused() {
+    let reply = get(&service(), "/recordings/current")
+        .header("if-match", "W/\"r3\"")
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::PRECONDITION_FAILED);
+}
+
+/// `If-Match: *` asks only that a representation exist — tagged or not.
+#[tokio::test]
+async fn if_match_any_holds_for_any_current_representation() {
+    for path in ["/recordings/current", "/recordings/untagged"] {
+        let reply = get(&service(), path).header("if-match", "*").call().await;
+
+        assert_eq!(reply.status, StatusCode::OK, "{path}");
+        assert_eq!(reply.body, RECORDING, "{path}");
+    }
+}
+
+/// A representation with no tag matches no listed tag, so a list fails.
+#[tokio::test]
+async fn an_untagged_representation_fails_a_listed_if_match() {
+    let reply = get(&service(), "/recordings/untagged")
+        .header("if-match", "\"r3\"")
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::PRECONDITION_FAILED);
+}
+
+/// Two `If-Match` field lines are one list, so a match on the second holds.
+///
+/// Section 5.3: a recipient may combine field lines of a list-based field into
+/// one value, so reading only the first would refuse a request the client
+/// wrote correctly.
+#[tokio::test]
+async fn if_match_reads_every_field_line() {
+    let reply = get(&service(), "/recordings/current")
+        .header("if-match", "\"r2\"")
+        .header("if-match", "\"r3\"")
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::OK);
+}
+
+/// 412 outranks 304: section 13.2.2 evaluates `If-Match` before
+/// `If-None-Match`.
+#[tokio::test]
+async fn a_failed_if_match_beats_a_matching_if_none_match() {
+    let reply = get(&service(), "/recordings/current")
+        .header("if-match", "\"r2\"")
+        .header("if-none-match", "\"r3\"")
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::PRECONDITION_FAILED);
+}
+
+/// 412 for a date before the last change, and the part for one at or after
+/// it.
+///
+/// Section 13.1.4 holds the condition true when the last modification is
+/// *earlier than or equal to* the date sent, so the boundary itself passes.
+#[tokio::test]
+async fn if_unmodified_since_refuses_a_representation_changed_since() {
+    let older = get(&service(), "/recordings/current")
+        .header("if-unmodified-since", "Sat, 05 Nov 1994 08:49:37 GMT")
+        .header("range", "bytes=10-19")
+        .call()
+        .await;
+    assert_eq!(older.status, StatusCode::PRECONDITION_FAILED);
+
+    for date in [MODIFIED_AS_SENT, "Mon, 07 Nov 1994 08:49:37 GMT"] {
+        let current = get(&service(), "/recordings/current")
+            .header("if-unmodified-since", date)
+            .header("range", "bytes=10-19")
+            .call()
+            .await;
+        assert_eq!(current.status, StatusCode::PARTIAL_CONTENT, "{date}");
+    }
+}
+
+/// `If-Match` outranks the date, which section 13.1.4 requires in as many
+/// words: *a recipient MUST ignore If-Unmodified-Since if the request contains
+/// an If-Match header field*.
+#[tokio::test]
+async fn if_match_is_preferred_over_if_unmodified_since() {
+    let reply = get(&service(), "/recordings/current")
+        .header("if-match", "\"r3\"")
+        .header("if-unmodified-since", "Sat, 05 Nov 1994 08:49:37 GMT")
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::OK);
+}
+
+/// An `If-Unmodified-Since` with nothing to evaluate is no condition at all.
+///
+/// Section 13.1.4 names each: a value that is not an HTTP-date, a value that
+/// appears to be a list of dates, and a resource with no modification date.
+#[tokio::test]
+async fn an_unusable_if_unmodified_since_is_ignored() {
+    for (path, value) in [
+        ("/recordings/current", "yesterday"),
+        (
+            "/recordings/current",
+            "Sat, 05 Nov 1994 08:49:37 GMT, Sat, 05 Nov 1994 08:49:37 GMT",
+        ),
+        ("/recordings/untagged", "Sat, 05 Nov 1994 08:49:37 GMT"),
+    ] {
+        let reply = get(&service(), path)
+            .header("if-unmodified-since", value)
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK, "{path} {value:?}");
+    }
+}
+
+/// Two `If-Unmodified-Since` field lines are a list of dates, which section
+/// 13.1.4 says to ignore — even where the first alone would fail.
+#[tokio::test]
+async fn two_if_unmodified_since_field_lines_are_ignored() {
+    let reply = get(&service(), "/recordings/current")
+        .header("if-unmodified-since", "Sat, 05 Nov 1994 08:49:37 GMT")
+        .header("if-unmodified-since", MODIFIED_AS_SENT)
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::OK);
+}
+
 // --- HEAD -----------------------------------------------------------------
 
 /// HEAD answers everything GET would, and sends no content.
@@ -365,6 +551,29 @@ fn the_description_names_what_a_delivery_reads_and_sends() {
 
     assert_eq!(
         declared,
-        ["If-Modified-Since", "If-None-Match", "If-Range", "Range"]
+        [
+            "If-Match",
+            "If-Modified-Since",
+            "If-None-Match",
+            "If-Range",
+            "If-Unmodified-Since",
+            "Range"
+        ]
     );
+
+    let mut statuses: Vec<&str> = operation
+        .responses
+        .responses
+        .keys()
+        .map(String::as_str)
+        .collect();
+    statuses.sort_unstable();
+
+    assert_eq!(statuses, ["200", "206", "304", "412", "416"]);
+
+    let Some(kynos::openapi::RefOr::Item(unsatisfiable)) = operation.responses.responses.get("416")
+    else {
+        panic!("an inline 416");
+    };
+    assert!(unsatisfiable.headers.contains_key("Content-Range"));
 }

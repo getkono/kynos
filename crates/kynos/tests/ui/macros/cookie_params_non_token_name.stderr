@@ -1,0 +1,5 @@
+error: the cookie `s=id` contains '=', and an RFC 6265 cookie name is a token: letters, digits and !#$%&'*+-.^_`|~
+ --> tests/ui/macros/cookie_params_non_token_name.rs:3:5
+  |
+3 |     #[serde(rename = "s=id")]
+  |     ^

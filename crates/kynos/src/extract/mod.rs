@@ -61,7 +61,9 @@ use crate::http::{Parts, Request};
     message = "`{Self}` cannot be extracted from a request head",
     label = "not extractable",
     note = "the context type `{C}` may be the problem rather than `{Self}`: `Inject<T>` needs \
-            `{C}: Provides<T>`, and `Auth<S>` needs `{C}: Authenticates<S>`"
+            `{C}: Provides<T>`",
+    note = "a guard — `Auth`, `MaybeAuth` or `Scoped` — is not extracted here: it is a \
+            handler's first argument, and implements `Guard`"
 )]
 pub trait FromRequestParts<C>: Sized + Send {
     /// How this extractor fails, and what that failure looks like in the

@@ -51,13 +51,13 @@ impl<C: Sync> CacheStore<C> for Stored {
             .unwrap_or_default()
     }
 
+    /// Replaces what `key` held, which is the contract's "replaces the variant
+    /// whose selecting values match" for a fixture none of whose routes vary.
     async fn put(&self, key: PrimaryKey, response: StoredResponse, _: &C) {
         self.0
             .lock()
             .expect("no test panics while holding this")
-            .entry(key)
-            .or_default()
-            .push(response);
+            .insert(key, vec![response]);
     }
 
     async fn invalidate(&self, key: &PrimaryKey, _: &C) {
@@ -83,6 +83,19 @@ struct Report {
 async fn reports() -> WithHeaders<Json<Report>, CacheControl> {
     CALLS.fetch_add(1, Ordering::SeqCst);
     WithHeaders::new(Json(Report { id: 1 }), CacheControl)
+}
+
+/// Cacheable, and numbers each response by the call that produced it, so a
+/// hit names the call it replays.
+#[kynos::get("/numbered")]
+async fn numbered() -> WithHeaders<Json<Report>, CacheControl> {
+    let id = CALLS.fetch_add(1, Ordering::SeqCst);
+    WithHeaders::new(
+        Json(Report {
+            id: u64::try_from(id).expect("a call count fits"),
+        }),
+        CacheControl,
+    )
 }
 
 /// Says nothing about how long it may be reused.
@@ -135,7 +148,14 @@ impl kynos::extract::params::header::EncodeHeaders for CacheControl {
 /// A service caching through `store`.
 fn cached(store: Stored) -> kynos::router::service::Service<()> {
     Router::<()>::new()
-        .mount(kynos::routes![reports, uncacheable, tagged, create, empty])
+        .mount(kynos::routes![
+            reports,
+            numbered,
+            uncacheable,
+            tagged,
+            create,
+            empty
+        ])
         .intercept(Cache::new(store).namespace("test"))
         .build(())
         .expect("a describable router")
@@ -318,6 +338,141 @@ async fn a_failed_unsafe_method_leaves_the_stored_response_alone() {
         calls_during(before),
         1,
         "a refused write invalidated a copy it had no reason to touch"
+    );
+}
+
+// --- Which request a stored response answers ------------------------------
+
+/// RFC 9111 section 2 keys a stored response on the whole target URI, and the
+/// authority is part of it.
+///
+/// Without it, a handler that picks a tenant from `Host` hands one tenant's
+/// page to the next one asking for the same path.
+#[tokio::test]
+async fn a_response_stored_for_one_host_is_not_served_to_another() {
+    let service = cached(Stored::default());
+    let before = CALLS.load(Ordering::SeqCst);
+
+    for host in ["a.example.com", "a.example.com", "b.example.com"] {
+        assert_eq!(
+            get(&service, "/reports")
+                .header("host", host)
+                .call()
+                .await
+                .status,
+            StatusCode::OK
+        );
+    }
+
+    assert_eq!(
+        calls_during(before),
+        2,
+        "the second host was answered from the first host's copy, or the first host was never \
+         answered from its own"
+    );
+}
+
+/// A host is matched without regard to case, as RFC 3986 section 3.2.2 compares
+/// it, and an authority carried on an absolute-form target names the same
+/// resource the same authority carried in `Host` does.
+#[tokio::test]
+async fn one_host_is_one_key_however_it_was_spelled() {
+    let service = cached(Stored::default());
+    let before = CALLS.load(Ordering::SeqCst);
+
+    assert_eq!(
+        get(&service, "/reports")
+            .header("host", "a.example.com")
+            .call()
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get(&service, "/reports")
+            .header("host", "A.Example.COM")
+            .call()
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get(&service, "http://a.example.com/reports")
+            .call()
+            .await
+            .status,
+        StatusCode::OK
+    );
+
+    assert_eq!(
+        calls_during(before),
+        1,
+        "one host spelled two ways, or carried two ways, was filed under two keys"
+    );
+}
+
+/// An unsafe method drops the copy stored for its own host, and only that one.
+#[tokio::test]
+async fn an_unsafe_method_invalidates_only_its_own_hosts_copy() {
+    let service = cached(Stored::default());
+    let before = CALLS.load(Ordering::SeqCst);
+
+    for host in ["a.example.com", "b.example.com"] {
+        get(&service, "/reports").header("host", host).call().await;
+    }
+
+    assert_eq!(
+        send(&service, Method::POST, "/reports")
+            .header("host", "a.example.com")
+            .call()
+            .await
+            .status,
+        StatusCode::NO_CONTENT
+    );
+
+    for host in ["a.example.com", "b.example.com"] {
+        get(&service, "/reports").header("host", host).call().await;
+    }
+
+    assert_eq!(
+        calls_during(before),
+        3,
+        "the write to one host left its own copy in place, or dropped another host's"
+    );
+}
+
+/// RFC 9111 section 5.2.1.4: a request saying `no-cache` is not answered from
+/// the store without validation, and this cache does not validate, so the
+/// handler answers it.
+///
+/// The response it gets is stored as any other is, since the directive limits
+/// reuse rather than storage: the request after it is a hit on *that*
+/// response, not on the one stored before it.
+#[tokio::test]
+async fn a_request_saying_no_cache_is_answered_by_the_handler() {
+    let service = cached(Stored::default());
+    let before = CALLS.load(Ordering::SeqCst);
+
+    let first = get(&service, "/numbered").call().await;
+
+    let refreshed = get(&service, "/numbered")
+        .header("cache-control", "max-age=0, No-Cache")
+        .call()
+        .await;
+    assert_eq!(refreshed.status, StatusCode::OK);
+    assert_eq!(
+        calls_during(before),
+        2,
+        "a request saying no-cache was answered from the store"
+    );
+    assert_ne!(refreshed.json()["id"], first.json()["id"]);
+
+    let after = get(&service, "/numbered").call().await;
+    assert_eq!(calls_during(before), 2, "the request after it missed");
+    assert_eq!(
+        after.json()["id"],
+        refreshed.json()["id"],
+        "the response to a no-cache request was not stored for the next one"
     );
 }
 

@@ -5,16 +5,17 @@ error[E0277]: `HeaderMap` cannot be extracted from a request head
   |                              ^^^^^^^^^^^^^^^^^^^^^^ not extractable
   |
   = help: the trait `FromRequestParts<()>` is not implemented for `HeaderMap`
-  = note: the context type `()` may be the problem rather than `HeaderMap`: `Inject<T>` needs `(): Provides<T>`, and `Auth<S>` needs `(): Authenticates<S>`
+  = note: the context type `()` may be the problem rather than `HeaderMap`: `Inject<T>` needs `(): Provides<T>`
+  = note: a guard — `Auth`, `MaybeAuth` or `Scoped` — is not extracted here: it is a handler's first argument, and implements `Guard`
   = help: the following other types implement trait `FromRequestParts<C>`:
             AcceptLanguage<L>
-            Auth<S>
             Conditions
             ConnectInfo
             Connection
             Cookies<T>
-            Forwarded
             Headers<T>
+            Inject<T>
+            LastEventId
           and $N others
 note: required by a bound in `from_request_parts`
  --> tests/ui/antipattern/raw_header_map_extractor.rs:3:29

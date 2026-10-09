@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use super::{
     freshness::{self, CACHEABLE, HOP_BY_HOP, Unstorable},
-    is_non_error, refuses_cross_origin,
+    is_non_error, primary_key, refuses_cross_origin,
 };
 use crate::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 
@@ -141,6 +141,43 @@ fn every_refusal_has_a_case() {
     }
 
     assert_eq!(cases.len(), variants.len(), "a refusal has no case");
+}
+
+/// A wildcard on any `Vary` line refuses the response.
+///
+/// RFC 9110 section 5.3 lets a list field be split across lines, so `*` on a
+/// later line is the same `Vary: *` -- and a first line that is not UTF-8 must
+/// not hide it.
+#[test]
+fn a_wildcard_on_any_vary_line_is_refused() {
+    assert_eq!(
+        storable(
+            &[],
+            &[
+                ("cache-control", "max-age=60"),
+                ("vary", "accept"),
+                ("vary", "*"),
+            ],
+        ),
+        Err(Unstorable::VaryWildcard)
+    );
+
+    let mut response = map(&[("cache-control", "max-age=60")]);
+    response.append(
+        header::VARY,
+        HeaderValue::from_bytes(b"\xff").expect("an opaque field"),
+    );
+    response.append(header::VARY, HeaderValue::from_static("*"));
+    assert_eq!(
+        freshness::storable(
+            &Method::GET,
+            StatusCode::OK,
+            &HeaderMap::new(),
+            &response,
+            None,
+        ),
+        Err(Unstorable::VaryWildcard)
+    );
 }
 
 /// A narrowed directive is read as the whole one.
@@ -301,4 +338,69 @@ fn every_status_class_is_classified_the_way_section_4_4_defines() {
     ] {
         assert!(!is_non_error(status), "{status} is neither 2xx nor 3xx");
     }
+}
+
+/// Only the request directive section 5.2.1.4 names forbids reuse.
+///
+/// The control is the negative half: `no-store` limits storage, not reuse,
+/// and a directive merely starting with the name is a different directive.
+#[test]
+fn only_a_request_saying_no_cache_forbids_reuse() {
+    for (fields, forbids) in [
+        (&[][..], false),
+        (&[("cache-control", "no-cache")][..], true),
+        (
+            &[
+                ("cache-control", "max-age=60"),
+                ("cache-control", "no-cache"),
+            ][..],
+            true,
+        ),
+        (&[("cache-control", "no-store")][..], false),
+        (&[("cache-control", "no-cache-please")][..], false),
+        (&[("pragma", "no-cache")][..], false),
+    ] {
+        assert_eq!(
+            freshness::forbids_reuse(&map(fields)),
+            forbids,
+            "{fields:?}"
+        );
+    }
+}
+
+/// A request naming no authority is filed under none, and the target's
+/// authority decides where the request also carries a `Host` that disagrees.
+///
+/// RFC 9112 section 3.2.2: an origin server receiving an absolute-form target
+/// "MUST ignore the received Host header field". The request below is an
+/// HTTP/1.1 one, as `Request::new` builds it; a version-2 request's
+/// `:authority` lands on the same URI and is read the same way. Filing it under
+/// `Host` would let one request plant a response for another host.
+#[test]
+fn the_key_names_the_authority_the_request_carried() {
+    let request = |target: &str, host: Option<&str>| {
+        let mut request = crate::http::Request::new(crate::http::body::Body::empty());
+        *request.uri_mut() = target.parse().expect("a usable target");
+        if let Some(host) = host {
+            request
+                .headers_mut()
+                .insert(header::HOST, HeaderValue::from_str(host).expect("a host"));
+        }
+        request
+    };
+
+    assert_eq!(
+        primary_key("", &request("/reports?page=2", None), "/reports").authority,
+        None
+    );
+    assert_eq!(
+        primary_key(
+            "",
+            &request("http://B.example.com/reports", Some("A.example.com")),
+            "/reports"
+        )
+        .authority
+        .as_deref(),
+        Some("b.example.com")
+    );
 }

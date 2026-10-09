@@ -51,14 +51,14 @@
 //! Where the contract must not move, run a second `Router` and `Server` on an
 //! internal port, and let the two documents differ because the two services do.
 //!
-//! # One caveat, where mutual TLS is configured
+//! # A built service's own edits reach the served bytes
 //!
-//! `Server::prepare` adds a `mutualTLS` scheme to the document *after* the
-//! router is built, so a service configured with
-//! `TlsConfig::require_client_certificate` serves a description one security
-//! requirement short of what `Service::openapi` reports. Declare the scheme on
-//! the router with [`Router::security_scheme`](crate::Router::security_scheme)
-//! and it is in the document before the reference is rendered.
+//! `Server::prepare` adds a `mutualTLS` scheme once the router is built, and
+//! `Service::into_tower_unchecked` flags every operation, so the document a
+//! reference was first rendered from is not always the one the service ends
+//! up reporting. Both edits go through the one method that edits a built
+//! service's document, and it renders the reference again before it returns,
+//! so the bytes served always equal what `Service::openapi` reports.
 
 mod endpoint;
 mod page;
@@ -69,7 +69,7 @@ mod tests;
 
 use std::{
     borrow::Cow,
-    sync::{Arc, OnceLock},
+    sync::{Arc, OnceLock, PoisonError, RwLock},
 };
 
 use bytes::Bytes;
@@ -216,8 +216,7 @@ impl Docs {
         let description_id = operation_id(&self.operation_id_prefix, self.description_at.as_str());
 
         let state = Arc::new(State {
-            page: OnceLock::new(),
-            description: OnceLock::new(),
+            rendered: RwLock::new(None),
             description_path: OnceLock::new(),
             template: self.page,
             policy: self.policy,
@@ -233,10 +232,7 @@ impl Docs {
                 )),
                 Role::Description(Arc::clone(&state)),
             ),
-            (
-                Arc::new(DocsPage::new(self.at, page_id, Arc::clone(&state))),
-                Role::Page(state),
-            ),
+            (Arc::new(DocsPage::new(self.at, page_id, state)), Role::Page),
         ]
     }
 }
@@ -288,20 +284,32 @@ fn template(path: &str, violations: &mut Vec<Violation>) -> PathTemplate {
 /// [`Mounted`]: crate::router::Mounted
 #[derive(Clone, Debug)]
 pub(crate) enum Role {
-    Page(Arc<State>),
+    /// Carries no state: the description's half names the reference, and the
+    /// page reads the URL that half recorded.
+    Page,
     Description(Arc<State>),
 }
 
 /// What the two halves share, filled once the document exists.
 #[derive(Debug)]
 pub(crate) struct State {
-    page: OnceLock<Bytes>,
-    description: OnceLock<Bytes>,
+    /// Replaced whenever the built service's document is edited. Every such
+    /// edit takes the service by `&mut` or by value, so no request is in
+    /// flight while it lands.
+    rendered: RwLock<Option<Rendered>>,
     /// The `paths` key the description ended up at, written by its own mount.
     description_path: OnceLock<String>,
     template: Cow<'static, str>,
     policy: Option<&'static str>,
     title: Option<String>,
+}
+
+/// Both halves' bytes, swapped together so no request sees a page from one
+/// rendering beside a description from another.
+#[derive(Debug)]
+struct Rendered {
+    page: Bytes,
+    description: Bytes,
 }
 
 /// Read where a rendered reference cannot be missing.
@@ -315,15 +323,34 @@ const UNRENDERED: &str =
     "an API reference is rendered by `Router::build`, which is the only way to obtain a `Service`";
 
 impl State {
-    pub(super) fn page(&self) -> &Bytes {
-        self.page.get().expect(UNRENDERED)
+    pub(super) fn page(&self) -> Bytes {
+        self.read(|rendered| &rendered.page)
     }
 
     pub(super) fn policy(&self) -> Option<&'static str> {
         self.policy
     }
 
-    pub(super) fn description(&self) -> &Bytes {
-        self.description.get().expect(UNRENDERED)
+    pub(super) fn description(&self) -> Bytes {
+        self.read(|rendered| &rendered.description)
+    }
+
+    /// One half of the current rendering, which `Bytes` clones by reference.
+    fn read(&self, half: impl FnOnce(&Rendered) -> &Bytes) -> Bytes {
+        let rendered = self
+            .rendered
+            .read()
+            // Only an assignment runs under the write lock, and it cannot
+            // panic, so a poisoned lock still holds a whole rendering.
+            .unwrap_or_else(PoisonError::into_inner);
+        half(rendered.as_ref().expect(UNRENDERED)).clone()
+    }
+
+    /// Replaces both halves' bytes at once.
+    fn publish(&self, rendered: Rendered) {
+        *self
+            .rendered
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(rendered);
     }
 }

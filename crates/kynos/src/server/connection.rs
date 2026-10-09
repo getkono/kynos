@@ -20,6 +20,7 @@ use tokio::{
 
 use crate::{
     extract::connection::Connection,
+    middleware::limits::request_body,
     router::service::Service,
     server::{
         TransportConfig,
@@ -209,11 +210,11 @@ where
         async move {
             let (mut parts, body) = request.into_parts();
             parts.extensions.insert(connection_info);
-            let request = crate::http::Request::from_parts(
-                parts,
-                crate::http::body::Body::from_incoming(body),
-            );
-            Ok::<_, Infallible>(service.call(request).await)
+            let erase = crate::http::body::Body::from_incoming;
+            let limit = config.request_body_idle_timeout;
+            let (body, stall) = request_body::bounded(body, limit, parts.version, erase);
+            let response = service.call(crate::http::Request::from_parts(parts, body));
+            Ok::<_, Infallible>(request_body::answer(response.await, stall))
         }
     });
 

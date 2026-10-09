@@ -306,11 +306,30 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
             kynos_openapi::Response::new("the client's copy is current"),
         );
 
+        // Reachable for the same reason: an `If-Match` naming a tag the file no
+        // longer carries.
+        responses = responses.with(
+            412,
+            kynos_openapi::Response::new("the file is not the one the client's copy came from"),
+        );
+
         operation.add_responses(&responses);
 
-        // `If-None-Match` is read, so it is declared. The group is not used for
-        // extraction -- an asset endpoint reads it directly -- but a consumer
-        // is entitled to know the request field exists.
+        // `If-Match` and `If-None-Match` are read, so they are declared. The
+        // group is not used for extraction -- an asset endpoint reads them
+        // directly -- but a consumer is entitled to know the request fields
+        // exist.
+        operation.add_parameter(
+            kynos_openapi::Parameter::header(
+                "If-Match",
+                kynos_openapi::Schema::of_type(
+                    kynos_openapi::model::schema::types::SchemaType::String,
+                ),
+            )
+            .with_description(
+                "The entity tag the client's copy was taken from, per RFC 9110 section 13.1.1",
+            ),
+        );
         operation.add_parameter(
             kynos_openapi::Parameter::header(
                 "If-None-Match",
@@ -363,6 +382,12 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
 
         // Which representation, first. Every condition below is about one.
         let chosen = self.choose(request.headers());
+
+        // Section 13.2.2 step 1, against the same chosen form: a client whose
+        // copy is the identity octets has not seen the brotli ones.
+        if let Some(refused) = range::precondition_failed(request.headers(), Some(chosen.etag)) {
+            return refused;
+        }
 
         // RFC 9110 section 13.1.2: `If-None-Match` on a GET is a cache
         // validation, and a match means the client's copy is current.

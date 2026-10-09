@@ -9,6 +9,11 @@ cargo run -p kynos --example <name>
 The **Features** column is what to append as `--features …` when an example
 needs more than the defaults. Each file's own header explains why it needs them.
 
+Grouped by what each one shows. To find one by what you are trying to do — such
+as reading the authenticated caller in a handler, which is
+[`jwt.rs`](jwt.rs) and [`security_schemes.rs`](security_schemes.rs) — see
+[getting started](../../../GETTING_STARTED.md).
+
 ## Start here
 
 | Example | Shows | Features |

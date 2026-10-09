@@ -16,6 +16,23 @@ use crate::{
 };
 
 /// An `application/x-www-form-urlencoded` request body.
+///
+/// The body is described with no Encoding Object, so every property takes the
+/// default `form` style with `explode`, and both directions follow it:
+///
+/// - A sequence field, such as `Vec<String>`, is one pair per item under the
+///   field's name, so `tag=a&tag=b` is two items and `tag=a` is one. With no
+///   pair at all it is missing, as any field is; `#[serde(default)]` reads that
+///   as empty.
+/// - Any other field is one pair. A second pair under its name does not fit the
+///   description and is refused with 422 rather than resolved to either value.
+/// - An empty value for an optional number or `bool`, as an empty number input
+///   submits, reads as `None`.
+///
+/// Two shapes are described but not yet decoded, and are refused with 422: a
+/// nested struct field, and a member that is not a string reached through
+/// `#[serde(flatten)]`, which serde buffers as text and then cannot read as
+/// the number or `bool` it is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Form<T>(pub T);
 
@@ -28,7 +45,7 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Form<T> 
     async fn from_request(request: Request, _context: &C) -> Result<Self, Self::Rejection> {
         let bytes = super::read_body(request, MEDIA_TYPE).await?;
 
-        // A pair is text once decoded, and `serde_urlencoded` would replace
+        // A pair is text once decoded, and `serde_html_form` would replace
         // octets that are not UTF-8 rather than refuse them, so they are
         // refused here first: a 400, as `Query<T>` answers the same pair. The
         // pairs are read through the reading `Query<T>` shares, so the two
@@ -47,10 +64,11 @@ impl<C: Sync, T: serde::de::DeserializeOwned + Send> FromRequest<C> for Form<T> 
         // Past that, form syntax admits no malformed input -- an unpaired key
         // is a key with an empty value, and a malformed escape is a literal
         // `%` -- so every way this fails is a pair that does not fit `T`,
-        // which is a 422 rather than a 400. The failure is keyed by the root
-        // JSON Pointer because serde reports which field only inside its
-        // message.
-        serde_urlencoded::from_str(text)
+        // which is a 422 rather than a 400. A scalar field repeated is one of
+        // those: the description gives it one pair. The failure is keyed by
+        // the root JSON Pointer because serde reports which field only inside
+        // its message.
+        serde_html_form::from_str(text)
             .map(Self)
             .map_err(|error| BodyRejection::Schema {
                 failures: BTreeMap::from([(String::new(), error.to_string())]),
