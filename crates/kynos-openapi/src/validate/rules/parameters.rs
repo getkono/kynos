@@ -83,9 +83,9 @@ pub(in crate::validate) fn resolve_parameter<'doc>(
 /// Checks one list of parameters, as written on a Path Item or an Operation.
 ///
 /// Uniqueness is decided by what each entry resolves to, so a duplicate that
-/// arrives by `$ref` is one. Every other rule here reads only the entries
-/// written inline: a referenced component belongs to `components`, not to
-/// this list, and checking it here would report it once per reference.
+/// arrives by `$ref` is one. [`check_parameter`] runs only on the entries
+/// written inline: a referenced component is checked once where it is
+/// defined, and checking it here would report it once per reference.
 pub(in crate::validate) fn check_parameter_list(
     location: &str,
     parameters: &[RefOr<Parameter>],
@@ -115,69 +115,87 @@ pub(in crate::validate) fn check_parameter_list(
             ));
         }
 
-        let Some(parameter) = entry.as_item() else {
-            continue;
-        };
-
-        if parameter.location == ParameterIn::Header && is_ignored_header_parameter(&parameter.name)
-        {
-            violations.push(Violation::error(
-                location,
-                SpecError::IgnoredHeaderParameter {
-                    name: parameter.name.clone(),
-                },
-            ));
+        if let Some(parameter) = entry.as_item() {
+            check_parameter(location, parameter, violations);
         }
-
-        if parameter.location == ParameterIn::Path && parameter.required != Some(true) {
-            violations.push(Violation::error(
-                location,
-                SpecError::PathParameterNotRequired {
-                    name: parameter.name.clone(),
-                },
-            ));
-        }
-
-        // The schema/content exclusion and the single-entry `content` rule used
-        // to be checked here. `ParameterShape` holds one or the other and its
-        // `Content` variant holds one pair, so neither violation can reach this
-        // function.
-
-        if let Some(style) = parameter.style() {
-            if !style.is_valid_for(parameter.location) {
-                violations.push(Violation::error(
-                    location,
-                    SpecError::IllegalStyle {
-                        style: format!("{style:?}").to_lowercase(),
-                        location: format!("{:?}", parameter.location).to_lowercase(),
-                    },
-                ));
-            }
-        }
-
-        // The `example`/`examples` exclusion used to be checked here too. A
-        // parameter carries one `Examples` holding one form or the other, so
-        // that violation cannot reach this function either.
-
-        check_extensions(location, &parameter.extensions, violations);
     }
 }
 
-/// Checks the three rules 3.2 states for `in: querystring`: it is described
-/// by `content`, at most one applies to an operation, and none applies beside
-/// an `in: query` parameter.
+/// Checks the rules one Parameter Object settles on its own, reported at
+/// `location`: the list it is written in, or its own pointer under
+/// `#/components/parameters`.
+pub(in crate::validate) fn check_parameter(
+    location: &str,
+    parameter: &Parameter,
+    violations: &mut Vec<Violation>,
+) {
+    if parameter.location == ParameterIn::Header && is_ignored_header_parameter(&parameter.name) {
+        violations.push(Violation::error(
+            location,
+            SpecError::IgnoredHeaderParameter {
+                name: parameter.name.clone(),
+            },
+        ));
+    }
+
+    if parameter.location == ParameterIn::Path && parameter.required != Some(true) {
+        violations.push(Violation::error(
+            location,
+            SpecError::PathParameterNotRequired {
+                name: parameter.name.clone(),
+            },
+        ));
+    }
+
+    // The schema/content exclusion and the single-entry `content` rule used
+    // to be checked here. `ParameterShape` holds one or the other and its
+    // `Content` variant holds one pair, so neither violation can reach this
+    // function.
+
+    #[cfg(feature = "openapi32")]
+    if parameter.location == ParameterIn::Querystring && parameter.content().is_none() {
+        violations.push(Violation::error(
+            location,
+            SpecError::QuerystringWithoutContent {
+                name: parameter.name.clone(),
+            },
+        ));
+    }
+
+    if let Some(style) = parameter.style() {
+        if !style.is_valid_for(parameter.location) {
+            violations.push(Violation::error(
+                location,
+                SpecError::IllegalStyle {
+                    style: format!("{style:?}").to_lowercase(),
+                    location: format!("{:?}", parameter.location).to_lowercase(),
+                },
+            ));
+        }
+    }
+
+    // The `example`/`examples` exclusion used to be checked here too. A
+    // parameter carries one `Examples` holding one form or the other, so
+    // that violation cannot reach this function either.
+
+    check_extensions(location, &parameter.extensions, violations);
+}
+
+/// Checks the two rules 3.2 states for `in: querystring` that compare
+/// parameters: at most one applies to an operation, and none applies beside
+/// an `in: query` parameter. The third, that one is described by `content`,
+/// is a rule of the parameter alone and [`check_parameter`]'s.
 ///
 /// `own` is the list at `location`; `inherited` is the path item's list when
-/// `own` is an operation's, and empty when `own` is the path item's. The last
-/// two rules hold "in the same operation (or in the operation's path-item)",
+/// `own` is an operation's, and empty when `own` is the path item's. Both
+/// rules hold "in the same operation (or in the operation's path-item)",
 /// so they read the parameters that apply: the inherited ones the operation
 /// does not override, then its own. A pair drawn wholly from `inherited` is
 /// skipped, because the path item's own check already reported it once, at
 /// the path item.
 ///
-/// Like uniqueness in [`check_parameter_list`], the two rules that compare
-/// entries read what each entry resolves to, overrides included; the
-/// `content` rule reads only the entries written inline.
+/// Like uniqueness in [`check_parameter_list`], both read what each entry
+/// resolves to, overrides included.
 #[cfg(feature = "openapi32")]
 pub(in crate::validate) fn check_querystring(
     location: &str,
@@ -190,17 +208,6 @@ pub(in crate::validate) fn check_querystring(
         Resolved::Found(parameter) => Some(parameter),
         Resolved::Missing | Resolved::Elsewhere => None,
     };
-
-    for parameter in own.iter().filter_map(RefOr::as_item) {
-        if parameter.location == ParameterIn::Querystring && parameter.content().is_none() {
-            violations.push(Violation::error(
-                location,
-                SpecError::QuerystringWithoutContent {
-                    name: parameter.name.clone(),
-                },
-            ));
-        }
-    }
 
     let own: Vec<&Parameter> = own.iter().filter_map(resolved).collect();
     let overridden = |parameter: &Parameter| {
