@@ -138,6 +138,9 @@ missing_docs = "deny"
 missing_debug_implementations = "warn"
 unreachable_pub = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }
+# `fuzzing` is the cfg `cargo fuzz` sets, and `kynos::__private::fuzz` is gated
+# on it. Declared so every other build reads it as known rather than misspelled.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

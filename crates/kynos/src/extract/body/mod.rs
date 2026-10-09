@@ -112,7 +112,7 @@ fn parameters_are_acceptable(media_type: &str, declared: &str, parameters: &str)
 /// The comparison is on the media type itself, never on a structured suffix: an
 /// operation accepts what its description claims, and `application/vnd.x+json`
 /// is not `application/json`.
-fn offers(headers: &HeaderMap, media_type: &str) -> bool {
+pub(crate) fn offers(headers: &HeaderMap, media_type: &str) -> bool {
     let (essence, declared) = media_type.split_once(';').unwrap_or((media_type, ""));
     let essence = essence.trim();
     content_type(headers).is_some_and(|(offered, parameters)| {
