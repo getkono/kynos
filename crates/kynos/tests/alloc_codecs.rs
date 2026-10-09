@@ -646,13 +646,10 @@ mod form {
     /// Read the way the JSON table was read: every ceiling set to zero, the
     /// target run, the counts the failure reported transcribed.
     ///
-    /// The request direction reads exactly as JSON's does — `serde_urlencoded`
-    /// deserializes an all-integer struct out of the borrowed octets too, so
-    /// the operation pays the body's collection and nothing more. The
-    /// responding direction costs one allocation more than JSON's: the form
-    /// encoder builds a `String` and the response body is then built from it,
-    /// where `serde_json` writes into a `Vec<u8>` that becomes the body
-    /// directly.
+    /// The request direction reads as JSON's does, and the responding one an
+    /// allocation below JSON's, though the form encoder builds a `String` the
+    /// response body is then made from where `serde_json` writes into the
+    /// `Vec<u8>` that becomes the body directly.
     const RECORDED: Table = Table {
         bodyless_floor: ("POST /floor", floor_request, StatusCode::NO_CONTENT, 7),
         transport_floor: (
@@ -668,7 +665,7 @@ mod form {
             7,
         ),
         decoding: ("POST /form", decode_request, StatusCode::NO_CONTENT, 8),
-        encoding: ("GET /form/out", encode_request, StatusCode::OK, 13),
+        encoding: ("GET /form/out", encode_request, StatusCode::OK, 11),
     };
 
     /// The record: what each operation of this service costs today.

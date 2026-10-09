@@ -1,6 +1,6 @@
 use std::net::{IpAddr, SocketAddr};
 
-use super::{Forwarded, TrustedProxies, node_address, within};
+use super::{Forwarded, ProxyHeader, TrustedProxies, node_address, within};
 use crate::http::{HeaderMap, HeaderValue, Request, body::Body};
 
 /// A header map from pairs, appending so a repeated name stays repeated.
@@ -43,13 +43,39 @@ fn an_unconfigured_policy_believes_no_forwarding_field() {
     assert_eq!(resolved.client_is_secure(), None);
 }
 
+/// A policy naming no field reads none, whatever addresses it was widened by.
+///
+/// `none().and_addresses(..)` says whom to believe but not where they wrote it,
+/// and either guess reads a field the client may have written.
+#[test]
+fn a_policy_naming_no_field_believes_no_forwarding_field() {
+    let headers = map(&[
+        ("forwarded", "for=203.0.113.7;proto=https"),
+        ("x-forwarded-for", "203.0.113.8"),
+        ("x-forwarded-proto", "https"),
+    ]);
+    let trusted = TrustedProxies::none()
+        .and_addresses([ip("10.0.0.1")])
+        .and_networks([(ip("10.0.0.0"), 8)]);
+
+    let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &trusted);
+
+    assert!(trusted.trusts_nobody());
+    assert_eq!(resolved.client(), Some(ip("10.0.0.1")));
+    assert_eq!(resolved.client_is_secure(), None);
+}
+
 /// One trusted hop resolves one element, and no more.
 #[test]
 fn one_trusted_hop_reads_one_element() {
     // Two elements: the client, then a proxy the client could have invented.
     let headers = map(&[("forwarded", "for=198.51.100.9, for=203.0.113.7")]);
 
-    let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+    let resolved = Forwarded::resolve(
+        &headers,
+        Some(peer("10.0.0.1")),
+        &TrustedProxies::hops(ProxyHeader::Forwarded, 1),
+    );
 
     assert_eq!(
         resolved.client(),
@@ -63,7 +89,11 @@ fn one_trusted_hop_reads_one_element() {
 fn two_trusted_hops_reach_the_second_element() {
     let headers = map(&[("forwarded", "for=198.51.100.9, for=203.0.113.7")]);
 
-    let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(2));
+    let resolved = Forwarded::resolve(
+        &headers,
+        Some(peer("10.0.0.1")),
+        &TrustedProxies::hops(ProxyHeader::Forwarded, 2),
+    );
 
     assert_eq!(resolved.client(), Some(ip("198.51.100.9")));
 }
@@ -80,7 +110,11 @@ fn a_forged_chain_cannot_outrun_the_configured_trust() {
         "for=1.1.1.1, for=2.2.2.2, for=3.3.3.3, for=203.0.113.7",
     )]);
 
-    let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+    let resolved = Forwarded::resolve(
+        &headers,
+        Some(peer("10.0.0.1")),
+        &TrustedProxies::hops(ProxyHeader::Forwarded, 1),
+    );
 
     assert_eq!(resolved.client(), Some(ip("203.0.113.7")));
 }
@@ -89,7 +123,7 @@ fn a_forged_chain_cannot_outrun_the_configured_trust() {
 #[test]
 fn a_trusted_network_reads_the_element_its_member_wrote() {
     let headers = map(&[("forwarded", "for=203.0.113.7")]);
-    let trusted = TrustedProxies::networks([(ip("10.0.0.0"), 8)]);
+    let trusted = TrustedProxies::networks(ProxyHeader::Forwarded, [(ip("10.0.0.0"), 8)]);
 
     let resolved = Forwarded::resolve(&headers, Some(peer("10.4.5.6")), &trusted);
 
@@ -100,39 +134,68 @@ fn a_trusted_network_reads_the_element_its_member_wrote() {
 #[test]
 fn a_sender_outside_the_trusted_networks_is_not_believed() {
     let headers = map(&[("forwarded", "for=203.0.113.7")]);
-    let trusted = TrustedProxies::networks([(ip("10.0.0.0"), 8)]);
+    let trusted = TrustedProxies::networks(ProxyHeader::Forwarded, [(ip("10.0.0.0"), 8)]);
 
     let resolved = Forwarded::resolve(&headers, Some(peer("192.0.2.5")), &trusted);
 
     assert_eq!(resolved.client(), Some(ip("192.0.2.5")));
 }
 
-/// `X-Forwarded-For` is read only where `Forwarded` is absent.
+/// Behind a proxy that writes `Forwarded`, the client's own `X-Forwarded-*`
+/// names nobody, and neither does it where the proxy wrote no `Forwarded`.
 ///
-/// Reading both risks pairing one hop's address with another hop's scheme.
+/// The twin of the case below. Falling back to the other field where the named
+/// one is absent would hand the client the address whenever its proxy stated
+/// none.
 #[test]
-fn the_specified_field_wins_over_the_de_facto_one() {
-    let headers = map(&[
-        ("forwarded", "for=203.0.113.7;proto=https"),
-        ("x-forwarded-for", "198.51.100.9"),
-        ("x-forwarded-proto", "http"),
-    ]);
+fn a_client_written_x_forwarded_pair_is_not_read_behind_a_forwarded_proxy() {
+    let trusted = TrustedProxies::hops(ProxyHeader::Forwarded, 1);
+    let spoofed = [
+        ("x-forwarded-for", "1.2.3.4"),
+        ("x-forwarded-proto", "https"),
+    ];
 
-    let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
-
+    let mut beside = spoofed.to_vec();
+    beside.push(("forwarded", "for=203.0.113.7;proto=http"));
+    let resolved = Forwarded::resolve(&map(&beside), Some(peer("10.0.0.1")), &trusted);
     assert_eq!(resolved.client(), Some(ip("203.0.113.7")));
-    assert_eq!(resolved.proto(), Some("https"));
+    assert_eq!(resolved.client_is_secure(), Some(false));
+
+    let resolved = Forwarded::resolve(&map(&spoofed), Some(peer("10.0.0.1")), &trusted);
+    assert_eq!(resolved.client(), Some(ip("10.0.0.1")));
+    assert_eq!(resolved.client_is_secure(), None);
 }
 
-/// With no `Forwarded`, the de-facto pair is read.
+/// Behind a proxy that appends to `X-Forwarded-For`, a `Forwarded` the client
+/// wrote itself names nobody.
+///
+/// An AWS ALB, or a typical nginx, passes a client's `Forwarded` through
+/// untouched. Reading it there lets the client pick its own address and scheme
+/// on every request, which is the bucket a `ByClientAddress` limit counts.
 #[test]
-fn the_de_facto_pair_is_read_when_it_is_all_there_is() {
+fn a_client_written_forwarded_is_not_read_behind_an_x_forwarded_for_proxy() {
+    let headers = map(&[
+        ("forwarded", "for=1.2.3.4;proto=https"),
+        ("x-forwarded-for", "198.51.100.9"),
+    ]);
+    let trusted = TrustedProxies::hops(ProxyHeader::XForwarded, 1);
+
+    let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &trusted);
+
+    assert_eq!(resolved.client(), Some(ip("198.51.100.9")));
+    assert_eq!(resolved.client_is_secure(), None);
+}
+
+/// Behind a proxy that writes the de-facto pair, the pair is read.
+#[test]
+fn the_de_facto_pair_is_read_behind_a_proxy_that_writes_it() {
     let headers = map(&[
         ("x-forwarded-for", "198.51.100.9, 203.0.113.7"),
         ("x-forwarded-proto", "https"),
     ]);
+    let trusted = TrustedProxies::hops(ProxyHeader::XForwarded, 1);
 
-    let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+    let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &trusted);
 
     assert_eq!(resolved.client(), Some(ip("203.0.113.7")));
     assert_eq!(resolved.client_is_secure(), Some(true));
@@ -159,8 +222,11 @@ fn an_unknown_element_at_a_trusted_position_is_still_a_hop() {
     ] {
         let headers = map(&[("forwarded", format!("for=203.0.113.9, {element}").as_str())]);
 
-        let resolved =
-            Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+        let resolved = Forwarded::resolve(
+            &headers,
+            Some(peer("10.0.0.1")),
+            &TrustedProxies::hops(ProxyHeader::Forwarded, 1),
+        );
 
         assert_eq!(
             resolved.client(),
@@ -175,9 +241,9 @@ fn an_unknown_element_at_a_trusted_position_is_still_a_hop() {
 fn an_unknown_x_forwarded_for_entry_at_a_trusted_position_is_still_a_hop() {
     for entry in ["unknown", "_hidden", "not-an-address"] {
         let headers = map(&[("x-forwarded-for", format!("203.0.113.9, {entry}").as_str())]);
+        let trusted = TrustedProxies::hops(ProxyHeader::XForwarded, 1);
 
-        let resolved =
-            Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+        let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &trusted);
 
         assert_eq!(
             resolved.client(),
@@ -197,9 +263,12 @@ fn an_unknown_element_spends_one_hop_of_trust() {
     )]);
     let x_forwarded_for = map(&[("x-forwarded-for", "198.51.100.1, 203.0.113.9, unknown")]);
 
-    for headers in [forwarded, x_forwarded_for] {
-        let resolved =
-            Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(2));
+    for (header, headers) in [
+        (ProxyHeader::Forwarded, forwarded),
+        (ProxyHeader::XForwarded, x_forwarded_for),
+    ] {
+        let trusted = TrustedProxies::hops(header, 2);
+        let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &trusted);
 
         assert_eq!(resolved.client(), Some(ip("203.0.113.9")));
     }
@@ -214,9 +283,12 @@ fn an_empty_list_element_is_not_a_hop() {
     let forwarded = map(&[("forwarded", "for=203.0.113.9, ")]);
     let x_forwarded_for = map(&[("x-forwarded-for", "203.0.113.9, ")]);
 
-    for headers in [forwarded, x_forwarded_for] {
-        let resolved =
-            Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+    for (header, headers) in [
+        (ProxyHeader::Forwarded, forwarded),
+        (ProxyHeader::XForwarded, x_forwarded_for),
+    ] {
+        let trusted = TrustedProxies::hops(header, 1);
+        let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &trusted);
 
         assert_eq!(resolved.client(), Some(ip("203.0.113.9")));
     }
@@ -236,8 +308,11 @@ fn a_delimiter_inside_a_quoted_value_splits_nothing() {
     ] {
         let headers = map(&[("forwarded", element)]);
 
-        let resolved =
-            Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+        let resolved = Forwarded::resolve(
+            &headers,
+            Some(peer("10.0.0.1")),
+            &TrustedProxies::hops(ProxyHeader::Forwarded, 1),
+        );
 
         assert_eq!(
             resolved.client(),
@@ -264,8 +339,11 @@ fn a_quote_the_client_leaves_open_swallows_no_trusted_hop() {
     ] {
         let headers = map(&[("forwarded", field)]);
 
-        let resolved =
-            Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+        let resolved = Forwarded::resolve(
+            &headers,
+            Some(peer("10.0.0.1")),
+            &TrustedProxies::hops(ProxyHeader::Forwarded, 1),
+        );
 
         assert_eq!(resolved.client(), Some(ip(client)), "`{field}`");
     }
@@ -291,7 +369,7 @@ fn repeated_forwarded_lines_are_one_chain_in_written_order() {
         let resolved = Forwarded::resolve(
             &headers,
             Some(peer("10.0.0.1")),
-            &TrustedProxies::hops(hops),
+            &TrustedProxies::hops(ProxyHeader::Forwarded, hops),
         );
 
         assert_eq!(resolved.client(), client.map(ip), "hops({hops})");
@@ -315,7 +393,11 @@ fn the_last_written_scheme_wins_across_elements_and_lines() {
         ("forwarded", "for=10.0.0.3"),
     ]);
 
-    let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &TrustedProxies::hops(1));
+    let resolved = Forwarded::resolve(
+        &headers,
+        Some(peer("10.0.0.1")),
+        &TrustedProxies::hops(ProxyHeader::Forwarded, 1),
+    );
 
     assert_eq!(resolved.proto(), Some("https"));
 }
@@ -413,7 +495,7 @@ fn a_scheme_claimed_by_an_untrusted_sender_is_not_believed() {
         ("x-forwarded-for", "203.0.113.7"),
         ("x-forwarded-proto", "https"),
     ]);
-    let trusted = TrustedProxies::addresses([ip("10.0.0.1")]);
+    let trusted = TrustedProxies::addresses(ProxyHeader::XForwarded, [ip("10.0.0.1")]);
 
     // The peer is not the address the policy names, so nothing it wrote counts.
     let resolved = Forwarded::resolve(&headers, Some(peer("203.0.113.9")), &trusted);
@@ -438,7 +520,7 @@ fn a_scheme_claimed_by_a_trusted_sender_is_believed() {
         ("x-forwarded-for", "203.0.113.7"),
         ("x-forwarded-proto", "https"),
     ]);
-    let trusted = TrustedProxies::addresses([ip("10.0.0.1")]);
+    let trusted = TrustedProxies::addresses(ProxyHeader::XForwarded, [ip("10.0.0.1")]);
 
     let resolved = Forwarded::resolve(&headers, Some(peer("10.0.0.1")), &trusted);
 

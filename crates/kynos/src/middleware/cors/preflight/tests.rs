@@ -11,9 +11,118 @@ use crate::{
 fn preflight(config: CorsConfig) -> Preflight {
     Preflight::new(
         vec![Scope::new(config, vec![Method::Get, Method::Delete])],
+        vec![Method::Get, Method::Delete],
         Some(HeaderValue::from_static("GET, DELETE")),
         FallbackPolicy::Problem,
     )
+}
+
+/// A path serving `GET` under `reader` and `DELETE` under no `Cors` at all.
+fn partly_covered(reader: CorsConfig) -> Preflight {
+    Preflight::new(
+        vec![Scope::new(reader, vec![Method::Get])],
+        vec![Method::Get, Method::Delete],
+        Some(HeaderValue::from_static("GET, DELETE")),
+        FallbackPolicy::Problem,
+    )
+}
+
+/// Asserts `response` is a refusal: a 204 carrying `Vary` and no CORS header.
+fn assert_refused(response: &crate::http::Response) {
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(
+        field(response, header::VARY).is_some(),
+        "a refusal is cached too"
+    );
+    assert_eq!(field(response, header::ACCESS_CONTROL_ALLOW_ORIGIN), None);
+    assert_eq!(field(response, header::ACCESS_CONTROL_ALLOW_METHODS), None);
+}
+
+/// The issue 425 case: the method runs under no `Cors`, so approving its
+/// preflight would send the browser on to a request whose side effect runs
+/// while its response carries no CORS header — whatever an override names.
+#[test]
+fn a_served_method_no_scope_covers_is_refused_even_where_an_override_names_it() {
+    let reader = CorsConfig {
+        methods: Some(vec![Method::Get, Method::Delete]),
+        ..named()
+    };
+
+    let response = partly_covered(reader).answer(&asking(
+        Some("https://app.example.com"),
+        Some("DELETE"),
+        None,
+    ));
+
+    assert_refused(&response);
+}
+
+/// The same override never advertises that method on a preflight it does
+/// answer. A browser caches every method `Access-Control-Allow-Methods` names
+/// for the origin and URL, and would send the uncovered one with no preflight
+/// of its own.
+#[test]
+fn an_override_never_advertises_a_served_method_no_scope_covers() {
+    let reader = CorsConfig {
+        methods: Some(vec![Method::Get, Method::Delete]),
+        ..named()
+    };
+
+    let response =
+        partly_covered(reader).answer(&asking(Some("https://app.example.com"), Some("GET"), None));
+
+    assert_eq!(
+        field(&response, header::ACCESS_CONTROL_ALLOW_METHODS).as_deref(),
+        Some("GET")
+    );
+}
+
+/// Without an override nothing answers for an uncovered method either: no
+/// scope's real response would carry the headers a permission promises.
+#[test]
+fn a_method_no_scope_covers_or_names_is_refused() {
+    let response = partly_covered(named()).answer(&asking(
+        Some("https://app.example.com"),
+        Some("PATCH"),
+        None,
+    ));
+
+    assert_refused(&response);
+}
+
+/// A method the path does not serve is the override's own case, and the scope
+/// whose override names it answers — not whichever scope was mounted first.
+#[test]
+fn an_override_answers_a_method_the_path_does_not_serve_from_the_scope_naming_it() {
+    let fronting = CorsConfig {
+        origins: vec!["https://admin.example.com".into()],
+        methods: Some(vec![Method::Patch]),
+        ..CorsConfig::default()
+    };
+
+    let response = Preflight::new(
+        vec![
+            Scope::new(named(), vec![Method::Get]),
+            Scope::new(fronting, vec![Method::Delete]),
+        ],
+        vec![Method::Get, Method::Delete],
+        Some(HeaderValue::from_static("GET, DELETE")),
+        FallbackPolicy::Problem,
+    )
+    .answer(&asking(
+        Some("https://admin.example.com"),
+        Some("PATCH"),
+        None,
+    ));
+
+    assert_eq!(
+        field(&response, header::ACCESS_CONTROL_ALLOW_ORIGIN).as_deref(),
+        Some("https://admin.example.com")
+    );
+    assert_eq!(
+        field(&response, header::ACCESS_CONTROL_ALLOW_METHODS).as_deref(),
+        Some("PATCH")
+    );
 }
 
 /// A configuration permitting one named origin.

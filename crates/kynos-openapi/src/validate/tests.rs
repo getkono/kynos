@@ -128,6 +128,112 @@ fn an_operation_outside_paths_is_validated_too() {
     );
 }
 
+/// An operation's own `callbacks` describe operations too.
+///
+/// The case above reaches a callback only through `components.callbacks`; one
+/// written inline on an operation hangs off that operation instead, and is
+/// just as much one of "all operations described in the API". Each case
+/// carries a different operation-level rule, and the nested one shows the walk
+/// descends through a callback's own operations as well.
+#[test]
+fn an_operation_inside_an_inline_callback_is_validated() {
+    use crate::model::{callback::Callback, reference::RefOr};
+
+    let with_callback = |operation: Operation| {
+        let mut owner = Operation::new("subscribe").with_responses(ok_responses());
+        owner.callbacks.insert(
+            "onData".to_owned(),
+            RefOr::Item(Callback::new().with(
+                "{$request.body#/url}",
+                PathItem::new().with_operation(Method::Post, operation),
+            )),
+        );
+        owner
+    };
+    let validate = |owner: Operation| {
+        Validator::new(SpecVersion::V3_1).validate(&document_with(&[(
+            "/subscriptions",
+            PathItem::new().with_operation(Method::Post, owner),
+        )]))
+    };
+
+    let duplicate = validate(with_callback(
+        Operation::new("subscribe").with_responses(ok_responses()),
+    ));
+    assert!(
+        duplicate.iter().any(|violation| matches!(
+            &violation.error,
+            SpecError::DuplicateOperationId { operation_id, .. } if operation_id == "subscribe"
+        ) && violation.location
+            == "#/paths/~1subscriptions/post/callbacks/onData/{$request.body#~1url}/post"),
+        "an inline callback describes an operation; got {duplicate:?}"
+    );
+
+    let responseless = validate(with_callback(with_callback(Operation::new("notify"))));
+    assert!(
+        responseless.iter().any(
+            |violation| matches!(violation.error, SpecError::NoResponses)
+                && violation.location
+                    == "#/paths/~1subscriptions/post/callbacks/onData/{$request.body#~1url}/post\
+                /callbacks/onData/{$request.body#~1url}/post"
+        ),
+        "a callback's own callbacks describe operations; got {responseless:?}"
+    );
+}
+
+/// A referenced callback is validated once, at the component it names.
+///
+/// The walk above follows inline items only: following a `$ref` would visit
+/// the component once per reference and report a duplicate `operationId`
+/// against the component itself. Both reference positions are covered — the
+/// callback itself, and a Path Item inside an inline callback.
+#[test]
+fn a_referenced_callback_is_not_walked_again_from_its_operation() {
+    use crate::model::{
+        callback::Callback,
+        reference::{Ref, RefOr},
+    };
+
+    let notify = |operation_id: &str| {
+        PathItem::new().with_operation(
+            Method::Post,
+            Operation::new(operation_id).with_responses(ok_responses()),
+        )
+    };
+    let mut owner = Operation::new("subscribe").with_responses(ok_responses());
+    owner.callbacks.insert(
+        "onData".to_owned(),
+        RefOr::Ref(Ref::new("#/components/callbacks/OnData")),
+    );
+    let mut item_ref = Callback::new();
+    item_ref.items.insert(
+        "{$request.body#/url}".to_owned(),
+        RefOr::Ref(Ref::new("#/components/pathItems/Notify")),
+    );
+    owner
+        .callbacks
+        .insert("onItem".to_owned(), RefOr::Item(item_ref));
+
+    let mut document = document_with(&[(
+        "/subscriptions",
+        PathItem::new().with_operation(Method::Post, owner),
+    )]);
+    document.components.callbacks.insert(
+        "OnData".to_owned(),
+        RefOr::Item(Callback::new().with("{$request.body#/url}", notify("onData"))),
+    );
+    document
+        .components
+        .path_items
+        .insert("Notify".to_owned(), notify("onItem"));
+
+    let found = errors(&document);
+    assert!(
+        found.is_empty(),
+        "a referenced callback is validated at its component alone; got {found:?}"
+    );
+}
+
 /// An operation with no responses is reported wherever it is written.
 ///
 /// The companion to the case above, and a different rule on purpose: it shows
@@ -704,6 +810,61 @@ fn a_declared_scheme_satisfies_the_requirement() {
     );
 
     assert!(errors(&document).is_empty());
+}
+
+/// The root `security` list is held to the same rule as an operation's:
+/// `references/3.1.2.md:4129` says each name "MUST correspond to a security
+/// scheme which is declared in the Security Schemes", wherever the
+/// requirement appears.
+#[test]
+fn a_document_requirement_must_name_a_declared_scheme() {
+    let document = document_with(&[])
+        .with_security(SecurityRequirement::scheme("Bearer"))
+        .with_security(SecurityRequirement::scheme("Typo"));
+    let mut declared = document.clone();
+    declared.components.security_schemes.insert(
+        "Bearer".to_owned(),
+        crate::RefOr::Item(crate::SecurityScheme::bearer(None)),
+    );
+
+    let reported: Vec<(String, SpecError)> = violations(&declared)
+        .into_iter()
+        .map(|v| (v.location, v.error))
+        .collect();
+    assert!(
+        matches!(
+            reported.as_slice(),
+            [(location, SpecError::UnknownSecurityScheme { name })]
+                if location == "#/security/1" && name == "Typo"
+        ),
+        "only the undeclared name is reported, at its own index: {reported:?}"
+    );
+
+    assert_eq!(
+        violations(&document)
+            .iter()
+            .filter(|v| matches!(v.error, SpecError::UnknownSecurityScheme { .. }))
+            .count(),
+        2,
+        "with nothing declared, both names are unknown"
+    );
+}
+
+/// The 3.2 allowance for naming a scheme by URI holds at the root as well.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_three_two_document_requirement_may_name_a_scheme_by_uri() {
+    let unknown_schemes = |name: &str, version: SpecVersion| {
+        Validator::new(version)
+            .validate(&document_with(&[]).with_security(SecurityRequirement::scheme(name)))
+            .into_iter()
+            .filter(|v| matches!(v.error, SpecError::UnknownSecurityScheme { .. }))
+            .count()
+    };
+
+    assert_eq!(unknown_schemes("./foo", SpecVersion::V3_2), 0);
+    assert_eq!(unknown_schemes("./foo", SpecVersion::V3_1), 1);
+    assert_eq!(unknown_schemes("Bearer", SpecVersion::V3_2), 1);
 }
 
 #[test]
@@ -1302,11 +1463,7 @@ const RAISED_ELSEWHERE: &[&str] = &[
     // `crates/kynos/tests/unchecked.rs` cover them there.
     "RouteConflict",
     "InvalidRoutePattern",
-    // A 3.1-only build has no 3.2 construct to raise this with. A 3.2-capable
-    // one does, and carries a ledger case below.
-    #[cfg(not(feature = "openapi32"))]
-    "RequiresV3_2",
-    // The same: `encoding` conflicts with `prefixEncoding` and `itemEncoding`,
+    // `encoding` conflicts with `prefixEncoding` and `itemEncoding`,
     // neither of which a 3.1 build has.
     #[cfg(not(feature = "openapi32"))]
     "ConflictingEncoding",
@@ -1662,11 +1819,16 @@ fn ledger_opacity() -> Vec<(&'static str, SpecVersion, Document)> {
 
     // Validating as 3.1 a document only 3.2 can express. The same walk
     // `Document::emit` refuses on, so the two agree on what 3.1 can carry.
-    #[cfg(feature = "openapi32")]
+    // `$self` is written to the wire and read back, so each build holds it
+    // where it parses it: a 3.2-capable build in `Document::self_uri`, a
+    // 3.1-only one in the root's extensions, where it is just as refused.
     push("RequiresV3_2", {
         let mut document = document_with(&[("/users", get(operation()))]);
-        document.self_uri = Some("https://example.com/orders".to_owned());
         document
+            .extensions
+            .insert("$self", "https://example.com/orders");
+        serde_json::from_value(serde_json::to_value(&document).expect("serializable"))
+            .expect("a description carrying `$self` parses in every build")
     });
 
     // One opaque operation raises three at once: the operation is reported, the

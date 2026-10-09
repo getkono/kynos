@@ -128,6 +128,14 @@ struct DigestLogin;
 #[security(mutual_tls)]
 struct PartnerCertificate;
 
+#[derive(SecurityScheme)]
+#[security(oauth2(client_credentials(token_url = "https://auth.example.com/token")))]
+struct Delegated;
+
+#[derive(SecurityScheme)]
+#[security(openid_connect(url = "https://auth.example.com/.well-known/openid-configuration"))]
+struct Federated;
+
 /// The whole `#[problem(...)]` grammar, so the expansion is exercised by a
 /// compiled use rather than only by compile-fail cases.
 ///
@@ -280,6 +288,21 @@ fn an_http_scheme_supplies_its_challenge() {
         Some("Bearer")
     );
     assert_eq!(<SessionCookie as SecuritySchemeTrait>::challenge(), None);
+}
+
+/// An OAuth 2.0 access token and an OpenID Connect one are bearer tokens read
+/// from `Authorization`, so a 401 refusing either names `Bearer`, as RFC 6750
+/// section 3 says.
+#[test]
+fn a_delegated_scheme_challenges_for_a_bearer_token() {
+    assert_eq!(
+        <Delegated as SecuritySchemeTrait>::challenge(),
+        Some("Bearer")
+    );
+    assert_eq!(
+        <Federated as SecuritySchemeTrait>::challenge(),
+        Some("Bearer")
+    );
 }
 
 // The count that ties the witnesses above to the macros `kynos-macros`

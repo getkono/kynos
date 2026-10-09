@@ -440,10 +440,10 @@ pub enum SpecError {
     #[error("a document must declare at least one of `paths`, `components` or `webhooks`")]
     EmptyDocument,
 
-    /// The document uses constructs that only OpenAPI 3.2 can express.
-    #[error("cannot emit as OpenAPI 3.1: {} 3.2-only construct(s) in use: {}", blockers.len(), blockers.join(", "))]
+    /// The document uses 3.2-only constructs or unrecognised non-`x-` fields 3.1 cannot express.
+    #[error("cannot emit as OpenAPI 3.1: {} 3.2-only or unrecognised field(s) in use: {}", blockers.len(), blockers.join(", "))]
     RequiresV3_2 {
-        /// Locations of the constructs standing in the way.
+        /// Locations of the fields standing in the way.
         blockers: Vec<String>,
     },
 }

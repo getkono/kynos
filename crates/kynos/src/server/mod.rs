@@ -41,12 +41,15 @@ use std::{future::pending, io, net::SocketAddr, num::NonZeroUsize, sync::Arc, ti
 
 use tokio::{
     net::TcpListener,
-    sync::{Semaphore, watch},
+    sync::{Semaphore, mpsc, watch},
     task::{JoinError, JoinSet},
 };
 
 use crate::{
     error::Result,
+    middleware::limits::request_body::{
+        DEFAULT_REQUEST_BODY_IDLE_TIMEOUT, validate_request_body_idle_timeout,
+    },
     router::service::Service,
     server::{
         accept::accept_loop,
@@ -85,6 +88,7 @@ pub struct Server<C> {
     shutdown_timeout: Duration,
     max_connections: NonZeroUsize,
     tcp_keepalive: Option<TcpKeepAlive>,
+    request_body_idle_timeout: Option<Duration>,
 }
 
 impl<C: 'static> Server<C> {
@@ -106,6 +110,7 @@ impl<C: 'static> Server<C> {
             max_connections: NonZeroUsize::new(DEFAULT_CONNECTION_LIMIT)
                 .expect("the default connection limit is non-zero"),
             tcp_keepalive: Some(TcpKeepAlive::default()),
+            request_body_idle_timeout: Some(DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
         }
     }
 
@@ -185,6 +190,30 @@ impl<C: 'static> Server<C> {
         self
     }
 
+    /// Sets how long a request body may go without a frame, or `None` to wait
+    /// indefinitely.
+    ///
+    /// On by default at 30 seconds, the same budget a request head is given.
+    /// The clock runs only while something is reading the body and has nothing
+    /// to read, so a large upload arriving steadily is never cut short, and a
+    /// handler that reads its body late is not charged for the wait.
+    ///
+    /// A body that stalls fails its read, and the request is answered `408
+    /// Request Timeout` in place of whatever the operation made of that
+    /// failure — over HTTP/1 with `Connection: close`, as RFC 9110 §15.5.9
+    /// advises, so the client cannot frame what it sends next as a new request.
+    /// A response the handler had already returned before the stall stands.
+    ///
+    /// The 408 is the server's rather than an operation's, so no operation
+    /// declares it — the same footing as a 431 from the protocol driver.
+    ///
+    /// [`prepare`](Self::prepare) refuses `Some(Duration::ZERO)`.
+    #[must_use]
+    pub fn request_body_idle_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.request_body_idle_timeout = timeout;
+        self
+    }
+
     /// Resolves and binds every configured listener atomically.
     ///
     /// # Errors
@@ -208,6 +237,7 @@ impl<C: 'static> Server<C> {
             self.http2,
         )?;
         validate_tcp_keepalive(self.tcp_keepalive)?;
+        validate_request_body_idle_timeout(self.request_body_idle_timeout)?;
 
         #[cfg(feature = "tls")]
         let mut service = self.service;
@@ -217,7 +247,7 @@ impl<C: 'static> Server<C> {
         #[cfg(feature = "tls")]
         let tls = if let Some(config) = self.tls {
             if config.client_authentication.is_some() {
-                apply_mutual_tls(service.openapi_mut())?;
+                service.openapi_mut(apply_mutual_tls)??;
             }
             Some(config.build().map_err(ServerError::from)?)
         } else {
@@ -273,6 +303,7 @@ impl<C: 'static> Server<C> {
                 tls,
                 shutdown_timeout: self.shutdown_timeout,
                 max_connections: self.max_connections,
+                request_body_idle_timeout: self.request_body_idle_timeout,
             },
             shutdown: self.shutdown,
         })
@@ -307,6 +338,7 @@ pub(in crate::server) struct TransportConfig {
     tls: Option<TlsRuntime>,
     shutdown_timeout: Duration,
     max_connections: NonZeroUsize,
+    request_body_idle_timeout: Option<Duration>,
 }
 
 impl<C: 'static> BoundServer<C> {
@@ -320,6 +352,7 @@ impl<C: 'static> BoundServer<C> {
     pub async fn serve(self) -> Result<()> {
         let (lifecycle_sender, lifecycle_receiver) = watch::channel(Lifecycle::Running);
         let permits = Arc::new(Semaphore::new(self.config.max_connections.get()));
+        let (failure_sender, mut failures) = mpsc::unbounded_channel();
         let mut accept_loops = JoinSet::new();
 
         for (listener, local_addr) in self.listeners.into_iter().zip(self.local_addrs) {
@@ -331,6 +364,7 @@ impl<C: 'static> BoundServer<C> {
                 self.config.clone(),
                 Arc::clone(&permits),
                 lifecycle_receiver.clone(),
+                failure_sender.clone(),
             ));
         }
 
@@ -342,9 +376,9 @@ impl<C: 'static> BoundServer<C> {
 
         let (root_error, force) = tokio::select! {
             biased;
+            Some(error) = failures.recv() => (Some(error), Box::pin(pending()) as ForceFuture),
             completed = accept_loops.join_next() => match completed {
-                Some(Ok(Ok(()))) | None => (None, Box::pin(pending()) as ForceFuture),
-                Some(Ok(Err(error))) => (Some(error), Box::pin(pending()) as ForceFuture),
+                Some(Ok(())) | None => (None, Box::pin(pending()) as ForceFuture),
                 Some(Err(error)) => (Some(accept_loop_failure(&error)), Box::pin(pending()) as ForceFuture),
             },
             signal = &mut shutdown => match signal {

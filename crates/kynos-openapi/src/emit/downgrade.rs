@@ -1,5 +1,7 @@
 //! What stands in the way of emitting a document as an earlier version.
 
+mod unrecognised;
+
 // The whole module is 3.2-only, so the gate sits here rather than on each of
 // its eighteen walkers.
 #[cfg(feature = "openapi32")]
@@ -30,59 +32,75 @@ use crate::model::{
     server::Server,
 };
 
-/// Lists the OpenAPI 3.2-only constructs a document uses.
+/// Lists the constructs in a document that OpenAPI 3.1 cannot express.
 ///
 /// Each entry is a location, suitable for telling the caller what stands in the
-/// way of emitting the document as 3.1. Always empty in a build without the
-/// `openapi32` feature, since the constructs cannot be represented at all.
+/// way of emitting the document as 3.1. Two kinds are listed:
+///
+/// - each 3.2-only field the model types, which only a build with the
+///   `openapi32` feature can hold;
+/// - in every build, each field the model does not recognise, kept in an
+///   object's [`Extensions`](crate::model::extensions::Extensions) because its
+///   name lacks the `x-` prefix. A build without `openapi32` parses every 3.2
+///   field there, and any build parses a `$ref` written as a `content` entry
+///   there, so neither is relabelled as 3.1.
 #[must_use]
 pub fn three_two_only_constructs(document: &Document) -> Vec<String> {
-    #[cfg(not(feature = "openapi32"))]
-    {
-        let _ = document;
-        Vec::new()
-    }
-
+    let mut blockers = Vec::new();
     #[cfg(feature = "openapi32")]
-    {
-        let mut blockers = Vec::new();
+    collect_three_two_fields(document, &mut blockers);
+    unrecognised::collect_unrecognised_fields(document, &mut blockers);
+    blockers
+}
 
-        if document.self_uri.is_some() {
-            blockers.push("#/$self".to_owned());
-        }
-        collect_servers_blockers("#", &document.servers, &mut blockers);
-        for (index, tag) in document.tags.iter().enumerate() {
-            for (field, present) in [
-                ("summary", tag.summary.is_some()),
-                ("parent", tag.parent.is_some()),
-                ("kind", tag.kind.is_some()),
-            ] {
-                if present {
-                    blockers.push(format!("#/tags/{index}/{field}"));
-                }
+/// Lists the fields in a document that the model does not recognise.
+///
+/// Each is a key without the `x-` prefix kept in an object's
+/// [`Extensions`](crate::model::extensions::Extensions), at the location it was
+/// written. These are the blockers [`three_two_only_constructs`] lists in every
+/// build. A build with `openapi32` types every 3.2 field, so there each one is
+/// a field the model holds at neither version, such as a misspelling or an
+/// extension missing its prefix, and emitting at 3.2 instead does not type it.
+#[must_use]
+pub fn unrecognised_fields(document: &Document) -> Vec<String> {
+    let mut found = Vec::new();
+    unrecognised::collect_unrecognised_fields(document, &mut found);
+    found
+}
+
+/// The 3.2-only fields the model types, which a build without `openapi32`
+/// cannot hold.
+#[cfg(feature = "openapi32")]
+fn collect_three_two_fields(document: &Document, blockers: &mut Vec<String>) {
+    if document.self_uri.is_some() {
+        blockers.push("#/$self".to_owned());
+    }
+    collect_servers_blockers("#", &document.servers, blockers);
+    for (index, tag) in document.tags.iter().enumerate() {
+        for (field, present) in [
+            ("summary", tag.summary.is_some()),
+            ("parent", tag.parent.is_some()),
+            ("kind", tag.kind.is_some()),
+        ] {
+            if present {
+                blockers.push(format!("#/tags/{index}/{field}"));
             }
         }
-        collect_components_blockers("#/components", &document.components, &mut blockers);
+    }
+    collect_components_blockers("#/components", &document.components, blockers);
 
-        for (raw, item) in &document.paths.items {
-            collect_path_item_blockers(
-                &format!("#/paths/{}", pointer_token(raw)),
-                item,
-                &mut blockers,
-            );
-        }
+    for (raw, item) in &document.paths.items {
+        collect_path_item_blockers(&format!("#/paths/{}", pointer_token(raw)), item, blockers);
+    }
 
-        // A webhook is a Path Item, and every 3.2 construct one can carry is
-        // one a Path Item under `paths` can carry.
-        for (name, item) in &document.webhooks {
-            collect_path_item_blockers(
-                &format!("#/webhooks/{}", pointer_token(name)),
-                item,
-                &mut blockers,
-            );
-        }
-
-        blockers
+    // A webhook is a Path Item, and every 3.2 construct one can carry is
+    // one a Path Item under `paths` can carry.
+    for (name, item) in &document.webhooks {
+        collect_path_item_blockers(
+            &format!("#/webhooks/{}", pointer_token(name)),
+            item,
+            blockers,
+        );
     }
 }
 

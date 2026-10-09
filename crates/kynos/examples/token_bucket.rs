@@ -65,7 +65,7 @@ use std::{
 
 use kynos::{
     Router,
-    http::forwarded::TrustedProxies,
+    http::forwarded::{ProxyHeader, TrustedProxies},
     middleware::rate_limit::{
         RateLimit,
         decision::{Decision, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
@@ -328,8 +328,9 @@ async fn healthz() -> NoContent {
 async fn main() -> kynos::Result<()> {
     let router = Router::<()>::new()
         // Without this, every client behind the load balancer shares one
-        // bucket -- a per-client limit that is silently a global one.
-        .trusted_proxies(TrustedProxies::hops(1))
+        // bucket -- a per-client limit that is silently a global one. One proxy,
+        // appending to `X-Forwarded-For`.
+        .trusted_proxies(TrustedProxies::hops(ProxyHeader::XForwarded, 1))
         .intercept(
             RateLimit::new(
                 // Ten requests at once, refilling at five a second.

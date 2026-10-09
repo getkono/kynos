@@ -18,7 +18,7 @@
 #
 # WHAT A DELTA INCLUDES, stated because attributing it all to Kynos would be
 # wrong: mounting a codec pulls in the crate that implements it -- `serde_json`
-# for `json`, `serde_urlencoded` for `form`, `multer` for `multipart`, `prost`
+# for `json`, `serde_html_form` for `form`, `multer` for `multipart`, `prost`
 # for `protobuf`, `async-compression` and its gzip, brotli and zstd encoders for
 # `compression` -- and each mounted operation declares a payload type carrying a
 # `Schema` derive and the codec's own serialization derive. Every row below is

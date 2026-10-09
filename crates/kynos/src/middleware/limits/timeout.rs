@@ -94,9 +94,11 @@ impl<T: ProblemType> Responses for TimedOut<T> {
 /// A timeout wraps whatever is beneath it, so it bounds a body read only when
 /// it is the *earlier* `intercept` call, per
 /// [the module's ordering rule](crate::middleware#the-order-a-chain-runs-in).
-/// `BodySize` walks a length-less body frame by frame, and a client that sends
-/// one frame slowly holds that loop open with nothing above it to end the
-/// exchange.
+/// `BodySize` walks a length-less body frame by frame, and a client that trickles
+/// frames holds that loop open. The server's idle timer
+/// (`Server::request_body_idle_timeout`) ends a body that stalls between
+/// frames; a `Timeout` mounted outside bounds only the total a slow but steady
+/// body may take.
 ///
 /// Nothing enforces this. `CompatibleWith` compares sets, and a set has no
 /// positions, so the wrong order compiles and describes itself identically.

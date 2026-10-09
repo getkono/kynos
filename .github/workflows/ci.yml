@@ -269,6 +269,25 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # A job of its own, not a step in `lint` beside the other gates that compile
+  # nothing: it is the one gate that can turn red with no change to this
+  # repository, when the RustSec database learns of an advisory against
+  # something already locked. Under its own name that reads as what it is
+  # rather than as a lint failure, and it blocks: a known vulnerability in the
+  # graph is a reason to stop, not a column to read later. A waiver is an
+  # `ignore` entry in `deny.toml` with its reason, reviewed like any change.
+  deny:
+    name: Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      # No Cargo build here, so no Cargo cache to restore.
+      - name: Set up
+        uses: ./.github/actions/setup
+      - name: Check advisories, licences, bans and sources
+        run: mise run deny:check
+
   package:
     name: Package
     runs-on: ubuntu-latest

@@ -194,16 +194,14 @@ fn media_type(path: &Path) -> &'static str {
 /// every file to hash it would turn a conditional request into the work it
 /// exists to avoid.
 ///
-/// # So an `If-Range` is never honoured here
+/// # So neither `If-Range` nor a listed `If-Match` ever holds here
 ///
-/// RFC 9110 section 13.1.5 evaluates that condition with the *strong*
-/// comparison, under which a weak tag is equivalent to nothing — not even to
-/// itself. A directory therefore answers every `If-Range` request with the
-/// whole file and a 200, which is the correct answer rather than a missing
-/// feature: a client splicing a part into a copy it holds needs to know the
-/// representation has not changed, and a tag this one cannot promise that.
-/// A plain `Range` with no condition is served as a 206 exactly as an embedded
-/// file's is; it is only the precondition that a weak validator cannot pass.
+/// RFC 9110 sections 13.1.5 and 13.1.1 take the *strong* comparison, under
+/// which a weak tag is equivalent to nothing — not even to itself. A directory
+/// therefore answers every `If-Range` with the whole file and a 200, and every
+/// `If-Match` but `*` with a 412: a client splicing a part into its copy needs
+/// to know the representation has not changed, and this tag cannot promise
+/// that. A plain `Range` is served as a 206 exactly as an embedded file's is.
 /// [`assets!`](crate::assets) hashes the contents and gets a strong tag, which
 /// is the mode to reach for when resumption matters.
 fn etag(metadata: &std::fs::Metadata) -> Option<String> {
@@ -266,6 +264,11 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
         cache_control: directory.cache_control,
     };
 
+    // Section 13.2.2 step 1, which a weak tag passes only as `*`: see `etag`.
+    if let Some(refused) = range::precondition_failed(request.headers(), headers.etag.as_deref()) {
+        return refused;
+    }
+
     if let (Some(tag), Some(field)) = (
         headers.etag.as_deref(),
         request.headers().get(header::IF_NONE_MATCH),
@@ -279,10 +282,8 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
     }
 
     // Section 14.2: the `Range` field is evaluated *only if the result in
-    // absence of the Range header field would be a 200*, which the 304 above
-    // has already settled. The validator goes with it and is weak, so section
-    // 13.1.5's condition never holds -- see `etag` for why that is the answer
-    // rather than a gap.
+    // absence of the Range header field would be a 200*, which the 412 and the
+    // 304 above have settled. The weak validator never passes an `If-Range`.
     let range_set = spec::read(request.method(), request.headers(), headers.etag.as_deref());
 
     // `stat` already reported the length, so satisfiability is decided before a

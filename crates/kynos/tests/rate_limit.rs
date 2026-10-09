@@ -16,7 +16,7 @@ use std::{
 use kynos::{
     Router,
     http::StatusCode,
-    http::forwarded::TrustedProxies,
+    http::forwarded::{ProxyHeader, TrustedProxies},
     middleware::rate_limit::{
         RateLimit,
         key::{And, ByClientAddress, ByHeader, ByPeerAddress, ByRoute, Shared},
@@ -483,7 +483,7 @@ async fn a_store_that_cannot_answer_refuses_where_that_was_selected() {
 async fn keying_by_peer_address_puts_every_proxied_client_in_one_bucket() {
     let service = Router::<()>::new()
         .mount(kynos::routes![counted, other])
-        .trusted_proxies(TrustedProxies::hops(1))
+        .trusted_proxies(TrustedProxies::hops(ProxyHeader::Forwarded, 1))
         .intercept(RateLimit::new(
             Quotas::new(ByPeerAddress, Counters::default()).quota(Quota::new(
                 "fixed",
@@ -520,7 +520,7 @@ async fn keying_by_peer_address_puts_every_proxied_client_in_one_bucket() {
 async fn keying_by_client_address_separates_two_clients_behind_one_proxy() {
     let service = Router::<()>::new()
         .mount(kynos::routes![counted, other])
-        .trusted_proxies(TrustedProxies::hops(1))
+        .trusted_proxies(TrustedProxies::hops(ProxyHeader::Forwarded, 1))
         .intercept(RateLimit::new(
             Quotas::new(ByClientAddress, Counters::default()).quota(Quota::new(
                 "fixed",

@@ -1,5 +1,5 @@
-use super::{ANY, matches, matches_strongly, split, strong_match, weak_match};
-use crate::http::HeaderValue;
+use super::{ANY, if_match, matches, matches_strongly, split, strong_match, weak_match};
+use crate::http::{HeaderMap, HeaderValue, header};
 
 /// A list assembled from members, and the members it was assembled from.
 ///
@@ -182,4 +182,33 @@ fn if_match_any_holds_whatever_the_representation_is_tagged() {
     for current in [Some(r#""r3""#), Some(r#"W/"r3""#), None] {
         assert!(matches_strongly(&field, current), "{current:?}");
     }
+}
+
+/// `If-Match` is one list across its field lines: a tag on the second line
+/// holds, two lines naming neither the current tag fail, and an absent field
+/// is told apart from a failed one without the tag being asked for.
+#[test]
+fn if_match_is_one_list_across_its_field_lines() {
+    let fields = |lines: &[&'static str]| {
+        let mut fields = HeaderMap::new();
+        for line in lines {
+            fields.append(header::IF_MATCH, HeaderValue::from_static(line));
+        }
+        fields
+    };
+
+    assert_eq!(
+        if_match(&fields(&[r#""old""#, r#""t""#]), || Some(r#""t""#)),
+        Some(true)
+    );
+    assert_eq!(
+        if_match(&fields(&[r#""old""#, r#""older""#]), || Some(r#""t""#)),
+        Some(false)
+    );
+    assert_eq!(
+        if_match(&fields(&[]), || -> Option<&str> {
+            panic!("no If-Match, so no tag to compare")
+        }),
+        None
+    );
 }

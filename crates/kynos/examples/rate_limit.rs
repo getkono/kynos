@@ -46,7 +46,7 @@ use std::{net::Ipv4Addr, time::Duration};
 use kynos::{
     Router,
     error::problem::ProblemType,
-    http::forwarded::TrustedProxies,
+    http::forwarded::{ProxyHeader, TrustedProxies},
     middleware::rate_limit::{
         RateLimit,
         key::{And, ByClientAddress, ByRoute},
@@ -143,10 +143,12 @@ async fn main() -> kynos::Result<()> {
         // shares one bucket -- a per-IP limit that is silently a global one.
         //
         // One hop, because this deployment is assumed to sit behind exactly one
-        // proxy. Trusting more than are really there is how a client gets to
-        // choose the bucket it counts against: it writes its own `Forwarded`,
-        // and the extra hop of trust reaches the element it wrote.
-        .trusted_proxies(TrustedProxies::hops(1))
+        // proxy, appending to `X-Forwarded-For`. Trusting more than are really
+        // there is how a client gets to choose the bucket it counts against: it
+        // writes its own `X-Forwarded-For`, and the extra hop of trust reaches
+        // the entry it wrote. Naming the wrong field does the same, since the
+        // proxy passes the other one through as the client sent it.
+        .trusted_proxies(TrustedProxies::hops(ProxyHeader::XForwarded, 1))
         // Per caller, per operation, with two windows. The key is what makes
         // "per endpoint" mean the `paths` key rather than the request path, so
         // a client cannot mint buckets by inventing URLs.

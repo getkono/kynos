@@ -31,7 +31,7 @@
 //!
 //! **A codec's delta is its code, its dependency's code, and its payload
 //! type's.** Mounting `Json` pulls `serde_json`; `Form` pulls
-//! `serde_urlencoded`; `MultipartForm` pulls `multer`; `Protobuf` pulls
+//! `serde_html_form`; `MultipartForm` pulls `multer`; `Protobuf` pulls
 //! `prost`; `Compression` pulls `async-compression` and its three encoders. A
 //! payload type is not free either: it carries a `Schema` derive and the
 //! codec's own serialization derive, and a mounted operation that named no type

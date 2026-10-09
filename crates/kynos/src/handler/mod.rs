@@ -62,7 +62,9 @@ pub enum Guarded {}
             for the last one",
     note = "a guard — `Auth`, `MaybeAuth` or `Scoped` — is the first argument, and there is at \
             most one: combine schemes with `AnyOf` or `AllOf` instead",
-    note = "the return type must implement `IntoResponse` and `Responses`",
+    note = "the return type must implement `IntoResponse` and `Responses`, and a codec such as \
+            `Json<T>` implements `Responses` only when `T` implements `Schema`: \
+            `#[derive(kynos::Schema)]` on `T` is the usual fix",
     note = "the handler's future must be `Send`: nothing that is not — an `Rc`, a `RefCell` \
             borrow, a lock guard — may be held across an `.await`"
 )]
