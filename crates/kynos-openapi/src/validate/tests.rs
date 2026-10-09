@@ -1535,6 +1535,54 @@ fn an_operation_adding_to_a_conflicting_path_item_is_reported_for_its_own_part()
     );
 }
 
+/// A querystring parameter that arrives by `$ref` is one, for both rules that
+/// compare entries: beside another querystring and beside a query parameter.
+#[cfg(feature = "openapi32")]
+#[test]
+fn querystring_rules_resolve_a_ref_d_parameter() {
+    use crate::model::reference::{Ref, RefOr};
+
+    let mut item = PathItem::new()
+        .with_operation(
+            Method::Get,
+            Operation::new("listUsers")
+                .with_parameter(Parameter::query("q", Schema::of_type(SchemaType::String)))
+                .with_responses(ok_responses()),
+        )
+        .with_operation(
+            Method::Post,
+            Operation::new("searchUsers")
+                .with_parameter(querystring("sort"))
+                .with_responses(ok_responses()),
+        );
+    item.parameters.push(RefOr::Ref(Ref::parameter("Filter")));
+    let document = document_with_component_parameter(
+        &[("/users", item)],
+        "Filter",
+        RefOr::Item(querystring("filter")),
+    );
+
+    assert_eq!(
+        querystring_violations(&document),
+        vec![
+            (
+                "#/paths/~1users/get".to_owned(),
+                SpecError::QueryBesideQuerystring {
+                    query: "q".to_owned(),
+                    querystring: "filter".to_owned(),
+                }
+            ),
+            (
+                "#/paths/~1users/post".to_owned(),
+                SpecError::DuplicateQuerystring {
+                    first: "filter".to_owned(),
+                    second: "sort".to_owned(),
+                }
+            ),
+        ]
+    );
+}
+
 // --- The variant ledger ---------------------------------------------------
 
 /// A variant's name, as an exhaustive match.
