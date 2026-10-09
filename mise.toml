@@ -5,12 +5,8 @@ config_roots = ["."]
 lockfile = true
 
 [tools]
-# `rust-src` is not a convenience here. A `const` assertion that fails inside
-# `kynos` surfaces with its primary span in `core`'s own `panic.rs`; rustc
-# prints that line's source when it can read it and degrades to a bare `note:`
-# when it cannot. The `ui` snapshots record one of those two renderings, so a
-# machine without the component fails the suite on the diagnostic's shape
-# rather than on anything the code did.
+# `rust-src` changes how rustc renders a failed `const` assertion, which the
+# `ui` snapshots record (docs/testing.md#snapshots).
 rust = { version = "1.97.1", profile = "minimal", components = [
   "clippy",
   "llvm-tools-preview",
@@ -19,8 +15,7 @@ rust = { version = "1.97.1", profile = "minimal", components = [
   "rustfmt",
 ] }
 hk = "1.53.0"
-# Dev tools come from upstream release binaries, not `cargo:` (which compiles
-# from source). Building convco alone cost over four minutes on every CI job.
+# Upstream release binaries rather than `cargo:`, which compiles from source.
 "github:taiki-e/cargo-llvm-cov" = "0.8.7"
 "github:taiki-e/cargo-hack" = "0.6.36"
 # nextest tags releases `cargo-nextest-<version>`, so the tag is the version.
@@ -39,79 +34,21 @@ run = "cargo fmt --all -- --check"
 
 [tasks.lint]
 description = "Lint all workspace targets with every feature enabled"
-# `--all-features` because without it Clippy never compiles an optional
-# feature's module, so it never reports one either.
+# Without `--all-features` Clippy never compiles an optional module.
 run = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
 
 [tasks."lint:baseline"]
 description = "Lint all workspace targets at baseline features"
-# The reason `test:baseline` exists: `--all-features` compiles every
-# `#[cfg(feature = ...)]` arm and no `#[cfg(not(feature = ...))]` one, so
-# `lint` alone has the opposite blind spot.
-#
+# Lints the `#[cfg(not(feature = ...))]` arms `lint` never compiles.
 # `kynos-profile` is excluded for `test:baseline`'s reason.
 run = "cargo clippy --workspace --exclude kynos-profile --all-targets -- -D warnings"
 
 [tasks."lint:codecs"]
 description = "Lint every kynos target at each codec's own feature set"
-# The six feature sets nothing else in this file builds a *test target* at.
-#
-# `features:check` passes `--no-dev-deps`, so it never builds one at all.
-# `features:targets` is `--each-feature --features openapi31`, which is
-# `openapi31` and exactly one other flag per run -- `macros` and a codec are
-# never in the same build, and with `default` excluded there is no
-# default-features run in it either. `lint`, `test`, `coverage:ci` and
-# `test:doc` pass `--all-features`, so every codec is on at once.
-# `lint:baseline` and `test:baseline` build the default set, where `json` is on,
-# the other four codecs are off, and `server`, `http1`, `http2` and `trace` are
-# on beside them. So `openapi31 + macros + F` for `F` in `form`, `multipart`,
-# `protobuf` and `compression` is compiled by nothing, and the two sets those
-# four are read against -- `macros` alone and `macros + json` -- are compiled in
-# that shape by nothing either.
-#
-# `crates/kynos/tests/alloc_codecs.rs` is the target these sets decide: five
-# `#[cfg]`-gated modules, one codec apiece, over a shared `harness` gated on
-# their disjunction, plus narrower gates inside it. Every one of those
-# expressions has a set it is the only thing deciding.
-# `crates/kynos/cost/codec.rs`, the codec cost fixture, is an example measured
-# at these same six sets, so `--all-targets` reaches it here too.
-#
-# What these sets guard is narrower than "a misspelled feature". A name absent
-# from the manifest is already caught wherever the file compiles at all, because
-# `unexpected_cfgs` validates it against the whole feature list rather than
-# against which features happen to be on. What only these sets can see is a gate
-# expression's *consequences*: an item dead once one codec is off, an import
-# with no user, an item hoisted into a wider gate than its users have. Those are
-# compile-time findings rather than failing assertions, which is why this is a
-# Clippy run rather than a test run.
-#
-# A task of its own rather than more invocations inside `features:targets`. That
-# task is one `cargo hack` command whose whole shape is "one feature at a time
-# against the baseline", which is what its name says and what its comment argues
-# for; "`macros` *and* a codec" is the opposite shape, and cargo-hack expresses
-# it only as a powerset -- which is `features:check`'s job, and which with
-# `--all-targets` on would cost far more than six builds. So it sits beside
-# `lint:baseline` instead, as the third named feature set Clippy is run over.
-#
-# `-p kynos` rather than `--workspace`: `macros` and the five codecs are all
-# `kynos`'s own flags, and neither other member declares one.
-#
-# Against the 3.1 baseline alone, for `features:targets`' reason: the 3.2 side
-# of every one of these gates is already built by `lint` and `test`, both of
-# which pass `--all-features`. Adding it here would double six builds to see
-# what two already see.
-#
-# The sets are written out rather than derived from a loop over codec names. Six
-# lines that can be grepped for, copied into a shell and run one at a time are
-# what someone reading a failure wants; the two-line version buys nothing and
-# hides which set is which.
-#
-# Incremental compilation stays on, where `features:check` and
-# `features:targets` turn it off. Their argument is that a session written for a
-# combination nothing will name again is a session nothing will read. This task
-# names the same six sets on every run and is in `hooks:pre-push`, so those
-# sessions are read back on the next push -- and six of them is not the scale
-# that argument is about.
+# `openapi31 + macros (+ codec)`: the only builds that compile one codec's test
+# and example gates alone (docs/testing.md#cross-cutting). Clippy, since what
+# they catch is a dead or mis-gated item. Incremental stays on: the same six
+# sets recur on every push. Written out, not looped, so each can be rerun alone.
 run = '''
 set -eu
 
@@ -138,24 +75,9 @@ run = "cargo nextest run --workspace --all-targets --all-features"
 
 [tasks."test:baseline"]
 description = "Test all workspace targets at baseline features"
-# Every other test task passes `--all-features`, and `features:check` passes
-# `--no-dev-deps`, so this is the only task that *builds* a test target with an
-# optional feature off -- against every `#[cfg]` site in the workspace. A gate
-# no test build exercises is a gate whose off-state is unknown.
-#
-# Baseline is the default feature set: `kynos-openapi`'s default is `openapi31`
-# and `kynos`'s selects it, so `--no-default-features --features openapi31`
-# would name the same build.
-#
-# The `ui` suite is excluded for the reason `ui:check` exists: trybuild
-# snapshots record the diagnostics of an `--all-features` build, and a trait
-# that is absent here rewords them.
-#
-# `kynos-profile` is excluded because it enables `kynos/compression` for its
-# compression sweep, and Cargo unifies a feature across every package a build
-# selects: with it in, `kynos` is never tested with `compression` off, and the
-# `cfg(not(feature = "compression"))` arms this task exists for go unbuilt. The
-# harness has no feature arms of its own; `test` runs its tests.
+# The only task that builds test targets with optional features off
+# (docs/testing.md#cross-cutting). `ui` snapshots record an `--all-features`
+# build. `kynos-profile` enables `kynos/compression`, which Cargo would unify on.
 run = "cargo nextest run --workspace --exclude kynos-profile --all-targets -E 'not binary(ui)'"
 
 [tasks."test:doc"]
@@ -164,32 +86,9 @@ run = "cargo test --workspace --all-features --doc"
 
 [tasks."test:arbitrary-precision"]
 description = "Test kynos-openapi with serde_json's arbitrary_precision forced on"
-# Cargo unifies features across the whole build graph, so any dependency asking
-# for `serde_json/arbitrary_precision` turns it on for this crate too, and with
-# it every `serde_json::Number` serializes as a one-field struct that only
-# serde_json's own serializer reads back as a number, and reaches a buffering
-# deserializer, such as an untagged enum's, as a map. No manifest here asks for
-# it, so without this task no build the repository runs has the switch on and
-# neither `to_yaml`'s handling of it nor the model's parsing is ever observed.
-#
-# `serde_json/arbitrary_precision` is `--features`' dependency spelling: a
-# feature of `kynos-openapi`'s `serde_json` dependency, turned on for this one
-# invocation. Not a dev-dependency, which would unify into every
-# `--workspace --all-targets` build and leave the default number path untested.
-#
-# The whole crate runs except two tests, excluded by exact name: the oracles
-# holding `to_yaml` to what `serde_yaml_ng` writes for the model. With the
-# switch on, the model's own YAML carries each number as that one-field struct
-# and `to_yaml` writes a number, so the two sides differ by design, as both
-# tests' doc comments say. Every other test holds in both graphs. A rename of
-# either oracle makes it run here and fail, rather than widening the exclusion.
-#
-# `--no-tests=fail` so that a filter matching nothing turns this task red rather
-# than letting it pass over nothing.
-#
-# Incremental compilation is off for the reason `features:check` gives: no other
-# invocation names this feature set, so a session written here is one nothing
-# else reads.
+# A downstream graph may unify `serde_json/arbitrary_precision` on; forced per
+# invocation (docs/testing.md#cross-cutting). The two excluded `to_yaml` oracles
+# differ from `serde_yaml_ng` by design under it, and are named exactly.
 env = { CARGO_INCREMENTAL = "0" }
 run = '''
 cargo nextest run -p kynos-openapi \
@@ -199,36 +98,11 @@ cargo nextest run -p kynos-openapi \
 
 [tasks."features:check"]
 description = "Lint every reachable feature combination"
-# Kynos gates the OpenAPI 3.2 object model, every optional codec and the escape
-# hatches behind features. Without a powerset check a combination nobody builds
-# locally breaks silently.
-# Clippy with warnings denied rather than `cargo check`, which denied none: this
-# is the only gate that compiles a *partial* combination, so it is the only one
-# that can see a warning which needs one feature on and another off. `lint`
-# structurally cannot -- `assets-fs` implies `unchecked`, so `--all-features`
-# always carries the caller that kept `record_unchecked_route` from being dead.
-# Cargo passes trailing arguments to the selected package only, so the denial
-# reaches every member and no dependency; cargo-hack makes each member the
-# selected package in turn.
-# `--at-least-one-of` encodes the baseline: a build with neither spec version
-# is rejected by a `compile_error!`, and that rejection is correct rather than
-# a failure the matrix should report.
-# `time` and `decimal` are excluded for the same reason as `server`: each is an
-# umbrella that does not compile alone. Their backends imply them, so excluding
-# them costs no coverage -- every combination that can reach the shapes still
-# does.
-# Incremental compilation is off here, and it costs this task nothing. rustc
-# keys an incremental session on the crate's `-C metadata`, and a feature set
-# is part of that, so every combination cargo-hack walks gets a session
-# directory of its own, and no *other* invocation in the same run ever names
-# it again. Across runs it is reused: a rerun of this task after an edit names
-# the same combinations, so what this trades away is that rerun's incremental
-# replay, and what it buys is disk: rustc's garbage collection prunes stale
-# entries *within* a session, not sessions no build will name again, so
-# nothing else reclaims them.
-# Where a `RUSTC_WRAPPER` is configured it is faster too, because such a cache
-# cannot store an incremental compilation: incremental would forfeit a cache
-# that hits to buy one that never does.
+# Clippy rather than `cargo check`: the only gate compiling partial feature
+# combinations, so the only one that sees a warning needing one feature on and
+# another off. `server`, `tls`, `time` and `decimal` do not compile alone; what
+# implies them covers them. Incremental is off: each combination's session is
+# never read again and nothing reclaims it.
 env = { CARGO_INCREMENTAL = "0" }
 run = '''
 cargo hack clippy --workspace --feature-powerset --depth 2 --no-dev-deps \
@@ -278,34 +152,9 @@ grep -F 'the `decimal` feature carries no types of its own' \
 
 [tasks."features:targets"]
 description = "Compile every target, not only the library, at each feature"
-# `features:check` passes `--no-dev-deps`, so it never builds a test or an
-# example -- which means no `#[cfg(test)]` block is ever compiled at a partial
-# feature set, and neither is any `required-features` example. The only feature
-# sets test code is otherwise built at are *default* (`test:baseline`) and *all*
-# (`test`), so a unit test naming a crate that only some other feature pulls in
-# compiles in both and in nothing else. That is exactly how a `futures_core` use
-# under the `multipart` gate survived: `futures-core` reaches the tree only
-# through `openapi32`.
-#
-# One feature at a time against the 3.1 baseline, rather than
-# `features:check`'s powerset. Each run here builds every target rather than
-# only the library, so a second dimension would cost a great deal; and the gap
-# being closed is a single feature's own test code, which is what
-# `openapi31 + F` exercises. The 3.2 side of each gate is already built by
-# `test` and `lint`, both of which pass `--all-features`.
-#
-# `openapi31` is pinned with `--features` rather than requested with
-# `--at-least-one-of`, which cargo-hack accepts only alongside a powerset.
-#
-# The exclusions are `features:check`'s, for its reasons: `server` and `tls`
-# need an HTTP protocol, `time` and `decimal` are umbrellas that do not compile
-# alone, and `full` would pull in everything and check nothing partial.
-# `kynos-profile` is excluded because it declares no feature, so there is
-# nothing to vary -- and `--features openapi31` names a flag it does not have,
-# which Cargo refuses outright.
-# Incremental compilation is off for the reason `features:check` gives: this
-# task never builds the same feature set twice either, so a session written
-# here is one nothing will read.
+# `features:check` passes `--no-dev-deps`, so this is what compiles tests and
+# examples at a partial feature set: `openapi31` plus one feature at a time.
+# Exclusions and incremental as `features:check`; `kynos-profile` has no features.
 env = { CARGO_INCREMENTAL = "0" }
 run = '''
 cargo hack check --workspace --exclude kynos-profile --each-feature --all-targets \
@@ -315,168 +164,48 @@ cargo hack check --workspace --exclude kynos-profile --each-feature --all-target
 
 [tasks."cost:features"]
 description = "Measure what each feature costs a linked artifact and monomorphized IR"
-# The two sweep kinds `docs/performance.md` files as tasks rather than targets:
-# `.text` of a fixed fixture, and `cargo llvm-lines` over the same one. Plus the
-# codec sweep below, which is the binary kind over the *other* fixture -- the one
-# that mounts a codec. It rides here rather than in a job of its own because it
-# is six more release builds on a sweep that already does fifty, and because a
-# reader comparing "what `json` costs a program that ignores it" against "what it
-# costs a program that mounts it" wants both numbers in one report.
+# `.text` at `--release`, the shipped artifact; IR at the dev profile, since
+# fat LTO deletes the monomorphizations `llvm-lines` counts. The script drives
+# the loop because every build overwrites the fixture. Runs in `cost.yml`, not
+# per pull request (docs/releasing.md).
 #
-# The two halves build at different profiles on purpose. `.text` is measured
-# at `--release`, which is the artifact that ships; the IR is counted at the
-# dev profile, because `llvm-lines` reads pre-link IR and a fat-LTO build
-# deletes the monomorphizations the codegen delta exists to count.
-#
-# `cargo hack` is deliberately *not* the driver, though `features:targets` is
-# the shape the feature list copies. cargo-hack has no hook between builds, and
-# every build overwrites `target/release/examples/cost_fixture`, so a sweep it
-# drove could not attribute an artifact to the feature that produced it -- it
-# would measure the last build once per point. Driving the loop in the script
-# also means nothing in this task rewrites a member manifest, which is the
-# hazard `check` records about `features:check` and the reason this must never
-# share that job.
-#
-# A script rather than a shell pipeline, for `containment:check`'s reason: this
-# parses two tools' output, diffs two committed tables and emits Markdown, and
-# every one of those is where a pipeline gets it quietly wrong.
-#
-# Not in `check` and not in `hooks:pre-push`, and not in a pull request's CI
-# either: `cost.yml` runs it after each merge, and on a release pull request
-# with `KYNOS_COST=check` as the gate `docs/releasing.md` describes.
-# `semver:check` set the precedent by being absent from the same list. What is
-# in `check` is `cost:test`, which holds the script's parsers and its report
-# and builds nothing.
-#
-# `cargo-llvm-lines` is pinned *here* rather than in `[tools]` because upstream
-# publishes no release binaries -- every `dtolnay/cargo-llvm-lines` release has
-# zero assets -- so the only backend available is `cargo:`, which compiles from
-# source. The comment on `[tools]` records what that costs: convco alone was
-# over four minutes on every CI job. A task-scoped pin is installed and
-# activated for the tasks that measure codegen and for no other.
-#
-# No task-scoped pin has a `mise.lock` entry -- not this one, `python`,
-# `gungraun` or `cargo-mutants` -- and that is what mise does rather than
-# something missed. `mise lock` reads `[tools]` alone: asked for any of the
-# four by name it reports "No tools configured to lock" (mise 2026.7.11), and
-# running a task installs its pins and leaves the lockfile byte-identical. So
-# the version on a task's `tools` line is the whole of its pin, and a reader
-# comparing this file against `mise.lock` is not looking at a gap. The seven
-# `[tools]` entries are the locked ones, each resolving to a downloaded file a
-# checksum can pin.
-#
-# `python` is pinned here, and on every other task that runs a file from
-# `scripts/`, because until this pin there was no such thing as the interpreter
-# those files run under: `python3` resolved to whatever the machine or the
-# runner image happened to ship. `containment.py` declares the floor --
-# `PYTHON_FLOOR`, 3.11, which is what the `tomllib` import at the head of it
-# already required -- and checks the scripts against it. This is the other half
-# of that number, and neither half closes the gap alone: the check states what
-# is allowed and cannot make anybody run the version it names, while a pin makes
-# what runs deterministic and states nothing, so a contributor on a newer
-# interpreter raises the floor with nothing reporting it. Raising it deliberately
-# means moving `PYTHON_FLOOR` and every line repeating it below in one commit.
-#
-# Task-scoped rather than `[tools]`, and for the cost the entry above is
-# task-scoped over rather than for the `cargo:` backend's reason. Only the CI
-# jobs that run a task from `scripts/` need it, in `ci.yml` and `cost.yml`.
-# Another, `publish:check`, pipes `cargo metadata` through a `python3 -c` one-liner,
-# which is not a file in `scripts/` and is held to no floor. A `[tools]` entry
-# would download and activate a Python for every job that runs none at all.
-#
-# The patch version is pinned like every other tool in this file. The floor is
-# the minor; the patch is what keeps two machines on the same interpreter.
+# Task-scoped pins stay out of every other job, and `mise lock` does not lock
+# them. `cargo-llvm-lines` has no release binaries. `python` matches
+# `PYTHON_FLOOR` in `scripts/containment.py`; raise both in one commit.
 tools = { "cargo:cargo-llvm-lines" = "0.4.48", python = "3.11.16" }
 run = "python3 scripts/cost_features.py"
 
 [tasks."cost:codegen"]
 description = "The codegen half of the sweep alone"
-# Separable because it is the half that needs a tool, and because it is the
-# half whose profile is the surprising one -- running it alone is how a reader
-# checks that claim without paying for twenty-five fat-LTO release builds.
-#
-# The `cargo-llvm-lines` and `python` pins are task-scoped for the reasons
-# given on `cost:features` above.
 tools = { "cargo:cargo-llvm-lines" = "0.4.48", python = "3.11.16" }
 run = "python3 scripts/cost_features.py --kind codegen"
 
 [tasks."cost:codecs"]
 description = "The codec half of the sweep alone: what mounting each codec costs"
-# Separable for `cost:codegen`'s reason, and cheaper than it: six release builds
-# rather than twenty-five, which is what makes re-reading this one question
-# affordable after a change to an extractor or a response codec.
-#
-# No `cargo-llvm-lines` pin, deliberately. This half weighs `.text` and never
-# counts IR, so pinning it would compile a tool from source for a task that
-# cannot use it -- the trade `cost:test`'s comment makes for the same reason.
-#
-# Not in `check` and not in `hooks:pre-push`, for `cost:features`' reason: it
-# compiles, and at `--release` with fat LTO. `check` runs `cost:test`, which
-# holds this script's parsers, its table reader and its ranking and builds
-# nothing.
-#
-# The `python` pin is task-scoped for the reason given on `cost:features`
-# above.
+# Weighs `.text` only, so it needs no `cargo-llvm-lines`.
 tools = { python = "3.11.16" }
 run = "python3 scripts/cost_features.py --kind codec"
 
 [tasks."cost:record"]
 description = "Record the measured deltas as the committed baseline"
-# The `fixtures:generate` idiom: the sweep compares when told to and writes when
-# told to, so a change in what a feature costs reaches review as a diff of the
-# recorded deltas rather than as a number someone retyped. Recording is a
-# deliberate act, per `docs/nfr.md#thresholds`, and one every release needs:
-# `KYNOS_COST=check` refuses a release pull request until the baselines are
-# what it measures, so this is how that gate is cleared.
-#
-# Writes all three baselines under `crates/kynos/cost/`, because it runs the
-# whole sweep. Recording one alone is `--kind` plus `KYNOS_COST=overwrite`.
-#
-# The `cargo-llvm-lines` and `python` pins are task-scoped for the reasons
-# given on `cost:features` above.
+# Writes all three baselines under `crates/kynos/cost/`, which a release pull
+# request must match (docs/releasing.md). One alone: `--kind` with
+# `KYNOS_COST=overwrite`.
 tools = { "cargo:cargo-llvm-lines" = "0.4.48", python = "3.11.16" }
 env = { KYNOS_COST = "overwrite" }
 run = "python3 scripts/cost_features.py"
 
 [tasks."cost:test"]
 description = "Test the cost sweep's parsers and its report"
-# The half of the sweep that compiles nothing, which is why it is in `check`
-# while `cost:features` is not. Every number the sweep reports passes through
-# two regular expressions, a TSV reader and a ranking, and a regression in any
-# of them is silent: the sweep still exits zero and still prints a table, with
-# the wrong function attributed or the wrong quantity compared.
-# `DISAMBIGUATOR` regressed exactly that way once already, in `1cf9bd6`.
-#
-# No `cargo-llvm-lines` pin, deliberately: the tests read captured output of
-# it rather than running it. Adding the pin would make a check that compiles
-# nothing compile a tool from source.
-#
-# `unittest` from the standard library and no test runner. There is no
-# `pytest`, no `tox` and no `requirements.txt` in this repository, and taking
-# a dependency to hold a few pure functions is the worse trade.
-#
-# `-B` so a run writes no bytecode into the tree it tests. `.gitignore` covers
-# the imports no task controls, and this keeps the task from being one of them.
-# The test file sets `sys.dont_write_bytecode` too, for a direct `python3` run.
-#
-# The `python` pin is task-scoped for the reason given on `cost:features`
-# above.
+# The sweep's parsers and report, which regress silently; compiles nothing, so
+# it is in `check`. `-B` writes no bytecode into the tree.
 tools = { python = "3.11.16" }
 run = "python3 -B scripts/cost_features_test.py"
 
 [tasks."profile:valgrind"]
 description = "Build the Valgrind the request-path profile runs under"
-# From source into a user prefix, because Valgrind is a system package and
-# neither mise nor a release binary provides it -- and the development machine
-# this was written on is an immutable image with no root. CI installs it with
-# `gungraun/setup-gungraun` instead, and that is the run of record.
-#
-# The digest pins the tarball, trust-on-first-use: sourceware publishes a
-# signature rather than a digest, and this line is the reviewed copy of what
-# was downloaded when the version was chosen.
-#
-# Idempotent, so `profile:requests` can name it as a dependency without
-# rebuilding anything a second time.
+# From source into a user prefix, needing no root; CI installs it with
+# `gungraun/setup-gungraun`. The digest is the reviewed tarball's. Idempotent.
 run = '''
 set -eu
 prefix="${KYNOS_VALGRIND:-$HOME/.local/share/kynos-valgrind}"
@@ -485,9 +214,7 @@ digest=5d589152eb8071c02feab8ce6ab719e431a1fbc3e2b1700f5432632a8b9264dc
 if "$prefix/bin/valgrind" --version 2>/dev/null | grep -qx "valgrind-$version"; then
   exit 0
 fi
-# A Valgrind already on `PATH` is used only if it is this version, which is
-# how CI's installation is picked up. Another version would record a different
-# host into the baseline, and which CPU features Valgrind reports moves with it.
+# Only this version, since another records a different host into the baseline.
 if [ "$(valgrind --version 2>/dev/null)" = "valgrind-$version" ]; then
   exit 0
 fi
@@ -505,39 +232,16 @@ make install >/dev/null
 
 [tasks."profile:requests"]
 description = "Count instructions and heap blocks over the in-process request path"
-# The instruction-count kind in `docs/performance.md`: gungraun runs
-# `crates/kynos-profile/benches/requests.rs` under Callgrind and DHAT, and
-# `scripts/profile_report.py` splits what Callgrind counted by object, holds
-# DHAT to `tests/alloc.rs`, and compares against
-# `crates/kynos-profile/requests.tsv`. The script's docstring is where the split
-# is argued: glibc's allocator costs a different number of instructions on
-# every run, and nothing else does.
-#
-# The script runs the benchmark as well as reading it (`--run`), so that
-# refusing an ambient `RUSTFLAGS`, clearing the previous run's output and
-# putting `profile:valgrind`'s prefix first on `PATH` are written once, for this task
-# and `profile:record` alike.
-#
-# `gungraun-runner` must be the version the library is, exactly, which is why
-# both are pinned to one number: `[workspace.dependencies]` pins the library
-# with `=`, and this pins the runner. Task-scoped for `cost:features`' reason: a
-# `[tools]` entry would download it into every CI job, and one job uses it.
-#
-# Not in `check` and not in `hooks:pre-push`: it needs Valgrind, which
-# `profile:valgrind` builds and nothing else installs. `profile:test` holds
-# the report's parsers and is in `check`.
+# Callgrind and DHAT over `crates/kynos-profile/benches/requests.rs`, compared
+# against `requests.tsv` by `scripts/profile_report.py` (docs/performance.md).
+# The runner must equal the `=`-pinned `gungraun` library version.
 tools = { "github:gungraun/gungraun" = "0.20.0", python = "3.11.16" }
 depends = ["profile:valgrind"]
 run = "python3 scripts/profile_report.py --run"
 
 [tasks."profile:record"]
 description = "Record the request-path profile as the committed baseline"
-# The `cost:record` idiom: the report compares unless told to write, so a change
-# in what a request costs reaches review as a diff of
-# `crates/kynos-profile/requests.tsv` rather than as a number retyped by hand.
-# Runs the whole profile first, because a baseline written from a previous
-# run's files records a build that is not this one. The pins are
-# `profile:requests`', for its reasons.
+# Runs the whole profile first, so the baseline records this build.
 tools = { "github:gungraun/gungraun" = "0.20.0", python = "3.11.16" }
 depends = ["profile:valgrind"]
 env = { KYNOS_PROFILE = "overwrite" }
@@ -545,28 +249,18 @@ run = "python3 scripts/profile_report.py --run"
 
 [tasks."profile:test"]
 description = "Test the request-path profile's parsers and its report"
-# `cost:test`'s shape and its reasons: the half of the profile that runs
-# nothing, and where a silent regression would live -- a Callgrind line read as
-# a cost that is a call's inclusive cost, or an object attributed wrongly, still
-# prints a table and exits zero. `-B` and the pin for the reasons given there.
+# As `cost:test`, for the profile report.
 tools = { python = "3.11.16" }
 run = "python3 -B scripts/profile_report_test.py"
 
 [tasks."fixtures:generate"]
 description = "Regenerate the conformance-fixture corpus"
-# The `trybuild` idiom: the test writes when told to and compares otherwise, so
-# a change to what Kynos emits reaches review as a diff of the documents a
-# downstream generator is built against.
 env = { KYNOS_FIXTURES = "overwrite" }
 run = "cargo nextest run -p kynos --test conformance_corpus --all-features"
 
 [tasks."references:verify"]
 description = "Verify the vendored specification texts are unmodified"
-# Three checks rather than one. `sha256sum -c` catches a file edited in place,
-# but not a file added and left out of the manifest, and not a digest quoted in
-# the README that no longer names anything. The prose is what a reader consults
-# and `SHA256SUMS` is what CI checks, so the third check is what stops the two
-# becoming two statements of one fact that drift.
+# An edited file, an unlisted file, and a README digest naming no file.
 run = '''
 set -eu
 cd references
@@ -599,60 +293,21 @@ done <"$quoted"
 
 [tasks."containment:check"]
 description = "Verify every crate is named only where its owner allows"
-# `architecture.md` says twice that the count is the check -- once for the
-# runtime allowance table, once for the hand-rolled `Stream` implementations --
-# and this task is what holds both counts.
-#
-# The script reads those tables rather than restating them, so each rule is
-# stated once and it is the statement a reader consults. Adding a site means
-# adding a row, which is the argument the table exists to force.
-#
-# A script rather than a `grep` pipeline because every one of these rules is
-# discussed in prose somewhere under `src`, so every one of them reports a false
-# positive against a naive grep. Comments, string literals -- which is also what
-# makes the `b"h2"` ALPN identifier a non-event rather than a special case --
-# and `#[cfg(test)]` modules come out before anything is matched. Getting that
-# wrong is not hypothetical: a first cut desynchronised on a char literal in
-# `http/etag.rs` and quietly stopped seeing code at all, reporting that every
-# rule held.
-#
-# The `python` pin is task-scoped for the reason given on `cost:features`
-# above.
+# Reads the tables in `docs/` rather than restating them, over source with
+# comments, string literals and `#[cfg(test)]` modules stripped.
 tools = { python = "3.11.16" }
 run = "python3 scripts/containment.py"
 
 [tasks."containment:test"]
 description = "Test what the containment gate reads its tables and its tree with"
-# The gate above is only as good as what it reads. Most of what this suite
-# holds is the parsers -- the ones that take a table cell apart and the ones
-# that take a source file apart: a rule that breaks says so and exits one,
-# while a parser that breaks drops a spelling, a site or a region of a file and
-# the gate goes on printing `every rule holds` over a table it half read. All
-# three of the defects `fc1bf1d` fixed were exactly that, and none of them was
-# reachable from any input the tree happens to contain.
-#
-# The rest is `main` itself, which the parsers say nothing about: which rules
-# stop running when a document loses the marker they slice it at, and which
-# rules a corpus reaches that no document does. A rule silenced there leaves
-# both gates green, which is the same failure with none of the parsing in it.
-#
-# `unittest` from the standard library and no test runner. There is no
-# `pytest`, no `tox` and no `requirements.txt` in this repository, and taking
-# a dependency to hold a few hundred lines of pure Python is the worse trade.
-#
-# `-B` so a run writes no bytecode into the tree it tests. `.gitignore` covers
-# the imports no task controls, and this keeps the task from being one of them.
-# The test file sets `sys.dont_write_bytecode` too, for a direct `python3` run.
-#
-# The `python` pin is task-scoped for the reason given on `cost:features`
-# above.
+# A broken parser or a rule no longer reached leaves the gate green, so both
+# are tested here. `-B` as `cost:test`.
 tools = { python = "3.11.16" }
 run = "python3 -B scripts/containment_test.py"
 
 [tasks."docs:check"]
 description = "Build documentation with warnings denied"
-# `missing_docs` is denied at the workspace level, so this also enforces that
-# every public item is documented.
+# `missing_docs` is denied, so this also requires every public item documented.
 run = "cargo doc --workspace --all-features --no-deps"
 env = { RUSTDOCFLAGS = "-D warnings" }
 
@@ -675,10 +330,7 @@ grep -F 'Kynos panic recovery requires `panic = "unwind"`' "$panic_check_output"
 
 [tasks."msrv:check"]
 description = "Verify the crate still builds on the declared MSRV"
-# `kynos-profile` is excluded because it cannot build on 1.85 -- gungraun's
-# floor is 1.88, which the member deliberately leaves undeclared (its manifest
-# says why) -- and is published nowhere: the MSRV is what an application needs
-# to build Kynos, and no application builds a measurement harness.
+# `kynos-profile` is unpublished and needs gungraun's 1.88 floor.
 run = '''
 rustup toolchain install 1.85 --profile minimal --no-self-update
 cargo +1.85 check --workspace --all-features --exclude kynos-profile
@@ -686,46 +338,11 @@ cargo +1.85 check --workspace --all-features --exclude kynos-profile
 
 [tasks."publish:check"]
 description = "Package every crate exactly as crates.io will receive it"
-# Every other task here builds the working tree, so a file the code needs but
-# the archive omits is invisible to all of them.
-# `cargo package` writes each member's `.crate` and then rebuilds it from the
-# extracted tarball, which is the only thing that can notice.
-#
-# `--workspace` rather than one `-p` run per crate. The published crates depend
-# on each other, and a per-crate run resolves each sibling from crates.io rather
-# than from this tree: it cannot resolve an unreleased version, and it verifies
-# against the published one otherwise. Multi-package packaging -- stable since
-# Cargo 1.90 -- stages the tarballs in a local registry under
-# `target/package/` and resolves each member against the archives of the ones
-# before it: the same mechanism, and the same order, `cargo publish` will use.
-#
-# That means this needs Cargo 1.90 or later and does not run at the declared
-# MSRV of 1.85. Not a contradiction: the MSRV is what an application needs to
-# *build* Kynos, not what a maintainer needs to publish it. `[tools]` pins
-# 1.97.1 and CI uses it.
-#
-# `--all-features` for the reason `lint` has it. The verify step compiles the
-# library, and at default features it compiles a fraction of `src/`: a module
-# reachable only under `tls` or `assets` could be missing from the archive and
-# a default-features verify would still pass. `release-plz.toml` sets
-# `publish_all_features = true` so the release itself runs this same check.
-#
-# Deliberately no `--allow-dirty`. Packaging a working tree that matches no
-# commit produces an artifact nobody can reproduce, and that is the failure this
-# task exists to catch rather than tolerate.
-#
-# The `--list` loop runs first because it costs a second and the failure it
-# catches would otherwise surface only after three from-scratch all-feature
-# builds. It checks `LICENSE` and nothing else: `readme` in each manifest
-# already makes a missing README a manifest error, which `--list` itself
-# raises, while nothing at all points at `LICENSE` -- and MIT requires the
-# notice to travel with the copy, so this is the only thing that would notice it
-# going missing. The members come from `cargo metadata`, so a new crate is
-# covered the day it is added rather than the day someone remembers this list.
-#
-# A member that declares `publish = false` is skipped by both halves, since no
-# registry will ever receive it: `kynos-profile` today, which `cargo package`
-# would refuse anyway for its unversioned path dependency on `kynos`.
+# Rebuilds each crate from its tarball, the only check that sees a file the
+# archive omits. `--workspace` resolves siblings from the staged archives, as
+# `cargo publish` will (Cargo 1.90+; the MSRV is for building, not publishing).
+# No `--allow-dirty`: an artifact must match a commit. The `--list` loop checks
+# `LICENSE`, which no manifest key references.
 run = '''
 set -eu
 
@@ -742,62 +359,26 @@ cargo package --workspace --all-features --exclude kynos-profile
 
 [tasks."semver:check"]
 description = "Compare the public API against the last published release"
-# A pre-v1 framework may still break its API, but each break should be a
-# decision rather than an accident, and this is what tells the two apart on
-# `master` rather than at release.
-#
-# release-plz also runs `cargo-semver-checks`, with two limits
-# `release-plz.toml` records: it is invoked with no feature flags, so only the
-# default set is compared, and it reports "compatible" for any failure whose
-# output does not demand a major version. Left to it alone, a break would land
-# on `master` and surface only in a release pull request beside the changelog.
-#
-# `--all-features` for the reason `lint`, `test` and `publish:check` have it.
-# Roughly thirty flags gate this crate, so a default-features comparison reads
-# a fraction of the surface: every item behind `tls`, `assets`, `cache` or
-# `unchecked` could change shape and nothing would say so. This is the half
-# release-plz cannot do, which is why the task exists rather than a settings
-# change.
-#
-# `--workspace` because all three crates publish together and move as one
-# version, so a break in `kynos-openapi` is a break `kynos` re-exports.
-#
-# Baseline is the last version on crates.io, resolved by the tool. It has
-# nothing to say until a version is published, which is a fact about a first
-# release rather than a reason to gate on something else.
-#
-# This task exits non-zero on a break, which is what a human running it wants.
-# The CI job is the half that reports rather than blocks, and it does that by
-# reading the verdict rather than by swallowing the exit code -- see the
-# `semver` job in `.github/workflows/ci.yml` for why `continue-on-error` is
-# the wrong tool for it.
+# release-plz's own semver check compares default features only, so a break
+# behind a flag would surface at release; this compares `--all-features` on
+# `master` against the last published version. CI reports rather than blocks.
 run = "cargo semver-checks check-release --workspace --all-features"
 
 [tasks."deny:check"]
 description = "Check dependencies for advisories, licences, bans and sources"
-# The policy -- which licences, which sources, which advisories are waived and
-# why -- is `deny.toml`'s, and each field is argued there. This task adds
-# nothing to it, so a human and CI run the same check.
-#
-# It compiles nothing; it reads `cargo metadata` and fetches the RustSec
-# advisory database. That fetch is why an advisory published overnight can fail
-# a pull request that changed no dependency: the graph did not move, what is
-# known about it did.
+# Policy is `deny.toml`'s. It fetches the advisory database, so a new advisory
+# can fail a pull request that changed no dependency.
 run = "cargo deny --locked check"
 
 [tasks.coverage]
 description = "Run tests with LLVM coverage"
-# `-E 'not binary(ui)'` for the reason `ui:check` gives, here as in
-# `coverage:ci`: `hooks:pre-push` runs this task, so without the exclusion every
-# push would put the suite under llvm-cov. The compile-fail suite is covered by
-# `ui:check`, which is in `check`.
+# `ui` is excluded here and in `coverage:ci` for `ui:check`'s reason.
 run = "cargo llvm-cov nextest --workspace --all-targets --all-features -E 'not binary(ui)'"
 
 [tasks."ui:check"]
 description = "Run the compile-fail suite"
-# trybuild spawns its own `cargo`, so this must not run under `llvm-cov`:
-# the instrumentation flags reach the child and perturb the exact stderr the
-# snapshots record. Hence its own task rather than a line in `coverage:ci`.
+# Never under `llvm-cov`: its flags reach trybuild's child `cargo` and perturb
+# the stderr the snapshots record.
 run = "cargo nextest run -p kynos --test ui --all-features"
 
 [tasks."coverage:ci"]
@@ -809,31 +390,9 @@ run = [
 
 [tasks.mutants]
 description = "Mutation-test one crate, or every crate"
-# What the run mutates, which tests it runs and what it leaves out are
-# `.cargo/mutants.toml`'s, and each is argued there. This task adds only what a
-# configuration file cannot say.
-#
-# `kynos` narrows the tests to its own suite: neither other crate depends on it,
-# so their suites cannot see a `kynos` mutant and running them is pure cost.
-# The other two keep the configured set, which adds `kynos`'s suite to theirs.
-#
-# `CARGO_TARGET_DIR` is unset because cargo-mutants builds each mutant in a
-# scratch copy of the tree, and Cargo keys a workspace member without its path:
-# with one shared target directory, a mutant built in one copy is reported
-# fresh in another, and the verdict belongs to whichever mutant built last.
-# Unset, each copy builds into its own `target/`.
-#
-# `PROPTEST_RNG_SEED` fixes the cases `proptest` draws, so a mutant is tested
-# against the same inputs on every run and its verdict reproduces. Any value
-# would do; a fixed one is the point.
-#
-# cargo-mutants is a task-scoped pin for `cost:features`' reason: a `[tools]`
-# entry would download it into every CI job, and only the mutation jobs use it.
-# Upstream publishes x86-64 binaries only, so on an arm64 machine this task has
-# nothing to install; the pin is the CI runner's.
-#
-# Not in `check` and not in `hooks:pre-push`: a full run is hours. The `mutants`
-# workflow runs it nightly in shards, and `mutants:diff` on every pull request.
+# Configured in `.cargo/mutants.toml`. `CARGO_TARGET_DIR` is unset so each
+# mutant's scratch copy builds into its own `target/`; a shared one reports a
+# stale build as fresh. The seed makes `proptest` verdicts reproduce.
 tools = { "github:sourcefrog/cargo-mutants" = "27.1.0" }
 env = { PROPTEST_RNG_SEED = "220" }
 usage = '''
@@ -863,17 +422,8 @@ cargo mutants "$@"
 
 [tasks."mutants:diff"]
 description = "Mutation-test the lines changed since the base branch"
-# The pull-request half of the gate: only the mutants on lines this branch
-# changed, so a change is held to its own tests and not to the backlog the
-# nightly run reports.
-#
-# The diff is taken against the merge base and the working tree, rather than
-# `BASE...HEAD`, because cargo-mutants matches its hunks against the files it
-# copies, which are the working tree's: an uncommitted edit that moved a line
-# would otherwise put every later hunk on the wrong one. `MUTANTS_BASE` is how
-# CI names the pull request's base commit; locally it is `origin/master`.
-#
-# The pins, the environment and `--shard` are `mutants`', for its reasons.
+# Diffed against the working tree, which is what cargo-mutants copies.
+# `MUTANTS_BASE` is CI's base commit.
 tools = { "github:sourcefrog/cargo-mutants" = "27.1.0" }
 env = { PROPTEST_RNG_SEED = "220" }
 usage = '''
@@ -895,23 +445,9 @@ cargo mutants "$@"
 
 [tasks.fuzz]
 description = "Fuzz one parser target, or every one, for a bounded time each"
-# What the targets assert, and why this is a nightly job rather than a gate, is
-# `docs/testing.md#fuzzing`.
-#
-# `cargo fuzz` needs a nightly toolchain, and a dated one: an undated nightly
-# moves under the job between two nights, and a failure that appears with it
-# says nothing about Kynos. `fuzz:check` installs and builds with the same one.
-#
-# Two corpus directories. libFuzzer writes what it discovers into the first,
-# which is under the ignored `fuzz/target/`, and only reads the rest, so a run
-# never dirties the committed seeds in `fuzz/corpus/`. Promoting a discovered
-# input is a deliberate copy, reviewed like any other change.
-#
-# cargo-fuzz is a task-scoped pin for `cost:features`' reason: a `[tools]`
-# entry would download it into every CI job. Upstream publishes an x86-64 Linux
-# binary only, so on an arm64 machine this task has nothing to install. That
-# binary is linked against musl and defaults to building for musl too, where
-# the sanitizer cannot link, so `--target` names the toolchain's own host.
+# See docs/testing.md#fuzzing. A dated nightly, so a failure is Kynos's own.
+# Discoveries go to the ignored `fuzz/target/`; committed seeds are only read.
+# `--target` is the host: the musl-linked cargo-fuzz defaults to musl.
 tools = { "github:rust-fuzz/cargo-fuzz" = "0.13.2" }
 env = { FUZZ_TOOLCHAIN = "nightly-2026-06-10" }
 usage = '''
@@ -939,14 +475,7 @@ done
 
 [tasks."fuzz:check"]
 description = "Build every fuzz target and replay its committed corpus"
-# The pull-request half of `fuzz`: no new input is generated, so it finishes in
-# the time the instrumented build takes. It is what keeps `fuzz/` compiling
-# against the tree -- nothing else builds it, since it is a workspace of its
-# own on another toolchain -- and what holds every committed seed, including a
-# crash once promoted into `fuzz/corpus/`, to its target on every change.
-#
-# `-runs=0` executes the corpus libFuzzer loads at start-up and nothing after.
-# The pins, and `--target`, are `fuzz`'s, for its reasons.
+# The only build of `fuzz/`; `-runs=0` replays the committed corpus only.
 tools = { "github:rust-fuzz/cargo-fuzz" = "0.13.2" }
 env = { FUZZ_TOOLCHAIN = "nightly-2026-06-10" }
 run = '''
@@ -962,16 +491,8 @@ done
 
 [tasks.check]
 description = "Run formatting, linting, and tests"
-# `features:check` and `features:targets` are here because `AGENTS.md` names
-# both this task and that one in consecutive sentences -- "run it whenever a
-# feature flag or a `#[cfg]` changes" and "run `mise run check` before handing
-# off" -- and they pointed at different commands. A contributor following the
-# second was not running the first.
-#
-# They run last, and in this order, because `cargo hack` rewrites member
-# manifests while it works: anything sharing the workspace with it reads a
-# manifest with its dev-dependencies stripped and fails for reasons that have
-# nothing to do with the change under test.
+# The `features:*` tasks run last: `cargo hack` rewrites member manifests while
+# it works, which breaks anything sharing the workspace.
 run = [
   { task = "format:check" },
   { task = "lint" },
@@ -998,33 +519,9 @@ run = [
 [tasks."commits:message"]
 description = "Validate one Conventional Commit message from stdin"
 quiet = true
-# The merge exemption has to be stated here, because convco states it as a
-# property of the commit and this task is only ever given a message.
-# `convco check <range>` drops a merge by parent count, and a bare message has
-# no parents -- so the two spellings of this repository's one rule disagreed
-# about every merge, and `git merge` could not write its own merge commit.
-#
-# It cannot be pushed back into convco: the `--from-stdin` branch of
-# `convco check` returns before `--ignore-message-pattern` is consulted, in
-# 0.7.0 and in 0.7.1 alike. Nor into `hk.pkl` -- see the note on the step.
-#
-# MERGE_HEAD is the parent count, read at the only moment this task can read
-# anything: git writes it before running the commit-msg hook and removes it
-# once the commit exists.
-#
-# A test for the *file*, not `git rev-parse --verify --quiet MERGE_HEAD`, which
-# resolves a ref -- a branch or tag of that name would exempt a one-parent
-# commit that `commits:check` rejects, losing this gate in the direction
-# opposite to the one it was written to fix. `--git-path` is also what survives
-# a linked worktree, and this repository is worked in linked worktrees.
-#
-# Squash, cherry-pick, revert and rebase are deliberately not exempted: each
-# produces a one-parent commit that `commits:check` does check.
-#
-# One case this cannot reach: amending an *existing* merge commit runs the hook
-# with MERGE_HEAD already gone over a commit that still has two parents, so the
-# gate rejects what `commits:check` exempts. `--no-verify` remains the escape.
-# Recorded in `docs/nfr.md`.
+# Exempts a merge as `commits:check` does, which convco's stdin mode cannot
+# see. MERGE_HEAD is tested as a file, not a ref a branch could shadow, through
+# `--git-path` for linked worktrees. Amending a merge is a known gap (docs/nfr.md).
 run = '''
 if [ -f "$(git rev-parse --git-path MERGE_HEAD)" ]; then
   exit 0
@@ -1049,62 +546,14 @@ fi
 
 [tasks."commits:test"]
 description = "Test that both halves of the commit rule agree about a merge"
-# The two tasks above state one rule through two instruments that cannot see
-# the same thing, and when they disagree neither one fails: both keep exiting
-# zero over every commit written by hand, and the divergence surfaces only at
-# the next merge, where the fix that looks available is `--no-verify`. So
-# `BothHalvesOverOneMerge` puts each verdict to both halves over the same
-# commit. The range half is the one that moves under maintenance -- a `.convco`
-# holding `merges: true`, or a `[tools]` bump of convco, changes what it
-# accepts and leaves the hook half untouched.
-#
-# The cases build real repositories rather than forging state files: one is a
-# linked worktree, because that is how this repository is worked and MERGE_HEAD
-# lives elsewhere there, and one installs `hk run commit-msg` as that
-# repository's own `commit-msg` hook and drives a real `git merge --no-ff`
-# through it -- issue #132's own symptom, so reverting this fix makes it print
-# `Not committing merge`. Whether hk runs the step is read out of that exit
-# code rather than out of the text of `hk.pkl`, so a step disarmed by any means
-# shows up in the answer.
-#
-# It compiles nothing but is not free -- most of its time goes on nested
-# `mise run` invocations and the real `hk` -- which is worth its three
-# placements, since each is somewhere the two halves could already have
-# diverged.
-#
-# `unittest` from the standard library: this repository has no Python test
-# runner, and taking a dependency to drive git through subprocess is the worse
-# trade. The file imports nothing from `scripts/`; `-B` keeps the task
-# matching `cost:test` and `containment:test`, and keeps a later import from
-# `scripts/` writing nothing.
-#
-# The `python` pin is task-scoped for the reason given on `cost:features`
-# above.
+# Two instruments state one rule and disagree silently, so each verdict is put
+# to both over real repositories, including a merge through hk's hook.
 tools = { python = "3.11.16" }
 run = "python3 -B scripts/commits_test.py"
 
 [tasks."hooks:pre-push"]
 description = "Run all pre-push checks"
-# `docs:check` and `containment:check` are here because neither is slow --
-# rustdoc over every member, and a script that compiles nothing -- and both fail
-# on things a push should not carry: an undocumented public item, since
-# `missing_docs` is denied, and a crate named outside the module that owns it.
-# Both were first caught in CI, which is a slower place to learn it.
-#
-# `containment:test` follows `containment:check` wherever it goes. The gate is
-# only as good as the parsers under it and the wiring that runs them, and both
-# fail the same way: a parser that drops a spelling and a rule that stops being
-# reached both leave the gate printing that every rule holds. A push carrying a
-# green gate over either is what the pair is here to refuse.
-#
-# `lint:codecs` is here rather than left to CI because the defect it catches is
-# invisible to the two lint passes above it, and a push is the last point where
-# its author is still the one looking. The six builds it adds are `-p kynos` at
-# small feature sets, which is the cheap end of what this list already runs.
-#
-# `commits:test` follows `commits:check` for the reason `containment:test`
-# follows its gate: a push is the last point where the person who wrote the
-# messages is still looking at them.
+# The cheap gates; each `*:test` follows the gate whose instrument it tests.
 run = [
   { task = "format:check" },
   { task = "lint" },
