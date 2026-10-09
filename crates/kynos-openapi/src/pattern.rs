@@ -69,12 +69,6 @@ pub struct UntranslatablePattern {
     reason: String,
 }
 
-impl From<String> for UntranslatablePattern {
-    fn from(reason: String) -> Self {
-        Self { reason }
-    }
-}
-
 /// `source`, an ECMA-262 pattern, as the pattern the `regex` engine runs.
 ///
 /// The translation is unanchored, as JSON Schema's `pattern` is: it matches a
@@ -87,6 +81,11 @@ impl From<String> for UntranslatablePattern {
 /// the two dialects read apart, or translates to a pattern the engine cannot
 /// compile.
 pub fn translate(source: &str) -> Result<String, UntranslatablePattern> {
+    translated(source).map_err(|reason| UntranslatablePattern { reason })
+}
+
+/// [`translate`], refusing with the reason alone.
+fn translated(source: &str) -> Result<String, String> {
     let ast = Parser::new()
         .parse(source)
         .map_err(|error| unreadable(&error))?;

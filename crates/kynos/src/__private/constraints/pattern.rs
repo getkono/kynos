@@ -18,7 +18,7 @@ use std::{
     sync::{Arc, LazyLock, OnceLock, PoisonError, RwLock},
 };
 
-use kynos_openapi::pattern::{UntranslatablePattern, translate};
+use kynos_openapi::pattern::translate;
 use regex::Regex;
 
 use crate::schema::constraints::{Pointer, Textual, Violations};
@@ -88,9 +88,9 @@ static KEYS: LazyLock<RwLock<HashMap<String, Arc<Regex>>>> = LazyLock::new(RwLoc
 ///
 /// # Errors
 ///
-/// [`UntranslatablePattern`] where `declared` does not translate. That is not
-/// cached, since the router refuses it while it is built.
-pub(crate) fn key(declared: &str) -> Result<Arc<Regex>, UntranslatablePattern> {
+/// Why `declared` does not translate, which is not cached, since the router
+/// refuses it while it is built.
+pub(crate) fn key(declared: &str) -> Result<Arc<Regex>, String> {
     // A poisoned lock guards a map only ever inserted into whole, so what it
     // holds is still sound.
     if let Some(compiled) = KEYS
@@ -101,12 +101,9 @@ pub(crate) fn key(declared: &str) -> Result<Arc<Regex>, UntranslatablePattern> {
         return Ok(Arc::clone(compiled));
     }
 
-    let translated = translate(declared)?;
-    let compiled = Regex::new(&translated).map_err(|error| {
-        UntranslatablePattern::from(format!(
-            "the `regex` engine cannot compile this pattern: {error}"
-        ))
-    })?;
+    let translated = translate(declared).map_err(|refusal| refusal.to_string())?;
+    let compiled = Regex::new(&translated)
+        .map_err(|error| format!("the `regex` engine cannot compile this pattern: {error}"))?;
     Ok(Arc::clone(
         KEYS.write()
             .unwrap_or_else(PoisonError::into_inner)
@@ -121,7 +118,7 @@ pub(crate) fn key(declared: &str) -> Result<Arc<Regex>, UntranslatablePattern> {
 pub(crate) struct KeyPattern {
     /// The pattern as declared, which a violation names.
     declared: String,
-    compiled: Result<Arc<Regex>, UntranslatablePattern>,
+    compiled: Result<Arc<Regex>, String>,
 }
 
 impl KeyPattern {

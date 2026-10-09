@@ -235,9 +235,7 @@ impl Registry {
     /// server. Translating it here also compiles it for the first request.
     pub(crate) fn admit_key_pattern<K: MapKey>(&mut self, pattern: &str) {
         #[cfg(feature = "pattern")]
-        let refusal = crate::__private::constraints::pattern::key(pattern)
-            .err()
-            .map(|refusal| refusal.to_string());
+        let refusal = crate::__private::constraints::pattern::key(pattern).err();
         #[cfg(not(feature = "pattern"))]
         let refusal = Some(
             "`kynos` enforces a pattern with a regular expression engine, which it compiles \
