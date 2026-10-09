@@ -364,7 +364,7 @@ tls = ["server", "dep:tokio-rustls"]
 # Application request and response payloads encoded as JSON. OpenAPI document
 # serialization and RFC 9457 problem details remain available without it.
 json = []
-form = ["dep:serde_urlencoded"]
+form = ["dep:serde_html_form"]
 multipart = ["dep:multer"]
 protobuf = ["dep:prost"]
 # Kynos owns the RFC 6265 this needs: the `cookie` crate would put
@@ -506,8 +506,8 @@ percent-encoding = { workspace = true }
 prost = { workspace = true, optional = true }
 rust_decimal = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
+serde_html_form = { workspace = true, optional = true }
 serde_json = { workspace = true }
-serde_urlencoded = { workspace = true, optional = true }
 socket2 = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }

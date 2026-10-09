@@ -1930,16 +1930,16 @@ class Main(unittest.TestCase):
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/extract/body/form.rs", reported[0])
 
-    def test_serde_urlencoded_stays_at_the_form_codec_sites(self):
+    def test_serde_html_form_stays_at_the_form_codec_sites(self):
         # `extract/params/query.rs` parses a query string, which is exactly the
-        # job a second `serde_urlencoded` site would be added for.
+        # job a second `serde_html_form` site would be added for.
         corpus = self.appending(
             "crates/kynos/src/extract/params/query.rs",
-            "\nuse serde_urlencoded::from_str;\n",
+            "\nuse serde_html_form::from_str;\n",
         )
         status, failures = self.report(corpus=corpus)
         self.assertEqual(status, 1)
-        reported = self.naming(failures, "`serde_urlencoded` is named only")
+        reported = self.naming(failures, "`serde_html_form` is named only")
         self.assertEqual(len(reported), 1)
         self.assertIn("crates/kynos/src/extract/params/query.rs", reported[0])
 

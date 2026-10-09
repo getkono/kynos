@@ -221,7 +221,7 @@ baseline row.
 
 **What those figures include is more than Kynos, and saying so is part of the
 measurement.** Mounting a codec pulls in the crate that implements it —
-`serde_json`, `serde_urlencoded`, `multer`, `prost`, `async-compression` — and
+`serde_json`, `serde_html_form`, `multer`, `prost`, `async-compression` — and
 the operation declares a payload type carrying two derives. `compression` is
 where the distinction stops being a caveat: nearly all of its row is the gzip,
 brotli and zstd backends, so the row prices the encoders rather than the
