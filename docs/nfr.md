@@ -35,10 +35,10 @@ ceiling by the standard [Thresholds](#thresholds) sets.
 
 Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
 `trybuild`, `proptest`, `alloc_counter`, `cargo-llvm-lines`, `cargo-mutants`,
-`gungraun` over Valgrind, rustdoc with
+`gungraun` over Valgrind, `cargo-fuzz`, rustdoc with
 `missing_docs = "deny"`, and `cargo-semver-checks` — the last through both
 release-plz, at default features and fail-open, and `mise run semver:check`, at
-every feature — and `cargo-deny`. Not yet present: `cargo-public-api`, `cargo-fuzz`, `cargo-udeps`. `criterion` is
+every feature — and `cargo-deny`. Not yet present: `cargo-public-api`, `cargo-udeps`. `criterion` is
 not on this list and will not be: benchmarks live in `kynos-bench`.
 
 ## Thresholds
@@ -269,7 +269,7 @@ rewrite.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| reliability | No extractor panics on any input | `cargo-fuzz` target per extractor, run nightly, corpus committed | `needs-tooling` |
+| reliability | No extractor panics on any input | `cargo-fuzz` targets in [`fuzz/`](../fuzz/), one per hand-written parser of untrusted input, each asserting no panic and a round trip or an independent oracle where one exists; [`fuzz.yml`](../.github/workflows/fuzz.yml) searches each nightly and replays the committed [`fuzz/corpus/`](../fuzz/corpus/) on every pull request | `partial`: a pull request fails only on a committed input, while a new one fails the nightly job, which no merge waits on; and the nine targets are Kynos's own parsers, not every extractor — a codec whose parser is a dependency's (`serde_json`, `serde_html_form`, `multer`, `prost`) is not fuzzed here. [`testing.md`](testing.md#fuzzing) lists them |
 | security | Header count and header-list size are bounded by default | The driver is configured from [`Http1Config`](../crates/kynos/src/server/protocol/http1.rs) and [`Http2Config`](../crates/kynos/src/server/protocol/http2.rs) on every connection; [`server/tests.rs`](../crates/kynos/src/server/tests.rs) asserts the configured cap is the one forwarded | `enforced` |
 | security | A body-size limit is available, and once mounted is enforced *and* declared | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting rejection at limit+1, that a declared length past the limit is refused before the body is read, and that a service mounting none neither refuses nor declares a 413 | `enforced`; no default, deliberately, and `planned` for the allocation bound |
 | security | Per-IP connection caps | none yet — see below | `planned` |
@@ -713,13 +713,12 @@ can write.
 
 ## Tooling gaps
 
-Three crates stand between this document and its enforcement. In order of what
+Two crates stand between this document and its enforcement. In order of what
 they unblock:
 
 | Tool | Unblocks | Notes |
 | --- | --- | --- |
 | `cargo-public-api` | Four `compatibility`/`dx` rows across the document model, runtime and workspace | The single highest-leverage addition: it enforces the architecture policy mechanically rather than by review |
-| `cargo-fuzz` | Extractor panic-freedom | Needs a committed corpus and a nightly job |
 | `cargo-udeps` | The unused-`[workspace.dependencies]` row under dependencies | An equivalent manifest check would do as well |
 
 `criterion` is intentionally absent from this list, and stays absent now that
