@@ -1,0 +1,5 @@
+error: lookaround and backreferences are ECMA-262, but the `regex` engine the check runs with does not implement them: both need a backtracking search, and it matches in time linear in the input instead. Express the bound without them, or check it in the handler and describe it in prose
+ --> tests/ui/macros/schema_pattern_lookaround.rs:7:24
+  |
+7 |     #[schema(pattern = "^(?=.*[0-9])[a-z0-9]+$")]
+  |                        ^^^^^^^^^^^^^^^^^^^^^^^^

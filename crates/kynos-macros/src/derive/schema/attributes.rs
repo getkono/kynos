@@ -1,6 +1,6 @@
 use super::{
-    COUNTS, Container, Field, Fields, IdentExt, Lit, LitFloat, LitInt, NUMERIC, Span, Spanned,
-    TokenStream2, Type, Variant, quote, skip_value, string_value,
+    COUNTS, Container, Field, Fields, IdentExt, Lit, LitFloat, LitInt, LitStr, NUMERIC, Span,
+    Spanned, TokenStream2, Type, Variant, quote, skip_value, string_value,
 };
 
 /// The name serde writes a named field under: the serialize side of its
@@ -441,9 +441,28 @@ pub(super) fn serde_default(attrs: &[syn::Attribute]) -> Option<DefaultFrom> {
 pub(super) struct Bound {
     /// The `Constraints` field it fills, which is the attribute's own key.
     pub(super) key: syn::Ident,
-    /// Its value as a typed literal: an `f64` for a number, a `u64` for a
-    /// count, a string for `pattern`, and nothing for the `unique_items` flag.
-    pub(super) value: Option<TokenStream2>,
+    /// Its value, and nothing for the `unique_items` flag.
+    pub(super) value: Option<BoundValue>,
+}
+
+/// What a [`Bound`] holds, as the typed literal the expansion writes.
+pub(super) enum BoundValue {
+    /// An `f64`, which every numeric JSON Schema bound is.
+    Number(LitFloat),
+    /// A `u64` count.
+    Count(LitInt),
+    /// The `pattern`, as written.
+    Pattern(LitStr),
+}
+
+impl quote::ToTokens for BoundValue {
+    fn to_tokens(&self, tokens: &mut TokenStream2) {
+        match self {
+            Self::Number(number) => number.to_tokens(tokens),
+            Self::Count(count) => count.to_tokens(tokens),
+            Self::Pattern(pattern) => pattern.to_tokens(tokens),
+        }
+    }
 }
 
 /// A field's `#[schema(...)]` constraints, in the order written.
@@ -483,19 +502,18 @@ pub(super) fn bounds(field: &Field) -> Vec<Bound> {
 
             let literal: Lit = meta.value()?.parse()?;
             let value = if NUMERIC.contains(&name.as_str()) {
-                as_float(&literal).map(|number| quote!(#number))
+                as_float(&literal).map(BoundValue::Number)
             } else if COUNTS.contains(&name.as_str()) {
                 match &literal {
-                    Lit::Int(count) => {
-                        let count =
-                            LitInt::new(&format!("{}u64", count.base10_digits()), count.span());
-                        Some(quote!(#count))
-                    }
+                    Lit::Int(count) => Some(BoundValue::Count(LitInt::new(
+                        &format!("{}u64", count.base10_digits()),
+                        count.span(),
+                    ))),
                     _ => None,
                 }
             } else if name == "pattern" {
-                match &literal {
-                    Lit::Str(pattern) => Some(quote!(#pattern)),
+                match literal {
+                    Lit::Str(pattern) => Some(BoundValue::Pattern(pattern)),
                     _ => None,
                 }
             } else {
@@ -527,9 +545,9 @@ pub(super) fn constraints(field: &Field) -> Option<TokenStream2> {
             None => quote! {
                 constraints.#key = ::core::option::Option::Some(true);
             },
-            Some(value) if key == "pattern" => quote! {
+            Some(BoundValue::Pattern(pattern)) => quote! {
                 constraints.#key = ::core::option::Option::Some(
-                    ::std::string::String::from(#value),
+                    ::std::string::String::from(#pattern),
                 );
             },
             Some(value) => quote! {

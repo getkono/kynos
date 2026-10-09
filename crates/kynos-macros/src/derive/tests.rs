@@ -359,6 +359,30 @@ mod schema {
                 ),
                 "reads the map empty",
             ),
+            // One site, which says why the check cannot enforce the pattern:
+            // what it is, with the feature, or that there is no engine.
+            #[cfg(feature = "pattern")]
+            case(
+                "a `pattern` the check cannot enforce",
+                quote::quote!(
+                    struct Order {
+                        #[schema(pattern = "a(?=b)")]
+                        code: String,
+                    }
+                ),
+                "lookaround and backreferences",
+            ),
+            #[cfg(not(feature = "pattern"))]
+            case(
+                "a `pattern` without the `pattern` feature",
+                quote::quote!(
+                    struct Order {
+                        #[schema(pattern = "^[a-z]+$")]
+                        code: String,
+                    }
+                ),
+                "only under its `pattern` feature",
+            ),
         ]
     }
 

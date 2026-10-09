@@ -1267,6 +1267,7 @@ dependencies = [
  "percent-encoding",
  "prost",
  "rcgen",
+ "regex",
  "rust_decimal",
  "rustix",
  "rustls",
@@ -1294,6 +1295,8 @@ dependencies = [
  "kynos-openapi",
  "proc-macro2",
  "quote",
+ "regex",
+ "regex-syntax",
  "syn 2.0.119",
 ]
 

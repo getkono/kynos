@@ -7,9 +7,6 @@
 //! by a real JSON Schema validator over the schema `T` emits — and the two must
 //! agree on whether it is admitted. Where the body is refused, the refusal is a
 //! 422 keyed by the JSON Pointer of the member that broke its bound.
-//!
-//! `pattern` is the one constraint left out: it is emitted and not yet
-//! enforced, which `kynos::schema::constraints` records.
 
 // `test-util` carries the JSON Schema validator, which is what makes this a
 // check against an oracle rather than an assertion written from the derive.
@@ -798,5 +795,87 @@ mod multipart {
             }
             other => panic!("a part breaking its bound was not refused at it: {other:?}"),
         }
+    }
+}
+
+/// `pattern`, which is enforced with a regular expression engine compiled in
+/// only under its own feature.
+///
+/// The documents stay where the validator reads ECMA-262 as the check does:
+/// its own translation leaves `.`, `\s` and `\b` Unicode-aware, so those are
+/// held in `kynos-macros`, against what the specification says of them.
+#[cfg(feature = "pattern")]
+mod pattern {
+    use super::{BTreeMap, Deserialize, Schema, Value, admits, json, read, refuses};
+
+    #[derive(Debug, Schema, Deserialize)]
+    struct Handle {
+        #[schema(pattern = "^[a-z]+$")]
+        slug: String,
+        /// Not anchored, so a digit anywhere in it will do.
+        #[schema(pattern = "\\d")]
+        code: Option<String>,
+        #[schema(pattern = "^\\w+$")]
+        word: String,
+        /// Filled with `""`, which the pattern refuses.
+        #[serde(default)]
+        #[schema(pattern = "^x")]
+        mark: String,
+    }
+
+    fn handle() -> Value {
+        json!({ "slug": "ada", "code": "a1", "word": "a_1" })
+    }
+
+    fn handle_with(member: &str, value: Value) -> Value {
+        let mut document = handle();
+        document[member] = value;
+        document
+    }
+
+    #[tokio::test]
+    async fn a_string_is_held_to_its_pattern() {
+        admits::<Handle>(handle()).await;
+        admits::<Handle>(handle_with("code", Value::Null)).await;
+        admits::<Handle>(handle_with("mark", json!("xy"))).await;
+        refuses::<Handle>(handle_with("slug", json!("Ada")), &["/slug"]).await;
+        refuses::<Handle>(handle_with("code", json!("ab")), &["/code"]).await;
+    }
+
+    #[tokio::test]
+    async fn a_pattern_reads_digits_and_word_characters_as_ascii() {
+        // ARABIC-INDIC DIGIT THREE is a Unicode digit and `é` a Unicode
+        // letter; ECMA-262's `\d` and `\w` admit neither.
+        refuses::<Handle>(handle_with("code", json!("\u{663}")), &["/code"]).await;
+        refuses::<Handle>(handle_with("word", json!("é")), &["/word"]).await;
+    }
+
+    #[tokio::test]
+    async fn a_violation_names_the_pattern_as_declared() {
+        let failures = read::<Handle>(&handle_with("word", json!("a-b")))
+            .await
+            .expect("refused");
+        assert_eq!(
+            failures,
+            BTreeMap::from([(
+                "/word".to_owned(),
+                "must match the pattern `^\\w+$`".to_owned()
+            )])
+        );
+    }
+
+    /// A generic container shares one compiled pattern across its
+    /// instantiations, since the pattern names no parameter.
+    #[derive(Debug, Schema, Deserialize)]
+    struct Labelled<T> {
+        #[schema(pattern = "^[A-Z]")]
+        label: String,
+        value: T,
+    }
+
+    #[tokio::test]
+    async fn a_generic_container_checks_its_pattern_in_every_instantiation() {
+        admits::<Labelled<u32>>(json!({ "label": "A", "value": 1 })).await;
+        refuses::<Labelled<String>>(json!({ "label": "a", "value": "x" }), &["/label"]).await;
     }
 }

@@ -247,9 +247,9 @@ pub trait MapKey: Schema {
     /// to the `min_length` and `max_length` set here, reporting a key that
     /// breaks one at the map. It reads the key through
     /// [`as_member`](Self::as_member), so a key type returning `None` there has
-    /// these described and not checked. The other string bounds are as a
-    /// field's: `pattern` is described and not checked, and `format` is an
-    /// annotation.
+    /// these described and not checked. The other string bounds are described
+    /// and not checked: `pattern`, which a field's check enforces only because
+    /// the derive compiles it, and `format`, which is an annotation.
     #[must_use]
     fn key_constraints() -> constraints::Constraints {
         constraints::Constraints::default()

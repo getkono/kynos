@@ -1,11 +1,11 @@
-error[E0277]: `u32` is not a string, so a length bound cannot apply to it
+error[E0277]: `u32` is not a string, so a string bound cannot apply to it
  --> tests/ui/macros/schema_length_bound_on_a_number.rs:8:12
   |
 8 |     seats: u32,
   |            ^^^ not a string
   |
   = help: the trait `Textual` is not implemented for `u32`
-  = note: `min_length` and `max_length` apply to `String`, and to an `Option`, `Box` or `Arc` of one; implement `kynos::schema::constraints::Textual` for a newtype that is a string on the wire
+  = note: `min_length`, `max_length` and `pattern` apply to `String`, and to an `Option`, `Box` or `Arc` of one; implement `kynos::schema::constraints::Textual` for a newtype that is a string on the wire
 help: the following other types implement trait `Textual`
  --> src/schema/constraints.rs
   |

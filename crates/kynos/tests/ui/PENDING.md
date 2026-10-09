@@ -51,8 +51,12 @@ feature sets, only require them.
 | `#[kynos::operation(method = "PROPFIND")]` rejected | a method outside the eight OpenAPI 3.1 names needs `openapi32` for `additionalOperations` |
 | `#[security(oauth2(device_authorization(..)))]` rejected | the RFC 8628 flow was introduced in OpenAPI 3.2, so a 3.1 build has no field to hold it |
 | `#[security(oauth2(.., metadata_url = ".."))]` rejected | `oauth2MetadataUrl` was introduced in OpenAPI 3.2, and was silently dropped before |
+| `#[schema(pattern = "..")]` rejected | without the `pattern` feature there is no engine to enforce it, so it is refused rather than described unchecked |
 
-Neither security-scheme row is unchecked, only unsnapshotted. Both have a
+None of the last three rows is unchecked, only unsnapshotted. The `pattern`
+row's ledger case is gated on `not(feature = "pattern")`, and the schema
+ledger has exactly one `pattern` case in either build, as the site has one
+message per build. Both security-scheme rows have a
 ledger case in
 [`derive/tests.rs`](../../../kynos-macros/src/derive/tests.rs), gated on
 `not(feature = "openapi32")` so it runs in the build that can provoke it, and

@@ -13,7 +13,7 @@
 //!             | exclusive_minimum = <number> | exclusive_maximum = <number>
 //!             | multiple_of = <number>
 //!             | min_length = <integer> | max_length = <integer>
-//!             | pattern = "<regex>"
+//!             | pattern = "<ECMA-262 regex>"      with the `pattern` feature
 //!             | min_items = <integer> | max_items = <integer>
 //!             | unique_items
 //! ```
@@ -35,6 +35,8 @@ mod aliases;
 mod attributes;
 mod check;
 mod kinds;
+#[cfg(feature = "pattern")]
+mod pattern;
 mod refusals;
 mod shape;
 
