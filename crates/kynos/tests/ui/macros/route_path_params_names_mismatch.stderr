@@ -1,4 +1,4 @@
-error[E0080]: evaluation panicked: `UserPath` declares a path parameter where the route `/users/{id}` has `id` (variable 1 of 1), and it is named for none of the route's variables; name it `id`, or rename it with `#[serde(rename = "id")]`
+error[E0080]: evaluation panicked: `UserPath` declares path parameter `user_id` where the route `/users/{id}` has variable `id`; PathParams names must match the route's variables one for one, in order
  --> tests/ui/macros/route_path_params_names_mismatch.rs:8:1
   |
 8 | #[kynos::get("/users/{id}")]

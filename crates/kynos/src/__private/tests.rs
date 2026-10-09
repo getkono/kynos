@@ -1,6 +1,6 @@
 use crate::{
     __private::{
-        path::{PathParameter, path_parameter_at},
+        path::path_parameter_mismatch,
         uri::{decode_path_value, encode_ext_value, endpoint_uri_with_path, query_pairs},
     },
     extract::params::path::{EncodePath, PathParams},
@@ -24,19 +24,70 @@ fn typed_endpoint_paths_percent_encode_each_segment() {
     assert_eq!(uri, "/reports/sales%2F2026%20report");
 }
 
-/// Each answer the route attribute renders a message for, computed in const
-/// context as the attribute's assertion computes it.
+const PATH: &str = "/tenants/{tenant}/members/{id}";
+const VARIABLES: &[&str] = &["tenant", "id"];
+
+fn mismatch(names: &[&str]) -> Option<String> {
+    path_parameter_mismatch("MemberPath", PATH, names, VARIABLES)
+        .map(|message| message.as_str().to_owned())
+}
+
+/// Evaluated in const context, where the route attribute's assertion runs it.
 #[test]
-fn path_parameters_compare_by_position_in_const_context() {
-    const VARIABLES: &[&str] = &["tenant", "id"];
-    const MATCHES: PathParameter = path_parameter_at(&["tenant", "id"], VARIABLES, 1);
-    const MOVED: PathParameter = path_parameter_at(&["id", "tenant"], VARIABLES, 0);
-    const UNKNOWN: PathParameter = path_parameter_at(&["tenant", "user_id"], VARIABLES, 1);
-    const MISSING: PathParameter = path_parameter_at(&["tenant"], VARIABLES, 1);
-    assert_eq!(std::hint::black_box(MATCHES), PathParameter::Matches);
-    assert_eq!(std::hint::black_box(MOVED), PathParameter::Moved(1));
-    assert_eq!(std::hint::black_box(UNKNOWN), PathParameter::Unknown);
-    assert_eq!(std::hint::black_box(MISSING), PathParameter::Missing);
+fn path_parameter_names_compare_in_const_context() {
+    const MATCHES: bool =
+        path_parameter_mismatch("G", PATH, &["tenant", "id"], VARIABLES).is_none();
+    const DIFFERS: bool =
+        path_parameter_mismatch("G", PATH, &["id", "tenant"], VARIABLES).is_some();
+    assert!(std::hint::black_box(MATCHES));
+    assert!(std::hint::black_box(DIFFERS));
+}
+
+#[test]
+fn a_mismatched_path_parameter_names_both_sides() {
+    assert_eq!(
+        mismatch(&["tenant", "member_id"]).as_deref(),
+        Some(
+            "`MemberPath` declares path parameter `member_id` where the route \
+             `/tenants/{tenant}/members/{id}` has variable `id`; PathParams names must match \
+             the route's variables one for one, in order"
+        )
+    );
+}
+
+#[test]
+fn a_missing_path_parameter_names_the_variable() {
+    assert_eq!(
+        mismatch(&["tenant"]).as_deref(),
+        Some(
+            "`MemberPath` declares no path parameter for variable `id` of the route \
+             `/tenants/{tenant}/members/{id}`; PathParams names must match the route's \
+             variables one for one, in order"
+        )
+    );
+}
+
+#[test]
+fn an_extra_path_parameter_is_named() {
+    assert_eq!(
+        mismatch(&["tenant", "id", "role"]).as_deref(),
+        Some(
+            "`MemberPath` declares path parameter `role`, for which the route \
+             `/tenants/{tenant}/members/{id}` has no variable; PathParams names must match the \
+             route's variables one for one, in order"
+        )
+    );
+}
+
+/// A name long enough to overflow the buffer is cut between characters, so
+/// the message stays valid UTF-8 rather than falling back.
+#[test]
+fn an_overlong_mismatch_message_is_cut_between_characters() {
+    let name = "é".repeat(1024);
+    let message = mismatch(&[name.as_str(), "id"]).expect("a mismatch");
+    assert!(message.starts_with("`MemberPath` declares path parameter `éé"));
+    assert!(message.len() <= 1024 && message.len() > 1020);
+    assert!(message.ends_with('é'));
 }
 
 /// RFC 8187 section 3.2.1, transcribed here rather than read from

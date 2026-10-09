@@ -1,46 +1,112 @@
 //! Const-evaluable comparisons, for the assertions a route attribute emits.
 //!
-//! A const panic formats nothing but a single `&str` on the declared MSRV, so
-//! the attribute cannot render a name it reads here into its message. It
-//! asks per position instead, and every answer it can render is one whose
-//! names it already holds as literals: the route's own variables.
+//! A const panic renders a single `&str` and formats nothing into it, so the
+//! message naming both sides of a mismatch is composed here, in a fixed
+//! buffer, and panicked with whole.
 
-/// How the parameter a `PathParams` group declares at one position compares
-/// with the route variable at that position.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PathParameter {
-    /// Named exactly as the route variable at that position.
-    Matches,
-    /// The group declares fewer parameters than the route has variables.
-    Missing,
-    /// Named as the route variable at the carried position instead.
-    Moved(usize),
-    /// Named as none of the route's variables.
-    Unknown,
+/// The rule every mismatch message ends with.
+const RULE: &str = "PathParams names must match the route's variables one for one, in order";
+
+/// Describes the first disagreement between the parameter `names` a
+/// `PathParams` group declares and its route's `variables`, in const code.
+///
+/// `group` and `path` are only rendered: the group's type and the route
+/// template, as the attribute read them. `None` when the two lists are equal.
+#[must_use]
+pub const fn path_parameter_mismatch(
+    group: &str,
+    path: &str,
+    names: &[&str],
+    variables: &[&str],
+) -> Option<Message> {
+    let mut message = Message::new();
+    message.push("`");
+    message.push(group);
+    let mut index = 0;
+    while index < names.len() && index < variables.len() {
+        if !const_str_eq(names[index], variables[index]) {
+            message.push("` declares path parameter `");
+            message.push(names[index]);
+            message.push("` where the route `");
+            message.push(path);
+            message.push("` has variable `");
+            message.push(variables[index]);
+            message.push("`; ");
+            message.push(RULE);
+            return Some(message);
+        }
+        index += 1;
+    }
+    if index < variables.len() {
+        message.push("` declares no path parameter for variable `");
+        message.push(variables[index]);
+        message.push("` of the route `");
+        message.push(path);
+        message.push("`; ");
+        message.push(RULE);
+        return Some(message);
+    }
+    if index < names.len() {
+        message.push("` declares path parameter `");
+        message.push(names[index]);
+        message.push("`, for which the route `");
+        message.push(path);
+        message.push("` has no variable; ");
+        message.push(RULE);
+        return Some(message);
+    }
+    None
 }
 
-/// Compares the parameter `names` declares at `index` with the route
-/// `variables`, in const code.
-///
-/// `index` is a position among `variables`; a group longer than the route is
-/// the caller's to detect, by comparing lengths.
-#[must_use]
-pub const fn path_parameter_at(names: &[&str], variables: &[&str], index: usize) -> PathParameter {
-    if index >= names.len() {
-        return PathParameter::Missing;
-    }
-    let name = names[index];
-    if index < variables.len() && const_str_eq(name, variables[index]) {
-        return PathParameter::Matches;
-    }
-    let mut position = 0;
-    while position < variables.len() {
-        if const_str_eq(name, variables[position]) {
-            return PathParameter::Moved(position);
+/// A message composed in const code, truncated at a character boundary if it
+/// outgrows its buffer.
+#[derive(Clone, Copy, Debug)]
+pub struct Message {
+    bytes: [u8; CAPACITY],
+    len: usize,
+}
+
+/// Long enough for any name a path template holds; a longer message is cut
+/// short rather than refused, since it is already an error.
+const CAPACITY: usize = 1024;
+
+impl Message {
+    const fn new() -> Self {
+        Self {
+            bytes: [0; CAPACITY],
+            len: 0,
         }
-        position += 1;
     }
-    PathParameter::Unknown
+
+    const fn push(&mut self, text: &str) {
+        let text = text.as_bytes();
+        let mut end = text.len();
+        if end > CAPACITY - self.len {
+            end = CAPACITY - self.len;
+            // Back off any continuation byte, so the cut falls between
+            // characters and the buffer stays valid UTF-8.
+            while end > 0 && text[end] & 0b1100_0000 == 0b1000_0000 {
+                end -= 1;
+            }
+        }
+        let mut index = 0;
+        while index < end {
+            self.bytes[self.len + index] = text[index];
+            index += 1;
+        }
+        self.len += end;
+    }
+
+    /// The message composed so far.
+    #[must_use]
+    pub const fn as_str(&self) -> &str {
+        match core::str::from_utf8(self.bytes.split_at(self.len).0) {
+            Ok(text) => text,
+            // Unreachable: only whole `&str`s, or prefixes of one cut between
+            // characters, are ever pushed.
+            Err(_) => RULE,
+        }
+    }
 }
 
 const fn const_str_eq(left: &str, right: &str) -> bool {
