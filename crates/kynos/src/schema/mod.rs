@@ -193,9 +193,14 @@ pub trait Schema {
     /// descend, so that a bound on a derived type is enforced wherever that
     /// type is nested; a hand implementation for a newtype delegates to its
     /// member.
-    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
-        let _ = (at, violations);
-    }
+    // An empty body rather than `let _ = (at, violations);`: cargo-mutants
+    // would replace that with `()`, which is the same function and survives
+    // every test.
+    #[expect(
+        unused_variables,
+        reason = "the names are what rustdoc shows an implementor"
+    )]
+    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {}
 }
 
 /// A type usable as a JSON object key.

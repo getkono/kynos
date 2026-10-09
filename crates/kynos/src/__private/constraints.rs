@@ -240,8 +240,10 @@ pub trait ByDefault<T> {
 }
 
 impl<T: Default> ByDefault<T> for &Filled<T> {
+    // Spelled as cargo-mutants spells a replacement, so it generates none that
+    // is this same function.
     fn filled(&self) -> Option<T> {
-        Some(T::default())
+        Some(Default::default())
     }
 }
 
