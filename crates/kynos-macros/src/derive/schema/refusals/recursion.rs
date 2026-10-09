@@ -1,8 +1,7 @@
 //! Types whose schema would never end.
 
-use proc_macro2::{Span, TokenStream, TokenTree};
-use quote::ToTokens;
-use syn::{DeriveInput, Ident};
+use proc_macro2::Span;
+use syn::{DeriveInput, GenericArgument, Ident, Path, PathArguments, Type};
 
 use crate::derive::schema::{
     attributes::{is_described, is_phantom},
@@ -30,7 +29,7 @@ pub(super) fn reject_recursive_generic(input: &DeriveInput) -> syn::Result<()> {
         .into_iter()
         .flatten()
         .filter(|field| is_described(field) && !is_phantom(&field.ty))
-        .find_map(|field| self_reference(field.ty.to_token_stream(), &input.ident));
+        .find_map(|field| self_reference(&field.ty, &input.ident));
     let Some(span) = site else {
         return Ok(());
     };
@@ -45,24 +44,47 @@ pub(super) fn reject_recursive_generic(input: &DeriveInput) -> syn::Result<()> {
     ))
 }
 
-/// Where `tokens` name `ty`: by its identifier at the head of a path, or as
+/// Where `ty` names `name`: by its identifier at the head of a path, or as
 /// `Self`.
-fn self_reference(tokens: TokenStream, ty: &Ident) -> Option<Span> {
-    let mut qualified = false;
-    for token in tokens {
-        match &token {
-            TokenTree::Ident(ident) if ident == "Self" || (!qualified && ident == ty) => {
-                return Some(ident.span());
-            }
-            TokenTree::Group(group) => {
-                if let Some(span) = self_reference(group.stream(), ty) {
-                    return Some(span);
-                }
-            }
-            _ => {}
-        }
-        // An identifier after `::` is a segment of a longer path.
-        qualified = matches!(&token, TokenTree::Punct(punct) if punct.as_char() == ':');
+///
+/// A qualified path, `<Self as Tr>::Out`, is skipped whole: it is described
+/// by the associated type's schema, which this derive cannot see, so any
+/// cycle through it is left to `Registry::resolve`.
+fn self_reference(ty: &Type, name: &Ident) -> Option<Span> {
+    match ty {
+        Type::Array(array) => self_reference(&array.elem, name),
+        Type::Group(group) => self_reference(&group.elem, name),
+        Type::Paren(paren) => self_reference(&paren.elem, name),
+        Type::Ptr(pointer) => self_reference(&pointer.elem, name),
+        Type::Reference(reference) => self_reference(&reference.elem, name),
+        Type::Slice(slice) => self_reference(&slice.elem, name),
+        Type::Tuple(tuple) => tuple
+            .elems
+            .iter()
+            .find_map(|elem| self_reference(elem, name)),
+        Type::Path(path) if path.qself.is_none() => path_reference(&path.path, name),
+        _ => None,
     }
-    None
+}
+
+/// Where `path` names `name` at its head, or in any segment's type arguments.
+fn path_reference(path: &Path, name: &Ident) -> Option<Span> {
+    let head = path
+        .segments
+        .first()
+        .map(|segment| &segment.ident)
+        .filter(|head| *head == "Self" || (path.leading_colon.is_none() && *head == name));
+    if let Some(head) = head {
+        return Some(head.span());
+    }
+    path.segments.iter().find_map(|segment| {
+        let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+            return None;
+        };
+        arguments.args.iter().find_map(|argument| match argument {
+            GenericArgument::Type(ty) => self_reference(ty, name),
+            GenericArgument::AssocType(binding) => self_reference(&binding.ty, name),
+            _ => None,
+        })
+    })
 }
