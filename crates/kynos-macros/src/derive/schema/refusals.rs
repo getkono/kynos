@@ -1,14 +1,15 @@
 //! What the `Schema` derive refuses before it emits anything.
 //!
 //! Each rule names a form whose declaration predicts no schema true of the
-//! wire in both directions, or a `#[schema(...)]` outside the grammar, and the
-//! expansion reads only inputs every rule here has passed. The rules are
-//! grouped by the serde form they read; [`check`] holds the order across the
-//! groups.
+//! wire in both directions, a `#[schema(...)]` outside the grammar, or a
+//! generic type whose schema would never end, and the expansion reads only
+//! inputs every rule here has passed. The rules are grouped by the serde form
+//! they read, the last by none; [`check`] holds the order across the groups.
 
 mod grammar;
 mod naming;
 mod object_keys;
+mod recursion;
 mod skips;
 mod wire_form;
 
@@ -35,5 +36,6 @@ pub(super) fn check(input: &DeriveInput) -> syn::Result<()> {
     object_keys::reject_unread_field_in_closed_object(input)?;
     skips::reject_one_way_member_skip(input)?;
     skips::reject_skipped_adjacent_payload(input)?;
-    grammar::check_constraints(input)
+    grammar::check_constraints(input)?;
+    recursion::reject_recursive_generic(input)
 }

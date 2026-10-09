@@ -445,6 +445,7 @@ mod schema {
                 include_str!("schema/refusals/grammar.rs"),
                 include_str!("schema/refusals/naming.rs"),
                 include_str!("schema/refusals/object_keys.rs"),
+                include_str!("schema/refusals/recursion.rs"),
                 include_str!("schema/refusals/skips.rs"),
                 include_str!("schema/refusals/wire_form.rs"),
             ]

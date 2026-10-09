@@ -92,7 +92,8 @@ pub(super) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     // every instantiation the same name, so `Page<User>` and `Page<Order>`
     // would collide in `components`; mangling the arguments into a legal
     // component key is the eventual answer, and inlining is the honest
-    // placeholder rather than a name that is wrong.
+    // placeholder rather than a name that is wrong. An inlined type cannot
+    // refer to itself, so `refusals::recursion` refuses one that does.
     let component = LitStr::new(&name.to_string(), name.span());
     let named = if input.generics.type_params().next().is_some() {
         quote!(::core::option::Option::None)
