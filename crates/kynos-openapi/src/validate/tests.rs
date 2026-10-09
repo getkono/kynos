@@ -528,18 +528,19 @@ fn a_reusable_parameters_style_is_checked_against_its_location() {
     );
 }
 
-/// A component's name is a pointer token, escaped as one.
+/// A component's name is a pointer token, escaped as one. The extension-name
+/// rule warns rather than errs, so every severity is read here.
 #[test]
 fn a_reusable_parameters_extensions_are_checked_at_its_escaped_pointer() {
     let mut parameter = Parameter::query("page", Schema::of_type(SchemaType::Integer));
     parameter.extensions.insert("not-prefixed", true);
     let document = document_with_component_parameter(&[], "a/b", crate::RefOr::Item(parameter));
 
-    let found = located_errors(&document);
+    let found = Validator::new(SpecVersion::V3_1).validate(&document);
     assert!(
-        found.iter().any(|(location, error)| {
-            location == "#/components/parameters/a~1b"
-                && matches!(error, SpecError::InvalidExtensionName { .. })
+        found.iter().any(|violation| {
+            violation.location == "#/components/parameters/a~1b"
+                && matches!(violation.error, SpecError::InvalidExtensionName { .. })
         }),
         "got {found:?}"
     );
