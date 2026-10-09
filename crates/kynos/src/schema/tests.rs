@@ -843,21 +843,25 @@ mod unchecked_is_transparent {
 
 /// How a container locates a violation inside its members, where
 /// `tests/constraints.rs` cannot reach it through a derived type: a member the
-/// document cannot address, and the first of two reports at one location.
+/// document cannot address, a container no fixture there holds, and the first
+/// of two reports at one location.
 mod checking {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::{
+        collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
+        sync::Arc,
+    };
 
     use crate::{
-        __private::constraints::{is_multiple, max_length, minimum, unique_items},
+        __private::constraints::{aliased, is_multiple, max_length, minimum, unique_items},
         schema::{
             MapKey, Schema,
-            constraints::{Pointer, Violations},
+            constraints::{Items, Pointer, Textual, UniqueItems, Violations},
             registry::Registry,
         },
     };
 
     /// A value whose only bound is that it is never `0`, reported at `at`.
-    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
     struct NonZero(u8);
 
     impl Schema for NonZero {
@@ -882,10 +886,67 @@ mod checking {
 
     impl MapKey for Opaque {}
 
-    fn failures<T: Schema>(value: &T) -> BTreeMap<String, String> {
+    fn failures<T: Schema + ?Sized>(value: &T) -> BTreeMap<String, String> {
         let mut violations = Violations::new();
         value.check_constraints(Pointer::root().member("v"), &mut violations);
         violations.into_failures()
+    }
+
+    /// Where `value` breaks a bound, without what it broke.
+    fn located<T: Schema + ?Sized>(value: &T) -> Vec<String> {
+        failures(value).into_keys().collect()
+    }
+
+    #[test]
+    fn every_container_descends_into_what_it_holds() {
+        assert_eq!(located(&Some(NonZero(0))), ["/v/inner"]);
+        assert_eq!(
+            located(&VecDeque::from([NonZero(1), NonZero(0)])),
+            ["/v/1/inner"]
+        );
+        assert_eq!(located::<[NonZero]>(&[NonZero(0)]), ["/v/0/inner"]);
+        assert_eq!(located(&[NonZero(1), NonZero(0)]), ["/v/1/inner"]);
+        assert_eq!(located(&HashSet::from([NonZero(0)])), ["/v"]);
+        assert_eq!(
+            located(&HashMap::from([("k".to_owned(), NonZero(0))])),
+            ["/v/k/inner"]
+        );
+    }
+
+    #[test]
+    fn each_kind_reads_the_value_it_holds() {
+        assert_eq!([1, 2].item_count(), Some(2));
+        assert_eq!(HashSet::from([1, 2]).item_count(), Some(2));
+        assert_eq!(BTreeSet::from([1, 2]).item_count(), Some(2));
+
+        assert_eq!([1, 2].has_unique_items(), Some(true));
+        assert_eq!([1, 1].has_unique_items(), Some(false));
+        assert_eq!(HashSet::from([1]).has_unique_items(), Some(true));
+        assert_eq!(BTreeSet::from([1]).has_unique_items(), Some(true));
+
+        assert_eq!(Box::new("ab".to_owned()).text(), Some("ab"));
+        assert_eq!(Arc::new("ab".to_owned()).text(), Some("ab"));
+    }
+
+    #[test]
+    fn an_aliased_member_is_named_by_every_name_it_is_read_under() {
+        for (names, member) in [
+            (&["a"][..], "`a`"),
+            (&["a", "b"], "`a` or `b`"),
+            (&["a", "b", "c"], "`a`, `b` or `c`"),
+        ] {
+            let mut violations = Violations::new();
+            aliased(Pointer::root(), names, &mut violations, |at, violations| {
+                minimum(&0, 1.0, at, violations);
+            });
+            assert_eq!(
+                violations.into_failures(),
+                BTreeMap::from([(
+                    String::new(),
+                    format!("the member read as {member} must be at least 1")
+                )])
+            );
+        }
     }
 
     #[test]

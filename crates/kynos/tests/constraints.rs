@@ -254,6 +254,46 @@ async fn a_newtype_a_tuple_and_a_flattened_member_report_where_the_wire_puts_the
     refuses::<Tagged>(flattened, &["/quantity"]).await;
 }
 
+/// A transparent struct, which is its one named member on the wire.
+#[derive(Debug, Schema, Deserialize)]
+#[serde(transparent)]
+struct Code {
+    value: String,
+}
+
+/// Whether `$ty` implements `$kind`: the inherent constant exists only under
+/// the bound, and shadows the trait's where it does.
+macro_rules! implements {
+    ($ty:ty: $kind:path) => {{
+        struct Probe<T: ?Sized>(std::marker::PhantomData<T>);
+        // Each probe reads one of the two constants, so the other is unused.
+        #[allow(dead_code)]
+        trait Otherwise {
+            const IMPLEMENTS: bool = false;
+        }
+        impl<T: ?Sized> Otherwise for Probe<T> {}
+        #[allow(dead_code)]
+        impl<T: ?Sized + $kind> Probe<T> {
+            const IMPLEMENTS: bool = true;
+        }
+        <Probe<$ty>>::IMPLEMENTS
+    }};
+}
+
+/// A derived type takes its member's kind only where it is that member on the
+/// wire, so a bound written on a field of the type applies to the member: a
+/// one-member tuple struct and a transparent struct do, and a struct with a
+/// named member or a tuple of two, which are an object and an array, do not.
+#[test]
+fn only_a_type_that_is_its_member_on_the_wire_takes_its_kind() {
+    use kynos::schema::constraints::{Numeric, Textual};
+
+    assert!(implements!(Sku: Textual));
+    assert!(implements!(Code: Textual));
+    assert!(!implements!(Line: Numeric));
+    assert!(!implements!(Range: Numeric));
+}
+
 /// Externally tagged, the default: a payload sits under its variant's name.
 #[derive(Debug, Schema, Deserialize)]
 #[serde(rename_all = "snake_case")]
