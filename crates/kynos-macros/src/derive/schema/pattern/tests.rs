@@ -92,7 +92,10 @@ fn refusals() -> Vec<(&'static str, &'static str)> {
         ("a**", "a quantifier on a quantifier"),
         (r"\b+", "a quantified assertion"),
         ("[]a]", "a `]` first in a class"),
-        ("(?<a.b>x)", "a group name that is not an ECMA-262 identifier"),
+        (
+            "(?<a.b>x)",
+            "a group name that is not an ECMA-262 identifier",
+        ),
     ]
 }
 
@@ -121,9 +124,18 @@ fn each_spelling_of_a_refused_construct_is_refused() {
         (r"\B{2}", "a quantified assertion"),
         ("[^]a]", "a `]` first in a class"),
         ("[]-a]", "a `]` first in a class"),
-        ("(?<a[0]>x)", "a group name that is not an ECMA-262 identifier"),
-        ("(?<a\u{bd}>x)", "a group name that is not an ECMA-262 identifier"),
-        ("(?<\u{345}a>x)", "a group name that is not an ECMA-262 identifier"),
+        (
+            "(?<a[0]>x)",
+            "a group name that is not an ECMA-262 identifier",
+        ),
+        (
+            "(?<a\u{bd}>x)",
+            "a group name that is not an ECMA-262 identifier",
+        ),
+        (
+            "(?<\u{345}a>x)",
+            "a group name that is not an ECMA-262 identifier",
+        ),
     ] {
         let Err(reason) = translate(pattern) else {
             panic!("`{pattern}` must be refused");
