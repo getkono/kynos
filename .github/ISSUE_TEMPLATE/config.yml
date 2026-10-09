@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Question about using Kynos
-    url: https://github.com/getkono/kynos/discussions/new?category=q-a
-    about: Usage questions and design discussion go to Discussions, not the issue tracker.
+    url: https://github.com/getkono/kynos/tree/master/docs
+    about: Start from the design documentation here and the API reference at docs.rs/kynos.
   - name: Report a security vulnerability
     url: https://github.com/getkono/kynos/security/advisories/new
     about: Report privately through a security advisory. Do not open a public issue.
