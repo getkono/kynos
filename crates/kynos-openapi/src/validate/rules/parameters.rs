@@ -1,5 +1,5 @@
-//! Parameter and header rules: uniqueness, the closed style table, and the
-//! headers the specification refuses to describe.
+//! Parameter and header rules: uniqueness, the closed style table, the headers
+//! the specification refuses to describe, and what `in: querystring` excludes.
 //!
 //! What is left here is what a name or a whole list settles and a single value
 //! cannot: the schema/content exclusion and the style a header may declare are
@@ -96,6 +96,91 @@ pub(in crate::validate) fn check_parameter_list(
         // that violation cannot reach this function either.
 
         check_extensions(location, &parameter.extensions, violations);
+    }
+}
+
+/// Checks the three rules 3.2 states for `in: querystring`: it is described
+/// by `content`, at most one applies to an operation, and none applies beside
+/// an `in: query` parameter.
+///
+/// `own` is the list at `location`; `inherited` is the path item's list when
+/// `own` is an operation's, and empty when `own` is the path item's. The last
+/// two rules hold "in the same operation (or in the operation's path-item)",
+/// so they read the parameters that apply: the inherited ones the operation
+/// does not override, then its own. A pair drawn wholly from `inherited` is
+/// skipped, because the path item's own check already reported it once, at
+/// the path item.
+#[cfg(feature = "openapi32")]
+pub(in crate::validate) fn check_querystring(
+    location: &str,
+    inherited: &[RefOr<Parameter>],
+    own: &[RefOr<Parameter>],
+    violations: &mut Vec<Violation>,
+) {
+    let own: Vec<&Parameter> = own.iter().filter_map(RefOr::as_item).collect();
+
+    for parameter in &own {
+        if parameter.location == ParameterIn::Querystring && parameter.content().is_none() {
+            violations.push(Violation::error(
+                location,
+                SpecError::QuerystringWithoutContent {
+                    name: parameter.name.clone(),
+                },
+            ));
+        }
+    }
+
+    let overridden = |parameter: &Parameter| {
+        own.iter().any(|mine| {
+            mine.location == parameter.location
+                && fold_header_case(mine) == fold_header_case(parameter)
+        })
+    };
+    // Each applying parameter, and whether it is one this location declares.
+    let applying: Vec<(&Parameter, bool)> = inherited
+        .iter()
+        .filter_map(RefOr::as_item)
+        .filter(|parameter| !overridden(parameter))
+        .map(|parameter| (parameter, false))
+        .chain(own.iter().map(|parameter| (*parameter, true)))
+        .collect();
+    let of = |location: ParameterIn| {
+        applying
+            .iter()
+            .filter(move |(parameter, _)| parameter.location == location)
+    };
+
+    let mut querystrings = of(ParameterIn::Querystring);
+    let Some(&(first, first_is_own)) = querystrings.next() else {
+        return;
+    };
+
+    for &(second, second_is_own) in querystrings {
+        if first_is_own || second_is_own {
+            violations.push(Violation::error(
+                location,
+                SpecError::DuplicateQuerystring {
+                    first: first.name.clone(),
+                    second: second.name.clone(),
+                },
+            ));
+        }
+    }
+
+    // Each query parameter once, naming the first querystring parameter it is
+    // newly beside here.
+    for &(query, query_is_own) in of(ParameterIn::Query) {
+        if let Some(&(querystring, _)) = of(ParameterIn::Querystring)
+            .find(|&&(_, querystring_is_own)| query_is_own || querystring_is_own)
+        {
+            violations.push(Violation::error(
+                location,
+                SpecError::QueryBesideQuerystring {
+                    query: query.name.clone(),
+                    querystring: querystring.name.clone(),
+                },
+            ));
+        }
     }
 }
 

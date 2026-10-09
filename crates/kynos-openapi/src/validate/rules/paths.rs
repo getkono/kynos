@@ -138,7 +138,8 @@ impl Validator {
     ///
     /// `template` is `None` wherever the item hangs off something that is not
     /// a path — a webhook, a reusable component, a callback expression — which
-    /// is the only rule that distinguishes those positions from `paths`.
+    /// is the only rule that distinguishes those positions from `paths`. Each
+    /// operation's inline callbacks are walked from here too.
     #[allow(clippy::too_many_arguments)]
     fn check_item<'doc>(
         self,
@@ -151,6 +152,8 @@ impl Validator {
         violations: &mut Vec<Violation>,
     ) {
         check_parameter_list(location, &item.parameters, violations);
+        #[cfg(feature = "openapi32")]
+        super::parameters::check_querystring(location, &[], &item.parameters, violations);
 
         let named = item
             .operations()
@@ -173,8 +176,9 @@ impl Validator {
         );
 
         for (segment, operation) in named {
+            let location = format!("{location}/{segment}");
             self.check_operation(
-                &format!("{location}/{segment}"),
+                &location,
                 template,
                 item,
                 operation,
@@ -183,6 +187,33 @@ impl Validator {
                 operation_ids,
                 violations,
             );
+
+            // An operation's own callbacks describe operations as much as
+            // `components.callbacks` does, so they are walked the same way:
+            // no template, and a referenced callback is left to the component
+            // it names rather than visited once per reference. Inline items
+            // only, so the recursion is bounded by the document's own depth.
+            for (name, callback) in &operation.callbacks {
+                let Some(callback) = callback.as_item() else {
+                    continue;
+                };
+                for (expression, item) in &callback.items {
+                    let Some(item) = item.as_item() else { continue };
+                    self.check_item(
+                        &format!(
+                            "{location}/callbacks/{}/{}",
+                            pointer_token(name),
+                            pointer_token(expression)
+                        ),
+                        None,
+                        item,
+                        declared_schemes,
+                        declared_tags,
+                        operation_ids,
+                        violations,
+                    );
+                }
+            }
         }
     }
 }

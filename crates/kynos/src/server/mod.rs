@@ -41,7 +41,7 @@ use std::{future::pending, io, net::SocketAddr, num::NonZeroUsize, sync::Arc, ti
 
 use tokio::{
     net::TcpListener,
-    sync::{Semaphore, watch},
+    sync::{Semaphore, mpsc, watch},
     task::{JoinError, JoinSet},
 };
 
@@ -247,7 +247,7 @@ impl<C: 'static> Server<C> {
         #[cfg(feature = "tls")]
         let tls = if let Some(config) = self.tls {
             if config.client_authentication.is_some() {
-                apply_mutual_tls(service.openapi_mut())?;
+                service.openapi_mut(apply_mutual_tls)??;
             }
             Some(config.build().map_err(ServerError::from)?)
         } else {
@@ -352,6 +352,7 @@ impl<C: 'static> BoundServer<C> {
     pub async fn serve(self) -> Result<()> {
         let (lifecycle_sender, lifecycle_receiver) = watch::channel(Lifecycle::Running);
         let permits = Arc::new(Semaphore::new(self.config.max_connections.get()));
+        let (failure_sender, mut failures) = mpsc::unbounded_channel();
         let mut accept_loops = JoinSet::new();
 
         for (listener, local_addr) in self.listeners.into_iter().zip(self.local_addrs) {
@@ -363,6 +364,7 @@ impl<C: 'static> BoundServer<C> {
                 self.config.clone(),
                 Arc::clone(&permits),
                 lifecycle_receiver.clone(),
+                failure_sender.clone(),
             ));
         }
 
@@ -374,9 +376,9 @@ impl<C: 'static> BoundServer<C> {
 
         let (root_error, force) = tokio::select! {
             biased;
+            Some(error) = failures.recv() => (Some(error), Box::pin(pending()) as ForceFuture),
             completed = accept_loops.join_next() => match completed {
-                Some(Ok(Ok(()))) | None => (None, Box::pin(pending()) as ForceFuture),
-                Some(Ok(Err(error))) => (Some(error), Box::pin(pending()) as ForceFuture),
+                Some(Ok(())) | None => (None, Box::pin(pending()) as ForceFuture),
                 Some(Err(error)) => (Some(accept_loop_failure(&error)), Box::pin(pending()) as ForceFuture),
             },
             signal = &mut shutdown => match signal {

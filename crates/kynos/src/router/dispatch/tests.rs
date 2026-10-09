@@ -93,6 +93,7 @@ fn served_fields(served: &Served<()>) {
         terminal,
         interceptors,
         catch_panics,
+        secured,
         #[cfg(feature = "unchecked")]
         unchecked_layers,
     } = served;
@@ -100,7 +101,14 @@ fn served_fields(served: &Served<()>) {
     #[cfg(feature = "unchecked")]
     let _ = unchecked_layers;
 
-    let _ = (method, operation_id, terminal, interceptors, catch_panics);
+    let _ = (
+        method,
+        operation_id,
+        terminal,
+        interceptors,
+        catch_panics,
+        secured,
+    );
 }
 
 // --- What leaves the table ------------------------------------------------

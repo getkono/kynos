@@ -117,8 +117,10 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         // that serve it, so its bytes cannot predate the document -- and an
         // entry `absorb` or `absorb_router` dropped has already failed the
         // build above, so no half of a mount reaches this unpaired.
+        // The service keeps what this returns, because `Server::prepare` and
+        // the tower conversion still edit the document after this point.
         #[cfg(feature = "docs")]
-        docs::render::render(&self.mounted, &document)?;
+        let published = docs::render::render(&self.mounted, &document)?;
 
         let mut matcher = matchit::Router::new();
         let mut paths: Vec<PathEntry<C>> = Vec::new();
@@ -152,13 +154,15 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             };
 
             let method = mounted.endpoint.method();
-            let operation_id = document
+            let described = document
                 .paths
                 .items
                 .get(&key)
-                .and_then(|item| item.operation(method))
+                .and_then(|item| item.operation(method));
+            let operation_id = described
                 .and_then(|operation| operation.operation_id.clone())
                 .unwrap_or_default();
+            let secured = described.is_some_and(declares_security);
 
             let mut interceptors = self.interceptors.clone();
             interceptors.extend(mounted.interceptors);
@@ -176,6 +180,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 terminal: Arc::new(EndpointTerminal::new(mounted.endpoint)),
                 interceptors,
                 catch_panics: mounted.catch_panics || catches::<P>(),
+                secured,
                 #[cfg(feature = "unchecked")]
                 unchecked_layers,
             });
@@ -223,10 +228,13 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             implemented,
         });
 
-        Ok(Service::new(document, move |request| {
+        let service = Service::new(document, move |request| {
             let dispatch = Arc::clone(&dispatch);
             async move { dispatch.serve(request).await }
-        }))
+        });
+        #[cfg(feature = "docs")]
+        let service = service.with_published(published);
+        Ok(service)
     }
 
     /// Assembles the description, and everything found on the way that a
@@ -569,4 +577,16 @@ pub(super) fn match_table_refusal(pattern: &str, error: matchit::InsertError) ->
             pattern: pattern.to_owned(),
         },
     }
+}
+
+/// Whether `operation` declares a security requirement.
+///
+/// An absent `security` and an empty list both declare none. A list holding the
+/// empty requirement beside a scheme declares one, since a request presenting
+/// the credential is answered as its holder.
+fn declares_security(operation: &kynos_openapi::Operation) -> bool {
+    operation
+        .security
+        .as_ref()
+        .is_some_and(|requirements| !requirements.is_empty())
 }
