@@ -327,6 +327,121 @@ fn path_parameters_hoisted_onto_the_path_item_satisfy_the_template() {
     assert!(errors(&document_with(&[("/users/{id}", item)])).is_empty());
 }
 
+/// `document_with`, plus one reusable parameter under `#/components/parameters`.
+fn document_with_component_parameter(
+    paths: &[(&str, PathItem)],
+    name: &str,
+    parameter: crate::RefOr<Parameter>,
+) -> Document {
+    let mut document = document_with(paths);
+    document
+        .components
+        .parameters
+        .insert(name.to_owned(), parameter);
+    document
+}
+
+fn get_with_ref(location: &str) -> PathItem {
+    let mut operation = Operation::new("getUser").with_responses(ok_responses());
+    operation
+        .parameters
+        .push(crate::RefOr::Ref(crate::model::reference::Ref::new(
+            location,
+        )));
+    PathItem::new().with_operation(Method::Get, operation)
+}
+
+/// A Reference Object stands in for the Parameter Object it names, so a `$ref`
+/// into `#/components/parameters` declares the variable as an inline parameter
+/// would.
+#[test]
+fn a_path_parameter_supplied_by_ref_satisfies_the_template() {
+    let document = document_with_component_parameter(
+        &[("/users/{id}", get_with_ref("#/components/parameters/Id"))],
+        "Id",
+        crate::RefOr::Item(Parameter::path("id", Schema::of_type(SchemaType::String))),
+    );
+    assert!(errors(&document).is_empty(), "got {:?}", errors(&document));
+}
+
+/// A component may itself be a reference to another component.
+#[test]
+fn a_chain_of_component_refs_is_followed_to_the_parameter() {
+    let mut document = document_with_component_parameter(
+        &[("/users/{id}", get_with_ref("#/components/parameters/Id"))],
+        "Id",
+        crate::RefOr::Ref(crate::model::reference::Ref::parameter("UserId")),
+    );
+    document.components.parameters.insert(
+        "UserId".to_owned(),
+        crate::RefOr::Item(Parameter::path("id", Schema::of_type(SchemaType::String))),
+    );
+    assert!(errors(&document).is_empty(), "got {:?}", errors(&document));
+}
+
+/// The correspondence is two-sided: a referenced path parameter with no
+/// variable to fill is unused, as an inline one is.
+#[test]
+fn a_path_parameter_supplied_by_ref_needs_a_matching_template_variable() {
+    let document = document_with_component_parameter(
+        &[("/users", get_with_ref("#/components/parameters/Id"))],
+        "Id",
+        crate::RefOr::Item(Parameter::path("id", Schema::of_type(SchemaType::String))),
+    );
+    assert!(matches!(
+        errors(&document).as_slice(),
+        [SpecError::UnusedPathParameter { name }] if name == "id"
+    ));
+}
+
+/// A reference this document cannot resolve may name the variable, so the
+/// variable is not reported undeclared on a guess: an external document, and a
+/// pointer that is not a component name, are both outside what a validator of
+/// one document can read.
+#[test]
+fn a_ref_outside_the_components_does_not_fabricate_an_undeclared_variable() {
+    for location in [
+        "common.yaml#/components/parameters/Id",
+        "#/paths/~1accounts~1{id}/get/parameters/0",
+    ] {
+        let found = errors(&document_with(&[("/users/{id}", get_with_ref(location))]));
+        assert!(found.is_empty(), "{location}: got {found:?}");
+    }
+}
+
+/// A local reference to a component that does not exist declares nothing, so
+/// the variable it was meant to declare is still undeclared.
+#[test]
+fn a_dangling_component_ref_declares_nothing() {
+    let found = errors(&document_with(&[(
+        "/users/{id}",
+        get_with_ref("#/components/parameters/Id"),
+    )]));
+    assert!(matches!(
+        found.as_slice(),
+        [SpecError::UndeclaredPathVariable { name }] if name == "id"
+    ));
+}
+
+/// Components that reference each other in a cycle stand for no parameter, and
+/// following them terminates.
+#[test]
+fn a_cycle_of_component_refs_declares_nothing() {
+    let mut document = document_with_component_parameter(
+        &[("/users/{id}", get_with_ref("#/components/parameters/A"))],
+        "A",
+        crate::RefOr::Ref(crate::model::reference::Ref::parameter("B")),
+    );
+    document.components.parameters.insert(
+        "B".to_owned(),
+        crate::RefOr::Ref(crate::model::reference::Ref::parameter("A")),
+    );
+    assert!(matches!(
+        errors(&document).as_slice(),
+        [SpecError::UndeclaredPathVariable { name }] if name == "id"
+    ));
+}
+
 #[test]
 fn a_path_parameter_must_be_required() {
     let mut parameter = Parameter::path("id", Schema::of_type(SchemaType::String));
@@ -367,6 +482,39 @@ fn duplicate_name_and_location_pairs_are_rejected() {
     let found = errors(&document_with(&[("/users", item)]));
     assert!(matches!(
         found.as_slice(),
+        [SpecError::DuplicateParameter { name, .. }] if name == "page"
+    ));
+}
+
+/// The list is unique by what each entry *is*, so a duplicate that arrives by
+/// `$ref` is a duplicate.
+#[test]
+fn a_duplicate_arriving_by_ref_is_rejected() {
+    let mut operation = Operation::new("listUsers")
+        .with_parameter(Parameter::query(
+            "page",
+            Schema::of_type(SchemaType::Integer),
+        ))
+        .with_responses(ok_responses());
+    operation
+        .parameters
+        .push(crate::RefOr::Ref(crate::model::reference::Ref::parameter(
+            "Page",
+        )));
+    let document = document_with_component_parameter(
+        &[(
+            "/users",
+            PathItem::new().with_operation(Method::Get, operation),
+        )],
+        "Page",
+        crate::RefOr::Item(Parameter::query(
+            "page",
+            Schema::of_type(SchemaType::Integer),
+        )),
+    );
+
+    assert!(matches!(
+        errors(&document).as_slice(),
         [SpecError::DuplicateParameter { name, .. }] if name == "page"
     ));
 }
@@ -1385,6 +1533,76 @@ fn an_operation_adding_to_a_conflicting_path_item_is_reported_for_its_own_part()
             ),
         ]
     );
+}
+
+/// A querystring parameter that arrives by `$ref` is one, for both rules that
+/// compare entries: beside another querystring and beside a query parameter.
+#[cfg(feature = "openapi32")]
+#[test]
+fn querystring_rules_resolve_a_ref_d_parameter() {
+    use crate::model::reference::{Ref, RefOr};
+
+    let mut item = PathItem::new()
+        .with_operation(
+            Method::Get,
+            Operation::new("listUsers")
+                .with_parameter(Parameter::query("q", Schema::of_type(SchemaType::String)))
+                .with_responses(ok_responses()),
+        )
+        .with_operation(
+            Method::Post,
+            Operation::new("searchUsers")
+                .with_parameter(querystring("sort"))
+                .with_responses(ok_responses()),
+        );
+    item.parameters.push(RefOr::Ref(Ref::parameter("Filter")));
+    let document = document_with_component_parameter(
+        &[("/users", item)],
+        "Filter",
+        RefOr::Item(querystring("filter")),
+    );
+
+    assert_eq!(
+        querystring_violations(&document),
+        vec![
+            (
+                "#/paths/~1users/get".to_owned(),
+                SpecError::QueryBesideQuerystring {
+                    query: "q".to_owned(),
+                    querystring: "filter".to_owned(),
+                }
+            ),
+            (
+                "#/paths/~1users/post".to_owned(),
+                SpecError::DuplicateQuerystring {
+                    first: "filter".to_owned(),
+                    second: "sort".to_owned(),
+                }
+            ),
+        ]
+    );
+}
+
+/// An operation's `$ref`'d parameter overrides its path item's of the same
+/// name and location, as an inline one does.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_ref_d_operation_parameter_overrides_the_path_items_querystring() {
+    use crate::model::reference::{Ref, RefOr};
+
+    let mut operation = Operation::new("listUsers").with_responses(ok_responses());
+    operation
+        .parameters
+        .push(RefOr::Ref(Ref::parameter("Filter")));
+    let mut item = PathItem::new().with_operation(Method::Get, operation);
+    item.parameters.push(RefOr::Item(querystring("filter")));
+    let document = document_with_component_parameter(
+        &[("/users", item)],
+        "Filter",
+        RefOr::Item(querystring("filter")),
+    );
+
+    assert_eq!(querystring_violations(&document), vec![]);
 }
 
 // --- The variant ledger ---------------------------------------------------

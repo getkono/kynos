@@ -4,13 +4,16 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use kynos_openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType};
 
-use crate::schema::{
-    MapKey, Schema,
-    constraints::{Pointer, Violations},
-    flatten::{AdmitsAny, OpenMap},
-    impls::with_object,
-    registry::Registry,
-    unchecked::Unchecked,
+use crate::{
+    __private::constraints as keyword,
+    schema::{
+        MapKey, Schema,
+        constraints::{Constraints, Pointer, Violations},
+        flatten::{AdmitsAny, OpenMap},
+        impls::with_object,
+        registry::Registry,
+        unchecked::Unchecked,
+    },
 };
 
 /// An array schema over `T`, optionally requiring its members to be distinct.
@@ -70,20 +73,70 @@ fn check_members<'a, T: Schema + 'a>(
     });
 }
 
-/// Checks each value of a map under its key, or at the map where the key
-/// cannot say what member name it is.
-fn check_values<'a, K: MapKey + 'a, V: Schema + 'a>(
+/// Checks each entry of a map: its key against the `propertyNames` that `K`
+/// declares, then its value under the key.
+///
+/// A key has no location of its own, since a pointer to it names its value,
+/// so a key is reported at the map, the key in the detail. Only the length
+/// bounds can fail: a key is a string, and `pattern` is described and not
+/// checked, as everywhere. A key that cannot say what member name it is is
+/// not checked, and its value is reported at the map.
+///
+/// `K::key_constraints` is built once the first key to check needs it, and
+/// only its length bounds are kept, so an empty map, or one whose keys cannot
+/// be checked, builds nothing.
+fn check_entries<'a, K: MapKey + 'a, V: Schema + 'a>(
     entries: impl Iterator<Item = (&'a K, &'a V)>,
     at: Pointer<'_>,
     violations: &mut Violations,
 ) {
+    let mut lengths = None;
     for (key, value) in entries {
         match key.as_member() {
-            Some(name) => value.check_constraints(at.member(name), violations),
+            Some(name) => {
+                let lengths = *lengths.get_or_insert_with(|| KeyLengths::of::<K>());
+                check_key(name, lengths, at, violations);
+                value.check_constraints(at.member(name), violations);
+            }
             None => violations.within(at, |inner| {
                 value.check_constraints(Pointer::root(), inner);
             }),
         }
+    }
+}
+
+/// The bounds of a map key that a check enforces.
+#[derive(Clone, Copy)]
+struct KeyLengths {
+    min: Option<u64>,
+    max: Option<u64>,
+}
+
+impl KeyLengths {
+    fn of<K: MapKey>() -> Self {
+        let Constraints {
+            min_length,
+            max_length,
+            ..
+        } = K::key_constraints();
+        Self {
+            min: min_length,
+            max: max_length,
+        }
+    }
+}
+
+/// Checks one key against its `lengths`, reporting at `at`, the map.
+fn check_key(name: &str, lengths: KeyLengths, at: Pointer<'_>, violations: &mut Violations) {
+    let mut broken = Violations::new();
+    if let Some(bound) = lengths.min {
+        keyword::text_min_length(name, bound, Pointer::root(), &mut broken);
+    }
+    if let Some(bound) = lengths.max {
+        keyword::text_max_length(name, bound, Pointer::root(), &mut broken);
+    }
+    for (_, detail) in broken.into_each() {
+        violations.report(at, format!("the key `{name}` {detail}"));
     }
 }
 
@@ -158,7 +211,7 @@ impl<K: MapKey, V: Schema, S> Schema for HashMap<K, V, S> {
     }
 
     fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
-        check_values(self.iter(), at, violations);
+        check_entries(self.iter(), at, violations);
     }
 }
 
@@ -168,7 +221,7 @@ impl<K: MapKey, V: Schema> Schema for BTreeMap<K, V> {
     }
 
     fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
-        check_values(self.iter(), at, violations);
+        check_entries(self.iter(), at, violations);
     }
 }
 

@@ -16,6 +16,7 @@ use crate::{
     error::rejection::BodyRejection,
     extract::body::json_lines::SEQUENCE_MEDIA_TYPE,
     http::{Request, body::Body},
+    schema::{Schema, constraints::Pointer},
 };
 
 /// The record separator RFC 7464 puts before each JSON text.
@@ -83,6 +84,7 @@ enum State {
 /// | --- | --- | --- |
 /// | is not well-formed JSON | 400 | the stream ends — after a framing failure the record boundaries are no longer trustworthy |
 /// | is JSON that does not fit `T` | 422 at JSON Pointer `/{index}` | the stream continues — the boundaries held, so a bulk ingest can report every bad record at once |
+/// | breaks a bound `T`'s schema declares | 422 at each offending member, under `/{index}` | the stream continues, for the same reason |
 /// | did not arrive, because the transport failed | 400 | the stream ends |
 /// | opens a `json-seq` body without a record separator | 400 | the stream ends |
 ///
@@ -239,7 +241,9 @@ impl<T> Records<T> {
     }
 }
 
-impl<T: serde::de::DeserializeOwned> Records<T> {
+/// `T: Schema` because each record is held to the bounds its schema declares,
+/// as a [`Json`](crate::extract::body::json::Json) body is.
+impl<T: serde::de::DeserializeOwned + Schema> Records<T> {
     /// The next record, or `None` once the body has no more to give.
     ///
     /// An inherent method rather than a combinator, so that reading a body
@@ -293,13 +297,13 @@ impl<T: serde::de::DeserializeOwned> Records<T> {
         }
     }
 
-    /// Decodes one record, drawing the 400/422 line where every JSON body
-    /// draws it.
+    /// Decodes one record and holds it to the bounds `T` declares, drawing
+    /// the 400/422 line where every JSON body draws it.
     fn decode(&mut self, record: &[u8]) -> Result<T, BodyRejection> {
         let index = self.index;
         self.index += 1;
 
-        serde_json::from_slice(record).map_err(|error| {
+        let value = serde_json::from_slice(record).map_err(|error| {
             if crate::extract::body::json::is_schema_failure(&error) {
                 // The record was a record; only its shape was wrong. The
                 // boundaries held, so reading continues.
@@ -312,7 +316,10 @@ impl<T: serde::de::DeserializeOwned> Records<T> {
                     detail: format!("record {index}: {error}"),
                 }
             }
-        })
+        })?;
+
+        // A broken bound is a shape failure too, so reading continues past it.
+        crate::extract::body::checked(value, Pointer::root().index(index))
     }
 }
 
@@ -337,7 +344,7 @@ fn trimmed(frame: &Bytes) -> Bytes {
 ///
 /// Every field is `Unpin` — the body is, and so is the buffer — so this needs
 /// no projection and no `unsafe`, which is forbidden here.
-impl<T: serde::de::DeserializeOwned> Stream for Records<T> {
+impl<T: serde::de::DeserializeOwned + Schema> Stream for Records<T> {
     type Item = Result<T, BodyRejection>;
 
     fn poll_next(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {

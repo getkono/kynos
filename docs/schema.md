@@ -708,10 +708,24 @@ re-walked. A second call would reuse the same maps and agree with itself.
 ## Enforcing field constraints
 
 A `#[schema(...)]` bound is emitted as its keyword and generated as a check:
-`#[derive(Schema)]` implements `Schema::check_constraints`, and `Json<T>` and
-`Form<T>` run it on the value serde produced. A broken bound is a 422 whose
-`errors` name each member by JSON Pointer — the member's position on the wire,
-under the name serde reads it by — keeping the first failure at each.
+`#[derive(Schema)]` implements `Schema::check_constraints`, and every input
+that decodes a `Schema` type runs it on the value it decoded. A broken bound
+is refused with `errors` naming each member by JSON Pointer — the member's
+position on the wire, under the name serde reads it by — keeping the first
+failure at each.
+
+| Input | Refusal | Pointer into |
+| --- | --- | --- |
+| `Json<T>`, `Form<T>` | 422 | the body |
+| `MultipartForm<T>` | 422 | the form, a part under its field's name |
+| `JsonLines<Records<T>>`, `JsonSeq<Records<T>>` | 422 per record, reading on | the record, under `/{index}` |
+| `QueryString<T, Json>` | 400, `QueryRejection::Schema` | the decoded query string |
+
+A query string answers 400 rather than 422, since RFC 9110's 422 is about the
+request's content, and 400 is the status every query parameter already
+declares. The parameter derives declare no field bounds: a parameter is read
+through `FromStr`, which is its check. `Protobuf<T>` is described by its
+message rather than by `#[schema(...)]`, so it has no bound to run.
 
 - **A keyword applies to its own kind only**, as in JSON Schema: an absent
   `Option` satisfies every bound. A bound on a type of another kind is a compile
@@ -724,6 +738,12 @@ under the name serde reads it by — keeping the first failure at each.
 - **A set's member is reported at the set**, since its iteration order is not
   the document's; so is a map value whose key type does not say its member
   name through `MapKey::as_member`.
+- **A map key is held to `MapKey::key_constraints`' lengths at the map**, the
+  key in the detail, since a pointer to a key names its value. It is read
+  through `as_member`, so a key type answering `None` has its bounds described
+  and not checked. A map flattened under `#[schema(open)]` loses its
+  `propertyNames` from the description and is still checked, so there the
+  parser is stricter than the document, as the type already is.
 - **A member read under an `alias` is reported at its object**, its names in
   the detail, since which name the document used is gone once serde reads it.
 - **A member serde fills from a `default` is held to its bounds unless its
@@ -740,7 +760,9 @@ under the name serde reads it by — keeping the first failure at each.
   regular expression engine Kynos does not depend on yet.
 
 The check runs on the typed value, so no JSON Schema interpreter sits on the
-request path, and a value inside every bound allocates nothing.
+request path, and a value inside every bound allocates nothing beyond what
+a map's `MapKey::key_constraints` builds, once per map that has a key to
+check.
 
 ## Rules
 
@@ -790,7 +812,7 @@ request path, and a value inside every bound allocates nothing.
 | 42 | `rename_all` is applied as serde applies it: to a field's identifier read as snake_case (`apply_to_field`), and to a variant's split before each uppercase letter (`apply_to_variant`), with ASCII case mapping; the parameter derives and `MultipartForm` name fields by the same rule | `rename_all_names_every_member_as_serde_does` in [`tests/derives.rs`](../crates/kynos/tests/derives.rs), against serde's own output for all eight styles |
 | 43 | A container `rename_all(serialize = ..., deserialize = ...)` whose two sides agree is read as that one style, and every key after it in the same `#[serde(...)]` is still read; one whose sides differ, or which names one side only, is refused, since the style reaches every member serde both writes and reads; the parameter derives refuse the split form whatever its sides, and `MultipartForm` refuses one whose sides differ as this derive does, since a part carries one name in both directions | `a_split_rename_all_whose_sides_agree_is_read` in [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over the emitted schema against what serde writes and reads; the `Schema` and `MultipartForm` ledgers, `a_split_rename_all_naming_one_side_is_refused` and `a_rename_giving_one_part_name_is_accepted` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); `a_split_rename_all_is_refused_even_where_its_sides_agree` in [`derive/common/tests.rs`](../crates/kynos-macros/src/derive/common/tests.rs); and `tests/ui/macros/schema_split_rename_all.rs` and `tests/ui/macros/multipart_split_rename_all.rs` for the wording |
 | 44 | A struct variant's field is named by its `rename`, else the variant's own `rename_all`, else the enum's `rename_all_fields`, else its identifier, and never by the enum's `rename_all`, which names variants alone, under every tagging and at every site that names it: the branch, the names serde reads it by, and the split-`rename` check; a split `rename_all_fields` that reaches a struct variant, or the split `rename_all` of a struct variant serde both writes and reads, whose sides differ is refused as a container one is, one whose sides agree is read as that one style, a variant serde only reads names its fields by its rule's deserialize side, and a unit or tuple variant's own split `rename_all` names no field and is accepted, as serde accepts it | `a_struct_variants_fields_are_named_as_serde_names_them` in [`tests/derives.rs`](../crates/kynos/tests/derives.rs), over external, internal and adjacent tagging against what serde writes, `a_split_field_rule_whose_sides_agree_is_read` there for a split `rename_all_fields` and variant `rename_all` whose sides agree, and `a_read_only_variants_fields_are_named_as_serde_reads_them` there against what serde reads; `a_split_rename_is_judged_by_the_variants_field_rule`, `a_split_field_rule_whose_sides_differ_is_refused` and `a_split_field_rule_no_field_is_named_both_ways_by_is_accepted` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs) |
-| 45 | Every `#[schema(...)]` bound but `pattern` that a described member declares is enforced by `Json<T>` and `Form<T>` after deserialization, as a 422 keyed by the member's JSON Pointer on the wire (by its object's, for a member read under an `alias`), and agrees with the emitted keyword on whether a document is admitted, but for a value sent for a defaulted member whose filled value breaks the same bound | [`tests/constraints.rs`](../crates/kynos/tests/constraints.rs), against a draft 2020-12 validator over the emitted schema; the locations no derived type reaches in [`schema/tests.rs`](../crates/kynos/src/schema/tests.rs) |
+| 45 | Every `#[schema(...)]` bound but `pattern` that a described member declares, and every `MapKey::key_constraints` length of a key that names itself through `as_member`, is enforced after decoding by `Json<T>`, `Form<T>`, `MultipartForm<T>`, each record of `JsonLines<Records<T>>` and `JsonSeq<Records<T>>`, and `QueryString<T, Json>` — a 422, or a 400 for the query string — keyed by the member's JSON Pointer on the wire (by its object's, for a member read under an `alias`; by its map's, for a key; under `/{index}`, for a record), and agrees with the emitted keyword on whether a document is admitted, but for a value sent for a defaulted member whose filled value breaks the same bound | [`tests/constraints.rs`](../crates/kynos/tests/constraints.rs), against a draft 2020-12 validator over the emitted schema for the JSON inputs; the locations no derived type reaches in [`schema/tests.rs`](../crates/kynos/src/schema/tests.rs) |
 | 46 | A generic type has no component name and is inlined, so one naming itself, by its identifier or as `Self`, in a member its schema describes is refused at compile time; an inlined type reaching itself with no named type between, as generic types referring to each other do, panics naming the type when the document is built rather than overflowing the stack | the derive's ledger in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs), `tests/ui/macros/schema_recursive_generic.rs` for the wording and `schema_recursive_concrete.rs` in the pass suite; [`registry/tests.rs`](../crates/kynos/src/schema/registry/tests.rs) for the panic |
 
 ## Rationale

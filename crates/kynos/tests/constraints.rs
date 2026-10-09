@@ -1,4 +1,5 @@
-//! That a field's `#[schema(...)]` constraints are what `Json` enforces.
+//! That a field's `#[schema(...)]` constraints are what `Json` enforces, and
+//! every other input that deserializes a `Schema` type with it.
 //!
 //! A constraint is one declaration with two projections: the keyword the
 //! description emits, and the check the derive generates after
@@ -513,6 +514,62 @@ async fn a_member_read_under_an_alias_is_reported_at_the_object_holding_it() {
     admits::<Shape>(json!({ "Square": { "side": 5 } })).await;
 }
 
+/// A map key bounded through `MapKey::key_constraints`, which the description
+/// emits as `propertyNames`.
+#[derive(Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+struct Code3(String);
+
+impl SchemaTrait for Code3 {
+    fn schema(registry: &mut kynos::schema::registry::Registry) -> kynos::openapi::Schema {
+        String::schema(registry)
+    }
+}
+
+impl kynos::schema::MapKey for Code3 {
+    fn key_constraints() -> kynos::schema::constraints::Constraints {
+        let mut constraints = kynos::schema::constraints::Constraints::default();
+        constraints.min_length = Some(2);
+        constraints.max_length = Some(3);
+        constraints
+    }
+
+    fn as_member(&self) -> Option<&str> {
+        Some(&self.0)
+    }
+}
+
+#[derive(Debug, Schema, Deserialize)]
+struct Catalogue {
+    by_code: BTreeMap<Code3, Line>,
+}
+
+#[tokio::test]
+async fn a_map_key_is_held_to_its_property_names_at_the_map() {
+    admits::<Catalogue>(
+        json!({ "by_code": { "ab": { "quantity": 1 }, "abc": { "quantity": 1 } } }),
+    )
+    .await;
+    // Lengths count code points here too.
+    admits::<Catalogue>(json!({ "by_code": { "ééé": { "quantity": 1 } } })).await;
+    // A key has no location of its own, since a pointer to it names its
+    // value, so it is reported at the map.
+    refuses::<Catalogue>(
+        json!({ "by_code": { "abcd": { "quantity": 1 } } }),
+        &["/by_code"],
+    )
+    .await;
+    refuses::<Catalogue>(
+        json!({ "by_code": { "a": { "quantity": 1 } } }),
+        &["/by_code"],
+    )
+    .await;
+    refuses::<Catalogue>(
+        json!({ "by_code": { "abcd": { "quantity": 0 } } }),
+        &["/by_code", "/by_code/abcd/quantity"],
+    )
+    .await;
+}
+
 /// `Form<T>` runs the same check after `serde_urlencoded` reads the body.
 #[cfg(feature = "form")]
 mod form {
@@ -557,6 +614,189 @@ mod form {
                 );
             }
             other => panic!("a form breaking two bounds was not refused at both: {other:?}"),
+        }
+    }
+}
+
+/// `JsonLines<Records<T>>` and `JsonSeq<Records<T>>` run the same check on
+/// each record as it is yielded, keyed under the record's position: OpenAPI
+/// 3.2 reads a sequential media type as an array in the same order.
+#[cfg(feature = "openapi32")]
+mod records {
+    use kynos::{
+        error::rejection::BodyRejection,
+        extract::{
+            FromRequest,
+            body::json_lines::{JsonLines, JsonSeq, records::Records},
+        },
+        http::{HeaderValue, Request, body::Body, header},
+    };
+    use serde_json::{Value, json};
+
+    use super::{Line, emitted};
+
+    /// A body carrying `documents`, framed as `media_type` frames them.
+    fn request(media_type: &'static str, documents: &[Value]) -> Request {
+        let mut bytes = Vec::new();
+        for document in documents {
+            if media_type == "application/json-seq" {
+                bytes.push(0x1e);
+            }
+            bytes.extend(serde_json::to_vec(document).expect("a document serializes"));
+            bytes.push(b'\n');
+        }
+        let mut request = Request::new(Body::from_bytes(bytes::Bytes::from(bytes)));
+        request
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, HeaderValue::from_static(media_type));
+        request
+    }
+
+    /// Each record's outcome: `None` where admitted, and the pointers it was
+    /// refused at otherwise.
+    async fn outcomes(mut records: Records<Line>) -> Vec<Option<Vec<String>>> {
+        let mut outcomes = Vec::new();
+        while let Some(record) = records.next().await {
+            outcomes.push(match record {
+                Ok(_) => None,
+                Err(BodyRejection::Schema { failures }) => Some(failures.into_keys().collect()),
+                Err(other) => panic!("a well-formed record refused as something else: {other:?}"),
+            });
+        }
+        outcomes
+    }
+
+    /// Holds each framing to the validator over the item schema, record by
+    /// record, and returns where the records were refused.
+    async fn agree(documents: &[Value]) -> Vec<Option<Vec<String>>> {
+        let schema = emitted::<Line>();
+        let validator = jsonschema::draft202012::new(&schema)
+            .expect("an emitted schema compiles as draft 2020-12");
+
+        let JsonLines { items } = JsonLines::<Records<Line>>::from_request(
+            request("application/x-ndjson", documents),
+            &(),
+        )
+        .await
+        .expect("an NDJSON body is taken unread");
+        let lines = outcomes(items).await;
+        let JsonSeq { items } =
+            JsonSeq::<Records<Line>>::from_request(request("application/json-seq", documents), &())
+                .await
+                .expect("a JSON text sequence is taken unread");
+        let sequence = outcomes(items).await;
+
+        assert_eq!(lines, sequence, "the two framings disagree");
+        for (document, outcome) in documents.iter().zip(&lines) {
+            assert_eq!(
+                validator.is_valid(document),
+                outcome.is_none(),
+                "the validator and the record disagree on {document}: refused at {outcome:?}"
+            );
+        }
+        lines
+    }
+
+    #[tokio::test]
+    async fn each_record_is_held_to_its_bounds_and_reading_continues() {
+        let refused = agree(&[
+            json!({ "quantity": 1 }),
+            json!({ "quantity": 0 }),
+            json!({ "quantity": 2 }),
+        ])
+        .await;
+        assert_eq!(refused, [None, Some(vec!["/1/quantity".to_owned()]), None]);
+    }
+}
+
+/// `QueryString<T, Json>` runs the same check on the document it decoded.
+#[cfg(feature = "openapi32")]
+mod query_string {
+    use kynos::{
+        error::rejection::QueryRejection,
+        extract::{FromRequestParts, params::querystring::QueryString},
+        http::{Request, StatusCode, Uri, body::Body, media},
+    };
+    use serde_json::json;
+
+    use super::{Line, emitted};
+
+    /// What `QueryString<Line, Json>` makes of the query in `uri`.
+    async fn read(uri: &'static str) -> Result<QueryString<Line, media::Json>, QueryRejection> {
+        let mut request = Request::new(Body::empty());
+        *request.uri_mut() = Uri::from_static(uri);
+        let mut parts = request.into_parts().0;
+        QueryString::<Line, media::Json>::from_request_parts(&mut parts, &()).await
+    }
+
+    #[tokio::test]
+    async fn a_query_string_is_held_to_the_same_bounds() {
+        let schema = emitted::<Line>();
+        let validator = jsonschema::draft202012::new(&schema)
+            .expect("an emitted schema compiles as draft 2020-12");
+
+        assert!(validator.is_valid(&json!({ "quantity": 1 })));
+        read("/search?%7B%22quantity%22%3A1%7D")
+            .await
+            .expect("inside every bound");
+
+        assert!(!validator.is_valid(&json!({ "quantity": 0 })));
+        let rejection = read("/search?%7B%22quantity%22%3A0%7D")
+            .await
+            .expect_err("a broken bound is refused");
+        assert_eq!(rejection.status(), StatusCode::BAD_REQUEST);
+        match rejection {
+            QueryRejection::Schema { name, failures } => {
+                assert_eq!(name, "querystring");
+                assert_eq!(failures.into_keys().collect::<Vec<_>>(), ["/quantity"]);
+            }
+            other => panic!("a broken bound was refused as something else: {other:?}"),
+        }
+    }
+}
+
+/// `MultipartForm<T>` runs the same check on the value its parts built, each
+/// part sitting under its field's name.
+#[cfg(feature = "multipart")]
+mod multipart {
+    use kynos::{
+        Schema,
+        error::rejection::BodyRejection,
+        extract::{FromRequest, body::multipart::MultipartForm},
+        http::{HeaderValue, Request, body::Body, header},
+    };
+
+    #[derive(Debug, Schema, kynos::MultipartForm)]
+    struct Upload {
+        #[schema(max_length = 3)]
+        name: String,
+    }
+
+    /// What `MultipartForm<Upload>` makes of one `name` part holding `value`.
+    async fn read(value: &str) -> Result<Upload, BodyRejection> {
+        let body = format!(
+            "--x\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\n{value}\r\n--x--\r\n"
+        );
+        let mut request = Request::new(Body::from_bytes(bytes::Bytes::from(body)));
+        request.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("multipart/form-data; boundary=x"),
+        );
+        MultipartForm::<Upload>::from_request(request, &())
+            .await
+            .map(|MultipartForm(upload)| upload)
+    }
+
+    #[tokio::test]
+    async fn a_multipart_body_is_held_to_the_same_bounds() {
+        let upload = read("abc").await.expect("inside every bound");
+        assert_eq!(upload.name, "abc");
+
+        match read("abcd").await {
+            Err(BodyRejection::Schema { failures }) => {
+                assert_eq!(failures.into_keys().collect::<Vec<_>>(), ["/name"]);
+            }
+            other => panic!("a part breaking its bound was not refused at it: {other:?}"),
         }
     }
 }

@@ -242,6 +242,14 @@ pub trait MapKey: Schema {
     /// Nothing, by default — which is what makes the resulting
     /// `propertyNames` vacuous for a plain [`String`] key, and why a map keyed
     /// by one emits none at all.
+    ///
+    /// A map's [`check_constraints`](Schema::check_constraints) holds each key
+    /// to the `min_length` and `max_length` set here, reporting a key that
+    /// breaks one at the map. It reads the key through
+    /// [`as_member`](Self::as_member), so a key type returning `None` there has
+    /// these described and not checked. The other string bounds are as a
+    /// field's: `pattern` is described and not checked, and `format` is an
+    /// annotation.
     #[must_use]
     fn key_constraints() -> constraints::Constraints {
         constraints::Constraints::default()
@@ -250,9 +258,12 @@ pub trait MapKey: Schema {
     /// This key as the member name it is written under, where it is one
     /// without being formatted.
     ///
-    /// Read only to locate a violation inside the map's value, so `None`, the
-    /// default, costs a precise location and nothing else: the violation is
-    /// then reported at the map itself, naming where inside the value it was.
+    /// Read to check the key against [`key_constraints`](Self::key_constraints)
+    /// and to locate a violation inside the map's value. `None`, the default,
+    /// leaves the key unchecked and costs the value a precise location: a
+    /// violation inside it is then reported at the map itself, naming where
+    /// inside the value it was. A key type that declares a length bound
+    /// returns `Some` here for it to be enforced.
     fn as_member(&self) -> Option<&str> {
         None
     }

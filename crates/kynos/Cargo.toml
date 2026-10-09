@@ -541,7 +541,9 @@ hyper = { workspace = true, features = ["client", "http1", "http2"] }
 # reads those attributes, so the tests have to be able to write them.
 serde = { workspace = true, features = ["derive"] }
 alloc_counter = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# `test-util` pauses the clock, so the HTTP/2 idle wait is timed to the instant
+# rather than against a wall clock a loaded runner can stretch.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 # The UI suite hands `Router::intercept` a real `tower::Layer`, so the negative
 # and its control differ only in whether the middleware declares itself.
 tower = { workspace = true }

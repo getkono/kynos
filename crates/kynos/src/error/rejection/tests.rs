@@ -114,6 +114,37 @@ fn a_schema_failure_travels_as_one_errors_entry_per_pointer() {
     );
 }
 
+/// A query string that breaks a bound travels as a body's schema failure does,
+/// at the parameter's own 400, its sentence naming the parameter the pointers
+/// read into.
+#[test]
+fn a_query_schema_failure_travels_as_one_errors_entry_per_pointer() {
+    let problem = QueryRejection::Schema {
+        name: "querystring".into(),
+        failures: [
+            ("/limit".to_owned(), "must be at most 100".to_owned()),
+            ("/from".to_owned(), "must be at least 1".to_owned()),
+        ]
+        .into_iter()
+        .collect(),
+    }
+    .into_problem();
+
+    assert_eq!(
+        serde_json::to_value(problem).expect("a problem serializes"),
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Bad Request",
+            "status": 400,
+            "detail": "query parameter `querystring` does not satisfy its schema",
+            "errors": [
+                { "pointer": "/from", "detail": "must be at least 1" },
+                { "pointer": "/limit", "detail": "must be at most 100" },
+            ],
+        })
+    );
+}
+
 /// A 415 names the media type the client sent, or says it sent none, so a
 /// client can tell a wrong `Content-Type` from a missing one.
 #[test]
@@ -481,6 +512,7 @@ fn path(expected: StatusCode, rejection: &PathRejection) -> Row {
 fn query(expected: StatusCode, rejection: &QueryRejection) -> Row {
     let name = match rejection {
         QueryRejection::Invalid { .. } => "QueryRejection::Invalid",
+        QueryRejection::Schema { .. } => "QueryRejection::Schema",
     };
     let statuses = (rejection.status(), QueryRejection::statuses());
     Row::new(name, expected, statuses, rejection)
@@ -561,6 +593,15 @@ fn ledger() -> Vec<Row> {
                 detail: text("not a number"),
             },
         ),
+        query(
+            StatusCode::BAD_REQUEST,
+            &QueryRejection::Schema {
+                name: text("querystring"),
+                failures: [(text("/limit"), text("must be at most 100"))]
+                    .into_iter()
+                    .collect(),
+            },
+        ),
         header(
             StatusCode::BAD_REQUEST,
             &HeaderRejection::Invalid {
@@ -631,6 +672,7 @@ fn every_variant_produces_a_status_its_type_declares() {
     let witnessed = [
         "PathRejection::Invalid",
         "QueryRejection::Invalid",
+        "QueryRejection::Schema",
         "HeaderRejection::Invalid",
         #[cfg(feature = "cookie")]
         "CookieRejection::Invalid",

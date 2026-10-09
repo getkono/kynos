@@ -113,6 +113,15 @@ macro_rules! rejection_response {
     };
 }
 
+/// Schema failures as RFC 9457's `errors` extension: one entry per pointer,
+/// which is the shape the specification's own validation example uses.
+fn pointer_errors(failures: BTreeMap<String, String>) -> Vec<serde_json::Value> {
+    failures
+        .into_iter()
+        .map(|(pointer, detail)| json!({ "pointer": pointer, "detail": detail }))
+        .collect()
+}
+
 /// A path parameter did not match its declared schema.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -168,6 +177,23 @@ pub enum QueryRejection {
         /// What was wrong with it.
         detail: String,
     },
+
+    /// The parameter decoded as a document that breaks a bound its schema
+    /// declares. Produces 400.
+    ///
+    /// Raised by
+    /// [`QueryString`](crate::extract::params::querystring::QueryString),
+    /// whose parameter is a whole document and so can break a bound
+    /// somewhere inside it. 400 rather than the 422 a body is refused with,
+    /// since RFC 9110's 422 is about the request's content, and a query
+    /// string is part of its target.
+    #[error("query parameter `{name}` does not satisfy its schema")]
+    Schema {
+        /// The parameter that failed.
+        name: String,
+        /// The failures, keyed by JSON Pointer into the decoded parameter.
+        failures: BTreeMap<String, String>,
+    },
 }
 
 impl QueryRejection {
@@ -175,7 +201,7 @@ impl QueryRejection {
     #[must_use]
     pub fn status(&self) -> StatusCode {
         match self {
-            Self::Invalid { .. } => StatusCode::BAD_REQUEST,
+            Self::Invalid { .. } | Self::Schema { .. } => StatusCode::BAD_REQUEST,
         }
     }
 }
@@ -189,6 +215,11 @@ impl IntoProblem for QueryRejection {
             Self::Invalid { detail, .. } => {
                 Problem::new(status).with_detail(format!("{summary}: {detail}"))
             }
+            // The shape `BodyRejection::Schema` travels in, one entry per
+            // pointer, read relative to the parameter the detail names.
+            Self::Schema { failures, .. } => Problem::new(status)
+                .with_detail(summary)
+                .with_extension("errors", pointer_errors(failures)),
         }
     }
 
@@ -355,16 +386,9 @@ impl IntoProblem for BodyRejection {
             // A set of failures cannot fit in one sentence, so it travels as
             // RFC 9457's `errors` extension: one entry per pointer, which is
             // the shape the specification's own validation example uses.
-            Self::Schema { failures } => {
-                let errors: Vec<_> = failures
-                    .into_iter()
-                    .map(|(pointer, detail)| json!({ "pointer": pointer, "detail": detail }))
-                    .collect();
-
-                problem
-                    .with_detail(summary)
-                    .with_extension("errors", errors)
-            }
+            Self::Schema { failures } => problem
+                .with_detail(summary)
+                .with_extension("errors", pointer_errors(failures)),
 
             Self::UnsupportedMediaType { received } => problem.with_detail(received.map_or_else(
                 || format!("{summary}: the request declared no `Content-Type`"),

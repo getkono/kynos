@@ -14,6 +14,7 @@ these are asked to enforce; this document is about the mechanics.
 | UI snapshot | `crates/kynos/tests/ui/` | `trybuild` | the exact text of a diagnostic | in use |
 | Property | `crates/kynos-openapi/tests/`, over `support/`'s generators | `proptest` | round-tripping, determinism and totality over generated documents | in use |
 | Conformance | a harness over a fixture app | `TestClient` over live responses | *emitted ⊇ observable* against a running service | in use |
+| Fuzz | [`fuzz/fuzz_targets/`](../fuzz/fuzz_targets/), over a committed corpus | `cargo fuzz`, on a pinned nightly | that a parser of untrusted input neither panics nor breaks its round trip or oracle on inputs nobody wrote — see [Fuzzing](#fuzzing) | in use |
 
 Tests move to a sibling `tests.rs` once a module passes ~400 lines, whether or
 not that module also becomes a directory — the two halves of the layout rule are
@@ -52,7 +53,7 @@ constructor's number and a codec's cannot share a file with the routing path's.
 | [`derives.rs`](../crates/kynos/tests/derives.rs) | every derive expands to a well-formed implementation of the trait it claims, and what the default `QueryParams::parameters` makes of a derived schema: an aliased field as one optional parameter per name, and no parameter for a member behind `allOf`, `oneOf` or `$ref`. The runtime properties, the recorded exceptions to a derive being a type-level surface: the derived query decoder refuses a declared value whose octets are not UTF-8, naming its wire parameter, matches a percent-encoded name, ignores an undeclared pair, decodes `+` as a space and keeps an escaped `+` (`%2B`) as a `+`; the derived cookie decoder refuses a declared cookie whose first value is not ASCII, naming its wire name, ignores an unreadable undeclared cookie on the same field, and passes a percent-encoded value through undecoded, which its description states as `style: cookie` under `openapi32` and leaves unstated under 3.1; the derived header decoder refuses a missing required header and a value that is not printable ASCII, naming its wire name, and reads an absent optional header as `None`; a derived `Reply` writes each variant's declared status, a bodied variant as JSON and a unit one with no content, and describes it by its `description`, else its doc comment, else its reason phrase, else the fixed sentence `the request succeeded`; and a derived `ApiError` publishes its extension members and no other field, its slug under `base` where it names no `type`, and its `Display` sentence as `detail` |
 | [`flatten.rs`](../crates/kynos/tests/flatten.rs) | that a flattened field's description agrees with the JSON its type writes and reads, checked against the emitted schema with a real JSON Schema validator in two ways — a value the type serializes, which the description must accept, and hand-written documents it must accept or refuse, such as a member of the wrong type or a key serde refuses, held to serde's own read in every closed case. Where a keyword's presence, absence or position is the point, such as where a flattened map's value schema is hoisted to or what an open flatten drops, it is asserted on the emitted schema itself as well. The cases: a flattened struct, a flattened tagged struct, whose tag reaches the parent through its `$ref`, an open map beside the parent's own properties and beside a flattened struct, an open map inside a tagged variant, the key constraint an open flatten drops, and an object `deny_unknown_fields` closes beside a flattened struct, alone and with a required or an optional field serde also reads under an `alias`, and beside a flattened adjacently tagged enum, whose refusals are held to serde's; a flattened `Problem` beside a member of the parent's own and beside an open map, a `Problem` as an internally tagged newtype variant's payload, and an open `Unchecked` payload, over a `serde_json::Map` and over a typed map, beside the parent's own properties and beside a field serde writes and never reads, as a map of `Unchecked` values is beside such a field too. Behind `macros` and `test-util`, which carries the validator |
 | [`aliases.rs`](../crates/kynos/tests/aliases.rs) | that a name serde reads under an `alias` means to a validator what it means to serde, for the bounds no `flatten.rs` case reaches: an optional field of a closed object under three names, bounded by a `not` over an `anyOf` of their pairs, beside a second aliased field whose bound it leaves in place, an externally tagged branch keyed by exactly one of its names, and a name two variants claim, internally and externally tagged, named in the first one's branch alone. Each document is held to serde's own read, so a bound fails even when the exact JSON in `derives.rs`, which is transcribed from the emitter, moved with it. Behind `macros` and `test-util` |
-| [`constraints.rs`](../crates/kynos/tests/constraints.rs) | that `Json<T>` enforces the `#[schema(...)]` bounds the description emits: each document is read by `Json<T>` and by a draft 2020-12 validator over the schema `T` emits, the two must agree on admitting it, and a refusal is keyed by the pointer of each member that broke a bound — through a named field, an `Option`, a nested type, a sequence, a map under an escaped key, a newtype, a tuple, a flattened field, each enum tagging, a field and a variant read under an `alias`, and a member serde fills from a field or container `default`; and that `Form<T>` refuses a form body at the same pointers. A recorded exception to a derive being a type-level surface, as `derives.rs`'s decoders are. Behind `macros`, `json` and `test-util`, and `form` for the `Form<T>` case |
+| [`constraints.rs`](../crates/kynos/tests/constraints.rs) | that `Json<T>` enforces the `#[schema(...)]` bounds the description emits: each document is read by `Json<T>` and by a draft 2020-12 validator over the schema `T` emits, the two must agree on admitting it, and a refusal is keyed by the pointer of each member that broke a bound — through a named field, an `Option`, a nested type, a sequence, a map under an escaped key, a newtype, a tuple, a flattened field, each enum tagging, a field and a variant read under an `alias`, and a member serde fills from a field or container `default`, and a map key past its `propertyNames`; that each `JsonLines` and `JsonSeq` record and a `QueryString<T, Json>` document agree with the same validator, a record refused under its index and reading continuing past it; and that `Form<T>` and `MultipartForm<T>` refuse a body at the same pointers. A recorded exception to a derive being a type-level surface, as `derives.rs`'s decoders are. Behind `macros`, `json` and `test-util`, with `form` and `multipart` for those bodies and `openapi32` for the records and the query string |
 | [`errors.rs`](../crates/kynos/tests/errors.rs) | each extractor rejects with the rejection type its signature names — and "each" is counted against the source: a sweep reads every `FromRequest`, `FromRequestParts` and `Guard` implementation out of `src/` and compares the types it finds with the ones witnessed, so an extractor added without a witness fails the build |
 | [`extractors.rs`](../crates/kynos/tests/extractors.rs) | what the extractors deciding from more than one input read, refuse and describe, each driven through the public trait and held to the exact rejection: which side of a `OneOf` its `Content-Type` selects, and that a malformed side fails as itself; that an `Option` body is absent only without a `Content-Type`; the closed table of parameters each text codec accepts after its media type, that a media type marker carrying a parameter is matched by type and subtype and accepts exactly the parameter it declares, and that multipart reads `boundary` and no other parameter, alone and as a `OneOf` side; and that a `QueryString` is percent-decoded and read as one JSON document. Each beside the request body or parameter the same type describes. Behind `macros`, `json` and `form`, with the multipart cases behind `multipart` and the `QueryString` cases behind `openapi32` |
 | [`reporting.rs`](../crates/kynos/tests/reporting.rs) | every error type a caller can receive is `Error + Send + Sync + 'static` |
@@ -160,7 +161,7 @@ Five kinds of code account for the workspace.
 | --- | --- | --- | --- |
 | Value type | a `Serialize`/`Deserialize` derive, and no logic beyond builders and accessors | the crate's round-trip and determinism properties, reached through a shared generator; and one exact-JSON case fixing its wire shape | per-field tests, accessor tests, a hand-written round-trip |
 | Closed enumeration | an enum or `const` table mirroring a fixed list in the specification | one table test whose closure fails when a variant is added | cases covering some of the variants |
-| Parser | an open input space — a `&str`, arbitrary JSON, a whole document | a property against an independently constructed oracle; and one case per error variant, counted against the source | round-tripping alone |
+| Parser | an open input space — a `&str`, arbitrary JSON, a whole document | a property against an independently constructed oracle; and one case per error variant, counted against the source; where it is hand-written and reads a request, a `fuzz/` target | round-tripping alone |
 | Type-level surface | a trait, a bound, an arity impl, a derive, or a rule that something must not compile | a doctest for the rule, a `.stderr` snapshot for its wording, a witness fn for the bound | running it — above all against a `todo!()` |
 | Runtime I/O | a socket, a timer, a task or a signal | an integration test over a real socket | a mock of the runtime |
 
@@ -762,6 +763,8 @@ mutated, each for its own reason:
   neither, so on any one platform two are uncompiled and their mutants missed.
 - The proc-macro entry points in `kynos-macros/src/lib.rs`, which only forward
   to a mutated `expand` function, so a mutant there is unviable.
+- The fuzz entry points in `__private/fuzz.rs`, which are `cfg(fuzzing)` and
+  so never compiled by a test build, and only forward to a mutated parser.
 - Hand-written `Debug` impls, which hold no contract a mutant can break: a
   redacting one is tested, but a mutant only prints less.
 
@@ -783,6 +786,43 @@ giving the reason. The attribute needs `mutants = { workspace = true }` under
 the member's `[dev-dependencies]`. Add that line the first time a member uses
 it. An exclusion that covers a whole kind of code belongs in `exclude_re`
 instead, with its reason beside it.
+
+## Fuzzing
+
+A property test draws from a generator someone wrote, so it reaches the inputs
+its author imagined. A fuzzer is guided by coverage instead, which is what
+finds the input a hand-written parser of request fields was never shown.
+
+| Command | Does | Where it runs |
+| --- | --- | --- |
+| `mise run fuzz [target] [--seconds n]` | searches one target, or each in turn, for `n` seconds | locally; nightly in [`fuzz.yml`](../.github/workflows/fuzz.yml), twenty minutes per target |
+| `mise run fuzz:check` | builds every target and replays [`fuzz/corpus/`](../fuzz/corpus/) | every pull request |
+
+[`fuzz/`](../fuzz/) is a workspace of its own: `cargo fuzz` needs a nightly
+toolchain, pinned by date in both tasks, and a member would break every stable
+`--workspace` gate. A parser with a public path is fuzzed through it; the rest
+are reached through `kynos::__private::fuzz`, which exists only under the
+`cfg(fuzzing)` `cargo fuzz` sets.
+
+| Target | Parser | Asserts beyond no panic |
+| --- | --- | --- |
+| `accept` | `Accept::parse`, and the qvalue reader in `http/quality.rs` | the qvalue reader agrees with section 12.4.2's grammar, transcribed by character class |
+| `basic` | `security::carrier::basic`, and its base64 decoder | the credential read is the one the `base64` crate's strict engine decodes, or neither reads one |
+| `cookie` | `http::cookie::jar` and `value_of` | every pair is ASCII without `;`, and a name the jar yields is found by `value_of` |
+| `date` | the HTTP-date reader and writer in `http/date.rs` | whatever the reader produces the writer renders back to it, and the reverse for every instant before the year 10000 |
+| `etag` | the entity-tag list reader and both comparisons in `http/etag.rs` | each member is trimmed and non-empty, and both comparisons find it in the field it came from |
+| `forwarded` | `Forwarded::resolve` | trusting nobody answers with the peer, a scheme is lowercased, and `client_is_secure` follows it |
+| `media_type` | the codec matcher `offers` in `extract/body/mod.rs` | a match agrees on type and subtype, and a bare media type offers itself |
+| `query` | `__private::uri::query_pairs` | the pairs equal a byte-at-a-time form decoder's |
+| `range` | `Range::parse` and `select` | a field is ignored only for a reason this constructor can see, and a part lies inside the representation |
+
+The search runs nightly rather than on a pull request because its verdict
+depends on how long it ran: a gate that fails on an input a longer run found is
+a gate whose result turns on the runner. What a pull request owes is the
+corpus. A crash the nightly job uploads is a bug fix, and lands as one: the
+input, copied into `fuzz/corpus/<target>/`, is the failing test, and the fix
+follows it. `fuzz:check` replays it from then on. The search writes what it
+discovers under `fuzz/target/`, so a run never edits the committed seeds.
 
 ## Snapshots
 

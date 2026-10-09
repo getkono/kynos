@@ -88,7 +88,7 @@ fn a_parameter_extractor_rejects_with_its_own_type() {
 fn a_whole_query_string_rejects_with_the_query_type() {
     use kynos::{extract::params::querystring::QueryString, http::media::Json};
 
-    #[derive(serde::Deserialize)]
+    #[derive(Schema, serde::Deserialize)]
     struct Filter {
         limit: u32,
     }
@@ -164,7 +164,7 @@ fn a_body_extractor_rejects_with_the_body_type() {
     {
         use kynos::extract::body::json_lines::{JsonLines, JsonSeq, records::Records};
 
-        #[derive(serde::Deserialize)]
+        #[derive(Schema, serde::Deserialize)]
         struct Reading {
             value: f64,
         }
