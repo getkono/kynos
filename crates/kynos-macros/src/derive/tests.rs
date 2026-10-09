@@ -78,6 +78,16 @@ mod schema {
                 "cannot describe a union",
             ),
             case(
+                "a generic type naming itself in a field it describes",
+                quote::quote!(
+                    struct Node<T> {
+                        value: T,
+                        next: Option<Box<Node<T>>>,
+                    }
+                ),
+                "refers to itself",
+            ),
+            case(
                 "`format`, which states what a value is rather than constraining it",
                 quote::quote!(
                     struct Order {
@@ -446,6 +456,60 @@ mod schema {
                 + tag_ledger().len()
                 + rename_ledger().len(),
         );
+    }
+
+    /// `Self` names the type as surely as its identifier does, in a variant as
+    /// in a field.
+    ///
+    /// Beside the ledger rather than in it: the ledger's row proves the site
+    /// fires, and this proves `Self` and an enum reach it.
+    #[test]
+    fn a_generic_enum_naming_itself_as_self_is_refused() {
+        let input: syn::DeriveInput = syn::parse2(quote::quote!(
+            enum Tree<T> {
+                Leaf(T),
+                Branch { children: Vec<Self> },
+            }
+        ))
+        .expect("the case itself must parse");
+
+        let Err(error) = expand_inner(&input) else {
+            panic!("a generic enum naming itself as `Self` must be refused");
+        };
+        assert!(
+            error.to_string().contains("refers to itself"),
+            "refused with another diagnostic: {error}"
+        );
+    }
+
+    /// Only a generic type naming itself where its schema descends is refused:
+    /// a concrete type is named and so `$ref`s itself, and a member serde skips
+    /// both ways, a `PhantomData`, or a path qualified to another type of the
+    /// same identifier is never described as this type.
+    #[test]
+    fn a_self_reference_the_schema_never_descends_into_is_accepted() {
+        for declaration in [
+            quote::quote!(
+                struct Node {
+                    next: Option<Box<Node>>,
+                }
+            ),
+            quote::quote!(
+                struct Node<T> {
+                    value: T,
+                    #[serde(skip)]
+                    next: Option<Box<Node<T>>>,
+                    marker: core::marker::PhantomData<Node<T>>,
+                    other: other::Node<T>,
+                }
+            ),
+        ] {
+            let input: syn::DeriveInput =
+                syn::parse2(declaration).expect("the case itself must parse");
+            if let Err(error) = expand_inner(&input) {
+                panic!("a self-reference the schema never descends into was refused: {error}");
+            }
+        }
     }
 
     /// A split container `rename_all` naming one side only leaves the other
