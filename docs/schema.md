@@ -762,7 +762,8 @@ message rather than by `#[schema(...)]`, so it has no bound to run.
   `\d`, `\w` and `\b` stay ASCII, and `\s` and `.` take ECMA-262's space and
   line terminators. A construct the engine cannot run (lookaround,
   backreferences) or that the two dialects read apart (`(?i)`, `\A`,
-  `(?P<name>`, POSIX and nested classes) is a compile error. The engine is a
+  `(?P<name>`, `a**`, `^*`, `[]a]`, POSIX and nested classes) is a compile
+  error. The engine is a
   finite automaton, so a request cannot make a pattern backtrack, and each
   field's pattern compiles once per process. A map key's `pattern` is still
   described and not checked.

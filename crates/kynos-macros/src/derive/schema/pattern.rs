@@ -10,9 +10,10 @@
 //!   and Unicode-aware in the engine; `\s` and `.` differ in which characters
 //!   they count as space and as a line terminator.
 //! - Where the engine reads a construct ECMA-262 refuses or reads otherwise —
-//!   inline flags, `\A`, `\z`, `(?P<name>`, a POSIX class, a nested class or a
-//!   set operation — it is refused, since the document and the check would
-//!   disagree about it.
+//!   inline flags, `\A`, `\z`, `(?P<name>`, a group name that is no
+//!   identifier, a quantified quantifier or assertion, a POSIX class, a nested
+//!   class, a leading `]` in a class or a set operation — it is refused, since
+//!   the document and the check would disagree about it.
 //! - Where ECMA-262 reads a construct the engine cannot — lookaround and
 //!   backreferences, which need a backtracking search — it is refused, since
 //!   no check could enforce it.
@@ -26,6 +27,8 @@ use regex_syntax::ast::{
     ClassUnicode, ClassUnicodeKind, ClassUnicodeOpKind, ErrorKind, GroupKind, HexLiteralKind,
     Literal, LiteralKind, Span, SpecialLiteralKind, parse::Parser,
 };
+
+use std::sync::LazyLock;
 
 use super::{LitStr, TokenStream2, Type, quote};
 
@@ -44,6 +47,13 @@ const DOT: &str = r"[^\n\r\x{2028}\x{2029}]";
 /// `\b` and `\B`, between ASCII word characters.
 const WORD_BOUNDARY: &str = r"(?-u:\b)";
 const NOT_WORD_BOUNDARY: &str = r"(?-u:\B)";
+
+/// An ECMA-262 group name: an identifier. The engine's names are a letter or
+/// `_` and then letters, digits, `_`, `.`, `[` and `]`, so this refuses what
+/// the engine reads and ECMA-262 does not; its `$` and joiners never reach it.
+static GROUP_NAME: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"^[\p{ID_Start}_]\p{ID_Continue}*$").expect("a valid pattern")
+});
 
 /// What ECMA-262 lets a backslash escape to the character itself, outside a
 /// class: its syntax characters and `/`. Inside one, `-` as well.
@@ -130,13 +140,20 @@ impl ast::Visitor for Translator {
 
     fn visit_pre(&mut self, ast: &Ast) -> Result<(), String> {
         match ast {
-            // The parser already refuses `{,n}`, the one quantifier the engine
-            // reads and ECMA-262 does not.
-            Ast::Empty(_)
-            | Ast::Alternation(_)
-            | Ast::Concat(_)
-            | Ast::ClassBracketed(_)
-            | Ast::Repetition(_) => Ok(()),
+            Ast::Empty(_) | Ast::Alternation(_) | Ast::Concat(_) | Ast::ClassBracketed(_) => Ok(()),
+            // The parser already refuses `{,n}`. ECMA-262 with Unicode support
+            // quantifies only an atom, so neither a quantifier nor an
+            // assertion can be quantified, where the engine reads both.
+            Ast::Repetition(repetition) => match &*repetition.ast {
+                Ast::Repetition(_) => Err(not_ecma(
+                    "a quantifier on a quantifier, such as `a**` or `x{2}{3}`, which ECMA-262 \
+                     refuses; group the inner one as `(?:x{2}){3}`",
+                )),
+                Ast::Assertion(_) => Err(not_ecma(
+                    "a quantified assertion, such as `^*` or `\\b+`, which ECMA-262 refuses",
+                )),
+                _ => Ok(()),
+            },
             Ast::Flags(_) => Err(not_ecma("an inline flag group such as `(?i)`")),
             Ast::Literal(literal) => literal_escape(literal, false),
             Ast::Dot(span) => {
@@ -150,11 +167,21 @@ impl ast::Visitor for Translator {
                 Ok(())
             }
             Ast::Group(group) => match &group.kind {
-                GroupKind::CaptureIndex(_)
-                | GroupKind::CaptureName {
+                GroupKind::CaptureIndex(_) => Ok(()),
+                GroupKind::CaptureName {
                     starts_with_p: false,
-                    ..
-                } => Ok(()),
+                    name,
+                } => {
+                    if GROUP_NAME.is_match(&name.name) {
+                        Ok(())
+                    } else {
+                        Err(not_ecma(
+                            "a group name that is not an ECMA-262 identifier, such as \
+                             `(?<a.b>...)`; it starts with a letter or `_` and holds no `.`, \
+                             `[` or `]`",
+                        ))
+                    }
+                }
                 GroupKind::CaptureName {
                     starts_with_p: true,
                     ..
@@ -245,9 +272,17 @@ impl Translator {
 fn literal_escape(literal: &Literal, in_class: bool) -> Result<(), String> {
     match &literal.kind {
         LiteralKind::Verbatim => {
+            // A bare `]` inside a class is one the engine read as its first
+            // character, where ECMA-262 reads `[]` as the empty class and
+            // then refuses the `]` that follows.
+            if in_class && literal.c == ']' {
+                Err(not_ecma(
+                    "a `]` first in a class, such as `[]a]`; ECMA-262 reads `[]` as the empty \
+                     class, so escape it as `\\]`",
+                ))
             // ECMA-262 refuses a bare `]`, `{` or `}` outside a class under
             // Unicode support, and the engine reads one as the character.
-            if !in_class && matches!(literal.c, ']' | '{' | '}') {
+            } else if !in_class && matches!(literal.c, ']' | '{' | '}') {
                 Err(not_ecma(&format!(
                     "an unescaped `{}`, which ECMA-262 refuses; write `\\{}`",
                     literal.c, literal.c
