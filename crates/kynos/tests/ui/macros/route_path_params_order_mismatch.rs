@@ -1,6 +1,6 @@
-//! A `PathParams` group declaring the route's variables out of order names the
-//! variable each position should hold. `ui/pass/route_path_params_names_in_order.rs`
-//! is the same program in the route's order.
+//! A group declaring the route's variables out of order is refused, naming the
+//! first parameter out of place and the variable the route has there. Its pass
+//! sibling, `ui/pass/route_path_params_names_in_order.rs`, is in route order.
 
 use kynos::extract::params::path::Path;
 
