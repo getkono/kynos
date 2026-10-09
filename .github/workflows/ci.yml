@@ -174,6 +174,35 @@ jobs:
       - name: Check panic recovery gating
         run: mise run panic:check
 
+  # Every other job runs on Linux, so the `cfg(windows)` arms -- the shutdown
+  # signals in `server/shutdown/signal.rs` above all -- were compiled nowhere,
+  # and a Windows user installing `tls` was the first to learn whether
+  # `aws-lc-sys` builds there. The suite rather than a bare `cargo check`:
+  # `--all-targets` compiles everything `check` would, and running it is what
+  # makes `tests/conformance_corpus.rs` compare each OS's emission against the
+  # same committed bytes, which is the cross-platform determinism `docs/nfr.md`
+  # claims. Both OSes run to the end, since a failure on one says nothing
+  # about the other.
+  portability:
+    name: Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      # `rust-cache` keys on the runner's OS itself, so one key serves both.
+      - name: Set up
+        uses: ./.github/actions/setup
+        with:
+          cargo-cache-key: portability
+      - name: Run tests
+        run: mise run test
+
   msrv:
     name: MSRV
     runs-on: ubuntu-latest
