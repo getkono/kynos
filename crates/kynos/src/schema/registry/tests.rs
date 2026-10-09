@@ -72,6 +72,55 @@ impl Schema for Node {
     }
 }
 
+/// Refers to [`Line`], a named type of its own, so `Line` finishes its descent
+/// while `Order` still holds a different name.
+struct Order;
+
+impl Schema for Order {
+    fn schema(registry: &mut Registry) -> OpenApiSchema {
+        object_with("line", registry.resolve::<Line>())
+    }
+
+    fn name() -> Option<ComponentName> {
+        ComponentName::new("Order").ok()
+    }
+}
+
+struct Line;
+
+impl Schema for Line {
+    fn schema(_registry: &mut Registry) -> OpenApiSchema {
+        object_with("sku", OpenApiSchema::of_type(SchemaType::String))
+    }
+
+    fn name() -> Option<ComponentName> {
+        ComponentName::new("Line").ok()
+    }
+}
+
+/// Only a descent holding the *same* name is a rival's holder: a named type
+/// nested inside a differently named one registers under its own name.
+#[test]
+fn a_named_type_inside_another_registers_under_its_own_name() {
+    let mut registry = Registry::new();
+
+    registry.resolve::<Order>();
+
+    assert!(registry.schema_conflicts().is_empty());
+    let components = registry.into_components();
+    assert_eq!(
+        components.schemas.get("Line"),
+        Some(&object_with(
+            "sku",
+            OpenApiSchema::of_type(SchemaType::String)
+        ))
+    );
+    assert_eq!(
+        components.schemas.get("Order"),
+        Some(&object_with("line", OpenApiSchema::component("Line")))
+    );
+}
+
 /// A different type reaching a name whose description has not finished is
 /// still a second claimant, and has to be compared like one: aliasing it to the
 /// first would describe `b::Item` as a recursive `a::Item` and drop it from the
