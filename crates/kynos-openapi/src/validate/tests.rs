@@ -442,6 +442,109 @@ fn a_cycle_of_component_refs_declares_nothing() {
     ));
 }
 
+/// Each error a 3.1 validation raises, with where it was raised.
+fn located_errors(document: &Document) -> Vec<(String, SpecError)> {
+    Validator::new(SpecVersion::V3_1)
+        .validate(document)
+        .into_iter()
+        .filter(|v| v.severity == super::Severity::Error)
+        .map(|v| (v.location, v.error))
+        .collect()
+}
+
+/// A reusable parameter is held to the rules an inline one is, and reported
+/// where it is defined: once, however many operations reference it.
+#[test]
+fn a_reusable_path_parameter_must_be_required_once_at_its_definition() {
+    use crate::model::reference::{Ref, RefOr};
+
+    let with_ref = |operation_id| {
+        let mut operation = Operation::new(operation_id).with_responses(ok_responses());
+        operation.parameters.push(RefOr::Ref(Ref::parameter("Id")));
+        operation
+    };
+    let item = PathItem::new()
+        .with_operation(Method::Get, with_ref("getUser"))
+        .with_operation(Method::Delete, with_ref("deleteUser"));
+    let mut parameter = Parameter::path("id", Schema::of_type(SchemaType::String));
+    parameter.required = Some(false);
+    let document =
+        document_with_component_parameter(&[("/users/{id}", item)], "Id", RefOr::Item(parameter));
+
+    assert_eq!(
+        located_errors(&document),
+        vec![(
+            "#/components/parameters/Id".to_owned(),
+            SpecError::PathParameterNotRequired {
+                name: "id".to_owned()
+            },
+        )]
+    );
+}
+
+/// The definition is checked whether or not anything references it.
+#[test]
+fn a_reusable_header_parameter_the_spec_ignores_is_reported() {
+    let document = document_with_component_parameter(
+        &[],
+        "Accept",
+        crate::RefOr::Item(Parameter::header(
+            "Accept",
+            Schema::of_type(SchemaType::String),
+        )),
+    );
+
+    assert_eq!(
+        located_errors(&document),
+        vec![(
+            "#/components/parameters/Accept".to_owned(),
+            SpecError::IgnoredHeaderParameter {
+                name: "Accept".to_owned()
+            },
+        )]
+    );
+}
+
+#[test]
+fn a_reusable_parameters_style_is_checked_against_its_location() {
+    let document = document_with_component_parameter(
+        &[],
+        "Trace",
+        crate::RefOr::Item(
+            Parameter::header("X-Trace", Schema::of_type(SchemaType::String))
+                .with_style(Style::DeepObject, false),
+        ),
+    );
+
+    assert_eq!(
+        located_errors(&document),
+        vec![(
+            "#/components/parameters/Trace".to_owned(),
+            SpecError::IllegalStyle {
+                style: "deepobject".to_owned(),
+                location: "header".to_owned(),
+            },
+        )]
+    );
+}
+
+/// A component's name is a pointer token, escaped as one.
+#[test]
+fn a_reusable_parameters_extensions_are_checked_at_its_escaped_pointer() {
+    let mut parameter = Parameter::query("page", Schema::of_type(SchemaType::Integer));
+    parameter.extensions.insert("not-prefixed", true);
+    let document = document_with_component_parameter(&[], "a/b", crate::RefOr::Item(parameter));
+
+    let found = located_errors(&document);
+    assert!(
+        found.iter().any(|(location, error)| {
+            location == "#/components/parameters/a~1b"
+                && matches!(error, SpecError::InvalidExtensionName { .. })
+        }),
+        "got {found:?}"
+    );
+}
+
 #[test]
 fn a_path_parameter_must_be_required() {
     let mut parameter = Parameter::path("id", Schema::of_type(SchemaType::String));
@@ -1603,6 +1706,44 @@ fn a_ref_d_operation_parameter_overrides_the_path_items_querystring() {
     );
 
     assert_eq!(querystring_violations(&document), vec![]);
+}
+
+/// A reusable querystring parameter must be described by `content` too, and is
+/// reported where it is defined rather than once per reference.
+#[cfg(feature = "openapi32")]
+#[test]
+fn a_reusable_querystring_parameter_without_content_is_reported_at_its_definition() {
+    use crate::model::{
+        parameter::ParameterIn,
+        reference::{Ref, RefOr},
+    };
+
+    let mut operation = Operation::new("listUsers").with_responses(ok_responses());
+    operation
+        .parameters
+        .push(RefOr::Ref(Ref::parameter("Filter")));
+    let document = document_with_component_parameter(
+        &[(
+            "/users",
+            PathItem::new().with_operation(Method::Get, operation),
+        )],
+        "Filter",
+        RefOr::Item(Parameter::new(
+            "filter",
+            ParameterIn::Querystring,
+            Schema::of_type(SchemaType::String),
+        )),
+    );
+
+    assert_eq!(
+        querystring_violations(&document),
+        vec![(
+            "#/components/parameters/Filter".to_owned(),
+            SpecError::QuerystringWithoutContent {
+                name: "filter".to_owned()
+            },
+        )]
+    );
 }
 
 // --- The variant ledger ---------------------------------------------------
