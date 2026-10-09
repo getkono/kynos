@@ -81,16 +81,21 @@ fn check_members<'a, T: Schema + 'a>(
 /// bounds can fail: a key is a string, and `pattern` is described and not
 /// checked, as everywhere. A key that cannot say what member name it is is
 /// not checked, and its value is reported at the map.
+///
+/// `K::key_constraints` is built once the first key to check needs it, and
+/// only its length bounds are kept, so an empty map, or one whose keys cannot
+/// be checked, builds nothing.
 fn check_entries<'a, K: MapKey + 'a, V: Schema + 'a>(
     entries: impl Iterator<Item = (&'a K, &'a V)>,
     at: Pointer<'_>,
     violations: &mut Violations,
 ) {
-    let keys = K::key_constraints();
+    let mut lengths = None;
     for (key, value) in entries {
         match key.as_member() {
             Some(name) => {
-                check_key(name, &keys, at, violations);
+                let lengths = *lengths.get_or_insert_with(|| KeyLengths::of::<K>());
+                check_key(name, lengths, at, violations);
                 value.check_constraints(at.member(name), violations);
             }
             None => violations.within(at, |inner| {
@@ -100,13 +105,34 @@ fn check_entries<'a, K: MapKey + 'a, V: Schema + 'a>(
     }
 }
 
-/// Checks one key against `constraints`, reporting at `at`, the map.
-fn check_key(name: &str, constraints: &Constraints, at: Pointer<'_>, violations: &mut Violations) {
+/// The bounds of a map key that a check enforces.
+#[derive(Clone, Copy)]
+struct KeyLengths {
+    min: Option<u64>,
+    max: Option<u64>,
+}
+
+impl KeyLengths {
+    fn of<K: MapKey>() -> Self {
+        let Constraints {
+            min_length,
+            max_length,
+            ..
+        } = K::key_constraints();
+        Self {
+            min: min_length,
+            max: max_length,
+        }
+    }
+}
+
+/// Checks one key against its `lengths`, reporting at `at`, the map.
+fn check_key(name: &str, lengths: KeyLengths, at: Pointer<'_>, violations: &mut Violations) {
     let mut broken = Violations::new();
-    if let Some(bound) = constraints.min_length {
+    if let Some(bound) = lengths.min {
         keyword::text_min_length(name, bound, Pointer::root(), &mut broken);
     }
-    if let Some(bound) = constraints.max_length {
+    if let Some(bound) = lengths.max {
         keyword::text_max_length(name, bound, Pointer::root(), &mut broken);
     }
     for (_, detail) in broken.into_each() {

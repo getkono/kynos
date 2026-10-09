@@ -760,7 +760,9 @@ message rather than by `#[schema(...)]`, so it has no bound to run.
   regular expression engine Kynos does not depend on yet.
 
 The check runs on the typed value, so no JSON Schema interpreter sits on the
-request path, and a value inside every bound allocates nothing.
+request path, and a value inside every bound allocates nothing beyond what
+a map's `MapKey::key_constraints` builds, once per map that has a key to
+check.
 
 ## Rules
 
