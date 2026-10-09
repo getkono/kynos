@@ -84,3 +84,141 @@ mod a_file_part_describes_itself {
         assert!(FilePart::name().is_none());
     }
 }
+
+/// A form body decodes the encoding its description states.
+///
+/// No Encoding Object is written, so each property takes the defaults:
+/// `style: form` with `explode: true`, under which an array property is one
+/// pair per item, all under the property's name. A field the description calls
+/// an array therefore has to accept a repeated key, and a single pair as a
+/// one-item array.
+#[cfg(feature = "form")]
+mod a_form_body_decodes_what_it_describes {
+    use std::collections::BTreeMap;
+
+    use crate::{
+        error::rejection::BodyRejection,
+        extract::{FromRequest, body::form::Form},
+        http::{HeaderValue, Request, StatusCode, body::Body, header},
+    };
+
+    /// Reads `T` from a form body holding `body`.
+    async fn read<T: serde::de::DeserializeOwned + Send>(
+        body: &'static [u8],
+    ) -> Result<T, BodyRejection> {
+        let mut request = Request::new(Body::from_bytes(bytes::Bytes::from_static(body)));
+        request.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/x-www-form-urlencoded"),
+        );
+        Form::<T>::from_request(request, &())
+            .await
+            .map(|Form(value)| value)
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct Tags {
+        tag: Vec<String>,
+    }
+
+    #[tokio::test]
+    async fn a_repeated_key_is_one_item_per_pair_in_order() {
+        let tags = read::<Tags>(b"tag=a&tag=b").await.expect("an array");
+
+        assert_eq!(tags.tag, ["a", "b"]);
+    }
+
+    #[tokio::test]
+    async fn a_single_pair_is_a_one_item_array() {
+        let tags = read::<Tags>(b"tag=a").await.expect("an array");
+
+        assert_eq!(tags.tag, ["a"]);
+    }
+
+    /// The items are parsed as the item type, not only collected as text.
+    #[tokio::test]
+    async fn the_items_are_read_as_the_item_type() {
+        #[derive(Debug, serde::Deserialize)]
+        struct Ids {
+            id: Vec<u32>,
+        }
+
+        let ids = read::<Ids>(b"id=3&other=x&id=5").await.expect("an array");
+
+        assert_eq!(ids.id, [3, 5]);
+    }
+
+    /// A scalar property is one pair. A second one does not fit the schema,
+    /// so it is refused as a 422 rather than resolved by picking one of the
+    /// two values.
+    #[tokio::test]
+    async fn a_repeated_scalar_key_is_422() {
+        #[derive(Debug, serde::Deserialize)]
+        #[allow(dead_code)]
+        struct Page {
+            page: u32,
+        }
+
+        let rejection = read::<Page>(b"page=1&page=2")
+            .await
+            .expect_err("a scalar takes one pair");
+
+        assert_eq!(rejection.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let BodyRejection::Schema { failures } = rejection else {
+            panic!("expected a schema failure, got {rejection:?}");
+        };
+        assert_eq!(failures.keys().collect::<Vec<_>>(), [""]);
+    }
+
+    /// A map of scalars is held to the same rule as a struct of them.
+    #[tokio::test]
+    async fn a_repeated_key_into_a_map_of_scalars_is_422() {
+        let rejection = read::<BTreeMap<String, String>>(b"a=1&a=2")
+            .await
+            .expect_err("a scalar value takes one pair");
+
+        assert_eq!(rejection.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    /// An empty number input is submitted as `name=`, which is no number; an
+    /// optional field reads it as absent rather than refusing the form.
+    #[tokio::test]
+    async fn an_empty_optional_number_is_none() {
+        #[derive(Debug, serde::Deserialize)]
+        struct Filter {
+            limit: Option<u32>,
+        }
+
+        let filter = read::<Filter>(b"limit=").await.expect("an absent number");
+
+        assert_eq!(filter.limit, None);
+    }
+
+    /// The two shapes `Form`'s documentation says are described but not
+    /// decoded, held to the 422 it promises for them.
+    #[tokio::test]
+    async fn a_nested_struct_and_a_flattened_number_are_422() {
+        #[derive(Debug, serde::Deserialize)]
+        #[allow(dead_code)]
+        struct Inner {
+            n: u32,
+        }
+        #[derive(Debug, serde::Deserialize)]
+        #[allow(dead_code)]
+        struct Nested {
+            inner: Inner,
+        }
+        #[derive(Debug, serde::Deserialize)]
+        #[allow(dead_code)]
+        struct Flattened {
+            #[serde(flatten)]
+            inner: Inner,
+        }
+
+        let nested = read::<Nested>(b"n=1").await.expect_err("not decoded");
+        let flattened = read::<Flattened>(b"n=1").await.expect_err("not decoded");
+
+        assert_eq!(nested.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(flattened.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+}

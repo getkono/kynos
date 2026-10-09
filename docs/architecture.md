@@ -52,7 +52,7 @@ is checkable, so the sites are enumerated:
 | Site | Names | Why it is not in `server/` |
 | --- | --- | --- |
 | `server/` | the five coupling points, and the listener, shutdown and lifecycle plumbing around them | — |
-| `middleware/limits/` | `tokio::{time::timeout, time::Instant, time::Sleep, time::sleep, sync::Semaphore}` | the timer wraps the chain's future, which does not exist until after routing; the permit bounds requests already in it; the body timer outlives both, because a streamed body is still being produced after the chain has returned |
+| `middleware/limits/` | `tokio::{time::timeout, time::Instant, time::Sleep, time::sleep, sync::Semaphore}` | the timer wraps the chain's future, which does not exist until after routing; the permit bounds requests already in it; the body timer outlives both, because a streamed body is still being produced after the chain has returned; the request-body idle timer the server applies is generic over the body it wraps, so it names neither `hyper` nor a socket |
 | `middleware/compression/` | `tokio::io::{AsyncRead, AsyncWrite, ReadBuf}` | `async-compression`'s encoders are written against tokio's I/O traits; no byte here crosses a socket |
 | `middleware/decompression/` | `tokio::io::{AsyncRead, ReadBuf}` | the same traits for the same reason, in the other direction: a client-compressed request body is decoded before an extractor sees it, which is as far from a socket as the encoders are |
 | `response/stream/sse.rs` | `tokio::time::{Instant, Sleep, sleep}` | a keep-alive is a property of one body, and the connection driver cannot know a body is an event stream |
@@ -202,7 +202,7 @@ by naming the row X displaces rather than by arguing that X is good.
 | Observability facade | `tracing` | [`server/`](../crates/kynos/src/server/), [`middleware/trace.rs`](../crates/kynos/src/middleware/trace.rs) | built |
 | Streaming bodies | `futures-core` | [`response/stream/`](../crates/kynos/src/response/stream/), [`extract/body/json_lines/`](../crates/kynos/src/extract/body/json_lines/), [`http/body.rs`](../crates/kynos/src/http/body.rs), gated on `openapi32` | built |
 | JSON | `serde_json` | ambient with `serde` | built |
-| Form codec | `serde_urlencoded` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
+| Form codec | `serde_html_form` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | built |
 | Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | built |
 | Protobuf codec | `prost` | [`extract/body/protobuf.rs`](../crates/kynos/src/extract/body/protobuf.rs), [`response/codec/protobuf.rs`](../crates/kynos/src/response/codec/protobuf.rs) | built |
 | Scalar formats, identifiers | `uuid` | [`schema/impls/identifier.rs`](../crates/kynos/src/schema/impls/identifier.rs) | built |
@@ -801,7 +801,10 @@ allocator. The mutex is not part of the cost either; it is inline in `Body`. The
 entry is true one step further out, on the server path, where
 `Body::from_incoming` erases a `hyper::body::Incoming` that is not zero-sized:
 on a router with no observer registered, one allocation per request that
-arrives over a socket, and one more for a response body that is not empty. The
+arrives over a socket, and one more for a response body that is not empty. A
+request body that is not already over is erased inside its idle timer instead,
+which is the same one allocation, plus one for the timer the first time a read
+of it has to wait. The
 qualifier is the condition
 [`dispatch.rs`](../crates/kynos/src/router/dispatch.rs)'s `finish` branches on
 — a router with an observer erases the response body a second time through a

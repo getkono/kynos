@@ -280,8 +280,22 @@ pub(super) fn install_preflight<C: Send + Sync + 'static>(
             })
             .collect();
 
+        // Every method the path answers, so a preflight can refuse one that
+        // runs under no `Cors` rather than let an override approve it.
+        let mut served: Vec<_> = entry
+            .operations
+            .iter()
+            .map(|operation| operation.method)
+            .collect();
+        if served.contains(&kynos_openapi::Method::Get)
+            && !served.contains(&kynos_openapi::Method::Head)
+        {
+            served.push(kynos_openapi::Method::Head);
+        }
+
         let preflight = crate::middleware::cors::preflight::Preflight::new(
             scopes,
+            served,
             options_implemented.then(|| entry.allow.clone()),
             method_not_allowed.clone(),
         );
