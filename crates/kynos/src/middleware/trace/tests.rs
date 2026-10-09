@@ -1,8 +1,8 @@
 use super::{DEFAULT_CORRELATION, REDACTED, Trace};
 use crate::{
-    extract::params::header::HeaderParams,
+    extract::params::header::{EncodeHeaders, HeaderParams},
     http::{HeaderMap, HeaderValue},
-    middleware::request_id::XRequestId,
+    middleware::request_id::{CorrelationHeaders, RequestId, XRequestId},
 };
 
 /// A header map from pairs.
@@ -61,12 +61,84 @@ fn a_redacted_name_in_another_case_is_still_redacted() {
     assert!(!recorded.contains("eyJ"), "{recorded}");
 }
 
-/// The correlation name comes from the group, not from a second copy of it.
+/// The default correlation names are the default group's, not a second copy.
 #[test]
-fn the_correlation_name_is_read_from_the_group() {
-    assert_eq!(XRequestId::NAMES, [DEFAULT_CORRELATION]);
+fn the_default_correlation_names_are_the_default_groups() {
+    assert_eq!(XRequestId::NAMES, DEFAULT_CORRELATION);
+}
+
+/// The names and the trust both come from the `RequestId` correlated by.
+#[test]
+fn correlating_reads_the_group_and_the_trust_from_the_request_id() {
+    let trace = Trace::new().correlating(&RequestId::new().header::<Pair>().trust_client(true));
+
+    assert_eq!(trace.correlation, Pair::NAMES);
+    assert!(trace.trust_client);
+    assert!(!Trace::new().correlating(&RequestId::new()).trust_client);
+}
+
+/// A `RequestId` that replaces an inbound identifier leaves the opening event
+/// without one, since what the client sent is not the request's identifier.
+#[test]
+fn an_identifier_request_id_replaces_is_not_logged_on_arrival() {
+    let inbound = map(&[("x-request-id", "forged")]);
+
+    assert_eq!(Trace::new().inbound(&inbound), "");
     assert_eq!(
-        Trace::new().correlating::<XRequestId>().correlation,
-        DEFAULT_CORRELATION
+        Trace::new()
+            .correlating(&RequestId::new().trust_client(false))
+            .inbound(&inbound),
+        ""
     );
+}
+
+/// A `RequestId` that echoes an inbound identifier makes it the request's, so
+/// the opening event carries it, read as `RequestId` reads it: the first
+/// declared name present.
+#[test]
+fn an_identifier_request_id_echoes_is_logged_on_arrival() {
+    let trusting = Trace::new().correlating(&RequestId::new().header::<Pair>().trust_client(true));
+
+    assert_eq!(
+        trusting.inbound(&map(&[("x-trace-id", "second")])),
+        "second"
+    );
+    assert_eq!(
+        trusting.inbound(&map(&[
+            ("x-trace-id", "second"),
+            ("x-correlation-id", "first")
+        ])),
+        "first"
+    );
+    assert_eq!(trusting.inbound(&map(&[])), "");
+}
+
+/// The closing event carries what the response does, trusted or not.
+#[test]
+fn the_assigned_identifier_is_logged_on_departure() {
+    let response = map(&[("x-request-id", "minted")]);
+
+    assert_eq!(Trace::new().assigned(&response), "minted");
+}
+
+/// A group of two names, to tell the first declared from the first present.
+struct Pair(HeaderValue);
+
+impl HeaderParams for Pair {
+    const NAMES: &'static [&'static str] = &["x-correlation-id", "x-trace-id"];
+}
+
+impl EncodeHeaders for Pair {
+    fn encode(&self) -> Vec<(crate::http::HeaderName, HeaderValue)> {
+        Self::NAMES
+            .iter()
+            .map(|name| (crate::http::HeaderName::from_static(name), self.0.clone()))
+            .collect()
+    }
+}
+
+impl CorrelationHeaders for Pair {
+    fn from_id(id: HeaderValue) -> Self {
+        Self(id)
+    }
 }

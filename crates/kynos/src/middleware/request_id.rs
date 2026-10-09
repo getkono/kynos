@@ -212,7 +212,8 @@ fn identifier_schema() -> kynos_openapi::Schema {
 /// what the response carries.
 pub struct RequestId<S = Counter, H = XRequestId> {
     source: S,
-    trust_client: bool,
+    // Read by `Trace`, which logs an inbound identifier only where this echoes it.
+    pub(super) trust_client: bool,
     _header: PhantomData<fn() -> H>,
 }
 
