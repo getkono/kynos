@@ -762,6 +762,8 @@ mutated, each for its own reason:
   neither, so on any one platform two are uncompiled and their mutants missed.
 - The proc-macro entry points in `kynos-macros/src/lib.rs`, which only forward
   to a mutated `expand` function, so a mutant there is unviable.
+- The fuzz entry points in `__private/fuzz.rs`, which are `cfg(fuzzing)` and
+  so never compiled by a test build, and only forward to a mutated parser.
 - Hand-written `Debug` impls, which hold no contract a mutant can break: a
   redacting one is tested, but a mutant only prints less.
 
