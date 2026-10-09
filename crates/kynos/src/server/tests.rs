@@ -3379,33 +3379,16 @@ mod request_body_idle {
     #[tokio::test]
     async fn a_limit_past_the_clock_leaves_the_body_waiting() {
         use std::{
-            convert::Infallible,
             pin::pin,
-            task::{Context, Poll, Waker},
+            task::{Context, Waker},
         };
 
-        use bytes::Bytes;
-        use http_body::{Body as _, Frame};
+        use http_body::Body as _;
 
         use crate::{
             http::{StatusCode, Version},
             middleware::limits::request_body::{answer, bounded},
         };
-
-        /// A body whose peer never sends another frame.
-        struct Silent;
-
-        impl http_body::Body for Silent {
-            type Data = Bytes;
-            type Error = Infallible;
-
-            fn poll_frame(
-                self: std::pin::Pin<&mut Self>,
-                _: &mut Context<'_>,
-            ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
-                Poll::Pending
-            }
-        }
 
         let (body, stall) = bounded(Silent, Some(Duration::MAX), Version::HTTP_11, |_| {
             unreachable!("a body that is not over is bounded")
@@ -3466,6 +3449,63 @@ mod request_body_idle {
             "a body whose inner body ended is over"
         );
         assert_eq!(body.size_hint().exact(), Some(0));
+    }
+
+    /// A body that stalls ends with an error naming the limit it passed, and
+    /// its request is answered 408 -- closing an HTTP/1 connection, and
+    /// carrying no `Connection` field on HTTP/2, which hyper would strip before
+    /// a client could see it.
+    #[tokio::test]
+    async fn a_stalled_body_names_its_limit_and_closes_only_http1() {
+        use http_body_util::BodyExt as _;
+
+        use crate::{
+            http::{HeaderValue, StatusCode, Version, header},
+            middleware::limits::request_body::{answer, bounded},
+        };
+
+        let limit = Duration::from_millis(1);
+        for (version, connection) in [
+            (Version::HTTP_10, Some(HeaderValue::from_static("close"))),
+            (Version::HTTP_11, Some(HeaderValue::from_static("close"))),
+            (Version::HTTP_2, None),
+        ] {
+            let (mut body, stall) = bounded(Silent, Some(limit), version, |_| {
+                unreachable!("a body that is not over is bounded")
+            });
+            let error = tokio::time::timeout(IDLE_UNREACHED, body.frame())
+                .await
+                .expect("the limit fires before the bound")
+                .expect("a stall ends the body with a frame")
+                .expect_err("the frame is the stall");
+            assert_eq!(
+                error.to_string(),
+                "no request body frame arrived within 1ms"
+            );
+
+            let response = answer(crate::http::Response::default(), stall);
+            assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+            assert_eq!(
+                response.headers().get(header::CONNECTION),
+                connection.as_ref(),
+                "{version:?}"
+            );
+        }
+    }
+
+    /// A body whose peer never sends another frame.
+    struct Silent;
+
+    impl http_body::Body for Silent {
+        type Data = bytes::Bytes;
+        type Error = std::convert::Infallible;
+
+        fn poll_frame(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+            std::task::Poll::Pending
+        }
     }
 
     /// A limit no unit test waits out.
