@@ -1,16 +1,8 @@
 name: Mutants
 
-# Mutation testing, apart from `ci.yml` because neither half is a task in
-# `mise run check`, and both build in cargo-mutants' scratch copies rather than
-# in the tree the other jobs cache. What a mutant is tested against, and what
-# is left out, is `.cargo/mutants.toml`; what a survivor means is
-# `docs/testing.md#mutation-testing`.
-#
-# Two halves. A pull request is held to the mutants on the lines it changed,
-# and fails on any that survive. The whole workspace is too large for one
-# night: some 4,800 mutants, each a rebuild of the mutated crate and every test
-# target that links it. So each night runs one seventh of it, sharded across
-# parallel jobs, and the week covers it all.
+# Mutation testing. A pull request fails on a surviving mutant on its changed
+# lines; each night runs one seventh of the workspace, so a week covers it.
+# `docs/testing.md#mutation-testing` has the reasons.
 on:
   pull_request:
   schedule:
@@ -28,15 +20,12 @@ on:
 permissions:
   contents: read
 
-# `ci.yml`'s rule for a pull request. A night's run is never cancelled by the
-# next one: it queues behind it instead.
+# A superseded pull request run is cancelled; a night's run queues instead.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# No `CARGO_INCREMENTAL: 0`, unlike `ci.yml`. cargo-mutants builds every mutant
-# in one scratch tree in turn, each differing from the last in one function,
-# which is exactly the edit-and-rebuild loop incremental compilation exists for.
+# Incremental stays on: each mutant is a one-function edit of the last build.
 env:
   CARGO_TERM_COLOR: always
   NEXTEST_PROFILE: ci
@@ -49,8 +38,6 @@ jobs:
     timeout-minutes: 300
     strategy:
       fail-fast: false
-      # Four shards, each running its own baseline first. A change that
-      # touches no Rust exits within a second of setup.
       matrix:
         shard: [0, 1, 2, 3]
     steps:
@@ -59,13 +46,11 @@ jobs:
         with:
           # The diff is taken from the merge base, which a shallow clone lacks.
           fetch-depth: 0
-      # No `cargo-cache-key`: cargo-mutants copies the tree without `target/`
-      # and builds in the copy, so a restored target directory is never read.
+      # No `cargo-cache-key`: cargo-mutants builds in a copy without `target/`.
       - name: Set up
         uses: ./.github/actions/setup
       - name: Test the mutants on changed lines
-        # Under the job's own bound, so the report below is still uploaded
-        # when a change carries more mutants than the job has time for.
+        # Under the job's bound, so the report is still uploaded.
         timeout-minutes: 280
         env:
           MUTANTS_BASE: ${{ github.event.pull_request.base.sha }}
@@ -85,9 +70,7 @@ jobs:
     timeout-minutes: 350
     strategy:
       fail-fast: false
-      # Sixteen jobs a night and seven nights a week make 112 shards, about
-      # forty-five mutants each. Not more at once, so a night's run leaves
-      # runners free for pull requests.
+      # 16 jobs a night for 7 nights make 112 shards; capped to leave runners free.
       max-parallel: 16
       matrix:
         job: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
@@ -97,8 +80,7 @@ jobs:
       - name: Set up
         uses: ./.github/actions/setup
       - name: Test this night's shard
-        # Under the job's own bound, so the report below is still uploaded
-        # when a shard runs long.
+        # Under the job's bound, so the report is still uploaded.
         timeout-minutes: 330
         env:
           SLICE: ${{ inputs.slice }}
