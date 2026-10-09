@@ -24,7 +24,7 @@ operation each way per codec behind that codec's flag, over a transport floor
 mounted at every point. Its baseline is that floor alone.
 
 What a codec row includes is stated in `codec.tsv` and worth stating here too:
-mounting a codec pulls in its dependency -- `serde_json`, `serde_urlencoded`,
+mounting a codec pulls in its dependency -- `serde_json`, `serde_html_form`,
 `multer`, `prost`, `async-compression` -- and its operations declare a payload
 type carrying two derives. The delta is all of that, which is what a program
 mounting the codec pays, and it is not Kynos code alone.
@@ -238,7 +238,7 @@ CODEC_HEADER = """\
 #
 # WHAT A DELTA INCLUDES, stated because attributing it all to Kynos would be
 # wrong: mounting a codec pulls in the crate that implements it -- `serde_json`
-# for `json`, `serde_urlencoded` for `form`, `multer` for `multipart`, `prost`
+# for `json`, `serde_html_form` for `form`, `multer` for `multipart`, `prost`
 # for `protobuf`, `async-compression` and its gzip, brotli and zstd encoders for
 # `compression` -- and each mounted operation declares a payload type carrying a
 # `Schema` derive and the codec's own serialization derive. Every row below is
@@ -1103,7 +1103,7 @@ def report(
             "baseline is that fixture with its transport floor and no codec, "
             "so a delta is decoding and encoding rather than reading a body at "
             "all. Each delta is the codec, the crate that implements it -- "
-            "`serde_json`, `serde_urlencoded`, `multer`, `prost`, "
+            "`serde_json`, `serde_html_form`, `multer`, `prost`, "
             "`async-compression` -- and the payload type its operations "
             "declare, so it is not attributable to Kynos alone.",
             codec,

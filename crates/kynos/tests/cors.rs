@@ -315,6 +315,139 @@ async fn a_group_scoped_cors_advertises_only_the_methods_it_covers() {
     );
 }
 
+/// A method the path answers outside every `Cors` is refused on preflight, even
+/// where a covering scope's `allow_methods` names it.
+///
+/// The override is for routes Kynos does not serve. Here Kynos does serve
+/// `DELETE`, under no `Cors` at all, so approving the preflight would send the
+/// browser on to a request whose side effect runs while its response carries no
+/// CORS header.
+#[tokio::test]
+async fn a_preflight_refuses_a_served_method_no_cors_covers() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![delete_widget])
+        .group(
+            kynos::router::group::Group::new("/")
+                .mount(kynos::routes![list_widgets])
+                .intercept(
+                    Cors::new()
+                        .allow_origins(["https://app.example.com"])
+                        .allow_methods([
+                            kynos::openapi::Method::Get,
+                            kynos::openapi::Method::Delete,
+                        ]),
+                ),
+        )
+        .build(())
+        .expect("a describable router");
+
+    let (status, fields) = send(
+        &service,
+        Method::OPTIONS,
+        "/widgets",
+        &[
+            ("origin", "https://app.example.com"),
+            ("access-control-request-method", "DELETE"),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(
+        field(&fields, header::VARY).is_some(),
+        "a refusal is cached too"
+    );
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        None,
+        "approved a preflight for a method no CORS configuration covers"
+    );
+    assert_eq!(field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS), None);
+}
+
+/// A third method on the same path, for a `Cors` covering neither of the others.
+#[kynos::post("/widgets")]
+async fn create_widget() -> NoContent {
+    NoContent
+}
+
+/// The `HEAD` a `GET` answers counts as served, so it runs under the `GET`'s
+/// chain: where that chain holds no `Cors`, a `HEAD` preflight is refused even
+/// though a sibling scope's `allow_methods` names it.
+#[tokio::test]
+async fn a_preflight_refuses_the_head_an_uncovered_get_answers() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![list_widgets])
+        .group(
+            kynos::router::group::Group::new("/")
+                .mount(kynos::routes![create_widget])
+                .intercept(
+                    Cors::new()
+                        .allow_origins(["https://app.example.com"])
+                        .allow_methods([kynos::openapi::Method::Head]),
+                ),
+        )
+        .build(())
+        .expect("a describable router");
+
+    let (status, fields) = send(
+        &service,
+        Method::OPTIONS,
+        "/widgets",
+        &[
+            ("origin", "https://app.example.com"),
+            ("access-control-request-method", "HEAD"),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_ORIGIN),
+        None,
+        "approved a preflight for the HEAD an uncovered GET answers"
+    );
+    assert_eq!(field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS), None);
+}
+
+/// Only a `GET` makes a `HEAD` served: on a path with none, a `HEAD` is a
+/// method Kynos does not serve, so an `allow_methods` override naming it
+/// approves and advertises it as it would any route fronted elsewhere.
+#[tokio::test]
+async fn an_override_approves_a_head_on_a_path_serving_no_get() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![create_widget])
+        .intercept(
+            Cors::new()
+                .allow_origins(["https://app.example.com"])
+                .allow_methods([kynos::openapi::Method::Post, kynos::openapi::Method::Head]),
+        )
+        .build(())
+        .expect("a describable router");
+
+    let (status, fields) = send(
+        &service,
+        Method::OPTIONS,
+        "/widgets",
+        &[
+            ("origin", "https://app.example.com"),
+            ("access-control-request-method", "HEAD"),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_ORIGIN).as_deref(),
+        Some("https://app.example.com"),
+        "refused a HEAD the path does not serve though the override names it"
+    );
+    assert_eq!(
+        field(&fields, header::ACCESS_CONTROL_ALLOW_METHODS).as_deref(),
+        Some("POST, HEAD")
+    );
+}
+
 /// A predicate reaches both answers a browser sees: the preflight, and the
 /// real response. Two places read the allow-list, so a widening that only one
 /// of them honoured would let a preflight pass and the request that followed

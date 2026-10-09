@@ -2,7 +2,9 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{Data, DataStruct, DeriveInput, Fields, FieldsNamed};
 
-use super::{named_fields, reject_duplicate_names, unit_struct, wire_names};
+use super::{
+    NameCase, named_fields, reject_duplicate_names, reject_non_token_names, unit_struct, wire_names,
+};
 
 /// The wire name `attribute`'s derive gives the one field of `declaration`.
 ///
@@ -239,7 +241,60 @@ fn distinct_names_are_not_duplicates() {
         }
     ));
     let names = ["page".to_owned(), "size".to_owned()];
-    assert!(reject_duplicate_names(&fields, &names, "parameter").is_ok());
+    for case in [NameCase::Sensitive, NameCase::Insensitive] {
+        assert!(reject_duplicate_names(&fields, &names, "parameter", case).is_ok());
+    }
+}
+
+/// Names differing only in case are one name where the location folds case,
+/// and two where it does not.
+#[test]
+fn case_decides_whether_two_spellings_clash() {
+    let fields = named(quote!(
+        struct Tracing {
+            upper: String,
+            lower: String,
+        }
+    ));
+    let names = ["X-Id".to_owned(), "x-id".to_owned()];
+
+    assert!(reject_duplicate_names(&fields, &names, "cookie", NameCase::Sensitive).is_ok());
+
+    let error = reject_duplicate_names(&fields, &names, "header", NameCase::Insensitive)
+        .expect_err("two spellings of one header name must be refused");
+    let reported = error.to_string();
+    assert!(
+        reported.contains("two fields declare the header `x-id`"),
+        "{reported}"
+    );
+    assert!(
+        reported.contains("the first is `upper`, which spells it `X-Id`"),
+        "{reported}"
+    );
+}
+
+/// A token is one or more visible ASCII characters other than the RFC 9110
+/// §5.6.2 delimiters. Swept over every ASCII character and one beyond it,
+/// against that definition rather than the `tchar` list the check holds.
+#[test]
+fn a_name_is_accepted_exactly_when_it_is_a_token() {
+    const DELIMITERS: &str = "\"(),/:;<=>?@[\\]{}";
+    let fields = named(quote!(
+        struct Holder {
+            value: String,
+        }
+    ));
+
+    for character in (0..=0x7f_u8).map(char::from).chain(['é']) {
+        let token = character.is_ascii_graphic() && !DELIMITERS.contains(character);
+        let names = [format!("a{character}b")];
+        let outcome = reject_non_token_names(&fields, &names, "header", "a field name");
+        assert_eq!(outcome.is_ok(), token, "{character:?}");
+    }
+
+    let error = reject_non_token_names(&fields, &[String::new()], "header", "a field name")
+        .expect_err("an empty name is no token");
+    assert!(error.to_string().contains("is empty"), "{error}");
 }
 
 /// A duplicate names the field that claimed the wire name first, because a
@@ -255,7 +310,7 @@ fn a_duplicate_names_the_field_that_claimed_it_first() {
     ));
     let names = ["cursor".to_owned(), "cursor".to_owned()];
 
-    let error = reject_duplicate_names(&fields, &names, "parameter")
+    let error = reject_duplicate_names(&fields, &names, "parameter", NameCase::Sensitive)
         .expect_err("two fields on one wire name must be refused");
     let reported = error.to_string();
 
@@ -374,8 +429,19 @@ fn cases() -> Vec<(&'static str, syn::Result<()>, &'static str)> {
                 &duplicate,
                 &["cursor".to_owned(), "cursor".to_owned()],
                 "parameter",
+                NameCase::Sensitive,
             ),
             "two fields declare the",
+        ),
+        (
+            "a wire name outside the token grammar",
+            reject_non_token_names(
+                &duplicate,
+                &["page".to_owned(), "x id".to_owned()],
+                "header",
+                "a field name",
+            ),
+            "contains ' '",
         ),
     ]
 }

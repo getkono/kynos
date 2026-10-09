@@ -14,7 +14,7 @@ impl<T: serde::Serialize> IntoResponse for Form<T> {
     fn into_response(self) -> Response {
         // Encoded in full before anything is written, for the reason the JSON
         // codec gives: a failure that arrives mid-body has no status left.
-        let Ok(encoded) = serde_urlencoded::to_string(&self.0) else {
+        let Ok(encoded) = serde_html_form::to_string(&self.0) else {
             return Problem::new(StatusCode::INTERNAL_SERVER_ERROR)
                 .with_detail("the response body could not be encoded as a form")
                 .into_response();

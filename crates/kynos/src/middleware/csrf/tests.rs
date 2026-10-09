@@ -242,23 +242,36 @@ fn a_target_authority_does_not_admit_another_origin() {
     ));
 }
 
-/// `Host` decides where both are present.
+/// The target's authority decides where both are present.
 ///
-/// Section 8.3.1 requires the two to agree when a version-2 client sends both,
-/// so preferring one is a tie-break rather than a policy -- and `Host` is what
-/// an HTTP/1.1 client actually sent.
+/// An HTTP/1.1 request carries an authority on its target only in absolute
+/// form, and RFC 9112 section 3.2.2 says an origin server receiving one "MUST
+/// ignore the received Host header field". A version-2 request's `:authority`
+/// is on the target too, and RFC 9113 section 8.3.1 makes it, not `Host`, the
+/// field that conveys the authority.
 #[test]
-fn the_host_field_decides_where_a_request_states_both() {
+fn the_target_authority_decides_where_a_request_states_both() {
     let csrf = Csrf::new();
 
     assert!(csrf.permits(
         &Method::POST,
         &map(&[
             ("origin", "https://api.example.com"),
-            ("host", "api.example.com"),
+            ("host", "other.example.com"),
         ]),
-        Some("other.example.com"),
+        Some("api.example.com"),
     ));
+    assert!(
+        !csrf.permits(
+            &Method::POST,
+            &map(&[
+                ("origin", "https://other.example.com"),
+                ("host", "other.example.com"),
+            ]),
+            Some("api.example.com"),
+        ),
+        "an origin matching only the ignored `Host` was admitted"
+    );
 }
 
 /// Every method RFC 9110 section 9.2.1 calls safe, and the ones it does not.
